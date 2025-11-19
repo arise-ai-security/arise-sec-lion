@@ -56,6 +56,40 @@ uv add --dev <package-name>
 uv sync
 ```
 
+### Running Tests
+
+**Unit Tests** (no database required):
+```bash
+uv run pytest tests/core tests/infrastructure/test_litellm_adapter.py -v
+```
+
+**Integration Tests** (requires PostgreSQL):
+```bash
+# Start test database
+docker compose -f docker-compose.test.yml up -d
+
+# Run integration tests
+TEST_DB_URL="postgresql://testuser:testpass@localhost:5433/testdb" \
+    uv run pytest tests/infrastructure/test_event_store.py -v
+
+# Stop database
+docker compose -f docker-compose.test.yml down
+```
+
+**All Tests**:
+```bash
+# Start test database
+docker compose -f docker-compose.test.yml up -d
+
+# Run all tests
+uv run pytest tests/core tests/infrastructure/test_litellm_adapter.py -v
+TEST_DB_URL="postgresql://testuser:testpass@localhost:5433/testdb" \
+    uv run pytest tests/infrastructure/test_event_store.py -v
+
+# Stop database
+docker compose -f docker-compose.test.yml down
+```
+
 ## Project Structure
 
 ```

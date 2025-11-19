@@ -1,0 +1,334 @@
+"""Integration tests for PostgresEventStore.
+
+These tests require a PostgreSQL database.
+
+Setup with Docker Compose (recommended):
+    # Start test database
+    docker compose -f docker-compose.test.yml up -d
+
+    # Run integration tests
+    TEST_DB_URL="postgresql://testuser:testpass@localhost:5433/testdb" \\
+        uv run pytest tests/infrastructure/test_event_store.py -v
+
+    # Stop database when done
+    docker compose -f docker-compose.test.yml down
+
+    # Clean up (remove volumes)
+    docker compose -f docker-compose.test.yml down -v
+
+Alternative (using docker run):
+    docker run --name test-postgres -e POSTGRES_PASSWORD=test -p 5432:5432 -d postgres:16
+    TEST_DB_URL="postgresql://postgres:test@localhost:5432/postgres" \\
+        uv run pytest tests/infrastructure/test_event_store.py -v
+
+If TEST_DB_URL environment variable is not set, tests will be skipped.
+"""
+
+import os
+from uuid import uuid4
+
+import pytest
+
+from core.domain.events import AgentCreated, TaskAssigned, WorkCompleted
+from core.domain.exceptions import ConcurrencyError, EventStoreError
+from core.domain.model import AgentRole
+from infrastructure.adapters.postgres_event_store import PostgresEventStore
+
+
+# Check if PostgreSQL test database is available
+TEST_DB_URL = os.environ.get("TEST_DB_URL")
+pytestmark = pytest.mark.skipif(not TEST_DB_URL, reason="TEST_DB_URL environment variable not set")
+
+
+@pytest.fixture
+async def event_store():
+    """Create and initialize event store for testing."""
+    if not TEST_DB_URL:
+        pytest.skip("TEST_DB_URL not set")
+
+    store = PostgresEventStore(TEST_DB_URL)
+    await store.connect()
+    await store.initialize_schema()
+
+    yield store
+
+    # Cleanup: drop the test table
+    if store.pool:
+        async with store.pool.acquire() as conn:
+            await conn.execute("DROP TABLE IF EXISTS events")
+
+    await store.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_event_store_initialization(event_store: PostgresEventStore):
+    """Test that event store initializes schema correctly."""
+
+    # Given: Event store is initialized (by fixture)
+    # When: Query for table existence
+    async with event_store.pool.acquire() as conn:
+        table_exists = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'events'
+            )
+            """
+        )
+
+    # Then: Table should exist
+    assert table_exists is True
+
+
+@pytest.mark.asyncio
+async def test_event_store_append_and_get_single_event(event_store: PostgresEventStore):
+    """Test appending and retrieving a single event (happy path)."""
+
+    # Given: Create a domain event
+    aggregate_id = uuid4()
+    event = AgentCreated(
+        aggregate_id=aggregate_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={"model": "gpt-4"},
+    )
+
+    # When: Append the event
+    await event_store.append(event, expected_version=0)
+
+    # And: Retrieve events for the aggregate
+    events = await event_store.get_events(aggregate_id)
+
+    # Then: Should return exactly one event
+    assert len(events) == 1
+
+    # And: Event should be correctly deserialized
+    retrieved_event = events[0]
+    assert isinstance(retrieved_event, AgentCreated)
+    assert retrieved_event.aggregate_id == aggregate_id
+    assert retrieved_event.sequence_number == 1
+    assert retrieved_event.role == AgentRole.BOSS.value
+    assert retrieved_event.config == {"model": "gpt-4"}
+
+
+@pytest.mark.asyncio
+async def test_event_store_append_multiple_events(event_store: PostgresEventStore):
+    """Test appending and retrieving multiple events in sequence."""
+
+    # Given: Create an aggregate with multiple events
+    aggregate_id = uuid4()
+
+    event1 = AgentCreated(
+        aggregate_id=aggregate_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={"model": "gpt-4"},
+    )
+
+    event2 = TaskAssigned(
+        aggregate_id=aggregate_id,
+        sequence_number=2,
+        task_description="Build a web scraper",
+    )
+
+    event3 = WorkCompleted(
+        aggregate_id=aggregate_id, sequence_number=3, result="Successfully completed"
+    )
+
+    # When: Append events in sequence
+    await event_store.append(event1, expected_version=0)
+    await event_store.append(event2, expected_version=1)
+    await event_store.append(event3, expected_version=2)
+
+    # And: Retrieve all events
+    events = await event_store.get_events(aggregate_id)
+
+    # Then: Should return all events in order
+    assert len(events) == 3
+    assert isinstance(events[0], AgentCreated)
+    assert isinstance(events[1], TaskAssigned)
+    assert isinstance(events[2], WorkCompleted)
+
+    # And: Verify order
+    assert events[0].sequence_number == 1
+    assert events[1].sequence_number == 2
+    assert events[2].sequence_number == 3
+
+
+@pytest.mark.asyncio
+async def test_event_store_get_events_empty_aggregate(event_store: PostgresEventStore):
+    """Test retrieving events for non-existent aggregate returns empty list."""
+
+    # Given: A random aggregate ID that doesn't exist
+    non_existent_id = uuid4()
+
+    # When: Retrieve events
+    events = await event_store.get_events(non_existent_id)
+
+    # Then: Should return empty list
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_event_store_concurrency_error_same_sequence(event_store: PostgresEventStore):
+    """Test that OCC detects concurrent writes with same sequence_number."""
+
+    # Given: Create two events with the same sequence_number
+    aggregate_id = uuid4()
+
+    event1 = AgentCreated(
+        aggregate_id=aggregate_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={"model": "gpt-4"},
+    )
+
+    event2_duplicate = AgentCreated(
+        aggregate_id=aggregate_id,
+        sequence_number=1,  # Same sequence!
+        role=AgentRole.MANAGER.value,
+        parent_id=uuid4(),
+        config={"model": "claude-3"},
+    )
+
+    # When: Append first event
+    await event_store.append(event1, expected_version=0)
+
+    # Then: Appending second event with same sequence should raise ConcurrencyError
+    with pytest.raises(ConcurrencyError) as exc_info:
+        await event_store.append(event2_duplicate, expected_version=0)
+
+    # And: Error should contain conflict details
+    error = exc_info.value
+    assert error.aggregate_id == str(aggregate_id)
+    assert error.expected_version == 0
+    assert error.actual_version == 1
+
+
+@pytest.mark.asyncio
+async def test_event_store_concurrency_error_stale_version(event_store: PostgresEventStore):
+    """Test that OCC detects stale expected_version."""
+
+    # Given: Append multiple events to establish version
+    aggregate_id = uuid4()
+
+    event1 = AgentCreated(
+        aggregate_id=aggregate_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={},
+    )
+
+    event2 = TaskAssigned(aggregate_id=aggregate_id, sequence_number=2, task_description="Task 1")
+
+    event3 = TaskAssigned(aggregate_id=aggregate_id, sequence_number=3, task_description="Task 2")
+
+    # When: Append events
+    await event_store.append(event1, expected_version=0)
+    await event_store.append(event2, expected_version=1)
+
+    # Then: Trying to append with stale expected_version should fail
+    with pytest.raises(ConcurrencyError) as exc_info:
+        await event_store.append(event3, expected_version=1)  # Stale! Actual is 2
+
+    # And: Error should show version mismatch
+    error = exc_info.value
+    assert error.expected_version == 1
+    assert error.actual_version == 2
+
+
+@pytest.mark.asyncio
+async def test_event_store_isolation_between_aggregates(event_store: PostgresEventStore):
+    """Test that events for different aggregates are isolated."""
+
+    # Given: Two different aggregates
+    aggregate_a = uuid4()
+    aggregate_b = uuid4()
+
+    event_a = AgentCreated(
+        aggregate_id=aggregate_a,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={},
+    )
+
+    event_b = AgentCreated(
+        aggregate_id=aggregate_b,
+        sequence_number=1,
+        role=AgentRole.MANAGER.value,
+        parent_id=uuid4(),
+        config={},
+    )
+
+    # When: Append events to both aggregates
+    await event_store.append(event_a, expected_version=0)
+    await event_store.append(event_b, expected_version=0)
+
+    # Then: Retrieving events for aggregate A returns only A's events
+    events_a = await event_store.get_events(aggregate_a)
+    assert len(events_a) == 1
+    assert events_a[0].aggregate_id == aggregate_a
+    assert events_a[0].role == AgentRole.BOSS.value
+
+    # And: Retrieving events for aggregate B returns only B's events
+    events_b = await event_store.get_events(aggregate_b)
+    assert len(events_b) == 1
+    assert events_b[0].aggregate_id == aggregate_b
+    assert events_b[0].role == AgentRole.MANAGER.value
+
+
+@pytest.mark.asyncio
+async def test_event_store_preserves_metadata(event_store: PostgresEventStore):
+    """Test that event metadata is preserved during serialization."""
+
+    # Given: Create event with metadata
+    aggregate_id = uuid4()
+    event = AgentCreated(
+        aggregate_id=aggregate_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={},
+        metadata={"user_id": "user-123", "correlation_id": "corr-456"},
+    )
+
+    # When: Append and retrieve
+    await event_store.append(event, expected_version=0)
+    events = await event_store.get_events(aggregate_id)
+
+    # Then: Metadata should be preserved
+    retrieved_event = events[0]
+    assert retrieved_event.metadata == {"user_id": "user-123", "correlation_id": "corr-456"}
+
+
+@pytest.mark.asyncio
+async def test_event_store_error_without_connection():
+    """Test that operations fail gracefully without connection."""
+
+    # Given: Event store without connection
+    store = PostgresEventStore("postgresql://invalid")
+
+    # When/Then: Append without connect should raise EventStoreError
+    event = AgentCreated(
+        aggregate_id=uuid4(),
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config={},
+    )
+
+    with pytest.raises(EventStoreError, match=r"(?i)connection pool not initialized"):
+        await store.append(event, expected_version=0)
+
+    # And: Get events without connect should raise EventStoreError
+    with pytest.raises(EventStoreError, match=r"(?i)connection pool not initialized"):
+        await store.get_events(uuid4())
+
+    # And: Initialize schema without connect should raise EventStoreError
+    with pytest.raises(EventStoreError, match=r"(?i)connection pool not initialized"):
+        await store.initialize_schema()
