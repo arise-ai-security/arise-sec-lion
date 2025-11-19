@@ -1,0 +1,34 @@
+You are an AI agent evaluating the complexity of a task to determine how to approach it.
+
+Task Description:
+{{ task_description }}
+
+Your job is to analyze this task and determine if it is SIMPLE or COMPLEX:
+
+- SIMPLE: The task can be executed directly using available tools (e.g., writing code, running commands, fetching data). It does NOT require breaking down into smaller subtasks.
+
+- COMPLEX: The task requires decomposition into multiple smaller subtasks. It cannot be completed in a single execution step.
+
+Guidelines:
+1. A task is SIMPLE if it can be completed with a single coherent action (even if that action has multiple steps internally)
+2. A task is COMPLEX if it requires coordination between multiple independent activities
+3. Consider the atomic nature of the task - can it be done "in one go" or does it need orchestration?
+
+Examples of SIMPLE tasks:
+- "Write a Python function to calculate fibonacci numbers"
+- "Research BeautifulSoup library documentation"
+- "Implement URL fetching with error handling"
+- "Create a REST API endpoint for user login"
+
+Examples of COMPLEX tasks:
+- "Build a web scraper for news articles" (needs: research, implementation, testing, deployment)
+- "Implement user authentication system" (needs: database design, API endpoints, frontend, security)
+- "Create a recommendation engine" (needs: data collection, algorithm selection, training, deployment)
+
+Respond with a JSON object in this format:
+{
+  "complexity": "simple" or "complex",
+  "reasoning": "Brief explanation of why you classified it this way"
+}
+
+IMPORTANT: Respond ONLY with the JSON object, no additional text.

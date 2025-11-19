@@ -10,7 +10,13 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import ChildSpawned, SubtasksDefined, WorkFailed
+from core.domain.events import (
+    ChildSpawned,
+    StatusChanged,
+    SubtasksDefined,
+    WorkCompleted,
+    WorkFailed,
+)
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.subtask import Subtask
 from core.ports.llm_port import LLMPort
@@ -98,8 +104,9 @@ async def test_manager_decomposition() -> None:
 
     # And: Verify two ChildSpawned events are recorded (one per subtask)
     assert len(child_spawned_events) == 2, "Should have 2 ChildSpawned events"
-    assert child_spawned_events[0].child_role == AgentRole.WORKER.value
-    assert child_spawned_events[1].child_role == AgentRole.WORKER.value
+    # Children now spawn with PENDING role (will evaluate complexity themselves)
+    assert child_spawned_events[0].child_role == AgentRole.PENDING.value
+    assert child_spawned_events[1].child_role == AgentRole.PENDING.value
 
     # And: Verify each ChildSpawned event contains Subtask value object
     assert isinstance(child_spawned_events[0].subtask, Subtask)
@@ -162,3 +169,245 @@ async def test_manager_llm_invalid_json_response() -> None:
     # And: Verify error_message is set
     assert agent.error_message is not None, "error_message should be set"
     assert len(agent.error_message) > 0, "error_message should not be empty"
+
+
+@pytest.mark.asyncio
+async def test_parent_completion_check() -> None:
+    """Test that a MANAGER waits for all children before completing."""
+
+    # Given: Create a MANAGER agent
+    agent_id = uuid4()
+    config = {"model": "gpt-4"}
+
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+    )
+    agent.assign_task("Build a web scraper for news articles")
+
+    # And: Manually simulate that it spawned 2 children
+    child_a_id = uuid4()
+    child_b_id = uuid4()
+
+    # Create child A (spawned with PENDING role)
+    child_a_event = ChildSpawned(
+        aggregate_id=agent_id,
+        sequence_number=3,
+        child_id=child_a_id,
+        child_role=AgentRole.PENDING.value,
+        subtask=Subtask(description="Research BeautifulSoup library"),
+    )
+    agent._apply(child_a_event)
+    agent._changes.append(child_a_event)
+
+    # Create child B (spawned with PENDING role)
+    child_b_event = ChildSpawned(
+        aggregate_id=agent_id,
+        sequence_number=4,
+        child_id=child_b_id,
+        child_role=AgentRole.PENDING.value,
+        subtask=Subtask(description="Implement URL fetching"),
+    )
+    agent._apply(child_b_event)
+    agent._changes.append(child_b_event)
+
+    # And: Set status to WAITING
+    status_event = StatusChanged(
+        aggregate_id=agent_id,
+        sequence_number=5,
+        old_status=AgentStatus.ANALYZING.value,
+        new_status=AgentStatus.WAITING.value,
+        reason="Waiting for children to complete",
+    )
+    agent._apply(status_event)
+    agent._changes.append(status_event)
+
+    # Clear changes to focus on handle_child_update events
+    initial_event_count = len(agent.events)
+
+    # When: Child A finishes
+    agent.handle_child_update(
+        child_id=child_a_id,
+        result="Successfully researched BeautifulSoup library",
+    )
+
+    # Then: Agent status is STILL WAITING (because Child B is not done)
+    assert agent.status == AgentStatus.WAITING, (
+        "Status should remain WAITING when not all children are complete"
+    )
+
+    # And: No WorkCompleted event yet
+    work_completed_events = [
+        e for e in agent.events[initial_event_count:] if isinstance(e, WorkCompleted)
+    ]
+    assert len(work_completed_events) == 0, "Should not complete until all children done"
+
+    # When: Child B finishes
+    agent.handle_child_update(
+        child_id=child_b_id,
+        result="Successfully implemented URL fetching",
+    )
+
+    # Then: Agent status transitions to COMPLETED
+    assert agent.status == AgentStatus.COMPLETED, (
+        "Status should transition to COMPLETED when all children are done"
+    )
+
+    # And: A WorkCompleted event is generated with aggregated results
+    work_completed_events = [
+        e for e in agent.events[initial_event_count:] if isinstance(e, WorkCompleted)
+    ]
+    assert len(work_completed_events) == 1, "Should have 1 WorkCompleted event"
+
+    # And: The result should aggregate results from both children
+    result = work_completed_events[0].result
+    assert "BeautifulSoup" in result, "Result should include Child A's work"
+    assert "URL fetching" in result, "Result should include Child B's work"
+
+    # And: Agent result is set
+    assert agent.result is not None
+    assert "BeautifulSoup" in agent.result
+    assert "URL fetching" in agent.result
+
+
+def test_cannot_spawn_boss_child() -> None:
+    """Test that system invariant prevents spawning BOSS children."""
+
+    # Given: Create a MANAGER agent
+    agent_id = uuid4()
+    config = {"model": "gpt-4"}
+
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+    )
+
+    # When/Then: Attempting to spawn a BOSS child raises AssertionError
+    # Try to create ChildSpawned event with BOSS role (invalid)
+    invalid_event = ChildSpawned(
+        aggregate_id=agent_id,
+        sequence_number=3,
+        child_id=uuid4(),
+        child_role=AgentRole.BOSS.value,
+        subtask=Subtask(description="Some task"),
+    )
+    # Applying this event should fail the invariant check
+    with pytest.raises(AssertionError, match=r"(?i)(boss|invariant)"):
+        agent._apply(invalid_event)
+
+
+@pytest.mark.asyncio
+async def test_child_evaluates_simple_complexity() -> None:
+    """Test that child agent evaluates SIMPLE task and becomes WORKER."""
+
+    # Given: Create a child agent with PENDING role
+    agent_id = uuid4()
+    config = {"model": "gpt-4"}
+
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
+    )
+    agent.assign_task("Write a Python function to calculate fibonacci numbers")
+
+    # And: Prepare FakeLLM that returns SIMPLE complexity
+    import json
+
+    fake_llm = FakeLLM(
+        canned_response=json.dumps(
+            {
+                "complexity": "simple",
+                "reasoning": "This is a single, focused task that can be implemented directly",
+            }
+        )
+    )
+
+    # When: Child evaluates complexity
+    await agent.evaluate_complexity(llm_port=fake_llm)
+
+    # Then: Agent role transitions from PENDING to WORKER
+    assert agent.role == AgentRole.WORKER, "Agent should become WORKER for SIMPLE tasks"
+
+    # And: ComplexityEvaluated event is recorded
+    from core.domain.events import ComplexityEvaluated
+
+    complexity_events = [e for e in agent.events if isinstance(e, ComplexityEvaluated)]
+    assert len(complexity_events) == 1, "Should have 1 ComplexityEvaluated event"
+    assert complexity_events[0].complexity == "simple"
+    assert complexity_events[0].determined_role == AgentRole.WORKER.value
+    assert "single" in complexity_events[0].reasoning.lower()
+
+    # And: Agent status remains ANALYZING (ready to execute)
+    assert agent.status == AgentStatus.ANALYZING
+
+
+@pytest.mark.asyncio
+async def test_child_evaluates_complex_complexity() -> None:
+    """Test that child agent evaluates COMPLEX task and becomes MANAGER."""
+
+    # Given: Create a child agent with PENDING role
+    agent_id = uuid4()
+    config = {"model": "gpt-4"}
+
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
+    )
+    agent.assign_task("Build a complete web scraping system with monitoring")
+
+    # And: Prepare FakeLLM that returns COMPLEX complexity
+    import json
+
+    fake_llm = FakeLLM(
+        canned_response=json.dumps(
+            {
+                "complexity": "complex",
+                "reasoning": "Requires multiple subtasks: scraping, storage, monitoring, alerting",
+            }
+        )
+    )
+
+    # When: Child evaluates complexity
+    await agent.evaluate_complexity(llm_port=fake_llm)
+
+    # Then: Agent role transitions from PENDING to MANAGER
+    assert agent.role == AgentRole.MANAGER, "Agent should become MANAGER for COMPLEX tasks"
+
+    # And: ComplexityEvaluated event is recorded
+    from core.domain.events import ComplexityEvaluated
+
+    complexity_events = [e for e in agent.events if isinstance(e, ComplexityEvaluated)]
+    assert len(complexity_events) == 1, "Should have 1 ComplexityEvaluated event"
+    assert complexity_events[0].complexity == "complex"
+    assert complexity_events[0].determined_role == AgentRole.MANAGER.value
+    assert "multiple" in complexity_events[0].reasoning.lower()
+
+    # And: Agent status remains ANALYZING (ready to decompose)
+    assert agent.status == AgentStatus.ANALYZING
+
+
+@pytest.mark.asyncio
+async def test_complexity_evaluation_invalid_response() -> None:
+    """Test that invalid LLM response for complexity evaluation fails gracefully."""
+
+    # Given: Create a child agent with PENDING role
+    agent_id = uuid4()
+    config = {"model": "gpt-4"}
+
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
+    )
+    agent.assign_task("Some task")
+
+    # And: Prepare FakeLLM that returns invalid JSON
+    fake_llm = FakeLLM(canned_response="This is not valid JSON!")
+
+    # When: Child attempts to evaluate complexity
+    await agent.evaluate_complexity(llm_port=fake_llm)
+
+    # Then: Agent transitions to FAILED status
+    assert agent.status == AgentStatus.FAILED, "Agent should fail when complexity evaluation fails"
+
+    # And: WorkFailed event is recorded
+    work_failed_events = [e for e in agent.events if isinstance(e, WorkFailed)]
+    assert len(work_failed_events) == 1, "Should have 1 WorkFailed event"
+    assert "complexity" in work_failed_events[0].reason.lower()
+
+    # And: Role remains PENDING (never determined)
+    assert agent.role == AgentRole.PENDING

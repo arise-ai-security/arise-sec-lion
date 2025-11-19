@@ -12,8 +12,10 @@ from uuid import UUID, uuid4
 
 from core.domain.events import (
     AgentCreated,
+    ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
+    ComplexityEvaluated,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -30,13 +32,25 @@ from core.ports.worker_port import WorkerToolPort
 class AgentRole(str, Enum):
     """The role of an agent in the hierarchical system.
 
+    Dynamic Role Determination:
+        - BOSS is the root agent (only ONE exists in the system)
+        - When an agent (BOSS or MANAGER) spawns children:
+          1. Each child is created with role=PENDING
+          2. Each child evaluates task complexity via LLM
+          3. If SIMPLE → child role becomes WORKER (executes task)
+          4. If COMPLEX → child role becomes MANAGER (decomposes further)
+        - This enables recursive decomposition of arbitrary depth
+        - Children can NEVER be BOSS role (enforced by ChildSpawned event handler)
+
     Attributes:
-        BOSS: Top-level agent that delegates to managers.
-        MANAGER: Mid-level agent that decomposes tasks and delegates to workers.
-        WORKER: Leaf-level agent that executes tasks using tools (Claude Code, OpenHands).
+        BOSS: Root agent that initiates task decomposition.
+        PENDING: Child agent awaiting complexity evaluation.
+        MANAGER: Agent that decomposes complex tasks and spawns children.
+        WORKER: Leaf agent that executes simple tasks using tools.
     """
 
     BOSS = "boss"
+    PENDING = "pending"
     MANAGER = "manager"
     WORKER = "worker"
 
@@ -165,22 +179,104 @@ class AgentSession:
         self._apply(task_event)
         self._changes.append(task_event)
 
-    async def evaluate_task(self, llm_port: LLMPort) -> None:
-        """Evaluate task and decompose into subtasks (for MANAGER agents).
+    async def evaluate_complexity(self, llm_port: LLMPort) -> None:
+        """Evaluate task complexity and determine agent role.
 
-        Uses an LLM to analyze the task and break it down into subtasks.
-        Creates SubtasksDefined and ChildSpawned events for each subtask.
+        Child agents (spawned with role=PENDING) use this method to determine
+        whether their task is SIMPLE (can be executed directly) or COMPLEX
+        (requires further decomposition).
+
+        Based on the evaluation:
+            - SIMPLE → role becomes WORKER
+            - COMPLEX → role becomes MANAGER
 
         Preconditions:
-            - Agent must be MANAGER role
+            - Agent must be in PENDING role
+            - Agent must be in ANALYZING status
+            - Task must be assigned
+
+        Args:
+            llm_port: LLM port to use for complexity evaluation.
+        """
+        # Preconditions: Fail fast if called incorrectly
+        assert self.role == AgentRole.PENDING, (
+            f"evaluate_complexity requires PENDING role, got {self.role}"
+        )
+        assert self.status == AgentStatus.ANALYZING, (
+            f"evaluate_complexity requires ANALYZING status, got {self.status}"
+        )
+        assert self.task_description, "evaluate_complexity requires assigned task"
+
+        # Construct prompt from Jinja2 template
+        prompt = render_prompt(
+            "child/complexity_evaluation.j2",
+            task_description=self.task_description,
+        )
+
+        # Query LLM
+        response = await llm_port.query(prompt, self.config)
+
+        # Parse response to determine complexity
+        try:
+            import json
+
+            data = json.loads(response)
+            complexity = data.get("complexity", "").lower()
+            reasoning = data.get("reasoning", "")
+
+            # Validate complexity value
+            if complexity not in ("simple", "complex"):
+                raise ValueError(f"Invalid complexity value: {complexity}")
+
+            # Determine role based on complexity
+            determined_role = AgentRole.WORKER if complexity == "simple" else AgentRole.MANAGER
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            # LLM response violated expectations - record as business fact
+            failed_event = WorkFailed(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                reason=f"Failed to evaluate complexity: {e}",
+            )
+            self._apply(failed_event)
+            self._changes.append(failed_event)
+            return
+
+        # Create ComplexityEvaluated event
+        complexity_event = ComplexityEvaluated(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            complexity=complexity,
+            determined_role=determined_role.value,
+            reasoning=reasoning,
+        )
+        self._apply(complexity_event)
+        self._changes.append(complexity_event)
+
+    async def evaluate_task(self, llm_port: LLMPort) -> None:
+        """Evaluate task and decompose into subtasks.
+
+        Uses an LLM to analyze the task and break it down into subtasks.
+        For each subtask, the LLM also determines complexity (SIMPLE or COMPLEX)
+        to decide whether to spawn a WORKER or MANAGER child.
+
+        System Behavior (Recursive Decomposition):
+            1. Parent (BOSS or MANAGER) decomposes task into subtasks
+            2. For each subtask, LLM evaluates complexity
+            3. If SIMPLE → spawn WORKER child (executes task)
+            4. If COMPLEX → spawn MANAGER child (decomposes further)
+            5. This enables arbitrary-depth recursive decomposition
+
+        Preconditions:
+            - Agent must be BOSS or MANAGER role
             - Agent must be in ANALYZING status
 
         Args:
             llm_port: LLM port to use for task decomposition.
         """
         # Preconditions: Fail fast if called on wrong agent type/status
-        assert self.role == AgentRole.MANAGER, (
-            f"evaluate_task requires MANAGER agent, got {self.role}"
+        assert self.role in (AgentRole.BOSS, AgentRole.MANAGER), (
+            f"evaluate_task requires BOSS or MANAGER agent, got {self.role}"
         )
         assert self.status == AgentStatus.ANALYZING, (
             f"evaluate_task requires ANALYZING status, got {self.status}"
@@ -220,13 +316,14 @@ class AgentSession:
         self._changes.append(subtasks_event)
 
         # Create ChildSpawned events for each subtask
+        # Children start with PENDING role and will evaluate complexity themselves
         for subtask in subtasks:
             child_id = uuid4()
             child_event = ChildSpawned(
                 aggregate_id=self.session_id,
                 sequence_number=self._next_sequence(),
                 child_id=child_id,
-                child_role=AgentRole.WORKER.value,
+                child_role=AgentRole.PENDING.value,  # Role determined by child
                 subtask=subtask,
             )
             self._apply(child_event)
@@ -297,6 +394,76 @@ class AgentSession:
             # Apply and record the event
             self._apply(corrected_event)
             self._changes.append(corrected_event)
+
+    def handle_child_update(self, child_id: UUID, result: str) -> None:
+        """Handle completion notification from a child agent.
+
+        Records the child's result and checks if all children have completed.
+        If all children are done, aggregates their results and completes this agent.
+
+        This method enables parent agents (BOSS or MANAGER) to track completion
+        of their children. Children can be either WORKER (simple tasks) or
+        MANAGER (complex tasks requiring further decomposition).
+
+        Preconditions:
+            - Agent must be MANAGER or BOSS role (only they have children)
+            - Agent must have spawned children
+            - Agent must be in WAITING status
+            - child_id must be in child_ids list
+
+        System Invariants:
+            - Children can be MANAGER or WORKER role (NEVER BOSS)
+            - Only ONE BOSS exists in the entire system
+            - BOSS and MANAGER can both spawn WORKER or MANAGER children
+
+        Args:
+            child_id: UUID of the child agent that completed.
+            result: The result produced by the child agent.
+        """
+        # Preconditions: Fail fast if called incorrectly
+        assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
+            f"handle_child_update requires MANAGER or BOSS role, got {self.role}"
+        )
+        assert len(self.child_ids) > 0, "handle_child_update requires agent with children"
+        assert self.status == AgentStatus.WAITING, (
+            f"handle_child_update requires WAITING status, got {self.status}"
+        )
+        assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
+
+        # Create ChildCompleted event
+        child_completed_event = ChildCompleted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            child_id=child_id,
+            result=result,
+        )
+        self._apply(child_completed_event)
+        self._changes.append(child_completed_event)
+
+        # Check if all children have completed
+        if len(self.child_results) == len(self.child_ids):
+            # All children done - aggregate results and complete
+            aggregated_result = self._aggregate_child_results()
+
+            work_completed_event = WorkCompleted(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                result=aggregated_result,
+            )
+            self._apply(work_completed_event)
+            self._changes.append(work_completed_event)
+
+    def _aggregate_child_results(self) -> str:
+        """Aggregate results from all completed children.
+
+        Returns:
+            A formatted string containing all child results.
+        """
+        lines = ["All subtasks completed successfully:", ""]
+        for child_id in self.child_ids:
+            child_result = self.child_results.get(child_id, "No result")
+            lines.append(f"- {child_result}")
+        return "\n".join(lines)
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
@@ -371,9 +538,21 @@ class AgentSession:
     def _(self, event: ChildSpawned) -> None:
         """Apply ChildSpawned event to track child agent IDs.
 
+        System Invariant: Children can only be PENDING, MANAGER, or WORKER (never BOSS).
+        Only ONE BOSS exists in the system.
+
         Args:
             event: ChildSpawned event with child_id and child_role.
+
+        Raises:
+            AssertionError: If child_role is BOSS (system invariant violation).
         """
+        # Enforce system invariant: children cannot be BOSS
+        assert event.child_role != AgentRole.BOSS.value, (
+            f"System invariant violated: Cannot spawn BOSS child. "
+            f"Children must be PENDING, MANAGER, or WORKER. Got: {event.child_role}"
+        )
+
         self.child_ids.append(event.child_id)
         self.version += 1
 
@@ -420,6 +599,26 @@ class AgentSession:
         self.result = event.result
         self.version += 1
 
+    @_apply.register
+    def _(self, event: ChildCompleted) -> None:
+        """Apply ChildCompleted event to track child completion.
+
+        Args:
+            event: ChildCompleted event with child_id and result.
+        """
+        self.child_results[event.child_id] = event.result
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ComplexityEvaluated) -> None:
+        """Apply ComplexityEvaluated event to set agent role based on task complexity.
+
+        Args:
+            event: ComplexityEvaluated event with determined role.
+        """
+        self.role = AgentRole(event.determined_role)
+        self.version += 1
+
     def _initialize_defaults(self, session_id: UUID) -> None:
         """Initialize all instance attributes to default values.
 
@@ -431,6 +630,7 @@ class AgentSession:
         self.status: AgentStatus = AgentStatus.PENDING
         self.parent_id: UUID | None = None
         self.child_ids: list[UUID] = []
+        self.child_results: dict[UUID, str] = {}  # Track completed children
         self.task_description: str = ""
         self.result: str | None = None
         self.error_message: str | None = None

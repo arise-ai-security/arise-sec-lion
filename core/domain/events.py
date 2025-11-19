@@ -151,3 +151,36 @@ class ThoughtCaptured(DomainEvent):
 
     content: str
     stream: str = "tool"
+
+
+class ChildCompleted(DomainEvent):
+    """Event raised when a child agent completes its work.
+
+    This event is used by parent agents (MANAGER, BOSS) to track the completion
+    status of their child agents and aggregate results.
+
+    Attributes:
+        child_id: UUID of the child agent that completed.
+        result: The result produced by the child agent.
+    """
+
+    child_id: UUID
+    result: str
+
+
+class ComplexityEvaluated(DomainEvent):
+    """Event raised when an agent evaluates its task complexity.
+
+    After receiving a task assignment, child agents evaluate whether their
+    task is SIMPLE (can be executed directly) or COMPLEX (requires decomposition).
+    This determines whether the agent will act as WORKER or MANAGER.
+
+    Attributes:
+        complexity: The evaluated complexity ("simple" or "complex").
+        determined_role: The role determined based on complexity (worker or manager).
+        reasoning: LLM's reasoning for the complexity decision.
+    """
+
+    complexity: str  # "simple" or "complex"
+    determined_role: str  # "worker" or "manager"
+    reasoning: str = ""
