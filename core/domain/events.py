@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from core.domain.subtask import Subtask
+
 
 def _utc_now() -> datetime:
     """Get current UTC datetime (Python 3.12+ compatible)."""
@@ -86,10 +88,10 @@ class SubtasksDefined(DomainEvent):
     """Event raised when a MANAGER agent decomposes a task into subtasks.
 
     Attributes:
-        subtasks: List of subtask definitions (each contains description, priority, etc.).
+        subtasks: List of Subtask value objects defining atomic units of work.
     """
 
-    subtasks: list[dict[str, Any]]
+    subtasks: list[Subtask]
 
 
 class ChildSpawned(DomainEvent):
@@ -98,10 +100,12 @@ class ChildSpawned(DomainEvent):
     Attributes:
         child_id: UUID of the newly created child agent.
         child_role: Role of the child agent (MANAGER or WORKER).
+        subtask: The specific Subtask value object assigned to this child.
     """
 
     child_id: UUID
     child_role: str
+    subtask: Subtask
 
 
 class WorkCompleted(DomainEvent):

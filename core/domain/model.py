@@ -8,9 +8,19 @@ Architecture constraints.
 from enum import Enum
 from functools import singledispatchmethod
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from core.domain.events import AgentCreated, StatusChanged, TaskAssigned
+from core.domain.events import (
+    AgentCreated,
+    ChildSpawned,
+    StatusChanged,
+    SubtasksDefined,
+    TaskAssigned,
+    WorkFailed,
+)
+from core.domain.prompt_loader import render_prompt
+from core.domain.services import SubtaskParser
+from core.ports.llm_port import LLMPort
 
 
 class AgentRole(str, Enum):
@@ -151,6 +161,84 @@ class AgentSession:
         self._apply(task_event)
         self._changes.append(task_event)
 
+    async def evaluate_task(self, llm_port: LLMPort) -> None:
+        """Evaluate task and decompose into subtasks (for MANAGER agents).
+
+        Uses an LLM to analyze the task and break it down into subtasks.
+        Creates SubtasksDefined and ChildSpawned events for each subtask.
+
+        Preconditions:
+            - Agent must be MANAGER role
+            - Agent must be in ANALYZING status
+
+        Args:
+            llm_port: LLM port to use for task decomposition.
+        """
+        # Preconditions: Fail fast if called on wrong agent type/status
+        assert self.role == AgentRole.MANAGER, (
+            f"evaluate_task requires MANAGER agent, got {self.role}"
+        )
+        assert self.status == AgentStatus.ANALYZING, (
+            f"evaluate_task requires ANALYZING status, got {self.status}"
+        )
+
+        # Construct prompt from Jinja2 template
+        prompt = render_prompt(
+            "manager/task_decomposition.j2",
+            task_description=self.task_description,
+        )
+
+        # Query LLM
+        response = await llm_port.query(prompt, self.config)
+
+        # Parse and validate subtasks using domain service
+        # Failure to parse is a business event (MANAGER failed decomposition)
+        try:
+            subtasks = SubtaskParser.parse_from_llm_response(response)
+        except ValueError as e:
+            # LLM response violated domain invariants - record as business fact
+            failed_event = WorkFailed(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                reason=f"Failed to parse subtasks: {e}",
+            )
+            self._apply(failed_event)
+            self._changes.append(failed_event)
+            return  # Exit gracefully, agent is now in FAILED state
+
+        # Create SubtasksDefined event
+        subtasks_event = SubtasksDefined(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtasks=subtasks,
+        )
+        self._apply(subtasks_event)
+        self._changes.append(subtasks_event)
+
+        # Create ChildSpawned events for each subtask
+        for subtask in subtasks:
+            child_id = uuid4()
+            child_event = ChildSpawned(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                child_id=child_id,
+                child_role=AgentRole.WORKER.value,
+                subtask=subtask,
+            )
+            self._apply(child_event)
+            self._changes.append(child_event)
+
+        # Transition to WAITING status
+        status_event = StatusChanged(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            old_status=self.status.value,
+            new_status=AgentStatus.WAITING.value,
+            reason="Decomposed task, waiting for child agents",
+        )
+        self._apply(status_event)
+        self._changes.append(status_event)
+
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply an event to update the agent's state (default handler).
@@ -161,12 +249,19 @@ class AgentSession:
         Args:
             event: The domain event to apply.
 
+        Raises:
+            TypeError: If no handler is registered for event type (programmer error).
+
         Note:
-            Default handler for unknown event types. Specific handlers are
-            registered via @_apply.register decorators.
+            Follows "Offensive Programming" principle: fail fast when contract violated.
+            If you see this error, register a handler with @_apply.register decorator.
         """
-        # Unknown event type - could log warning in production
-        self.version += 1
+        # Fail fast: unknown event type is a programmer error
+        raise TypeError(
+            f"No handler registered for event type {type(event).__name__}. "
+            f"Register handler with @_apply.register decorator. "
+            f"This is a programmer error, not a runtime condition."
+        )
 
     @_apply.register
     def _(self, event: AgentCreated) -> None:
@@ -200,6 +295,38 @@ class AgentSession:
             event: StatusChanged event with new_status.
         """
         self.status = AgentStatus(event.new_status)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SubtasksDefined) -> None:
+        """Apply SubtasksDefined event (no state change, event is recorded).
+
+        Args:
+            event: SubtasksDefined event with subtasks list.
+        """
+        # Subtasks are stored in the event itself, not in aggregate state
+        # This event serves as an audit trail for decomposition decisions
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ChildSpawned) -> None:
+        """Apply ChildSpawned event to track child agent IDs.
+
+        Args:
+            event: ChildSpawned event with child_id and child_role.
+        """
+        self.child_ids.append(event.child_id)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: WorkFailed) -> None:
+        """Apply WorkFailed event to transition to FAILED status.
+
+        Args:
+            event: WorkFailed event with failure reason.
+        """
+        self.status = AgentStatus.FAILED
+        self.error_message = event.reason
         self.version += 1
 
     def _initialize_defaults(self, session_id: UUID) -> None:
