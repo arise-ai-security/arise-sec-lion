@@ -703,3 +703,26 @@ class AgentSession:
             True if role is WORKER and child_ids is empty.
         """
         return self.role == AgentRole.WORKER and len(self.child_ids) == 0
+
+    def fail_with_reason(self, reason: str) -> None:
+        """Mark this agent as failed with a reason.
+
+        This method allows the application layer to mark an agent as failed
+        when infrastructure failures (LLM errors, tool errors) cannot be recovered.
+        It creates a WorkFailed event.
+
+        Use cases:
+            - LLM authentication failures (permanent)
+            - Rate limits exhausted after retries
+            - External tool unavailable after retries
+
+        Args:
+            reason: Human-readable explanation of why the agent failed.
+        """
+        failed_event = WorkFailed(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            reason=reason,
+        )
+        self._apply(failed_event)
+        self._changes.append(failed_event)

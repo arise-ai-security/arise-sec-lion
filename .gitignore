@@ -678,4 +678,9 @@ FodyWeavers.xsd
 # AI
 .claude
 
+# Markdown files
+# Ignore all markdown files except README.md
+*.md
+!README.md
+
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm+all,visualstudio,git

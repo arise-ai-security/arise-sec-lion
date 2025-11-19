@@ -7,6 +7,9 @@ from core.ports.
 
 from typing import Any
 
+import litellm
+
+from core.domain.exceptions import LLMError
 from core.ports.llm_port import LLMPort
 
 
@@ -51,29 +54,66 @@ class LiteLLMAdapter(LLMPort):
         Raises:
             LLMError: On API failures, rate limits, or invalid configurations.
         """
-        # TODO: Implement LLM query logic
-        # TODO: 1. Merge config_dict with default_config
-        # TODO: 2. Extract model, temperature, max_tokens from merged config
-        # TODO: 3. Call litellm.acompletion() with messages=[{"role": "user", "content": prompt}]
-        # TODO: 4. Handle errors (rate limits, timeouts, invalid API keys)
-        # TODO: 5. Extract and return response text
-        # TODO: 6. Consider logging for debugging and cost tracking
-
-        # Merge configurations
+        # Merge configurations (query config overrides defaults)
         merged_config = {**self.default_config, **config_dict}
 
         # Extract common parameters
         model = merged_config.get("model", "gpt-4")
         temperature = merged_config.get("temperature", 0.7)
         max_tokens = merged_config.get("max_tokens", 1000)
+        top_p = merged_config.get("top_p")
 
-        # TODO: Call LiteLLM
-        # response = await litellm.acompletion(
-        #     model=model,
-        #     messages=[{"role": "user", "content": prompt}],
-        #     temperature=temperature,
-        #     max_tokens=max_tokens
-        # )
-        # return response.choices[0].message.content
+        try:
+            # Call LiteLLM with unified interface
+            response = await litellm.acompletion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+            )
 
-        raise NotImplementedError("LiteLLM query not yet implemented")
+            # Extract text content from response
+            content = response.choices[0].message.content
+
+            if content is None:
+                raise LLMError("LLM returned empty response")
+
+            return content
+
+        except litellm.exceptions.AuthenticationError as e:
+            raise LLMError(
+                f"LLM authentication failed for model '{model}': {e}",
+                original_error=e,
+            ) from e
+
+        except litellm.exceptions.RateLimitError as e:
+            raise LLMError(
+                f"LLM rate limit exceeded for model '{model}': {e}",
+                original_error=e,
+            ) from e
+
+        except litellm.exceptions.APIError as e:
+            raise LLMError(
+                f"LLM API error for model '{model}': {e}",
+                original_error=e,
+            ) from e
+
+        except litellm.exceptions.Timeout as e:
+            raise LLMError(
+                f"LLM request timed out for model '{model}': {e}",
+                original_error=e,
+            ) from e
+
+        except litellm.exceptions.ServiceUnavailableError as e:
+            raise LLMError(
+                f"LLM service unavailable for model '{model}': {e}",
+                original_error=e,
+            ) from e
+
+        except Exception as e:
+            # Catch-all for unexpected errors
+            raise LLMError(
+                f"Unexpected error querying LLM with model '{model}': {e}",
+                original_error=e,
+            ) from e

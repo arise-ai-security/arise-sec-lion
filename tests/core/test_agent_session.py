@@ -66,3 +66,33 @@ def test_task_assignment() -> None:
 
     # And: Verify task_description matches input
     assert agent.task_description == task_description, "Agent task_description must match input"
+
+
+def test_fail_with_reason() -> None:
+    """Test that fail_with_reason marks agent as FAILED with error message."""
+
+    # Given: Create a BOSS agent with a task
+    boss_id = uuid4()
+    config = {"model": "gpt-4"}
+
+    boss = AgentSession.create(session_id=boss_id, role=AgentRole.BOSS, config=config)
+    boss.assign_task("Some task")
+
+    # When: Mark agent as failed with a reason
+    boss.fail_with_reason("LLM authentication failed after 3 retries")
+
+    # Then: Agent status transitions to FAILED
+    assert boss.status == AgentStatus.FAILED
+
+    # And: error_message is set
+    assert boss.error_message == "LLM authentication failed after 3 retries"
+
+    # And: WorkFailed event is recorded
+    from core.domain.events import WorkFailed
+
+    failed_events = [e for e in boss.events if isinstance(e, WorkFailed)]
+    assert len(failed_events) == 1
+    assert failed_events[0].reason == "LLM authentication failed after 3 retries"
+
+    # And: Agent is terminal
+    assert boss.is_terminal() is True
