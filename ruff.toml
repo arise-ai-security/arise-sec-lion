@@ -1,0 +1,103 @@
+# Ruff configuration for arise-sec-lion
+# Ruff replaces: black (formatter), isort (import sorting), flake8 (linting)
+
+# Python version target
+target-version = "py312"
+
+# Line length
+line-length = 100
+
+# Directories to exclude from linting/formatting
+extend-exclude = [
+    ".venv",
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "*.egg-info",
+    "build",
+    "dist",
+]
+
+[lint]
+# Enable these rule sets
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort (import sorting)
+    "N",      # pep8-naming
+    "UP",     # pyupgrade (Python 3.12+ upgrades)
+    "ANN",    # flake8-annotations (type hints)
+    "ASYNC",  # flake8-async
+    "S",      # flake8-bandit (security)
+    "B",      # flake8-bugbear
+    "A",      # flake8-builtins
+    "C4",     # flake8-comprehensions
+    "T10",    # flake8-debugger
+    "EXE",    # flake8-executable
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "Q",      # flake8-quotes
+    "RET",    # flake8-return
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib
+    "PL",     # pylint
+    "RUF",    # Ruff-specific rules
+]
+
+# Disable specific rules
+ignore = [
+    "ANN401",  # Dynamically typed expressions (Any) are allowed
+    "S101",    # Use of assert (we use it in tests)
+    "PLR0913", # Too many arguments
+    "PLR2004", # Magic value used in comparison
+    "ARG002",  # Unused method arguments (OK for Protocol and skeleton implementations)
+    "F841",    # Unused local variables (OK for TODO skeleton code)
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+[lint.per-file-ignores]
+# Tests can have additional flexibility
+"tests/**/*.py" = [
+    "S101",    # Allow assert in tests
+    "ANN",     # Don't require type hints in tests
+    "PLR2004", # Allow magic values in tests
+]
+
+# __init__.py files can have unused imports
+"__init__.py" = [
+    "F401",  # Unused imports
+]
+
+[lint.isort]
+# Configure import sorting (replaces isort)
+known-first-party = ["core", "infrastructure", "config"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+combine-as-imports = true
+split-on-trailing-comma = true
+lines-after-imports = 2
+
+[lint.pydocstyle]
+# Use Google-style docstrings
+convention = "google"
+
+[format]
+# Formatting options
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

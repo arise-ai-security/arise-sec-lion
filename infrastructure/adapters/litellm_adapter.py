@@ -7,8 +7,6 @@ from core.ports.
 
 from typing import Any
 
-import litellm
-
 from core.ports.llm_port import LLMPort
 
 

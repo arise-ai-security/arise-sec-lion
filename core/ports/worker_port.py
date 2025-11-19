@@ -24,9 +24,7 @@ class WorkerToolPort(Protocol):
     - Early detection of failures or blocks
     """
 
-    async def run_session(
-        self, task_context: dict[str, Any]
-    ) -> AsyncIterator[DomainEvent]:
+    async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Execute a worker task and stream domain events as they occur.
 
         This method wraps the external tool (Claude Code/OpenHands) in a PTY,

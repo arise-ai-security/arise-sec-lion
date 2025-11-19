@@ -37,9 +37,7 @@ class OpenHandsAdapter(WorkerToolPort):
         self.openhands_config = openhands_config or {}
         self.default_timeout = default_timeout
 
-    async def run_session(
-        self, task_context: dict[str, Any]
-    ) -> AsyncIterator[DomainEvent]:
+    async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Execute a task via OpenHands and stream domain events.
 
         This method interfaces with OpenHands (via API, CLI, or SDK) to execute

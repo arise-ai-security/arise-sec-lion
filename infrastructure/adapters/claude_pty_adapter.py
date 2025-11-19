@@ -33,9 +33,7 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         default_timeout: Default timeout in seconds for task execution.
     """
 
-    def __init__(
-        self, claude_binary_path: str = "claude", default_timeout: int = 300
-    ) -> None:
+    def __init__(self, claude_binary_path: str = "claude", default_timeout: int = 300) -> None:
         """Initialize the Claude Code PTY adapter.
 
         Args:
@@ -45,9 +43,7 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         self.claude_binary_path = claude_binary_path
         self.default_timeout = default_timeout
 
-    async def run_session(
-        self, task_context: dict[str, Any]
-    ) -> AsyncIterator[DomainEvent]:
+    async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Execute a task via Claude Code and stream domain events.
 
         This method:
