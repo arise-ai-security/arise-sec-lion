@@ -26,7 +26,9 @@ def test_boss_initialization_flow() -> None:
     config = {"model": "gpt-4", "temperature": 0.7}
 
     # Action
-    agent = AgentSession(id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None)
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
+    )
 
     # Assertion (Event Sourcing Check)
     assert len(agent.events) == 1, "Agent should have exactly 1 uncommitted event"
@@ -58,7 +60,9 @@ def test_task_assignment() -> None:
     agent_id = uuid4()
     config = {"model": "gpt-4"}
 
-    agent = AgentSession(id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None)
+    agent = AgentSession.create(
+        session_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
+    )
 
     # Action
     task_description = "Build a snake game"

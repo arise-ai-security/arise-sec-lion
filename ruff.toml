@@ -58,6 +58,7 @@ ignore = [
     "PLR2004", # Magic value used in comparison
     "ARG002",  # Unused method arguments (OK for Protocol and skeleton implementations)
     "F841",    # Unused local variables (OK for TODO skeleton code)
+    "PLC0415", # Import at top-level (OK for avoiding circular dependencies in event sourcing)
 ]
 
 # Allow autofix for all enabled rules
