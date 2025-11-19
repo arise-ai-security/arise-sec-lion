@@ -13,14 +13,18 @@ from uuid import UUID, uuid4
 from core.domain.events import (
     AgentCreated,
     ChildSpawned,
+    CodeGenerationStarted,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
+    ThoughtCaptured,
+    WorkCompleted,
     WorkFailed,
 )
 from core.domain.prompt_loader import render_prompt
 from core.domain.services import SubtaskParser
 from core.ports.llm_port import LLMPort
+from core.ports.worker_port import WorkerToolPort
 
 
 class AgentRole(str, Enum):
@@ -239,6 +243,61 @@ class AgentSession:
         self._apply(status_event)
         self._changes.append(status_event)
 
+    async def execute_task(self, tool_port: WorkerToolPort) -> None:
+        """Execute task using an external worker tool (for WORKER agents).
+
+        Uses a worker tool (Claude Code, OpenHands) to execute the task and
+        captures its thinking process in real-time. Creates CodeGenerationStarted,
+        ThoughtCaptured, and WorkCompleted/WorkFailed events.
+
+        Preconditions:
+            - Agent must be WORKER role
+            - Agent must be in ANALYZING status
+
+        Args:
+            tool_port: Worker tool port to use for task execution.
+        """
+        # Preconditions: Fail fast if called on wrong agent type/status
+        assert self.role == AgentRole.WORKER, f"execute_task requires WORKER agent, got {self.role}"
+        assert self.status == AgentStatus.ANALYZING, (
+            f"execute_task requires ANALYZING status, got {self.status}"
+        )
+
+        # Get tool name from config (default to "unknown")
+        tool_name = self.config.get("tool", "unknown")
+
+        # Create CodeGenerationStarted event
+        started_event = CodeGenerationStarted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            tool_name=tool_name,
+        )
+        self._apply(started_event)
+        self._changes.append(started_event)
+
+        # Prepare task context for worker tool
+        task_context = {
+            "session_id": self.session_id,
+            "task_description": self.task_description,
+            "tool_name": tool_name,
+            "config": self.config,
+        }
+
+        # Stream events from worker tool execution
+        async for tool_event in tool_port.run_session(task_context):
+            # Create a new event with correct aggregate_id and sequence_number
+            # (tool doesn't know these values, so we recreate the event)
+            event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
+            event_data["aggregate_id"] = self.session_id
+            event_data["sequence_number"] = self._next_sequence()
+
+            # Recreate event with correct values
+            corrected_event = type(tool_event)(**event_data)
+
+            # Apply and record the event
+            self._apply(corrected_event)
+            self._changes.append(corrected_event)
+
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply an event to update the agent's state (default handler).
@@ -327,6 +386,38 @@ class AgentSession:
         """
         self.status = AgentStatus.FAILED
         self.error_message = event.reason
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: CodeGenerationStarted) -> None:
+        """Apply CodeGenerationStarted event to transition to IN_PROGRESS.
+
+        Args:
+            event: CodeGenerationStarted event with tool_name.
+        """
+        self.status = AgentStatus.IN_PROGRESS
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ThoughtCaptured) -> None:
+        """Apply ThoughtCaptured event (no state change, audit trail only).
+
+        Args:
+            event: ThoughtCaptured event with captured thought content.
+        """
+        # Thoughts are stored in events, not in aggregate state
+        # This event serves as audit trail for worker thinking process
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: WorkCompleted) -> None:
+        """Apply WorkCompleted event to transition to COMPLETED status.
+
+        Args:
+            event: WorkCompleted event with result.
+        """
+        self.status = AgentStatus.COMPLETED
+        self.result = event.result
         self.version += 1
 
     def _initialize_defaults(self, session_id: UUID) -> None:

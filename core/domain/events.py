@@ -126,3 +126,28 @@ class WorkFailed(DomainEvent):
     """
 
     reason: str
+
+
+class CodeGenerationStarted(DomainEvent):
+    """Event raised when a WORKER agent starts code generation/execution.
+
+    Attributes:
+        tool_name: Name of the worker tool being used (e.g., "claude-code", "openhands").
+    """
+
+    tool_name: str
+
+
+class ThoughtCaptured(DomainEvent):
+    """Event raised when a WORKER tool emits thinking/logging output.
+
+    This event captures real-time stdout/stderr from worker tools (Claude Code, OpenHands)
+    to provide visibility into the agent's reasoning and execution process.
+
+    Attributes:
+        content: The captured thought/log content.
+        stream: Which stream this came from ("stdout", "stderr", "tool").
+    """
+
+    content: str
+    stream: str = "tool"
