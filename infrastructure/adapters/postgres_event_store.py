@@ -289,3 +289,38 @@ class PostgresEventStore(EventStorePort):
                 f"Failed to retrieve events for aggregate {aggregate_id}",
                 original_error=e,
             ) from e
+
+    async def get_all_aggregate_ids(self) -> list[UUID]:
+        """Retrieve all unique aggregate IDs from the event store.
+
+        This method queries the database for all distinct aggregate_ids
+        that have events. Used by the orchestration layer to discover
+        all agents in the system.
+
+        Returns:
+            List of UUIDs for all aggregates with events.
+            Returns empty list if no aggregates exist.
+
+        Raises:
+            EventStoreError: On database failures.
+        """
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT aggregate_id
+                    FROM events
+                    ORDER BY aggregate_id
+                    """
+                )
+
+            return [row["aggregate_id"] for row in rows]
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to retrieve all aggregate IDs",
+                original_error=e,
+            ) from e

@@ -5,10 +5,14 @@ This service coordinates the execution of agent steps by:
 2. Dispatching to appropriate domain methods based on agent state
 3. Persisting events with Optimistic Concurrency Control
 4. Handling retries and errors
+5. Managing child agent lifecycle (creation, completion notifications)
+6. Orchestrating the entire multi-agent system
 """
 
+import asyncio
 from uuid import UUID
 
+from core.domain.events import ChildSpawned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.ports.event_store_port import EventStorePort
@@ -24,12 +28,15 @@ class AgentExecutionService:
     - Dispatches to domain methods based on agent role/status
     - Persists uncommitted events with OCC
     - Handles concurrency conflicts with retry logic
+    - Manages child agent lifecycle (creation and parent notifications)
+    - Orchestrates the entire multi-agent system loop
 
     Attributes:
         event_store: Port for loading/saving domain events.
         llm_port: Port for LLM interactions (complexity evaluation, task analysis).
         worker_tool_port: Port for worker tool execution (e.g., Claude Code CLI).
         max_retries: Maximum number of OCC retry attempts (default: 3).
+        poll_interval: Interval in seconds for polling active agents (default: 0.5).
     """
 
     def __init__(
@@ -38,6 +45,7 @@ class AgentExecutionService:
         llm_port: LLMPort,
         worker_tool_port: WorkerToolPort,
         max_retries: int = 3,
+        poll_interval: float = 0.5,
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -46,11 +54,13 @@ class AgentExecutionService:
             llm_port: LLM adapter for agent reasoning.
             worker_tool_port: Worker tool adapter for task execution.
             max_retries: Maximum OCC retry attempts (default: 3).
+            poll_interval: Interval in seconds for polling active agents (default: 0.5).
         """
         self.event_store = event_store
         self.llm_port = llm_port
         self.worker_tool_port = worker_tool_port
         self.max_retries = max_retries
+        self.poll_interval = poll_interval
 
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one step of the agent workflow based on current state.
@@ -90,12 +100,20 @@ class AgentExecutionService:
                 await self._dispatch_agent_action(agent)
 
                 # Step 3: Persist uncommitted events with OCC
-                for event in agent.events:
+                uncommitted_events = list(agent.events)  # Copy before clearing
+                for event in uncommitted_events:
                     await self.event_store.append(event, expected_version=current_version)
                     current_version += 1
 
                 # Success - clear uncommitted changes
                 agent.mark_changes_as_committed()
+
+                # Step 4: Handle child spawning (create child agent records)
+                await self._handle_child_spawning(agent, uncommitted_events)
+
+                # Step 5: Handle parent notification (if agent completed)
+                await self._handle_parent_notification(agent)
+
                 return
 
             except ConcurrencyError as e:
@@ -167,3 +185,136 @@ class AgentExecutionService:
         else:
             # Unknown role - should not happen
             raise ValueError(f"Unknown agent role: {agent.role}")
+
+    async def _handle_child_spawning(self, parent: AgentSession, events: list) -> None:
+        """Handle creation of child agents from ChildSpawned events.
+
+        When a parent agent spawns children (via evaluate_task), this method:
+        1. Creates a new AgentSession for each child
+        2. Assigns the subtask to the child
+        3. Persists the child's events to the event store
+
+        Note: We do NOT recursively call run_agent_step here. The main loop
+        will pick up these new agents and execute them.
+
+        Args:
+            parent: The parent agent that spawned children.
+            events: List of events that were just persisted for the parent.
+        """
+        # Extract ChildSpawned events
+        child_spawned_events = [e for e in events if isinstance(e, ChildSpawned)]
+
+        for child_event in child_spawned_events:
+            # Create new child agent
+            child = AgentSession.create(
+                session_id=child_event.child_id,
+                role=AgentRole(child_event.child_role),
+                config=parent.config,  # Inherit parent's config
+                parent_id=parent.session_id,
+            )
+
+            # Assign the subtask to the child
+            child.assign_task(child_event.subtask.description)
+
+            # Persist child's creation events
+            for idx, child_evt in enumerate(child.events):
+                await self.event_store.append(child_evt, expected_version=idx)
+
+            # Clear uncommitted changes
+            child.mark_changes_as_committed()
+
+    async def _handle_parent_notification(self, agent: AgentSession) -> None:
+        """Handle notifying parent when child agent completes.
+
+        When a child agent reaches COMPLETED status, this method:
+        1. Loads the parent agent
+        2. Calls parent.handle_child_update() to record the result
+        3. Persists the parent's new events
+
+        Args:
+            agent: The agent that may have completed and needs to notify its parent.
+        """
+        # Only notify parent if agent is completed and has a parent
+        if agent.status != AgentStatus.COMPLETED or agent.parent_id is None:
+            return
+
+        # Load parent agent
+        parent_events = await self.event_store.get_events(agent.parent_id)
+        if not parent_events:
+            # Parent not found - this shouldn't happen
+            raise ValueError(f"Parent agent {agent.parent_id} not found in event store")
+
+        parent = AgentSession.load_from_history(parent_events)
+        parent_version = parent.version
+
+        # Notify parent of child completion
+        parent.handle_child_update(agent.session_id, agent.result or "")
+
+        # Persist parent's new events
+        for event in parent.events:
+            await self.event_store.append(event, expected_version=parent_version)
+            parent_version += 1
+
+        # Clear uncommitted changes
+        parent.mark_changes_as_committed()
+
+    async def _get_active_agent_ids(self) -> list[UUID]:
+        """Get list of agent IDs that are not in terminal state.
+
+        An agent is "active" if its status is not COMPLETED or FAILED.
+        This is used by the system loop to determine which agents need processing.
+
+        Returns:
+            List of UUIDs for agents in non-terminal states.
+        """
+        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+
+        active_ids = []
+        for agent_id in all_agent_ids:
+            events = await self.event_store.get_events(agent_id)
+            if events:
+                agent = AgentSession.load_from_history(events)
+                if not agent.is_terminal():
+                    active_ids.append(agent_id)
+
+        return active_ids
+
+    async def run_system_loop(self, root_agent_id: UUID) -> None:
+        """Run the main orchestration loop for the multi-agent system.
+
+        This method implements the core system loop that:
+        1. Polls for active agents (not in terminal state)
+        2. Executes one step for each active agent
+        3. Repeats until all agents reach terminal state
+
+        The loop continues until there are no more active agents, meaning
+        the entire task hierarchy has been completed or failed.
+
+        Args:
+            root_agent_id: UUID of the root (BOSS) agent.
+
+        Note:
+            In a production system, this would be replaced by a job queue
+            (e.g., Celery, Redis Queue, AWS SQS) for scalability and
+            distributed processing. This is an MVP implementation for
+            demonstration purposes.
+        """
+        while True:
+            # Get list of active agents
+            active_agents = await self._get_active_agent_ids()
+
+            if not active_agents:
+                # No more active agents - system is done
+                break
+
+            # Execute one step for each active agent
+            for agent_id in active_agents:
+                try:
+                    await self.run_agent_step(agent_id)
+                except Exception as e:
+                    # Log error but continue with other agents
+                    # In production, this would go to proper logging
+                    print(f"Error executing agent {agent_id}: {e!r}")
+
+            # Brief pause before next iteration
+            await asyncio.sleep(self.poll_interval)

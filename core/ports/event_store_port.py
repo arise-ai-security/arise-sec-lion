@@ -58,3 +58,18 @@ class EventStorePort(Protocol):
             EventStoreError: On database or connection failures.
         """
         ...
+
+    async def get_all_aggregate_ids(self) -> list[UUID]:
+        """Retrieve all unique aggregate IDs that have events in the store.
+
+        This method is used by the orchestration layer to discover all agents
+        in the system and determine which ones are active.
+
+        Returns:
+            List of UUIDs for all aggregates that have at least one event.
+            Returns empty list if no aggregates exist.
+
+        Raises:
+            EventStoreError: On database or connection failures.
+        """
+        ...

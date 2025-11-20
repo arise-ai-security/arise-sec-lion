@@ -16,6 +16,7 @@ from core.domain.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    DomainEvent,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -154,7 +155,7 @@ class AgentSession:
         return instance
 
     @property
-    def events(self) -> list[Any]:
+    def events(self) -> list[DomainEvent]:
         """Get the list of uncommitted events (changes).
 
         Returns:
@@ -648,11 +649,11 @@ class AgentSession:
         self.error_message: str | None = None
         self.config: dict[str, Any] = {}
         self.version: int = 0
-        self._changes: list[Any] = []
+        self._changes: list[DomainEvent] = []
         self._sequence: int = 0
 
     @classmethod
-    def load_from_history(cls, events: list[Any]) -> "AgentSession":
+    def load_from_history(cls, events: list[DomainEvent]) -> "AgentSession":
         """Reconstruct an AgentSession from its event history.
 
         This factory method rehydrates an aggregate from its event stream.
