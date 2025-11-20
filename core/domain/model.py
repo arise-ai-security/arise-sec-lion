@@ -162,6 +162,18 @@ class AgentSession:
         """
         return self._changes
 
+    def mark_changes_as_committed(self) -> None:
+        """Clear the uncommitted changes after successful persistence.
+
+        This method is called by the application layer after successfully
+        persisting all uncommitted events to the event store. It clears
+        the _changes list to prevent duplicate event persistence.
+
+        Note: Only call this after ensuring all events in _changes have
+        been successfully written to the event store.
+        """
+        self._changes.clear()
+
     def assign_task(self, task_description: str) -> None:
         """Assign a task to this agent.
 
