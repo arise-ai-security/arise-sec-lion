@@ -22,6 +22,33 @@ class EventStorePort(Protocol):
     - Thread-safe/async-safe operations
     """
 
+    async def connect(self) -> None:
+        """Establish connection to the event store backend.
+
+        Should be called during application startup.
+
+        Raises:
+            EventStoreError: If unable to connect.
+        """
+        ...
+
+    async def disconnect(self) -> None:
+        """Close connection to the event store backend.
+
+        Should be called during application shutdown.
+        """
+        ...
+
+    async def initialize_schema(self) -> None:
+        """Initialize the event store schema (e.g., create tables).
+
+        Should be called during application startup after connect().
+
+        Raises:
+            EventStoreError: If schema initialization fails.
+        """
+        ...
+
     async def append(self, event: DomainEvent, expected_version: int) -> None:
         """Append a domain event to the event stream.
 

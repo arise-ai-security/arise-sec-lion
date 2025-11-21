@@ -102,10 +102,20 @@ This project strictly adheres to industry-standard design principles from renown
 **Application in this project:**
 ```
 core/
-  domain/        # Pure business logic
-  ports/         # Abstract interfaces (LLMPort, EventStorePort, WorkerToolPort)
+  domain/           # Pure business logic (events.py, model.py, subtask.py, etc.)
+  ports/            # Abstract interfaces (LLMPort, EventStorePort, WorkerToolPort)
+  application/      # Use cases and orchestration (execution_service.py)
 infrastructure/
-  adapters/      # Concrete implementations (PostgresEventStore, LiteLLMAdapter)
+  adapters/         # Concrete implementations (PostgresEventStore, LiteLLMAdapter, ClaudePTYAdapter)
+  sql/              # Database schemas
+bootstrap/          # Dependency injection and wiring
+config/             # Environment-based configuration (YAML + pydantic-settings)
+presentation/       # CLI interface
+prompts/            # Jinja2 templates (hierarchical prompt composition)
+  system/           # Role identity prompts (role_boss.j2, role_manager.j2, etc.)
+  strategies/       # Operational methodology prompts
+  tasks/            # Task-specific prompts
+  output_formats/   # JSON schema prompts for structured output
 ```
 
 **Strict Rule:** Core NEVER imports from infrastructure. Dependencies point inward.
@@ -252,7 +262,101 @@ except json.JSONDecodeError as e:
 
 ## Implementation Roadmap Status
 
-  - [ ] Phase 1: Project Skeleton & Event Store (Postgres + OCC)
-  - [ ] Phase 2: Core Domain (AgentSession Aggregate & Events)
-  - [ ] Phase 3: LiteLLM Adapter & Manager Logic
-  - [ ] Phase 4: Claude Code PTY Adapter (Thinking Capture)
+  - [x] Phase 1: Project Skeleton & Event Store (Postgres + OCC)
+  - [x] Phase 2: Core Domain (AgentSession Aggregate & Events)
+  - [x] Phase 3: LiteLLM Adapter & Manager Logic
+  - [x] Phase 4: Claude Code PTY Adapter (Thinking Capture)
+
+## Current Project Structure
+
+```
+arise-sec-lion/
+├── core/                           # Domain core (NO infrastructure imports)
+│   ├── domain/
+│   │   ├── model.py               # AgentSession aggregate, AgentRole, AgentStatus enums
+│   │   ├── events.py              # Domain events (AgentCreated, TaskAssigned, etc.)
+│   │   ├── subtask.py             # Subtask value object
+│   │   ├── agent_config.py        # LLMConfig, AgentConfig (per-operation/heuristic/hybrid)
+│   │   ├── config_resolver.py     # Resolves config for specific operations
+│   │   ├── prompt_builder.py      # Hierarchical prompt composition service
+│   │   ├── services.py            # Domain services (SubtaskParser)
+│   │   └── exceptions.py          # Custom domain exceptions
+│   ├── ports/
+│   │   ├── event_store_port.py    # EventStorePort Protocol
+│   │   ├── llm_port.py            # LLMPort Protocol
+│   │   └── worker_port.py         # WorkerToolPort Protocol (AsyncIterator[DomainEvent])
+│   └── application/
+│       ├── execution_service.py   # AgentExecutionService (The Brain)
+│       └── dtos.py                # Data transfer objects
+├── infrastructure/
+│   ├── adapters/
+│   │   ├── postgres_event_store.py  # PostgreSQL + asyncpg + OCC
+│   │   ├── litellm_adapter.py       # Multi-provider LLM via litellm
+│   │   ├── claude_pty_adapter.py    # Claude Code PTY wrapper (thinking capture)
+│   │   └── openhands_adapter.py     # OpenHands adapter (planned)
+│   └── sql/
+│       └── create_events_table.sql  # Event store schema
+├── prompts/                         # Jinja2 templates (hierarchical prompt structure)
+│   ├── system/                      # Agent identity prompts
+│   │   ├── role_boss.j2
+│   │   ├── role_manager.j2
+│   │   ├── role_pending.j2
+│   │   └── role_worker.j2
+│   ├── strategies/                  # Operational methodology
+│   │   ├── boss_delegation.j2
+│   │   ├── manager_decomposition.j2
+│   │   └── complexity_evaluation.j2
+│   ├── tasks/                       # Task-specific prompts
+│   │   ├── task_decomposition.j2
+│   │   └── complexity_evaluation.j2
+│   └── output_formats/              # JSON schema for structured output
+│       ├── subtask_list.j2
+│       └── complexity_result.j2
+├── bootstrap/                       # Dependency injection
+├── config/                          # Environment configuration (YAML + pydantic-settings)
+├── presentation/                    # CLI interface
+└── tests/                           # Comprehensive test suite (87+ tests)
+```
+
+## Domain Events Reference
+
+| Event | Description | Key Attributes |
+|-------|-------------|----------------|
+| `AgentCreated` | New agent session created | `role`, `parent_id`, `config` |
+| `TaskAssigned` | Task assigned to agent | `task_description`, `constraints` |
+| `StatusChanged` | Agent status transition | `old_status`, `new_status`, `reason` |
+| `ComplexityEvaluated` | PENDING agent evaluates task | `complexity`, `determined_role`, `reasoning` |
+| `SubtasksDefined` | MANAGER decomposes task | `subtasks: list[Subtask]` |
+| `ChildSpawned` | Parent spawns child agent | `child_id`, `child_role`, `subtask`, `child_config` |
+| `CodeGenerationStarted` | WORKER starts execution | `tool_name` |
+| `ThoughtCaptured` | Worker tool emits thinking | `content`, `stream` |
+| `ChildCompleted` | Child agent finishes | `child_id`, `result` |
+| `WorkCompleted` | Agent completes successfully | `result` |
+| `WorkFailed` | Agent fails | `reason` |
+
+## Agent Lifecycle
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │              BOSS (root)                │
+                    │  - Initiates task decomposition         │
+                    │  - Only ONE in the system               │
+                    └────────────────┬────────────────────────┘
+                                     │ spawns children
+                                     ▼
+                    ┌─────────────────────────────────────────┐
+                    │              PENDING                     │
+                    │  - Evaluates task complexity via LLM    │
+                    │  - Determines: SIMPLE or COMPLEX?       │
+                    └────────────────┬────────────────────────┘
+                                     │
+              ┌──────────────────────┴──────────────────────┐
+              │ SIMPLE                                      │ COMPLEX
+              ▼                                             ▼
+┌─────────────────────────┐               ┌─────────────────────────┐
+│        WORKER           │               │        MANAGER          │
+│  - Executes via tools   │               │  - Decomposes further   │
+│  - Claude Code/OpenHands│               │  - Spawns PENDING       │
+│  - Captures thinking    │               │  - Waits for children   │
+└─────────────────────────┘               └─────────────────────────┘
+```
