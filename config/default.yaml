@@ -1,0 +1,54 @@
+# Default Configuration for Arise Multi-Agent System
+# This file contains sensible defaults for all environments
+
+infrastructure:
+  # PostgreSQL Event Store
+  postgres_host: localhost
+  postgres_port: 5432
+  postgres_user: arise
+  postgres_database: arise_events
+  # NOTE: Set ARISE_INFRA_POSTGRES_PASSWORD via environment variable!
+
+  # LLM Configuration (Role-based Model Selection)
+  # Each agent role uses a different model based on complexity and cost:
+  # - BOSS: High-level planning (powerful model)
+  # - MANAGER: Task decomposition (balanced model)
+  # - WORKER: Simple execution (cheap, fast model)
+  # - PENDING: Complexity evaluation (cheap model)
+  #
+  # API keys are read from environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+  #
+  # Model Examples:
+  #   OpenAI:     gpt-4o-mini, gpt-4o, gpt-4-turbo
+  #   Anthropic:  claude-3-5-sonnet-20241022, claude-3-opus-20240229
+  #   Google:     gemini-1.5-pro, gemini-1.5-flash, gemini-pro
+  #
+  llm_model_boss: gpt-4o        # Powerful model for high-level planning
+  llm_model_manager: gpt-4o      # Balanced model for decomposition
+  llm_model_worker: gpt-4o-mini  # Fast, cheap model for execution
+  llm_model_pending: gpt-4o-mini # Cheap model for complexity checks
+  llm_temperature: 0.7
+  llm_max_tokens: 1000
+
+  # Worker Tool
+  worker_tool_type: claude_code
+
+application:
+  # Optimistic Concurrency Control
+  max_retries: 3
+  retry_delay: 0.1  # seconds
+
+  # Orchestration Loop
+  poll_interval: 0.5  # seconds
+
+  # Timeouts
+  llm_timeout: 30.0  # seconds
+  worker_timeout: 300.0  # seconds
+
+  # Agent Configuration
+  default_task_complexity_threshold: 5
+
+presentation:
+  verbose: true
+  show_progress: true
+  log_level: INFO

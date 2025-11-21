@@ -1,0 +1,31 @@
+# Development Configuration
+# Optimized for local development with verbose output and fast feedback
+
+infrastructure:
+  postgres_host: localhost
+  postgres_port: 5432
+  postgres_user: arise
+  postgres_database: arise_events_dev
+
+  # Use cheaper/faster models for development
+  llm_model_boss: gpt-4o-mini       # Even BOSS uses mini in dev
+  llm_model_manager: gpt-4o-mini
+  llm_model_worker: gpt-4o-mini
+  llm_model_pending: gpt-4o-mini
+  llm_temperature: 0.7
+  llm_max_tokens: 500  # Lower for faster responses
+
+  worker_tool_type: claude_code
+
+application:
+  max_retries: 2  # Fewer retries for faster failure in dev
+  retry_delay: 0.05
+  poll_interval: 0.2  # Faster polling for quick feedback
+  llm_timeout: 15.0  # Shorter timeout for dev
+  worker_timeout: 120.0
+  default_task_complexity_threshold: 3  # Lower threshold for more splitting
+
+presentation:
+  verbose: true  # Detailed output for debugging
+  show_progress: true
+  log_level: DEBUG  # Maximum verbosity
