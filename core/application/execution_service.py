@@ -10,8 +10,9 @@ This service coordinates the execution of agent steps by:
 """
 
 import asyncio
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import ChildSpawned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
@@ -318,3 +319,138 @@ class AgentExecutionService:
 
             # Brief pause before next iteration
             await asyncio.sleep(self.poll_interval)
+
+    async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
+        """Query the final state of an agent.
+
+        This is a query method for the presentation layer to retrieve
+        agent state without directly accessing the event store.
+
+        IMPORTANT: Returns a DTO (not domain aggregate) to prevent domain
+        objects from leaking to presentation layer. This follows strict
+        layered architecture where Presentation → Application (DTOs only).
+
+        Args:
+            agent_id: UUID of the agent to query.
+
+        Returns:
+            AgentResultDTO with agent status and result (no domain logic).
+
+        Raises:
+            ValueError: If agent not found.
+        """
+        events = await self.event_store.get_events(agent_id)
+
+        if not events:
+            raise ValueError(f"Agent {agent_id} not found")
+
+        # Reconstruct aggregate from events (internal to application)
+        agent = AgentSession.load_from_history(events)
+
+        # Convert to DTO for presentation layer
+        return AgentResultDTO(
+            agent_id=str(agent.session_id),
+            status=agent.status.value,
+            result=agent.result,
+            task_description=agent.task_description or "",
+            role=agent.role.value,
+        )
+
+    async def get_system_statistics(self) -> SystemStatisticsDTO:
+        """Get statistics about the multi-agent system.
+
+        This is a query method for the presentation layer to retrieve
+        system-wide statistics without directly accessing the event store.
+
+        IMPORTANT: Returns a DTO (not dict) for type safety and to prevent
+        presentation from depending on internal data structures.
+
+        Returns:
+            SystemStatisticsDTO with aggregate counts.
+        """
+        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+
+        completed = 0
+        failed = 0
+        active = 0
+
+        for agent_id in all_agent_ids:
+            events = await self.event_store.get_events(agent_id)
+            if events:
+                agent = AgentSession.load_from_history(events)
+                if agent.status == AgentStatus.COMPLETED:
+                    completed += 1
+                elif agent.status == AgentStatus.FAILED:
+                    failed += 1
+                else:
+                    active += 1
+
+        return SystemStatisticsDTO(
+            total_agents=len(all_agent_ids),
+            completed=completed,
+            failed=failed,
+            active=active,
+        )
+
+    async def initialize(self) -> None:
+        """Initialize infrastructure dependencies.
+
+        This method handles infrastructure lifecycle management (connection
+        setup, schema initialization, etc.) and should be called during
+        application startup.
+
+        Note:
+            This is an application-level operation that coordinates
+            infrastructure initialization. In DDD, application services
+            can manage infrastructure lifecycle as part of use cases.
+        """
+        await self.event_store.connect()
+        await self.event_store.initialize_schema()
+
+    async def cleanup(self) -> None:
+        """Cleanup infrastructure dependencies.
+
+        This method handles infrastructure lifecycle cleanup (closing
+        connections, releasing resources, etc.) and should be called
+        during application shutdown.
+        """
+        await self.event_store.disconnect()
+
+    async def create_boss_agent(self, task_description: str, config: dict) -> UUID:
+        """Create and persist a new BOSS agent with a task.
+
+        This is a command method that creates the root agent for the system.
+        Used by the presentation layer to bootstrap a new agent hierarchy.
+
+        Args:
+            task_description: The task to assign to the BOSS agent.
+            config: Configuration for the agent (e.g., LLM model).
+
+        Returns:
+            UUID of the created BOSS agent.
+
+        Raises:
+            Exception: If agent creation or persistence fails.
+        """
+        # Generate unique ID for root agent
+        root_id = uuid4()
+
+        # Create BOSS agent (top of hierarchy)
+        boss_agent = AgentSession.create(
+            session_id=root_id,
+            role=AgentRole.BOSS,
+            config=config,
+            parent_id=None,  # BOSS has no parent
+        )
+
+        # Assign the user's task to the BOSS
+        boss_agent.assign_task(task_description)
+
+        # Persist initial events to event store
+        for idx, event in enumerate(boss_agent.events):
+            await self.event_store.append(event, expected_version=idx)
+
+        # Mark changes as committed
+        boss_agent.mark_changes_as_committed()
+
+        return root_id

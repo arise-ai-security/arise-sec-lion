@@ -1,16 +1,48 @@
-# This is a sample Python script.
+#!/usr/bin/env python3
+"""Main entrypoint for the Recursive Multi-Agent System.
 
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
+This is the application entry point. It delegates all dependency wiring
+to the bootstrap layer and simply runs the composed application.
+
+Separation of Concerns:
+- main.py:        Entry point (runs the application)
+- bootstrap.py:   Composition Root (wires dependencies)
+- Other layers:   Business logic (domain, application, infrastructure, presentation)
+
+Reference: Mark Seemann - "Dependency Injection in .NET"
+The main function should be as thin as possible - just call bootstrap and run.
+"""
+
+import asyncio
+import sys
+
+from bootstrap import bootstrap
 
 
-def print_hi(name: str) -> None:
-    # Use a breakpoint in the code line below to debug your script.
-    print(f"Hi, {name}")  # Press ⌘F8 to toggle the breakpoint.
+async def main() -> None:
+    """Main entry point.
+
+    Responsibilities:
+    1. Call bootstrap() to wire all dependencies
+    2. Run the composed application
+    3. Handle interrupts gracefully
+
+    All dependency wiring logic lives in bootstrap/bootstrap.py,
+    keeping this entry point clean and focused.
+    """
+    # Wire all dependencies (Composition Root)
+    app = bootstrap()
+
+    # Run the application
+    await app.run()
 
 
-# Press the green button in the gutter to run the script.
 if __name__ == "__main__":
-    print_hi("PyCharm")
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print()
+        print("⚠ Interrupted by user (Ctrl+C)")
+        print("Note: Agent state is persisted in the event store.")
+        print("You can resume by re-running with the same task.")
+        sys.exit(0)
