@@ -36,6 +36,7 @@ class AgentExecutionService:
         event_store: Port for loading/saving domain events.
         llm_port: Port for LLM interactions (complexity evaluation, task analysis).
         worker_tool_port: Port for worker tool execution (e.g., Claude Code CLI).
+        model_config: Role-to-model mapping for agent configuration.
         max_retries: Maximum number of OCC retry attempts (default: 3).
         poll_interval: Interval in seconds for polling active agents (default: 0.5).
     """
@@ -45,6 +46,7 @@ class AgentExecutionService:
         event_store: EventStorePort,
         llm_port: LLMPort,
         worker_tool_port: WorkerToolPort,
+        model_config: dict[str, str] | None = None,
         max_retries: int = 3,
         poll_interval: float = 0.5,
     ) -> None:
@@ -54,6 +56,8 @@ class AgentExecutionService:
             event_store: Event store implementation for persistence.
             llm_port: LLM adapter for agent reasoning.
             worker_tool_port: Worker tool adapter for task execution.
+            model_config: Role-to-model mapping (keys: "boss", "manager", "worker", "pending").
+                         If None, uses default gpt-4o-mini for all roles.
             max_retries: Maximum OCC retry attempts (default: 3).
             poll_interval: Interval in seconds for polling active agents (default: 0.5).
         """
@@ -62,6 +66,16 @@ class AgentExecutionService:
         self.worker_tool_port = worker_tool_port
         self.max_retries = max_retries
         self.poll_interval = poll_interval
+
+        # Set default model_config if not provided
+        if model_config is None:
+            model_config = {
+                "boss": "gpt-4o-mini",
+                "manager": "gpt-4o-mini",
+                "worker": "gpt-4o-mini",
+                "pending": "gpt-4o-mini",
+            }
+        self.model_config = model_config
 
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one step of the agent workflow based on current state.
@@ -206,11 +220,15 @@ class AgentExecutionService:
         child_spawned_events = [e for e in events if isinstance(e, ChildSpawned)]
 
         for child_event in child_spawned_events:
+            # Get child config from event (parent's decision)
+            # Parent specifies models, hyperparameters, and tool for child
+            child_config = child_event.child_config
+
             # Create new child agent
             child = AgentSession.create(
                 session_id=child_event.child_id,
                 role=AgentRole(child_event.child_role),
-                config=parent.config,  # Inherit parent's config
+                config=child_config,  # Use parent's config decision
                 parent_id=parent.session_id,
             )
 
@@ -416,7 +434,7 @@ class AgentExecutionService:
         """
         await self.event_store.disconnect()
 
-    async def create_boss_agent(self, task_description: str, config: dict) -> UUID:
+    async def create_boss_agent(self, task_description: str) -> UUID:
         """Create and persist a new BOSS agent with a task.
 
         This is a command method that creates the root agent for the system.
@@ -424,7 +442,6 @@ class AgentExecutionService:
 
         Args:
             task_description: The task to assign to the BOSS agent.
-            config: Configuration for the agent (e.g., LLM model).
 
         Returns:
             UUID of the created BOSS agent.
@@ -435,11 +452,26 @@ class AgentExecutionService:
         # Generate unique ID for root agent
         root_id = uuid4()
 
+        # Get model for BOSS role from settings
+        boss_model = self.model_config.get("boss", "gpt-4o-mini")
+
+        # Create config for BOSS agent using heuristic strategy
+        # BOSS is root agent, so application layer decides config (not parent)
+        boss_config = {
+            "strategy": "heuristic",
+            "base": {
+                "model": boss_model,
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            },
+            "tool": "claude_code",  # Default tool for workers spawned by BOSS
+        }
+
         # Create BOSS agent (top of hierarchy)
         boss_agent = AgentSession.create(
             session_id=root_id,
             role=AgentRole.BOSS,
-            config=config,
+            config=boss_config,
             parent_id=None,  # BOSS has no parent
         )
 

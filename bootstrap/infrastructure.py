@@ -31,9 +31,6 @@ class InfrastructureConfig:
     # PostgreSQL Event Store
     postgres_connection_string: str = "postgresql://arise:arise@localhost:5432/arise_events"
 
-    # LiteLLM Configuration
-    llm_model: str = "gpt-4o-mini"
-
     # Worker Tool Configuration
     # (ClaudeCodePTYAdapter doesn't need config for now)
 
@@ -78,8 +75,8 @@ def get_infrastructure(config: InfrastructureConfig | None = None) -> Infrastruc
 
     # LiteLLM Adapter - implements LLMPort
     # Supports OpenAI, Anthropic, and 100+ LLM providers
-    # Pass default_config dict with model
-    llm_adapter = LiteLLMAdapter(default_config={"model": config.llm_model})
+    # No default model needed - agents specify models based on their roles
+    llm_adapter = LiteLLMAdapter()
 
     # Claude Code PTY Adapter - implements WorkerToolPort
     # Executes worker tasks using Claude Code CLI via pseudo-terminal

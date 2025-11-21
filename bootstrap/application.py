@@ -23,6 +23,9 @@ class ApplicationConfig:
     # System orchestration loop polling interval (seconds)
     poll_interval: float = 0.5
 
+    # Role-based LLM model mapping
+    model_config: dict[str, str] | None = None
+
 
 @dataclass
 class Application:
@@ -69,6 +72,7 @@ def get_application(
         event_store=infrastructure.event_store,
         llm_port=infrastructure.llm_adapter,
         worker_tool_port=infrastructure.worker_tool,
+        model_config=config.model_config,
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
     )

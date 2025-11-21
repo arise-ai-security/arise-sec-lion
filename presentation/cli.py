@@ -134,9 +134,9 @@ class CLI:
 
         try:
             # Delegate BOSS creation to application service
+            # Model is selected based on role (configured in settings)
             root_id = await self.execution_service.create_boss_agent(
-                task_description=task_description,
-                config={"llm": "gpt-4o-mini"},
+                task_description=task_description
             )
 
             if self.config.verbose:

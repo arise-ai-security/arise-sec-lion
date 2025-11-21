@@ -8,6 +8,9 @@ Reference: Mark Seemann - "Dependency Injection in .NET"
 The bootstrap function is the single place where all object composition happens.
 """
 
+from pathlib import Path
+
+from config import Settings
 from presentation.cli import CLI, CLIConfig
 
 from .application import Application, ApplicationConfig, get_application
@@ -16,6 +19,7 @@ from .presentation import get_cli
 
 
 def bootstrap(
+    config_path: str | Path | None = None,
     infrastructure_config: InfrastructureConfig | None = None,
     application_config: ApplicationConfig | None = None,
     cli_config: CLIConfig | None = None,
@@ -29,15 +33,27 @@ def bootstrap(
     3. Presentation layer (CLI)
 
     Args:
+        config_path: Path to YAML configuration file. If provided, loads
+                    Settings from the file and uses them to build config objects.
+                    Environment variables still take precedence for secrets.
         infrastructure_config: Configuration for infrastructure adapters.
-                              Uses defaults if not provided.
+                              Overrides settings from config_path if provided.
+                              Uses defaults if neither is provided.
         application_config: Configuration for application services.
-                           Uses defaults if not provided.
+                           Overrides settings from config_path if provided.
+                           Uses defaults if neither is provided.
         cli_config: Configuration for CLI behavior.
-                   Uses defaults if not provided.
+                   Overrides settings from config_path if provided.
+                   Uses defaults if neither is provided.
 
     Returns:
         Fully wired CLI instance ready to run.
+
+    Configuration Precedence:
+        1. Explicitly passed config objects (infrastructure_config, etc.)
+        2. Config file (config_path)
+        3. Environment variables (for secrets)
+        4. Defaults (in code)
 
     Architecture Note:
         This function knows about ALL layers and composes them together.
@@ -53,6 +69,17 @@ def bootstrap(
     """
 
     # ============================================================================
+    # CONFIGURATION LOADING
+    # ============================================================================
+    # Load Settings from config file if provided, then convert to layer configs.
+    # Explicitly passed config objects take precedence over file-based settings.
+    # ============================================================================
+
+    settings: Settings | None = None
+    if config_path is not None:
+        settings = Settings.from_yaml(config_path)
+
+    # ============================================================================
     # LAYER 1: Infrastructure - Adapters (implements domain ports)
     # ============================================================================
     # Infrastructure adapters implement the port interfaces defined by the domain.
@@ -63,10 +90,16 @@ def bootstrap(
     # ============================================================================
 
     if infrastructure_config is None:
-        infrastructure_config = InfrastructureConfig(
-            postgres_connection_string="postgresql://arise:arise@localhost:5432/arise_events",
-            llm_model="gpt-4o-mini",
-        )
+        if settings is not None:
+            # Build from settings
+            infrastructure_config = InfrastructureConfig(
+                postgres_connection_string=settings.infrastructure.postgres_connection_string,
+            )
+        else:
+            # Use defaults
+            infrastructure_config = InfrastructureConfig(
+                postgres_connection_string="postgresql://arise:arise@localhost:5432/arise_events",
+            )
 
     infrastructure: Infrastructure = get_infrastructure(infrastructure_config)
 
@@ -80,10 +113,28 @@ def bootstrap(
     # ============================================================================
 
     if application_config is None:
-        application_config = ApplicationConfig(
-            max_retries=3,
-            poll_interval=0.5,
-        )
+        if settings is not None:
+            # Build model_config from infrastructure settings
+            model_config = {
+                "boss": settings.infrastructure.llm_model_boss,
+                "manager": settings.infrastructure.llm_model_manager,
+                "worker": settings.infrastructure.llm_model_worker,
+                "pending": settings.infrastructure.llm_model_pending,
+            }
+
+            # Build from settings
+            application_config = ApplicationConfig(
+                max_retries=settings.application.max_retries,
+                poll_interval=settings.application.poll_interval,
+                model_config=model_config,
+            )
+        else:
+            # Use defaults
+            application_config = ApplicationConfig(
+                max_retries=3,
+                poll_interval=0.5,
+                model_config=None,  # Will use AgentExecutionService defaults
+            )
 
     application: Application = get_application(infrastructure, application_config)
 
@@ -98,7 +149,12 @@ def bootstrap(
     # ============================================================================
 
     if cli_config is None:
-        cli_config = CLIConfig(verbose=True)
+        if settings is not None:
+            # Build from settings
+            cli_config = CLIConfig(verbose=settings.presentation.verbose)
+        else:
+            # Use defaults
+            cli_config = CLIConfig(verbose=True)
 
     cli: CLI = get_cli(application.execution_service, cli_config)
 

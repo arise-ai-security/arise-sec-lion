@@ -13,25 +13,52 @@ Reference: Mark Seemann - "Dependency Injection in .NET"
 The main function should be as thin as possible - just call bootstrap and run.
 """
 
+import argparse
 import asyncio
 import sys
 
 from bootstrap import bootstrap
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments containing config file path.
+    """
+    parser = argparse.ArgumentParser(
+        description="Recursive Multi-Agent System",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default=None,
+        help="Path to YAML configuration file (e.g., config/production.yaml)",
+    )
+
+    return parser.parse_args()
+
+
 async def main() -> None:
     """Main entry point.
 
     Responsibilities:
-    1. Call bootstrap() to wire all dependencies
-    2. Run the composed application
-    3. Handle interrupts gracefully
+    1. Parse command-line arguments
+    2. Call bootstrap() to wire all dependencies
+    3. Run the composed application
+    4. Handle interrupts gracefully
 
     All dependency wiring logic lives in bootstrap/bootstrap.py,
     keeping this entry point clean and focused.
     """
+    # Parse command-line arguments
+    args = parse_args()
+
     # Wire all dependencies (Composition Root)
-    app = bootstrap()
+    app = bootstrap(config_path=args.config)
 
     # Run the application
     await app.run()
