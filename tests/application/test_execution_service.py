@@ -3,6 +3,7 @@
 These tests verify the orchestration logic using mocked ports.
 """
 
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -12,6 +13,15 @@ from core.application.execution_service import AgentExecutionService
 from core.domain.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentStatus
+
+
+def _test_config() -> dict[str, Any]:
+    """Create a standard test config for agents."""
+    return {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
 
 
 @pytest.fixture
@@ -58,7 +68,7 @@ async def test_run_agent_step_pending_role_calls_evaluate_complexity(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=parent_id,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -100,7 +110,7 @@ async def test_run_agent_step_boss_role_calls_evaluate_task(
         sequence_number=1,
         role=AgentRole.BOSS.value,
         parent_id=None,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -145,7 +155,7 @@ async def test_run_agent_step_manager_role_calls_evaluate_task(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=parent_id,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -195,7 +205,7 @@ async def test_run_agent_step_worker_role_calls_execute_task(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=None,  # No parent for this isolated test
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -277,7 +287,7 @@ async def test_run_agent_step_retries_on_concurrency_error(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=parent_id,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -317,7 +327,7 @@ async def test_run_agent_step_raises_after_max_retries(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=parent_id,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -357,7 +367,7 @@ async def test_run_agent_step_marks_failed_on_unexpected_error(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=parent_id,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -411,7 +421,7 @@ async def test_run_agent_step_skips_non_analyzing_agents(
         sequence_number=1,
         role=AgentRole.BOSS.value,
         parent_id=None,
-        config={},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -458,7 +468,7 @@ async def test_run_agent_step_creates_children_when_boss_spawns(
         sequence_number=1,
         role=AgentRole.BOSS.value,
         parent_id=None,
-        config={"llm": "test"},
+        config=_test_config(),
     )
 
     event2 = TaskAssigned(
@@ -470,12 +480,15 @@ async def test_run_agent_step_creates_children_when_boss_spawns(
     mock_event_store.get_events.return_value = [event1, event2]
 
     # Mock LLM to return subtasks JSON (this will trigger child spawning)
-    mock_llm_port.query.return_value = """
-    [
-        {"description": "Setup backend"},
-        {"description": "Create frontend"}
-    ]
-    """
+    import json
+
+    child_config = _test_config()
+    mock_llm_port.query.return_value = json.dumps(
+        [
+            {"description": "Setup backend", "config": child_config},
+            {"description": "Create frontend", "config": child_config},
+        ]
+    )
 
     # Track all append calls to verify child creation
     append_calls = []
@@ -524,7 +537,7 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
         sequence_number=1,
         role=AgentRole.PENDING.value,
         parent_id=parent_id,
-        config={},
+        config=_test_config(),
     )
 
     child_event2 = TaskAssigned(
@@ -548,7 +561,7 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
         sequence_number=1,
         role=AgentRole.BOSS.value,
         parent_id=None,
-        config={},
+        config=_test_config(),
     )
 
     parent_event2 = TaskAssigned(
@@ -560,12 +573,14 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     from core.domain.events import ChildSpawned, StatusChanged
     from core.domain.subtask import Subtask
 
+    child_config = _test_config()
     parent_event3 = ChildSpawned(
         aggregate_id=parent_id,
         sequence_number=3,
         child_id=child_id,
         child_role=AgentRole.PENDING.value,
-        subtask=Subtask(description="Write tests"),
+        subtask=Subtask(description="Write tests", config=child_config),
+        child_config=child_config,
     )
 
     parent_event4 = StatusChanged(
@@ -647,7 +662,7 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
             sequence_number=1,
             role=AgentRole.BOSS.value,
             parent_id=None,
-            config={},
+            config=_test_config(),
         ),
         TaskAssigned(
             aggregate_id=active_agent_id,
@@ -665,7 +680,7 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
             sequence_number=1,
             role=AgentRole.WORKER.value,
             parent_id=None,
-            config={},
+            config=_test_config(),
         ),
         TaskAssigned(
             aggregate_id=completed_agent_id,
@@ -688,7 +703,7 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
             sequence_number=1,
             role=AgentRole.WORKER.value,
             parent_id=None,
-            config={},
+            config=_test_config(),
         ),
         TaskAssigned(
             aggregate_id=failed_agent_id,

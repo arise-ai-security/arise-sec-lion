@@ -8,15 +8,26 @@ from core.domain.services import SubtaskParser
 from core.domain.subtask import Subtask
 
 
+# Helper to create standard test config
+def _test_config_json():
+    """Return config dict for use in JSON test data."""
+    return {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 500},
+        "tool": "claude_code",
+    }
+
+
 def test_parse_valid_subtask_list() -> None:
     """Test parsing valid JSON array into Subtask list."""
 
-    # Given: Valid LLM response with subtasks
+    # Given: Valid LLM response with subtasks (including configs)
+    config = _test_config_json()
     llm_response = json.dumps(
         [
-            {"description": "Research BeautifulSoup library"},
-            {"description": "Implement URL fetching"},
-            {"description": "Parse HTML content"},
+            {"description": "Research BeautifulSoup library", "config": config},
+            {"description": "Implement URL fetching", "config": config},
+            {"description": "Parse HTML content", "config": config},
         ]
     )
 
@@ -79,10 +90,11 @@ def test_parse_missing_description_field_raises_value_error() -> None:
     """Test that subtask without description field raises ValueError."""
 
     # Given: JSON with object missing description
+    config = _test_config_json()
     llm_response = json.dumps(
         [
-            {"description": "Valid task"},
-            {"priority": "high"},  # Missing description!
+            {"description": "Valid task", "config": config},
+            {"priority": "high", "config": config},  # Missing description!
         ]
     )
 
@@ -95,9 +107,10 @@ def test_parse_empty_description_raises_value_error() -> None:
     """Test that subtask with empty description raises ValueError."""
 
     # Given: JSON with empty description
+    config = _test_config_json()
     llm_response = json.dumps(
         [
-            {"description": ""},  # Empty!
+            {"description": "", "config": config},  # Empty!
         ]
     )
 
@@ -110,9 +123,10 @@ def test_parse_single_valid_subtask() -> None:
     """Test that single-item list is valid (though 2-3 is preferred)."""
 
     # Given: Single subtask (edge case, but valid)
+    config = _test_config_json()
     llm_response = json.dumps(
         [
-            {"description": "Complete the entire task"},
+            {"description": "Complete the entire task", "config": config},
         ]
     )
 
@@ -127,11 +141,13 @@ def test_parse_single_valid_subtask() -> None:
 def test_parse_extra_fields_ignored() -> None:
     """Test that extra fields in subtask dict are ignored."""
 
-    # Given: JSON with extra fields beyond description
+    # Given: JSON with extra fields beyond description and config
+    config = _test_config_json()
     llm_response = json.dumps(
         [
             {
                 "description": "Research libraries",
+                "config": config,
                 "priority": "high",
                 "estimated_time": "2 hours",
             },

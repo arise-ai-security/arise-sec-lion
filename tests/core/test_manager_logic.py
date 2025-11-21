@@ -22,6 +22,24 @@ from core.domain.subtask import Subtask
 from core.ports.llm_port import LLMPort
 
 
+def _test_agent_config() -> dict[str, Any]:
+    """Create a standard test config for agents."""
+    return {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
+
+
+def _test_child_config() -> dict[str, Any]:
+    """Create a standard test config for child agents."""
+    return {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 500},
+        "tool": "claude_code",
+    }
+
+
 class FakeLLM(LLMPort):
     """Fake LLM implementation for testing.
 
@@ -58,7 +76,7 @@ async def test_manager_decomposition() -> None:
 
     # Given: Create a MANAGER agent with ANALYZING status
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     # Create MANAGER agent
     agent = AgentSession.create(
@@ -68,11 +86,12 @@ async def test_manager_decomposition() -> None:
     # Assign a task (transitions to ANALYZING)
     agent.assign_task("Build a web scraper for news articles")
 
-    # And: Prepare a FakeLLM that returns two subtasks
+    # And: Prepare a FakeLLM that returns two subtasks with configs
+    child_config = _test_child_config()
     fake_llm = FakeLLM(
         canned_response=[
-            {"description": "Research BeautifulSoup and Scrapy libraries"},
-            {"description": "Implement URL fetching and HTML parsing"},
+            {"description": "Research BeautifulSoup and Scrapy libraries", "config": child_config},
+            {"description": "Implement URL fetching and HTML parsing", "config": child_config},
         ]
     )
 
@@ -129,7 +148,7 @@ async def test_manager_llm_invalid_json_response() -> None:
 
     # Given: Create a MANAGER agent with ANALYZING status
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
@@ -177,7 +196,7 @@ async def test_parent_completion_check() -> None:
 
     # Given: Create a MANAGER agent
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
@@ -187,6 +206,7 @@ async def test_parent_completion_check() -> None:
     # And: Manually simulate that it spawned 2 children
     child_a_id = uuid4()
     child_b_id = uuid4()
+    child_config = _test_child_config()
 
     # Create child A (spawned with PENDING role)
     child_a_event = ChildSpawned(
@@ -194,7 +214,8 @@ async def test_parent_completion_check() -> None:
         sequence_number=3,
         child_id=child_a_id,
         child_role=AgentRole.PENDING.value,
-        subtask=Subtask(description="Research BeautifulSoup library"),
+        subtask=Subtask(description="Research BeautifulSoup library", config=child_config),
+        child_config=child_config,
     )
     agent._apply(child_a_event)
     agent._changes.append(child_a_event)
@@ -205,7 +226,8 @@ async def test_parent_completion_check() -> None:
         sequence_number=4,
         child_id=child_b_id,
         child_role=AgentRole.PENDING.value,
-        subtask=Subtask(description="Implement URL fetching"),
+        subtask=Subtask(description="Implement URL fetching", config=child_config),
+        child_config=child_config,
     )
     agent._apply(child_b_event)
     agent._changes.append(child_b_event)
@@ -274,7 +296,7 @@ def test_cannot_spawn_boss_child() -> None:
 
     # Given: Create a MANAGER agent
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
@@ -282,12 +304,14 @@ def test_cannot_spawn_boss_child() -> None:
 
     # When/Then: Attempting to spawn a BOSS child raises AssertionError
     # Try to create ChildSpawned event with BOSS role (invalid)
+    child_config = _test_child_config()
     invalid_event = ChildSpawned(
         aggregate_id=agent_id,
         sequence_number=3,
         child_id=uuid4(),
         child_role=AgentRole.BOSS.value,
-        subtask=Subtask(description="Some task"),
+        subtask=Subtask(description="Some task", config=child_config),
+        child_config=child_config,
     )
     # Applying this event should fail the invariant check
     with pytest.raises(AssertionError, match=r"(?i)(boss|invariant)"):
@@ -300,7 +324,7 @@ async def test_child_evaluates_simple_complexity() -> None:
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
@@ -344,7 +368,7 @@ async def test_child_evaluates_complex_complexity() -> None:
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
@@ -388,7 +412,7 @@ async def test_complexity_evaluation_invalid_response() -> None:
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = _test_agent_config()
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()

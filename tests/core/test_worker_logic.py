@@ -77,7 +77,11 @@ async def test_worker_execution_flow() -> None:
 
     # Given: Create a WORKER agent with a task
     agent_id = uuid4()
-    config = {"tool": "claude-code"}
+    config = {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 500},
+        "tool": "claude_code",
+    }
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.WORKER, config=config, parent_id=uuid4()
@@ -100,7 +104,7 @@ async def test_worker_execution_flow() -> None:
     # Then: Verify CodeGenerationStarted event is recorded
     code_gen_events = [e for e in agent.events if isinstance(e, CodeGenerationStarted)]
     assert len(code_gen_events) == 1, "Should have 1 CodeGenerationStarted event"
-    assert code_gen_events[0].tool_name == "claude-code"
+    assert code_gen_events[0].tool_name == "claude_code"
 
     # And: Verify ThoughtCaptured events are recorded
     thought_events = [e for e in agent.events if isinstance(e, ThoughtCaptured)]

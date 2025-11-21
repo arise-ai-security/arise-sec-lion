@@ -15,7 +15,11 @@ def test_boss_initialization_flow() -> None:
 
     # Given: Define UUID and configuration
     agent_id = uuid4()
-    config = {"model": "gpt-4", "temperature": 0.7}
+    config = {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
 
     # When: Create a new AgentSession
     agent = AgentSession.create(
@@ -41,7 +45,11 @@ def test_task_assignment() -> None:
 
     # Given: Create a BOSS agent
     agent_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
 
     agent = AgentSession.create(
         session_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
@@ -73,7 +81,11 @@ def test_fail_with_reason() -> None:
 
     # Given: Create a BOSS agent with a task
     boss_id = uuid4()
-    config = {"model": "gpt-4"}
+    config = {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
 
     boss = AgentSession.create(session_id=boss_id, role=AgentRole.BOSS, config=config)
     boss.assign_task("Some task")
