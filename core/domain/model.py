@@ -10,6 +10,10 @@ from functools import singledispatchmethod
 from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic import TypeAdapter
+
+from core.domain.agent_config import AgentConfig
+from core.domain.config_resolver import ConfigResolver
 from core.domain.events import (
     AgentCreated,
     ChildCompleted,
@@ -226,8 +230,11 @@ class AgentSession:
             task_description=self.task_description,
         )
 
-        # Query LLM
-        response = await llm_port.query(prompt, self.config)
+        # Resolve operation-specific config using strategy-agnostic resolver
+        llm_config = ConfigResolver.resolve(self.config, operation="complexity_evaluation")
+
+        # Query LLM with resolved config
+        response = await llm_port.query(prompt, llm_config.model_dump())
 
         # Parse response to determine complexity
         try:
@@ -301,8 +308,11 @@ class AgentSession:
             task_description=self.task_description,
         )
 
-        # Query LLM
-        response = await llm_port.query(prompt, self.config)
+        # Resolve operation-specific config using strategy-agnostic resolver
+        llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")
+
+        # Query LLM with resolved config
+        response = await llm_port.query(prompt, llm_config.model_dump())
 
         # Parse and validate subtasks using domain service
         # Failure to parse is a business event (MANAGER failed decomposition)
@@ -330,6 +340,7 @@ class AgentSession:
 
         # Create ChildSpawned events for each subtask
         # Children start with PENDING role and will evaluate complexity themselves
+        # Parent specifies child config (models, hyperparameters, tool) per subtask
         for subtask in subtasks:
             child_id = uuid4()
             child_event = ChildSpawned(
@@ -338,6 +349,7 @@ class AgentSession:
                 child_id=child_id,
                 child_role=AgentRole.PENDING.value,  # Role determined by child
                 subtask=subtask,
+                child_config=subtask.config,  # Parent's config decision for child
             )
             self._apply(child_event)
             self._changes.append(child_event)
@@ -373,8 +385,8 @@ class AgentSession:
             f"execute_task requires ANALYZING status, got {self.status}"
         )
 
-        # Get tool name from config (default to "unknown")
-        tool_name = self.config.get("tool", "unknown")
+        # Get tool name from config (all config strategies have 'tool' field)
+        tool_name = self.config.tool
 
         # Create CodeGenerationStarted event
         started_event = CodeGenerationStarted(
@@ -511,7 +523,12 @@ class AgentSession:
         """
         self.role = AgentRole(event.role)
         self.parent_id = event.parent_id
-        self.config = event.config
+
+        # Deserialize config dict to typed AgentConfig using TypeAdapter
+        # This validates the config and provides type-safe access
+        adapter = TypeAdapter(AgentConfig)
+        self.config = adapter.validate_python(event.config)
+
         self.status = AgentStatus.PENDING
         self.version += 1
 
@@ -647,7 +664,7 @@ class AgentSession:
         self.task_description: str = ""
         self.result: str | None = None
         self.error_message: str | None = None
-        self.config: dict[str, Any] = {}
+        self.config: AgentConfig  # Type-safe config (deserialized from events)
         self.version: int = 0
         self._changes: list[DomainEvent] = []
         self._sequence: int = 0

@@ -97,15 +97,26 @@ class SubtasksDefined(DomainEvent):
 class ChildSpawned(DomainEvent):
     """Event raised when an agent spawns a child agent.
 
+    This event captures the parent's decision about:
+    1. What task to assign (subtask.description)
+    2. How the child should operate (child_config)
+
+    The child_config field allows the parent to specify which models/hyperparameters
+    the child uses for different operations (complexity evaluation, task decomposition).
+    This makes the system "super flexible" - parents control all child behavior.
+
     Attributes:
         child_id: UUID of the newly created child agent.
-        child_role: Role of the child agent (MANAGER or WORKER).
+        child_role: Role of the child agent (PENDING initially, becomes MANAGER or WORKER).
         subtask: The specific Subtask value object assigned to this child.
+        child_config: Serialized AgentConfig dict for the child agent.
+                     Specifies models, hyperparameters, and tool selection.
     """
 
     child_id: UUID
     child_role: str
     subtask: Subtask
+    child_config: dict[str, Any]
 
 
 class WorkCompleted(DomainEvent):
