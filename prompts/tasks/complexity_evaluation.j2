@@ -1,0 +1,64 @@
+<TASK_CONTEXT>
+Agent ID: {{ agent_id }}
+Agent Role: PENDING
+Parent Task: {{ parent_task or "Root task" }}
+</TASK_CONTEXT>
+
+<TASK_DESCRIPTION>
+You are evaluating whether the following task is SIMPLE or COMPLEX:
+
+**Task to Evaluate**:
+{{ task_description }}
+
+Your classification determines your next role:
+- **SIMPLE** → You become a WORKER and execute the task directly
+- **COMPLEX** → You become a MANAGER and decompose it into subtasks
+
+</TASK_DESCRIPTION>
+
+<EVALUATION_CRITERIA>
+
+## SIMPLE Task Characteristics
+- Single well-defined task
+- Clear, unambiguous requirements
+- Can be executed in one session (<1 hour of focused work)
+- No external dependencies beyond standard libraries
+- Straightforward implementation using known patterns
+- Single domain/technology
+- Standard operations (CRUD, refactoring, bug fixes)
+
+## COMPLEX Task Characteristics
+- Multiple distinct domains/technologies (frontend + backend + database)
+- Requires research or exploration before execution
+- Ambiguous or underspecified requirements
+- Multiple subtasks with potential dependencies
+- Needs architectural or design decisions
+- Coordinates multiple systems/services
+- Estimated >1 hour of focused work
+- Novel problem without established solution patterns
+
+</EVALUATION_CRITERIA>
+
+<EXAMPLES>
+
+### SIMPLE Examples
+- "Write a Python function to calculate Fibonacci numbers"
+- "Add input validation to the UserService.create_user method"
+- "Refactor the User model to use properties instead of direct attributes"
+- "Fix bug where logout doesn't clear session cookie"
+- "Research BeautifulSoup library documentation"
+
+### COMPLEX Examples
+- "Build a web scraper for news articles" (research + implementation + testing + deployment)
+- "Implement user authentication system" (database schema + API + security + sessions)
+- "Create a recommendation engine" (data collection + algorithm + training + deployment)
+- "Add real-time notifications" (WebSocket + event system + frontend integration)
+- "Migrate from REST API to GraphQL" (schema design + server setup + client updates)
+
+</EXAMPLES>
+
+<SUCCESS_CRITERIA>
+- Make a clear binary decision: SIMPLE or COMPLEX
+- Provide specific reasoning citing task characteristics
+- Be decisive and confident in your classification
+</SUCCESS_CRITERIA>

@@ -1,0 +1,124 @@
+<TASK_CONTEXT>
+Agent ID: {{ agent_id }}
+Agent Role: {{ agent_role }}
+Parent Task: {{ parent_task or "Root task" }}
+</TASK_CONTEXT>
+
+<TASK_DESCRIPTION>
+Your task is to decompose the following task into 2-3 concrete subtasks:
+
+**Task to Decompose**:
+{{ task_description }}
+
+For each subtask, you must specify:
+1. **description**: What the child agent should do
+2. **config**: How the child agent should operate (model, hyperparameters, tool)
+
+</TASK_DESCRIPTION>
+
+<CONFIG_STRATEGIES>
+
+You can use one of three strategies for each child:
+
+## Strategy 1: per_operation (Most Flexible)
+Specify exact config for each LLM operation the child might perform:
+- complexity_evaluation: Config for deciding if task is SIMPLE or COMPLEX
+- task_decomposition: Config for breaking task into subtasks (if child becomes MANAGER)
+
+Use this when you want fine-grained control over each operation.
+
+**Example**:
+{
+  "description": "Build web scraper for news articles",
+  "config": {
+    "strategy": "per_operation",
+    "complexity_evaluation": {
+      "model": "gpt-4o-mini",
+      "temperature": 0.3,
+      "max_tokens": 300
+    },
+    "task_decomposition": {
+      "model": "gpt-4o",
+      "temperature": 0.7,
+      "max_tokens": 1500
+    },
+    "tool": "claude_code"
+  }
+}
+
+## Strategy 2: heuristic (Simplest)
+Specify one base config, and the child will apply domain rules:
+- Complexity eval: Uses base model but lowers temperature to 0.3
+- Task decomposition: Uses base config as-is
+
+Use this for simpler subtasks where you trust default heuristics.
+
+**Example**:
+{
+  "description": "Research BeautifulSoup documentation",
+  "config": {
+    "strategy": "heuristic",
+    "base": {
+      "model": "gpt-4o-mini",
+      "temperature": 0.5,
+      "max_tokens": 500
+    },
+    "tool": "claude_code"
+  }
+}
+
+## Strategy 3: hybrid (Balanced)
+Specify base config with optional overrides for specific operations.
+
+**Example**:
+{
+  "description": "Implement authentication system",
+  "config": {
+    "strategy": "hybrid",
+    "base": {
+      "model": "gpt-4o",
+      "temperature": 0.7,
+      "max_tokens": 1000
+    },
+    "overrides": {
+      "complexity_evaluation": {
+        "temperature": 0.3,
+        "max_tokens": 300
+      }
+    },
+    "tool": "openhands"
+  }
+}
+
+</CONFIG_STRATEGIES>
+
+<GUIDELINES>
+
+## Model Selection
+- **Complex reasoning tasks**: gpt-4o, claude-3-5-sonnet-20241022
+- **Simple classification/research**: gpt-4o-mini, gemini-flash
+- **Default for most tasks**: gpt-4o-mini (cost-effective)
+
+## Temperature Settings
+- **Deterministic** (complexity eval, factual research): 0.1-0.4
+- **Balanced** (implementation, analysis): 0.4-0.6
+- **Creative** (brainstorming, design): 0.6-0.9
+
+## Tool Selection
+- **claude_code**: Default for coding tasks, terminal commands, file operations
+- **openhands**: Complex multi-step workflows, browser automation, ambiguous tasks
+
+## Decomposition Quality
+- Each subtask should be **independently executable**
+- Avoid sequential dependencies where possible
+- Keep count to 2-3 subtasks (avoid over-decomposition)
+- Each description should be concrete and actionable
+
+</GUIDELINES>
+
+<SUCCESS_CRITERIA>
+- 2-3 well-defined subtasks
+- Each subtask has complete, valid configuration
+- Subtasks are independently executable
+- Configs match task complexity and requirements
+</SUCCESS_CRITERIA>

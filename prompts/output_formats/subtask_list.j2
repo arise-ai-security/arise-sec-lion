@@ -1,0 +1,187 @@
+<OUTPUT_FORMAT>
+
+Return ONLY valid JSON matching this exact schema:
+
+[
+  {
+    "description": "string (min 10 chars, max 500 chars)",
+    "config": {
+      "strategy": "per_operation" | "heuristic" | "hybrid",
+      "tool": "claude_code" | "openhands",
+      ... (strategy-specific fields, see below)
+    }
+  },
+  ... (2-3 subtasks total)
+]
+
+## Config Schema by Strategy
+
+### per_operation:
+{
+  "strategy": "per_operation",
+  "complexity_evaluation": {
+    "model": "string",
+    "temperature": number (0.0-2.0),
+    "max_tokens": number (1-100000),
+    "top_p": number (0.0-1.0) | null  # optional
+  },
+  "task_decomposition": {
+    "model": "string",
+    "temperature": number (0.0-2.0),
+    "max_tokens": number (1-100000),
+    "top_p": number (0.0-1.0) | null  # optional
+  },
+  "tool": "claude_code" | "openhands"
+}
+
+### heuristic:
+{
+  "strategy": "heuristic",
+  "base": {
+    "model": "string",
+    "temperature": number (0.0-2.0),
+    "max_tokens": number (1-100000),
+    "top_p": number (0.0-1.0) | null  # optional
+  },
+  "tool": "claude_code" | "openhands"
+}
+
+### hybrid:
+{
+  "strategy": "hybrid",
+  "base": {
+    "model": "string",
+    "temperature": number (0.0-2.0),
+    "max_tokens": number (1-100000),
+    "top_p": number (0.0-1.0) | null  # optional
+  },
+  "overrides": {
+    "complexity_evaluation": {  # optional
+      "model": "string" | null,  # optional override
+      "temperature": number | null,  # optional override
+      "max_tokens": number | null,  # optional override
+      "top_p": number | null  # optional override
+    },
+    "task_decomposition": {  # optional
+      # same as above
+    }
+  },
+  "tool": "claude_code" | "openhands"
+}
+
+**CRITICAL RULES**:
+1. Response must be PURE JSON array (no markdown, no commentary)
+2. Array must contain 2-3 subtasks (not 1, not 4+)
+3. Each subtask MUST have "description" and "config" fields
+4. Config MUST include "strategy" and "tool" fields
+5. All required fields for chosen strategy must be present
+6. Temperature: 0.0-2.0, max_tokens: 1-100000
+7. Model names: "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "gemini-flash", etc.
+
+**Example Valid Output (per_operation)**:
+[
+  {
+    "description": "Research existing authentication libraries and select the most suitable one for our use case",
+    "config": {
+      "strategy": "per_operation",
+      "complexity_evaluation": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.3,
+        "max_tokens": 300
+      },
+      "task_decomposition": {
+        "model": "gpt-4o",
+        "temperature": 0.7,
+        "max_tokens": 1500
+      },
+      "tool": "claude_code"
+    }
+  },
+  {
+    "description": "Implement user registration with email verification and password hashing",
+    "config": {
+      "strategy": "heuristic",
+      "base": {
+        "model": "gpt-4o",
+        "temperature": 0.6,
+        "max_tokens": 1000
+      },
+      "tool": "claude_code"
+    }
+  }
+]
+
+**Example Valid Output (heuristic)**:
+[
+  {
+    "description": "Research BeautifulSoup library documentation and extract key usage patterns",
+    "config": {
+      "strategy": "heuristic",
+      "base": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.3,
+        "max_tokens": 500
+      },
+      "tool": "claude_code"
+    }
+  },
+  {
+    "description": "Implement basic web scraper with error handling and rate limiting",
+    "config": {
+      "strategy": "heuristic",
+      "base": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.5,
+        "max_tokens": 800
+      },
+      "tool": "claude_code"
+    }
+  },
+  {
+    "description": "Write unit tests for scraper functionality",
+    "config": {
+      "strategy": "heuristic",
+      "base": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.4,
+        "max_tokens": 600
+      },
+      "tool": "claude_code"
+    }
+  }
+]
+
+**Invalid Outputs** (DO NOT DO THIS):
+
+❌ Markdown code blocks:
+```json
+[...]
+```
+
+❌ Only 1 subtask:
+[
+  {"description": "...", "config": {...}}
+]
+
+❌ Too many subtasks (4+):
+[
+  {...}, {...}, {...}, {...}
+]
+
+❌ Missing required fields:
+[
+  {
+    "description": "Do something",
+    "config": {
+      "strategy": "heuristic"
+      # Missing "base" and "tool"!
+    }
+  }
+]
+
+❌ Invalid temperature:
+{
+  "temperature": 5.0  # Must be 0.0-2.0
+}
+
+</OUTPUT_FORMAT>

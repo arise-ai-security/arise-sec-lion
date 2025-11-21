@@ -18,6 +18,7 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.domain.model import AgentRole, AgentSession, AgentStatus
+from core.domain.prompt_builder import PromptBuilder
 from core.domain.subtask import Subtask
 from core.ports.llm_port import LLMPort
 
@@ -95,8 +96,8 @@ async def test_manager_decomposition() -> None:
         ]
     )
 
-    # When: Call agent.evaluate_task(llm_port)
-    await agent.evaluate_task(llm_port=fake_llm)
+    # When: Call agent.evaluate_task(llm_port, prompt_builder)
+    await agent.evaluate_task(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
     # Then: Verify 6 events exist
     # (AgentCreated, TaskAssigned, SubtasksDefined, ChildSpawned x2, StatusChanged)
@@ -158,8 +159,8 @@ async def test_manager_llm_invalid_json_response() -> None:
     # And: Prepare a FakeLLM that returns invalid JSON
     fake_llm = FakeLLM(canned_response="This is not JSON at all!")
 
-    # When: Call agent.evaluate_task(llm_port) with invalid JSON response
-    await agent.evaluate_task(llm_port=fake_llm)
+    # When: Call agent.evaluate_task(llm_port, prompt_builder) with invalid JSON response
+    await agent.evaluate_task(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
     # Then: Verify 3 events exist (AgentCreated, TaskAssigned, WorkFailed)
     assert len(agent.events) == 3, f"Expected 3 events, got {len(agent.events)}"
@@ -344,7 +345,7 @@ async def test_child_evaluates_simple_complexity() -> None:
     )
 
     # When: Child evaluates complexity
-    await agent.evaluate_complexity(llm_port=fake_llm)
+    await agent.evaluate_complexity(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
     # Then: Agent role transitions from PENDING to WORKER
     assert agent.role == AgentRole.WORKER, "Agent should become WORKER for SIMPLE tasks"
@@ -388,7 +389,7 @@ async def test_child_evaluates_complex_complexity() -> None:
     )
 
     # When: Child evaluates complexity
-    await agent.evaluate_complexity(llm_port=fake_llm)
+    await agent.evaluate_complexity(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
     # Then: Agent role transitions from PENDING to MANAGER
     assert agent.role == AgentRole.MANAGER, "Agent should become MANAGER for COMPLEX tasks"
@@ -423,7 +424,7 @@ async def test_complexity_evaluation_invalid_response() -> None:
     fake_llm = FakeLLM(canned_response="This is not valid JSON!")
 
     # When: Child attempts to evaluate complexity
-    await agent.evaluate_complexity(llm_port=fake_llm)
+    await agent.evaluate_complexity(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
     # Then: Agent transitions to FAILED status
     assert agent.status == AgentStatus.FAILED, "Agent should fail when complexity evaluation fails"

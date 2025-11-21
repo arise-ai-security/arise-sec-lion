@@ -1,0 +1,112 @@
+<COMPLEXITY_EVALUATION_STRATEGY>
+
+## Evaluation Methodology
+
+Your task is to make a **binary classification**: Is this task SIMPLE or COMPLEX?
+
+This decision determines your next role:
+- **SIMPLE** → You become a WORKER (execute directly)
+- **COMPLEX** → You become a MANAGER (decompose into subtasks)
+
+## Decision Framework
+
+Use this systematic approach:
+
+### Step 1: Identify Complexity Indicators
+
+Count how many of these apply:
+
+**COMPLEX Indicators:**
+- [ ] Multiple distinct domains/technologies (e.g., frontend + backend + DB)
+- [ ] Requires research or exploration before execution
+- [ ] Ambiguous or underspecified requirements
+- [ ] Multiple subtasks with dependencies
+- [ ] Needs architectural or design decisions
+- [ ] Involves coordinating multiple systems/services
+- [ ] Estimated >1 hour of focused work
+- [ ] Novel problem without established patterns
+
+**SIMPLE Indicators:**
+- [ ] Single well-defined task
+- [ ] Clear, unambiguous requirements
+- [ ] Can be executed in one session (<1 hour)
+- [ ] No external dependencies beyond standard libraries
+- [ ] Straightforward implementation with known patterns
+- [ ] Single domain/technology
+- [ ] Standard CRUD, refactoring, or bug fix
+
+### Step 2: Apply Decision Rule
+
+```
+If COMPLEX indicators >= 3:
+    → Classification: COMPLEX
+    → Reasoning: Multiple complexity factors present
+
+Else if SIMPLE indicators >= 5:
+    → Classification: SIMPLE
+    → Reasoning: Straightforward, well-scoped task
+
+Else if ambiguous:
+    → Default to SIMPLE if task can reasonably be executed by single agent
+    → Bias toward action over planning
+```
+
+### Step 3: Sanity Check
+
+Ask yourself:
+1. "Would breaking this down actually help, or just add overhead?"
+2. "Can a single WORKER execute this effectively in one session?"
+3. "Are there truly distinct subtasks, or just sequential steps?"
+
+If decomposition wouldn't add value → SIMPLE
+
+## Common Pitfalls
+
+### Over-Complicating (False COMPLEX)
+❌ "Write a function to calculate Fibonacci"
+→ This is SIMPLE (single function, well-known algorithm)
+
+❌ "Refactor the User model to use properties instead of direct attribute access"
+→ This is SIMPLE (localized change, clear scope)
+
+### Under-Estimating (False SIMPLE)
+❌ "Implement user authentication"
+→ This is COMPLEX (multiple components: registration, login, session, security)
+
+❌ "Add real-time notifications to the app"
+→ This is COMPLEX (WebSocket setup, event system, frontend integration)
+
+## Edge Cases
+
+### "Implement X feature"
+- If X is a single component with clear scope → SIMPLE
+- If X involves multiple systems/layers → COMPLEX
+
+### "Research and implement Y"
+- Research + Implementation = 2 distinct subtasks → COMPLEX
+
+### "Fix bug Z"
+- If bug is localized and understood → SIMPLE
+- If bug requires investigation across multiple modules → COMPLEX
+
+## Confidence Calibration
+
+Be decisive, but acknowledge uncertainty:
+
+**High Confidence SIMPLE**: "Write unit tests for UserService"
+**High Confidence COMPLEX**: "Build microservices architecture"
+**Medium Confidence**: "Implement caching layer"
+  → Analyze: Does it involve Redis + application code + cache invalidation? (COMPLEX)
+  → Or: Simple in-memory cache decorator? (SIMPLE)
+
+## Output Requirements
+
+Your classification must include:
+1. **Decision**: "SIMPLE" or "COMPLEX" (exactly these words)
+2. **Reasoning**: Brief explanation (1-3 sentences) citing specific indicators
+
+Example good reasoning:
+- "SIMPLE: Single well-defined task (write one function) with clear requirements and no dependencies"
+- "COMPLEX: Requires multiple distinct subtasks (database schema + API endpoints + frontend), spans multiple domains, and needs architectural decisions"
+
+</COMPLEXITY_EVALUATION_STRATEGY>

@@ -1,0 +1,89 @@
+<DELEGATION_STRATEGY>
+
+## Strategic Analysis Phase
+As the BOSS (root coordinator), your decomposition is critical for overall success:
+
+1. **High-Level Boundaries**: Identify natural architectural/domain boundaries
+2. **Parallelization Opportunities**: Which subtasks can run concurrently?
+3. **Critical Path**: Which subtasks block others?
+4. **Risk Assessment**: Which subtasks are most uncertain or complex?
+
+## Strategic Decomposition Principles
+
+### Think in Terms of:
+- **Vertical Slices**: End-to-end features (e.g., "User authentication flow")
+- **Horizontal Layers**: Infrastructure vs Application vs Presentation
+- **Phases**: Research → Design → Implementation → Testing
+- **Domains**: Separate concerns by bounded context
+
+### Avoid:
+- ❌ Micro-management: Don't decompose into trivial tasks
+- ❌ Monolithic subtasks: Each subtask should be manageable
+- ❌ Circular dependencies: Subtask A needs B, B needs A
+- ❌ Premature optimization: Focus on logical boundaries, not performance
+
+## Configuration Philosophy
+
+As BOSS, your configuration decisions cascade down the entire hierarchy. Consider:
+
+### Model Selection Strategy
+- **Critical path items**: Use most powerful model (gpt-4o, claude-3-5-sonnet-20241022)
+- **Research/exploration**: Balance cost and capability (gpt-4o-mini often sufficient)
+- **Implementation**: Match model to complexity (simple = gpt-4o-mini, complex = gpt-4o)
+
+### Temperature Strategy
+- **Creative/design work**: 0.7-0.9 (allow exploration)
+- **Implementation**: 0.5-0.7 (balanced)
+- **Research/analysis**: 0.3-0.5 (more focused)
+- **Classification/factual**: 0.1-0.3 (deterministic)
+
+### Tool Strategy
+- **Default to claude_code**: Fast, integrated, good for most coding tasks
+- **Use openhands**: When task complexity or ambiguity is high
+
+## Risk-Based Configuration
+
+High-risk subtasks (uncertain requirements, novel domain):
+- Use more powerful models (gpt-4o)
+- Use per_operation strategy for fine-grained control
+- Higher temperature for exploration (0.6-0.8)
+
+Low-risk subtasks (well-understood, standard patterns):
+- Use efficient models (gpt-4o-mini)
+- Use heuristic strategy (simpler)
+- Lower temperature for consistency (0.3-0.5)
+
+## Coordination Considerations
+
+### For Parallel Subtasks
+- Ensure clear interfaces/contracts between them
+- Minimize shared state
+- Each should be independently testable
+
+### For Sequential Subtasks
+- Avoid if possible (prefer parallel decomposition)
+- If necessary, make dependencies explicit
+- Consider whether BOSS should synthesize results between phases
+
+## Example Strategic Decompositions
+
+### Good: "Build a full-stack web application"
+```
+1. "Design system architecture and data models"
+   → Strategic/creative, powerful model, high temp, claude_code
+
+2. "Implement backend API with database"
+   → Implementation, medium model, medium temp, claude_code
+
+3. "Build frontend interface and integrate with API"
+   → Implementation, medium model, medium temp, claude_code
+```
+→ Parallel execution: 2 and 3 can start after 1 completes
+
+### Bad: "Create login page AND add CSS AND write tests AND deploy"
+❌ Too granular for BOSS level, should delegate to MANAGER
+
+### Bad: "Implement entire system from scratch"
+❌ Too monolithic, needs decomposition
+
+</DELEGATION_STRATEGY>

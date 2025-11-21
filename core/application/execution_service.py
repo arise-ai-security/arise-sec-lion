@@ -16,6 +16,7 @@ from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import ChildSpawned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
+from core.domain.prompt_builder import PromptBuilder
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
@@ -36,6 +37,7 @@ class AgentExecutionService:
         event_store: Port for loading/saving domain events.
         llm_port: Port for LLM interactions (complexity evaluation, task analysis).
         worker_tool_port: Port for worker tool execution (e.g., Claude Code CLI).
+        prompt_builder: Service for building hierarchical prompts.
         model_config: Role-to-model mapping for agent configuration.
         max_retries: Maximum number of OCC retry attempts (default: 3).
         poll_interval: Interval in seconds for polling active agents (default: 0.5).
@@ -46,6 +48,7 @@ class AgentExecutionService:
         event_store: EventStorePort,
         llm_port: LLMPort,
         worker_tool_port: WorkerToolPort,
+        prompt_builder: PromptBuilder | None = None,
         model_config: dict[str, str] | None = None,
         max_retries: int = 3,
         poll_interval: float = 0.5,
@@ -56,6 +59,7 @@ class AgentExecutionService:
             event_store: Event store implementation for persistence.
             llm_port: LLM adapter for agent reasoning.
             worker_tool_port: Worker tool adapter for task execution.
+            prompt_builder: Prompt builder service. If None, creates default instance.
             model_config: Role-to-model mapping (keys: "boss", "manager", "worker", "pending").
                          If None, uses default gpt-4o-mini for all roles.
             max_retries: Maximum OCC retry attempts (default: 3).
@@ -64,6 +68,7 @@ class AgentExecutionService:
         self.event_store = event_store
         self.llm_port = llm_port
         self.worker_tool_port = worker_tool_port
+        self.prompt_builder = prompt_builder or PromptBuilder()
         self.max_retries = max_retries
         self.poll_interval = poll_interval
 
@@ -187,11 +192,11 @@ class AgentExecutionService:
         # Dispatch based on role
         if agent.role == AgentRole.PENDING:
             # Child agent needs to evaluate task complexity
-            await agent.evaluate_complexity(self.llm_port)
+            await agent.evaluate_complexity(self.llm_port, self.prompt_builder)
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
             # Manager-type agent needs to decompose task into subtasks
-            await agent.evaluate_task(self.llm_port)
+            await agent.evaluate_task(self.llm_port, self.prompt_builder)
 
         elif agent.role == AgentRole.WORKER:
             # Worker agent needs to execute task using tools

@@ -28,7 +28,7 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.prompt_loader import render_prompt
+from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
@@ -196,7 +196,7 @@ class AgentSession:
         self._apply(task_event)
         self._changes.append(task_event)
 
-    async def evaluate_complexity(self, llm_port: LLMPort) -> None:
+    async def evaluate_complexity(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
         """Evaluate task complexity and determine agent role.
 
         Child agents (spawned with role=PENDING) use this method to determine
@@ -214,6 +214,7 @@ class AgentSession:
 
         Args:
             llm_port: LLM port to use for complexity evaluation.
+            prompt_builder: PromptBuilder service for hierarchical prompt construction.
         """
         # Preconditions: Fail fast if called incorrectly
         assert self.role == AgentRole.PENDING, (
@@ -224,10 +225,11 @@ class AgentSession:
         )
         assert self.task_description, "evaluate_complexity requires assigned task"
 
-        # Construct prompt from Jinja2 template
-        prompt = render_prompt(
-            "child/complexity_evaluation.j2",
+        # Build hierarchical prompt (System + Strategy + Task + Output Format)
+        prompt = prompt_builder.build_complexity_evaluation_prompt(
             task_description=self.task_description,
+            agent_id=self.session_id,
+            parent_task=None,  # TODO: Pass parent context if available
         )
 
         # Resolve operation-specific config using strategy-agnostic resolver
@@ -273,7 +275,7 @@ class AgentSession:
         self._apply(complexity_event)
         self._changes.append(complexity_event)
 
-    async def evaluate_task(self, llm_port: LLMPort) -> None:
+    async def evaluate_task(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
         """Evaluate task and decompose into subtasks.
 
         Uses an LLM to analyze the task and break it down into subtasks.
@@ -293,6 +295,7 @@ class AgentSession:
 
         Args:
             llm_port: LLM port to use for task decomposition.
+            prompt_builder: PromptBuilder service for hierarchical prompt construction.
         """
         # Preconditions: Fail fast if called on wrong agent type/status
         assert self.role in (AgentRole.BOSS, AgentRole.MANAGER), (
@@ -302,11 +305,20 @@ class AgentSession:
             f"evaluate_task requires ANALYZING status, got {self.status}"
         )
 
-        # Construct prompt from Jinja2 template
-        prompt = render_prompt(
-            "manager/task_decomposition.j2",
-            task_description=self.task_description,
-        )
+        # Build hierarchical prompt based on role (BOSS or MANAGER)
+        if self.role == AgentRole.BOSS:
+            prompt = prompt_builder.build_boss_delegation_prompt(
+                task_description=self.task_description,
+                agent_id=self.session_id,
+                parent_task=None,  # BOSS is root, no parent
+            )
+        else:  # MANAGER
+            prompt = prompt_builder.build_manager_decomposition_prompt(
+                task_description=self.task_description,
+                agent_id=self.session_id,
+                agent_role="MANAGER",
+                parent_task=None,  # TODO: Pass parent context if available
+            )
 
         # Resolve operation-specific config using strategy-agnostic resolver
         llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")

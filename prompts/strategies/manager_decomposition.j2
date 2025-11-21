@@ -1,0 +1,107 @@
+<DECOMPOSITION_STRATEGY>
+
+## Analysis Phase
+Before decomposition, analyze:
+1. **Task Nature**: Research? Implementation? Refactoring? Testing?
+2. **Complexity Indicators**:
+   - Multiple domains (backend + frontend + database + infrastructure)
+   - External dependencies (APIs, third-party services)
+   - Ambiguous requirements needing clarification
+   - Multi-step workflows with sequential dependencies
+3. **Resource Requirements**: Which models/tools are optimal for each subtask?
+
+## Decomposition Heuristics
+
+### Good Subtask Characteristics
+- **Independent**: Can be executed without waiting for other subtasks to complete
+- **Concrete**: Has clear, measurable outputs and success criteria
+- **Scoped**: Completable by a single WORKER or sub-MANAGER agent
+- **Testable**: Success can be objectively verified
+- **Atomic**: Represents a coherent unit of work
+
+### Avoid These Anti-Patterns
+- ❌ Sequential dependencies (Subtask 2 must wait for Subtask 1 to complete)
+- ❌ Vague goals ("Improve the system", "Make it better")
+- ❌ Over-granular tasks (10+ subtasks for simple work)
+- ❌ Duplicate work between subtasks
+- ❌ Single subtask that does everything (defeats purpose of decomposition)
+
+### Optimal Decomposition Count
+- **2 subtasks**: Task naturally divides into two distinct parts
+- **3 subtasks**: Task has clear beginning/middle/end or research/implementation/testing
+- **Avoid 1 subtask**: If only 1 subtask, the parent should be a WORKER instead
+- **Avoid 4+**: Over-decomposition adds coordination overhead
+
+## Configuration Decision Tree
+
+```
+Subtask Analysis:
+│
+├─ Is it primarily research/documentation/analysis?
+│  └─ YES → Use cheaper model (gpt-4o-mini), low temp (0.3), tool: claude_code
+│
+├─ Is it creative/generative (design, brainstorming)?
+│  └─ YES → Use powerful model (gpt-4o), higher temp (0.7-0.9), tool: claude_code
+│
+├─ Is it deterministic/factual (data processing, refactoring)?
+│  └─ YES → Use cheap model (gpt-4o-mini), very low temp (0.1-0.3), tool: claude_code
+│
+├─ Is it complex implementation with multiple tools?
+│  └─ YES → Use powerful model (gpt-4o), medium temp (0.5-0.7), tool: openhands
+│
+└─ Default → gpt-4o-mini, temp 0.5, tool: claude_code
+```
+
+## Tool Selection Guide
+
+### Use claude_code when:
+- Task is primarily coding (read/write/edit files)
+- Terminal commands are needed
+- Task is well-scoped and straightforward
+- Single-step or simple multi-step execution
+- Fast iteration is important
+
+### Use openhands when:
+- Task requires browser automation
+- Complex multi-tool workflows (git + docker + testing + deployment)
+- Task has ambiguous requirements needing exploration
+- Multiple external services must be coordinated
+
+## Config Strategy Selection
+
+### per_operation (Most Control)
+Use when child might become MANAGER and you want fine-grained control:
+- Specify different models for complexity_evaluation vs task_decomposition
+- Example: Cheap model for complexity check, powerful model for decomposition
+
+### heuristic (Simplest)
+Use when child will likely be WORKER or subtask is straightforward:
+- One base config, agent applies domain rules automatically
+- Complexity eval uses lower temp/tokens automatically
+
+### hybrid (Balanced)
+Use when you want to set base config but override specific operations:
+- Base: gpt-4o, temp 0.7
+- Override complexity_evaluation: temp 0.3 (more deterministic)
+
+## Example Decompositions
+
+### Good: "Implement user authentication system"
+```
+1. "Research and select authentication library (OAuth2/JWT)"
+   → Research task, cheap model, low temp
+
+2. "Implement user registration with email verification"
+   → Implementation, medium model, medium temp
+
+3. "Add login/logout endpoints with session management"
+   → Implementation, medium model, medium temp
+```
+
+### Bad: "Build the entire backend"
+❌ Too vague, needs more specific decomposition
+
+### Bad: "Set up database AND implement auth AND write tests AND deploy"
+❌ Too many subtasks (4), should be decomposed differently
+
+</DECOMPOSITION_STRATEGY>

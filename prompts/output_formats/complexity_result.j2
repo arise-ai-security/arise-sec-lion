@@ -1,0 +1,61 @@
+<OUTPUT_FORMAT>
+
+Return ONLY valid JSON matching this exact schema:
+
+{
+  "complexity": "simple" | "complex",
+  "reasoning": "string (min 20 chars, max 500 chars)"
+}
+
+**CRITICAL RULES**:
+1. Response must be PURE JSON (no markdown, no code blocks, no commentary)
+2. `complexity` field must be EXACTLY "simple" or "complex" (lowercase)
+3. `reasoning` field must explain your classification with specific task characteristics
+4. No additional fields or text outside the JSON object
+
+**Example Valid Outputs**:
+
+```json
+{
+  "complexity": "simple",
+  "reasoning": "Single well-defined task (write one function) with clear requirements and no external dependencies. Can be completed in one session with straightforward implementation."
+}
+```
+
+```json
+{
+  "complexity": "complex",
+  "reasoning": "Task requires multiple distinct subtasks: database schema design, API endpoint implementation, and frontend integration. Spans multiple domains and requires architectural decisions."
+}
+```
+
+**Invalid Outputs** (DO NOT DO THIS):
+
+❌ Adding markdown:
+```json
+{
+  "complexity": "simple",
+  "reasoning": "..."
+}
+```
+
+❌ Adding commentary:
+Here's my analysis:
+{
+  "complexity": "complex",
+  "reasoning": "..."
+}
+
+❌ Wrong case:
+{
+  "complexity": "Simple",  # Must be lowercase
+  "reasoning": "..."
+}
+
+❌ Wrong values:
+{
+  "complexity": "moderate",  # Must be "simple" or "complex"
+  "reasoning": "..."
+}
+
+</OUTPUT_FORMAT>
