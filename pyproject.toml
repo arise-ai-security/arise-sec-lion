@@ -20,3 +20,18 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "ruff>=0.14.5",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+    "core/domain/tests",
+    "core/application/tests",
+    "infrastructure/tests",
+    "presentation/tests",
+    "bootstrap/tests",
+]
+markers = [
+    "e2e: end-to-end tests (require full infrastructure)",
+    "integration: integration tests (require external services)",
+]
+addopts = "-v --tb=short"

@@ -66,8 +66,18 @@ fixable = ["ALL"]
 unfixable = []
 
 [lint.per-file-ignores]
-# Tests can have additional flexibility
-"tests/**/*.py" = [
+# Tests can have additional flexibility (matches layer-based test structure)
+"**/tests/*.py" = [
+    "S101",    # Allow assert in tests
+    "ANN",     # Don't require type hints in tests
+    "PLR2004", # Allow magic values in tests
+]
+"**/tests/test_*.py" = [
+    "S101",    # Allow assert in tests
+    "ANN",     # Don't require type hints in tests
+    "PLR2004", # Allow magic values in tests
+]
+"**/tests/conftest.py" = [
     "S101",    # Allow assert in tests
     "ANN",     # Don't require type hints in tests
     "PLR2004", # Allow magic values in tests
