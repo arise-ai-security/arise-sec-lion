@@ -426,8 +426,9 @@ JSON format:
 
         print(f"  Task queue size: {len(root.task_queue)}")
 
-        # Save events
-        version = root.version
+        # Save events using current event count for OCC
+        existing = await event_store.get_events(root_session_id)
+        version = len(existing)
         for event in root.events:
             await event_store.append(event, expected_version=version)
             version += 1
@@ -478,19 +479,21 @@ JSON format:
         print("\n--- Step 5: Subordinate Execution (Simulated) ---")
 
         # In real scenario, subordinates would execute and report back
-        # For this test, we simulate: vim fails, vi succeeds, nano terminated
+        # For this test, follow the example workflow numbers:
+        # - All models are gpt-4o
+        # - vi succeeds, both other siblings are terminated without spending budget
 
-        # vim subordinate: tries to use vim, but budget depletes trying to install
+        # vim subordinate: terminated without spending (not available on machine)
         vim_sub_id = UUID(subordinate_configs[0]["child_id"])
-        vim_remaining = 0.0  # Budget depleted
-        print(f"  vim ({str(vim_sub_id)[:8]}): DEPLETED (remaining: {vim_remaining})")
+        vim_remaining = 111.0  # Full budget remaining
+        print(f"  vim ({str(vim_sub_id)[:8]}): TERMINATED (remaining: {vim_remaining})")
 
-        # vi subordinate: succeeds
+        # vi subordinate: succeeds with full remaining budget
         vi_sub_id = UUID(subordinate_configs[1]["child_id"])
-        vi_remaining = 80.0  # Used some budget, 80 remaining of 111
+        vi_remaining = 111.0  # Full remaining of 111
         print(f"  vi ({str(vi_sub_id)[:8]}): SUCCESS (remaining: {vi_remaining})")
 
-        # nano subordinate: terminated early
+        # nano subordinate: terminated early without spending
         nano_sub_id = UUID(subordinate_configs[2]["child_id"])
         nano_remaining = 111.0  # Full budget remaining (terminated early)
         print(f"  nano ({str(nano_sub_id)[:8]}): TERMINATED (remaining: {nano_remaining})")
@@ -504,9 +507,9 @@ JSON format:
         reward_ratio = 1.2
         neutral_ratio = 1.0
 
-        vim_recollected = vim_remaining * neutral_ratio  # 0 (depleted)
-        vi_recollected = vi_remaining * reward_ratio  # 80 * 1.2 = 96
-        nano_recollected = nano_remaining * neutral_ratio  # 111 * 1.0 = 111
+        vim_recollected = vim_remaining * neutral_ratio   # 111 * 1.0 = 111
+        vi_recollected = vi_remaining * reward_ratio      # 111 * 1.2 = 133.2
+        nano_recollected = nano_remaining * neutral_ratio # 111 * 1.0 = 111
 
         total_recollected = vim_recollected + vi_recollected + nano_recollected
 
@@ -528,10 +531,10 @@ JSON format:
 
         print(f"\n  Root budget after recollection: {root.current_budget}")
 
-        # Verify budget calculation
+        # Verify budget calculation against the example workflow:
         # Initial: 1000
         # After allocation: 1000 - 333 = 667
-        # After recollection: 667 + 96 + 111 = 874
+        # After recollection: 667 + (111*1.2) + (111 + 111) = 1022.2
         expected_budget = initial_budget - subtask_budget + total_recollected
         assert abs(root.current_budget - expected_budget) < 0.01, \
             f"Budget mismatch: {root.current_budget} != {expected_budget}"
@@ -550,8 +553,9 @@ JSON format:
         if next_task:
             print(f"\n  Next task to process: {next_task.description}")
 
-        # Save all events
-        version = root.version
+        # Save all events using current event count for OCC
+        existing = await event_store.get_events(root_session_id)
+        version = len(existing)
         for event in root.events:
             await event_store.append(event, expected_version=version)
             version += 1
