@@ -345,7 +345,7 @@ arise-sec-lion/
                                      │ spawns children
                                      ▼
                     ┌─────────────────────────────────────────┐
-                    │              PENDING                     │
+                    │              PENDING                    │
                     │  - Evaluates task complexity via LLM    │
                     │  - Determines: SIMPLE or COMPLEX?       │
                     └────────────────┬────────────────────────┘

@@ -16,6 +16,8 @@ from core.domain.agent_config import AgentConfig
 from core.domain.config_resolver import ConfigResolver
 from core.domain.events import (
     AgentCreated,
+    BudgetAdjusted,
+    BudgetAllocated,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -24,12 +26,15 @@ from core.domain.events import (
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
+    TaskDequeued,
+    TaskEnqueued,
     ThoughtCaptured,
     WorkCompleted,
     WorkFailed,
 )
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser
+from core.domain.subtask import Subtask
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 
@@ -94,6 +99,14 @@ class AgentSession:
         - Events are applied via _apply() method
         - State can be reconstructed by replaying events via load_from_history()
 
+    Agent Node Structure:
+        - Agent Model: Configuration containing LLM model name and parameters
+        - Current Budget: Numeric resource allocation for task execution
+        - Objective: Task description assigned to this agent
+        - Task Queue: FIFO queue of subtasks to be processed
+        - Supervisor Node: Reference to parent agent (parent_id)
+        - Subordinate Nodes: List of child agents (child_ids)
+
     Attributes:
         session_id: Unique identifier for this agent session.
         role: The hierarchical role (BOSS, MANAGER, or WORKER).
@@ -103,7 +116,9 @@ class AgentSession:
         task_description: The task assigned to this agent.
         result: The final result/output when status is COMPLETED.
         error_message: Error details when status is FAILED.
-        config: Configuration for this agent.
+        config: Configuration for this agent (LLM model and parameters).
+        current_budget: Numeric resource allocation for this agent.
+        task_queue: FIFO queue of Subtask objects to be processed.
         version: Event stream version (for Optimistic Concurrency Control).
     """
 
@@ -661,6 +676,48 @@ class AgentSession:
         self.role = AgentRole(event.determined_role)
         self.version += 1
 
+    @_apply.register
+    def _(self, event: BudgetAllocated) -> None:
+        """Apply BudgetAllocated event to set initial budget.
+
+        Args:
+            event: BudgetAllocated event with amount and source.
+        """
+        self.current_budget = event.amount
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: BudgetAdjusted) -> None:
+        """Apply BudgetAdjusted event to update budget balance.
+
+        Args:
+            event: BudgetAdjusted event with adjustment and new balance.
+        """
+        self.current_budget = event.new_balance
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: TaskEnqueued) -> None:
+        """Apply TaskEnqueued event to add subtask to queue.
+
+        Args:
+            event: TaskEnqueued event with subtask.
+        """
+        self.task_queue.append(event.subtask)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: TaskDequeued) -> None:
+        """Apply TaskDequeued event to remove subtask from queue.
+
+        Args:
+            event: TaskDequeued event with subtask that was removed.
+        """
+        # Remove the first occurrence of the subtask from queue
+        if event.subtask in self.task_queue:
+            self.task_queue.remove(event.subtask)
+        self.version += 1
+
     def _initialize_defaults(self, session_id: UUID) -> None:
         """Initialize all instance attributes to default values.
 
@@ -677,6 +734,8 @@ class AgentSession:
         self.result: str | None = None
         self.error_message: str | None = None
         self.config: AgentConfig  # Type-safe config (deserialized from events)
+        self.current_budget: float = 0.0  # Resource allocation
+        self.task_queue: list[Subtask] = []  # FIFO queue of subtasks
         self.version: int = 0
         self._changes: list[DomainEvent] = []
         self._sequence: int = 0
@@ -768,3 +827,110 @@ class AgentSession:
         )
         self._apply(failed_event)
         self._changes.append(failed_event)
+
+    def allocate_budget(self, amount: float, source: str = "initial") -> None:
+        """Allocate budget to this agent.
+
+        Budget represents the numeric resource allocation that an agent can use
+        to perform its tasks. This method is typically called when creating a
+        new agent or when a parent allocates resources to a child.
+
+        Args:
+            amount: The budget amount to allocate (must be positive).
+            source: Source of the budget allocation (e.g., "initial", "parent", "reward").
+
+        Raises:
+            ValueError: If amount is negative.
+        """
+        if amount < 0:
+            raise ValueError(f"Budget amount must be non-negative, got {amount}")
+
+        budget_event = BudgetAllocated(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            amount=amount,
+            source=source,
+        )
+        self._apply(budget_event)
+        self._changes.append(budget_event)
+
+    def adjust_budget(self, adjustment: float, reason: str) -> None:
+        """Adjust the agent's budget by a positive or negative amount.
+
+        This method is used by the reward mechanism to increase budget when
+        subordinates succeed or decrease budget when subordinates fail.
+
+        Args:
+            adjustment: Amount to adjust (positive for increase, negative for decrease).
+            reason: Explanation for the budget adjustment.
+
+        Note:
+            Budget can go negative if penalties exceed current budget.
+            This is allowed to track "debt" or over-allocation scenarios.
+        """
+        new_balance = self.current_budget + adjustment
+
+        adjustment_event = BudgetAdjusted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            adjustment=adjustment,
+            reason=reason,
+            new_balance=new_balance,
+        )
+        self._apply(adjustment_event)
+        self._changes.append(adjustment_event)
+
+    def enqueue_task(self, subtask: Subtask) -> None:
+        """Add a subtask to the end of the task queue.
+
+        The task queue is a FIFO queue where agents store subtasks that need
+        to be processed. Tasks are dequeued in order for execution.
+
+        Args:
+            subtask: The Subtask to add to the queue.
+        """
+        enqueue_event = TaskEnqueued(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask=subtask,
+        )
+        self._apply(enqueue_event)
+        self._changes.append(enqueue_event)
+
+    def dequeue_task(self) -> Subtask | None:
+        """Remove and return the next task from the task queue.
+
+        Returns:
+            The next Subtask in the queue, or None if queue is empty.
+        """
+        if not self.task_queue:
+            return None
+
+        subtask = self.task_queue[0]
+        dequeue_event = TaskDequeued(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask=subtask,
+        )
+        self._apply(dequeue_event)
+        self._changes.append(dequeue_event)
+
+        return subtask
+
+    def peek_next_task(self) -> Subtask | None:
+        """Look at the next task in the queue without removing it.
+
+        Returns:
+            The next Subtask in the queue, or None if queue is empty.
+        """
+        if not self.task_queue:
+            return None
+        return self.task_queue[0]
+
+    def has_pending_tasks(self) -> bool:
+        """Check if there are tasks remaining in the queue.
+
+        Returns:
+            True if task_queue is not empty, False otherwise.
+        """
+        return len(self.task_queue) > 0

@@ -195,3 +195,64 @@ class ComplexityEvaluated(DomainEvent):
     complexity: str  # "simple" or "complex"
     determined_role: str  # "worker" or "manager"
     reasoning: str = ""
+
+
+class BudgetAllocated(DomainEvent):
+    """Event raised when budget is allocated to an agent.
+
+    Budget is the numeric resource allocation that an agent can use to perform its tasks.
+    Initial budget is typically set when the agent is created or when a parent allocates
+    resources to a child agent.
+
+    Attributes:
+        amount: The budget amount allocated to this agent.
+        source: Source of the budget allocation (e.g., "initial", "parent", "reward").
+    """
+
+    amount: float
+    source: str = "initial"
+
+
+class BudgetAdjusted(DomainEvent):
+    """Event raised when an agent's budget is adjusted.
+
+    Budget can be adjusted based on the success or failure of subordinate agents
+    (reward mechanism) or other factors. Positive adjustments increase budget,
+    negative adjustments decrease it.
+
+    Attributes:
+        adjustment: The amount to adjust (positive for increase, negative for decrease).
+        reason: Explanation for the budget adjustment.
+        new_balance: The new budget balance after adjustment.
+    """
+
+    adjustment: float
+    reason: str
+    new_balance: float
+
+
+class TaskEnqueued(DomainEvent):
+    """Event raised when a subtask is added to the agent's task queue.
+
+    The task queue is a FIFO queue of subtasks that the agent needs to process.
+    Each subtask is either executed directly (atomic task) or delegated to
+    subordinate agents (composite task).
+
+    Attributes:
+        subtask: The Subtask value object being added to the queue.
+    """
+
+    subtask: Subtask
+
+
+class TaskDequeued(DomainEvent):
+    """Event raised when a subtask is removed from the agent's task queue for processing.
+
+    When an agent is ready to work on the next task, it dequeues the first
+    subtask from its task queue and begins processing.
+
+    Attributes:
+        subtask: The Subtask value object being dequeued.
+    """
+
+    subtask: Subtask
