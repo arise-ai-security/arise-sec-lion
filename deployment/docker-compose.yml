@@ -1,0 +1,62 @@
+# =============================================================================
+# Development Docker Compose - Arise Multi-Agent System
+# =============================================================================
+# Usage:
+#   cp .env.example .env  # Configure your settings
+#   docker compose up -d  # Start services
+#   docker compose logs -f app  # View app logs
+
+services:
+  # ---------------------------------------------------------------------------
+  # Application Service
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: development
+    container_name: arise-app
+    volumes:
+      - ..:/app  # Mount source for hot reload
+      - /app/.venv  # Exclude venv from mount
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    networks:
+      - arise-network
+    # Run the main application
+    command: python main.py "Your task description here"
+    # Or keep container running for manual execution:
+    # command: sleep infinity
+    stdin_open: true
+    tty: true
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: arise-db
+    env_file: .env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arise-network
+
+networks:
+  arise-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

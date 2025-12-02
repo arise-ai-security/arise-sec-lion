@@ -1,0 +1,31 @@
+# =============================================================================
+# Test Docker Compose - Arise Multi-Agent System
+# =============================================================================
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   TEST_DB_URL="postgresql://testuser:testpass@localhost:5433/testdb" uv run pytest
+
+services:
+  test-db:
+    image: postgres:16-alpine
+    container_name: arise-test-db
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: testdb
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - test_postgres_data:/var/lib/postgresql/data
+      - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # Tmpfs for faster tests (data not persisted)
+    tmpfs:
+      - /var/lib/postgresql/data
+
+volumes:
+  test_postgres_data:
