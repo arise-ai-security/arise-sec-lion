@@ -600,3 +600,174 @@ class TestBudgetCalculations:
 
         # 667 + 111 + 133.2 + 111 = 1022.2
         assert abs(final_budget - 1022.2) < 0.01
+
+
+class TestFlowchartRewardMechanism:
+    """Test the refined reward mechanism per the flowchart semantics.
+
+    Per the flowchart:
+    - SUCCESS: Supervisor budget += remaining + (reward_ratio * allocated)
+    - FAILURE: Supervisor budget += remaining - (penalty_ratio * allocated)
+
+    Default heuristic ratios (placeholders to be tuned):
+    - reward_ratio: 0.2 (gain 20% of allocated budget on success)
+    - penalty_ratio: 0.1 (lose 10% of allocated budget on failure)
+    - termination_ratio: 0.0 (no reward/penalty for terminated siblings)
+    """
+
+    def test_flowchart_success_scenario(self):
+        """Test SUCCESS: supervisor gains remaining + bonus.
+
+        Scenario:
+        - Supervisor S has budget 1000
+        - Allocates 333 to subordinate for task Y2
+        - Subordinate succeeds with 200 remaining
+        - S gets back: 200 + (0.2 * 333) = 200 + 66.6 = 266.6
+        - Final budget: 667 + 266.6 = 933.6
+        """
+        initial_budget = 1000.0
+        allocated = 333.0
+        remaining = 200.0
+        reward_ratio = 0.2
+
+        after_allocation = initial_budget - allocated  # 667
+        recollected = remaining + (reward_ratio * allocated)  # 200 + 66.6 = 266.6
+        final_budget = after_allocation + recollected  # 933.6
+
+        assert abs(final_budget - 933.6) < 0.01
+
+    def test_flowchart_failure_scenario(self):
+        """Test FAILURE: supervisor gets remaining minus penalty.
+
+        Scenario:
+        - Supervisor S has budget 1000
+        - Allocates 333 to subordinate for task Y2
+        - Subordinate fails with 100 remaining
+        - S gets back: 100 - (0.1 * 333) = 100 - 33.3 = 66.7
+        - Final budget: 667 + 66.7 = 733.7
+        """
+        initial_budget = 1000.0
+        allocated = 333.0
+        remaining = 100.0
+        penalty_ratio = 0.1
+
+        after_allocation = initial_budget - allocated  # 667
+        recollected = remaining - (penalty_ratio * allocated)  # 100 - 33.3 = 66.7
+        final_budget = after_allocation + recollected  # 733.7
+
+        assert abs(final_budget - 733.7) < 0.01
+
+    def test_flowchart_failure_depleted_budget(self):
+        """Test FAILURE when child depleted budget causes net loss.
+
+        Scenario:
+        - Supervisor S has budget 1000
+        - Allocates 333 to subordinate
+        - Subordinate fails with 0 remaining (depleted)
+        - S gets back: 0 - (0.1 * 333) = -33.3
+        - Final budget: 667 + (-33.3) = 633.7
+        """
+        initial_budget = 1000.0
+        allocated = 333.0
+        remaining = 0.0
+        penalty_ratio = 0.1
+
+        after_allocation = initial_budget - allocated  # 667
+        recollected = remaining - (penalty_ratio * allocated)  # 0 - 33.3 = -33.3
+        final_budget = after_allocation + recollected  # 633.7
+
+        assert abs(recollected - (-33.3)) < 0.01
+        assert abs(final_budget - 633.7) < 0.01
+
+    def test_flowchart_budget_depletion_ends_lifecycle(self):
+        """Test Budget <= 0 → END of Supervisor Node S Lifecycle.
+
+        Scenario:
+        - Supervisor S has budget 100
+        - Allocates all 100 to subordinate
+        - Subordinate fails with 0 remaining
+        - S gets back: 0 - (0.1 * 100) = -10
+        - Final budget: 0 + (-10) = -10 → END
+        """
+        initial_budget = 100.0
+        allocated = 100.0
+        remaining = 0.0
+        penalty_ratio = 0.1
+
+        after_allocation = initial_budget - allocated  # 0
+        recollected = remaining - (penalty_ratio * allocated)  # -10
+        final_budget = after_allocation + recollected  # -10
+
+        assert final_budget <= 0, "Budget depleted → END lifecycle"
+
+    def test_flowchart_multi_subordinate_success(self):
+        """Test multi-model strategy with one success.
+
+        Scenario:
+        - Supervisor allocates 333 split among 3 subordinates (111 each)
+        - Sub1 depleted (0 remaining), Sub2 succeeds (111 remaining), Sub3 terminated (111 remaining)
+        - Sub1: terminated, gets 0 + 0 = 0
+        - Sub2: succeeded, gets 111 + (0.2 * 111) = 111 + 22.2 = 133.2
+        - Sub3: terminated, gets 111 + 0 = 111
+        - Total recollected: 0 + 133.2 + 111 = 244.2
+        - Final: 1000 - 333 + 244.2 = 911.2
+        """
+        initial_budget = 1000.0
+        total_allocation = 333.0
+        per_subordinate = 111.0
+        reward_ratio = 0.2
+        termination_ratio = 0.0
+
+        # Sub1: terminated (depleted)
+        sub1_remaining = 0.0
+        sub1_recollected = sub1_remaining + (termination_ratio * per_subordinate)  # 0
+
+        # Sub2: succeeded
+        sub2_remaining = 111.0
+        sub2_recollected = sub2_remaining + (reward_ratio * per_subordinate)  # 133.2
+
+        # Sub3: terminated (sibling succeeded)
+        sub3_remaining = 111.0
+        sub3_recollected = sub3_remaining + (termination_ratio * per_subordinate)  # 111
+
+        after_allocation = initial_budget - total_allocation  # 667
+        total_recollected = sub1_recollected + sub2_recollected + sub3_recollected
+        final_budget = after_allocation + total_recollected
+
+        assert abs(total_recollected - 244.2) < 0.01
+        assert abs(final_budget - 911.2) < 0.01
+
+    def test_flowchart_all_subordinates_fail(self):
+        """Test scenario when all subordinates fail.
+
+        Scenario:
+        - Supervisor allocates 333 split among 3 subordinates (111 each)
+        - All fail with varying remaining budgets: 50, 30, 20
+        - Each gets penalty: remaining - (0.1 * 111)
+        - Sub1: 50 - 11.1 = 38.9
+        - Sub2: 30 - 11.1 = 18.9
+        - Sub3: 20 - 11.1 = 8.9
+        - Total recollected: 38.9 + 18.9 + 8.9 = 66.7
+        - Final: 667 + 66.7 = 733.7
+        """
+        initial_budget = 1000.0
+        total_allocation = 333.0
+        per_subordinate = 111.0
+        penalty_ratio = 0.1
+
+        sub1_remaining = 50.0
+        sub2_remaining = 30.0
+        sub3_remaining = 20.0
+
+        penalty_per_sub = penalty_ratio * per_subordinate  # 11.1
+
+        sub1_recollected = sub1_remaining - penalty_per_sub  # 38.9
+        sub2_recollected = sub2_remaining - penalty_per_sub  # 18.9
+        sub3_recollected = sub3_remaining - penalty_per_sub  # 8.9
+
+        after_allocation = initial_budget - total_allocation  # 667
+        total_recollected = sub1_recollected + sub2_recollected + sub3_recollected
+        final_budget = after_allocation + total_recollected
+
+        assert abs(total_recollected - 66.7) < 0.01
+        assert abs(final_budget - 733.7) < 0.01

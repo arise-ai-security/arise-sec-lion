@@ -1225,38 +1225,53 @@ class AgentSession:
     def recollect_budget_from_child(
         self,
         child_id: UUID,
-        original_allocation: float,
+        allocated_budget: float,
         remaining_budget: float,
         child_succeeded: bool,
-        reward_ratio: float = 1.2,
-        penalty_ratio: float = 0.0,
+        reward_ratio: float = 0.2,
+        penalty_ratio: float = 0.1,
     ) -> float:
         """Recollect budget from a completed child with reward/penalty applied.
 
-        When a child agent completes (success or failure), the supervisor recollects
-        the remaining budget with a ratio applied:
-        - Success: remaining_budget * reward_ratio (e.g., 1.2x)
-        - Failure: remaining_budget * penalty_ratio (e.g., 0.0)
+        Per the flowchart:
+        - SUCCESS: supervisor.budget += remaining_budget + (reward_ratio * allocated_budget)
+        - FAILURE: supervisor.budget += remaining_budget - (penalty_ratio * allocated_budget)
+
+        The remaining budget is always returned, then the reward/penalty is applied
+        as an additional adjustment based on the originally allocated budget.
+
+        Note: The reward_ratio and penalty_ratio are heuristics to be tuned.
+        Default values are placeholders:
+        - reward_ratio: 0.2 (gain 20% of allocated budget on success)
+        - penalty_ratio: 0.1 (lose 10% of allocated budget on failure)
 
         Args:
             child_id: The ID of the child agent.
-            original_allocation: The budget originally allocated to the child.
+            allocated_budget: The budget originally allocated to the child (X_Y2).
             remaining_budget: The child's remaining budget at completion.
             child_succeeded: Whether the child completed successfully.
-            reward_ratio: Multiplier for successful completion (default 1.2).
-            penalty_ratio: Multiplier for failed completion (default 0.0).
+            reward_ratio: Ratio of allocated_budget added on success (default 0.2).
+            penalty_ratio: Ratio of allocated_budget subtracted on failure (default 0.1).
 
         Returns:
-            The amount of budget recollected.
+            The net amount of budget change for the supervisor.
         """
-        ratio = reward_ratio if child_succeeded else penalty_ratio
-        amount_recollected = remaining_budget * ratio
+        if child_succeeded:
+            # Success: return remaining + bonus
+            bonus = reward_ratio * allocated_budget
+            amount_recollected = remaining_budget + bonus
+            ratio = reward_ratio
+        else:
+            # Failure: return remaining - penalty
+            penalty = penalty_ratio * allocated_budget
+            amount_recollected = remaining_budget - penalty
+            ratio = penalty_ratio
 
         recollect_event = BudgetRecollected(
             aggregate_id=self.session_id,
             sequence_number=self._next_sequence(),
             child_id=child_id,
-            original_allocation=original_allocation,
+            original_allocation=allocated_budget,
             remaining_budget=remaining_budget,
             ratio_applied=ratio,
             amount_recollected=amount_recollected,
