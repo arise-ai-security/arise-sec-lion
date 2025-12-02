@@ -13,13 +13,27 @@ import asyncio
 from uuid import UUID, uuid4
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
-from core.domain.events import ChildSpawned
+from core.domain.events import (
+    ChildSpawned,
+    SubordinatesSpawned,
+    VerifierSpawned,
+)
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
+from core.ports.reward_mechanism_port import RewardMechanismPort
+from core.ports.verification_heuristics_port import VerificationHeuristicsPort
 from core.ports.worker_port import WorkerToolPort
+
+
+# Default models for multi-model strategy (3 different models)
+DEFAULT_SUBORDINATE_MODELS = [
+    "claude-sonnet-4-5-20250514",  # Anthropic
+    "gemini-1.5-pro",  # Google
+    "gpt-4o",  # OpenAI
+]
 
 
 class AgentExecutionService:
@@ -32,13 +46,25 @@ class AgentExecutionService:
     - Handles concurrency conflicts with retry logic
     - Manages child agent lifecycle (creation and parent notifications)
     - Orchestrates the entire multi-agent system loop
+    - Implements Task Assignment Workflow with verification and retry
+
+    Task Assignment Workflow:
+    1. Pop first task from queue
+    2. Spawn 3 subordinates with different models (diversity for success)
+    3. Wait for first success (terminate others) or all failures
+    4. On success: trigger verification heuristics, recollect budget
+    5. On failure: decide to retry (re-insert revised task) or end lifecycle
+    6. If verification injected: add verification task to head of queue
 
     Attributes:
         event_store: Port for loading/saving domain events.
         llm_port: Port for LLM interactions (complexity evaluation, task analysis).
         worker_tool_port: Port for worker tool execution (e.g., Claude Code CLI).
         prompt_builder: Service for building hierarchical prompts.
+        reward_mechanism: Port for budget recollection ratio calculations.
+        verification_heuristics: Port for verification trigger decisions.
         model_config: Role-to-model mapping for agent configuration.
+        subordinate_models: List of models to use for parallel subordinates.
         max_retries: Maximum number of OCC retry attempts (default: 3).
         poll_interval: Interval in seconds for polling active agents (default: 0.5).
     """
@@ -49,7 +75,10 @@ class AgentExecutionService:
         llm_port: LLMPort,
         worker_tool_port: WorkerToolPort,
         prompt_builder: PromptBuilder | None = None,
+        reward_mechanism: RewardMechanismPort | None = None,
+        verification_heuristics: VerificationHeuristicsPort | None = None,
         model_config: dict[str, str] | None = None,
+        subordinate_models: list[str] | None = None,
         max_retries: int = 3,
         poll_interval: float = 0.5,
     ) -> None:
@@ -60,8 +89,12 @@ class AgentExecutionService:
             llm_port: LLM adapter for agent reasoning.
             worker_tool_port: Worker tool adapter for task execution.
             prompt_builder: Prompt builder service. If None, creates default instance.
+            reward_mechanism: Port for budget recollection. If None, uses defaults.
+            verification_heuristics: Port for verification decisions. If None, no verification.
             model_config: Role-to-model mapping (keys: "boss", "manager", "worker", "pending").
                          If None, uses default gpt-4o-mini for all roles.
+            subordinate_models: List of models for parallel subordinates.
+                               If None, uses DEFAULT_SUBORDINATE_MODELS.
             max_retries: Maximum OCC retry attempts (default: 3).
             poll_interval: Interval in seconds for polling active agents (default: 0.5).
         """
@@ -69,8 +102,13 @@ class AgentExecutionService:
         self.llm_port = llm_port
         self.worker_tool_port = worker_tool_port
         self.prompt_builder = prompt_builder or PromptBuilder()
+        self.reward_mechanism = reward_mechanism
+        self.verification_heuristics = verification_heuristics
         self.max_retries = max_retries
         self.poll_interval = poll_interval
+
+        # Set subordinate models for multi-model strategy
+        self.subordinate_models = subordinate_models or DEFAULT_SUBORDINATE_MODELS
 
         # Set default model_config if not provided
         if model_config is None:
@@ -246,6 +284,66 @@ class AgentExecutionService:
 
             # Clear uncommitted changes
             child.mark_changes_as_committed()
+
+        # Handle SubordinatesSpawned events (parallel subordinates for same subtask)
+        subordinate_events = [e for e in events if isinstance(e, SubordinatesSpawned)]
+
+        for sub_event in subordinate_events:
+            for config in sub_event.subordinate_configs:
+                if "child_id" not in config:
+                    continue
+
+                child_id = config["child_id"]
+                if isinstance(child_id, str):
+                    child_id = UUID(child_id)
+
+                child_config = config.get("config", {})
+                child_role = config.get("role", AgentRole.PENDING.value)
+
+                # Create new subordinate agent
+                child = AgentSession.create(
+                    session_id=child_id,
+                    role=AgentRole(child_role),
+                    config=child_config,
+                    parent_id=parent.session_id,
+                )
+
+                # Assign the subtask to the child
+                child.assign_task(sub_event.subtask.description)
+
+                # Allocate budget if specified
+                if "budget" in config:
+                    child.allocate_budget(config["budget"], source="parent")
+
+                # Persist child's creation events
+                for idx, child_evt in enumerate(child.events):
+                    await self.event_store.append(child_evt, expected_version=idx)
+
+                child.mark_changes_as_committed()
+
+        # Handle VerifierSpawned events
+        verifier_events = [e for e in events if isinstance(e, VerifierSpawned)]
+
+        for verifier_event in verifier_events:
+            # Create new verifier agent
+            verifier = AgentSession.create(
+                session_id=verifier_event.verifier_id,
+                role=AgentRole.PENDING,  # Verifier starts as PENDING
+                config=verifier_event.verifier_config,
+                parent_id=parent.session_id,
+            )
+
+            # Assign verification task
+            verification_task = (
+                f"Verify the following completed task: {verifier_event.target_subtask.description}"
+            )
+            verifier.assign_task(verification_task)
+
+            # Persist verifier's creation events
+            for idx, v_evt in enumerate(verifier.events):
+                await self.event_store.append(v_evt, expected_version=idx)
+
+            verifier.mark_changes_as_committed()
 
     async def _handle_parent_notification(self, agent: AgentSession) -> None:
         """Handle notifying parent when child agent completes.

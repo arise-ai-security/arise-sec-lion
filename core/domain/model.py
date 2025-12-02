@@ -16,19 +16,34 @@ from core.domain.agent_config import AgentConfig
 from core.domain.config_resolver import ConfigResolver
 from core.domain.events import (
     AgentCreated,
+    AgentTerminated,
+    AllChildrenFailed,
+    AllSubordinatesFailed,
     BudgetAdjusted,
     BudgetAllocated,
+    BudgetRecollected,
     ChildCompleted,
+    ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
     DomainEvent,
+    FirstSuccessRecorded,
     StatusChanged,
+    SubordinatesSpawned,
+    SubtaskRetried,
     SubtasksDefined,
+    SubtreeAborted,
     TaskAssigned,
     TaskDequeued,
     TaskEnqueued,
+    TaskReinjected,
+    TerminationReason,
     ThoughtCaptured,
+    VerificationCompleted,
+    VerificationHeuristicEvaluated,
+    VerificationInjected,
+    VerifierSpawned,
     WorkCompleted,
     WorkFailed,
 )
@@ -76,6 +91,8 @@ class AgentStatus(str, Enum):
         COMPLETED: Agent has successfully completed its task.
         FAILED: Agent encountered an error and cannot proceed.
         BLOCKED: Agent is blocked waiting for external input or resolution.
+        TERMINATED: Agent has been terminated (budget depleted, aborted, etc.).
+        VERIFYING: Agent is performing or awaiting verification of completed work.
     """
 
     PENDING = "pending"
@@ -85,6 +102,8 @@ class AgentStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     BLOCKED = "blocked"
+    TERMINATED = "terminated"
+    VERIFYING = "verifying"
 
 
 class AgentSession:
@@ -718,6 +737,189 @@ class AgentSession:
             self.task_queue.remove(event.subtask)
         self.version += 1
 
+    # ========================================================================
+    # Termination Event Handlers
+    # ========================================================================
+
+    @_apply.register
+    def _(self, event: AgentTerminated) -> None:
+        """Apply AgentTerminated event to mark agent as terminated.
+
+        Args:
+            event: AgentTerminated event with termination reason.
+        """
+        self.status = AgentStatus.TERMINATED
+        self.termination_reason = event.reason
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SubtreeAborted) -> None:
+        """Apply SubtreeAborted event (audit trail for subtree abortion).
+
+        Args:
+            event: SubtreeAborted event with affected child IDs.
+        """
+        # This event is primarily for audit trail
+        # Actual child termination is handled by execution service
+        self.version += 1
+
+    # ========================================================================
+    # Budget Recollection Event Handlers
+    # ========================================================================
+
+    @_apply.register
+    def _(self, event: BudgetRecollected) -> None:
+        """Apply BudgetRecollected event to update budget after child completion.
+
+        Args:
+            event: BudgetRecollected event with recollection details.
+        """
+        self.current_budget += event.amount_recollected
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ChildFailed) -> None:
+        """Apply ChildFailed event to track child failure.
+
+        Args:
+            event: ChildFailed event with failure details.
+        """
+        self.child_failures[event.child_id] = event.failure_reason
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: AllChildrenFailed) -> None:
+        """Apply AllChildrenFailed event (audit trail for total failure).
+
+        Args:
+            event: AllChildrenFailed event with penalty information.
+        """
+        # This event is for audit trail and analytics
+        self.version += 1
+
+    # ========================================================================
+    # Verification Event Handlers
+    # ========================================================================
+
+    @_apply.register
+    def _(self, event: VerificationInjected) -> None:
+        """Apply VerificationInjected event to track pending verification.
+
+        Args:
+            event: VerificationInjected event with verification target.
+        """
+        self.verification_pending.append(event.target_child_id)
+        self.status = AgentStatus.VERIFYING
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: VerifierSpawned) -> None:
+        """Apply VerifierSpawned event to track verifier agent.
+
+        Args:
+            event: VerifierSpawned event with verifier details.
+        """
+        self.child_ids.append(event.verifier_id)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: VerificationCompleted) -> None:
+        """Apply VerificationCompleted event to process verification result.
+
+        Args:
+            event: VerificationCompleted event with verification outcome.
+        """
+        if event.target_child_id in self.verification_pending:
+            self.verification_pending.remove(event.target_child_id)
+        import time
+        self.last_verification_time = time.time()
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: TaskReinjected) -> None:
+        """Apply TaskReinjected event to add task back to front of queue.
+
+        Args:
+            event: TaskReinjected event with task to redo.
+        """
+        # Insert at the front of the queue (priority redo)
+        self.task_queue.insert(0, event.subtask)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: VerificationHeuristicEvaluated) -> None:
+        """Apply VerificationHeuristicEvaluated event (audit trail only).
+
+        Args:
+            event: VerificationHeuristicEvaluated event with decision details.
+        """
+        # This event is for audit trail and tuning heuristics
+        self.version += 1
+
+    # ========================================================================
+    # Multi-Model Strategy Event Handlers
+    # ========================================================================
+
+    @_apply.register
+    def _(self, event: SubordinatesSpawned) -> None:
+        """Apply SubordinatesSpawned event to track parallel subordinates.
+
+        Args:
+            event: SubordinatesSpawned event with subordinate configurations.
+        """
+        # Track current subtask and its subordinates
+        self.current_subtask = event.subtask
+        self.current_subtask_subordinates = []
+
+        for config in event.subordinate_configs:
+            if "child_id" in config:
+                child_id = config["child_id"]
+                if isinstance(child_id, str):
+                    child_id = UUID(child_id)
+                self.child_ids.append(child_id)
+                self.current_subtask_subordinates.append(child_id)
+                if "budget" in config:
+                    self.child_budgets[child_id] = config["budget"]
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: FirstSuccessRecorded) -> None:
+        """Apply FirstSuccessRecorded event when first parallel child succeeds.
+
+        Args:
+            event: FirstSuccessRecorded event with winning child details.
+        """
+        # Record the winning result
+        self.child_results[event.winning_child_id] = event.result or event.method_used
+        # Update budget with recollected amounts
+        self.current_budget += event.budget_recollected_from_winner
+        self.current_budget += event.budget_recollected_from_siblings
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: AllSubordinatesFailed) -> None:
+        """Apply AllSubordinatesFailed event when all parallel children fail.
+
+        Args:
+            event: AllSubordinatesFailed event with failure details.
+        """
+        # Record all failures
+        for child_id in event.failed_child_ids:
+            reason = event.failure_reasons.get(str(child_id), "Unknown failure")
+            self.child_failures[child_id] = reason
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SubtaskRetried) -> None:
+        """Apply SubtaskRetried event to re-insert revised subtask to queue.
+
+        Args:
+            event: SubtaskRetried event with revised subtask.
+        """
+        # Insert revised subtask at the head of the queue
+        self.task_queue.insert(0, event.revised_subtask)
+        self.version += 1
+
     def _initialize_defaults(self, session_id: UUID) -> None:
         """Initialize all instance attributes to default values.
 
@@ -730,12 +932,22 @@ class AgentSession:
         self.parent_id: UUID | None = None
         self.child_ids: list[UUID] = []
         self.child_results: dict[UUID, str] = {}  # Track completed children
+        self.child_failures: dict[UUID, str] = {}  # Track failed children
+        self.child_budgets: dict[UUID, float] = {}  # Track budget allocated to each child
         self.task_description: str = ""
         self.result: str | None = None
         self.error_message: str | None = None
+        self.termination_reason: str | None = None  # Reason for termination if terminated
         self.config: AgentConfig  # Type-safe config (deserialized from events)
         self.current_budget: float = 0.0  # Resource allocation
+        self.initial_budget: float = 0.0  # Budget at allocation (for recollection calc)
         self.task_queue: list[Subtask] = []  # FIFO queue of subtasks
+        self.verification_pending: list[UUID] = []  # Child IDs awaiting verification
+        self.last_verification_time: float = 0.0  # Timestamp of last verification
+        # Track subordinates spawned for current subtask (for multi-model strategy)
+        self.current_subtask_subordinates: list[UUID] = []
+        self.current_subtask: Subtask | None = None
+        self.subtask_retry_counts: dict[str, int] = {}  # subtask.description -> retry count
         self.version: int = 0
         self._changes: list[DomainEvent] = []
         self._sequence: int = 0
@@ -793,9 +1005,13 @@ class AgentSession:
         """Check if the agent is in a terminal state.
 
         Returns:
-            True if status is COMPLETED or FAILED, False otherwise.
+            True if status is COMPLETED, FAILED, or TERMINATED.
         """
-        return self.status in (AgentStatus.COMPLETED, AgentStatus.FAILED)
+        return self.status in (
+            AgentStatus.COMPLETED,
+            AgentStatus.FAILED,
+            AgentStatus.TERMINATED,
+        )
 
     def is_leaf(self) -> bool:
         """Check if this agent is a leaf node (WORKER with no children).
@@ -934,3 +1150,491 @@ class AgentSession:
             True if task_queue is not empty, False otherwise.
         """
         return len(self.task_queue) > 0
+
+    # ========================================================================
+    # Termination Methods
+    # ========================================================================
+
+    def terminate(
+        self,
+        reason: str,
+        detail: str = "",
+        cascade: bool = False,
+    ) -> None:
+        """Terminate this agent.
+
+        Agent termination occurs in three main scenarios:
+        1. Budget Depletion: Agent's budget drops to zero or below
+        2. Objective Completion: Agent successfully completes and reports to supervisor
+        3. Failed Subtask: Agent fails a critical subtask and supervisor decides not to reassign
+
+        Args:
+            reason: The termination reason (use TerminationReason constants).
+            detail: Additional human-readable details about the termination.
+            cascade: Whether this termination should cascade to child agents.
+        """
+        terminated_event = AgentTerminated(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            reason=reason,
+            detail=detail,
+            final_budget=self.current_budget,
+            cascade=cascade,
+        )
+        self._apply(terminated_event)
+        self._changes.append(terminated_event)
+
+    def abort_subtree(self, child_ids: list[UUID], reason: str) -> None:
+        """Abort an entire subtree of child agents.
+
+        When a supervisor determines that a subtask cannot be completed,
+        it aborts the subtask and all agents in that subtree.
+
+        Args:
+            child_ids: List of child agent IDs to terminate.
+            reason: Why the subtree is being aborted.
+        """
+        abort_event = SubtreeAborted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            child_ids_to_terminate=child_ids,
+            reason=reason,
+        )
+        self._apply(abort_event)
+        self._changes.append(abort_event)
+
+    def check_budget_depletion(self) -> bool:
+        """Check if budget is depleted and terminate if so.
+
+        Returns:
+            True if agent was terminated due to budget depletion.
+        """
+        if self.current_budget <= 0:
+            self.terminate(
+                reason=TerminationReason.BUDGET_DEPLETED,
+                detail=f"Budget depleted: {self.current_budget}",
+                cascade=True,
+            )
+            return True
+        return False
+
+    # ========================================================================
+    # Budget Recollection Methods (Reward/Penalty Mechanism)
+    # ========================================================================
+
+    def recollect_budget_from_child(
+        self,
+        child_id: UUID,
+        original_allocation: float,
+        remaining_budget: float,
+        child_succeeded: bool,
+        reward_ratio: float = 1.2,
+        penalty_ratio: float = 0.0,
+    ) -> float:
+        """Recollect budget from a completed child with reward/penalty applied.
+
+        When a child agent completes (success or failure), the supervisor recollects
+        the remaining budget with a ratio applied:
+        - Success: remaining_budget * reward_ratio (e.g., 1.2x)
+        - Failure: remaining_budget * penalty_ratio (e.g., 0.0)
+
+        Args:
+            child_id: The ID of the child agent.
+            original_allocation: The budget originally allocated to the child.
+            remaining_budget: The child's remaining budget at completion.
+            child_succeeded: Whether the child completed successfully.
+            reward_ratio: Multiplier for successful completion (default 1.2).
+            penalty_ratio: Multiplier for failed completion (default 0.0).
+
+        Returns:
+            The amount of budget recollected.
+        """
+        ratio = reward_ratio if child_succeeded else penalty_ratio
+        amount_recollected = remaining_budget * ratio
+
+        recollect_event = BudgetRecollected(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            child_id=child_id,
+            original_allocation=original_allocation,
+            remaining_budget=remaining_budget,
+            ratio_applied=ratio,
+            amount_recollected=amount_recollected,
+            child_succeeded=child_succeeded,
+        )
+        self._apply(recollect_event)
+        self._changes.append(recollect_event)
+
+        return amount_recollected
+
+    def handle_child_failure(
+        self,
+        child_id: UUID,
+        failure_reason: str,
+        budget_at_failure: float,
+        retry_attempted: bool = False,
+    ) -> None:
+        """Handle a child agent's failure.
+
+        This is distinct from handle_child_update (success) and is used for
+        tracking failure analytics and determining penalty ratios.
+
+        Args:
+            child_id: UUID of the child agent that failed.
+            failure_reason: The reason for the failure.
+            budget_at_failure: The child's remaining budget when it failed.
+            retry_attempted: Whether a retry was attempted before recording failure.
+        """
+        assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
+
+        failed_event = ChildFailed(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            child_id=child_id,
+            failure_reason=failure_reason,
+            budget_at_failure=budget_at_failure,
+            retry_attempted=retry_attempted,
+        )
+        self._apply(failed_event)
+        self._changes.append(failed_event)
+
+    def record_all_children_failed(
+        self,
+        subtask_description: str,
+        child_ids: list[UUID],
+        penalty_ratio: float = 0.0,
+    ) -> None:
+        """Record that all children failed a subtask.
+
+        When all subordinate nodes fail, the supervisor creates a penalty on all.
+
+        Args:
+            subtask_description: Description of the failed subtask.
+            child_ids: List of child agent IDs that all failed.
+            penalty_ratio: The penalty ratio applied to budget recollection.
+        """
+        all_failed_event = AllChildrenFailed(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask_description=subtask_description,
+            child_ids=child_ids,
+            penalty_ratio=penalty_ratio,
+        )
+        self._apply(all_failed_event)
+        self._changes.append(all_failed_event)
+
+    # ========================================================================
+    # Verification Methods
+    # ========================================================================
+
+    def inject_verification_task(
+        self,
+        target_subtask: Subtask,
+        target_child_id: UUID,
+        injection_reason: str,
+        estimated_cost: float = 0.0,
+    ) -> None:
+        """Inject a verification task into the queue.
+
+        The supervisor injects verification tasks based on heuristics to validate
+        completed work and catch potential false negatives.
+
+        Args:
+            target_subtask: The subtask being verified (just completed).
+            target_child_id: The child that completed the subtask being verified.
+            injection_reason: Why this verification was injected.
+            estimated_cost: Expected budget cost for verification.
+        """
+        inject_event = VerificationInjected(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            target_subtask=target_subtask,
+            target_child_id=target_child_id,
+            injection_reason=injection_reason,
+            estimated_verification_cost=estimated_cost,
+        )
+        self._apply(inject_event)
+        self._changes.append(inject_event)
+
+    def spawn_verifier(
+        self,
+        verifier_id: UUID,
+        target_subtask: Subtask,
+        target_child_id: UUID,
+        verifier_config: dict[str, Any],
+    ) -> None:
+        """Spawn an independent verifier sub-agent.
+
+        The verifier agent is expected to be different from all original
+        subordinate nodes (often a more advanced model).
+
+        Args:
+            verifier_id: UUID for the new verifier agent.
+            target_subtask: The subtask being verified.
+            target_child_id: The child whose work is being verified.
+            verifier_config: Configuration for the verifier agent.
+        """
+        spawn_event = VerifierSpawned(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            verifier_id=verifier_id,
+            target_subtask=target_subtask,
+            target_child_id=target_child_id,
+            verifier_config=verifier_config,
+        )
+        self._apply(spawn_event)
+        self._changes.append(spawn_event)
+
+    def complete_verification(
+        self,
+        verifier_id: UUID,
+        target_subtask: Subtask,
+        target_child_id: UUID,
+        verification_passed: bool,
+        verification_report: str = "",
+        issues_found: list[str] | None = None,
+    ) -> None:
+        """Record completion of a verification task.
+
+        Args:
+            verifier_id: UUID of the verifier agent.
+            target_subtask: The subtask that was verified.
+            target_child_id: The child whose work was verified.
+            verification_passed: Whether the original work passed verification.
+            verification_report: Detailed report from the verifier.
+            issues_found: List of issues found during verification.
+        """
+        complete_event = VerificationCompleted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            verifier_id=verifier_id,
+            target_subtask=target_subtask,
+            target_child_id=target_child_id,
+            verification_passed=verification_passed,
+            verification_report=verification_report,
+            issues_found=issues_found or [],
+        )
+        self._apply(complete_event)
+        self._changes.append(complete_event)
+
+    def reinject_failed_task(
+        self,
+        subtask: Subtask,
+        verification_context: str,
+        original_child_id: UUID,
+        retry_count: int = 1,
+    ) -> None:
+        """Re-inject a task that failed verification for redo.
+
+        If the verifier reports that the previous task was not correctly finished,
+        the supervisor re-injects the same task with additional context.
+
+        Args:
+            subtask: The subtask being re-injected for redo.
+            verification_context: Context from the verifier to help redo.
+            original_child_id: The child that originally failed this task.
+            retry_count: Number of times this task has been reinjected.
+        """
+        reinject_event = TaskReinjected(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask=subtask,
+            verification_context=verification_context,
+            original_child_id=original_child_id,
+            retry_count=retry_count,
+        )
+        self._apply(reinject_event)
+        self._changes.append(reinject_event)
+
+    def record_verification_heuristic_evaluation(
+        self,
+        subtask_completed: Subtask,
+        child_id: UUID,
+        complexity_score: float,
+        subtree_size: int,
+        random_roll: float,
+        random_threshold: float,
+        time_since_last: float,
+        edits_count: int,
+        expected_edits_range: tuple[int, int],
+        suspicious: bool,
+        available_budget: float,
+        verification_decided: bool,
+        decision_reasoning: str,
+    ) -> None:
+        """Record the verification heuristic evaluation for audit trail.
+
+        This provides an audit trail for debugging and tuning the heuristics.
+
+        Args:
+            subtask_completed: The subtask that just completed.
+            child_id: The child that completed the subtask.
+            complexity_score: Estimated complexity of the subtask (0.0-1.0).
+            subtree_size: Number of agents in the subtree.
+            random_roll: Random value used for probability check (0.0-1.0).
+            random_threshold: Threshold for random verification injection.
+            time_since_last: Seconds since last verification task.
+            edits_count: Number of edits reported by the child.
+            expected_edits_range: Expected range of edits for task complexity.
+            suspicious: Whether the completion is flagged as suspicious.
+            available_budget: Budget available for verification.
+            verification_decided: Whether a verification task was injected.
+            decision_reasoning: Human-readable explanation of the decision.
+        """
+        heuristic_event = VerificationHeuristicEvaluated(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask_completed=subtask_completed,
+            child_id=child_id,
+            complexity_score=complexity_score,
+            subtree_size=subtree_size,
+            random_roll=random_roll,
+            random_threshold=random_threshold,
+            time_since_last_verification=time_since_last,
+            edits_count=edits_count,
+            expected_edits_range=expected_edits_range,
+            suspicious=suspicious,
+            available_budget=available_budget,
+            verification_decided=verification_decided,
+            decision_reasoning=decision_reasoning,
+        )
+        self._apply(heuristic_event)
+        self._changes.append(heuristic_event)
+
+    # ========================================================================
+    # Multi-Model Strategy Methods
+    # ========================================================================
+
+    def spawn_parallel_subordinates(
+        self,
+        subtask: Subtask,
+        subordinate_configs: list[dict[str, Any]],
+        total_budget: float = 0.0,
+    ) -> None:
+        """Spawn multiple subordinate nodes for the same subtask in parallel.
+
+        Default behavior: Spawn 3 agents with different LLM models, each with
+        equal budget split. Only one needs to succeed.
+
+        Args:
+            subtask: The subtask assigned to all subordinates.
+            subordinate_configs: List of configs with child_id, model, method_hint, budget.
+            total_budget: Total budget allocated for this subtask.
+        """
+        spawn_event = SubordinatesSpawned(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask=subtask,
+            total_budget_allocated=total_budget,
+            subordinate_configs=subordinate_configs,
+        )
+        self._apply(spawn_event)
+        self._changes.append(spawn_event)
+
+    def record_first_success(
+        self,
+        winning_child_id: UUID,
+        subtask: Subtask,
+        sibling_ids_terminated: list[UUID],
+        result: str = "",
+        method_used: str = "",
+        budget_recollected_from_winner: float = 0.0,
+        budget_recollected_from_siblings: float = 0.0,
+    ) -> None:
+        """Record when the first parallel subordinate succeeds.
+
+        When multiple subordinates work on the same subtask, the first to succeed
+        triggers termination of all siblings to save budget.
+
+        Args:
+            winning_child_id: The child that succeeded first.
+            subtask: The subtask that was completed.
+            sibling_ids_terminated: List of sibling IDs that were terminated.
+            result: The result produced by the winning child.
+            method_used: The method/approach used by the winning child.
+            budget_recollected_from_winner: Budget recollected with reward ratio.
+            budget_recollected_from_siblings: Budget recollected from terminated siblings.
+        """
+        success_event = FirstSuccessRecorded(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            winning_child_id=winning_child_id,
+            subtask=subtask,
+            sibling_ids_terminated=sibling_ids_terminated,
+            result=result,
+            method_used=method_used,
+            budget_recollected_from_winner=budget_recollected_from_winner,
+            budget_recollected_from_siblings=budget_recollected_from_siblings,
+        )
+        self._apply(success_event)
+        self._changes.append(success_event)
+
+        # Clear current subtask tracking
+        self.current_subtask = None
+        self.current_subtask_subordinates = []
+
+    def record_all_subordinates_failed(
+        self,
+        subtask: Subtask,
+        failed_child_ids: list[UUID],
+        failure_reasons: dict[str, str],
+        total_budget_lost: float = 0.0,
+    ) -> None:
+        """Record when all parallel subordinates fail a subtask.
+
+        This is a terminal condition for the subtask. The supervisor must decide
+        whether to retry or report failure.
+
+        Args:
+            subtask: The subtask that all subordinates failed.
+            failed_child_ids: List of all subordinates that failed.
+            failure_reasons: Map of child_id (as string) -> failure reason.
+            total_budget_lost: Total budget consumed by all failed subordinates.
+        """
+        failed_event = AllSubordinatesFailed(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtask=subtask,
+            failed_child_ids=failed_child_ids,
+            failure_reasons=failure_reasons,
+            total_budget_lost=total_budget_lost,
+        )
+        self._apply(failed_event)
+        self._changes.append(failed_event)
+
+        # Clear current subtask tracking
+        self.current_subtask = None
+        self.current_subtask_subordinates = []
+
+    def retry_subtask(
+        self,
+        original_subtask: Subtask,
+        revised_subtask: Subtask,
+        revision_reason: str,
+        additional_context: str = "",
+    ) -> None:
+        """Retry a failed subtask with a revised version.
+
+        Re-inserts the revised subtask at the head of the task queue.
+
+        Args:
+            original_subtask: The original subtask that failed.
+            revised_subtask: The revised subtask with additional context.
+            revision_reason: Why the subtask was revised.
+            additional_context: Context from failures/verification to help retry.
+        """
+        # Track retry count
+        retry_count = self.subtask_retry_counts.get(original_subtask.description, 0) + 1
+        self.subtask_retry_counts[original_subtask.description] = retry_count
+
+        retry_event = SubtaskRetried(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            original_subtask=original_subtask,
+            revised_subtask=revised_subtask,
+            retry_count=retry_count,
+            revision_reason=revision_reason,
+            additional_context=additional_context,
+        )
+        self._apply(retry_event)
+        self._changes.append(retry_event)
