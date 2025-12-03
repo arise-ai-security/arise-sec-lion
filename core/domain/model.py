@@ -377,7 +377,9 @@ class AgentSession:
         self._apply(status_event)
         self._changes.append(status_event)
 
-    async def execute_task(self, tool_port: WorkerToolPort) -> None:
+    async def execute_task(
+        self, tool_port: WorkerToolPort, working_directory: str | None = None
+    ) -> None:
         """Execute task using an external worker tool (for WORKER agents).
 
         Uses a worker tool (Claude Code, OpenHands) to execute the task and
@@ -390,6 +392,8 @@ class AgentSession:
 
         Args:
             tool_port: Worker tool port to use for task execution.
+            working_directory: Directory for generated code output. If None,
+                              worker tool uses its default (usually current directory).
         """
         # Preconditions: Fail fast if called on wrong agent type/status
         assert self.role == AgentRole.WORKER, f"execute_task requires WORKER agent, got {self.role}"
@@ -410,12 +414,16 @@ class AgentSession:
         self._changes.append(started_event)
 
         # Prepare task context for worker tool
-        task_context = {
+        task_context: dict[str, Any] = {
             "session_id": self.session_id,
             "task_description": self.task_description,
             "tool_name": tool_name,
             "config": self.config,
         }
+
+        # Add working_directory if specified
+        if working_directory:
+            task_context["working_directory"] = working_directory
 
         # Stream events from worker tool execution
         async for tool_event in tool_port.run_session(task_context):

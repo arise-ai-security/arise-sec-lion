@@ -26,6 +26,9 @@ class ApplicationConfig:
     # Role-based LLM model mapping
     model_config: dict[str, str] | None = None
 
+    # Working directory for worker tools (code generation output)
+    working_directory: str | None = None
+
 
 @dataclass
 class Application:
@@ -75,6 +78,7 @@ def get_application(
         model_config=config.model_config,
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
+        working_directory=config.working_directory,
     )
 
     return Application(execution_service=execution_service)

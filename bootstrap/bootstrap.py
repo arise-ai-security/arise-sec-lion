@@ -123,10 +123,13 @@ def bootstrap(
             }
 
             # Build from settings
+            # Note: working_directory comes from presentation settings (output_directory)
+            # where worker tools should write generated code
             application_config = ApplicationConfig(
                 max_retries=settings.application.max_retries,
                 poll_interval=settings.application.poll_interval,
                 model_config=model_config,
+                working_directory=settings.presentation.output_directory,
             )
         else:
             # Use defaults
@@ -134,6 +137,7 @@ def bootstrap(
                 max_retries=3,
                 poll_interval=0.5,
                 model_config=None,  # Will use AgentExecutionService defaults
+                working_directory="./output",  # Default output directory
             )
 
     application: Application = get_application(infrastructure, application_config)
@@ -151,10 +155,13 @@ def bootstrap(
     if cli_config is None:
         if settings is not None:
             # Build from settings
-            cli_config = CLIConfig(verbose=settings.presentation.verbose)
+            cli_config = CLIConfig(
+                verbose=settings.presentation.verbose,
+                output_directory=settings.presentation.output_directory,
+            )
         else:
             # Use defaults
-            cli_config = CLIConfig(verbose=True)
+            cli_config = CLIConfig(verbose=True, output_directory="./output")
 
     cli: CLI = get_cli(application.execution_service, cli_config)
 

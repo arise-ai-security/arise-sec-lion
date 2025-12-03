@@ -52,6 +52,7 @@ class AgentExecutionService:
         model_config: dict[str, str] | None = None,
         max_retries: int = 3,
         poll_interval: float = 0.5,
+        working_directory: str | None = None,
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -64,6 +65,8 @@ class AgentExecutionService:
                          If None, uses default gpt-4o-mini for all roles.
             max_retries: Maximum OCC retry attempts (default: 3).
             poll_interval: Interval in seconds for polling active agents (default: 0.5).
+            working_directory: Directory for worker tool code generation output.
+                              If None, worker tool uses its default directory.
         """
         self.event_store = event_store
         self.llm_port = llm_port
@@ -71,6 +74,7 @@ class AgentExecutionService:
         self.prompt_builder = prompt_builder or PromptBuilder()
         self.max_retries = max_retries
         self.poll_interval = poll_interval
+        self.working_directory = working_directory
 
         # Set default model_config if not provided
         if model_config is None:
@@ -200,7 +204,9 @@ class AgentExecutionService:
 
         elif agent.role == AgentRole.WORKER:
             # Worker agent needs to execute task using tools
-            await agent.execute_task(self.worker_tool_port)
+            await agent.execute_task(
+                self.worker_tool_port, working_directory=self.working_directory
+            )
 
         else:
             # Unknown role - should not happen
