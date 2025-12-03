@@ -30,8 +30,21 @@ infrastructure:
   llm_temperature: 0.7
   llm_max_tokens: 1000
 
-  # Worker Tool
-  worker_tool_type: claude_code
+  # Worker Tool Configuration
+  # Supported types: "claude_code" or "openhands"
+  #
+  # claude_code: Uses Claude Code CLI (requires ANTHROPIC_API_KEY)
+  #   - Best for: Users with Anthropic API access
+  #   - Requires: claude CLI installed, ANTHROPIC_API_KEY env var
+  #
+  # openhands: Uses OpenHands SDK (supports any LLM provider)
+  #   - Best for: Users with OpenAI or other LLM provider access
+  #   - Requires: openhands-sdk installed, OPENAI_API_KEY or LLM_API_KEY env var
+  #   - Model: Configurable via worker_tool_model (default: openai/gpt-4o)
+  #
+  worker_tool_type: openhands
+  worker_tool_model: openai/gpt-4o  # Only used for openhands (LiteLLM format)
+  worker_tool_timeout: 300  # seconds
 
 application:
   # Optimistic Concurrency Control
@@ -52,3 +65,4 @@ presentation:
   verbose: true
   show_progress: true
   log_level: INFO
+  output_directory: ./output  # Directory for generated code and exports

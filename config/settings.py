@@ -214,6 +214,10 @@ class PresentationSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", description="Logging level"
     )
+    output_directory: str = Field(
+        default="./output",
+        description="Directory for generated code, exports, and last run tracking",
+    )
 
 
 class Settings(BaseSettings):
