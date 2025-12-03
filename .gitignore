@@ -684,4 +684,7 @@ FodyWeavers.xsd
 *.md
 !README.md
 
+# Output directory (generated code, exports, last run tracking)
+output/
+
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm+all,visualstudio,git

@@ -11,12 +11,14 @@ This is correct - infrastructure is in the outer layer and depends on the inner 
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 from infrastructure.adapters.claude_pty_adapter import ClaudeCodePTYAdapter
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
+from infrastructure.adapters.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
 
@@ -32,7 +34,10 @@ class InfrastructureConfig:
     postgres_connection_string: str = "postgresql://arise:arise@localhost:5432/arise_events"
 
     # Worker Tool Configuration
-    # (ClaudeCodePTYAdapter doesn't need config for now)
+    # Supported types: "claude_code" or "openhands"
+    worker_tool_type: Literal["claude_code", "openhands"] = "openhands"
+    worker_tool_model: str = "openai/gpt-4o"  # For openhands: LiteLLM model identifier
+    worker_tool_timeout: int = 300  # seconds
 
 
 @dataclass
@@ -78,9 +83,22 @@ def get_infrastructure(config: InfrastructureConfig | None = None) -> Infrastruc
     # No default model needed - agents specify models based on their roles
     llm_adapter = LiteLLMAdapter()
 
-    # Claude Code PTY Adapter - implements WorkerToolPort
-    # Executes worker tasks using Claude Code CLI via pseudo-terminal
-    worker_tool = ClaudeCodePTYAdapter()
+    # Worker Tool - implements WorkerToolPort
+    # Select adapter based on configuration
+    worker_tool: WorkerToolPort
+    if config.worker_tool_type == "claude_code":
+        # Claude Code PTY Adapter
+        # Executes worker tasks using Claude Code CLI via pseudo-terminal
+        # Requires: ANTHROPIC_API_KEY environment variable
+        worker_tool = ClaudeCodePTYAdapter(timeout_seconds=config.worker_tool_timeout)
+    else:
+        # OpenHands SDK Adapter (default)
+        # Executes worker tasks using OpenHands with any LLM provider
+        # Requires: OPENAI_API_KEY or LLM_API_KEY environment variable
+        worker_tool = OpenHandsAdapter(
+            model=config.worker_tool_model,
+            timeout_seconds=config.worker_tool_timeout,
+        )
 
     return Infrastructure(
         event_store=event_store,
