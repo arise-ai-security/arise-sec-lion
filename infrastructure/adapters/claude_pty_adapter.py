@@ -124,6 +124,58 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         return any(thinking_indicators)
 
     @staticmethod
+    def _classify_output(line: str) -> str:
+        """Classify a line of Claude Code output into output_type categories.
+
+        Uses heuristics to classify PTY output:
+        - Lines with thinking indicators → "thinking"
+        - Lines showing file/task operations → "progress"
+        - Other output → "output"
+
+        Args:
+            line: A single line of output.
+
+        Returns:
+            One of: "thinking", "progress", "output"
+        """
+        line_lower = line.lower().strip()
+
+        # Thinking indicators - internal reasoning
+        thinking_indicators = [
+            line.startswith(">"),  # Claude Code prompt marker
+            "thinking" in line_lower,
+            "analyzing" in line_lower,
+            "considering" in line_lower,
+            "planning" in line_lower,
+            "reasoning" in line_lower,
+            "let me" in line_lower,
+            "i'll" in line_lower,
+            "i will" in line_lower,
+        ]
+        if any(thinking_indicators):
+            return "thinking"
+
+        # Progress indicators - task progress updates
+        progress_indicators = [
+            "created" in line_lower,
+            "modified" in line_lower,
+            "deleted" in line_lower,
+            "running" in line_lower,
+            "executing" in line_lower,
+            "reading" in line_lower,
+            "writing" in line_lower,
+            "installing" in line_lower,
+            "building" in line_lower,
+            "compiling" in line_lower,
+            line.startswith(("✓", "→", "⠋", "⠙")),  # Status/spinner characters
+        ]
+        if any(progress_indicators):
+            return "progress"
+
+        # Default: general output
+        return "output"
+
+    @staticmethod
     def _validate_task_context(task_context: dict[str, Any]) -> tuple[str, Any, str]:
         """Validate task context and extract required fields.
 
@@ -188,6 +240,11 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         This method hardcodes sequence starting at 2, assuming CodeGenerationStarted was #1.
         Application layer should assign these based on aggregate's current version.
 
+        All PTY output is captured as ThoughtCaptured events with classified output_type:
+        - "thinking": Internal reasoning/planning
+        - "progress": Task progress updates (file operations, etc.)
+        - "output": General tool output
+
         Args:
             master_fd: Master file descriptor of PTY.
             process: Subprocess to read from.
@@ -212,17 +269,18 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
                     if not line.strip():
                         continue
 
-                    if self._is_thought_output(line):
-                        # TODO: APPLICATION LAYER should assign sequence numbers
-                        collected_events.append(
-                            ThoughtCaptured(
-                                aggregate_id=session_id,
-                                sequence_number=sequence,  # TODO: Hardcoded increment
-                                content=line.strip(),
-                                stream="stdout",
-                            )
+                    # Capture ALL output as domain events with classified output_type
+                    output_type = self._classify_output(line)
+                    collected_events.append(
+                        ThoughtCaptured(
+                            aggregate_id=session_id,
+                            sequence_number=sequence,  # TODO: Hardcoded increment
+                            content=line.strip(),
+                            stream="stdout",
+                            output_type=output_type,
                         )
-                        sequence += 1  # TODO: Remove - application layer manages this
+                    )
+                    sequence += 1  # TODO: Remove - application layer manages this
 
                     output_buffer.append(line)
 
