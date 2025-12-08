@@ -29,7 +29,7 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.domain.prompt_builder import PromptBuilder
-from core.domain.services import SubtaskParser
+from core.domain.services import SubtaskParser, strip_markdown_code_block
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 
@@ -242,7 +242,9 @@ class AgentSession:
         try:
             import json
 
-            data = json.loads(response)
+            # Strip markdown code blocks if present (LLMs often wrap JSON in ```json...```)
+            clean_response = strip_markdown_code_block(response)
+            data = json.loads(clean_response)
             complexity = data.get("complexity", "").lower()
             reasoning = data.get("reasoning", "")
 
@@ -378,7 +380,10 @@ class AgentSession:
         self._changes.append(status_event)
 
     async def execute_task(
-        self, tool_port: WorkerToolPort, working_directory: str | None = None
+        self,
+        tool_port: WorkerToolPort,
+        working_directory: str | None = None,
+        workspace_context: str | None = None,
     ) -> None:
         """Execute task using an external worker tool (for WORKER agents).
 
@@ -394,6 +399,8 @@ class AgentSession:
             tool_port: Worker tool port to use for task execution.
             working_directory: Directory for generated code output. If None,
                               worker tool uses its default (usually current directory).
+            workspace_context: Optional context about existing files in the workspace.
+                              This helps workers collaborate on shared files.
         """
         # Preconditions: Fail fast if called on wrong agent type/status
         assert self.role == AgentRole.WORKER, f"execute_task requires WORKER agent, got {self.role}"
@@ -414,9 +421,36 @@ class AgentSession:
         self._changes.append(started_event)
 
         # Prepare task context for worker tool
+        # Wrap with system prompt that explicitly instructs file creation
+        # This is critical because LLMs often interpret "write a script" as "explain how"
+        # instead of actually creating files
+        worker_system_prompt = (
+            "<WORKER_INSTRUCTIONS>\n"
+            "You are a WORKER agent with access to terminal and file editing tools.\n"
+            "Your job is to EXECUTE the task by CREATING ACTUAL FILES in the workspace.\n\n"
+            "IMPORTANT RULES:\n"
+            "1. DO NOT just explain or provide code snippets - CREATE the actual files\n"
+            "2. Use the file_editor tool to create/edit files in the workspace\n"
+            "3. Use the terminal tool to run commands (e.g., to test your code)\n"
+            "4. All files should be created in the current working directory\n"
+            "5. After creating files, verify they exist by listing the directory\n"
+            "</WORKER_INSTRUCTIONS>\n\n"
+        )
+
+        enhanced_description = f"{worker_system_prompt}<TASK>\n{self.task_description}\n</TASK>"
+
+        # Add workspace context if available (shows existing files from other workers)
+        if workspace_context:
+            enhanced_description += (
+                f"\n\n<WORKSPACE_CONTEXT>\n"
+                f"You are working in a shared workspace. Other workers may have created files.\n"
+                f"Current files in workspace:\n{workspace_context}\n"
+                f"</WORKSPACE_CONTEXT>"
+            )
+
         task_context: dict[str, Any] = {
             "session_id": self.session_id,
-            "task_description": self.task_description,
+            "task_description": enhanced_description,
             "tool_name": tool_name,
             "config": self.config,
         }
