@@ -26,8 +26,9 @@ class ApplicationConfig:
     # Role-based LLM model mapping
     model_config: dict[str, str] | None = None
 
-    # Working directory for worker tools (code generation output)
-    working_directory: str | None = None
+    # Base output directory for worker tools (code generation artifacts)
+    # Each run creates a subdirectory named after the BOSS agent ID
+    output_directory: str | None = None
 
     # Progress callback for real-time event notifications
     # Signature: (event: DomainEvent, agent: AgentSession) -> None
@@ -86,7 +87,7 @@ def get_application(
         model_config=config.model_config,
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
-        working_directory=config.working_directory,
+        output_directory=config.output_directory,
         progress_callback=config.progress_callback,
         default_worker_tool=config.default_worker_tool,
     )

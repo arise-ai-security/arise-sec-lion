@@ -120,23 +120,21 @@ def bootstrap(
 
     if application_config is None:
         # Build model_config from infrastructure settings
+        # Only BOSS model is configured here; child agents get their config from parents
         model_config = {
             "boss": settings.infrastructure.llm_model_boss,
-            "manager": settings.infrastructure.llm_model_manager,
-            "worker": settings.infrastructure.llm_model_worker,
-            "pending": settings.infrastructure.llm_model_pending,
         }
 
         # Build from settings (loaded from config file or environment variables)
-        # Note: working_directory comes from presentation settings (output_directory)
-        # where worker tools should write generated code
+        # Note: output_directory is the base directory; each run creates a
+        # subdirectory named after the BOSS agent ID for artifact isolation
         # Progress callback enables real-time event output during orchestration
         # default_worker_tool guides LLM to specify the correct tool in subtask configs
         application_config = ApplicationConfig(
             max_retries=settings.application.max_retries,
             poll_interval=settings.application.poll_interval,
             model_config=model_config,
-            working_directory=settings.presentation.output_directory,
+            output_directory=settings.presentation.output_directory,
             progress_callback=format_event_progress if settings.presentation.verbose else None,
             default_worker_tool=settings.infrastructure.worker_tool_type,
         )

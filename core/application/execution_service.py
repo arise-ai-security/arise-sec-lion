@@ -61,7 +61,7 @@ class AgentExecutionService:
         model_config: dict[str, str] | None = None,
         max_retries: int = 3,
         poll_interval: float = 0.5,
-        working_directory: str | None = None,
+        output_directory: str | None = None,
         progress_callback: ProgressCallback | None = None,
         default_worker_tool: str = "claude_code",
     ) -> None:
@@ -76,8 +76,9 @@ class AgentExecutionService:
                          If None, uses default gpt-4o-mini for all roles.
             max_retries: Maximum OCC retry attempts (default: 3).
             poll_interval: Interval in seconds for polling active agents (default: 0.5).
-            working_directory: Directory for worker tool code generation output.
-                              If None, worker tool uses its default directory.
+            output_directory: Base directory for generated artifacts. Each run creates
+                             a subdirectory named after the BOSS agent ID.
+                             If None, worker tool uses its default directory.
             progress_callback: Optional callback invoked when events are persisted.
                               Signature: (event: DomainEvent, agent: AgentSession) -> None.
                               Used for real-time progress updates in CLI/UI.
@@ -90,7 +91,8 @@ class AgentExecutionService:
         self.prompt_builder = prompt_builder or PromptBuilder(default_tool=default_worker_tool)
         self.max_retries = max_retries
         self.poll_interval = poll_interval
-        self.working_directory = working_directory
+        self.output_directory = output_directory
+        self.working_directory: str | None = None  # Set per-run in create_boss_agent()
         self.progress_callback = progress_callback
 
         # Set default model_config if not provided
@@ -532,6 +534,10 @@ class AgentExecutionService:
         This is a command method that creates the root agent for the system.
         Used by the presentation layer to bootstrap a new agent hierarchy.
 
+        Each run creates a unique working directory under output_directory named
+        after the BOSS agent ID (e.g., ./output/abc12345-..../). This ensures
+        artifacts from different runs are isolated.
+
         Args:
             task_description: The task to assign to the BOSS agent.
 
@@ -543,6 +549,12 @@ class AgentExecutionService:
         """
         # Generate unique ID for root agent
         root_id = uuid4()
+
+        # Create working directory for this run: {output_directory}/{boss_id}/
+        if self.output_directory:
+            run_output_path = Path(self.output_directory) / str(root_id)
+            run_output_path.mkdir(parents=True, exist_ok=True)
+            self.working_directory = str(run_output_path)
 
         # Get model for BOSS role from settings
         boss_model = self.model_config.get("boss", "gpt-4o-mini")
