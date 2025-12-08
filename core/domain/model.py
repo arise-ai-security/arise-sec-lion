@@ -5,6 +5,7 @@ sessions. It has NO external dependencies (except Pydantic) per Hexagonal
 Architecture constraints.
 """
 
+import json
 from enum import Enum
 from functools import singledispatchmethod
 from typing import Any
@@ -240,8 +241,6 @@ class AgentSession:
 
         # Parse response to determine complexity
         try:
-            import json
-
             # Strip markdown code blocks if present (LLMs often wrap JSON in ```json...```)
             clean_response = strip_markdown_code_block(response)
             data = json.loads(clean_response)

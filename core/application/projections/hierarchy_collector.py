@@ -6,6 +6,7 @@ events.
 """
 
 from collections import deque
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from core.domain.events import ChildSpawned, DomainEvent
@@ -39,6 +40,37 @@ class HierarchyCollector:
         """
         self._event_store = event_store
 
+    async def _traverse(
+        self, root_agent_id: UUID
+    ) -> AsyncIterator[tuple[UUID, list[DomainEvent], int]]:
+        """BFS traversal yielding (agent_id, events, depth) for each agent.
+
+        This is the core traversal method that eliminates duplication across
+        collect(), collect_agent_ids(), and get_hierarchy_depth().
+
+        Args:
+            root_agent_id: UUID of the root agent (typically BOSS).
+
+        Yields:
+            Tuples of (agent_id, events, depth) for each agent in the hierarchy.
+        """
+        visited: set[UUID] = set()
+        queue: deque[tuple[UUID, int]] = deque([(root_agent_id, 0)])
+
+        while queue:
+            agent_id, depth = queue.popleft()
+
+            if agent_id in visited:
+                continue
+            visited.add(agent_id)
+
+            events = await self._event_store.get_events(agent_id)
+            yield agent_id, events, depth
+
+            for event in events:
+                if isinstance(event, ChildSpawned) and event.child_id not in visited:
+                    queue.append((event.child_id, depth + 1))
+
     async def collect(self, root_agent_id: UUID) -> list[DomainEvent]:
         """Recursively collect events from entire agent hierarchy.
 
@@ -52,27 +84,8 @@ class HierarchyCollector:
             List of all events from the hierarchy, sorted by occurred_at.
         """
         all_events: list[DomainEvent] = []
-        visited: set[UUID] = set()
-        queue: deque[UUID] = deque([root_agent_id])
-
-        while queue:
-            agent_id = queue.popleft()
-
-            # Skip if already visited (shouldn't happen in a tree, but safe)
-            if agent_id in visited:
-                continue
-            visited.add(agent_id)
-
-            # Fetch events for this agent
-            events = await self._event_store.get_events(agent_id)
+        async for _agent_id, events, _depth in self._traverse(root_agent_id):
             all_events.extend(events)
-
-            # Find child agents from ChildSpawned events
-            for event in events:
-                if isinstance(event, ChildSpawned) and event.child_id not in visited:
-                    queue.append(event.child_id)
-
-        # Sort by occurred_at for chronological order
         return sorted(all_events, key=lambda e: (e.occurred_at, e.sequence_number))
 
     async def collect_agent_ids(self, root_agent_id: UUID) -> set[UUID]:
@@ -87,23 +100,10 @@ class HierarchyCollector:
         Returns:
             Set of all agent UUIDs in the hierarchy.
         """
-        visited: set[UUID] = set()
-        queue: deque[UUID] = deque([root_agent_id])
-
-        while queue:
-            agent_id = queue.popleft()
-
-            if agent_id in visited:
-                continue
-            visited.add(agent_id)
-
-            # Fetch events to discover children
-            events = await self._event_store.get_events(agent_id)
-            for event in events:
-                if isinstance(event, ChildSpawned) and event.child_id not in visited:
-                    queue.append(event.child_id)
-
-        return visited
+        agent_ids: set[UUID] = set()
+        async for agent_id, _events, _depth in self._traverse(root_agent_id):
+            agent_ids.add(agent_id)
+        return agent_ids
 
     async def get_hierarchy_depth(self, root_agent_id: UUID) -> int:
         """Calculate the depth of the agent hierarchy.
@@ -119,21 +119,6 @@ class HierarchyCollector:
             Maximum depth of the hierarchy tree.
         """
         max_depth = 0
-        visited: set[UUID] = set()
-        # Queue entries: (agent_id, depth)
-        queue: deque[tuple[UUID, int]] = deque([(root_agent_id, 0)])
-
-        while queue:
-            agent_id, depth = queue.popleft()
-
-            if agent_id in visited:
-                continue
-            visited.add(agent_id)
+        async for _agent_id, _events, depth in self._traverse(root_agent_id):
             max_depth = max(max_depth, depth)
-
-            events = await self._event_store.get_events(agent_id)
-            for event in events:
-                if isinstance(event, ChildSpawned) and event.child_id not in visited:
-                    queue.append((event.child_id, depth + 1))
-
         return max_depth

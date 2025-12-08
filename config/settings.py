@@ -80,41 +80,9 @@ class InfrastructureSettings(BaseSettings):
     # This provides "super flexibility" - different children in the same hierarchy
     # can use different models (GPT-4, Gemini, Claude), different hyperparameters
     # (temperature, max_tokens), and different tools (claude_code, openhands).
-    #
-    # These role-based defaults are kept for backward compatibility and as
-    # examples/documentation of typical model selections:
     llm_model_boss: str = Field(
         default="gpt-4o",
         description="Model for root BOSS agent (high-level planning)",
-    )
-    llm_model_manager: str = Field(
-        default="gpt-4o",
-        description=(
-            "[DEPRECATED] Example model for MANAGER agents (use parent's config at runtime)"
-        ),
-    )
-    llm_model_worker: str = Field(
-        default="gpt-4o-mini",
-        description=(
-            "[DEPRECATED] Example model for WORKER agents (use parent's config at runtime)"
-        ),
-    )
-    llm_model_pending: str = Field(
-        default="gpt-4o-mini",
-        description=(
-            "[DEPRECATED] Example model for PENDING agents (use parent's config at runtime)"
-        ),
-    )
-    llm_temperature: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        description=("[DEPRECATED] Example temperature (use parent's config at runtime)"),
-    )
-    llm_max_tokens: int = Field(
-        default=1000,
-        gt=0,
-        description=("[DEPRECATED] Example max tokens (use parent's config at runtime)"),
     )
 
     # Worker Tool Configuration
@@ -141,29 +109,6 @@ class InfrastructureSettings(BaseSettings):
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
         )
-
-    def get_model_for_role(self, role: str) -> str:
-        """Get the LLM model for a specific agent role.
-
-        Args:
-            role: Agent role ("boss", "manager", "worker", "pending").
-
-        Returns:
-            Model name for the given role.
-
-        Raises:
-            ValueError: If role is unknown.
-        """
-        role_lower = role.lower()
-        if role_lower == "boss":
-            return self.llm_model_boss
-        if role_lower == "manager":
-            return self.llm_model_manager
-        if role_lower == "worker":
-            return self.llm_model_worker
-        if role_lower == "pending":
-            return self.llm_model_pending
-        raise ValueError(f"Unknown agent role: {role}")
 
 
 class ApplicationSettings(BaseSettings):

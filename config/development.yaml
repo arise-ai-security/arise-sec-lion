@@ -7,13 +7,8 @@ infrastructure:
   postgres_user: arise
   postgres_database: arise_events_dev
 
-  # Use cheaper/faster models for development
-  llm_model_boss: gpt-4o-mini       # Even BOSS uses mini in dev
-  llm_model_manager: gpt-4o-mini
-  llm_model_worker: gpt-4o-mini
-  llm_model_pending: gpt-4o-mini
-  llm_temperature: 0.7
-  llm_max_tokens: 500  # Lower for faster responses
+  # Use cheaper/faster model for development
+  llm_model_boss: gpt-4o-mini  # Even BOSS uses mini in dev
 
   worker_tool_type: openhands
 
