@@ -55,6 +55,92 @@ class CLIConfig:
 
 
 # ==============================================================================
+# Progress Callback Formatter
+# ==============================================================================
+
+
+def format_event_progress(event: object, _agent: object) -> None:  # noqa: PLR0912, PLR0915
+    """Format and print real-time progress for domain events.
+
+    This function is passed as a callback to the AgentExecutionService to
+    display progress during orchestration. It uses duck-typing to avoid
+    importing domain types into the presentation layer.
+
+    Args:
+        event: A DomainEvent instance (duck-typed).
+        agent: An AgentSession instance (duck-typed).
+    """
+    # Extract common info using duck typing
+    event_type = type(event).__name__
+    agent_id = str(getattr(event, "aggregate_id", "?"))[:8]  # Short ID
+
+    # Format based on event type
+    match event_type:
+        case "AgentCreated":
+            role = getattr(event, "role", "?")
+            parent_id = getattr(event, "parent_id", None)
+            parent_info = f" (parent: {str(parent_id)[:8]})" if parent_id else " (root)"
+            print(f"   🤖 Agent {agent_id}... created as {role}{parent_info}")
+
+        case "TaskAssigned":
+            task = getattr(event, "task_description", "")
+            # Truncate long task descriptions
+            task_preview = task[:60] + "..." if len(task) > 60 else task
+            print(f"   📋 [{agent_id}] Task: {task_preview}")
+
+        case "StatusChanged":
+            old = getattr(event, "old_status", "?")
+            new = getattr(event, "new_status", "?")
+            reason = getattr(event, "reason", "")
+            reason_info = f" ({reason})" if reason else ""
+            print(f"   → [{agent_id}] {old} → {new}{reason_info}")
+
+        case "ComplexityEvaluated":
+            complexity = getattr(event, "complexity", "?")
+            role = getattr(event, "determined_role", "?")
+            emoji = "🔧" if complexity == "simple" else "🔀"
+            print(f"   {emoji} [{agent_id}] Complexity: {complexity} → becomes {role.upper()}")
+
+        case "SubtasksDefined":
+            subtasks = getattr(event, "subtasks", [])
+            print(f"   📑 [{agent_id}] Decomposed into {len(subtasks)} subtask(s)")
+
+        case "ChildSpawned":
+            child_id = str(getattr(event, "child_id", "?"))[:8]
+            child_role = getattr(event, "child_role", "?")
+            subtask = getattr(event, "subtask", None)
+            desc = getattr(subtask, "description", "")[:40] if subtask else ""
+            print(f"   👶 [{agent_id}] Spawned child {child_id}... as {child_role}")
+            if desc:
+                print(f"      └─ {desc}...")
+
+        case "CodeGenerationStarted":
+            tool = getattr(event, "tool_name", "?")
+            print(f"   ⚡ [{agent_id}] Code generation started (tool: {tool})")
+
+        case "ThoughtCaptured":
+            # Skip thought events to avoid clutter - they're too verbose
+            pass
+
+        case "WorkCompleted":
+            result = getattr(event, "result", "")
+            result_preview = result[:50] + "..." if len(result) > 50 else result
+            print(f"   ✅ [{agent_id}] Work completed")
+
+        case "WorkFailed":
+            reason = getattr(event, "reason", "unknown")[:80]
+            print(f"   ❌ [{agent_id}] Work failed: {reason}")
+
+        case "ChildCompleted":
+            child_id = str(getattr(event, "child_id", "?"))[:8]
+            print(f"   ✓ [{agent_id}] Child {child_id}... completed")
+
+        case _:
+            # Unknown event type - show minimal info
+            print(f"   • [{agent_id}] {event_type}")
+
+
+# ==============================================================================
 # Last Run Tracking
 # ==============================================================================
 
@@ -186,7 +272,7 @@ class CLI:
             print("[1/5] Initializing infrastructure adapters...")
             print("   ✓ Event Store: PostgreSQL")
             print("   ✓ LLM Adapter: LiteLLM")
-            print("   ✓ Worker Tool: Claude Code PTY")
+            print("   ✓ Worker Tools: Claude Code PTY, OpenHands (routed by config)")
             print()
 
         if self.config.verbose:
@@ -390,17 +476,14 @@ async def _get_event_store() -> EventStorePort:
         Connected EventStorePort instance.
     """
     if "event_store" not in _cli_context:
+        from config import Settings
         from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
         config_path = _cli_context.get("config_path")
-        if config_path:
-            from config import Settings
+        # Load settings: explicit config file OR from environment variables
+        settings = Settings.from_yaml(config_path) if config_path else Settings()
 
-            settings = Settings.from_yaml(config_path)
-            connection_string = settings.infrastructure.postgres_connection_string
-        else:
-            connection_string = "postgresql://arise:arise@localhost:5432/arise_events"
-
+        connection_string = settings.infrastructure.postgres_connection_string
         event_store = PostgresEventStore(connection_string)
         await event_store.connect()
         _cli_context["event_store"] = event_store

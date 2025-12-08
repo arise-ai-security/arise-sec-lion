@@ -5,11 +5,42 @@ on entities or value objects per Domain-Driven Design (Eric Evans).
 """
 
 import json
+import re
 
 from pydantic import TypeAdapter, ValidationError
 
 from core.domain.agent_config import AgentConfig
 from core.domain.subtask import Subtask
+
+
+# Regex pattern to extract JSON from markdown code blocks
+# Matches: ```json ... ``` or ``` ... ``` (with optional language identifier)
+MARKDOWN_CODE_BLOCK_PATTERN = re.compile(
+    r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def strip_markdown_code_block(text: str) -> str:
+    """Strip markdown code block wrapper from LLM response.
+
+    LLMs often wrap JSON responses in markdown code blocks like:
+        ```json
+        {"key": "value"}
+        ```
+
+    This function extracts the inner content.
+
+    Args:
+        text: Raw LLM response that may be wrapped in markdown.
+
+    Returns:
+        Inner content if wrapped in code block, otherwise original text.
+    """
+    match = MARKDOWN_CODE_BLOCK_PATTERN.match(text.strip())
+    if match:
+        return match.group(1).strip()
+    return text.strip()
 
 
 class SubtaskParser:
@@ -67,9 +98,12 @@ class SubtaskParser:
             >>> len(subtasks)
             1
         """
+        # Strip markdown code blocks if present (LLMs often wrap JSON in ```json...```)
+        clean_response = strip_markdown_code_block(response)
+
         # Parse JSON - raises ValueError if invalid
         try:
-            data = json.loads(response)
+            data = json.loads(clean_response)
         except json.JSONDecodeError as e:
             msg = f"LLM response is not valid JSON: {e}"
             raise ValueError(msg) from e
