@@ -1,11 +1,12 @@
 # =============================================================================
 # Multi-stage Dockerfile for Arise Multi-Agent System
 # =============================================================================
-# This Dockerfile uses OpenHands SDK for worker task execution (default).
-# OpenHands requires OPENAI_API_KEY (or other LLM provider key) at runtime.
+# This Dockerfile supports both worker tools:
+# - Claude Code CLI (default): Requires ANTHROPIC_API_KEY at runtime
+# - OpenHands SDK: Requires OPENAI_API_KEY (or other LLM provider key)
 #
-# For Claude Code support, set worker_tool_type=claude_code in config
-# and ensure claude CLI is available (not included in this image by default).
+# The composite worker adapter routes to the correct tool based on agent config.
+# Parent agents specify which tool their children should use via config.tool.
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder - Install Python dependencies
@@ -30,11 +31,17 @@ FROM python:3.12-slim AS development
 
 WORKDIR /app
 
-# Install minimal system dependencies
+# Install system dependencies including Node.js for Claude Code CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

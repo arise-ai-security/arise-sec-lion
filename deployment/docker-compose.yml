@@ -19,18 +19,32 @@ services:
     volumes:
       - ..:/app  # Mount source for hot reload
       - /app/.venv  # Exclude venv from mount
+      # Docker socket mounting for Docker-in-Docker (sibling containers)
+      # Allows OpenHands adapter to spawn sandbox containers on the host's Docker daemon
+      # Security note: This grants container root-equivalent access to host Docker
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
     env_file: .env
     environment:
+      # Configuration cascade environment (default: development)
+      # Controls which config file is loaded: config/{ARISE_ENV}.yaml -> config/default.yaml
+      # Valid values: development, production, test
+      ARISE_ENV: ${ARISE_ENV:-development}
+      # Legacy DATABASE_URL (not currently used by settings, but kept for compatibility)
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Override postgres_host for Docker networking (service name instead of localhost)
+      # Settings read ARISE_INFRA_* prefixed env vars (see config/settings.py)
+      ARISE_INFRA_POSTGRES_HOST: db
+      ARISE_INFRA_POSTGRES_USER: ${POSTGRES_USER}
+      ARISE_INFRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ARISE_INFRA_POSTGRES_DATABASE: ${POSTGRES_DB}
     networks:
       - arise-network
-    # Run the main application
-    command: python main.py "Your task description here"
-    # Or keep container running for manual execution:
-    # command: sleep infinity
+    # Keep container running for interactive development
+    # Use: docker compose exec app python main.py run "Your task"
+    command: sleep infinity
     stdin_open: true
     tty: true
 
