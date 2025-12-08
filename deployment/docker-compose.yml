@@ -5,10 +5,67 @@
 #   cp .env.example .env  # Configure your settings
 #   docker compose up -d  # Start services
 #   docker compose logs -f app  # View app logs
+#
+# Services:
+#   - web: React dashboard at http://localhost:3000
+#   - api: FastAPI server at http://localhost:8000
+#   - app: CLI for running tasks (interactive)
+#   - db: PostgreSQL database
 
 services:
   # ---------------------------------------------------------------------------
-  # Application Service
+  # Web Dashboard (React + Nginx)
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ../presentation/web
+      dockerfile: Dockerfile
+    container_name: arise-web
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - arise-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # API Service (FastAPI)
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: development
+    container_name: arise-api
+    volumes:
+      - ..:/app
+      - /app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      ARISE_ENV: ${ARISE_ENV:-development}
+      ARISE_INFRA_POSTGRES_HOST: db
+      ARISE_INFRA_POSTGRES_USER: ${POSTGRES_USER}
+      ARISE_INFRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ARISE_INFRA_POSTGRES_DATABASE: ${POSTGRES_DB}
+    ports:
+      - "8000:8000"
+    networks:
+      - arise-network
+    command: uvicorn presentation.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Application Service (CLI)
   # ---------------------------------------------------------------------------
   app:
     build:
