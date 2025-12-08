@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "asyncpg>=0.30.0",
     "click>=8.1.0",
+    "fastapi>=0.124.0",
     "jinja2>=3.1.6",
     "litellm>=1.80.0",
     "openhands-sdk>=1.4.1",
@@ -14,6 +15,8 @@ dependencies = [
     "pydantic>=2.12.4",
     "pydantic-settings>=2.12.0",
     "pyyaml>=6.0.3",
+    "sse-starlette>=3.0.3",
+    "uvicorn>=0.38.0",
 ]
 
 [dependency-groups]
