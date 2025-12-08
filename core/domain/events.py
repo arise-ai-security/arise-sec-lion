@@ -157,11 +157,17 @@ class ThoughtCaptured(DomainEvent):
 
     Attributes:
         content: The captured thought/log content.
-        stream: Which stream this came from ("stdout", "stderr", "tool").
+        stream: Which stream this came from ("stdout", "stderr", "tool", "openhands").
+        output_type: Classification of output type:
+            - "thinking": Internal reasoning (Claude's thinking, OpenHands agent thoughts)
+            - "progress": Task progress updates (subtask completion, file operations)
+            - "output": Actual command/tool output (default)
+            - "debug": Diagnostic information (verbose logs if needed)
     """
 
     content: str
     stream: str = "tool"
+    output_type: str = "output"
 
 
 class ChildCompleted(DomainEvent):
