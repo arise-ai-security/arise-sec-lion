@@ -1,13 +1,17 @@
 """Configuration Management using Pydantic Settings.
 
 This module provides type-safe configuration management with multiple sources:
-1. Default values (in code)
-2. Config files (YAML/TOML)
-3. Environment variables (for secrets)
-4. CLI arguments (runtime overrides)
+1. Default values (config/default.yaml)
+2. Environment-specific overrides (config/{ARISE_ENV}.yaml)
+3. Environment variables (for secrets and runtime overrides)
+4. CLI arguments (runtime overrides via --config flag)
 
-Configuration Layers (precedence, highest to lowest):
-  CLI args > Environment Variables > Config File > Defaults
+Configuration Cascade (precedence, highest to lowest):
+  CLI args > Environment Variables > {env}.yaml > default.yaml > Code defaults
+
+Environment Variable:
+    ARISE_ENV: Determines which environment config to load (default: "development")
+              Valid values: "development", "production", "test"
 
 Reference:
 - 12-Factor App: https://12factor.net/config
@@ -20,11 +24,16 @@ Architecture Note:
     - Presentation: UI settings (config files)
 """
 
+import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Default config directory (relative to project root)
+CONFIG_DIR = Path(__file__).parent
 
 
 class InfrastructureSettings(BaseSettings):
@@ -108,12 +117,21 @@ class InfrastructureSettings(BaseSettings):
         description=("[DEPRECATED] Example max tokens (use parent's config at runtime)"),
     )
 
-    # Worker Tool (Example Only)
+    # Worker Tool Configuration
     # NOTE: At runtime, parent agents specify which tool each WORKER child should use
-    # via the subtask config. This setting is kept for backward compatibility.
+    # via the subtask config. These settings provide the defaults.
     worker_tool_type: Literal["claude_code", "openhands"] = Field(
         default="claude_code",
-        description=("[DEPRECATED] Example worker tool (use parent's config at runtime)"),
+        description="Default worker tool type (claude_code or openhands)",
+    )
+    worker_tool_model: str = Field(
+        default="openai/gpt-4o",
+        description="LiteLLM model identifier for OpenHands worker tool",
+    )
+    worker_tool_timeout: int = Field(
+        default=300,
+        gt=0,
+        description="Worker tool execution timeout in seconds",
     )
 
     @property
@@ -250,9 +268,141 @@ class Settings(BaseSettings):
     application: ApplicationSettings = Field(default_factory=ApplicationSettings)
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)
 
+    @staticmethod
+    def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+        """Deep merge two dictionaries, with override taking precedence.
+
+        Args:
+            base: Base dictionary (default values).
+            override: Override dictionary (environment-specific values).
+
+        Returns:
+            Merged dictionary with override values taking precedence.
+        """
+        result = base.copy()
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = Settings._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _filter_env_overridden(
+        data: dict[str, Any],
+        env_prefix: str,
+        field_names: list[str],
+    ) -> dict[str, Any]:
+        """Remove fields from data that have environment variable overrides.
+
+        In pydantic-settings, init kwargs take precedence over env vars.
+        To ensure env vars can override YAML config, we must NOT pass
+        fields that have corresponding env vars set.
+
+        Args:
+            data: Dictionary of field values (from YAML).
+            env_prefix: Environment variable prefix (e.g., "ARISE_INFRA_").
+            field_names: List of field names to check.
+
+        Returns:
+            Filtered dictionary with env-overridden fields removed.
+        """
+        result = data.copy()
+        for field_name in field_names:
+            env_var = f"{env_prefix}{field_name.upper()}"
+            if os.getenv(env_var) is not None and field_name in result:
+                del result[field_name]
+        return result
+
+    @classmethod
+    def load(cls, env: str | None = None, config_dir: Path | None = None) -> "Settings":
+        """Load settings with cascade: {env}.yaml -> default.yaml.
+
+        This implements the environment-based configuration pattern:
+        1. Load config/default.yaml as base
+        2. Load config/{env}.yaml and merge (overrides default)
+        3. Environment variables still take final precedence
+
+        Args:
+            env: Environment name (default: ARISE_ENV or "development").
+                 Valid values: "development", "production", "test"
+            config_dir: Directory containing config files (default: config/).
+
+        Returns:
+            Settings instance with merged configuration.
+
+        Example:
+            # Uses ARISE_ENV environment variable (or "development" if not set)
+            settings = Settings.load()
+
+            # Explicitly specify environment
+            settings = Settings.load(env="production")
+        """
+        import yaml
+
+        # Determine environment
+        if env is None:
+            env = os.getenv("ARISE_ENV", "development")
+
+        # Determine config directory
+        if config_dir is None:
+            config_dir = CONFIG_DIR
+
+        # Load default.yaml as base
+        default_path = config_dir / "default.yaml"
+        config_data: dict[str, Any] = {}
+
+        if default_path.exists():
+            with default_path.open(encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+        # Load environment-specific config and merge
+        env_path = config_dir / f"{env}.yaml"
+        if env_path.exists():
+            with env_path.open(encoding="utf-8") as f:
+                env_data = yaml.safe_load(f) or {}
+            config_data = cls._deep_merge(config_data, env_data)
+
+        # Create nested settings with proper env var precedence
+        #
+        # IMPORTANT: In pydantic-settings, init kwargs have HIGHEST priority,
+        # even higher than environment variables. To ensure env vars can
+        # override YAML config, we filter out fields that have env vars set.
+        #
+        # Priority (after filtering):
+        #   1. Environment variables (for fields not in filtered data)
+        #   2. YAML config values (for fields not overridden by env vars)
+        #   3. Code defaults (for fields not in YAML)
+        infra_data = config_data.get("infrastructure", {})
+        app_data = config_data.get("application", {})
+        pres_data = config_data.get("presentation", {})
+
+        # Filter out fields that have env var overrides
+        infra_fields = list(InfrastructureSettings.model_fields.keys())
+        app_fields = list(ApplicationSettings.model_fields.keys())
+        pres_fields = list(PresentationSettings.model_fields.keys())
+
+        filtered_infra = cls._filter_env_overridden(infra_data, "ARISE_INFRA_", infra_fields)
+        filtered_app = cls._filter_env_overridden(app_data, "ARISE_APP_", app_fields)
+        filtered_pres = cls._filter_env_overridden(pres_data, "ARISE_UI_", pres_fields)
+
+        # Create nested settings - env vars will now take precedence
+        infrastructure = InfrastructureSettings(**filtered_infra)
+        application = ApplicationSettings(**filtered_app)
+        presentation = PresentationSettings(**filtered_pres)
+
+        return cls(
+            infrastructure=infrastructure,
+            application=application,
+            presentation=presentation,
+        )
+
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "Settings":
-        """Load settings from YAML file.
+        """Load settings from a specific YAML file (no cascade).
+
+        Use this when you want to load from a specific file without
+        the environment-based cascade. For cascade loading, use Settings.load().
 
         Args:
             config_path: Path to YAML configuration file.

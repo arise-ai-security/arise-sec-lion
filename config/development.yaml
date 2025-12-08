@@ -15,7 +15,7 @@ infrastructure:
   llm_temperature: 0.7
   llm_max_tokens: 500  # Lower for faster responses
 
-  worker_tool_type: claude_code
+  worker_tool_type: openhands
 
 application:
   max_retries: 2  # Fewer retries for faster failure in dev
