@@ -14,6 +14,14 @@ Architecture Note:
     - Cleaner error handling
     - Support for any LLM provider (OpenAI GPT-4, etc.)
 
+Event Streaming:
+    The OpenHands SDK uses callback-based event streaming via `on_event(event: Event)`.
+    SDK Event Types (per https://arxiv.org/html/2511.03690v1):
+    - ActionEvent: Agent tool invocations with reasoning
+    - MessageEvent: User/assistant text exchanges
+    - ObservationEvent: Successful tool execution results
+    - AgentErrorEvent: System or agent failures
+
 TODO: APPLICATION LAYER INTEGRATION REQUIRED
 ---------------------------------------------
 Same limitations as ClaudeCodePTYAdapter - sequence numbers are hardcoded.
@@ -21,6 +29,7 @@ See claude_pty_adapter.py for detailed explanation.
 """
 
 import asyncio
+import logging
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -33,6 +42,30 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.ports.worker_port import WorkerToolPort
+
+
+# Suppress verbose OpenHands SDK logging to prevent stdout pollution
+# Events are captured as domain events instead
+logging.getLogger("openhands").setLevel(logging.WARNING)
+logging.getLogger("openhands.sdk").setLevel(logging.WARNING)
+logging.getLogger("openhands.tools").setLevel(logging.WARNING)
+
+# Map SDK event class names to our output_type classification
+SDK_EVENT_TYPE_MAP: dict[str, str] = {
+    # Agent reasoning and actions → thinking
+    "ActionEvent": "thinking",
+    "AgentThinkAction": "thinking",
+    # Messages and observations → output
+    "MessageEvent": "output",
+    "ObservationEvent": "output",
+    "CmdRunObservation": "output",
+    # Errors → output (captured, not logged)
+    "AgentErrorEvent": "output",
+    # File operations → progress
+    "FileReadAction": "progress",
+    "FileWriteAction": "progress",
+    "FileEditAction": "progress",
+}
 
 
 class OpenHandsAdapter(WorkerToolPort):
@@ -97,11 +130,50 @@ class OpenHandsAdapter(WorkerToolPort):
 
         return task_description, session_id, working_dir
 
+    @staticmethod
+    def _classify_event(event: Any) -> str:
+        """Classify an OpenHands SDK event into our output_type categories.
+
+        Uses the SDK_EVENT_TYPE_MAP to map event class names to output_type.
+        Falls back to "output" for unknown event types.
+
+        Args:
+            event: An OpenHands SDK event object.
+
+        Returns:
+            One of: "thinking", "progress", "output", "debug"
+        """
+        event_class_name = type(event).__name__
+        return SDK_EVENT_TYPE_MAP.get(event_class_name, "output")
+
+    @staticmethod
+    def _extract_event_content(event: Any) -> str | None:
+        """Extract displayable content from an OpenHands SDK event.
+
+        Args:
+            event: An OpenHands SDK event object.
+
+        Returns:
+            String content or None if no content found.
+        """
+        # Try various common attributes for event content
+        if hasattr(event, "message") and event.message:
+            return str(event.message)
+        if hasattr(event, "content") and event.content:
+            return str(event.content)
+        if hasattr(event, "action") and event.action:
+            return f"Action: {event.action}"
+        if hasattr(event, "observation") and event.observation:
+            return f"Observation: {event.observation}"
+        if hasattr(event, "thought") and event.thought:
+            return f"Thought: {event.thought}"
+        return None
+
     async def _run_with_sdk(
         self,
         task_description: str,
         working_dir: str,
-    ) -> tuple[list[str], str | None, str | None]:
+    ) -> tuple[list[tuple[str, str]], str | None, str | None]:
         """Run task using OpenHands SDK.
 
         Args:
@@ -109,9 +181,10 @@ class OpenHandsAdapter(WorkerToolPort):
             working_dir: Working directory for the agent.
 
         Returns:
-            Tuple of (thought_logs, result, error).
+            Tuple of (classified_events, result, error) where classified_events
+            is a list of (content, output_type) tuples.
         """
-        thought_logs: list[str] = []
+        classified_events: list[tuple[str, str]] = []
         result: str | None = None
         error: str | None = None
 
@@ -146,22 +219,20 @@ class OpenHandsAdapter(WorkerToolPort):
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, conversation.run)
 
-            # Collect thoughts from conversation events
+            # Collect and classify events from conversation
             # The SDK provides events with various attributes
             if hasattr(conversation, "events"):
                 for event in conversation.events:
-                    if hasattr(event, "message"):
-                        thought_logs.append(str(event.message))
-                    elif hasattr(event, "content"):
-                        thought_logs.append(str(event.content))
-                    elif hasattr(event, "action"):
-                        thought_logs.append(f"Action: {event.action}")
-                    elif hasattr(event, "observation"):
-                        thought_logs.append(f"Observation: {event.observation}")
+                    content = self._extract_event_content(event)
+                    if content:
+                        output_type = self._classify_event(event)
+                        classified_events.append((content, output_type))
 
             result = f"Task completed successfully in workspace: {working_dir}"
-            if thought_logs:
-                result = "\n".join(thought_logs[-5:])  # Last 5 thoughts as summary
+            if classified_events:
+                # Use last 5 output events as summary
+                output_events = [c for c, t in classified_events if t == "output"]
+                result = "\n".join(output_events[-5:]) if output_events else result
 
         except ImportError as e:
             error = (
@@ -171,7 +242,7 @@ class OpenHandsAdapter(WorkerToolPort):
         except Exception as e:
             error = f"OpenHands execution failed: {e!r}"
 
-        return thought_logs, result, error
+        return classified_events, result, error
 
     async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Execute a task using OpenHands SDK and stream domain events.
@@ -209,20 +280,21 @@ class OpenHandsAdapter(WorkerToolPort):
 
         try:
             # Step 2: Run with timeout
-            thought_logs, result, error = await asyncio.wait_for(
+            classified_events, result, error = await asyncio.wait_for(
                 self._run_with_sdk(task_description, working_dir),
                 timeout=self.timeout_seconds,
             )
 
-            # Step 3: Yield thought events
+            # Step 3: Yield classified thought events
             sequence = 2
-            for thought in thought_logs:
-                if thought.strip():
+            for content, output_type in classified_events:
+                if content.strip():
                     yield ThoughtCaptured(
                         aggregate_id=session_id,
                         sequence_number=sequence,
-                        content=thought.strip(),
+                        content=content.strip(),
                         stream="openhands",
+                        output_type=output_type,
                     )
                     sequence += 1
 
