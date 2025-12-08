@@ -11,12 +11,12 @@ This is correct - infrastructure is in the outer layer and depends on the inner 
 """
 
 from dataclasses import dataclass
-from typing import Literal
 
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 from infrastructure.adapters.claude_pty_adapter import ClaudeCodePTYAdapter
+from infrastructure.adapters.composite_worker_adapter import CompositeWorkerAdapter
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
@@ -26,18 +26,26 @@ from infrastructure.adapters.postgres_event_store import PostgresEventStore
 class InfrastructureConfig:
     """Configuration for infrastructure adapters.
 
-    In production, these values should be loaded from environment variables
-    or configuration files.
+    All fields are required and must be provided from config files
+    (config/default.yaml, config/development.yaml, etc.) or environment
+    variables. This ensures explicit configuration and prevents
+    accidental use of hardcoded defaults.
+
+    The bootstrap.py module is responsible for loading Settings from
+    config files and mapping them to this config object.
+
+    Raises:
+        TypeError: If any required field is not provided.
     """
 
     # PostgreSQL Event Store
-    postgres_connection_string: str = "postgresql://arise:arise@localhost:5432/arise_events"
+    postgres_connection_string: str
 
     # Worker Tool Configuration
-    # Supported types: "claude_code" or "openhands"
-    worker_tool_type: Literal["claude_code", "openhands"] = "openhands"
-    worker_tool_model: str = "openai/gpt-4o"  # For openhands: LiteLLM model identifier
-    worker_tool_timeout: int = 300  # seconds
+    # Default tool used when agent config doesn't specify one
+    default_worker_tool: str
+    worker_tool_model: str  # For openhands: LiteLLM model identifier
+    worker_tool_timeout: int  # seconds
 
 
 @dataclass
@@ -53,7 +61,7 @@ class Infrastructure:
     worker_tool: WorkerToolPort
 
 
-def get_infrastructure(config: InfrastructureConfig | None = None) -> Infrastructure:
+def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     """Create and return all infrastructure adapters.
 
     This factory function instantiates the concrete implementations of
@@ -61,10 +69,14 @@ def get_infrastructure(config: InfrastructureConfig | None = None) -> Infrastruc
     and can be swapped without changing the domain or application logic.
 
     Args:
-        config: Infrastructure configuration. Uses defaults if not provided.
+        config: Infrastructure configuration. Must be explicitly provided
+                from config files or environment variables. No defaults.
 
     Returns:
         Infrastructure container with all adapters.
+
+    Raises:
+        TypeError: If config is None or missing required fields.
 
     Architecture Note:
         Infrastructure adapters implement the ports (interfaces) defined by
@@ -72,8 +84,6 @@ def get_infrastructure(config: InfrastructureConfig | None = None) -> Infrastruc
         Hexagonal Architecture - the domain doesn't depend on infrastructure,
         infrastructure depends on domain interfaces.
     """
-    if config is None:
-        config = InfrastructureConfig()
 
     # PostgreSQL Event Store - implements EventStorePort
     event_store = PostgresEventStore(config.postgres_connection_string)
@@ -84,21 +94,24 @@ def get_infrastructure(config: InfrastructureConfig | None = None) -> Infrastruc
     llm_adapter = LiteLLMAdapter()
 
     # Worker Tool - implements WorkerToolPort
-    # Select adapter based on configuration
-    worker_tool: WorkerToolPort
-    if config.worker_tool_type == "claude_code":
-        # Claude Code PTY Adapter
-        # Executes worker tasks using Claude Code CLI via pseudo-terminal
-        # Requires: ANTHROPIC_API_KEY environment variable
-        worker_tool = ClaudeCodePTYAdapter(timeout_seconds=config.worker_tool_timeout)
-    else:
-        # OpenHands SDK Adapter (default)
-        # Executes worker tasks using OpenHands with any LLM provider
-        # Requires: OPENAI_API_KEY or LLM_API_KEY environment variable
-        worker_tool = OpenHandsAdapter(
-            model=config.worker_tool_model,
-            timeout_seconds=config.worker_tool_timeout,
-        )
+    # Use composite adapter that routes to the correct tool based on agent config
+    # This allows parent agents to specify which tool their children should use
+
+    # Create individual adapters
+    claude_code_adapter = ClaudeCodePTYAdapter(timeout_seconds=config.worker_tool_timeout)
+    openhands_adapter = OpenHandsAdapter(
+        model=config.worker_tool_model,
+        timeout_seconds=config.worker_tool_timeout,
+    )
+
+    # Create composite adapter that routes based on tool_name in task context
+    worker_tool: WorkerToolPort = CompositeWorkerAdapter(
+        adapters={
+            "claude_code": claude_code_adapter,
+            "openhands": openhands_adapter,
+        },
+        default_tool=config.default_worker_tool,
+    )
 
     return Infrastructure(
         event_store=event_store,

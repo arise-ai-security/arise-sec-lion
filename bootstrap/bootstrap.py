@@ -11,7 +11,7 @@ The bootstrap function is the single place where all object composition happens.
 from pathlib import Path
 
 from config import Settings
-from presentation.cli import CLI, CLIConfig
+from presentation.cli import CLI, CLIConfig, format_event_progress
 
 from .application import Application, ApplicationConfig, get_application
 from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastructure
@@ -71,13 +71,21 @@ def bootstrap(
     # ============================================================================
     # CONFIGURATION LOADING
     # ============================================================================
-    # Load Settings from config file if provided, then convert to layer configs.
-    # Explicitly passed config objects take precedence over file-based settings.
+    # Configuration cascade (highest to lowest precedence):
+    #   1. CLI args (config_path parameter)
+    #   2. Environment variables (ARISE_INFRA_*, ARISE_APP_*, etc.)
+    #   3. Environment-specific config (config/{ARISE_ENV}.yaml)
+    #   4. Default config (config/default.yaml)
+    #   5. Code defaults (in settings.py)
+    #
+    # Set ARISE_ENV to control which environment config is loaded:
+    #   - "development" (default): Uses config/development.yaml
+    #   - "production": Uses config/production.yaml
+    #   - "test": Uses config/test.yaml
     # ============================================================================
 
-    settings: Settings | None = None
-    if config_path is not None:
-        settings = Settings.from_yaml(config_path)
+    # Load settings: explicit config file OR cascade (env.yaml -> default.yaml -> code defaults)
+    settings = Settings.from_yaml(config_path) if config_path is not None else Settings.load()
 
     # ============================================================================
     # LAYER 1: Infrastructure - Adapters (implements domain ports)
@@ -90,16 +98,14 @@ def bootstrap(
     # ============================================================================
 
     if infrastructure_config is None:
-        if settings is not None:
-            # Build from settings
-            infrastructure_config = InfrastructureConfig(
-                postgres_connection_string=settings.infrastructure.postgres_connection_string,
-            )
-        else:
-            # Use defaults
-            infrastructure_config = InfrastructureConfig(
-                postgres_connection_string="postgresql://arise:arise@localhost:5432/arise_events",
-            )
+        # Build from settings (loaded from config file or environment variables)
+        # All fields are required - if not configured, InfrastructureConfig raises TypeError
+        infrastructure_config = InfrastructureConfig(
+            postgres_connection_string=settings.infrastructure.postgres_connection_string,
+            default_worker_tool=settings.infrastructure.worker_tool_type,
+            worker_tool_model=settings.infrastructure.worker_tool_model,
+            worker_tool_timeout=settings.infrastructure.worker_tool_timeout,
+        )
 
     infrastructure: Infrastructure = get_infrastructure(infrastructure_config)
 
@@ -113,32 +119,27 @@ def bootstrap(
     # ============================================================================
 
     if application_config is None:
-        if settings is not None:
-            # Build model_config from infrastructure settings
-            model_config = {
-                "boss": settings.infrastructure.llm_model_boss,
-                "manager": settings.infrastructure.llm_model_manager,
-                "worker": settings.infrastructure.llm_model_worker,
-                "pending": settings.infrastructure.llm_model_pending,
-            }
+        # Build model_config from infrastructure settings
+        model_config = {
+            "boss": settings.infrastructure.llm_model_boss,
+            "manager": settings.infrastructure.llm_model_manager,
+            "worker": settings.infrastructure.llm_model_worker,
+            "pending": settings.infrastructure.llm_model_pending,
+        }
 
-            # Build from settings
-            # Note: working_directory comes from presentation settings (output_directory)
-            # where worker tools should write generated code
-            application_config = ApplicationConfig(
-                max_retries=settings.application.max_retries,
-                poll_interval=settings.application.poll_interval,
-                model_config=model_config,
-                working_directory=settings.presentation.output_directory,
-            )
-        else:
-            # Use defaults
-            application_config = ApplicationConfig(
-                max_retries=3,
-                poll_interval=0.5,
-                model_config=None,  # Will use AgentExecutionService defaults
-                working_directory="./output",  # Default output directory
-            )
+        # Build from settings (loaded from config file or environment variables)
+        # Note: working_directory comes from presentation settings (output_directory)
+        # where worker tools should write generated code
+        # Progress callback enables real-time event output during orchestration
+        # default_worker_tool guides LLM to specify the correct tool in subtask configs
+        application_config = ApplicationConfig(
+            max_retries=settings.application.max_retries,
+            poll_interval=settings.application.poll_interval,
+            model_config=model_config,
+            working_directory=settings.presentation.output_directory,
+            progress_callback=format_event_progress if settings.presentation.verbose else None,
+            default_worker_tool=settings.infrastructure.worker_tool_type,
+        )
 
     application: Application = get_application(infrastructure, application_config)
 
@@ -153,15 +154,11 @@ def bootstrap(
     # ============================================================================
 
     if cli_config is None:
-        if settings is not None:
-            # Build from settings
-            cli_config = CLIConfig(
-                verbose=settings.presentation.verbose,
-                output_directory=settings.presentation.output_directory,
-            )
-        else:
-            # Use defaults
-            cli_config = CLIConfig(verbose=True, output_directory="./output")
+        # Build from settings (loaded from config file or environment variables)
+        cli_config = CLIConfig(
+            verbose=settings.presentation.verbose,
+            output_directory=settings.presentation.output_directory,
+        )
 
     cli: CLI = get_cli(application.execution_service, cli_config)
 

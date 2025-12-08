@@ -8,7 +8,7 @@ Dependency: Application depends on Infrastructure (via Port interfaces)
 
 from dataclasses import dataclass
 
-from core.application.execution_service import AgentExecutionService
+from core.application.execution_service import AgentExecutionService, ProgressCallback
 
 from .infrastructure import Infrastructure
 
@@ -28,6 +28,14 @@ class ApplicationConfig:
 
     # Working directory for worker tools (code generation output)
     working_directory: str | None = None
+
+    # Progress callback for real-time event notifications
+    # Signature: (event: DomainEvent, agent: AgentSession) -> None
+    progress_callback: ProgressCallback | None = None
+
+    # Default worker tool to use in subtask prompt examples
+    # This guides the LLM to specify this tool in subtask configs
+    default_worker_tool: str = "claude_code"
 
 
 @dataclass
@@ -79,6 +87,8 @@ def get_application(
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
         working_directory=config.working_directory,
+        progress_callback=config.progress_callback,
+        default_worker_tool=config.default_worker_tool,
     )
 
     return Application(execution_service=execution_service)
