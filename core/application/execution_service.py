@@ -10,16 +10,25 @@ This service coordinates the execution of agent steps by:
 """
 
 import asyncio
+import contextlib
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
-from core.domain.events import ChildSpawned
+from core.domain.events import ChildSpawned, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
+
+
+# Type alias for progress callback function
+# Signature: (event: DomainEvent, agent: AgentSession) -> None
+ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
 class AgentExecutionService:
@@ -53,6 +62,8 @@ class AgentExecutionService:
         max_retries: int = 3,
         poll_interval: float = 0.5,
         working_directory: str | None = None,
+        progress_callback: ProgressCallback | None = None,
+        default_worker_tool: str = "claude_code",
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -67,14 +78,20 @@ class AgentExecutionService:
             poll_interval: Interval in seconds for polling active agents (default: 0.5).
             working_directory: Directory for worker tool code generation output.
                               If None, worker tool uses its default directory.
+            progress_callback: Optional callback invoked when events are persisted.
+                              Signature: (event: DomainEvent, agent: AgentSession) -> None.
+                              Used for real-time progress updates in CLI/UI.
+            default_worker_tool: Default worker tool for subtask prompts.
+                                Valid values: "claude_code" or "openhands".
         """
         self.event_store = event_store
         self.llm_port = llm_port
         self.worker_tool_port = worker_tool_port
-        self.prompt_builder = prompt_builder or PromptBuilder()
+        self.prompt_builder = prompt_builder or PromptBuilder(default_tool=default_worker_tool)
         self.max_retries = max_retries
         self.poll_interval = poll_interval
         self.working_directory = working_directory
+        self.progress_callback = progress_callback
 
         # Set default model_config if not provided
         if model_config is None:
@@ -85,6 +102,60 @@ class AgentExecutionService:
                 "pending": "gpt-4o-mini",
             }
         self.model_config = model_config
+
+    def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
+        """Invoke progress callback if configured.
+
+        Args:
+            event: The domain event that was just persisted.
+            agent: The agent that produced the event.
+        """
+        if self.progress_callback is not None:
+            with contextlib.suppress(Exception):
+                self.progress_callback(event, agent)
+
+    def _get_workspace_context(self) -> str | None:
+        """Scan workspace directory and return file listing for worker context.
+
+        This enables workers to see files created by other workers in the shared
+        workspace, allowing them to build upon each other's work.
+
+        Returns:
+            A formatted string listing files in the workspace, or None if:
+            - working_directory is not configured
+            - directory doesn't exist or is empty
+            - an error occurs during scanning
+        """
+        if not self.working_directory:
+            return None
+
+        workspace_path = Path(self.working_directory)
+
+        if not workspace_path.exists():
+            return None
+
+        try:
+            # Recursively find all files (excluding hidden directories like .git)
+            files = []
+            for item in workspace_path.rglob("*"):
+                # Skip hidden files and directories
+                if any(part.startswith(".") for part in item.parts):
+                    continue
+                if item.is_file():
+                    # Get relative path from workspace root
+                    rel_path = item.relative_to(workspace_path)
+                    files.append(str(rel_path))
+
+            if not files:
+                return None
+
+            # Sort for consistent output
+            files.sort()
+            return "\n".join(f"- {f}" for f in files)
+
+        except OSError:
+            # Permission errors, etc. - don't fail, just skip context
+            return None
 
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one step of the agent workflow based on current state.
@@ -128,6 +199,8 @@ class AgentExecutionService:
                 for event in uncommitted_events:
                     await self.event_store.append(event, expected_version=current_version)
                     current_version += 1
+                    # Notify progress callback for real-time updates
+                    self._notify_progress(event, agent)
 
                 # Success - clear uncommitted changes
                 agent.mark_changes_as_committed()
@@ -204,8 +277,12 @@ class AgentExecutionService:
 
         elif agent.role == AgentRole.WORKER:
             # Worker agent needs to execute task using tools
+            # Scan workspace for existing files to provide context
+            workspace_context = self._get_workspace_context()
             await agent.execute_task(
-                self.worker_tool_port, working_directory=self.working_directory
+                self.worker_tool_port,
+                working_directory=self.working_directory,
+                workspace_context=workspace_context,
             )
 
         else:
@@ -249,6 +326,8 @@ class AgentExecutionService:
             # Persist child's creation events
             for idx, child_evt in enumerate(child.events):
                 await self.event_store.append(child_evt, expected_version=idx)
+                # Notify progress callback for child creation
+                self._notify_progress(child_evt, child)
 
             # Clear uncommitted changes
             child.mark_changes_as_committed()
@@ -284,6 +363,8 @@ class AgentExecutionService:
         for event in parent.events:
             await self.event_store.append(event, expected_version=parent_version)
             parent_version += 1
+            # Notify progress callback for parent update
+            self._notify_progress(event, parent)
 
         # Clear uncommitted changes
         parent.mark_changes_as_committed()
@@ -492,6 +573,8 @@ class AgentExecutionService:
         # Persist initial events to event store
         for idx, event in enumerate(boss_agent.events):
             await self.event_store.append(event, expected_version=idx)
+            # Notify progress callback for BOSS creation
+            self._notify_progress(event, boss_agent)
 
         # Mark changes as committed
         boss_agent.mark_changes_as_committed()
