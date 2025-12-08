@@ -42,7 +42,7 @@ Use this when you want fine-grained control over each operation.
       "temperature": 0.7,
       "max_tokens": 1500
     },
-    "tool": "claude_code"
+    "tool": "{{ default_tool }}"
   }
 }
 
@@ -63,7 +63,7 @@ Use this for simpler subtasks where you trust default heuristics.
       "temperature": 0.5,
       "max_tokens": 500
     },
-    "tool": "claude_code"
+    "tool": "{{ default_tool }}"
   }
 }
 
@@ -86,7 +86,7 @@ Specify base config with optional overrides for specific operations.
         "max_tokens": 300
       }
     },
-    "tool": "openhands"
+    "tool": "{{ default_tool }}"
   }
 }
 
@@ -105,8 +105,8 @@ Specify base config with optional overrides for specific operations.
 - **Creative** (brainstorming, design): 0.6-0.9
 
 ## Tool Selection
-- **claude_code**: Default for coding tasks, terminal commands, file operations
-- **openhands**: Complex multi-step workflows, browser automation, ambiguous tasks
+- **{{ default_tool }}**: The configured default tool for this system
+- Use the default tool ("{{ default_tool }}") unless you have a specific reason to switch
 
 ## Decomposition Quality
 - Each subtask should be **independently executable**

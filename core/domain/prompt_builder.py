@@ -27,7 +27,7 @@ class PromptBuilder:
     system configuration, operational strategy, task definition, and output format.
 
     Usage:
-        builder = PromptBuilder(template_dir="prompts")
+        builder = PromptBuilder(template_dir="prompts", default_tool="openhands")
         prompt = builder.build_manager_decomposition_prompt(
             task_description="Implement authentication system",
             agent_id=uuid4(),
@@ -35,14 +35,22 @@ class PromptBuilder:
         )
     """
 
-    def __init__(self, template_dir: str | Path = "prompts") -> None:
-        """Initialize the prompt builder with template directory.
+    def __init__(
+        self,
+        template_dir: str | Path = "prompts",
+        default_tool: str = "claude_code",
+    ) -> None:
+        """Initialize the prompt builder with template directory and default tool.
 
         Args:
             template_dir: Path to the root prompts directory containing
                          system/, strategies/, tasks/, output_formats/ subdirectories.
+            default_tool: Default worker tool to use in prompt examples.
+                         This guides the LLM to specify this tool for subtask configs.
+                         Valid values: "claude_code", "openhands"
         """
         self.template_dir = Path(template_dir)
+        self.default_tool = default_tool
         # Autoescape disabled intentionally: templates generate LLM prompts (plain text),
         # not HTML. XSS is not a risk, and escaping would corrupt prompt content.
         self.env = Environment(
@@ -130,10 +138,14 @@ class PromptBuilder:
         """
         try:
             # 1. System Prompt - MANAGER agent identity
-            system = self.env.get_template("system/role_manager.j2").render()
+            system = self.env.get_template("system/role_manager.j2").render(
+                default_tool=self.default_tool,
+            )
 
             # 2. Strategy Prompt - Decomposition methodology
-            strategy = self.env.get_template("strategies/manager_decomposition.j2").render()
+            strategy = self.env.get_template("strategies/manager_decomposition.j2").render(
+                default_tool=self.default_tool,
+            )
 
             # 3. Task Prompt - Specific task to decompose
             task = self.env.get_template("tasks/task_decomposition.j2").render(
@@ -141,10 +153,13 @@ class PromptBuilder:
                 agent_id=str(agent_id),
                 agent_role=agent_role,
                 parent_task=parent_task,
+                default_tool=self.default_tool,
             )
 
             # 4. Output Format - JSON schema for subtask list
-            output_format = self.env.get_template("output_formats/subtask_list.j2").render()
+            output_format = self.env.get_template("output_formats/subtask_list.j2").render(
+                default_tool=self.default_tool,
+            )
 
             # Compose in hierarchical order
             return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
@@ -180,10 +195,14 @@ class PromptBuilder:
         """
         try:
             # 1. System Prompt - BOSS agent identity
-            system = self.env.get_template("system/role_boss.j2").render()
+            system = self.env.get_template("system/role_boss.j2").render(
+                default_tool=self.default_tool,
+            )
 
             # 2. Strategy Prompt - Strategic delegation methodology
-            strategy = self.env.get_template("strategies/boss_delegation.j2").render()
+            strategy = self.env.get_template("strategies/boss_delegation.j2").render(
+                default_tool=self.default_tool,
+            )
 
             # 3. Task Prompt - Specific task to delegate
             task = self.env.get_template("tasks/task_decomposition.j2").render(
@@ -191,10 +210,13 @@ class PromptBuilder:
                 agent_id=str(agent_id),
                 agent_role="BOSS",
                 parent_task=parent_task,
+                default_tool=self.default_tool,
             )
 
             # 4. Output Format - JSON schema for subtask list
-            output_format = self.env.get_template("output_formats/subtask_list.j2").render()
+            output_format = self.env.get_template("output_formats/subtask_list.j2").render(
+                default_tool=self.default_tool,
+            )
 
             # Compose in hierarchical order
             return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
