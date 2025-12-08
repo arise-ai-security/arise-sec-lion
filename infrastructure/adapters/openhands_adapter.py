@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 from core.domain.events import (
-    CodeGenerationStarted,
     DomainEvent,
     ThoughtCaptured,
     WorkCompleted,
@@ -117,7 +116,9 @@ class OpenHandsAdapter(WorkerToolPort):
         error: str | None = None
 
         try:
-            # Import OpenHands SDK (lazy import to avoid import errors if not installed)
+            # Import OpenHands SDK and tools
+            # openhands-sdk: Core SDK (LLM, Agent, Conversation, Tool)
+            # openhands-tools: Built-in tools (TerminalTool, FileEditorTool)
             from openhands.sdk import LLM, Agent, Conversation, Tool
             from openhands.tools.file_editor import FileEditorTool
             from openhands.tools.terminal import TerminalTool
@@ -126,11 +127,12 @@ class OpenHandsAdapter(WorkerToolPort):
             llm = LLM(model=self.model, api_key=self.api_key)
 
             # Create agent with standard tools for code generation
+            # Tool(name=...) references the tool by its registered name
             agent = Agent(
                 llm=llm,
                 tools=[
-                    Tool(name=TerminalTool.name),
-                    Tool(name=FileEditorTool.name),
+                    Tool(name=TerminalTool.name),  # "terminal"
+                    Tool(name=FileEditorTool.name),  # "file_editor"
                 ],
             )
 
@@ -140,13 +142,12 @@ class OpenHandsAdapter(WorkerToolPort):
             # Send the task
             conversation.send_message(task_description)
 
-            # Run the agent (this is blocking in current SDK)
-            # We run it in an executor to not block the event loop
-            loop = asyncio.get_event_loop()
+            # Run the agent - use run_in_executor for sync API
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, conversation.run)
 
             # Collect thoughts from conversation events
-            # Note: The exact API for accessing events may vary by SDK version
+            # The SDK provides events with various attributes
             if hasattr(conversation, "events"):
                 for event in conversation.events:
                     if hasattr(event, "message"):
@@ -163,7 +164,10 @@ class OpenHandsAdapter(WorkerToolPort):
                 result = "\n".join(thought_logs[-5:])  # Last 5 thoughts as summary
 
         except ImportError as e:
-            error = f"OpenHands SDK not installed. Install with: uv add openhands-sdk. Error: {e}"
+            error = (
+                f"OpenHands packages not installed. "
+                f"Install with: uv add openhands-sdk openhands-tools. Error: {e}"
+            )
         except Exception as e:
             error = f"OpenHands execution failed: {e!r}"
 
@@ -200,13 +204,8 @@ class OpenHandsAdapter(WorkerToolPort):
         # Step 1: Validate inputs
         task_description, session_id, working_dir = self._validate_task_context(task_context)
 
-        # Yield start event
-        # TODO: APPLICATION LAYER should assign sequence_number
-        yield CodeGenerationStarted(
-            aggregate_id=session_id,
-            sequence_number=1,
-            tool_name=f"openhands ({self.model})",
-        )
+        # Note: CodeGenerationStarted event is created by domain model (model.py execute_task)
+        # The adapter only needs to yield ThoughtCaptured and WorkCompleted/WorkFailed events
 
         try:
             # Step 2: Run with timeout

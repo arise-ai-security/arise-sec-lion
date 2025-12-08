@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Any
 
 from core.domain.events import (
-    CodeGenerationStarted,
     DomainEvent,
     ThoughtCaptured,
     WorkCompleted,
@@ -401,15 +400,8 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         master_fd, _slave_fd, process = await self._spawn_process(task_description, working_dir)
 
         try:
-            # Yield start event
-            # TODO: APPLICATION LAYER should assign sequence_number based on aggregate state
-            # This hardcoded value (1) assumes this is the first event, which may not be true
-            # in a multi-worker system where the aggregate already has events.
-            yield CodeGenerationStarted(
-                aggregate_id=session_id,
-                sequence_number=1,  # TODO: Remove hardcoded value, use placeholder (0) or raw event
-                tool_name=self.command,
-            )
+            # Note: CodeGenerationStarted event is created by domain model (model.py execute_task)
+            # The adapter only needs to yield ThoughtCaptured and WorkCompleted/WorkFailed events
 
             # Step 3: Read output with timeout
             try:

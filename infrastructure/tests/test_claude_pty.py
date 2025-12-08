@@ -2,6 +2,10 @@
 
 These tests use a dummy CLI script (dummy_cli.py) to simulate Claude Code behavior
 without requiring the actual Claude CLI installation.
+
+Note: The adapter yields only ThoughtCaptured and WorkCompleted/WorkFailed events.
+The CodeGenerationStarted event is created by the domain model (model.py execute_task),
+not by the adapter. This prevents duplicate events.
 """
 
 from pathlib import Path
@@ -9,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import CodeGenerationStarted, ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed
 from infrastructure.adapters.claude_pty_adapter import ClaudeCodePTYAdapter
 
 
@@ -38,10 +42,9 @@ async def test_pty_adapter_successful_execution():
     async for event in adapter.run_session(task_context):
         events.append(event)
 
-    # Then: Should yield CodeGenerationStarted event
+    # Then: Should yield events (adapter yields ThoughtCaptured and WorkCompleted/WorkFailed)
+    # Note: CodeGenerationStarted is created by domain model, not the adapter
     assert len(events) > 0, "Should yield at least one event"
-    assert isinstance(events[0], CodeGenerationStarted)
-    assert events[0].tool_name == DUMMY_CLI_PATH
 
     # And: Should yield ThoughtCaptured events for thinking output
     thought_events = [e for e in events if isinstance(e, ThoughtCaptured)]

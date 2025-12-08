@@ -92,8 +92,22 @@ class PostgresEventStore(EventStorePort):
         Raises:
             ConnectionError: If unable to connect to the database.
         """
-        # TODO: Implement connection pool initialization
-        self.pool = await asyncpg.create_pool(self.connection_string)
+
+        async def init_connection(conn: asyncpg.Connection) -> None:
+            """Initialize connection with custom JSON codec using orjson."""
+            # Register orjson for JSONB encoding/decoding
+            # This ensures dicts are properly serialized to JSONB without double-encoding
+            await conn.set_type_codec(
+                "jsonb",
+                encoder=lambda v: orjson.dumps(v).decode("utf-8"),
+                decoder=orjson.loads,
+                schema="pg_catalog",
+            )
+
+        self.pool = await asyncpg.create_pool(
+            self.connection_string,
+            init=init_connection,
+        )
 
     async def disconnect(self) -> None:
         """Close the connection pool.
@@ -160,10 +174,9 @@ class PostgresEventStore(EventStorePort):
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
-            # Serialize event to JSON using orjson (fast)
-            # Convert Pydantic model to dict, then to JSON
+            # Convert Pydantic model to dict for JSONB storage
+            # The custom orjson codec registered in connect() handles serialization
             event_dict = event.model_dump(mode="json")
-            payload_json = orjson.dumps(event_dict).decode("utf-8")
 
             # Extract event type for deserialization
             event_type = event.__class__.__name__
@@ -172,6 +185,7 @@ class PostgresEventStore(EventStorePort):
             # If another process already inserted this sequence_number,
             # the UNIQUE constraint will raise UniqueViolationError
             async with self.pool.acquire() as conn:
+                # Pass dicts directly - the orjson codec handles serialization
                 await conn.execute(
                     """
                     INSERT INTO events (
@@ -182,15 +196,15 @@ class PostgresEventStore(EventStorePort):
                         payload,
                         occurred_at,
                         metadata
-                    ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
                     event.event_id,
                     event.aggregate_id,
                     event.sequence_number,
                     event_type,
-                    payload_json,
+                    event_dict,  # Dict - codec handles serialization
                     event.occurred_at,
-                    orjson.dumps(event.metadata).decode("utf-8"),
+                    event.metadata,  # Dict - codec handles serialization
                 )
 
         except asyncpg.UniqueViolationError as e:
@@ -269,8 +283,15 @@ class PostgresEventStore(EventStorePort):
 
                 # Deserialize JSON to Pydantic model
                 try:
-                    # payload_json is already a dict from asyncpg JSONB
-                    event = event_class(**payload_json)
+                    # Handle both dict (correct) and string (double-encoded legacy data)
+                    if isinstance(payload_json, str):
+                        # Double-encoded: JSONB stored a JSON string, parse it
+                        payload_dict = orjson.loads(payload_json)
+                    else:
+                        # Normal: JSONB returned a dict directly
+                        payload_dict = payload_json
+
+                    event = event_class(**payload_dict)
                     events.append(event)
                 except Exception as e:
                     raise EventStoreError(
