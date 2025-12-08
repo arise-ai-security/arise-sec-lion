@@ -69,6 +69,46 @@ Verify: `grep -r "from infrastructure" core/` should return nothing.
 
 The user will handle these operations manually.
 
+## Development Environment
+
+**This project uses Docker Compose for development.** All commands should run inside containers.
+
+### Running the System
+
+```bash
+cd deployment
+
+# First time or after code changes: build and start
+docker compose up --build -d
+
+# Run a task (container must be running)
+docker compose exec app python main.py run "Your task description"
+
+# View logs
+docker compose logs -f app
+
+# View results
+docker compose exec app python main.py events
+docker compose exec app python main.py summary
+docker compose exec app python main.py list
+
+# Stop services
+docker compose down
+```
+
+### Running Tests
+
+```bash
+docker compose exec app uv run pytest
+docker compose exec app uv run pytest -v --tb=short
+```
+
+### Important
+
+- **DO NOT** suggest bare `uv run` commands - always use `docker compose exec app`
+- The app container has the source mounted for hot reload
+- API keys are configured via `deployment/.env`
+
 ## Agent Roles & Flow
 
 ```
