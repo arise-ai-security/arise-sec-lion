@@ -9,7 +9,7 @@ A **recursive, self-healing multi-agent orchestration platform** that decomposes
 | **Architecture** | Hexagonal (Ports & Adapters) + Event Sourcing |
 | **Agent Hierarchy** | BOSS → MANAGER → WORKER (recursive) |
 | **Execution** | "Black Box" tools (Claude Code, OpenHands) with thinking capture |
-| **Tech Stack** | Python 3.12+, `uv`, `asyncpg`, `litellm`, `pydantic` |
+| **Tech Stack** | Python 3.12+, `uv`, `asyncpg`, `litellm`, `pydantic`, `FastAPI`, `React` |
 
 ## Project Structure Map
 
@@ -38,7 +38,10 @@ arise-sec-lion/
 │
 ├── bootstrap/               # Dependency injection (composition root)
 ├── config/                  # YAML settings + pydantic-settings
-├── presentation/            # CLI (Click commands)
+├── presentation/            # User interfaces
+│   ├── cli.py               # Click commands
+│   ├── api/                 # FastAPI REST + SSE
+│   └── web/                 # React dashboard
 ├── prompts/                 # Jinja2 templates for LLM prompts
 ├── deployment/              # Docker, docker-compose
 └── agent-docs/              # Detailed documentation (see below)
@@ -159,6 +162,8 @@ PENDING ────────────────────────
 | [`agent-docs/design-principles.md`](agent-docs/design-principles.md) | Understanding code patterns, reviewing code |
 | [`agent-docs/domain-model.md`](agent-docs/domain-model.md) | Modifying agent behavior, lifecycle, domain logic |
 | [`agent-docs/development.md`](agent-docs/development.md) | Building, testing, Docker, coding conventions |
+| [`agent-docs/api.md`](agent-docs/api.md) | REST API endpoints, SSE streaming, schemas |
+| [`agent-docs/dashboard.md`](agent-docs/dashboard.md) | React dashboard, XYFlow visualization |
 
 **Instruction:** Read the relevant doc(s) before implementing changes. If unsure which docs apply, ask.
 
@@ -180,3 +185,5 @@ grep -r "from infrastructure" core/      # ✓ No dependency violations
 - [x] OpenHands Adapter (Alternative worker)
 - [x] CLI with Click (run, events, summary, list)
 - [x] Projection Pipeline (Query side)
+- [x] REST API (FastAPI + SSE streaming)
+- [x] Agent Dashboard (React + XYFlow)
