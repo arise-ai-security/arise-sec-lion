@@ -1,7 +1,4 @@
-"""Configuration management for the Arise Multi-Agent System.
-
-This package provides type-safe configuration using Pydantic Settings.
-"""
+"""Configuration via Pydantic Settings."""
 
 from .settings import (
     ApplicationSettings,

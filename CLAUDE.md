@@ -164,6 +164,7 @@ PENDING ────────────────────────
 | [`agent-docs/development.md`](agent-docs/development.md) | Building, testing, Docker, coding conventions |
 | [`agent-docs/api.md`](agent-docs/api.md) | REST API endpoints, SSE streaming, schemas |
 | [`agent-docs/dashboard.md`](agent-docs/dashboard.md) | React dashboard, XYFlow visualization |
+| [`agent-docs/deployment.md`](agent-docs/deployment.md) | Docker Compose, services, build stages, networking |
 
 **Instruction:** Read the relevant doc(s) before implementing changes. If unsure which docs apply, ask.
 

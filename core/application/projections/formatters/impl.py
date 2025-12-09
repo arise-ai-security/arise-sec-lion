@@ -1,14 +1,4 @@
-"""Output formatter implementations.
-
-This module provides formatter implementations that convert domain events
-and summaries into string representations.
-
-Available formatters:
-    - "json": JSONFormatter - Pretty-printed JSON array
-    - "jsonl": JSONLinesFormatter - One JSON object per line (streaming)
-    - "text": TextFormatter - Human-readable text format
-    - "compact": CompactTextFormatter - Single-line per entry
-"""
+"""Output formatter implementations: JSON, JSONL, text, compact."""
 
 import json
 from collections.abc import Callable
@@ -20,18 +10,13 @@ from core.domain.events import DomainEvent
 
 
 def _event_to_dict(event: DomainEvent) -> dict[str, Any]:
-    """Convert DomainEvent to a JSON-serializable dictionary.
-
-    Uses Pydantic's built-in JSON serialization mode which automatically
-    handles UUIDs, datetimes, and nested Pydantic models.
-    """
+    """Convert DomainEvent to JSON-serializable dict via Pydantic."""
     data = event.model_dump(mode="json")
     data["event_type"] = type(event).__name__
     return data
 
 
 def _summary_to_dict(summary: ProjectionSummary) -> dict[str, Any]:
-    """Convert ProjectionSummary to a JSON-serializable dictionary."""
     return {
         "total_events": summary.total_events,
         "events_by_type": summary.events_by_type,
@@ -45,48 +30,42 @@ def _summary_to_dict(summary: ProjectionSummary) -> dict[str, Any]:
 
 @register_formatter("json")
 class JSONFormatter:
-    """Pretty-printed JSON array formatter."""
+    """Pretty-printed JSON array."""
 
     def __init__(self, indent: int = 2) -> None:
         self._indent = indent
 
     def format(self, events: list[DomainEvent]) -> str:
-        """Format events as a JSON array."""
         data = [_event_to_dict(event) for event in events]
         return json.dumps(data, indent=self._indent, ensure_ascii=False)
 
     def format_summary(self, summary: ProjectionSummary) -> str:
-        """Format a summary as JSON."""
         data = _summary_to_dict(summary)
         return json.dumps(data, indent=self._indent, ensure_ascii=False)
 
 
 @register_formatter("jsonl")
 class JSONLinesFormatter:
-    """JSON Lines (JSONL) streaming formatter."""
+    """One JSON object per line (streaming-friendly)."""
 
     def format(self, events: list[DomainEvent]) -> str:
-        """Format events as JSONL."""
         lines = [json.dumps(_event_to_dict(event), ensure_ascii=False) for event in events]
         return "\n".join(lines)
 
     def format_summary(self, summary: ProjectionSummary) -> str:
-        """Format a summary as a single JSON line."""
         data = _summary_to_dict(summary)
         return json.dumps(data, ensure_ascii=False)
 
 
 @register_formatter("text")
 class TextFormatter:
-    """Human-readable text formatter."""
+    """Human-readable multi-line text."""
 
     def format(self, events: list[DomainEvent]) -> str:
-        """Format events as human-readable text."""
         lines = [self._format_event(event) for event in events]
         return "\n".join(lines)
 
     def format_summary(self, summary: ProjectionSummary) -> str:
-        """Format a summary as human-readable text."""
         lines = [
             "=== Projection Summary ===",
             f"Total Events: {summary.total_events}",
@@ -113,7 +92,6 @@ class TextFormatter:
         return "\n".join(lines)
 
     def _format_event(self, event: DomainEvent) -> str:
-        """Format a single event."""
         timestamp_str = event.occurred_at.strftime("%Y-%m-%d %H:%M:%S")
         event_type = type(event).__name__
         lines = [
@@ -121,7 +99,6 @@ class TextFormatter:
             f"Agent: {event.aggregate_id}",
         ]
 
-        # Add event-specific details
         details = self._get_event_details(event)
         if details:
             for key, value in details.items():
@@ -131,14 +108,11 @@ class TextFormatter:
         return "\n".join(lines)
 
     def _get_event_details(self, event: DomainEvent) -> dict[str, Any]:
-        """Extract event-specific details for display."""
-        # Get all fields except base DomainEvent fields
         base_fields = {"event_id", "aggregate_id", "sequence_number", "occurred_at", "metadata"}
         details = {}
         for field_name in type(event).model_fields:
             if field_name not in base_fields:
                 value = getattr(event, field_name)
-                # Truncate long strings
                 if isinstance(value, str) and len(value) > 100:
                     value = value[:100] + "..."
                 details[field_name] = value
@@ -147,15 +121,13 @@ class TextFormatter:
 
 @register_formatter("compact")
 class CompactTextFormatter:
-    """Compact single-line text formatter."""
+    """Single-line per event."""
 
     def format(self, events: list[DomainEvent]) -> str:
-        """Format events as compact single lines."""
         lines = [self._format_event(event) for event in events]
         return "\n".join(lines)
 
     def format_summary(self, summary: ProjectionSummary) -> str:
-        """Format a summary as a compact single line."""
         type_counts = ", ".join(f"{t}:{c}" for t, c in sorted(summary.events_by_type.items()))
         return (
             f"Events: {summary.total_events} | "
@@ -165,12 +137,10 @@ class CompactTextFormatter:
         )
 
     def _format_event(self, event: DomainEvent) -> str:
-        """Format a single event as one line."""
         time_str = event.occurred_at.strftime("%H:%M:%S")
         agent_short = str(event.aggregate_id)[:8]
         event_type = type(event).__name__
 
-        # Get a brief summary based on event type
         summary = self._get_event_summary(event)
         max_len = 80
         if len(summary) > max_len:
@@ -179,12 +149,10 @@ class CompactTextFormatter:
         return f"{time_str} {event_type} [{agent_short}] {summary}"
 
     def _get_event_summary(self, event: DomainEvent) -> str:
-        """Get a brief summary string for the event."""
         return _EVENT_SUMMARY_HANDLERS.get(type(event).__name__, _default_summary)(event)
 
 
 def _default_summary(_event: DomainEvent) -> str:
-    """Default summary for unknown event types."""
     return ""
 
 

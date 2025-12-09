@@ -1,8 +1,4 @@
-"""Data models for the Event Projection System.
-
-This module defines immutable data structures used throughout the projection
-pipeline. All models are frozen dataclasses to ensure immutability.
-"""
+"""Immutable data models for the projection pipeline."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,20 +9,7 @@ from core.domain.events import DomainEvent
 
 @dataclass(frozen=True)
 class ProjectionSummary:
-    """Aggregated statistics from a projection run.
-
-    Provides a high-level overview of the events processed, useful for
-    dashboards, reports, and monitoring.
-
-    Attributes:
-        total_events: Total number of events processed.
-        events_by_type: Count of events grouped by event type name.
-        agents_involved: Set of unique agent UUIDs that produced events.
-        first_event: Timestamp of the earliest event (None if no events).
-        last_event: Timestamp of the latest event (None if no events).
-        error_count: Number of WorkFailed events.
-        errors: List of WorkFailed events for inspection.
-    """
+    """Aggregated event statistics from a projection run."""
 
     total_events: int
     events_by_type: dict[str, int]
@@ -38,11 +21,7 @@ class ProjectionSummary:
 
     @classmethod
     def empty(cls) -> "ProjectionSummary":
-        """Create an empty summary with zero counts.
-
-        Returns:
-            A ProjectionSummary with all counts at zero and empty collections.
-        """
+        """Create empty summary with zero counts."""
         return cls(
             total_events=0,
             events_by_type={},
