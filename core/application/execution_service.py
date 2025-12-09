@@ -570,8 +570,16 @@ class AgentExecutionService:
         self._workspace_context_scanned = False
 
         # Create working directory for this run: {output_directory}/{boss_id}/
+        # IMPORTANT: Use .resolve() to get absolute path. Worker tools (especially
+        # OpenHands) may run in sandboxed environments where relative paths resolve
+        # differently. An absolute path ensures the directory is found correctly.
         if self.output_directory:
-            run_output_path = Path(self.output_directory) / str(root_id)
+            # First ensure base output directory exists
+            base_output = Path(self.output_directory).resolve()
+            base_output.mkdir(parents=True, exist_ok=True)
+
+            # Then create run-specific subdirectory
+            run_output_path = base_output / str(root_id)
             run_output_path.mkdir(parents=True, exist_ok=True)
             self.working_directory = str(run_output_path)
 
