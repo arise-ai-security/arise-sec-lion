@@ -127,3 +127,28 @@ class EventStoreError(Exception):
         if self.original_error:
             return f"{self.message} (caused by: {self.original_error!r})"
         return self.message
+
+
+class ToolNotAvailableError(Exception):
+    """Exception raised when a requested worker tool is not available.
+
+    This exception is raised by infrastructure adapters when the requested
+    tool (e.g., "claude_code", "openhands") is not configured or unavailable.
+    The domain layer should catch this and emit a proper WorkFailed event.
+
+    Attributes:
+        tool_name: The name of the tool that was requested.
+        available_tools: List of tools that are available.
+    """
+
+    def __init__(self, tool_name: str, available_tools: list[str]) -> None:
+        """Initialize ToolNotAvailableError with tool details.
+
+        Args:
+            tool_name: The name of the tool that was requested.
+            available_tools: List of tools that are currently available.
+        """
+        self.tool_name = tool_name
+        self.available_tools = available_tools
+        message = f"Worker tool '{tool_name}' not available. Available tools: {available_tools}"
+        super().__init__(message)

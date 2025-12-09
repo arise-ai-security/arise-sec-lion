@@ -14,7 +14,8 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from core.domain.events import DomainEvent, WorkFailed
+from core.domain.events import DomainEvent
+from core.domain.exceptions import ToolNotAvailableError
 from core.ports.worker_port import WorkerToolPort
 
 
@@ -79,16 +80,8 @@ class CompositeWorkerAdapter(WorkerToolPort):
             logger.error(
                 f"Tool '{tool_name}' (key: '{tool_key}') unavailable. Options: {available}"
             )
-
-            # Yield a WorkFailed event instead of raising
-            session_id = task_context.get("session_id")
-            if session_id:
-                yield WorkFailed(
-                    aggregate_id=session_id,
-                    sequence_number=0,  # Will be corrected by domain model
-                    reason=f"Worker tool '{tool_name}' not available. Available tools: {available}",
-                )
-            return
+            # Raise exception - domain layer will emit proper WorkFailed event
+            raise ToolNotAvailableError(tool_name, available)
 
         # Get the appropriate adapter and delegate
         adapter = self.adapters[tool_key]

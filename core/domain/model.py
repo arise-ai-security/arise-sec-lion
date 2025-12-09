@@ -29,6 +29,7 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
+from core.domain.exceptions import ToolNotAvailableError
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser, strip_markdown_code_block
 from core.ports.llm_port import LLMPort
@@ -459,19 +460,23 @@ class AgentSession:
             task_context["working_directory"] = working_directory
 
         # Stream events from worker tool execution
-        async for tool_event in tool_port.run_session(task_context):
-            # Create a new event with correct aggregate_id and sequence_number
-            # (tool doesn't know these values, so we recreate the event)
-            event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
-            event_data["aggregate_id"] = self.session_id
-            event_data["sequence_number"] = self._next_sequence()
+        try:
+            async for tool_event in tool_port.run_session(task_context):
+                # Create a new event with correct aggregate_id and sequence_number
+                # (tool doesn't know these values, so we recreate the event)
+                event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
+                event_data["aggregate_id"] = self.session_id
+                event_data["sequence_number"] = self._next_sequence()
 
-            # Recreate event with correct values
-            corrected_event = type(tool_event)(**event_data)
+                # Recreate event with correct values
+                corrected_event = type(tool_event)(**event_data)
 
-            # Apply and record the event
-            self._apply(corrected_event)
-            self._changes.append(corrected_event)
+                # Apply and record the event
+                self._apply(corrected_event)
+                self._changes.append(corrected_event)
+        except ToolNotAvailableError as e:
+            # Infrastructure signaled tool unavailable - emit proper domain event
+            self.fail_with_reason(str(e))
 
     def handle_child_update(self, child_id: UUID, result: str) -> None:
         """Handle completion notification from a child agent.

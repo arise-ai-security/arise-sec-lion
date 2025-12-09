@@ -94,6 +94,9 @@ class AgentExecutionService:
         self.output_directory = output_directory
         self.working_directory: str | None = None  # Set per-run in create_boss_agent()
         self.progress_callback = progress_callback
+        # Workspace context caching - only scan directory once per run
+        self._workspace_context_cache: str | None = None
+        self._workspace_context_scanned: bool = False
 
         # Set default model_config if not provided
         if model_config is None:
@@ -122,12 +125,23 @@ class AgentExecutionService:
         This enables workers to see files created by other workers in the shared
         workspace, allowing them to build upon each other's work.
 
+        Note:
+            Results are cached after first scan to avoid repeated I/O on every
+            worker step. The cache is per-run (reset when create_boss_agent is called).
+
         Returns:
             A formatted string listing files in the workspace, or None if:
             - working_directory is not configured
             - directory doesn't exist or is empty
             - an error occurs during scanning
         """
+        # Return cached result if already scanned
+        if self._workspace_context_scanned:
+            return self._workspace_context_cache
+
+        # Mark as scanned (even if result is None)
+        self._workspace_context_scanned = True
+
         if not self.working_directory:
             return None
 
@@ -153,7 +167,8 @@ class AgentExecutionService:
 
             # Sort for consistent output
             files.sort()
-            return "\n".join(f"- {f}" for f in files)
+            self._workspace_context_cache = "\n".join(f"- {f}" for f in files)
+            return self._workspace_context_cache
 
         except OSError:
             # Permission errors, etc. - don't fail, just skip context
@@ -549,6 +564,10 @@ class AgentExecutionService:
         """
         # Generate unique ID for root agent
         root_id = uuid4()
+
+        # Reset workspace context cache for new run
+        self._workspace_context_cache = None
+        self._workspace_context_scanned = False
 
         # Create working directory for this run: {output_directory}/{boss_id}/
         if self.output_directory:
