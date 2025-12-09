@@ -106,3 +106,92 @@ class PromptVariablesSchema(BaseModel):
     """Schema for available prompt variables."""
 
     variables: dict[str, str] = Field(..., description="Variable name to description mapping")
+
+
+# Agent Summary Schemas (CQRS Projection)
+
+
+class SubtaskSummarySchema(BaseModel):
+    """Schema for a subtask in the agent summary."""
+
+    description: str = Field(..., description="Subtask description")
+    child_id: str | None = Field(None, description="Child agent UUID assigned to this subtask")
+    child_status: str | None = Field(None, description="Child agent status")
+
+
+class AgentSummarySchema(BaseModel):
+    """CQRS projection schema for agent node summary.
+
+    Aggregates data from multiple events to provide a comprehensive view
+    of an agent's state, configuration, and reasoning.
+    """
+
+    id: str = Field(..., description="Agent UUID")
+    role: str = Field(..., description="Agent role (BOSS, MANAGER, WORKER, PENDING)")
+    status: str = Field(..., description="Current status")
+    task_description: str = Field(..., description="Task assigned to this agent")
+
+    # Complexity evaluation (from ComplexityEvaluated event)
+    complexity: str | None = Field(None, description="Evaluated complexity (simple/complex)")
+    complexity_reasoning: str | None = Field(None, description="LLM reasoning for complexity")
+
+    # For WORKER agents (from CodeGenerationStarted event)
+    worker_tool: str | None = Field(None, description="Worker tool used (claude_code/openhands)")
+
+    # For MANAGER agents (from SubtasksDefined event)
+    subtasks: list[SubtaskSummarySchema] = Field(
+        default_factory=list, description="Subtasks defined by this manager"
+    )
+
+    # Configuration (from AgentConfig)
+    config_strategy: str | None = Field(
+        None, description="Config strategy (per_operation/heuristic/hybrid)"
+    )
+    config_details: dict = Field(
+        default_factory=dict, description="Configuration details (models, hyperparameters)"
+    )
+
+    # Result/Error
+    result: str | None = Field(None, description="Final result (if completed)")
+    error_message: str | None = Field(None, description="Error message (if failed)")
+
+
+# System Configuration Schema
+
+
+class LLMConfigSchema(BaseModel):
+    """Schema for LLM configuration."""
+
+    model: str
+    temperature: float
+    max_tokens: int
+    top_p: float | None = None
+
+
+class InfrastructureConfigSchema(BaseModel):
+    """Schema for infrastructure configuration (safe subset)."""
+
+    llm_model_boss: str = Field(..., description="LLM model for BOSS agent")
+    worker_tool_type: str = Field(..., description="Default worker tool type")
+    worker_tool_model: str = Field(..., description="Model for OpenHands worker")
+    worker_tool_timeout: int = Field(..., description="Worker tool timeout (seconds)")
+
+
+class ApplicationConfigSchema(BaseModel):
+    """Schema for application configuration."""
+
+    max_retries: int = Field(..., description="Maximum OCC retry attempts")
+    retry_delay: float = Field(..., description="Delay between retries (seconds)")
+    poll_interval: float = Field(..., description="Agent polling interval (seconds)")
+    llm_timeout: float = Field(..., description="LLM query timeout (seconds)")
+    worker_timeout: float = Field(..., description="Worker task timeout (seconds)")
+    default_task_complexity_threshold: int = Field(
+        ..., description="Complexity threshold for task decomposition"
+    )
+
+
+class SystemConfigSchema(BaseModel):
+    """Schema for system configuration (read-only view)."""
+
+    infrastructure: InfrastructureConfigSchema
+    application: ApplicationConfigSchema

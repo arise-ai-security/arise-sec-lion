@@ -5,6 +5,7 @@
 import type {
   AgentListItem,
   AgentHierarchy,
+  AgentSummary,
   DomainEvent,
   CategorizedEvents,
   Prompt,
@@ -12,6 +13,7 @@ import type {
   PromptUpdate,
   RenderedPrompt,
   PromptVariables,
+  SystemConfig,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -113,4 +115,14 @@ export async function resetPrompt(category: string, name: string): Promise<Promp
 
 export async function getTemplateVariables(): Promise<PromptVariables> {
   return fetchJson<PromptVariables>('/prompts/variables');
+}
+
+// Agent Summary endpoint
+export async function getAgentSummary(agentId: string): Promise<AgentSummary> {
+  return fetchJson<AgentSummary>(`/agents/${agentId}/summary`);
+}
+
+// System Configuration endpoint
+export async function getSystemConfig(): Promise<SystemConfig> {
+  return fetchJson<SystemConfig>('/config');
 }

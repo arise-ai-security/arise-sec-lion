@@ -6,10 +6,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentTree } from './components/AgentTree';
+import { ConfigPanel } from './components/ConfigPanel';
 import { EventPanel } from './components/EventPanel';
+import { SummaryPanel } from './components/SummaryPanel';
 import { useSSE } from './hooks/useSSE';
 import * as api from './api/client';
-import type { AgentListItem, AgentHierarchy, CategorizedEvents, DomainEvent } from './types/api';
+import type { AgentListItem, AgentHierarchy, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
 
 function App() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
@@ -18,10 +20,14 @@ function App() {
   const [events, setEvents] = useState<CategorizedEvents | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [realtimeEvents, setRealtimeEvents] = useState<DomainEvent[]>([]);
+  const [summary, setSummary] = useState<AgentSummary | null>(null);
+  const [showConfigPanel, setShowConfigPanel] = useState(false);
+  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events'>('summary');
 
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
 
   // Use refs for values needed in callbacks to avoid dependency loops
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -93,10 +99,11 @@ function App() {
     };
   }, [selectedAgentId]);
 
-  // Fetch events when a node is selected
+  // Fetch events and summary when a node is selected
   useEffect(() => {
     if (!selectedNodeId) {
       setEvents(null);
+      setSummary(null);
       return;
     }
 
@@ -121,7 +128,27 @@ function App() {
       }
     }
 
+    async function loadSummary() {
+      setLoadingSummary(true);
+      try {
+        const data = await api.getAgentSummary(selectedNodeId!);
+        if (!cancelled) {
+          setSummary(data);
+        }
+      } catch (error) {
+        console.error('Failed to load summary:', error);
+        if (!cancelled) {
+          setSummary(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingSummary(false);
+        }
+      }
+    }
+
     loadEvents();
+    loadSummary();
 
     return () => {
       cancelled = true;
@@ -216,14 +243,26 @@ function App() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
-              title={isConnected ? 'Connected' : 'Disconnected'}
-            />
-            <span className="text-xs text-gray-500">
-              {isConnected ? 'Live' : 'Offline'}
-            </span>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowConfigPanel(true)}
+              className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Config
+            </button>
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
+                title={isConnected ? 'Connected' : 'Disconnected'}
+              />
+              <span className="text-xs text-gray-500">
+                {isConnected ? 'Live' : 'Offline'}
+              </span>
+            </div>
           </div>
         </header>
 
@@ -239,22 +278,51 @@ function App() {
         </div>
       </div>
 
-      {/* Events panel */}
-      <div className="w-80 flex-shrink-0 bg-white dark:bg-gray-800 border-l dark:border-gray-700">
-        <div className="h-14 flex items-center px-4 border-b dark:border-gray-700">
-          <h2 className="font-semibold text-gray-800 dark:text-white">
-            {selectedNodeId ? 'Agent Events' : 'Events'}
-          </h2>
-          {realtimeEvents.length > 0 && (
-            <span className="ml-2 px-2 py-0.5 text-xs bg-blue-500 text-white rounded-full">
-              +{realtimeEvents.length}
-            </span>
+      {/* Right panel with tabs */}
+      <div className="w-96 flex-shrink-0 bg-white dark:bg-gray-800 border-l dark:border-gray-700">
+        {/* Tab header */}
+        <div className="h-14 flex items-center justify-between px-4 border-b dark:border-gray-700">
+          <div className="flex gap-1">
+            <button
+              onClick={() => setRightPanelView('summary')}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                rightPanelView === 'summary'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Summary
+            </button>
+            <button
+              onClick={() => setRightPanelView('events')}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                rightPanelView === 'events'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Events
+              {realtimeEvents.length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-blue-600 rounded-full">
+                  +{realtimeEvents.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Tab content */}
+        <div className="h-[calc(100vh-3.5rem)] overflow-hidden">
+          {rightPanelView === 'summary' ? (
+            <SummaryPanel summary={summary} loading={loadingSummary} />
+          ) : (
+            <EventPanel events={events} loading={loadingEvents} />
           )}
         </div>
-        <div className="h-[calc(100vh-3.5rem)] overflow-hidden">
-          <EventPanel events={events} loading={loadingEvents} />
-        </div>
       </div>
+
+      {/* Config Modal */}
+      <ConfigPanel isOpen={showConfigPanel} onClose={() => setShowConfigPanel(false)} />
     </div>
   );
 }

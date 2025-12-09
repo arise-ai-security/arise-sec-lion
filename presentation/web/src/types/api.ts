@@ -80,3 +80,59 @@ export interface RenderedPrompt {
 export interface PromptVariables {
   variables: Record<string, string>;
 }
+
+// Agent Summary types (CQRS Projection)
+
+export interface SubtaskSummary {
+  description: string;
+  child_id: string | null;
+  child_status: string | null;
+}
+
+export interface AgentSummary {
+  id: string;
+  role: AgentRole;
+  status: AgentStatus;
+  task_description: string;
+
+  // Complexity evaluation
+  complexity: string | null;
+  complexity_reasoning: string | null;
+
+  // For WORKER agents
+  worker_tool: string | null;
+
+  // For MANAGER agents
+  subtasks: SubtaskSummary[];
+
+  // Configuration
+  config_strategy: string | null;
+  config_details: Record<string, unknown>;
+
+  // Result/Error
+  result: string | null;
+  error_message: string | null;
+}
+
+// System Configuration types
+
+export interface InfrastructureConfig {
+  llm_model_boss: string;
+  worker_tool_type: string;
+  worker_tool_model: string;
+  worker_tool_timeout: number;
+}
+
+export interface ApplicationConfig {
+  max_retries: number;
+  retry_delay: number;
+  poll_interval: number;
+  llm_timeout: number;
+  worker_timeout: number;
+  default_task_complexity_threshold: number;
+}
+
+export interface SystemConfig {
+  infrastructure: InfrastructureConfig;
+  application: ApplicationConfig;
+}

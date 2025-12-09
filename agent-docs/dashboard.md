@@ -32,7 +32,9 @@ npm run build      # Output in dist/
 | `App` | `src/App.tsx` | Main layout, state management, SSE connection |
 | `AgentSidebar` | `src/components/AgentSidebar.tsx` | BOSS agent list selector |
 | `AgentTree` | `src/components/AgentTree.tsx` | XYFlow hierarchy visualization |
+| `SummaryPanel` | `src/components/SummaryPanel.tsx` | Agent summary (task, complexity, config) |
 | `EventPanel` | `src/components/EventPanel.tsx` | Categorized event display with filtering |
+| `ConfigPanel` | `src/components/ConfigPanel.tsx` | System configuration modal |
 
 ## API Client
 
@@ -42,6 +44,7 @@ Located at `src/api/client.ts`:
 // Agent queries
 listBossAgents(): Promise<AgentListItem[]>
 getAgentHierarchy(agentId: string): Promise<AgentHierarchy>
+getAgentSummary(agentId: string): Promise<AgentSummary>
 
 // Event queries
 getAgentEvents(agentId: string): Promise<CategorizedEvents>
@@ -49,6 +52,9 @@ getAllAgentEvents(agentId: string): Promise<DomainEvent[]>
 
 // SSE streaming
 createEventSource(rootId: string): EventSource
+
+// System config
+getSystemConfig(): Promise<SystemConfig>
 ```
 
 ## Real-time Updates

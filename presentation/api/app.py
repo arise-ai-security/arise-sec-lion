@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Settings
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
-from presentation.api.routes import agents, events, prompts
+from presentation.api.routes import agents, config, events, prompts
 
 
 @asynccontextmanager
@@ -80,6 +80,7 @@ def create_app(
     app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
     app.include_router(events.router, prefix="/api/events", tags=["events"])
     app.include_router(prompts.router, prefix="/api/prompts", tags=["prompts"])
+    app.include_router(config.router, prefix="/api/config", tags=["config"])
 
     # Health check endpoint
     @app.get("/api/health", tags=["health"])
