@@ -1,38 +1,12 @@
-# =============================================================================
-# Development Docker Compose - Arise Multi-Agent System
-# =============================================================================
-# Usage:
-#   cp .env.example .env  # Configure your settings
-#   docker compose up -d  # Start services
-#   docker compose logs -f app  # View app logs
+# Arise Multi-Agent System
 #
-# Services:
-#   - web: React dashboard at http://localhost:3000
-#   - api: FastAPI server at http://localhost:8000
-#   - app: CLI for running tasks (interactive)
-#   - db: PostgreSQL database
+# Usage:
+#   docker compose up -d                    # Start dev environment
+#   docker compose --profile prod up -d     # Start production
+#   docker compose --profile test up -d     # Start test DB only
 
 services:
-  # ---------------------------------------------------------------------------
-  # Web Dashboard (React + Nginx)
-  # ---------------------------------------------------------------------------
-  web:
-    build:
-      context: ../presentation/web
-      dockerfile: Dockerfile
-    container_name: arise-web
-    ports:
-      - "3000:80"
-    depends_on:
-      api:
-        condition: service_healthy
-    networks:
-      - arise-network
-    restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # API Service (FastAPI)
-  # ---------------------------------------------------------------------------
+  # API Server (FastAPI)
   api:
     build:
       context: ..
@@ -47,26 +21,17 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      ARISE_ENV: ${ARISE_ENV:-development}
       ARISE_INFRA_POSTGRES_HOST: db
-      ARISE_INFRA_POSTGRES_USER: ${POSTGRES_USER}
-      ARISE_INFRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      ARISE_INFRA_POSTGRES_DATABASE: ${POSTGRES_DB}
     ports:
       - "8000:8000"
-    networks:
-      - arise-network
     command: uvicorn presentation.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
 
-  # ---------------------------------------------------------------------------
-  # Application Service (CLI)
-  # ---------------------------------------------------------------------------
+  # CLI App (for running tasks)
   app:
     build:
       context: ..
@@ -74,40 +39,20 @@ services:
       target: development
     container_name: arise-app
     volumes:
-      - ..:/app  # Mount source for hot reload
-      - /app/.venv  # Exclude venv from mount
-      # Docker socket mounting for Docker-in-Docker (sibling containers)
-      # Allows OpenHands adapter to spawn sandbox containers on the host's Docker daemon
-      # Security note: This grants container root-equivalent access to host Docker
+      - ..:/app
+      - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
     env_file: .env
     environment:
-      # Configuration cascade environment (default: development)
-      # Controls which config file is loaded: config/{ARISE_ENV}.yaml -> config/default.yaml
-      # Valid values: development, production, test
-      ARISE_ENV: ${ARISE_ENV:-development}
-      # Legacy DATABASE_URL (not currently used by settings, but kept for compatibility)
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      # Override postgres_host for Docker networking (service name instead of localhost)
-      # Settings read ARISE_INFRA_* prefixed env vars (see config/settings.py)
       ARISE_INFRA_POSTGRES_HOST: db
-      ARISE_INFRA_POSTGRES_USER: ${POSTGRES_USER}
-      ARISE_INFRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      ARISE_INFRA_POSTGRES_DATABASE: ${POSTGRES_DB}
-    networks:
-      - arise-network
-    # Keep container running for interactive development
-    # Use: docker compose exec app python main.py run "Your task"
     command: sleep infinity
     stdin_open: true
     tty: true
 
-  # ---------------------------------------------------------------------------
-  # PostgreSQL Database
-  # ---------------------------------------------------------------------------
+  # PostgreSQL
   db:
     image: postgres:16-alpine
     container_name: arise-db
@@ -118,16 +63,47 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arise} -d ${POSTGRES_DB:-arise}"]
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - arise-network
 
-networks:
-  arise-network:
-    driver: bridge
+  # --- Production profile ---
+  app-prod:
+    profiles: [prod]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: production
+    container_name: arise-app-prod
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      ARISE_INFRA_POSTGRES_HOST: db
+
+  # --- Test profile ---
+  test-db:
+    profiles: [test]
+    image: postgres:16-alpine
+    container_name: arise-test-db
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: testdb
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
