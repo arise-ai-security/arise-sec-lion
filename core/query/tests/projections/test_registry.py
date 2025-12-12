@@ -2,7 +2,7 @@
 
 import pytest
 
-from core.application.projections.registry import (
+from core.query.projections.registry import (
     ProjectionRegistry,
     RegistryError,
     register_filter,

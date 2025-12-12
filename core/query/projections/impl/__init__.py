@@ -1,6 +1,6 @@
 """Projection implementations."""
 
-from core.application.projections.impl.summary import SummaryProjection
+from core.query.projections.impl.summary import SummaryProjection
 
 
 __all__ = [

@@ -6,15 +6,15 @@ from uuid import uuid4
 
 import pytest
 
-from core.application.projections.formatters import (
+from core.domain.events import AgentCreated, WorkFailed
+from core.query.projections.formatters import (
     CompactTextFormatter,
     JSONFormatter,
     JSONLinesFormatter,
     TextFormatter,
 )
-from core.application.projections.models import ProjectionSummary
-from core.application.projections.registry import ProjectionRegistry
-from core.domain.events import AgentCreated, WorkFailed
+from core.query.projections.models import ProjectionSummary
+from core.query.projections.registry import ProjectionRegistry
 
 
 @pytest.fixture

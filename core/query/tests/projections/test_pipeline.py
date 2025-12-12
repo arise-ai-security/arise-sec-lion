@@ -5,14 +5,6 @@ from uuid import uuid4
 
 import pytest
 
-from core.application.projections.filters import ErrorOnlyFilter, IncludeAllFilter
-from core.application.projections.formatters import JSONFormatter, JSONLinesFormatter
-from core.application.projections.models import ProjectionSummary
-from core.application.projections.pipeline import (
-    ProjectionPipeline,
-    ProjectionPipelineBuilder,
-)
-from core.application.projections.registry import RegistryError
 from core.domain.events import (
     AgentCreated,
     ChildSpawned,
@@ -22,6 +14,14 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.domain.subtask import Subtask
+from core.query.projections.filters import ErrorOnlyFilter, IncludeAllFilter
+from core.query.projections.formatters import JSONFormatter, JSONLinesFormatter
+from core.query.projections.models import ProjectionSummary
+from core.query.projections.pipeline import (
+    ProjectionPipeline,
+    ProjectionPipelineBuilder,
+)
+from core.query.projections.registry import RegistryError
 from infrastructure.adapters.sinks import StringSink
 
 from .conftest import BASE_TIME, BOSS_ID, MANAGER_ID, FakeEventStore

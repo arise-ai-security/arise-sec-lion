@@ -5,15 +5,15 @@ from uuid import uuid4
 
 import pytest
 
-from core.application.projections.impl import SummaryProjection
-from core.application.projections.models import ProjectionSummary
-from core.application.projections.registry import ProjectionRegistry
 from core.domain.events import (
     AgentCreated,
     TaskAssigned,
     WorkCompleted,
     WorkFailed,
 )
+from core.query.projections.impl import SummaryProjection
+from core.query.projections.models import ProjectionSummary
+from core.query.projections.registry import ProjectionRegistry
 
 
 class TestSummaryProjection:

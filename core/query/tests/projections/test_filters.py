@@ -2,7 +2,12 @@
 
 from uuid import uuid4
 
-from core.application.projections.filters import (
+from core.domain.events import (
+    AgentCreated,
+    TaskAssigned,
+    WorkFailed,
+)
+from core.query.projections.filters import (
     AgentFilter,
     AnyOfFilter,
     CompositeFilter,
@@ -10,12 +15,7 @@ from core.application.projections.filters import (
     EventTypeFilter,
     IncludeAllFilter,
 )
-from core.application.projections.registry import ProjectionRegistry
-from core.domain.events import (
-    AgentCreated,
-    TaskAssigned,
-    WorkFailed,
-)
+from core.query.projections.registry import ProjectionRegistry
 
 
 class TestIncludeAllFilter:

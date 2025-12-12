@@ -4,7 +4,6 @@ from datetime import timedelta
 
 import pytest
 
-from core.application.projections.hierarchy_collector import HierarchyCollector
 from core.domain.events import (
     AgentCreated,
     ChildSpawned,
@@ -12,6 +11,7 @@ from core.domain.events import (
     WorkCompleted,
 )
 from core.domain.subtask import Subtask
+from core.query.projections.hierarchy_collector import HierarchyCollector
 
 from .conftest import (
     BASE_TIME,

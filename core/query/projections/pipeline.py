@@ -3,16 +3,16 @@
 from typing import Any, Self
 from uuid import UUID
 
-from core.application.projections.base import EventFilter, Formatter
-from core.application.projections.filters import IncludeAllFilter
-from core.application.projections.formatters import JSONFormatter
-from core.application.projections.hierarchy_collector import HierarchyCollector
-from core.application.projections.impl import SummaryProjection
-from core.application.projections.models import ProjectionSummary
-from core.application.projections.registry import ProjectionRegistry
 from core.domain.events import DomainEvent
 from core.ports.event_store_port import EventStorePort
-from core.ports.sink_port import SinkPort
+from core.query.ports.sink_port import SinkPort
+from core.query.projections.base import EventFilter, Formatter
+from core.query.projections.filters import IncludeAllFilter
+from core.query.projections.formatters import JSONFormatter
+from core.query.projections.hierarchy_collector import HierarchyCollector
+from core.query.projections.impl import SummaryProjection
+from core.query.projections.models import ProjectionSummary
+from core.query.projections.registry import ProjectionRegistry
 
 
 class ProjectionPipeline:

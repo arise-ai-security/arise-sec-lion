@@ -4,10 +4,10 @@ from collections import Counter
 from collections.abc import Iterable
 from uuid import UUID
 
-from core.application.projections.base import Projection
-from core.application.projections.models import ProjectionSummary
-from core.application.projections.registry import register_projection
 from core.domain.events import DomainEvent, WorkFailed
+from core.query.projections.base import Projection
+from core.query.projections.models import ProjectionSummary
+from core.query.projections.registry import register_projection
 
 
 @register_projection("summary")

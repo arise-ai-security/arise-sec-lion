@@ -2,7 +2,7 @@
 
 import io
 
-from core.application.projections.registry import ProjectionRegistry
+from core.query.projections.registry import ProjectionRegistry
 
 # All sinks are in infrastructure layer (Hexagonal Architecture)
 from infrastructure.adapters.sinks import (

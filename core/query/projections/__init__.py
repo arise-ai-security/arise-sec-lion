@@ -23,12 +23,13 @@ Note on Sinks (Hexagonal Architecture):
     The SinkPort protocol (abstract interface) is in core/ports/sink_port.py.
 """
 
-from core.application.projections.base import (
+from core.query.ports.sink_port import SinkPort
+from core.query.projections.base import (
     EventFilter,
     Formatter,
     Projection,
 )
-from core.application.projections.filters import (
+from core.query.projections.filters import (
     AgentFilter,
     AnyOfFilter,
     CompositeFilter,
@@ -36,20 +37,20 @@ from core.application.projections.filters import (
     EventTypeFilter,
     IncludeAllFilter,
 )
-from core.application.projections.formatters import (
+from core.query.projections.formatters import (
     CompactTextFormatter,
     JSONFormatter,
     JSONLinesFormatter,
     TextFormatter,
 )
-from core.application.projections.hierarchy_collector import HierarchyCollector
-from core.application.projections.impl import SummaryProjection
-from core.application.projections.models import ProjectionSummary
-from core.application.projections.pipeline import (
+from core.query.projections.hierarchy_collector import HierarchyCollector
+from core.query.projections.impl import SummaryProjection
+from core.query.projections.models import ProjectionSummary
+from core.query.projections.pipeline import (
     ProjectionPipeline,
     ProjectionPipelineBuilder,
 )
-from core.application.projections.registry import (
+from core.query.projections.registry import (
     ProjectionRegistry,
     RegistryError,
     register_filter,
@@ -57,7 +58,6 @@ from core.application.projections.registry import (
     register_projection,
     register_sink,
 )
-from core.ports.sink_port import SinkPort
 
 
 __all__ = [

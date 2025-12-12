@@ -5,8 +5,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
-from core.application.projections.registry import register_sink
-from core.ports.sink_port import SinkPort
+from core.query.ports.sink_port import SinkPort
+from core.query.projections.registry import register_sink
 
 
 @register_sink("stdout")

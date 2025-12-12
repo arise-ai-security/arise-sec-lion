@@ -2,8 +2,8 @@
 
 from uuid import UUID
 
-from core.application.projections.registry import register_filter
 from core.domain.events import DomainEvent, WorkFailed
+from core.query.projections.registry import register_filter
 
 
 @register_filter("all")

@@ -16,8 +16,8 @@ import click
 
 if TYPE_CHECKING:
     from core.application.execution_service import AgentExecutionService
-    from core.application.projections import ProjectionPipelineBuilder
     from core.ports.event_store_port import EventStorePort
+    from core.query.projections import ProjectionPipelineBuilder
 
 
 @dataclass
@@ -411,7 +411,7 @@ async def _show_events(
     errors_only: bool,
 ) -> None:
     import infrastructure.adapters.sinks  # noqa: F401
-    from core.application.projections import ProjectionPipelineBuilder
+    from core.query.projections import ProjectionPipelineBuilder
 
     try:
         event_store = await _get_event_store()
@@ -475,7 +475,7 @@ def summary(agent_id: UUID | None, fmt: str, output: str | None) -> None:
 
 async def _show_summary(agent_id: UUID | None, fmt: str, output: str | None) -> None:
     import infrastructure.adapters.sinks  # noqa: F401
-    from core.application.projections import ProjectionPipelineBuilder
+    from core.query.projections import ProjectionPipelineBuilder
 
     try:
         event_store = await _get_event_store()
