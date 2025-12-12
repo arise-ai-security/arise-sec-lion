@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from jinja2 import Environment, TemplateSyntaxError
 
-from presentation.api.schemas import (
+from query.api.schemas import (
     PromptListSchema,
     PromptSchema,
     PromptUpdateSchema,

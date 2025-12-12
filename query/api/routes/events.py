@@ -10,7 +10,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from core.application.projections.hierarchy_collector import HierarchyCollector
 from core.domain.events import (
     AgentCreated,
     ChildCompleted,
@@ -25,8 +24,9 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from presentation.api.dependencies import EventStoreDep
-from presentation.api.schemas import CategorizedEventsSchema, EventSchema
+from core.query.projections.hierarchy_collector import HierarchyCollector
+from query.api.dependencies import EventStoreDep
+from query.api.schemas import CategorizedEventsSchema, EventSchema
 
 
 router = APIRouter()

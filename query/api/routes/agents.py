@@ -7,7 +7,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
-from core.application.projections.hierarchy_collector import HierarchyCollector
 from core.domain.events import (
     AgentCreated,
     ChildSpawned,
@@ -16,8 +15,9 @@ from core.domain.events import (
     SubtasksDefined,
 )
 from core.domain.model import AgentSession
-from presentation.api.dependencies import EventStoreDep
-from presentation.api.schemas import (
+from core.query.projections.hierarchy_collector import HierarchyCollector
+from query.api.dependencies import EventStoreDep
+from query.api.schemas import (
     AgentHierarchySchema,
     AgentListItemSchema,
     AgentNodeSchema,

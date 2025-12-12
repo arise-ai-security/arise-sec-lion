@@ -7,7 +7,7 @@ This allows the dashboard to display current hyperparameters.
 from fastapi import APIRouter
 
 from config import Settings
-from presentation.api.schemas import (
+from query.api.schemas import (
     ApplicationConfigSchema,
     InfrastructureConfigSchema,
     SystemConfigSchema,

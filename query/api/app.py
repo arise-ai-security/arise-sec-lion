@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Settings
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
-from presentation.api.routes import agents, config, events, prompts
+from query.api.routes import agents, config, events, prompts
 
 
 @asynccontextmanager
