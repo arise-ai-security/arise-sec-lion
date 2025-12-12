@@ -5,7 +5,7 @@ infrastructure:
   postgres_host: localhost
   postgres_port: 5432
   postgres_user: arise
-  postgres_database: arise
+  postgres_database: arise_events
 
   # LLM for BOSS agent (child agents configured dynamically)
   llm_model_boss: gpt-4o

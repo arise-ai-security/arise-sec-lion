@@ -151,6 +151,37 @@ PENDING ────────────────────────
 | Docstrings | Required on public classes/methods |
 | Tests | Red-Green-Refactor (TDD), Given-When-Then |
 
+## Configuration Rules
+
+**Separation of config and secrets (12-Factor App principle):**
+
+| Category | Location | Committed to Git? |
+|----------|----------|-------------------|
+| **Secrets** (passwords, API keys) | `deployment/.env` | ❌ Never |
+| **Docker overrides** (host names) | `deployment/.env` | ❌ No |
+| **Application defaults** | `config/config.yaml` | ✅ Yes |
+
+**Rules:**
+- **NEVER** put secrets in `config/config.yaml`
+- **NEVER** put non-secret defaults in `.env` (they belong in `config.yaml`)
+- Environment variables override YAML values (precedence: env > yaml > code defaults)
+- Use `deployment/.env.example` as a template for required secrets
+
+**Example:**
+```yaml
+# config/config.yaml - defaults (committed)
+infrastructure:
+  postgres_user: arise
+  llm_model_boss: gpt-4o
+```
+
+```bash
+# deployment/.env - secrets only (NOT committed)
+ARISE_INFRA_POSTGRES_PASSWORD=secret123
+OPENAI_API_KEY=sk-xxx
+ARISE_INFRA_POSTGRES_HOST=db  # Docker override
+```
+
 ## Detailed Documentation
 
 **Before starting work, decide which docs are relevant and read them:**
