@@ -24,9 +24,9 @@ class InfrastructureSettings(BaseSettings):
     postgres_password: str  # Required - set via ARISE_INFRA_POSTGRES_PASSWORD or .env
     postgres_database: str = "arise"
 
-    llm_model_boss: str = "gpt-4o"
-    worker_tool_type: Literal["claude_code", "openhands"] = "openhands"
-    worker_tool_model: str = "openai/gpt-4o"
+    llm_model_boss: str  # Required - e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+    worker_tool_type: Literal["claude_code", "openhands"]  # Required - which worker tool to use
+    worker_tool_model: str  # Required - e.g., "openai/gpt-4o" (LiteLLM format)
     worker_tool_timeout: int = Field(default=300, gt=0)
 
     @property
@@ -76,6 +76,21 @@ class Settings(BaseSettings):
     application: ApplicationSettings = Field(default_factory=ApplicationSettings)
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)
 
+    @staticmethod
+    def _filter_yaml_for_env_overrides(
+        yaml_data: dict[str, Any],
+        env_prefix: str,
+    ) -> dict[str, Any]:
+        """Remove YAML values that have env var overrides (env vars win)."""
+        import os
+
+        result = {}
+        for key, value in yaml_data.items():
+            env_var = f"{env_prefix}{key.upper()}"
+            if os.getenv(env_var) is None:
+                result[key] = value
+        return result
+
     @classmethod
     def load(cls, config_dir: Path | None = None) -> "Settings":
         """Load from config.yaml with env var overrides."""
@@ -91,9 +106,47 @@ class Settings(BaseSettings):
             with config_path.open(encoding="utf-8") as f:
                 config_data = yaml.safe_load(f) or {}
 
-        # Build settings - env vars automatically override YAML values
+        # Filter out YAML values that have env var overrides
+        infra_data = cls._filter_yaml_for_env_overrides(
+            config_data.get("infrastructure", {}), "ARISE_INFRA_"
+        )
+        app_data = cls._filter_yaml_for_env_overrides(
+            config_data.get("application", {}), "ARISE_APP_"
+        )
+        pres_data = cls._filter_yaml_for_env_overrides(
+            config_data.get("presentation", {}), "ARISE_UI_"
+        )
+
         return cls(
-            infrastructure=InfrastructureSettings(**config_data.get("infrastructure", {})),
-            application=ApplicationSettings(**config_data.get("application", {})),
-            presentation=PresentationSettings(**config_data.get("presentation", {})),
+            infrastructure=InfrastructureSettings(**infra_data),
+            application=ApplicationSettings(**app_data),
+            presentation=PresentationSettings(**pres_data),
+        )
+
+    @classmethod
+    def from_yaml(cls, config_path: str | Path) -> "Settings":
+        """Load from specific YAML file with env var overrides."""
+        import yaml
+
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with config_file.open(encoding="utf-8") as f:
+            config_data = yaml.safe_load(f) or {}
+
+        infra_data = cls._filter_yaml_for_env_overrides(
+            config_data.get("infrastructure", {}), "ARISE_INFRA_"
+        )
+        app_data = cls._filter_yaml_for_env_overrides(
+            config_data.get("application", {}), "ARISE_APP_"
+        )
+        pres_data = cls._filter_yaml_for_env_overrides(
+            config_data.get("presentation", {}), "ARISE_UI_"
+        )
+
+        return cls(
+            infrastructure=InfrastructureSettings(**infra_data),
+            application=ApplicationSettings(**app_data),
+            presentation=PresentationSettings(**pres_data),
         )

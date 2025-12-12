@@ -17,7 +17,10 @@ def bootstrap(
     cli_config: CLIConfig | None = None,
 ) -> CLI:
     """Wire Infrastructure → Application → Presentation. Returns ready CLI."""
-    settings = Settings.from_yaml(config_path) if config_path is not None else Settings.load()
+    # Only load settings if we need them (i.e., some config is not provided)
+    settings = None
+    if infrastructure_config is None or application_config is None or cli_config is None:
+        settings = Settings.from_yaml(config_path) if config_path is not None else Settings.load()
 
     if infrastructure_config is None:
         infrastructure_config = InfrastructureConfig(

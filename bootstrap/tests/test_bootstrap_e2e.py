@@ -52,6 +52,11 @@ class TestBootstrapWiring:
         """Test that bootstrap returns a CLI instance."""
         cli = bootstrap(
             infrastructure_config=make_test_infra_config(),
+            application_config=ApplicationConfig(
+                max_retries=3,
+                poll_interval=0.5,
+                model_config={"boss": "gpt-4o"},
+            ),
             cli_config=CLIConfig(verbose=False),
         )
         assert isinstance(cli, CLI)
@@ -84,10 +89,11 @@ class TestBootstrapWiring:
 
         assert cli.config.verbose is True
 
-    def test_bootstrap_uses_config_file_defaults(self) -> None:
+    def test_bootstrap_uses_config_file_defaults(self, monkeypatch) -> None:
         """Test that bootstrap loads config from default config file."""
-        # When no explicit config is passed, bootstrap loads from Settings
-        # which reads from environment variables and has pydantic defaults
+        # Required env vars for Settings to load (no defaults for these)
+        monkeypatch.setenv("ARISE_INFRA_POSTGRES_PASSWORD", "test")
+
         cli = bootstrap()
         assert isinstance(cli, CLI)
         assert cli.config.verbose is True  # Default from PresentationSettings
@@ -198,6 +204,7 @@ infrastructure:
   postgres_user: yaml
   postgres_password: yaml
   postgres_database: yaml
+  llm_model_boss: gpt-4o
   worker_tool_type: claude_code
   worker_tool_model: openai/gpt-4o
   worker_tool_timeout: 300
