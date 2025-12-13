@@ -159,27 +159,51 @@ PENDING ────────────────────────
 |----------|----------|-------------------|
 | **Secrets** (passwords, API keys) | `deployment/.env` | ❌ Never |
 | **Docker overrides** (host names) | `deployment/.env` | ❌ No |
-| **Application defaults** | `config/config.yaml` | ✅ Yes |
+| **Base defaults** | `config/config.yaml` | ✅ Yes |
+| **Phase-specific overrides** | `config/config.{env}.yaml` | ✅ Yes |
+
+**Load hierarchy (highest to lowest priority):**
+1. Environment variables (secrets + Docker overrides only)
+2. Phase-specific YAML (`config/config.{ARISE_ENV}.yaml`)
+3. Base YAML (`config/config.yaml`)
+4. Code defaults
+
+**Environment phases** (set via `ARISE_ENV`):
+- `development` (default) - cheaper models, verbose logging
+- `production` - best models, minimal logging
 
 **Rules:**
-- **NEVER** put secrets in `config/config.yaml`
-- **NEVER** put non-secret defaults in `.env` (they belong in `config.yaml`)
-- Environment variables override YAML values (precedence: env > yaml > code defaults)
+- **NEVER** put secrets in any `config/*.yaml` file
+- **NEVER** put application config in `.env` (only secrets belong there)
+- Use flat env var names for secrets (no prefix): `POSTGRES_PASSWORD`, `OPENAI_API_KEY`
 - Use `deployment/.env.example` as a template for required secrets
 
 **Example:**
 ```yaml
-# config/config.yaml - defaults (committed)
+# config/config.yaml - base defaults (committed)
 infrastructure:
   postgres_user: arise
   llm_model_boss: gpt-4o
+  worker_tool_type: openhands
+application:
+  max_retries: 3
+  poll_interval: 0.5
+```
+
+```yaml
+# config/config.development.yaml - dev overrides (committed)
+infrastructure:
+  llm_model_boss: gpt-4o-mini  # cheaper for dev
+presentation:
+  log_level: DEBUG
 ```
 
 ```bash
 # deployment/.env - secrets only (NOT committed)
-ARISE_INFRA_POSTGRES_PASSWORD=secret123
+POSTGRES_PASSWORD=secret123
 OPENAI_API_KEY=sk-xxx
-ARISE_INFRA_POSTGRES_HOST=db  # Docker override
+POSTGRES_HOST=db  # Docker override
+# ARISE_ENV=production  # optional, default: development
 ```
 
 ## Detailed Documentation

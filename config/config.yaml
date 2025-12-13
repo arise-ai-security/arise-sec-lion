@@ -1,5 +1,5 @@
 # Arise Multi-Agent System Configuration
-# Override any value via env vars: ARISE_INFRA_*, ARISE_APP_*, ARISE_UI_*
+# Secrets go in deployment/.env, application config belongs here
 
 infrastructure:
   postgres_host: localhost

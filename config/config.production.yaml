@@ -1,0 +1,10 @@
+# Production environment overrides
+# Base values come from config.yaml
+
+infrastructure:
+  # Use best models for production
+  llm_model_boss: gpt-4o
+
+presentation:
+  verbose: false
+  log_level: WARNING

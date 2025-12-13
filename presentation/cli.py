@@ -283,8 +283,8 @@ async def _get_event_store() -> EventStorePort:
         from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
         config_path = _cli_context.get("config_path")
-        settings = Settings.from_yaml(config_path) if config_path else Settings()
-        connection_string = settings.infrastructure.postgres_connection_string
+        settings = Settings.from_yaml(config_path) if config_path else Settings.load()
+        connection_string = settings.postgres_connection_string
         event_store = PostgresEventStore(connection_string)
         await event_store.connect()
         _cli_context["event_store"] = event_store
