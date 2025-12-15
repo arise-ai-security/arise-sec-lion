@@ -10,9 +10,10 @@ from uuid import UUID, uuid4
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import (
     ChildSpawned,
+    DomainEvent,
     SubordinatesSpawned,
     VerifierSpawned,
-), DomainEvent
+)
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder

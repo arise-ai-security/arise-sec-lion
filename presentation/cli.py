@@ -120,7 +120,7 @@ class CLI:
 
     def _print_banner(self) -> None:
         print("╔═══════════════════════════════════════════════════════════════════╗")
-        print("║  Recursive Multi-Agent System - Powered by Event Sourcing       ║")
+        print("║  Recursive Multi-Agent System - Powered by Event Sourcing         ║")
         print("╚═══════════════════════════════════════════════════════════════════╝")
         print()
 

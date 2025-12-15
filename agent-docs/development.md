@@ -77,11 +77,14 @@ docker run --name arise-db \
 ### Example Commands
 
 ```bash
+# 0. Navigate to deployment folder
+cd deployment
+
 # 1. Start everything
 docker compose up -d
 
 # 2. Run a task
-docker compose exec app python main.py run "Count words in a text file"
+docker compose exec app python main.py run "write a java script that recursively counts the number of files including nested folders in a given directory"
 
 # 3. Open browser to http://localhost:5173 to see the agent tree
 
