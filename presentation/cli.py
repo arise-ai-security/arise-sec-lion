@@ -302,7 +302,7 @@ class CLI:
             print(f"Status: {final_result.status}")
             print()
 
-            stats = await self.execution_service.get_system_statistics()
+            stats = await self.execution_service.get_system_statistics(root_id)
             print(f"Total Agents Created: {stats.total_agents}")
             print()
 

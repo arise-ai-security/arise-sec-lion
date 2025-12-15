@@ -180,10 +180,10 @@ class TestFullAgentFlow:
 
         try:
             # Create BOSS agent
-            await e2e_cli.execution_service.create_boss_agent(task_description="Stats test task")
+            boss_id = await e2e_cli.execution_service.create_boss_agent(task_description="Stats test task")
 
             # Get statistics
-            stats = await e2e_cli.execution_service.get_system_statistics()
+            stats = await e2e_cli.execution_service.get_system_statistics(boss_id)
             assert stats.total_agents >= 1
 
         finally:

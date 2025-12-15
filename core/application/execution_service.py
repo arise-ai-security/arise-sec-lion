@@ -447,14 +447,23 @@ class AgentExecutionService:
             role=agent.role.value,
         )
 
-    async def get_system_statistics(self) -> SystemStatisticsDTO:
-        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+    async def get_system_statistics(self, root_agent_id: UUID) -> SystemStatisticsDTO:
+        """Get statistics for agents in a specific run hierarchy.
+
+        Args:
+            root_agent_id: The root BOSS agent ID to scope statistics to.
+
+        Returns:
+            Statistics for only the agents in this run's hierarchy.
+        """
+        collector = HierarchyCollector(self.event_store)
+        hierarchy_agent_ids = await collector.collect_agent_ids(root_agent_id)
 
         completed = 0
         failed = 0
         active = 0
 
-        for agent_id in all_agent_ids:
+        for agent_id in hierarchy_agent_ids:
             events = await self.event_store.get_events(agent_id)
             if events:
                 agent = AgentSession.load_from_history(events)
@@ -466,7 +475,7 @@ class AgentExecutionService:
                     active += 1
 
         return SystemStatisticsDTO(
-            total_agents=len(all_agent_ids),
+            total_agents=len(hierarchy_agent_ids),
             completed=completed,
             failed=failed,
             active=active,

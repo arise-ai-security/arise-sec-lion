@@ -64,7 +64,7 @@ class FakeExecutionService:
         """Return configured test result."""
         return self.agent_result
 
-    async def get_system_statistics(self) -> SystemStatisticsDTO:
+    async def get_system_statistics(self, root_agent_id: str) -> SystemStatisticsDTO:
         """Return configured test statistics."""
         return self.system_stats
 
