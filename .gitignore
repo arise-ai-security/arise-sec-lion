@@ -228,6 +228,7 @@ celerybeat.pid
 
 # Environments
 .env
+deployment/.env
 .venv
 env/
 venv/
@@ -679,8 +680,13 @@ FodyWeavers.xsd
 .claude
 
 # Markdown files
-# Ignore all markdown files except README.md
+# Ignore all markdown files except specific docs
 *.md
 !README.md
+!CLAUDE.md
+!agent-docs/*.md
+
+# Output directory (generated code, exports, last run tracking)
+output/
 
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm+all,visualstudio,git

@@ -1,0 +1,54 @@
+# =============================================================================
+# Docker Build Ignore - Arise Multi-Agent System
+# =============================================================================
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.code-workspace
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+dist
+build
+
+# Environment files (secrets)
+.env
+deployment/.env
+!deployment/.env.example
+
+# Docker (avoid recursive copies)
+deployment/docker-compose*.yml
+Dockerfile
+
+# Documentation (not needed in image)
+*.md
+!README.md
+docs/
+
+# Tests (not needed in production image)
+tests/
+*_test.py
+test_*.py
+conftest.py
+
+# Claude/AI
+.claude
+
+# Misc
+.DS_Store
+*.log
+tmp/
+temp/

@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* React Flow styles */
+.react-flow__node {
+  @apply rounded-lg shadow-lg;
+}
+
+.react-flow__edge-path {
+  @apply stroke-gray-400;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  @apply w-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100 dark:bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 dark:bg-gray-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400 dark:bg-gray-500;
+}

@@ -1,0 +1,95 @@
+"""FastAPI application factory.
+
+This module creates and configures the FastAPI application with all routes.
+It properly initializes the event store using the lifespan context manager.
+"""
+
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from config import Settings
+from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from query.api.routes import agents, config, events, prompts
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Manage application lifespan - startup and shutdown.
+
+    This context manager:
+    1. On startup: Connects to the database
+    2. On shutdown: Disconnects from the database
+
+    The event store is attached to app.state for access in routes.
+    """
+    # Load settings from config files and environment variables
+    settings = Settings.load()
+
+    # Create and connect the event store
+    event_store = PostgresEventStore(settings.infrastructure.postgres_connection_string)
+    await event_store.connect()
+
+    # Attach to app state for dependency injection in routes
+    app.state.event_store = event_store
+
+    yield
+
+    # Cleanup on shutdown
+    await event_store.disconnect()
+
+
+def create_app(
+    title: str = "Arise Multi-Agent System",
+    static_dir: Path | None = None,
+) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        title: Application title for OpenAPI docs.
+        static_dir: Path to static files directory for React app.
+                   If provided, serves static files at root path.
+
+    Returns:
+        Configured FastAPI application instance.
+    """
+    app = FastAPI(
+        title=title,
+        description="REST API and SSE endpoints for the multi-agent orchestration system",
+        version="1.0.0",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+        lifespan=lifespan,
+    )
+
+    # CORS middleware for development (React dev server on different port)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://localhost:3000"],  # Vite default ports
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Include API routers
+    app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
+    app.include_router(events.router, prefix="/api/events", tags=["events"])
+    app.include_router(prompts.router, prefix="/api/prompts", tags=["prompts"])
+    app.include_router(config.router, prefix="/api/config", tags=["config"])
+
+    # Health check endpoint
+    @app.get("/api/health", tags=["health"])
+    async def health_check() -> dict:
+        """Health check endpoint."""
+        return {"status": "healthy"}
+
+    # Serve static files if directory provided (production build)
+    if static_dir and static_dir.exists():
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+
+    return app

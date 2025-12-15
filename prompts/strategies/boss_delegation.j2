@@ -38,8 +38,8 @@ As BOSS, your configuration decisions cascade down the entire hierarchy. Conside
 - **Classification/factual**: 0.1-0.3 (deterministic)
 
 ### Tool Strategy
-- **Default to claude_code**: Fast, integrated, good for most coding tasks
-- **Use openhands**: When task complexity or ambiguity is high
+- **Default to {{ default_tool }}**: The configured default tool for this system
+- Use the default tool ("{{ default_tool }}") for most tasks
 
 ## Risk-Based Configuration
 
@@ -70,13 +70,13 @@ Low-risk subtasks (well-understood, standard patterns):
 ### Good: "Build a full-stack web application"
 ```
 1. "Design system architecture and data models"
-   → Strategic/creative, powerful model, high temp, claude_code
+   → Strategic/creative, powerful model, high temp, {{ default_tool }}
 
 2. "Implement backend API with database"
-   → Implementation, medium model, medium temp, claude_code
+   → Implementation, medium model, medium temp, {{ default_tool }}
 
 3. "Build frontend interface and integrate with API"
-   → Implementation, medium model, medium temp, claude_code
+   → Implementation, medium model, medium temp, {{ default_tool }}
 ```
 → Parallel execution: 2 and 3 can start after 1 completes
 

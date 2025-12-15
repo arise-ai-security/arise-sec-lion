@@ -1,0 +1,124 @@
+# Arise Multi-Agent System
+#
+# Usage:
+#   docker compose up -d                    # Start dev environment
+#   docker compose --profile prod up -d     # Start production
+#   docker compose --profile test up -d     # Start test DB only
+
+services:
+  # Web Dashboard (React + Vite)
+  web:
+    image: node:20-alpine
+    container_name: arise-web
+    working_dir: /app
+    volumes:
+      - ../query/web:/app
+      - web_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_API_URL: http://localhost:8000
+
+  # API Server (FastAPI)
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: development
+    container_name: arise-api
+    volumes:
+      - ..:/app
+      - /app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      ARISE_INFRA_POSTGRES_HOST: db
+    ports:
+      - "8000:8000"
+    command: uvicorn query.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # CLI App (for running tasks)
+  app:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: development
+    container_name: arise-app
+    volumes:
+      - ..:/app
+      - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      ARISE_INFRA_POSTGRES_HOST: db
+    command: sleep infinity
+    stdin_open: true
+    tty: true
+
+  # PostgreSQL
+  db:
+    image: postgres:16-alpine
+    container_name: arise-db
+    env_file: .env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arise} -d ${POSTGRES_DB:-arise}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Production profile ---
+  app-prod:
+    profiles: [prod]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: production
+    container_name: arise-app-prod
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      ARISE_INFRA_POSTGRES_HOST: db
+
+  # --- Test profile ---
+  test-db:
+    profiles: [test]
+    image: postgres:16-alpine
+    container_name: arise-test-db
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: testdb
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  web_node_modules:

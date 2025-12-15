@@ -1,80 +1,177 @@
-"""OpenHands adapter for worker task execution.
+"""OpenHands SDK Adapter: use OpenHands agent via Python SDK for task execution."""
 
-This adapter wraps the OpenHands tool (formerly OpenDevin) to execute tasks
-with real-time thinking capture. It implements the WorkerToolPort protocol
-from core.ports.
-"""
-
+import asyncio
+import logging
+import os
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
-from core.domain.events import DomainEvent
+from core.domain.events import (
+    DomainEvent,
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkFailed,
+)
 from core.ports.worker_port import WorkerToolPort
 
 
+logging.getLogger("openhands").setLevel(logging.WARNING)
+logging.getLogger("openhands.sdk").setLevel(logging.WARNING)
+logging.getLogger("openhands.tools").setLevel(logging.WARNING)
+
+SDK_EVENT_TYPE_MAP: dict[str, str] = {
+    "ActionEvent": "thinking",
+    "AgentThinkAction": "thinking",
+    "MessageEvent": "output",
+    "ObservationEvent": "output",
+    "CmdRunObservation": "output",
+    "AgentErrorEvent": "output",
+    "FileReadAction": "progress",
+    "FileWriteAction": "progress",
+    "FileEditAction": "progress",
+}
+
+
 class OpenHandsAdapter(WorkerToolPort):
-    """OpenHands-based adapter for autonomous coding task execution.
-
-    This adapter interfaces with OpenHands (https://github.com/All-Hands-AI/OpenHands),
-    an autonomous agent that can execute software engineering tasks. Like the
-    Claude Code adapter, this wraps the tool to capture its execution process
-    and emit domain events.
-
-    Attributes:
-        openhands_config: Configuration for OpenHands execution.
-        default_timeout: Default timeout in seconds for task execution.
-    """
+    """Execute tasks via OpenHands SDK with configurable LLM provider."""
 
     def __init__(
-        self, openhands_config: dict[str, Any] | None = None, default_timeout: int = 600
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout_seconds: int = 300,
     ) -> None:
-        """Initialize the OpenHands adapter.
+        self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
+        self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.timeout_seconds = timeout_seconds
 
-        Args:
-            openhands_config: OpenHands-specific configuration (model, sandbox, etc.).
-            default_timeout: Default timeout in seconds for tasks.
-        """
-        self.openhands_config = openhands_config or {}
-        self.default_timeout = default_timeout
+    @staticmethod
+    def _validate_task_context(task_context: dict[str, Any]) -> tuple[str, Any, str]:
+        task_description = task_context.get("task_description")
+        session_id = task_context.get("session_id")
+        if not task_description:
+            raise ValueError("task_context must include 'task_description'")
+        if not session_id:
+            raise ValueError("task_context must include 'session_id'")
+        working_dir = task_context.get("working_directory", str(Path.cwd()))
+        return task_description, session_id, working_dir
+
+    @staticmethod
+    def _classify_event(event: Any) -> str:
+        event_class_name = type(event).__name__
+        return SDK_EVENT_TYPE_MAP.get(event_class_name, "output")
+
+    @staticmethod
+    def _extract_event_content(event: Any) -> str | None:
+        if hasattr(event, "message") and event.message:
+            return str(event.message)
+        if hasattr(event, "content") and event.content:
+            return str(event.content)
+        if hasattr(event, "action") and event.action:
+            return f"Action: {event.action}"
+        if hasattr(event, "observation") and event.observation:
+            return f"Observation: {event.observation}"
+        if hasattr(event, "thought") and event.thought:
+            return f"Thought: {event.thought}"
+        return None
+
+    async def _run_with_sdk(
+        self,
+        task_description: str,
+        working_dir: str,
+    ) -> tuple[list[tuple[str, str]], str | None, str | None]:
+        """Run task via OpenHands SDK, return (events, result, error)."""
+        classified_events: list[tuple[str, str]] = []
+        result: str | None = None
+        error: str | None = None
+
+        try:
+            from openhands.sdk import LLM, Agent, Conversation, Tool
+            from openhands.tools.file_editor import FileEditorTool
+            from openhands.tools.terminal import TerminalTool
+
+            llm = LLM(model=self.model, api_key=self.api_key)
+            agent = Agent(
+                llm=llm,
+                tools=[
+                    Tool(name=TerminalTool.name),
+                    Tool(name=FileEditorTool.name),
+                ],
+            )
+            conversation = Conversation(agent=agent, workspace=working_dir)
+            conversation.send_message(task_description)
+
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, conversation.run)
+
+            if hasattr(conversation, "events"):
+                for event in conversation.events:
+                    content = self._extract_event_content(event)
+                    if content:
+                        output_type = self._classify_event(event)
+                        classified_events.append((content, output_type))
+
+            result = f"Task completed successfully in workspace: {working_dir}"
+            if classified_events:
+                output_events = [c for c, t in classified_events if t == "output"]
+                result = "\n".join(output_events[-5:]) if output_events else result
+
+        except ImportError as e:
+            error = (
+                f"OpenHands packages not installed. "
+                f"Install with: uv add openhands-sdk openhands-tools. Error: {e}"
+            )
+        except Exception as e:
+            error = f"OpenHands execution failed: {e!r}"
+
+        return classified_events, result, error
 
     async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
-        """Execute a task via OpenHands and stream domain events.
+        """Execute task via OpenHands SDK, stream ThoughtCaptured, yield final event."""
+        task_description, session_id, working_dir = self._validate_task_context(task_context)
 
-        This method interfaces with OpenHands (via API, CLI, or SDK) to execute
-        the task and captures its actions, observations, and thinking process.
+        try:
+            classified_events, result, error = await asyncio.wait_for(
+                self._run_with_sdk(task_description, working_dir),
+                timeout=self.timeout_seconds,
+            )
 
-        Args:
-            task_context: Task execution context. Expected keys:
-                - task_description: str (the task for OpenHands)
-                - session_id: UUID (agent session ID)
-                - working_directory: str (optional, repository path)
-                - timeout_seconds: int (optional, overrides default)
-                - environment: dict[str, str] (optional, env vars)
-                - openhands_model: str (optional, LLM to use)
+            sequence = 2
+            for content, output_type in classified_events:
+                if content.strip():
+                    yield ThoughtCaptured(
+                        aggregate_id=session_id,
+                        sequence_number=sequence,
+                        content=content.strip(),
+                        stream="openhands",
+                        output_type=output_type,
+                    )
+                    sequence += 1
 
-        Yields:
-            DomainEvent instances as the task progresses:
-            - TaskStartedEvent (when OpenHands session begins)
-            - ThinkingLogCapturedEvent (for each action/observation)
-            - TaskCompletedEvent (on success)
-            - TaskFailedEvent (on errors or timeout)
-            - TaskBlockedEvent (if OpenHands requests user input)
+            if error:
+                yield WorkFailed(
+                    aggregate_id=session_id,
+                    sequence_number=sequence,
+                    reason=error,
+                )
+            else:
+                yield WorkCompleted(
+                    aggregate_id=session_id,
+                    sequence_number=sequence,
+                    result=result or "Task completed",
+                )
 
-        Raises:
-            WorkerToolError: On OpenHands initialization or execution failures.
-            ValidationError: If required fields missing from task_context.
-        """
-        # TODO: Implement OpenHands integration
-        # TODO: 1. Validate task_context (require task_description, session_id)
-        # TODO: 2. Initialize OpenHands session (via API or SDK)
-        # TODO: 3. Submit task_description to OpenHands
-        # TODO: 4. Yield TaskStartedEvent
-        # TODO: 5. Poll/stream OpenHands events (actions, observations, messages)
-        # TODO: 6. For each event: yield ThinkingLogCapturedEvent with action details
-        # TODO: 7. Monitor for completion, errors, or user input requests
-        # TODO: 8. Yield TaskCompletedEvent, TaskFailedEvent, or TaskBlockedEvent
-        # TODO: 9. Handle timeout with asyncio.wait_for()
-        # TODO: 10. Clean up OpenHands session on exit
+        except TimeoutError:
+            yield WorkFailed(
+                aggregate_id=session_id,
+                sequence_number=2,
+                reason=f"Task timed out after {self.timeout_seconds} seconds",
+            )
 
-        raise NotImplementedError("OpenHands adapter not yet implemented")
-        yield  # type: ignore  # Required for AsyncIterator type hint
+        except Exception as e:
+            yield WorkFailed(
+                aggregate_id=session_id,
+                sequence_number=2,
+                reason=f"OpenHands adapter error: {e!r}",
+            )

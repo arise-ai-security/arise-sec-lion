@@ -26,14 +26,36 @@ from presentation.cli import CLI, CLIConfig
 pytestmark = pytest.mark.e2e
 
 
+def make_test_infra_config(
+    postgres_connection_string: str = "postgresql://test:test@localhost:5432/test",
+    default_worker_tool: str = "claude_code",
+    worker_tool_model: str = "openai/gpt-4o",
+    worker_tool_timeout: int = 300,
+) -> InfrastructureConfig:
+    """Create a complete InfrastructureConfig for testing.
+
+    All fields are required, so this helper provides sensible defaults
+    for tests that don't care about specific values.
+    """
+    return InfrastructureConfig(
+        postgres_connection_string=postgres_connection_string,
+        default_worker_tool=default_worker_tool,
+        worker_tool_model=worker_tool_model,
+        worker_tool_timeout=worker_tool_timeout,
+    )
+
+
 class TestBootstrapWiring:
     """Tests for bootstrap dependency injection."""
 
     def test_bootstrap_returns_cli(self) -> None:
         """Test that bootstrap returns a CLI instance."""
         cli = bootstrap(
-            infrastructure_config=InfrastructureConfig(
-                postgres_connection_string="postgresql://test:test@localhost:5432/test"
+            infrastructure_config=make_test_infra_config(),
+            application_config=ApplicationConfig(
+                max_retries=3,
+                poll_interval=0.5,
+                model_config={"boss": "gpt-4o"},
             ),
             cli_config=CLIConfig(verbose=False),
         )
@@ -41,8 +63,11 @@ class TestBootstrapWiring:
 
     def test_bootstrap_with_custom_config(self) -> None:
         """Test that bootstrap accepts custom configurations."""
-        infra_config = InfrastructureConfig(
-            postgres_connection_string="postgresql://custom:custom@localhost:5432/custom"
+        infra_config = make_test_infra_config(
+            postgres_connection_string="postgresql://custom:custom@localhost:5432/custom",
+            default_worker_tool="openhands",
+            worker_tool_model="anthropic/claude-3-5-sonnet",
+            worker_tool_timeout=600,
         )
         app_config = ApplicationConfig(
             max_retries=5,
@@ -64,11 +89,14 @@ class TestBootstrapWiring:
 
         assert cli.config.verbose is True
 
-    def test_bootstrap_uses_defaults_when_no_config(self) -> None:
-        """Test that bootstrap uses defaults when no config provided."""
+    def test_bootstrap_uses_config_file_defaults(self, monkeypatch) -> None:
+        """Test that bootstrap loads config from default config file."""
+        # Required env vars for Settings to load (no defaults for these)
+        monkeypatch.setenv("ARISE_INFRA_POSTGRES_PASSWORD", "test")
+
         cli = bootstrap()
         assert isinstance(cli, CLI)
-        assert cli.config.verbose is True  # Default
+        assert cli.config.verbose is True  # Default from PresentationSettings
 
 
 class TestInfrastructureWiring:
@@ -76,14 +104,19 @@ class TestInfrastructureWiring:
 
     def test_get_infrastructure_creates_adapters(self) -> None:
         """Test that infrastructure factory creates all adapters."""
-        config = InfrastructureConfig(
-            postgres_connection_string="postgresql://test:test@localhost:5432/test"
-        )
+        config = make_test_infra_config()
         infra = get_infrastructure(config)
 
         assert infra.event_store is not None
         assert infra.llm_adapter is not None
         assert infra.worker_tool is not None
+
+    def test_infrastructure_config_requires_all_fields(self) -> None:
+        """Test that InfrastructureConfig raises error if fields are missing."""
+        with pytest.raises(TypeError, match=r"missing.*required"):
+            InfrastructureConfig(  # type: ignore[call-arg]
+                postgres_connection_string="postgresql://test:test@localhost:5432/test"
+            )
 
 
 class TestApplicationWiring:
@@ -91,10 +124,7 @@ class TestApplicationWiring:
 
     def test_get_application_creates_service(self) -> None:
         """Test that application factory creates execution service."""
-        infra_config = InfrastructureConfig(
-            postgres_connection_string="postgresql://test:test@localhost:5432/test"
-        )
-        infra = get_infrastructure(infra_config)
+        infra = get_infrastructure(make_test_infra_config())
 
         app_config = ApplicationConfig(max_retries=3, poll_interval=0.5)
         app = get_application(infra, app_config)
@@ -165,11 +195,19 @@ class TestConfigurationLoading:
 
     def test_bootstrap_with_yaml_config_path(self, tmp_path) -> None:
         """Test that bootstrap can load config from YAML file."""
-        # Create a test config file
+        # Create a test config file with all required infrastructure settings
         config_file = tmp_path / "test_config.yaml"
         config_file.write_text("""
 infrastructure:
-  postgres_connection_string: "postgresql://yaml:yaml@localhost:5432/yaml"
+  postgres_host: localhost
+  postgres_port: 5432
+  postgres_user: yaml
+  postgres_password: yaml
+  postgres_database: yaml
+  llm_model_boss: gpt-4o
+  worker_tool_type: claude_code
+  worker_tool_model: openai/gpt-4o
+  worker_tool_timeout: 300
 
 application:
   max_retries: 10

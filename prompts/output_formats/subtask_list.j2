@@ -7,7 +7,7 @@ Return ONLY valid JSON matching this exact schema:
     "description": "string (min 10 chars, max 500 chars)",
     "config": {
       "strategy": "per_operation" | "heuristic" | "hybrid",
-      "tool": "claude_code" | "openhands",
+      "tool": "{{ default_tool }}",
       ... (strategy-specific fields, see below)
     }
   },
@@ -31,7 +31,7 @@ Return ONLY valid JSON matching this exact schema:
     "max_tokens": number (1-100000),
     "top_p": number (0.0-1.0) | null  # optional
   },
-  "tool": "claude_code" | "openhands"
+  "tool": "{{ default_tool }}"
 }
 
 ### heuristic:
@@ -43,7 +43,7 @@ Return ONLY valid JSON matching this exact schema:
     "max_tokens": number (1-100000),
     "top_p": number (0.0-1.0) | null  # optional
   },
-  "tool": "claude_code" | "openhands"
+  "tool": "{{ default_tool }}"
 }
 
 ### hybrid:
@@ -66,7 +66,7 @@ Return ONLY valid JSON matching this exact schema:
       # same as above
     }
   },
-  "tool": "claude_code" | "openhands"
+  "tool": "{{ default_tool }}"
 }
 
 **CRITICAL RULES**:
@@ -94,7 +94,7 @@ Return ONLY valid JSON matching this exact schema:
         "temperature": 0.7,
         "max_tokens": 1500
       },
-      "tool": "claude_code"
+      "tool": "{{ default_tool }}"
     }
   },
   {
@@ -106,7 +106,7 @@ Return ONLY valid JSON matching this exact schema:
         "temperature": 0.6,
         "max_tokens": 1000
       },
-      "tool": "claude_code"
+      "tool": "{{ default_tool }}"
     }
   }
 ]
@@ -122,7 +122,7 @@ Return ONLY valid JSON matching this exact schema:
         "temperature": 0.3,
         "max_tokens": 500
       },
-      "tool": "claude_code"
+      "tool": "{{ default_tool }}"
     }
   },
   {
@@ -134,7 +134,7 @@ Return ONLY valid JSON matching this exact schema:
         "temperature": 0.5,
         "max_tokens": 800
       },
-      "tool": "claude_code"
+      "tool": "{{ default_tool }}"
     }
   },
   {
@@ -146,7 +146,7 @@ Return ONLY valid JSON matching this exact schema:
         "temperature": 0.4,
         "max_tokens": 600
       },
-      "tool": "claude_code"
+      "tool": "{{ default_tool }}"
     }
   }
 ]

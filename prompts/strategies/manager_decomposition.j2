@@ -38,34 +38,24 @@ Before decomposition, analyze:
 Subtask Analysis:
 │
 ├─ Is it primarily research/documentation/analysis?
-│  └─ YES → Use cheaper model (gpt-4o-mini), low temp (0.3), tool: claude_code
+│  └─ YES → Use cheaper model (gpt-4o-mini), low temp (0.3), tool: {{ default_tool }}
 │
 ├─ Is it creative/generative (design, brainstorming)?
-│  └─ YES → Use powerful model (gpt-4o), higher temp (0.7-0.9), tool: claude_code
+│  └─ YES → Use powerful model (gpt-4o), higher temp (0.7-0.9), tool: {{ default_tool }}
 │
 ├─ Is it deterministic/factual (data processing, refactoring)?
-│  └─ YES → Use cheap model (gpt-4o-mini), very low temp (0.1-0.3), tool: claude_code
+│  └─ YES → Use cheap model (gpt-4o-mini), very low temp (0.1-0.3), tool: {{ default_tool }}
 │
 ├─ Is it complex implementation with multiple tools?
-│  └─ YES → Use powerful model (gpt-4o), medium temp (0.5-0.7), tool: openhands
+│  └─ YES → Use powerful model (gpt-4o), medium temp (0.5-0.7), tool: {{ default_tool }}
 │
-└─ Default → gpt-4o-mini, temp 0.5, tool: claude_code
+└─ Default → gpt-4o-mini, temp 0.5, tool: {{ default_tool }}
 ```
 
 ## Tool Selection Guide
 
-### Use claude_code when:
-- Task is primarily coding (read/write/edit files)
-- Terminal commands are needed
-- Task is well-scoped and straightforward
-- Single-step or simple multi-step execution
-- Fast iteration is important
-
-### Use openhands when:
-- Task requires browser automation
-- Complex multi-tool workflows (git + docker + testing + deployment)
-- Task has ambiguous requirements needing exploration
-- Multiple external services must be coordinated
+- **{{ default_tool }}**: The configured default tool for this system
+- Use the default tool ("{{ default_tool }}") for all subtasks unless you have a specific reason to switch
 
 ## Config Strategy Selection
 

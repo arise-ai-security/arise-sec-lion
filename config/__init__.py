@@ -1,13 +1,11 @@
-"""Configuration management for the Arise Multi-Agent System.
-
-This package provides type-safe configuration using Pydantic Settings.
-"""
+"""Configuration via Pydantic Settings with phase-specific YAML support."""
 
 from .settings import (
     ApplicationSettings,
     InfrastructureSettings,
     PresentationSettings,
     Settings,
+    get_environment,
 )
 
 
@@ -16,4 +14,5 @@ __all__ = [
     "InfrastructureSettings",
     "PresentationSettings",
     "Settings",
+    "get_environment",
 ]
