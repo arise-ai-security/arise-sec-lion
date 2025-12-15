@@ -87,3 +87,59 @@ The web dashboard is containerized with nginx for production:
 - `Dockerfile` - Multi-stage build (node → nginx)
 - `nginx.conf` - Serves static files, proxies `/api` to backend
 - Deployed via `deployment/docker-compose.yaml` as `web` service
+
+## Utility Scripts
+
+### ReactFlow Export (`scripts/generate_reactflow.py`)
+
+Generates a standalone ReactFlow component from an agent hierarchy. Useful for embedding agent trees in documentation or external applications.
+
+**Features:**
+- Fetches hierarchy from the REST API
+- Color-codes nodes by role:
+  - **BOSS**: purple (`#7c3aed`)
+  - **MANAGER**: blue (`#2563eb`)
+  - **WORKER**: green (`#16a34a`)
+  - **PENDING**: yellow (`#eab308`)
+- Calculates tree layout positions automatically
+- Outputs valid JSX ready to use in any React project
+
+**Usage:**
+
+```bash
+# List all available agents
+python3 scripts/generate_reactflow.py --list
+
+# Generate component for the latest agent (output to stdout)
+python3 scripts/generate_reactflow.py > AgentTree.jsx
+
+# Generate for a specific agent by ID
+python3 scripts/generate_reactflow.py 12dad0e4-f455-4fc0-92e2-0c04644a92e1 > AgentTree.jsx
+
+# Generate for the 3rd most recent agent (0-indexed)
+python3 scripts/generate_reactflow.py -n 2 > AgentTree.jsx
+```
+
+**Requirements:**
+- API server running at `http://localhost:8000`
+- `curl` available in PATH
+- Python 3.x (no external dependencies)
+
+**Output Example:**
+
+```jsx
+import React, { useCallback } from 'react';
+import ReactFlow, { Background, Controls, MiniMap, ... } from 'reactflow';
+
+const initialNodes = [
+  { id: '...', position: { x: 0, y: 0 }, data: { label: 'BOSS (waiting)\n...' }, style: { background: '#7c3aed', ... } },
+  // ...more nodes
+];
+
+const initialEdges = [
+  { id: 'e-...', source: '...', target: '...', type: 'smoothstep' },
+  // ...more edges
+];
+
+export default function ReactFlowTree() { ... }
+```
