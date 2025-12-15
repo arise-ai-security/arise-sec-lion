@@ -12,10 +12,15 @@ interface AgentSidebarProps {
 }
 
 const statusColors: Record<string, string> = {
-  INITIALIZING: 'bg-yellow-400',
-  WORKING: 'bg-blue-400',
-  COMPLETED: 'bg-green-400',
-  FAILED: 'bg-red-400',
+  pending: 'bg-yellow-400',
+  analyzing: 'bg-yellow-400',
+  in_progress: 'bg-blue-400',
+  waiting: 'bg-blue-400',
+  completed: 'bg-green-400',
+  failed: 'bg-red-400',
+  blocked: 'bg-orange-400',
+  terminated: 'bg-gray-400',
+  verifying: 'bg-purple-400',
 };
 
 export function AgentSidebar({ agents, selectedId, onSelect, loading }: AgentSidebarProps) {

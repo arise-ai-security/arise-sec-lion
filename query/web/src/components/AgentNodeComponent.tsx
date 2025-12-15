@@ -17,17 +17,22 @@ interface AgentNodeComponentProps {
 }
 
 const roleColors: Record<AgentRole, string> = {
-  BOSS: 'bg-purple-600 border-purple-700',
-  MANAGER: 'bg-blue-600 border-blue-700',
-  WORKER: 'bg-green-600 border-green-700',
-  PENDING: 'bg-yellow-500 border-yellow-600',
+  boss: 'bg-purple-600 border-purple-700',
+  manager: 'bg-blue-600 border-blue-700',
+  worker: 'bg-green-600 border-green-700',
+  pending: 'bg-yellow-500 border-yellow-600',
 };
 
 const statusIcons: Record<AgentStatus, string> = {
-  INITIALIZING: '⏳',
-  WORKING: '🔄',
-  COMPLETED: '✅',
-  FAILED: '❌',
+  pending: '⏳',
+  analyzing: '🔍',
+  in_progress: '🔄',
+  waiting: '⏳',
+  completed: '✅',
+  failed: '❌',
+  blocked: '🚫',
+  terminated: '⛔',
+  verifying: '🔬',
 };
 
 export function AgentNodeComponent({ data }: AgentNodeComponentProps) {

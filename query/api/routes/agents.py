@@ -156,17 +156,40 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
     all_agent_ids = await collector.collect_agent_ids(agent_id)
     depth = await collector.get_hierarchy_depth(agent_id)
 
-    # Build agent lookup
+    # Build agent lookup - include agents even if their events haven't been created yet
+    # This handles the race condition where ChildSpawned is persisted on parent
+    # but the child's AgentCreated hasn't been persisted yet
     agents_by_id: dict[UUID, AgentSession] = {}
+    pending_agent_ids: set[UUID] = set()  # Track IDs that exist but have no events yet
+
     for aid in all_agent_ids:
         events = await event_store.get_events(aid)
         if events:
             agents_by_id[aid] = AgentSession.load_from_history(events)
+        else:
+            # Child was spawned but its events haven't been created yet
+            pending_agent_ids.add(aid)
 
     # Build tree recursively
     def build_node(aid: UUID) -> AgentNodeSchema:
+        if aid in pending_agent_ids:
+            # Return a placeholder node for agents whose events haven't been created yet
+            return AgentNodeSchema(
+                id=str(aid),
+                role="pending",
+                status="pending",
+                task_description="(initializing...)",
+                parent_id=None,
+                children=[],
+            )
+
         agent = agents_by_id[aid]
-        children = [build_node(cid) for cid in agent.child_ids if cid in agents_by_id]
+        # Include children that are either fully loaded OR pending
+        children = [
+            build_node(cid)
+            for cid in agent.child_ids
+            if cid in agents_by_id or cid in pending_agent_ids
+        ]
         return AgentNodeSchema(
             id=str(aid),
             role=agent.role.value,

@@ -614,7 +614,7 @@ async def _list_runs(limit: int, fmt: str) -> None:
                 continue
 
             first_event = events[0]
-            if isinstance(first_event, AgentCreated) and first_event.role.value == "BOSS":
+            if isinstance(first_event, AgentCreated) and first_event.role == "boss":
                 task = "N/A"
                 for event in events:
                     if hasattr(event, "task_description"):
