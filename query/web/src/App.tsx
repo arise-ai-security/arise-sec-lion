@@ -33,8 +33,10 @@ function App() {
   const selectedAgentIdRef = useRef(selectedAgentId);
   selectedAgentIdRef.current = selectedAgentId;
 
-  // Debounce ref for hierarchy refresh
+  // Throttle refs for hierarchy refresh (ensures refresh at least every 1s under load)
   const refreshDebounceRef = useRef<number | null>(null);
+  const lastRefreshTimeRef = useRef<number>(0);
+  const REFRESH_THROTTLE_MS = 1000; // At least refresh every 1 second
 
   // Fetch list of BOSS agents - stable callback (no dependencies that change)
   const loadAgents = useCallback(async () => {
@@ -155,53 +157,85 @@ function App() {
     };
   }, [selectedNodeId]);
 
-  // Debounced hierarchy refresh - stable callback using ref
+  // Throttled hierarchy refresh - ensures refresh at least every REFRESH_THROTTLE_MS
+  // even when continuous events are coming in
   const refreshHierarchy = useCallback(() => {
-    // Cancel any pending refresh
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTimeRef.current;
+
+    // Cancel any pending debounced refresh
     if (refreshDebounceRef.current) {
       clearTimeout(refreshDebounceRef.current);
     }
 
-    // Debounce: wait 500ms before actually refreshing
-    refreshDebounceRef.current = window.setTimeout(async () => {
+    const doRefresh = async () => {
       const agentId = selectedAgentIdRef.current;
       if (!agentId) return;
 
+      lastRefreshTimeRef.current = Date.now();
       try {
         const data = await api.getAgentHierarchy(agentId);
         setHierarchy(data);
       } catch (error) {
         console.error('Failed to refresh hierarchy:', error);
       }
-    }, 500);
+    };
+
+    // If enough time has passed, refresh immediately (throttle leading edge)
+    if (timeSinceLastRefresh >= REFRESH_THROTTLE_MS) {
+      doRefresh();
+    } else {
+      // Otherwise, schedule a refresh for when the throttle period ends
+      const delay = REFRESH_THROTTLE_MS - timeSinceLastRefresh;
+      refreshDebounceRef.current = window.setTimeout(doRefresh, delay);
+    }
   }, []);
 
-  // Cleanup debounce on unmount
+  // Throttle refs for summary/events refresh
+  const summaryRefreshRef = useRef<number | null>(null);
+  const lastSummaryRefreshRef = useRef<number>(0);
+  const SUMMARY_THROTTLE_MS = 500; // Refresh summary at most every 500ms
+
+  // Cleanup throttle timers on unmount
   useEffect(() => {
     return () => {
       if (refreshDebounceRef.current) {
         clearTimeout(refreshDebounceRef.current);
       }
+      if (summaryRefreshRef.current) {
+        clearTimeout(summaryRefreshRef.current);
+      }
     };
   }, []);
 
-  // Refresh summary for a specific agent - stable callback using ref
-  const refreshSummary = useCallback(async (agentId: string) => {
-    try {
-      const data = await api.getAgentSummary(agentId);
-      setSummary(data);
-    } catch (error) {
-      console.error('Failed to refresh summary:', error);
-    }
-  }, []);
+  // Throttled refresh for summary and events when events arrive for selected node
+  const refreshSelectedNodeData = useCallback((agentId: string) => {
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastSummaryRefreshRef.current;
 
-  // Refresh events for a specific agent
-  const refreshEvents = useCallback(async (agentId: string) => {
-    try {
-      const data = await api.getAgentEvents(agentId);
-      setEvents(data);
-    } catch (error) {
-      console.error('Failed to refresh events:', error);
+    if (summaryRefreshRef.current) {
+      clearTimeout(summaryRefreshRef.current);
+    }
+
+    const doRefresh = async () => {
+      lastSummaryRefreshRef.current = Date.now();
+      try {
+        const [summaryData, eventsData] = await Promise.all([
+          api.getAgentSummary(agentId),
+          api.getAgentEvents(agentId),
+        ]);
+        setSummary(summaryData);
+        setEvents(eventsData);
+      } catch (error) {
+        console.error('Failed to refresh selected node data:', error);
+      }
+    };
+
+    if (timeSinceLastRefresh >= SUMMARY_THROTTLE_MS) {
+      doRefresh();
+    } else {
+      const delay = SUMMARY_THROTTLE_MS - timeSinceLastRefresh;
+      summaryRefreshRef.current = window.setTimeout(doRefresh, delay);
     }
   }, []);
 
@@ -217,19 +251,18 @@ function App() {
       return updated.slice(-100);
     });
 
-    // Refresh hierarchy when structure-changing events occur (debounced)
+    // Refresh hierarchy when structure-changing events occur (throttled)
     const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed'];
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
     }
 
-    // Refresh summary and events when events arrive for the currently selected node
+    // Refresh summary and events when events arrive for the currently selected node (throttled)
     const currentNodeId = selectedNodeIdRef.current;
     if (currentNodeId && event.aggregate_id === currentNodeId) {
-      refreshSummary(currentNodeId);
-      refreshEvents(currentNodeId);
+      refreshSelectedNodeData(currentNodeId);
     }
-  }, [refreshHierarchy, refreshSummary, refreshEvents]);
+  }, [refreshHierarchy, refreshSelectedNodeData]);
 
   // SSE connection for real-time updates
   const { isConnected } = useSSE({
