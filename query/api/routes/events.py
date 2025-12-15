@@ -166,8 +166,12 @@ async def sse_events(root_id: UUID, event_store: EventStoreDep) -> EventSourceRe
                             "data": schema.model_dump_json(),
                         }
 
-                # Poll interval
-                await asyncio.sleep(0.5)
+                # Send ping to keep connection alive and force flush
+                # This ensures browsers/proxies don't buffer the response
+                yield {"event": "ping", "data": ""}
+
+                # Poll interval - shorter for more responsive updates
+                await asyncio.sleep(0.3)
 
             except Exception as e:
                 yield {

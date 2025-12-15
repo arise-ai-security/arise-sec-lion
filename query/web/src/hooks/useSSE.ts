@@ -51,6 +51,8 @@ export function useSSE({ rootId, onEvent, onError }: UseSSEOptions): UseSSERetur
 
       eventSource.onmessage = (event) => {
         if (!isMounted) return;
+        // Ignore empty ping events (keep-alive)
+        if (!event.data || event.data === '') return;
         try {
           const data = JSON.parse(event.data) as DomainEvent;
           onEventRef.current(data);

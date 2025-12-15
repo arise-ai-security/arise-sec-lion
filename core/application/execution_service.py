@@ -22,6 +22,7 @@ from core.ports.llm_port import LLMPort
 from core.ports.reward_mechanism_port import RewardMechanismPort
 from core.ports.verification_heuristics_port import VerificationHeuristicsPort
 from core.ports.worker_port import WorkerToolPort
+from core.query.projections.hierarchy_collector import HierarchyCollector
 
 
 # Default models for multi-model strategy (3 different models)
@@ -347,9 +348,21 @@ class AgentExecutionService:
 
         parent.mark_changes_as_committed()
 
-    async def _get_active_agent_ids(self) -> list[UUID]:
-        """Return agent IDs not in terminal state (COMPLETED/FAILED)."""
-        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+    async def _get_active_agent_ids(self, root_id: UUID | None = None) -> list[UUID]:
+        """Return agent IDs not in terminal state (COMPLETED/FAILED).
+
+        Args:
+            root_id: If provided, only return agents within this hierarchy.
+                    If None, returns all active agents (legacy behavior).
+        """
+        if root_id is not None:
+            # Get only agents in this hierarchy
+            collector = HierarchyCollector(self.event_store)
+            all_agent_ids = await collector.collect_agent_ids(root_id)
+        else:
+            # Legacy: get all agents
+            all_agent_ids = set(await self.event_store.get_all_aggregate_ids())
+
         active_ids = []
         for agent_id in all_agent_ids:
             events = await self.event_store.get_events(agent_id)
@@ -359,9 +372,19 @@ class AgentExecutionService:
                     active_ids.append(agent_id)
         return active_ids
 
-    async def _get_agents_status(self) -> list[dict[str, Any]]:
-        """Return status information for all agents."""
-        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+    async def _get_agents_status(self, root_id: UUID | None = None) -> list[dict[str, Any]]:
+        """Return status information for agents.
+
+        Args:
+            root_id: If provided, only return agents within this hierarchy.
+                    If None, returns all agents (legacy behavior).
+        """
+        if root_id is not None:
+            collector = HierarchyCollector(self.event_store)
+            all_agent_ids = await collector.collect_agent_ids(root_id)
+        else:
+            all_agent_ids = set(await self.event_store.get_all_aggregate_ids())
+
         agents_status = []
         for agent_id in all_agent_ids:
             events = await self.event_store.get_events(agent_id)
@@ -386,15 +409,20 @@ class AgentExecutionService:
                 self.status_callback(agents_status)
 
     async def run_system_loop(self, root_agent_id: UUID) -> None:
-        """Poll and execute active agents until all reach terminal state."""
+        """Poll and execute active agents in the hierarchy until all reach terminal state.
+
+        Only processes agents within the hierarchy rooted at root_agent_id.
+        This ensures that running a new task doesn't process agents from previous runs.
+        """
         while True:
-            active_agents = await self._get_active_agent_ids()
+            # Only get active agents within this hierarchy
+            active_agents = await self._get_active_agent_ids(root_id=root_agent_id)
             if not active_agents:
                 break
 
-            # Notify status callback with current agents status
+            # Notify status callback with current agents status (filtered to hierarchy)
             if self.status_callback:
-                agents_status = await self._get_agents_status()
+                agents_status = await self._get_agents_status(root_id=root_agent_id)
                 self._notify_status(agents_status)
 
             for agent_id in active_agents:

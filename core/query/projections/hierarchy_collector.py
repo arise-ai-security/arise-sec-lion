@@ -4,12 +4,12 @@ from collections import deque
 from collections.abc import AsyncIterator
 from uuid import UUID
 
-from core.domain.events import ChildSpawned, DomainEvent
+from core.domain.events import ChildSpawned, DomainEvent, SubordinatesSpawned
 from core.ports.event_store_port import EventStorePort
 
 
 class HierarchyCollector:
-    """Collects events from BOSS and all descendants via ChildSpawned traversal."""
+    """Collects events from BOSS and all descendants via ChildSpawned/SubordinatesSpawned traversal."""
 
     def __init__(self, event_store: EventStorePort) -> None:
         self._event_store = event_store
@@ -31,8 +31,18 @@ class HierarchyCollector:
             yield agent_id, events, depth
 
             for event in events:
+                # Handle ChildSpawned events (single child)
                 if isinstance(event, ChildSpawned) and event.child_id not in visited:
                     queue.append((event.child_id, depth + 1))
+                # Handle SubordinatesSpawned events (multiple children with same task)
+                elif isinstance(event, SubordinatesSpawned):
+                    for config in event.subordinate_configs:
+                        child_id = config.get("child_id")
+                        if child_id:
+                            if isinstance(child_id, str):
+                                child_id = UUID(child_id)
+                            if child_id not in visited:
+                                queue.append((child_id, depth + 1))
 
     async def collect(self, root_agent_id: UUID) -> list[DomainEvent]:
         """Collect all events from hierarchy, sorted by occurred_at."""
