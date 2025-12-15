@@ -185,6 +185,30 @@ function App() {
     };
   }, []);
 
+  // Refresh summary for a specific agent - stable callback using ref
+  const refreshSummary = useCallback(async (agentId: string) => {
+    try {
+      const data = await api.getAgentSummary(agentId);
+      setSummary(data);
+    } catch (error) {
+      console.error('Failed to refresh summary:', error);
+    }
+  }, []);
+
+  // Refresh events for a specific agent
+  const refreshEvents = useCallback(async (agentId: string) => {
+    try {
+      const data = await api.getAgentEvents(agentId);
+      setEvents(data);
+    } catch (error) {
+      console.error('Failed to refresh events:', error);
+    }
+  }, []);
+
+  // Ref for selectedNodeId to avoid re-creating handleSSEEvent
+  const selectedNodeIdRef = useRef(selectedNodeId);
+  selectedNodeIdRef.current = selectedNodeId;
+
   // Handle real-time events via SSE
   const handleSSEEvent = useCallback((event: DomainEvent) => {
     setRealtimeEvents(prev => {
@@ -198,7 +222,14 @@ function App() {
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
     }
-  }, [refreshHierarchy]);
+
+    // Refresh summary and events when events arrive for the currently selected node
+    const currentNodeId = selectedNodeIdRef.current;
+    if (currentNodeId && event.aggregate_id === currentNodeId) {
+      refreshSummary(currentNodeId);
+      refreshEvents(currentNodeId);
+    }
+  }, [refreshHierarchy, refreshSummary, refreshEvents]);
 
   // SSE connection for real-time updates
   const { isConnected } = useSSE({
