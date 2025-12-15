@@ -8,15 +8,33 @@ import orjson
 
 from core.domain.events import (
     AgentCreated,
+    AgentTerminated,
+    AllChildrenFailed,
+    AllSubordinatesFailed,
+    BudgetAdjusted,
+    BudgetAllocated,
+    BudgetRecollected,
     ChildCompleted,
+    ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
     DomainEvent,
+    FirstSuccessRecorded,
     StatusChanged,
+    SubordinatesSpawned,
+    SubtaskRetried,
     SubtasksDefined,
+    SubtreeAborted,
     TaskAssigned,
+    TaskDequeued,
+    TaskEnqueued,
+    TaskReinjected,
     ThoughtCaptured,
+    VerificationCompleted,
+    VerificationHeuristicEvaluated,
+    VerificationInjected,
+    VerifierSpawned,
     WorkCompleted,
     WorkFailed,
 )
@@ -25,17 +43,43 @@ from core.ports.event_store_port import EventStorePort
 
 
 EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
+    # Core agent lifecycle events
     "AgentCreated": AgentCreated,
     "TaskAssigned": TaskAssigned,
     "StatusChanged": StatusChanged,
+    "ComplexityEvaluated": ComplexityEvaluated,
+    "AgentTerminated": AgentTerminated,
+    # Task decomposition events
     "SubtasksDefined": SubtasksDefined,
     "ChildSpawned": ChildSpawned,
-    "WorkCompleted": WorkCompleted,
-    "WorkFailed": WorkFailed,
+    "SubordinatesSpawned": SubordinatesSpawned,
+    # Work execution events
     "CodeGenerationStarted": CodeGenerationStarted,
     "ThoughtCaptured": ThoughtCaptured,
+    "WorkCompleted": WorkCompleted,
+    "WorkFailed": WorkFailed,
+    # Child completion events
     "ChildCompleted": ChildCompleted,
-    "ComplexityEvaluated": ComplexityEvaluated,
+    "ChildFailed": ChildFailed,
+    "AllChildrenFailed": AllChildrenFailed,
+    "FirstSuccessRecorded": FirstSuccessRecorded,
+    "AllSubordinatesFailed": AllSubordinatesFailed,
+    # Budget events
+    "BudgetAllocated": BudgetAllocated,
+    "BudgetAdjusted": BudgetAdjusted,
+    "BudgetRecollected": BudgetRecollected,
+    # Task queue events
+    "TaskEnqueued": TaskEnqueued,
+    "TaskDequeued": TaskDequeued,
+    "TaskReinjected": TaskReinjected,
+    "SubtaskRetried": SubtaskRetried,
+    # Termination events
+    "SubtreeAborted": SubtreeAborted,
+    # Verification events
+    "VerificationInjected": VerificationInjected,
+    "VerifierSpawned": VerifierSpawned,
+    "VerificationCompleted": VerificationCompleted,
+    "VerificationHeuristicEvaluated": VerificationHeuristicEvaluated,
 }
 
 

@@ -119,6 +119,22 @@ class SubtaskSummarySchema(BaseModel):
     child_status: str | None = Field(None, description="Child agent status")
 
 
+class TaskQueueItemSchema(BaseModel):
+    """Schema for a task in the queue."""
+
+    description: str = Field(..., description="Task description")
+    priority: int = Field(0, description="Task priority (0 = normal)")
+
+
+class BudgetInfoSchema(BaseModel):
+    """Schema for budget information."""
+
+    current_budget: float = Field(0.0, description="Current budget balance")
+    initial_budget: float = Field(0.0, description="Initial budget allocated")
+    spent: float = Field(0.0, description="Budget spent (initial - current)")
+    source: str | None = Field(None, description="Budget source (initial/parent)")
+
+
 class AgentSummarySchema(BaseModel):
     """CQRS projection schema for agent node summary.
 
@@ -154,6 +170,15 @@ class AgentSummarySchema(BaseModel):
     # Result/Error
     result: str | None = Field(None, description="Final result (if completed)")
     error_message: str | None = Field(None, description="Error message (if failed)")
+
+    # Budget information
+    budget: BudgetInfoSchema | None = Field(None, description="Budget allocation and usage")
+
+    # Task queue
+    task_queue: list[TaskQueueItemSchema] = Field(
+        default_factory=list, description="Pending tasks in queue"
+    )
+    queue_size: int = Field(0, description="Number of tasks in queue")
 
 
 # System Configuration Schema

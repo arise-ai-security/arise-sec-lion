@@ -72,12 +72,58 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
         </span>
       </div>
 
-      {/* Task Description */}
-      <Section title="Task">
+      {/* Task Description (Objective) */}
+      <Section title="Objective">
         <p className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 p-2 rounded">
           {summary.task_description || 'No task assigned'}
         </p>
       </Section>
+
+      {/* Budget Information */}
+      {summary.budget && (
+        <Section title="Budget">
+          <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-gray-500">Current Balance:</span>
+              <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                ${summary.budget.current_budget.toFixed(1)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-gray-500">Initial Allocation:</span>
+              <span className="text-sm text-gray-700 dark:text-gray-300">
+                ${summary.budget.initial_budget.toFixed(1)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-gray-500">Spent:</span>
+              <span className={`text-sm ${
+                summary.budget.spent > 0
+                  ? 'text-orange-600 dark:text-orange-400'
+                  : 'text-gray-700 dark:text-gray-300'
+              }`}>
+                ${summary.budget.spent.toFixed(1)}
+              </span>
+            </div>
+            {/* Progress bar */}
+            <div className="mt-2">
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div
+                  className="bg-green-500 h-2 rounded-full transition-all"
+                  style={{
+                    width: `${Math.min(100, (summary.budget.current_budget / summary.budget.initial_budget) * 100)}%`
+                  }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                <span>0</span>
+                <span>{summary.budget.source || 'budget'}</span>
+                <span>${summary.budget.initial_budget.toFixed(0)}</span>
+              </div>
+            </div>
+          </div>
+        </Section>
+      )}
 
       {/* Complexity Evaluation (for non-BOSS agents) */}
       {summary.complexity && (
@@ -139,6 +185,32 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                       {subtask.child_status}
                     </span>
                   </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Task Queue (pending tasks) */}
+      {summary.queue_size > 0 && (
+        <Section title={`Task Queue (${summary.queue_size})`}>
+          <div className="space-y-2">
+            {summary.task_queue.map((task, idx) => (
+              <div
+                key={idx}
+                className="bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded border-l-2 border-yellow-400 flex items-center gap-2"
+              >
+                <span className="text-yellow-600 dark:text-yellow-400">
+                  {idx + 1}.
+                </span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 flex-1">
+                  {task.description}
+                </p>
+                {task.priority > 0 && (
+                  <span className="px-1.5 py-0.5 text-xs bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 rounded">
+                    P{task.priority}
+                  </span>
                 )}
               </div>
             ))}

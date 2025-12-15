@@ -89,6 +89,18 @@ export interface SubtaskSummary {
   child_status: string | null;
 }
 
+export interface TaskQueueItem {
+  description: string;
+  priority: number;
+}
+
+export interface BudgetInfo {
+  current_budget: number;
+  initial_budget: number;
+  spent: number;
+  source: string | null;
+}
+
 export interface AgentSummary {
   id: string;
   role: AgentRole;
@@ -112,6 +124,13 @@ export interface AgentSummary {
   // Result/Error
   result: string | null;
   error_message: string | null;
+
+  // Budget information
+  budget: BudgetInfo | null;
+
+  // Task queue
+  task_queue: TaskQueueItem[];
+  queue_size: number;
 }
 
 // System Configuration types

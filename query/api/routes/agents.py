@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 from core.domain.events import (
     AgentCreated,
+    BudgetAllocated,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -22,7 +23,9 @@ from query.api.schemas import (
     AgentListItemSchema,
     AgentNodeSchema,
     AgentSummarySchema,
+    BudgetInfoSchema,
     SubtaskSummarySchema,
+    TaskQueueItemSchema,
 )
 
 
@@ -212,6 +215,10 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
     subtasks_list: list[SubtaskSummarySchema] = []
     child_id_map: dict[int, UUID] = {}  # Map subtask index to child_id
 
+    # Budget tracking
+    initial_budget: float = 0.0
+    budget_source: str | None = None
+
     for event in events:
         if isinstance(event, ComplexityEvaluated):
             complexity = event.complexity
@@ -219,6 +226,10 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
 
         elif isinstance(event, CodeGenerationStarted):
             worker_tool = event.tool_name
+
+        elif isinstance(event, BudgetAllocated):
+            initial_budget = event.amount
+            budget_source = event.source
 
         elif isinstance(event, SubtasksDefined):
             # Store subtasks - we'll match children later
@@ -257,6 +268,22 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         config_strategy = getattr(config, "strategy", None)
         config_details = _build_config_details(config, config_strategy)
 
+    # Build budget info
+    budget_info: BudgetInfoSchema | None = None
+    if initial_budget > 0 or agent.current_budget > 0:
+        budget_info = BudgetInfoSchema(
+            current_budget=agent.current_budget,
+            initial_budget=initial_budget,
+            spent=initial_budget - agent.current_budget,
+            source=budget_source,
+        )
+
+    # Build task queue
+    task_queue_items = [
+        TaskQueueItemSchema(description=task.description, priority=0)
+        for task in agent.task_queue
+    ]
+
     return AgentSummarySchema(
         id=str(agent.session_id),
         role=agent.role.value,
@@ -270,4 +297,7 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         config_details=config_details,
         result=agent.result,
         error_message=agent.error_message,
+        budget=budget_info,
+        task_queue=task_queue_items,
+        queue_size=len(task_queue_items),
     )

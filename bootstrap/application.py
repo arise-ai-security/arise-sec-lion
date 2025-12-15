@@ -2,7 +2,11 @@
 
 from dataclasses import dataclass
 
-from core.application.execution_service import AgentExecutionService, ProgressCallback
+from core.application.execution_service import (
+    AgentExecutionService,
+    ProgressCallback,
+    StatusCallback,
+)
 
 from .infrastructure import Infrastructure
 
@@ -16,6 +20,7 @@ class ApplicationConfig:
     model_config: dict[str, str] | None = None
     output_directory: str | None = None
     progress_callback: ProgressCallback | None = None
+    status_callback: StatusCallback | None = None
     default_worker_tool: str = "claude_code"
 
 
@@ -43,6 +48,7 @@ def get_application(
         poll_interval=config.poll_interval,
         output_directory=config.output_directory,
         progress_callback=config.progress_callback,
+        status_callback=config.status_callback,
         default_worker_tool=config.default_worker_tool,
     )
 

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from config import Settings
-from presentation.cli import CLI, CLIConfig, format_event_progress
+from presentation.cli import CLI, CLIConfig, format_event_progress, format_status_display
 
 from .application import Application, ApplicationConfig, get_application
 from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastructure
@@ -40,6 +40,7 @@ def bootstrap(
             model_config=model_config,
             output_directory=settings.presentation.output_directory,
             progress_callback=format_event_progress if settings.presentation.verbose else None,
+            status_callback=format_status_display if settings.presentation.verbose else None,
             default_worker_tool=settings.infrastructure.worker_tool_type,
         )
 

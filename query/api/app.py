@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings.load()
 
     # Create and connect the event store
-    event_store = PostgresEventStore(settings.infrastructure.postgres_connection_string)
+    event_store = PostgresEventStore(settings.postgres_connection_string)
     await event_store.connect()
 
     # Attach to app state for dependency injection in routes

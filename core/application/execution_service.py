@@ -33,6 +33,7 @@ DEFAULT_SUBORDINATE_MODELS = [
 
 
 ProgressCallback = Callable[[DomainEvent, Any], None]
+StatusCallback = Callable[[list[dict[str, Any]]], None]
 
 
 class AgentExecutionService:
@@ -82,6 +83,7 @@ class AgentExecutionService:
         poll_interval: float = 0.5,
         output_directory: str | None = None,
         progress_callback: ProgressCallback | None = None,
+        status_callback: StatusCallback | None = None,
         default_worker_tool: str = "claude_code",
     ) -> None:
         """Initialize the execution service with infrastructure ports.
@@ -107,6 +109,7 @@ class AgentExecutionService:
         self.output_directory = output_directory
         self.working_directory: str | None = None
         self.progress_callback = progress_callback
+        self.status_callback = status_callback
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
 
@@ -239,6 +242,10 @@ class AgentExecutionService:
         """Create child AgentSessions from ChildSpawned events."""
         child_spawned_events = [e for e in events if isinstance(e, ChildSpawned)]
 
+        # Calculate budget per child (split parent's budget evenly)
+        num_children = len(child_spawned_events)
+        budget_per_child = (parent.current_budget / num_children) if num_children > 0 else 0.0
+
         for child_event in child_spawned_events:
             child_config = child_event.child_config
             child = AgentSession.create(
@@ -248,6 +255,10 @@ class AgentExecutionService:
                 parent_id=parent.session_id,
             )
             child.assign_task(child_event.subtask.description)
+
+            # Allocate budget to child
+            if budget_per_child > 0:
+                child.allocate_budget(budget_per_child, source="parent")
 
             for idx, child_evt in enumerate(child.events):
                 await self.event_store.append(child_evt, expected_version=idx)
@@ -348,12 +359,43 @@ class AgentExecutionService:
                     active_ids.append(agent_id)
         return active_ids
 
+    async def _get_agents_status(self) -> list[dict[str, Any]]:
+        """Return status information for all agents."""
+        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+        agents_status = []
+        for agent_id in all_agent_ids:
+            events = await self.event_store.get_events(agent_id)
+            if events:
+                agent = AgentSession.load_from_history(events)
+                agents_status.append({
+                    "agent_id": str(agent_id)[:8],
+                    "role": agent.role.value,
+                    "status": agent.status.value,
+                    "budget": agent.current_budget,
+                    "task": (agent.task_description[:40] + "...")
+                    if agent.task_description and len(agent.task_description) > 40
+                    else agent.task_description,
+                    "queue_size": len(agent.task_queue),
+                })
+        return agents_status
+
+    def _notify_status(self, agents_status: list[dict[str, Any]]) -> None:
+        """Notify status callback if configured."""
+        if self.status_callback is not None:
+            with contextlib.suppress(Exception):
+                self.status_callback(agents_status)
+
     async def run_system_loop(self, root_agent_id: UUID) -> None:
         """Poll and execute active agents until all reach terminal state."""
         while True:
             active_agents = await self._get_active_agent_ids()
             if not active_agents:
                 break
+
+            # Notify status callback with current agents status
+            if self.status_callback:
+                agents_status = await self._get_agents_status()
+                self._notify_status(agents_status)
 
             for agent_id in active_agents:
                 try:
@@ -442,6 +484,10 @@ class AgentExecutionService:
             parent_id=None,
         )
         boss_agent.assign_task(task_description)
+
+        # Allocate initial budget to BOSS agent (default: 1000.0)
+        initial_budget = 1000.0
+        boss_agent.allocate_budget(initial_budget, source="initial")
 
         for idx, event in enumerate(boss_agent.events):
             await self.event_store.append(event, expected_version=idx)

@@ -26,6 +26,54 @@ class CLIConfig:
     output_directory: str = "./output"
 
 
+def format_status_display(agents_status: list) -> None:
+    """Print current status of all agents (pending, active, etc.)."""
+    if not agents_status:
+        return
+
+    # Group agents by status
+    pending_agents = [a for a in agents_status if a["status"] == "pending"]
+    analyzing_agents = [a for a in agents_status if a["status"] == "analyzing"]
+    in_progress_agents = [a for a in agents_status if a["status"] == "in_progress"]
+    waiting_agents = [a for a in agents_status if a["status"] == "waiting"]
+
+    # Only display if there are pending agents
+    if pending_agents or analyzing_agents or waiting_agents:
+        print()
+        print("   ┌─────────────────────────────────────────────────────────────────┐")
+
+        # Show pending agents
+        if pending_agents:
+            print(f"    📋 Pending: {len(pending_agents)} agent(s)")
+            for agent in pending_agents[:3]:  # Show first 3
+                budget_str = f"${agent['budget']:.0f}" if agent['budget'] > 0 else ""
+                print(f"       • [{agent['agent_id']}] {agent['role']} {budget_str}")
+            if len(pending_agents) > 3:
+                print(f"       ... and {len(pending_agents) - 3} more")
+
+        # Show analyzing agents
+        if analyzing_agents:
+            print(f"    🔍 Analyzing: {len(analyzing_agents)} agent(s)")
+            for agent in analyzing_agents[:3]:
+                budget_str = f"${agent['budget']:.0f}" if agent['budget'] > 0 else ""
+                print(f"       • [{agent['agent_id']}] {agent['role']} {budget_str}")
+
+        # Show waiting agents
+        if waiting_agents:
+            print(f"    ⏳ Waiting: {len(waiting_agents)} agent(s)")
+
+        # Show in-progress agents
+        if in_progress_agents:
+            print(f"    ⚡ Working: {len(in_progress_agents)} agent(s)")
+
+        # Calculate total budget
+        total_budget = sum(a["budget"] for a in agents_status)
+        print(f"    💰 Total Budget: ${total_budget:.0f}")
+
+        print("   └─────────────────────────────────────────────────────────────────┘")
+        print()
+
+
 def format_event_progress(event: object, _agent: object) -> None:  # noqa: PLR0912
     """Print real-time progress for domain events (duck-typed callback)."""
     event_type = type(event).__name__
@@ -76,6 +124,30 @@ def format_event_progress(event: object, _agent: object) -> None:  # noqa: PLR09
         case "ChildCompleted":
             child_id = str(getattr(event, "child_id", "?"))[:8]
             print(f"   ✓ [{agent_id}] Child {child_id}... completed")
+        case "BudgetAllocated":
+            amount = getattr(event, "amount", 0)
+            source = getattr(event, "source", "unknown")
+            print(f"   💰 [{agent_id}] Budget allocated: {amount:.1f} (source: {source})")
+        case "BudgetAdjusted":
+            adjustment = getattr(event, "adjustment", 0)
+            new_balance = getattr(event, "new_balance", 0)
+            reason = getattr(event, "reason", "")[:40]
+            sign = "+" if adjustment >= 0 else ""
+            print(f"   💸 [{agent_id}] Budget adjusted: {sign}{adjustment:.1f} → {new_balance:.1f} ({reason})")
+        case "BudgetRecollected":
+            child_id = str(getattr(event, "child_id", "?"))[:8]
+            amount = getattr(event, "amount_recollected", 0)
+            succeeded = getattr(event, "child_succeeded", False)
+            status = "✓" if succeeded else "✗"
+            print(f"   🔄 [{agent_id}] {status} Recollected {amount:.1f} from child {child_id}...")
+        case "TaskEnqueued":
+            subtask = getattr(event, "subtask", None)
+            desc = getattr(subtask, "description", "")[:40] if subtask else ""
+            print(f"   📥 [{agent_id}] Task enqueued: {desc}...")
+        case "TaskDequeued":
+            subtask = getattr(event, "subtask", None)
+            desc = getattr(subtask, "description", "")[:40] if subtask else ""
+            print(f"   📤 [{agent_id}] Task dequeued: {desc}...")
         case _:
             print(f"   • [{agent_id}] {event_type}")
 
