@@ -101,6 +101,12 @@ Generates a standalone ReactFlow component from an agent hierarchy. Useful for e
   - **MANAGER**: blue (`#2563eb`)
   - **WORKER**: green (`#16a34a`)
   - **PENDING**: yellow (`#eab308`)
+- **Click on any node** to view detailed agent information in a modal:
+  - **Objective**: Full task description
+  - **Complexity Evaluation**: Complexity rating (simple/complex) with reasoning
+  - **Configuration**: Strategy, worker tool, and config details
+  - **Subtasks**: List of subtasks with status (for manager agents)
+  - **Result/Error**: Completion result or error message if applicable
 - Calculates tree layout positions automatically
 - Outputs valid JSX ready to use in any React project
 
