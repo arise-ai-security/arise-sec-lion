@@ -8,6 +8,7 @@ import orjson
 
 from core.domain.events import (
     AgentCreated,
+    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -17,7 +18,9 @@ from core.domain.events import (
     SubtasksDefined,
     TaskAssigned,
     ThoughtCaptured,
+    TokensConsumed,
     WorkCompleted,
+    WorkerCostRecorded,
     WorkFailed,
 )
 from core.domain.exceptions import ConcurrencyError, EventStoreError
@@ -36,6 +39,10 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "ThoughtCaptured": ThoughtCaptured,
     "ChildCompleted": ChildCompleted,
     "ComplexityEvaluated": ComplexityEvaluated,
+    # Cost tracking events
+    "TokensConsumed": TokensConsumed,
+    "WorkerCostRecorded": WorkerCostRecorded,
+    "BudgetExceeded": BudgetExceeded,
 }
 
 

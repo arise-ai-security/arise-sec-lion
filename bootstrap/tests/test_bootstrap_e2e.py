@@ -96,7 +96,7 @@ class TestBootstrapWiring:
 
         cli = bootstrap()
         assert isinstance(cli, CLI)
-        assert cli.config.verbose is True  # Default from PresentationSettings
+        assert cli.config.verbose is True  # Default from PresentationConfig
 
 
 class TestInfrastructureWiring:

@@ -24,7 +24,7 @@ def bootstrap(
 
     if infrastructure_config is None:
         infrastructure_config = InfrastructureConfig(
-            postgres_connection_string=settings.postgres_connection_string,
+            postgres_connection_string=settings.infrastructure.postgres_connection_string,
             default_worker_tool=settings.infrastructure.worker_tool_type,
             worker_tool_model=settings.infrastructure.worker_tool_model,
             worker_tool_timeout=settings.infrastructure.worker_tool_timeout,

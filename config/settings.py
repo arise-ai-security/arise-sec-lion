@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,17 +68,41 @@ def _load_yaml_hierarchy(env: str | None = None) -> dict[str, Any]:
 
 
 class InfrastructureConfig(BaseModel):
-    """DB, LLM, and worker tool settings. Loaded from YAML."""
+    """DB, LLM, and worker tool settings.
 
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_user: str = "arise"
-    postgres_database: str = "arise_events"
+    All fields are required - missing values will raise an error.
+    Postgres password injected from POSTGRES_PASSWORD env var in Settings.load().
+    """
 
-    llm_model_boss: str  # Required in YAML
-    worker_tool_type: Literal["claude_code", "openhands"]  # Required in YAML
-    worker_tool_model: str  # Required in YAML
-    worker_tool_timeout: int = Field(default=300, gt=0)
+    # Postgres settings (all required)
+    postgres_host: str
+    postgres_port: int
+    postgres_user: str
+    postgres_password: str  # Injected from POSTGRES_PASSWORD env var
+    postgres_database: str
+
+    # LLM settings (all required)
+    llm_model_boss: str
+    worker_tool_type: Literal["claude_code", "openhands"]
+    worker_tool_model: str
+    worker_tool_timeout: int
+
+    @property
+    def postgres_connection_string(self) -> str:
+        """Build PostgreSQL connection string."""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+        )
+
+
+class BudgetConfig(BaseModel):
+    """Cost and token limits. Hard stops to prevent runaway spending."""
+
+    max_total_cost_usd: float = Field(default=10.0, ge=0.0)
+    max_tokens_per_agent: int = Field(default=100000, gt=0)
+    cost_warning_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    cost_tracking_enabled: bool = True
 
 
 class ApplicationConfig(BaseModel):
@@ -90,6 +114,9 @@ class ApplicationConfig(BaseModel):
     llm_timeout: float = Field(default=30.0, gt=0.0)
     worker_timeout: float = Field(default=300.0, gt=0.0)
     default_task_complexity_threshold: int = Field(default=5, ge=1, le=10)
+
+    # Budget configuration for cost tracking and limits
+    budget: BudgetConfig
 
 
 class PresentationConfig(BaseModel):
@@ -109,40 +136,50 @@ class PresentationConfig(BaseModel):
 class Settings(BaseSettings):
     """Root config: secrets from env, everything else from YAML.
 
-    Env vars (secrets only):
+    Env vars injected into infrastructure config in load():
         POSTGRES_PASSWORD - Database password
-        POSTGRES_HOST - Docker override for database host
-        OPENAI_API_KEY - OpenAI API key (read by LiteLLM)
-        ANTHROPIC_API_KEY - Anthropic API key (read by LiteLLM)
+        POSTGRES_HOST - Optional override for Docker
+
+    Env vars read directly by LiteLLM (not managed here):
+        OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
     """
 
     model_config = SettingsConfigDict(extra="ignore")
 
-    # --- Secrets from environment ---
-    postgres_password: str = Field(description="Database password from POSTGRES_PASSWORD")
-    postgres_host: str | None = Field(
-        default=None, description="Override from POSTGRES_HOST (for Docker)"
-    )
+    # --- Config sections from YAML (required - no defaults) ---
+    infrastructure: InfrastructureConfig
+    application: ApplicationConfig
+    presentation: PresentationConfig
 
-    # --- Config sections from YAML ---
-    infrastructure: InfrastructureConfig = Field(
-        default_factory=lambda: InfrastructureConfig(
-            llm_model_boss="gpt-4o",
-            worker_tool_type="openhands",
-            worker_tool_model="openai/gpt-4o",
-        )
-    )
-    application: ApplicationConfig = Field(default_factory=ApplicationConfig)
-    presentation: PresentationConfig = Field(default_factory=PresentationConfig)
+    @classmethod
+    def _build_from_config(cls, config: dict[str, Any]) -> "Settings":
+        """Build Settings from config dict, injecting env vars into infrastructure.
 
-    @computed_field
-    @property
-    def postgres_connection_string(self) -> str:
-        """Build connection string from config + secret."""
-        host = self.postgres_host or self.infrastructure.postgres_host
-        return (
-            f"postgresql://{self.infrastructure.postgres_user}:{self.postgres_password}"
-            f"@{host}:{self.infrastructure.postgres_port}/{self.infrastructure.postgres_database}"
+        Env vars injected:
+            POSTGRES_PASSWORD - Required database password
+            POSTGRES_HOST - Optional override (for Docker)
+
+        Raises:
+            ValueError: If POSTGRES_PASSWORD env var is not set
+            ValidationError: If required fields are missing
+        """
+        infra_config = config.get("infrastructure", {})
+
+        # Inject postgres secrets from environment
+        postgres_password = os.getenv("POSTGRES_PASSWORD")
+        if not postgres_password:
+            raise ValueError("POSTGRES_PASSWORD environment variable is required")
+        infra_config["postgres_password"] = postgres_password
+
+        # Optional host override for Docker
+        postgres_host_override = os.getenv("POSTGRES_HOST")
+        if postgres_host_override:
+            infra_config["postgres_host"] = postgres_host_override
+
+        return cls(
+            infrastructure=InfrastructureConfig(**infra_config),
+            application=ApplicationConfig(**config.get("application", {})),
+            presentation=PresentationConfig(**config.get("presentation", {})),
         )
 
     @classmethod
@@ -154,18 +191,23 @@ class Settings(BaseSettings):
 
         Returns:
             Settings instance with merged configuration
+
+        Raises:
+            ValueError: If POSTGRES_PASSWORD env var is not set
+            ValidationError: If required fields are missing from config.yaml
         """
         config = _load_yaml_hierarchy(env)
-
-        return cls(
-            infrastructure=InfrastructureConfig(**config.get("infrastructure", {})),
-            application=ApplicationConfig(**config.get("application", {})),
-            presentation=PresentationConfig(**config.get("presentation", {})),
-        )
+        return cls._build_from_config(config)
 
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "Settings":
-        """Load from specific YAML file (for testing)."""
+        """Load from specific YAML file (for testing).
+
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            ValueError: If POSTGRES_PASSWORD env var is not set
+            ValidationError: If required fields are missing
+        """
         config_file = Path(config_path)
         if not config_file.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -173,18 +215,4 @@ class Settings(BaseSettings):
         with config_file.open(encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
 
-        return cls(
-            infrastructure=InfrastructureConfig(**config.get("infrastructure", {})),
-            application=ApplicationConfig(**config.get("application", {})),
-            presentation=PresentationConfig(**config.get("presentation", {})),
-        )
-
-
-# =============================================================================
-# Backwards Compatibility Aliases
-# =============================================================================
-
-# These aliases maintain backwards compatibility with existing code
-InfrastructureSettings = InfrastructureConfig
-ApplicationSettings = ApplicationConfig
-PresentationSettings = PresentationConfig
+        return cls._build_from_config(config)

@@ -12,6 +12,7 @@ from core.domain.agent_config import AgentConfig
 from core.domain.config_resolver import ConfigResolver
 from core.domain.events import (
     AgentCreated,
+    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -21,10 +22,12 @@ from core.domain.events import (
     SubtasksDefined,
     TaskAssigned,
     ThoughtCaptured,
+    TokensConsumed,
     WorkCompleted,
     WorkFailed,
 )
 from core.domain.exceptions import ToolNotAvailableError
+from core.domain.llm_response import LLMResponse
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser, strip_markdown_code_block
 from core.ports.llm_port import LLMPort
@@ -111,10 +114,13 @@ class AgentSession:
         )
 
         llm_config = ConfigResolver.resolve(self.config, operation="complexity_evaluation")
-        response = await llm_port.query(prompt, llm_config.model_dump())
+        llm_response = await llm_port.query_with_usage(prompt, llm_config.model_dump())
+
+        # Emit cost tracking event
+        self._emit_tokens_consumed(llm_response, operation="complexity_evaluation")
 
         try:
-            clean_response = strip_markdown_code_block(response)
+            clean_response = strip_markdown_code_block(llm_response.content)
             data = json.loads(clean_response)
             complexity = data.get("complexity", "").lower()
             reasoning = data.get("reasoning", "")
@@ -166,10 +172,13 @@ class AgentSession:
             )
 
         llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")
-        response = await llm_port.query(prompt, llm_config.model_dump())
+        llm_response = await llm_port.query_with_usage(prompt, llm_config.model_dump())
+
+        # Emit cost tracking event
+        self._emit_tokens_consumed(llm_response, operation="task_decomposition")
 
         try:
-            subtasks = SubtaskParser.parse_from_llm_response(response)
+            subtasks = SubtaskParser.parse_from_llm_response(llm_response.content)
         except ValueError as e:
             failed_event = WorkFailed(
                 aggregate_id=self.session_id,
@@ -376,6 +385,36 @@ class AgentSession:
     def _(self, event: ComplexityEvaluated) -> None:
         self.role = AgentRole(event.determined_role)
         self.version += 1
+
+    @_apply.register
+    def _(self, event: TokensConsumed) -> None:
+        # Cost events don't change agent state, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: BudgetExceeded) -> None:
+        # Budget exceeded is informational, actual failure comes from WorkFailed
+        self.version += 1
+
+    def _emit_tokens_consumed(self, llm_response: LLMResponse, operation: str) -> None:
+        """Emit TokensConsumed event after an LLM call.
+
+        Args:
+            llm_response: Response from LLM with usage metadata.
+            operation: Operation type (e.g., "complexity_evaluation", "task_decomposition").
+        """
+        cost_event = TokensConsumed(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            model=llm_response.model,
+            prompt_tokens=llm_response.usage.prompt_tokens,
+            completion_tokens=llm_response.usage.completion_tokens,
+            total_tokens=llm_response.usage.total_tokens,
+            cost_usd=llm_response.cost_usd,
+            operation=operation,
+        )
+        self._apply(cost_event)
+        self._changes.append(cost_event)
 
     def _initialize_defaults(self, session_id: UUID) -> None:
         self.session_id: UUID = session_id

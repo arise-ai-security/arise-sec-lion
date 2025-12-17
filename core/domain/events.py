@@ -102,3 +102,49 @@ class ComplexityEvaluated(DomainEvent):
     complexity: str
     determined_role: str
     reasoning: str = ""
+
+
+# =============================================================================
+# Cost Tracking Events
+# =============================================================================
+
+
+class TokensConsumed(DomainEvent):
+    """LLM call consumed tokens with associated cost.
+
+    Emitted after each LLM call to track token usage and costs.
+    Enables cost aggregation per agent, per operation, and system-wide.
+    """
+
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+    operation: str  # "complexity_evaluation", "task_decomposition", "worker_execution"
+
+
+class WorkerCostRecorded(DomainEvent):
+    """Worker tool execution incurred cost.
+
+    Tracks costs from Claude Code, OpenHands, or other worker tools.
+    Some tools may not provide token counts (e.g., PTY-based execution).
+    """
+
+    tool_name: str  # "claude_code", "openhands"
+    model: str | None = None  # Underlying model if known
+    tokens: int | None = None  # Total tokens if available
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
+
+
+class BudgetExceeded(DomainEvent):
+    """System budget limit reached - execution halted.
+
+    This is a hard stop event. When emitted, the agent should
+    transition to FAILED status with budget exceeded as reason.
+    """
+
+    budget_limit_usd: float
+    current_total_usd: float
+    exceeded_by_usd: float = 0.0
