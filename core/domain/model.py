@@ -18,6 +18,7 @@ from core.domain.events import (
     CodeGenerationStarted,
     ComplexityEvaluated,
     DomainEvent,
+    LimitEnforced,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -27,6 +28,7 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.domain.exceptions import ToolNotAvailableError
+from core.domain.execution_context import ExecutionContext
 from core.domain.llm_response import LLMResponse
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser, strip_markdown_code_block
@@ -151,7 +153,12 @@ class AgentSession:
         self._changes.append(complexity_event)
 
     async def evaluate_task(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
-        """For BOSS/MANAGER: decompose task into subtasks and spawn children."""
+        """For BOSS/MANAGER: decompose task into subtasks and spawn children.
+
+        Respects execution context limits:
+        - max_depth: Forces WORKER role for children at max depth
+        - max_children_per_node: Limits number of subtasks spawned
+        """
         assert self.role in (AgentRole.BOSS, AgentRole.MANAGER), (
             f"Requires BOSS/MANAGER, got {self.role}"
         )
@@ -189,6 +196,22 @@ class AgentSession:
             self._changes.append(failed_event)
             return
 
+        # Enforce max_children_per_node limit (if enabled, -1 = unlimited)
+        if self.execution_context is not None and self.execution_context.is_children_limited():
+            max_children = self.execution_context.max_children_per_node
+            if len(subtasks) > max_children:
+                limit_event = LimitEnforced(
+                    aggregate_id=self.session_id,
+                    sequence_number=self._next_sequence(),
+                    limit_type="children",
+                    limit_value=max_children,
+                    attempted_value=len(subtasks),
+                    action_taken="truncated_subtasks",
+                )
+                self._apply(limit_event)
+                self._changes.append(limit_event)
+                subtasks = subtasks[:max_children]
+
         subtasks_event = SubtasksDefined(
             aggregate_id=self.session_id,
             sequence_number=self._next_sequence(),
@@ -197,13 +220,31 @@ class AgentSession:
         self._apply(subtasks_event)
         self._changes.append(subtasks_event)
 
+        # Determine child role based on depth limit
+        # At max depth, force WORKER role to prevent infinite recursion
+        force_worker = False
+        if self.execution_context is not None and not self.execution_context.can_spawn_child():
+            force_worker = True
+            limit_event = LimitEnforced(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                limit_type="depth",
+                limit_value=self.execution_context.max_depth,
+                attempted_value=self.execution_context.current_depth + 1,
+                action_taken="forced_worker_role",
+            )
+            self._apply(limit_event)
+            self._changes.append(limit_event)
+
+        child_role = AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
+
         for subtask in subtasks:
             child_id = uuid4()
             child_event = ChildSpawned(
                 aggregate_id=self.session_id,
                 sequence_number=self._next_sequence(),
                 child_id=child_id,
-                child_role=AgentRole.PENDING.value,
+                child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
             )
@@ -396,6 +437,11 @@ class AgentSession:
         # Budget exceeded is informational, actual failure comes from WorkFailed
         self.version += 1
 
+    @_apply.register
+    def _(self, event: LimitEnforced) -> None:
+        # Limit enforcement is informational, tracks when limits affect behavior
+        self.version += 1
+
     def _emit_tokens_consumed(self, llm_response: LLMResponse, operation: str) -> None:
         """Emit TokensConsumed event after an LLM call.
 
@@ -430,6 +476,12 @@ class AgentSession:
         self.version: int = 0
         self._changes: list[DomainEvent] = []
         self._sequence: int = 0
+        # Execution context for limit enforcement (set by ExecutionService)
+        self.execution_context: ExecutionContext | None = None
+
+    def set_execution_context(self, context: ExecutionContext) -> None:
+        """Set execution context for limit enforcement."""
+        self.execution_context = context
 
     @classmethod
     def load_from_history(cls, events: list[DomainEvent]) -> "AgentSession":

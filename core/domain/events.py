@@ -148,3 +148,17 @@ class BudgetExceeded(DomainEvent):
     budget_limit_usd: float
     current_total_usd: float
     exceeded_by_usd: float = 0.0
+
+
+class LimitEnforced(DomainEvent):
+    """A system limit was enforced, modifying agent behavior.
+
+    Emitted when limits like max_depth or max_children prevent normal
+    operation. The agent continues but with constrained behavior
+    (e.g., forcing WORKER role at max depth instead of spawning more managers).
+    """
+
+    limit_type: str  # "depth", "children", "agents", "budget"
+    limit_value: int | float
+    attempted_value: int | float
+    action_taken: str  # "forced_worker_role", "rejected_children", "halted"

@@ -2,7 +2,12 @@
 
 from dataclasses import dataclass
 
-from core.application.execution_service import AgentExecutionService, ProgressCallback
+from config import OrchestrationConfig
+from core.application.execution_service import (
+    AgentExecutionService,
+    BudgetConfig,
+    ProgressCallback,
+)
 
 from .infrastructure import Infrastructure
 
@@ -11,12 +16,16 @@ from .infrastructure import Infrastructure
 class ApplicationConfig:
     """Configuration for application services."""
 
-    max_retries: int = 3
-    poll_interval: float = 0.5
-    model_config: dict[str, str] | None = None
-    output_directory: str | None = None
+    system_limits: OrchestrationConfig.LimitsConfig
+    max_retries: int
+    poll_interval: float
+    model_config: dict[str, str]
+    output_directory: str
+    default_worker_tool: str
+    budget_max_total_cost_usd: float
+    budget_cost_warning_threshold: float
+    budget_cost_tracking_enabled: bool
     progress_callback: ProgressCallback | None = None
-    default_worker_tool: str = "claude_code"
 
 
 @dataclass
@@ -28,22 +37,27 @@ class Application:
 
 def get_application(
     infrastructure: Infrastructure,
-    config: ApplicationConfig | None = None,
+    config: ApplicationConfig,
 ) -> Application:
     """Create all application services."""
-    if config is None:
-        config = ApplicationConfig()
+    budget_config = BudgetConfig(
+        max_total_cost_usd=config.budget_max_total_cost_usd,
+        cost_warning_threshold=config.budget_cost_warning_threshold,
+        cost_tracking_enabled=config.budget_cost_tracking_enabled,
+    )
 
     execution_service = AgentExecutionService(
         event_store=infrastructure.event_store,
         llm_port=infrastructure.llm_adapter,
         worker_tool_port=infrastructure.worker_tool,
+        system_limits=config.system_limits,
         model_config=config.model_config,
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
         output_directory=config.output_directory,
-        progress_callback=config.progress_callback,
         default_worker_tool=config.default_worker_tool,
+        budget_config=budget_config,
+        progress_callback=config.progress_callback,
     )
 
     return Application(execution_service=execution_service)

@@ -14,6 +14,7 @@ from core.domain.events import (
     CodeGenerationStarted,
     ComplexityEvaluated,
     DomainEvent,
+    LimitEnforced,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -43,6 +44,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,
     "BudgetExceeded": BudgetExceeded,
+    # Limit enforcement events
+    "LimitEnforced": LimitEnforced,
 }
 
 

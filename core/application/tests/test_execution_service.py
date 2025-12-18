@@ -9,9 +9,11 @@ from uuid import uuid4
 
 import pytest
 
-from core.application.execution_service import AgentExecutionService
+from config import OrchestrationConfig
+from core.application.execution_service import AgentExecutionService, BudgetConfig
 from core.domain.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
+from core.domain.llm_response import LLMResponse, LLMUsage
 from core.domain.model import AgentRole, AgentStatus
 
 
@@ -22,6 +24,36 @@ def _test_config() -> dict[str, Any]:
         "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
         "tool": "claude_code",
     }
+
+
+def _test_system_limits() -> OrchestrationConfig.LimitsConfig:
+    """Create test system limits (all unlimited for tests)."""
+    return OrchestrationConfig.LimitsConfig(
+        max_depth=-1,
+        max_children_per_node=-1,
+        max_total_agents=-1,
+        max_concurrent_workers=-1,
+        llm_rate_limit_rpm=-1,
+    )
+
+
+def _test_budget_config() -> BudgetConfig:
+    """Create test budget config."""
+    return BudgetConfig(
+        max_total_cost_usd=10.0,
+        cost_warning_threshold=0.8,
+        cost_tracking_enabled=True,
+    )
+
+
+def _make_llm_response(content: str, model: str = "gpt-4") -> LLMResponse:
+    """Create a mock LLMResponse for testing."""
+    return LLMResponse(
+        content=content,
+        usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+        model=model,
+        cost_usd=0.0,
+    )
 
 
 @pytest.fixture
@@ -49,7 +81,18 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
         event_store=mock_event_store,
         llm_port=mock_llm_port,
         worker_tool_port=mock_worker_port,
+        system_limits=_test_system_limits(),
+        model_config={
+            "boss": "gpt-4o",
+            "manager": "gpt-4o",
+            "worker": "gpt-4o",
+            "pending": "gpt-4o",
+        },
         max_retries=3,
+        poll_interval=0.5,
+        output_directory="./test_output",
+        default_worker_tool="claude_code",
+        budget_config=_test_budget_config(),
     )
 
 
@@ -80,13 +123,13 @@ async def test_run_agent_step_pending_role_calls_evaluate_complexity(
     mock_event_store.get_events.return_value = [event1, event2]
 
     # Mock LLM to return SIMPLE complexity
-    mock_llm_port.query.return_value = "SIMPLE"
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
     # When: Run agent step
     await execution_service.run_agent_step(agent_id)
 
     # Then: LLM should have been called for complexity evaluation
-    assert mock_llm_port.query.called, "evaluate_complexity should call LLM"
+    assert mock_llm_port.query_with_usage.called, "evaluate_complexity should call LLM"
 
     # And: Events should have been appended to event store
     assert mock_event_store.append.called, "Should save events to event store"
@@ -122,18 +165,18 @@ async def test_run_agent_step_boss_role_calls_evaluate_task(
     mock_event_store.get_events.return_value = [event1, event2]
 
     # Mock LLM to return subtasks JSON
-    mock_llm_port.query.return_value = """
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("""
     [
         {"description": "Setup backend API"},
         {"description": "Create frontend"}
     ]
-    """
+    """)
 
     # When: Run agent step
     await execution_service.run_agent_step(agent_id)
 
     # Then: LLM should have been called for task evaluation
-    assert mock_llm_port.query.called, "evaluate_task should call LLM"
+    assert mock_llm_port.query_with_usage.called, "evaluate_task should call LLM"
 
     # And: Events should have been saved
     assert mock_event_store.append.called, "Should save SubtasksDefined event"
@@ -177,18 +220,18 @@ async def test_run_agent_step_manager_role_calls_evaluate_task(
     mock_event_store.get_events.return_value = [event1, event2, event3]
 
     # Mock LLM to return subtasks
-    mock_llm_port.query.return_value = """
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("""
     [
         {"description": "Implement user registration"},
         {"description": "Implement login/logout"}
     ]
-    """
+    """)
 
     # When: Run agent step
     await execution_service.run_agent_step(agent_id)
 
     # Then: LLM should be called for task evaluation
-    assert mock_llm_port.query.called, "MANAGER should evaluate task"
+    assert mock_llm_port.query_with_usage.called, "MANAGER should evaluate task"
 
 
 @pytest.mark.asyncio
@@ -297,12 +340,15 @@ async def test_run_agent_step_retries_on_concurrency_error(
     )
 
     mock_event_store.get_events.return_value = [event1, event2]
-    mock_llm_port.query.return_value = "SIMPLE"
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
-    # First append fails with ConcurrencyError, second succeeds
+    # First append fails with ConcurrencyError, subsequent appends succeed
+    # After retry: TokensConsumed, ComplexityEvaluated, StatusChanged events
     mock_event_store.append.side_effect = [
         ConcurrencyError(aggregate_id=str(agent_id), expected_version=2, actual_version=3),
-        None,  # Retry succeeds
+        None,  # Retry succeeds - TokensConsumed
+        None,  # ComplexityEvaluated
+        None,  # StatusChanged
     ]
 
     # When: Run agent step
@@ -337,7 +383,7 @@ async def test_run_agent_step_raises_after_max_retries(
     )
 
     mock_event_store.get_events.return_value = [event1, event2]
-    mock_llm_port.query.return_value = "SIMPLE"
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
     # All appends fail with ConcurrencyError
     mock_event_store.append.side_effect = ConcurrencyError(
@@ -379,7 +425,7 @@ async def test_run_agent_step_marks_failed_on_unexpected_error(
     mock_event_store.get_events.return_value = [event1, event2]
 
     # LLM raises unexpected error
-    mock_llm_port.query.side_effect = RuntimeError("LLM service unavailable")
+    mock_llm_port.query_with_usage.side_effect = RuntimeError("LLM service unavailable")
 
     # When: Run agent step
     with pytest.raises(RuntimeError, match="LLM service unavailable"):
@@ -444,7 +490,7 @@ async def test_run_agent_step_skips_non_analyzing_agents(
     await execution_service.run_agent_step(agent_id)
 
     # Then: Should not call LLM or worker tool
-    assert not mock_llm_port.query.called, "Should skip non-ANALYZING agents"
+    assert not mock_llm_port.query_with_usage.called, "Should skip non-ANALYZING agents"
 
     # And: Should not append any new events (no uncommitted changes)
     assert not mock_event_store.append.called, "Should not save events for completed agent"
@@ -483,11 +529,13 @@ async def test_run_agent_step_creates_children_when_boss_spawns(
     import json
 
     child_config = _test_config()
-    mock_llm_port.query.return_value = json.dumps(
-        [
-            {"description": "Setup backend", "config": child_config},
-            {"description": "Create frontend", "config": child_config},
-        ]
+    mock_llm_port.query_with_usage.return_value = _make_llm_response(
+        json.dumps(
+            [
+                {"description": "Setup backend", "config": child_config},
+                {"description": "Create frontend", "config": child_config},
+            ]
+        )
     )
 
     # Track all append calls to verify child creation

@@ -274,7 +274,7 @@ class TestConfigResolverEdgeCases:
             tool="claude_code",
         )
 
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(ValueError, match="Unknown operation"):
             ConfigResolver.resolve(config, operation="unknown_operation")  # type: ignore
 
     def test_unknown_operation_heuristic(self):

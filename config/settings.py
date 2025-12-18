@@ -1,16 +1,4 @@
-"""Configuration via Pydantic Settings with phase-specific YAML support.
-
-Design principle: Secrets in .env, everything else in YAML.
-
-Load hierarchy (highest to lowest priority):
-1. Environment variables (secrets + Docker overrides only)
-2. config.{ARISE_ENV}.yaml (phase-specific)
-3. config.yaml (base defaults)
-
-Usage:
-    from config import Settings
-    settings = Settings.load()  # Uses ARISE_ENV to determine phase
-"""
+"""Configuration via Pydantic Settings with phase-specific YAML support."""
 
 import os
 from pathlib import Path
@@ -45,14 +33,12 @@ def _load_yaml_hierarchy(env: str | None = None) -> dict[str, Any]:
     if env is None:
         env = get_environment()
 
-    # Load base config
     base_path = CONFIG_DIR / "config.yaml"
     config: dict[str, Any] = {}
     if base_path.exists():
         with base_path.open(encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
 
-    # Merge phase-specific config (if exists)
     phase_path = CONFIG_DIR / f"config.{env}.yaml"
     if phase_path.exists():
         with phase_path.open(encoding="utf-8") as f:
@@ -62,152 +48,133 @@ def _load_yaml_hierarchy(env: str | None = None) -> dict[str, Any]:
     return config
 
 
-# =============================================================================
-# Configuration Models (BaseModel - no env var reading)
-# =============================================================================
+class DatabaseConfig(BaseModel):
+    """PostgreSQL connection settings."""
 
-
-class InfrastructureConfig(BaseModel):
-    """DB, LLM, and worker tool settings.
-
-    All fields are required - missing values will raise an error.
-    Postgres password injected from POSTGRES_PASSWORD env var in Settings.load().
-    """
-
-    # Postgres settings (all required)
-    postgres_host: str
-    postgres_port: int
-    postgres_user: str
-    postgres_password: str  # Injected from POSTGRES_PASSWORD env var
-    postgres_database: str
-
-    # LLM settings (all required)
-    llm_model_boss: str
-    worker_tool_type: Literal["claude_code", "openhands"]
-    worker_tool_model: str
-    worker_tool_timeout: int
+    host: str
+    port: int
+    user: str
+    password: str
+    name: str
 
     @property
-    def postgres_connection_string(self) -> str:
+    def connection_string(self) -> str:
         """Build PostgreSQL connection string."""
-        return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
-        )
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
 
 
-class BudgetConfig(BaseModel):
-    """Cost and token limits. Hard stops to prevent runaway spending."""
+class LLMConfig(BaseModel):
+    """LLM provider settings."""
 
-    max_total_cost_usd: float = Field(default=10.0, ge=0.0)
-    max_tokens_per_agent: int = Field(default=100000, gt=0)
-    cost_warning_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
-    cost_tracking_enabled: bool = True
+    model_boss: str
 
 
-class ApplicationConfig(BaseModel):
-    """Orchestration settings. Loaded from YAML."""
+class WorkerConfig(BaseModel):
+    """Worker tool settings."""
 
-    max_retries: int = Field(default=3, ge=0, le=10)
-    retry_delay: float = Field(default=0.1, ge=0.0)
-    poll_interval: float = Field(default=0.5, ge=0.1)
-    llm_timeout: float = Field(default=30.0, gt=0.0)
-    worker_timeout: float = Field(default=300.0, gt=0.0)
-    default_task_complexity_threshold: int = Field(default=5, ge=1, le=10)
+    tool_type: Literal["claude_code", "openhands"]
+    tool_model: str
+    tool_timeout: int
 
-    # Budget configuration for cost tracking and limits
+
+class OrchestrationConfig(BaseModel):
+    """Execution behavior settings."""
+
+    class BudgetConfig(BaseModel):
+        """Cost and token limits."""
+
+        max_total_cost_usd: float = Field(ge=0.0)
+        max_tokens_per_agent: int = Field(gt=0)
+        cost_warning_threshold: float = Field(ge=0.0, le=1.0)
+        cost_tracking_enabled: bool
+
+    class LimitsConfig(BaseModel):
+        """Agent hierarchy and concurrency limits."""
+
+        max_depth: int
+        max_children_per_node: int
+        max_total_agents: int
+        max_concurrent_workers: int
+        llm_rate_limit_rpm: int
+
+        def is_depth_limited(self) -> bool:
+            """Check if depth limit is enabled."""
+            return self.max_depth > 0
+
+        def is_children_limited(self) -> bool:
+            """Check if children-per-node limit is enabled."""
+            return self.max_children_per_node > 0
+
+        def is_agents_limited(self) -> bool:
+            """Check if total agents limit is enabled."""
+            return self.max_total_agents > 0
+
+        def is_workers_limited(self) -> bool:
+            """Check if concurrent workers limit is enabled."""
+            return self.max_concurrent_workers > 0
+
+    max_retries: int = Field(ge=0, le=10)
+    retry_delay: float = Field(ge=0.0)
+    poll_interval: float = Field(ge=0.1)
+    llm_timeout: float = Field(gt=0.0)
+    worker_timeout: float = Field(gt=0.0)
+    default_task_complexity_threshold: int = Field(ge=1, le=10)
+
     budget: BudgetConfig
+    limits: LimitsConfig
 
 
-class PresentationConfig(BaseModel):
-    """UI settings. Loaded from YAML."""
+class OutputConfig(BaseModel):
+    """UI and output settings."""
 
-    verbose: bool = True
-    show_progress: bool = True
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    output_directory: str = "./output"
-
-
-# =============================================================================
-# Root Settings (BaseSettings - reads secrets from env)
-# =============================================================================
+    verbose: bool
+    show_progress: bool
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+    directory: str
 
 
 class Settings(BaseSettings):
-    """Root config: secrets from env, everything else from YAML.
-
-    Env vars injected into infrastructure config in load():
-        POSTGRES_PASSWORD - Database password
-        POSTGRES_HOST - Optional override for Docker
-
-    Env vars read directly by LiteLLM (not managed here):
-        OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
-    """
+    """Root config: secrets from env, everything else from YAML."""
 
     model_config = SettingsConfigDict(extra="ignore")
 
-    # --- Config sections from YAML (required - no defaults) ---
-    infrastructure: InfrastructureConfig
-    application: ApplicationConfig
-    presentation: PresentationConfig
+    database: DatabaseConfig
+    llm: LLMConfig
+    worker: WorkerConfig
+    orchestration: OrchestrationConfig
+    output: OutputConfig
 
     @classmethod
     def _build_from_config(cls, config: dict[str, Any]) -> "Settings":
-        """Build Settings from config dict, injecting env vars into infrastructure.
+        """Build Settings from config dict, injecting env vars."""
+        db_config = config.get("database", {})
 
-        Env vars injected:
-            POSTGRES_PASSWORD - Required database password
-            POSTGRES_HOST - Optional override (for Docker)
-
-        Raises:
-            ValueError: If POSTGRES_PASSWORD env var is not set
-            ValidationError: If required fields are missing
-        """
-        infra_config = config.get("infrastructure", {})
-
-        # Inject postgres secrets from environment
         postgres_password = os.getenv("POSTGRES_PASSWORD")
         if not postgres_password:
             raise ValueError("POSTGRES_PASSWORD environment variable is required")
-        infra_config["postgres_password"] = postgres_password
+        db_config["password"] = postgres_password
 
-        # Optional host override for Docker
         postgres_host_override = os.getenv("POSTGRES_HOST")
         if postgres_host_override:
-            infra_config["postgres_host"] = postgres_host_override
+            db_config["host"] = postgres_host_override
 
         return cls(
-            infrastructure=InfrastructureConfig(**infra_config),
-            application=ApplicationConfig(**config.get("application", {})),
-            presentation=PresentationConfig(**config.get("presentation", {})),
+            database=DatabaseConfig(**db_config),
+            llm=LLMConfig(**config.get("llm", {})),
+            worker=WorkerConfig(**config.get("worker", {})),
+            orchestration=OrchestrationConfig(**config.get("orchestration", {})),
+            output=OutputConfig(**config.get("output", {})),
         )
 
     @classmethod
     def load(cls, env: str | None = None) -> "Settings":
-        """Load settings: YAML config + env secrets.
-
-        Args:
-            env: Override ARISE_ENV (default: read from environment)
-
-        Returns:
-            Settings instance with merged configuration
-
-        Raises:
-            ValueError: If POSTGRES_PASSWORD env var is not set
-            ValidationError: If required fields are missing from config.yaml
-        """
+        """Load settings: YAML config + env secrets."""
         config = _load_yaml_hierarchy(env)
         return cls._build_from_config(config)
 
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "Settings":
-        """Load from specific YAML file (for testing).
-
-        Raises:
-            FileNotFoundError: If config file doesn't exist
-            ValueError: If POSTGRES_PASSWORD env var is not set
-            ValidationError: If required fields are missing
-        """
+        """Load from specific YAML file (for testing)."""
         config_file = Path(config_path)
         if not config_file.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")

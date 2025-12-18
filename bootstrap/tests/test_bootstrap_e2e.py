@@ -19,11 +19,23 @@ import pytest
 
 from bootstrap import ApplicationConfig, InfrastructureConfig, bootstrap
 from bootstrap.bootstrap import get_application, get_infrastructure
+from config import OrchestrationConfig
 from presentation.cli import CLI, CLIConfig
 
 
 # Mark all tests in this module as e2e
 pytestmark = pytest.mark.e2e
+
+
+def make_test_system_limits() -> OrchestrationConfig.LimitsConfig:
+    """Create test system limits (all unlimited for tests)."""
+    return OrchestrationConfig.LimitsConfig(
+        max_depth=-1,
+        max_children_per_node=-1,
+        max_total_agents=-1,
+        max_concurrent_workers=-1,
+        llm_rate_limit_rpm=-1,
+    )
 
 
 def make_test_infra_config(
@@ -32,16 +44,37 @@ def make_test_infra_config(
     worker_tool_model: str = "openai/gpt-4o",
     worker_tool_timeout: int = 300,
 ) -> InfrastructureConfig:
-    """Create a complete InfrastructureConfig for testing.
-
-    All fields are required, so this helper provides sensible defaults
-    for tests that don't care about specific values.
-    """
+    """Create a complete InfrastructureConfig for testing."""
     return InfrastructureConfig(
         postgres_connection_string=postgres_connection_string,
         default_worker_tool=default_worker_tool,
         worker_tool_model=worker_tool_model,
         worker_tool_timeout=worker_tool_timeout,
+    )
+
+
+def make_test_app_config(
+    system_limits: OrchestrationConfig.LimitsConfig | None = None,
+    max_retries: int = 3,
+    poll_interval: float = 0.5,
+    model_config: dict[str, str] | None = None,
+    output_directory: str = "./test_output",
+    default_worker_tool: str = "claude_code",
+    budget_max_total_cost_usd: float = 10.0,
+    budget_cost_warning_threshold: float = 0.8,
+    budget_cost_tracking_enabled: bool = True,
+) -> ApplicationConfig:
+    """Create a complete ApplicationConfig for testing."""
+    return ApplicationConfig(
+        system_limits=system_limits or make_test_system_limits(),
+        max_retries=max_retries,
+        poll_interval=poll_interval,
+        model_config=model_config or {"boss": "gpt-4o"},
+        output_directory=output_directory,
+        default_worker_tool=default_worker_tool,
+        budget_max_total_cost_usd=budget_max_total_cost_usd,
+        budget_cost_warning_threshold=budget_cost_warning_threshold,
+        budget_cost_tracking_enabled=budget_cost_tracking_enabled,
     )
 
 
@@ -52,12 +85,8 @@ class TestBootstrapWiring:
         """Test that bootstrap returns a CLI instance."""
         cli = bootstrap(
             infrastructure_config=make_test_infra_config(),
-            application_config=ApplicationConfig(
-                max_retries=3,
-                poll_interval=0.5,
-                model_config={"boss": "gpt-4o"},
-            ),
-            cli_config=CLIConfig(verbose=False),
+            application_config=make_test_app_config(),
+            cli_config=CLIConfig(verbose=False, output_directory="./test_output"),
         )
         assert isinstance(cli, CLI)
 
@@ -69,7 +98,7 @@ class TestBootstrapWiring:
             worker_tool_model="anthropic/claude-3-5-sonnet",
             worker_tool_timeout=600,
         )
-        app_config = ApplicationConfig(
+        app_config = make_test_app_config(
             max_retries=5,
             poll_interval=1.0,
             model_config={
@@ -79,7 +108,7 @@ class TestBootstrapWiring:
                 "pending": "gpt-4",
             },
         )
-        cli_config = CLIConfig(verbose=True)
+        cli_config = CLIConfig(verbose=True, output_directory="./test_output")
 
         cli = bootstrap(
             infrastructure_config=infra_config,
@@ -91,12 +120,10 @@ class TestBootstrapWiring:
 
     def test_bootstrap_uses_config_file_defaults(self, monkeypatch) -> None:
         """Test that bootstrap loads config from default config file."""
-        # Required env vars for Settings to load (no defaults for these)
-        monkeypatch.setenv("ARISE_INFRA_POSTGRES_PASSWORD", "test")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "test")
 
         cli = bootstrap()
         assert isinstance(cli, CLI)
-        assert cli.config.verbose is True  # Default from PresentationConfig
 
 
 class TestInfrastructureWiring:
@@ -125,8 +152,7 @@ class TestApplicationWiring:
     def test_get_application_creates_service(self) -> None:
         """Test that application factory creates execution service."""
         infra = get_infrastructure(make_test_infra_config())
-
-        app_config = ApplicationConfig(max_retries=3, poll_interval=0.5)
+        app_config = make_test_app_config()
         app = get_application(infra, app_config)
 
         assert app.execution_service is not None
@@ -153,16 +179,13 @@ class TestFullAgentFlow:
         e2e_cli: CLI,
     ) -> None:
         """Test that BOSS agent can be created and persisted."""
-        # Initialize infrastructure
         await e2e_cli.execution_service.initialize()
 
         try:
-            # Create BOSS agent
             boss_id = await e2e_cli.execution_service.create_boss_agent(
                 task_description="Test task for E2E"
             )
 
-            # Verify agent exists
             result = await e2e_cli.execution_service.get_agent_result(boss_id)
             assert result.role == "boss"
             assert result.task_description == "Test task for E2E"
@@ -179,10 +202,8 @@ class TestFullAgentFlow:
         await e2e_cli.execution_service.initialize()
 
         try:
-            # Create BOSS agent
             await e2e_cli.execution_service.create_boss_agent(task_description="Stats test task")
 
-            # Get statistics
             stats = await e2e_cli.execution_service.get_system_statistics()
             assert stats.total_agents >= 1
 
@@ -193,28 +214,50 @@ class TestFullAgentFlow:
 class TestConfigurationLoading:
     """Tests for configuration file loading."""
 
-    def test_bootstrap_with_yaml_config_path(self, tmp_path) -> None:
+    def test_bootstrap_with_yaml_config_path(self, tmp_path, monkeypatch) -> None:
         """Test that bootstrap can load config from YAML file."""
-        # Create a test config file with all required infrastructure settings
+        monkeypatch.setenv("POSTGRES_PASSWORD", "yaml")
+
         config_file = tmp_path / "test_config.yaml"
         config_file.write_text("""
-infrastructure:
-  postgres_host: localhost
-  postgres_port: 5432
-  postgres_user: yaml
-  postgres_password: yaml
-  postgres_database: yaml
-  llm_model_boss: gpt-4o
-  worker_tool_type: claude_code
-  worker_tool_model: openai/gpt-4o
-  worker_tool_timeout: 300
+database:
+  host: localhost
+  port: 5432
+  user: yaml
+  name: yaml
 
-application:
+llm:
+  model_boss: gpt-4o
+
+worker:
+  tool_type: claude_code
+  tool_model: openai/gpt-4o
+  tool_timeout: 300
+
+orchestration:
   max_retries: 10
+  retry_delay: 0.1
   poll_interval: 2.0
+  llm_timeout: 30.0
+  worker_timeout: 300.0
+  default_task_complexity_threshold: 5
+  budget:
+    max_total_cost_usd: 10.0
+    max_tokens_per_agent: 100000
+    cost_warning_threshold: 0.8
+    cost_tracking_enabled: true
+  limits:
+    max_depth: -1
+    max_children_per_node: -1
+    max_total_agents: -1
+    max_concurrent_workers: -1
+    llm_rate_limit_rpm: -1
 
-presentation:
+output:
   verbose: false
+  show_progress: true
+  log_level: INFO
+  directory: ./output
 """)
 
         cli = bootstrap(config_path=config_file)

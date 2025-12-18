@@ -1,21 +1,31 @@
 """Agent Execution Service - orchestrates agent lifecycle and execution."""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import BudgetExceeded, ChildSpawned, DomainEvent, TokensConsumed
+
+
+if TYPE_CHECKING:
+    from config import OrchestrationConfig
+    from core.ports.event_store_port import EventStorePort
+    from core.ports.llm_port import LLMPort
+    from core.ports.worker_port import WorkerToolPort
+
+    SystemLimitsConfig = OrchestrationConfig.LimitsConfig
+
 from core.domain.exceptions import ConcurrencyError
+from core.domain.execution_context import ExecutionContext
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
-from core.ports.event_store_port import EventStorePort
-from core.ports.llm_port import LLMPort
-from core.ports.worker_port import WorkerToolPort
 
 
 ProgressCallback = Callable[[DomainEvent, Any], None]
@@ -25,15 +35,15 @@ ProgressCallback = Callable[[DomainEvent, Any], None]
 class BudgetConfig:
     """Budget configuration for cost tracking and limits."""
 
-    max_total_cost_usd: float = 10.0
-    cost_warning_threshold: float = 0.8
-    cost_tracking_enabled: bool = True
+    max_total_cost_usd: float
+    cost_warning_threshold: float
+    cost_tracking_enabled: bool
 
 
 class AgentExecutionService:
     """Orchestrates agent workflow: load → dispatch → persist → propagate.
 
-    Supports cost tracking and budget enforcement when budget_config is provided.
+    Supports cost tracking, budget enforcement, and system limits.
     """
 
     def __init__(
@@ -41,19 +51,21 @@ class AgentExecutionService:
         event_store: EventStorePort,
         llm_port: LLMPort,
         worker_tool_port: WorkerToolPort,
+        system_limits: SystemLimitsConfig,
+        model_config: dict[str, str],
+        max_retries: int,
+        poll_interval: float,
+        output_directory: str,
+        default_worker_tool: str,
+        budget_config: BudgetConfig,
         prompt_builder: PromptBuilder | None = None,
-        model_config: dict[str, str] | None = None,
-        max_retries: int = 3,
-        poll_interval: float = 0.5,
-        output_directory: str | None = None,
         progress_callback: ProgressCallback | None = None,
-        default_worker_tool: str = "claude_code",
-        budget_config: BudgetConfig | None = None,
     ) -> None:
         self.event_store = event_store
         self.llm_port = llm_port
         self.worker_tool_port = worker_tool_port
         self.prompt_builder = prompt_builder or PromptBuilder(default_tool=default_worker_tool)
+        self.model_config = model_config
         self.max_retries = max_retries
         self.poll_interval = poll_interval
         self.output_directory = output_directory
@@ -63,18 +75,23 @@ class AgentExecutionService:
         self._workspace_context_scanned: bool = False
 
         # Budget tracking
-        self.budget_config = budget_config or BudgetConfig()
+        self.budget_config = budget_config
         self._total_cost_usd: float = 0.0
         self._warning_emitted: bool = False
 
-        if model_config is None:
-            model_config = {
-                "boss": "gpt-4o-mini",
-                "manager": "gpt-4o-mini",
-                "worker": "gpt-4o-mini",
-                "pending": "gpt-4o-mini",
-            }
-        self.model_config = model_config
+        # System limits (required, -1 means unlimited)
+        self.system_limits = system_limits
+        # Semaphore: use large number for "unlimited" when max_concurrent_workers is -1
+        semaphore_limit = (
+            system_limits.max_concurrent_workers
+            if system_limits.is_workers_limited()
+            else 10000  # Effectively unlimited
+        )
+        self._worker_semaphore = asyncio.Semaphore(semaphore_limit)
+        self._total_agents_created: int = 0
+
+        # Execution context tracking (maps agent_id -> context)
+        self._execution_contexts: dict[UUID, ExecutionContext] = {}
 
     def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
         if self.progress_callback is not None:
@@ -133,6 +150,17 @@ class AgentExecutionService:
 
         agent.mark_changes_as_committed()
 
+    async def _check_and_handle_post_action_budget(self, agent_id: UUID) -> bool:
+        """Check budget after action and handle if exceeded. Returns True if halted."""
+        if not self._is_budget_exceeded():
+            return False
+        # Reload agent to get fresh state and fail it
+        events = await self.event_store.get_events(agent_id)
+        agent = AgentSession.load_from_history(events)
+        if not agent.is_terminal():
+            await self._handle_budget_exceeded(agent, agent.version)
+        return True
+
     def get_total_cost(self) -> float:
         """Get current total cost across all agents."""
         return self._total_cost_usd
@@ -173,7 +201,7 @@ class AgentExecutionService:
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one workflow step: load → dispatch → persist with OCC retry.
 
-        Includes cost tracking and budget enforcement when cost_tracking_enabled.
+        Includes cost tracking, budget enforcement, and system limits.
         """
         retry_count = 0
 
@@ -185,6 +213,10 @@ class AgentExecutionService:
 
                 agent = AgentSession.load_from_history(events)
                 current_version = agent.version
+
+                # Set execution context on agent for limit enforcement
+                if agent_id in self._execution_contexts:
+                    agent.set_execution_context(self._execution_contexts[agent_id])
 
                 # Check budget before executing (hard stop)
                 if self._is_budget_exceeded():
@@ -204,12 +236,7 @@ class AgentExecutionService:
                 agent.mark_changes_as_committed()
 
                 # Check budget after action (may have just exceeded)
-                if self._is_budget_exceeded():
-                    # Reload agent to get fresh state and fail it
-                    events = await self.event_store.get_events(agent_id)
-                    agent = AgentSession.load_from_history(events)
-                    if not agent.is_terminal():
-                        await self._handle_budget_exceeded(agent, agent.version)
+                if await self._check_and_handle_post_action_budget(agent_id):
                     return
 
                 await self._handle_child_spawning(agent, uncommitted_events)
@@ -244,7 +271,10 @@ class AgentExecutionService:
                 raise
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
-        """Dispatch based on role: PENDING→complexity, BOSS/MANAGER→decompose, WORKER→execute."""
+        """Dispatch based on role: PENDING→complexity, BOSS/MANAGER→decompose, WORKER→execute.
+
+        Worker execution is rate-limited by max_concurrent_workers semaphore.
+        """
         if agent.status != AgentStatus.ANALYZING:
             return
 
@@ -255,21 +285,39 @@ class AgentExecutionService:
             await agent.evaluate_task(self.llm_port, self.prompt_builder)
 
         elif agent.role == AgentRole.WORKER:
-            workspace_context = self._get_workspace_context()
-            await agent.execute_task(
-                self.worker_tool_port,
-                working_directory=self.working_directory,
-                workspace_context=workspace_context,
-            )
+            # Use semaphore to limit concurrent worker executions
+            async with self._worker_semaphore:
+                workspace_context = self._get_workspace_context()
+                await agent.execute_task(
+                    self.worker_tool_port,
+                    working_directory=self.working_directory,
+                    workspace_context=workspace_context,
+                )
 
         else:
             raise ValueError(f"Unknown agent role: {agent.role}")
 
     async def _handle_child_spawning(self, parent: AgentSession, events: list) -> None:
-        """Create child AgentSessions from ChildSpawned events."""
+        """Create child AgentSessions from ChildSpawned events.
+
+        Propagates execution context to children with incremented depth.
+        Enforces max_total_agents limit.
+        """
         child_spawned_events = [e for e in events if isinstance(e, ChildSpawned)]
 
+        # Get parent's execution context for propagation
+        parent_context = self._execution_contexts.get(parent.session_id)
+
         for child_event in child_spawned_events:
+            # Check max_total_agents limit (if enabled)
+            if (
+                self.system_limits.is_agents_limited()
+                and self._total_agents_created >= self.system_limits.max_total_agents
+            ):
+                # Skip creating this child - limit exceeded
+                # The parent will be notified of failure when children don't complete
+                continue
+
             child_config = child_event.child_config
             child = AgentSession.create(
                 session_id=child_event.child_id,
@@ -279,11 +327,17 @@ class AgentExecutionService:
             )
             child.assign_task(child_event.subtask.description)
 
+            # Propagate execution context to child (with incremented depth)
+            if parent_context is not None:
+                child_context = parent_context.for_child()
+                self._execution_contexts[child_event.child_id] = child_context
+
             for idx, child_evt in enumerate(child.events):
                 await self.event_store.append(child_evt, expected_version=idx)
                 self._notify_progress(child_evt, child)
 
             child.mark_changes_as_committed()
+            self._total_agents_created += 1
 
     async def _handle_parent_notification(self, agent: AgentSession) -> None:
         """Notify parent when child completes, triggering aggregation if all done."""
@@ -380,11 +434,26 @@ class AgentExecutionService:
         await self.event_store.disconnect()
 
     async def create_boss_agent(self, task_description: str) -> UUID:
-        """Create root BOSS agent with task. Returns agent UUID."""
+        """Create root BOSS agent with task. Returns agent UUID.
+
+        Initializes execution context for the agent hierarchy with system limits.
+        """
         root_id = uuid4()
 
+        # Reset state for new run
         self._workspace_context_cache = None
         self._workspace_context_scanned = False
+        self._total_agents_created = 1  # Count the boss agent
+        self._execution_contexts.clear()
+
+        # Create root execution context from system limits
+        root_context = ExecutionContext.create_root(
+            max_depth=self.system_limits.max_depth,
+            max_children_per_node=self.system_limits.max_children_per_node,
+            budget_usd=self.budget_config.max_total_cost_usd,
+            max_retries=self.max_retries,
+        )
+        self._execution_contexts[root_id] = root_context
 
         # Use .resolve() for absolute path - worker tools may run in sandboxed environments
         if self.output_directory:
