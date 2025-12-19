@@ -97,6 +97,7 @@ class AgentExecutionService:
         status_callback: StatusCallback | None = None,
         default_worker_tool: str = "claude_code",
         budget_config: BudgetConfig | None = None,
+        system_limits: Any | None = None,
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -123,6 +124,7 @@ class AgentExecutionService:
         self.progress_callback = progress_callback
         self.status_callback = status_callback
         self.budget_config = budget_config or BudgetConfig()
+        self.system_limits = system_limits
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
 
