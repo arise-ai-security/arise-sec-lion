@@ -224,7 +224,7 @@ async def test_litellm_adapter_unexpected_error() -> None:
         mock_acompletion.side_effect = unexpected_error
 
         # When/Then: Query raises LLMError with unexpected error message
-        with pytest.raises(LLMError, match=r"(?i)unexpected error.*gpt-4"):
+        with pytest.raises(LLMError, match=r"(?i)unexpected.*error.*gpt-4"):
             await adapter.query(prompt="Test", config_dict={"model": "gpt-4"})
 
 

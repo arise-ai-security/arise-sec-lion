@@ -21,6 +21,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.100.0",
     "pre-commit>=4.4.0",
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",
@@ -32,6 +33,7 @@ asyncio_mode = "auto"
 testpaths = [
     "core/domain/tests",
     "core/application/tests",
+    "core/query/tests",
     "infrastructure/tests",
     "presentation/tests",
     "bootstrap/tests",
@@ -39,5 +41,6 @@ testpaths = [
 markers = [
     "e2e: end-to-end tests (require full infrastructure)",
     "integration: integration tests (require external services)",
+    "property: property-based tests (may take longer)",
 ]
 addopts = "-v --tb=short"

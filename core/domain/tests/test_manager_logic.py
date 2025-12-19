@@ -17,6 +17,7 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
+from core.domain.llm_response import LLMResponse, LLMUsage
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.subtask import Subtask
@@ -70,6 +71,24 @@ class FakeLLM(LLMPort):
             return self.canned_response
         return json.dumps(self.canned_response)
 
+    async def query_with_usage(self, prompt: str, config_dict: dict[str, Any]) -> LLMResponse:
+        """Return canned response wrapped in LLMResponse with fake usage data.
+
+        Args:
+            prompt: The prompt (ignored in fake).
+            config_dict: Configuration (ignored in fake).
+
+        Returns:
+            LLMResponse with content and zero-cost usage.
+        """
+        content = await self.query(prompt, config_dict)
+        return LLMResponse(
+            content=content,
+            usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+            model=config_dict.get("model", "fake-model"),
+            cost_usd=0.0,
+        )
+
 
 @pytest.mark.asyncio
 async def test_manager_decomposition() -> None:
@@ -99,9 +118,9 @@ async def test_manager_decomposition() -> None:
     # When: Call agent.evaluate_task(llm_port, prompt_builder)
     await agent.evaluate_task(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
-    # Then: Verify 6 events exist
-    # (AgentCreated, TaskAssigned, SubtasksDefined, ChildSpawned x2, StatusChanged)
-    assert len(agent.events) == 6, f"Expected 6 events, got {len(agent.events)}"
+    # Then: Verify 7 events exist
+    # (AgentCreated, TaskAssigned, TokensConsumed, SubtasksDefined, ChildSpawned x2, StatusChanged)
+    assert len(agent.events) == 7, f"Expected 7 events, got {len(agent.events)}"
 
     # And: Find specific events
     subtasks_event = None
@@ -162,8 +181,8 @@ async def test_manager_llm_invalid_json_response() -> None:
     # When: Call agent.evaluate_task(llm_port, prompt_builder) with invalid JSON response
     await agent.evaluate_task(llm_port=fake_llm, prompt_builder=PromptBuilder())
 
-    # Then: Verify 3 events exist (AgentCreated, TaskAssigned, WorkFailed)
-    assert len(agent.events) == 3, f"Expected 3 events, got {len(agent.events)}"
+    # Then: Verify 4 events exist (AgentCreated, TaskAssigned, TokensConsumed, WorkFailed)
+    assert len(agent.events) == 4, f"Expected 4 events, got {len(agent.events)}"
 
     # And: Find the WorkFailed event
     work_failed_event = None

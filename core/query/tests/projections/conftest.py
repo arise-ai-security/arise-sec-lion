@@ -7,6 +7,7 @@ import pytest
 
 from core.domain.events import (
     AgentCreated,
+    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -16,7 +17,9 @@ from core.domain.events import (
     SubtasksDefined,
     TaskAssigned,
     ThoughtCaptured,
+    TokensConsumed,
     WorkCompleted,
+    WorkerCostRecorded,
     WorkFailed,
 )
 from core.domain.subtask import Subtask
@@ -300,3 +303,152 @@ class FakeEventStore:
 def fake_event_store() -> FakeEventStore:
     """Create a fake event store for testing."""
     return FakeEventStore()
+
+
+@pytest.fixture
+def tokens_consumed_event() -> TokensConsumed:
+    """Create a TokensConsumed event for BOSS."""
+    return TokensConsumed(
+        aggregate_id=BOSS_ID,
+        sequence_number=5,
+        model="gpt-4o",
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        cost_usd=0.05,
+        operation="complexity_evaluation",
+        occurred_at=BASE_TIME + timedelta(seconds=5),
+    )
+
+
+@pytest.fixture
+def worker_cost_recorded_event() -> WorkerCostRecorded:
+    """Create a WorkerCostRecorded event for WORKER."""
+    return WorkerCostRecorded(
+        aggregate_id=WORKER_ID,
+        sequence_number=6,
+        tool_name="claude_code",
+        model="claude-3-5-sonnet-20241022",
+        tokens=5000,
+        cost_usd=0.50,
+        duration_seconds=120.0,
+        occurred_at=BASE_TIME + timedelta(seconds=10),
+    )
+
+
+@pytest.fixture
+def budget_exceeded_event() -> BudgetExceeded:
+    """Create a BudgetExceeded event."""
+    return BudgetExceeded(
+        aggregate_id=BOSS_ID,
+        sequence_number=10,
+        budget_limit_usd=1.0,
+        current_total_usd=1.5,
+        exceeded_by_usd=0.5,
+        occurred_at=BASE_TIME + timedelta(seconds=15),
+    )
+
+
+@pytest.fixture
+def cost_events_hierarchy() -> list[DomainEvent]:
+    """Create a realistic hierarchy with cost events.
+
+    BOSS -> MANAGER -> 2 WORKERS
+    Each agent has associated cost events.
+    """
+    return [
+        # BOSS created
+        AgentCreated(
+            aggregate_id=BOSS_ID,
+            sequence_number=1,
+            role="BOSS",
+            parent_id=None,
+            config={},
+            occurred_at=BASE_TIME,
+        ),
+        # BOSS LLM cost for task decomposition
+        TokensConsumed(
+            aggregate_id=BOSS_ID,
+            sequence_number=2,
+            model="gpt-4o",
+            prompt_tokens=1000,
+            completion_tokens=500,
+            total_tokens=1500,
+            cost_usd=0.10,
+            operation="task_decomposition",
+            occurred_at=BASE_TIME + timedelta(seconds=1),
+        ),
+        # MANAGER created
+        AgentCreated(
+            aggregate_id=MANAGER_ID,
+            sequence_number=1,
+            role="MANAGER",
+            parent_id=BOSS_ID,
+            config={},
+            occurred_at=BASE_TIME + timedelta(seconds=2),
+        ),
+        # MANAGER LLM cost
+        TokensConsumed(
+            aggregate_id=MANAGER_ID,
+            sequence_number=2,
+            model="gpt-4o-mini",
+            prompt_tokens=800,
+            completion_tokens=400,
+            total_tokens=1200,
+            cost_usd=0.05,
+            operation="task_decomposition",
+            occurred_at=BASE_TIME + timedelta(seconds=3),
+        ),
+        # WORKER 1 created
+        AgentCreated(
+            aggregate_id=WORKER_ID,
+            sequence_number=1,
+            role="WORKER",
+            parent_id=MANAGER_ID,
+            config={},
+            occurred_at=BASE_TIME + timedelta(seconds=4),
+        ),
+        # WORKER 1 complexity evaluation
+        TokensConsumed(
+            aggregate_id=WORKER_ID,
+            sequence_number=2,
+            model="gpt-4o-mini",
+            prompt_tokens=200,
+            completion_tokens=100,
+            total_tokens=300,
+            cost_usd=0.01,
+            operation="complexity_evaluation",
+            occurred_at=BASE_TIME + timedelta(seconds=5),
+        ),
+        # WORKER 1 tool execution cost
+        WorkerCostRecorded(
+            aggregate_id=WORKER_ID,
+            sequence_number=3,
+            tool_name="claude_code",
+            model="claude-3-5-sonnet-20241022",
+            tokens=5000,
+            cost_usd=0.50,
+            duration_seconds=120.0,
+            occurred_at=BASE_TIME + timedelta(seconds=6),
+        ),
+        # WORKER 2 created
+        AgentCreated(
+            aggregate_id=WORKER2_ID,
+            sequence_number=1,
+            role="WORKER",
+            parent_id=MANAGER_ID,
+            config={},
+            occurred_at=BASE_TIME + timedelta(seconds=4),
+        ),
+        # WORKER 2 tool execution cost (no model info)
+        WorkerCostRecorded(
+            aggregate_id=WORKER2_ID,
+            sequence_number=2,
+            tool_name="openhands",
+            model=None,
+            tokens=None,
+            cost_usd=0.30,
+            duration_seconds=90.0,
+            occurred_at=BASE_TIME + timedelta(seconds=7),
+        ),
+    ]

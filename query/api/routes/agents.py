@@ -17,6 +17,8 @@ from core.domain.events import (
 )
 from core.domain.model import AgentSession
 from core.query.projections.hierarchy_collector import HierarchyCollector
+from core.query.projections.impl import SummaryProjection
+from core.query.projections.models import CostSummary, ProjectionSummary
 from query.api.dependencies import EventStoreDep
 from query.api.schemas import (
     AgentHierarchySchema,
@@ -24,6 +26,12 @@ from query.api.schemas import (
     AgentNodeSchema,
     AgentSummarySchema,
     BudgetInfoSchema,
+    CostBreakdownSchema,
+    ExecutionSummarySchema,
+    ExecutionTimingSchema,
+    RoleCostBreakdownSchema,
+    RoleCountSchema,
+    RoleTokensSchema,
     SubtaskSummarySchema,
     TaskQueueItemSchema,
 )
@@ -324,3 +332,117 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         task_queue=task_queue_items,
         queue_size=len(task_queue_items),
     )
+
+
+def _projection_summary_to_schema(summary: ProjectionSummary) -> ExecutionSummarySchema:
+    """Convert ProjectionSummary to ExecutionSummarySchema.
+
+    Args:
+        summary: The projection summary with costs, timing, and node counts.
+
+    Returns:
+        ExecutionSummarySchema for API response.
+    """
+    # Convert cost breakdown
+    cost = summary.cost
+    cost_schema = CostBreakdownSchema(
+        total_cost_usd=cost.total_cost_usd if cost else 0.0,
+        llm_cost_usd=cost.llm_cost_usd if cost else 0.0,
+        worker_cost_usd=cost.worker_cost_usd if cost else 0.0,
+        total_tokens=cost.total_tokens if cost else 0,
+        prompt_tokens=cost.prompt_tokens if cost else 0,
+        completion_tokens=cost.completion_tokens if cost else 0,
+        cost_by_role=RoleCostBreakdownSchema(
+            BOSS=cost.cost_by_role.get("BOSS", 0.0) if cost else 0.0,
+            MANAGER=cost.cost_by_role.get("MANAGER", 0.0) if cost else 0.0,
+            WORKER=cost.cost_by_role.get("WORKER", 0.0) if cost else 0.0,
+            PENDING=cost.cost_by_role.get("PENDING", 0.0) if cost else 0.0,
+            UNKNOWN=cost.cost_by_role.get("UNKNOWN", 0.0) if cost else 0.0,
+        ),
+        cost_by_model=dict(cost.cost_by_model) if cost else {},
+        cost_by_operation=dict(cost.cost_by_operation) if cost else {},
+        cost_by_agent=dict(cost.cost_by_agent) if cost else {},
+        tokens_by_role=RoleTokensSchema(
+            BOSS=cost.tokens_by_role.get("BOSS", 0) if cost else 0,
+            MANAGER=cost.tokens_by_role.get("MANAGER", 0) if cost else 0,
+            WORKER=cost.tokens_by_role.get("WORKER", 0) if cost else 0,
+            PENDING=cost.tokens_by_role.get("PENDING", 0) if cost else 0,
+        ),
+        budget_limit_usd=cost.budget_limit_usd if cost else None,
+        budget_remaining_usd=cost.budget_remaining_usd if cost else None,
+        budget_exceeded=cost.budget_exceeded if cost else False,
+    )
+
+    # Convert node counts
+    node_counts = summary.node_counts
+    node_counts_schema = RoleCountSchema(
+        BOSS=node_counts.by_role.get("BOSS", 0) if node_counts else 0,
+        MANAGER=node_counts.by_role.get("MANAGER", 0) if node_counts else 0,
+        WORKER=node_counts.by_role.get("WORKER", 0) if node_counts else 0,
+        PENDING=node_counts.by_role.get("PENDING", 0) if node_counts else 0,
+        total=node_counts.total if node_counts else 0,
+    )
+
+    # Convert timing
+    timing = summary.execution_time
+    timing_schema = ExecutionTimingSchema(
+        total_seconds=timing.total_seconds if timing else 0.0,
+        by_role=dict(timing.per_role) if timing else {},
+        by_phase=dict(timing.per_phase) if timing else {},
+        by_agent=dict(timing.per_agent) if timing else {},
+    )
+
+    # Determine if execution is complete (all agents in terminal state)
+    # This is a simplification - actual check would need agent states
+    is_complete = summary.error_count == 0 and summary.total_events > 0
+
+    return ExecutionSummarySchema(
+        total_events=summary.total_events,
+        events_by_type=dict(summary.events_by_type),
+        first_event=summary.first_event,
+        last_event=summary.last_event,
+        error_count=summary.error_count,
+        node_counts=node_counts_schema,
+        cost=cost_schema,
+        timing=timing_schema,
+        is_complete=is_complete,
+    )
+
+
+@router.get("/{agent_id}/execution-summary", response_model=ExecutionSummarySchema)
+async def get_execution_summary(
+    agent_id: UUID, event_store: EventStoreDep
+) -> ExecutionSummarySchema:
+    """Get comprehensive execution summary for an agent hierarchy.
+
+    This endpoint aggregates cost, timing, and node count data from all events
+    in the agent hierarchy (root + all descendants).
+
+    The summary includes:
+    - Event statistics (total, by type, errors)
+    - Cost breakdown (total, by role, by model, by operation, by agent)
+    - Token usage (total, by role)
+    - Execution timing (total, by role, by phase, by agent)
+    - Node counts (total, by role)
+    - Budget tracking (if configured)
+
+    Args:
+        agent_id: Root agent UUID (typically BOSS).
+
+    Returns:
+        ExecutionSummarySchema with comprehensive execution metrics.
+    """
+    # Verify agent exists
+    root_events = await event_store.get_events(agent_id)
+    if not root_events:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    # Collect all events in the hierarchy
+    collector = HierarchyCollector(event_store)
+    all_events = await collector.collect(agent_id)
+
+    # Project into summary
+    projection = SummaryProjection()
+    summary = projection.project(all_events)
+
+    return _projection_summary_to_schema(summary)

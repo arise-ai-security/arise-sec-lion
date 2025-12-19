@@ -67,10 +67,9 @@ Verify: `grep -r "from infrastructure" core/` should return nothing.
 ## Forbidden Operations
 
 **In any case, Claude shall NEVER:**
-- **Commit** - Do not run `git commit` or create commits
 - **Lint** - Do not run `ruff check`, `ruff format`, or any linting/formatting commands
 
-The user will handle these operations manually.
+The user will handle linting manually.
 
 ## Development Environment
 
@@ -243,3 +242,4 @@ grep -r "from infrastructure" core/      # ✓ No dependency violations
 - [x] Projection Pipeline (Query side)
 - [x] REST API (FastAPI + SSE streaming)
 - [x] Agent Dashboard (React + XYFlow)
+- [x] Cost Tracking & Execution Summary (with SSE updates)

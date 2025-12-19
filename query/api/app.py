@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings.load()
 
     # Create and connect the event store
-    event_store = PostgresEventStore(settings.postgres_connection_string)
+    event_store = PostgresEventStore(settings.database.connection_string)
     await event_store.connect()
 
     # Attach to app state for dependency injection in routes
@@ -52,11 +52,16 @@ def create_app(
     Args:
         title: Application title for OpenAPI docs.
         static_dir: Path to static files directory for React app.
-                   If provided, serves static files at root path.
+                   If not provided, defaults to query/web/dist if it exists.
 
     Returns:
         Configured FastAPI application instance.
     """
+    # Default to web dist directory if not specified
+    if static_dir is None:
+        default_static = Path(__file__).parent.parent / "web" / "dist"
+        if default_static.exists():
+            static_dir = default_static
     app = FastAPI(
         title=title,
         description="REST API and SSE endpoints for the multi-agent orchestration system",

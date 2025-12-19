@@ -1,21 +1,18 @@
-# Arise Multi-Agent System Configuration
-# Secrets go in deployment/.env, application config belongs here
+database:
+  host: localhost
+  port: 5432
+  user: arise
+  name: arise_events
 
-infrastructure:
-  postgres_host: localhost
-  postgres_port: 5432
-  postgres_user: arise
-  postgres_database: arise_events
+llm:
+  model_boss: gpt-4o
 
-  # LLM for BOSS agent (child agents configured dynamically)
-  llm_model_boss: gpt-4o
+worker:
+  tool_type: openhands
+  tool_model: openai/gpt-4o
+  tool_timeout: 300
 
-  # Worker tool: "claude_code" or "openhands"
-  worker_tool_type: openhands
-  worker_tool_model: openai/gpt-4o
-  worker_tool_timeout: 300
-
-application:
+orchestration:
   max_retries: 3
   retry_delay: 0.1
   poll_interval: 0.5
@@ -23,8 +20,21 @@ application:
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
 
-presentation:
+  budget:
+    max_total_cost_usd: 10.0
+    max_tokens_per_agent: 100000
+    cost_warning_threshold: 0.8
+    cost_tracking_enabled: true
+
+  limits:
+    max_depth: 5
+    max_children_per_node: 10
+    max_total_agents: 100
+    max_concurrent_workers: 5
+    llm_rate_limit_rpm: 60
+
+output:
   verbose: true
   show_progress: true
   log_level: INFO
-  output_directory: ./output
+  directory: ./output

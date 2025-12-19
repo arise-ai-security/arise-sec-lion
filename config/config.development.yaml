@@ -1,10 +1,6 @@
-# Development environment overrides
-# Base values come from config.yaml
+llm:
+  model_boss: gpt-4o-mini
 
-infrastructure:
-  # Use cheaper/faster models for development
-  llm_model_boss: gpt-4o-mini
-
-presentation:
+output:
   verbose: true
   log_level: DEBUG

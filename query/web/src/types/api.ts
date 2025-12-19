@@ -3,8 +3,8 @@
  * These mirror the definitions in presentation/api/schemas.py
  */
 
-// Agent types - lowercase to match Python enum values from API
-export type AgentRole = 'boss' | 'manager' | 'worker' | 'pending';
+// Agent types
+export type AgentRole = 'BOSS' | 'MANAGER' | 'WORKER' | 'PENDING';
 export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked' | 'terminated' | 'verifying';
 
 export interface AgentListItem {
@@ -154,4 +154,107 @@ export interface ApplicationConfig {
 export interface SystemConfig {
   infrastructure: InfrastructureConfig;
   application: ApplicationConfig;
+}
+
+// =============================================================================
+// Execution Summary Types (Cost, Timing, Node Counts)
+// =============================================================================
+
+/** Cost breakdown by agent role. */
+export interface RoleCostBreakdown {
+  BOSS: number;
+  MANAGER: number;
+  WORKER: number;
+  PENDING: number;
+  UNKNOWN: number;
+}
+
+/** Agent counts by role. */
+export interface RoleCount {
+  BOSS: number;
+  MANAGER: number;
+  WORKER: number;
+  PENDING: number;
+  total: number;
+}
+
+/** Token usage by role. */
+export interface RoleTokens {
+  BOSS: number;
+  MANAGER: number;
+  WORKER: number;
+  PENDING: number;
+}
+
+/** Execution timing breakdown. */
+export interface ExecutionTiming {
+  /** Total execution time in seconds. */
+  total_seconds: number;
+  /** Execution time by role (role -> seconds). */
+  by_role: Record<string, number>;
+  /** Time spent in each phase (phase -> seconds). */
+  by_phase: Record<string, number>;
+  /** Execution time per agent (agent_id -> seconds). */
+  by_agent: Record<string, number>;
+}
+
+/** Comprehensive cost breakdown. */
+export interface CostBreakdown {
+  /** Total cost in USD. */
+  total_cost_usd: number;
+  /** Cost from LLM calls. */
+  llm_cost_usd: number;
+  /** Cost from worker tool execution. */
+  worker_cost_usd: number;
+
+  /** Total tokens consumed. */
+  total_tokens: number;
+  /** Input tokens consumed. */
+  prompt_tokens: number;
+  /** Output tokens consumed. */
+  completion_tokens: number;
+
+  /** Cost breakdown by agent role. */
+  cost_by_role: RoleCostBreakdown;
+  /** Cost breakdown by LLM model. */
+  cost_by_model: Record<string, number>;
+  /** Cost breakdown by operation type. */
+  cost_by_operation: Record<string, number>;
+  /** Cost breakdown by agent ID. */
+  cost_by_agent: Record<string, number>;
+  /** Token usage by role. */
+  tokens_by_role: RoleTokens;
+
+  /** Budget limit if configured. */
+  budget_limit_usd: number | null;
+  /** Remaining budget. */
+  budget_remaining_usd: number | null;
+  /** Whether budget was exceeded. */
+  budget_exceeded: boolean;
+}
+
+/** Comprehensive execution summary for an agent hierarchy. */
+export interface ExecutionSummary {
+  /** Total number of domain events. */
+  total_events: number;
+  /** Event counts by type name. */
+  events_by_type: Record<string, number>;
+  /** Timestamp of first event. */
+  first_event: string | null;
+  /** Timestamp of last event. */
+  last_event: string | null;
+  /** Number of WorkFailed events. */
+  error_count: number;
+
+  /** Agent counts by role. */
+  node_counts: RoleCount;
+
+  /** Cost breakdown. */
+  cost: CostBreakdown;
+
+  /** Execution timing details. */
+  timing: ExecutionTiming;
+
+  /** Whether all agents have completed. */
+  is_complete: boolean;
 }

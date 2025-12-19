@@ -54,3 +54,33 @@ class ToolNotAvailableError(Exception):
         self.tool_name = tool_name
         self.available_tools = available_tools
         super().__init__(f"Tool '{tool_name}' unavailable. Available: {available_tools}")
+
+
+class CostInvariantViolation(Exception):
+    """Raised when a cost invariant is violated.
+
+    This indicates a bug in the cost calculation logic that must be fixed.
+    These errors should never occur in production if tests pass.
+    """
+
+    def __init__(
+        self,
+        invariant: str,
+        expected: object,
+        actual: object,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        self.invariant = invariant
+        self.expected = expected
+        self.actual = actual
+        self.context = context or {}
+
+        message = (
+            f"Cost invariant violated: {invariant}\n"
+            f"  Expected: {expected}\n"
+            f"  Actual: {actual}"
+        )
+        if context:
+            message += f"\n  Context: {context}"
+
+        super().__init__(message)

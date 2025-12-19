@@ -24,32 +24,36 @@ def bootstrap(
 
     if infrastructure_config is None:
         infrastructure_config = InfrastructureConfig(
-            postgres_connection_string=settings.postgres_connection_string,
-            default_worker_tool=settings.infrastructure.worker_tool_type,
-            worker_tool_model=settings.infrastructure.worker_tool_model,
-            worker_tool_timeout=settings.infrastructure.worker_tool_timeout,
+            postgres_connection_string=settings.database.connection_string,
+            default_worker_tool=settings.worker.tool_type,
+            worker_tool_model=settings.worker.tool_model,
+            worker_tool_timeout=settings.worker.tool_timeout,
         )
 
     infrastructure: Infrastructure = get_infrastructure(infrastructure_config)
 
     if application_config is None:
-        model_config = {"boss": settings.infrastructure.llm_model_boss}
+        model_config = {"boss": settings.llm.model_boss}
         application_config = ApplicationConfig(
-            max_retries=settings.application.max_retries,
-            poll_interval=settings.application.poll_interval,
+            system_limits=settings.orchestration.limits,
+            max_retries=settings.orchestration.max_retries,
+            poll_interval=settings.orchestration.poll_interval,
             model_config=model_config,
-            output_directory=settings.presentation.output_directory,
-            progress_callback=format_event_progress if settings.presentation.verbose else None,
-            status_callback=format_status_display if settings.presentation.verbose else None,
-            default_worker_tool=settings.infrastructure.worker_tool_type,
+            output_directory=settings.output.directory,
+            default_worker_tool=settings.worker.tool_type,
+            budget_max_total_cost_usd=settings.orchestration.budget.max_total_cost_usd,
+            budget_cost_warning_threshold=settings.orchestration.budget.cost_warning_threshold,
+            budget_cost_tracking_enabled=settings.orchestration.budget.cost_tracking_enabled,
+            progress_callback=format_event_progress if settings.output.verbose else None,
+            status_callback=format_status_display if settings.output.verbose else None,
         )
 
     application: Application = get_application(infrastructure, application_config)
 
     if cli_config is None:
         cli_config = CLIConfig(
-            verbose=settings.presentation.verbose,
-            output_directory=settings.presentation.output_directory,
+            verbose=settings.output.verbose,
+            output_directory=settings.output.directory,
         )
 
     cli: CLI = get_cli(application.execution_service, cli_config)

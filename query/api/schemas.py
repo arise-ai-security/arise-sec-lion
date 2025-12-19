@@ -220,3 +220,118 @@ class SystemConfigSchema(BaseModel):
 
     infrastructure: InfrastructureConfigSchema
     application: ApplicationConfigSchema
+
+
+# =============================================================================
+# Execution Summary Schemas (Cost, Timing, Node Counts)
+# =============================================================================
+
+
+class RoleCostBreakdownSchema(BaseModel):
+    """Schema for cost breakdown by agent role."""
+
+    BOSS: float = Field(0.0, description="Total cost from BOSS agents")
+    MANAGER: float = Field(0.0, description="Total cost from MANAGER agents")
+    WORKER: float = Field(0.0, description="Total cost from WORKER agents")
+    PENDING: float = Field(0.0, description="Total cost from PENDING agents")
+    UNKNOWN: float = Field(0.0, description="Cost from agents with unknown role")
+
+
+class RoleCountSchema(BaseModel):
+    """Schema for agent counts by role."""
+
+    BOSS: int = Field(0, description="Number of BOSS agents")
+    MANAGER: int = Field(0, description="Number of MANAGER agents")
+    WORKER: int = Field(0, description="Number of WORKER agents")
+    PENDING: int = Field(0, description="Number of PENDING agents")
+    total: int = Field(0, description="Total number of agents")
+
+
+class RoleTokensSchema(BaseModel):
+    """Schema for token counts by role."""
+
+    BOSS: int = Field(0, description="Tokens used by BOSS agents")
+    MANAGER: int = Field(0, description="Tokens used by MANAGER agents")
+    WORKER: int = Field(0, description="Tokens used by WORKER agents")
+    PENDING: int = Field(0, description="Tokens used by PENDING agents")
+
+
+class ExecutionTimingSchema(BaseModel):
+    """Schema for execution timing breakdown."""
+
+    total_seconds: float = Field(..., description="Total execution time in seconds")
+    by_role: dict[str, float] = Field(
+        default_factory=dict, description="Total execution time by role"
+    )
+    by_phase: dict[str, float] = Field(
+        default_factory=dict, description="Time spent in each phase (analyzing, in_progress, etc.)"
+    )
+    by_agent: dict[str, float] = Field(
+        default_factory=dict, description="Execution time per agent (agent_id -> seconds)"
+    )
+
+
+class CostBreakdownSchema(BaseModel):
+    """Schema for comprehensive cost breakdown."""
+
+    total_cost_usd: float = Field(..., description="Total cost in USD")
+    llm_cost_usd: float = Field(..., description="Cost from LLM calls")
+    worker_cost_usd: float = Field(..., description="Cost from worker tool execution")
+
+    # Token usage
+    total_tokens: int = Field(..., description="Total tokens consumed")
+    prompt_tokens: int = Field(..., description="Input tokens consumed")
+    completion_tokens: int = Field(..., description="Output tokens consumed")
+
+    # Breakdowns
+    cost_by_role: RoleCostBreakdownSchema = Field(
+        default_factory=RoleCostBreakdownSchema, description="Cost breakdown by agent role"
+    )
+    cost_by_model: dict[str, float] = Field(
+        default_factory=dict, description="Cost breakdown by LLM model"
+    )
+    cost_by_operation: dict[str, float] = Field(
+        default_factory=dict, description="Cost breakdown by operation type"
+    )
+    cost_by_agent: dict[str, float] = Field(
+        default_factory=dict, description="Cost breakdown by agent ID"
+    )
+    tokens_by_role: RoleTokensSchema = Field(
+        default_factory=RoleTokensSchema, description="Token usage by role"
+    )
+
+    # Budget tracking
+    budget_limit_usd: float | None = Field(None, description="Budget limit if configured")
+    budget_remaining_usd: float | None = Field(None, description="Remaining budget")
+    budget_exceeded: bool = Field(False, description="Whether budget was exceeded")
+
+
+class ExecutionSummarySchema(BaseModel):
+    """Comprehensive execution summary for an agent hierarchy.
+
+    Combines event statistics, cost breakdown, timing, and node counts.
+    This is the main schema for the cost/execution viewer feature.
+    """
+
+    # Event statistics
+    total_events: int = Field(..., description="Total number of domain events")
+    events_by_type: dict[str, int] = Field(
+        default_factory=dict, description="Event counts by type name"
+    )
+    first_event: datetime | None = Field(None, description="Timestamp of first event")
+    last_event: datetime | None = Field(None, description="Timestamp of last event")
+    error_count: int = Field(0, description="Number of WorkFailed events")
+
+    # Node counts
+    node_counts: RoleCountSchema = Field(
+        default_factory=RoleCountSchema, description="Agent counts by role"
+    )
+
+    # Cost breakdown
+    cost: CostBreakdownSchema = Field(..., description="Cost breakdown")
+
+    # Execution timing
+    timing: ExecutionTimingSchema = Field(..., description="Execution timing details")
+
+    # Derived fields
+    is_complete: bool = Field(False, description="Whether all agents have completed")
