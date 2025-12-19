@@ -7,9 +7,11 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentTree } from './components/AgentTree';
 import { ConfigPanel } from './components/ConfigPanel';
+import { CostPanel } from './components/CostPanel';
 import { EventPanel } from './components/EventPanel';
 import { SummaryPanel } from './components/SummaryPanel';
 import { useSSE } from './hooks/useSSE';
+import { useSummarySSE } from './hooks/useSummarySSE';
 import * as api from './api/client';
 import type { AgentListItem, AgentHierarchy, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
 
@@ -22,7 +24,7 @@ function App() {
   const [realtimeEvents, setRealtimeEvents] = useState<DomainEvent[]>([]);
   const [summary, setSummary] = useState<AgentSummary | null>(null);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
-  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events'>('summary');
+  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events' | 'costs'>('summary');
 
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
@@ -207,6 +209,11 @@ function App() {
     onError: (error) => console.error('SSE error:', error),
   });
 
+  // SSE connection for real-time execution summary (costs, timing, node counts)
+  const { summary: executionSummary, isConnected: isSummaryConnected } = useSummarySSE({
+    rootId: selectedAgentId,
+  });
+
   const handleAgentSelect = useCallback((agentId: string) => {
     setSelectedAgentId(agentId);
     setSelectedNodeId(agentId);
@@ -308,6 +315,21 @@ function App() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setRightPanelView('costs')}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                rightPanelView === 'costs'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Costs
+              {executionSummary && executionSummary.cost.total_cost_usd > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-green-600 rounded-full">
+                  ${executionSummary.cost.total_cost_usd.toFixed(2)}
+                </span>
+              )}
+            </button>
           </div>
         </div>
 
@@ -315,8 +337,14 @@ function App() {
         <div className="h-[calc(100vh-3.5rem)] overflow-hidden">
           {rightPanelView === 'summary' ? (
             <SummaryPanel summary={summary} loading={loadingSummary} />
-          ) : (
+          ) : rightPanelView === 'events' ? (
             <EventPanel events={events} loading={loadingEvents} />
+          ) : (
+            <CostPanel
+              summary={executionSummary}
+              loading={!executionSummary && !!selectedAgentId}
+              isConnected={isSummaryConnected}
+            />
           )}
         </div>
       </div>
