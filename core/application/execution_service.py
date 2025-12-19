@@ -3,9 +3,19 @@
 import asyncio
 import contextlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+
+
+@dataclass
+class BudgetConfig:
+    """Configuration for cost budget tracking."""
+
+    max_total_cost_usd: float = 100.0
+    cost_warning_threshold: float = 0.8
+    cost_tracking_enabled: bool = True
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import (
@@ -86,6 +96,7 @@ class AgentExecutionService:
         progress_callback: ProgressCallback | None = None,
         status_callback: StatusCallback | None = None,
         default_worker_tool: str = "claude_code",
+        budget_config: BudgetConfig | None = None,
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -111,6 +122,7 @@ class AgentExecutionService:
         self.working_directory: str | None = None
         self.progress_callback = progress_callback
         self.status_callback = status_callback
+        self.budget_config = budget_config or BudgetConfig()
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
 
