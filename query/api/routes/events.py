@@ -25,8 +25,10 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.query.projections.hierarchy_collector import HierarchyCollector
+from core.query.projections.impl import SummaryProjection
 from query.api.dependencies import EventStoreDep
-from query.api.schemas import CategorizedEventsSchema, EventSchema
+from query.api.routes.agents import _projection_summary_to_schema
+from query.api.schemas import CategorizedEventsSchema, EventSchema, ExecutionSummarySchema
 
 
 router = APIRouter()
@@ -177,3 +179,56 @@ async def sse_events(root_id: UUID, event_store: EventStoreDep) -> EventSourceRe
                 break
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/sse/{root_id}/summary")
+async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceResponse:
+    """Server-Sent Events stream for real-time execution summary updates.
+
+    This endpoint provides real-time updates of the execution summary
+    (costs, timing, node counts) as the agent hierarchy executes.
+
+    Updates are sent whenever new events are detected. The client receives
+    a complete ExecutionSummarySchema on each update.
+
+    Example client usage:
+        const source = new EventSource('/api/events/sse/{root_id}/summary');
+        source.addEventListener('summary', (event) => {
+            const summary = JSON.parse(event.data);
+            console.log('Updated cost:', summary.cost.total_cost_usd);
+        });
+    """
+
+    async def summary_generator() -> AsyncGenerator[dict[str, str], None]:
+        """Generate SSE events with summary updates."""
+        collector = HierarchyCollector(event_store)
+        projection = SummaryProjection()
+        last_event_count = 0
+
+        while True:
+            try:
+                # Collect all events in hierarchy
+                all_events = await collector.collect(root_id)
+                current_count = len(all_events)
+
+                # Only emit update if events changed
+                if current_count != last_event_count:
+                    last_event_count = current_count
+                    summary = projection.project(all_events)
+                    schema = _projection_summary_to_schema(summary)
+                    yield {
+                        "event": "summary",
+                        "data": schema.model_dump_json(),
+                    }
+
+                # Poll interval
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                yield {
+                    "event": "error",
+                    "data": str(e),
+                }
+                break
+
+    return EventSourceResponse(summary_generator())
