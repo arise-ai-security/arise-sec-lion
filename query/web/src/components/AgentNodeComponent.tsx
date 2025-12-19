@@ -16,11 +16,11 @@ interface AgentNodeComponentProps {
   data: AgentNodeData;
 }
 
-const roleColors: Record<AgentRole, string> = {
-  BOSS: 'bg-purple-600 border-purple-700',
-  MANAGER: 'bg-blue-600 border-blue-700',
-  WORKER: 'bg-green-600 border-green-700',
-  PENDING: 'bg-yellow-500 border-yellow-600',
+const roleColors: Record<Lowercase<AgentRole>, string> = {
+  boss: 'bg-purple-600 border-purple-700',
+  manager: 'bg-blue-600 border-blue-700',
+  worker: 'bg-green-600 border-green-700',
+  pending: 'bg-yellow-500 border-yellow-600',
 };
 
 const statusIcons: Record<AgentStatus, string> = {
@@ -36,7 +36,8 @@ const statusIcons: Record<AgentStatus, string> = {
 };
 
 export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
-  const colorClass = roleColors[data.role] || 'bg-gray-500 border-gray-600';
+  const roleKey = data.role.toLowerCase() as Lowercase<AgentRole>;
+  const colorClass = roleColors[roleKey] || 'bg-gray-500 border-gray-600';
   const statusIcon = statusIcons[data.status] || '❓';
 
   return (
