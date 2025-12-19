@@ -24,10 +24,13 @@ const roleColors: Record<AgentRole, string> = {
 };
 
 const statusIcons: Record<AgentStatus, string> = {
-  INITIALIZING: '⏳',
-  WORKING: '🔄',
-  COMPLETED: '✅',
-  FAILED: '❌',
+  pending: '⏳',
+  analyzing: '🔍',
+  in_progress: '🔄',
+  waiting: '⏸️',
+  completed: '✅',
+  failed: '❌',
+  blocked: '🚫',
 };
 
 export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
