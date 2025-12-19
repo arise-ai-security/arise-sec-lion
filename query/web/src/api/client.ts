@@ -14,6 +14,7 @@ import type {
   RenderedPrompt,
   PromptVariables,
   SystemConfig,
+  ExecutionSummary,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -125,4 +126,29 @@ export async function getAgentSummary(agentId: string): Promise<AgentSummary> {
 // System Configuration endpoint
 export async function getSystemConfig(): Promise<SystemConfig> {
   return fetchJson<SystemConfig>('/config');
+}
+
+// Execution Summary endpoints
+
+/**
+ * Get the comprehensive execution summary for an agent hierarchy.
+ * Includes cost breakdown, timing, and node counts.
+ */
+export async function getExecutionSummary(agentId: string): Promise<ExecutionSummary> {
+  return fetchJson<ExecutionSummary>(`/agents/${agentId}/execution-summary`);
+}
+
+/**
+ * Create an EventSource for real-time execution summary updates.
+ * The server sends 'summary' events with ExecutionSummary data.
+ *
+ * @example
+ * const source = createSummaryEventSource(rootId);
+ * source.addEventListener('summary', (event) => {
+ *   const summary = JSON.parse(event.data);
+ *   console.log('Updated cost:', summary.cost.total_cost_usd);
+ * });
+ */
+export function createSummaryEventSource(rootId: string): EventSource {
+  return new EventSource(`${API_BASE}/events/sse/${rootId}/summary`);
 }
