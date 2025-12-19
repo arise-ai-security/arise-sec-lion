@@ -62,8 +62,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-arise}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-arise_events}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arise} -d ${POSTGRES_DB:-arise}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arise} -d ${POSTGRES_DB:-arise_events}"]
       interval: 5s
       timeout: 5s
       retries: 5
