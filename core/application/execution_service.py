@@ -239,6 +239,11 @@ class AgentExecutionService:
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
         """Dispatch based on role: PENDING→complexity, BOSS/MANAGER→decompose, WORKER→execute."""
+        # Recovery: if WAITING parent has all children done, process missing notifications
+        if agent.status == AgentStatus.WAITING and agent.child_ids:
+            await self._recover_stuck_parent(agent)
+            return
+
         if agent.status != AgentStatus.ANALYZING:
             return
 
@@ -389,6 +394,47 @@ class AgentExecutionService:
             self._notify_progress(event, parent)
 
         parent.mark_changes_as_committed()
+
+    async def _recover_stuck_parent(self, parent: AgentSession) -> None:
+        """Recover a WAITING parent by checking for missing child completions.
+
+        This handles the case where a child completed but the parent notification
+        was lost (e.g., due to process crash or network issue).
+        """
+        parent_version = parent.version
+        any_updates = False
+
+        for child_id in parent.child_ids:
+            # Skip if we already recorded this child
+            if child_id in parent.child_results or child_id in parent.child_failures:
+                continue
+
+            # Check child's current state
+            child_events = await self.event_store.get_events(child_id)
+            if not child_events:
+                continue
+
+            child = AgentSession.load_from_history(child_events)
+
+            # If child is in terminal state but parent doesn't know, process it
+            if child.status == AgentStatus.COMPLETED:
+                parent.handle_child_update(child_id, child.result or "")
+                any_updates = True
+            elif child.status == AgentStatus.FAILED:
+                parent.handle_child_failure(
+                    child_id=child_id,
+                    failure_reason=child.error_message or "Unknown failure",
+                    budget_at_failure=child.current_budget,
+                )
+                any_updates = True
+
+        # Persist any updates
+        if any_updates:
+            for event in parent.events:
+                await self.event_store.append(event, expected_version=parent_version)
+                parent_version += 1
+                self._notify_progress(event, parent)
+            parent.mark_changes_as_committed()
 
     async def _get_active_agent_ids(self, root_id: UUID | None = None) -> list[UUID]:
         """Return agent IDs not in terminal state (COMPLETED/FAILED).
