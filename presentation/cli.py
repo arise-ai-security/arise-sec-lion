@@ -413,8 +413,25 @@ def cli(ctx: click.Context, config: str | None) -> None:
 
 @cli.command()
 @click.argument("task")
+@click.option(
+    "--worker-shortcut-prob",
+    type=float,
+    default=None,
+    help="Probability (0.0-1.0) that pending agents become workers directly (default: 0.3)",
+)
+@click.option(
+    "--budget-threshold",
+    type=float,
+    default=None,
+    help="Budget threshold (0.0-1.0) below which pending agents become workers (default: 0.02)",
+)
 @click.pass_context
-def run(ctx: click.Context, task: str) -> None:
+def run(
+    ctx: click.Context,
+    task: str,
+    worker_shortcut_prob: float | None,
+    budget_threshold: float | None,
+) -> None:
     """Run a task with the multi-agent system.
 
     TASK is the description of what you want to accomplish.
@@ -424,11 +441,19 @@ def run(ctx: click.Context, task: str) -> None:
         python main.py run "Build a REST API with authentication"
 
         python main.py run "Analyze this codebase for security issues"
+
+        python main.py run --worker-shortcut-prob 0.5 "Quick prototype"
+
+        python main.py run --budget-threshold 0.05 "Complex task"
     """
     from bootstrap import bootstrap
 
     config_path = ctx.obj.get("config_path")
-    app = bootstrap(config_path=config_path)
+    app = bootstrap(
+        config_path=config_path,
+        worker_shortcut_probability=worker_shortcut_prob,
+        budget_threshold_ratio=budget_threshold,
+    )
 
     asyncio.run(app.run_with_task(task))
 

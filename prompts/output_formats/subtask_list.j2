@@ -5,6 +5,7 @@ Return ONLY valid JSON matching this exact schema:
 [
   {
     "description": "string (min 10 chars, max 500 chars)",
+    "budget_weight": number (0.1-10.0, based on complexity/importance/time),
     "config": {
       "strategy": "per_operation" | "heuristic" | "hybrid",
       "tool": "{{ default_tool }}",
@@ -13,6 +14,19 @@ Return ONLY valid JSON matching this exact schema:
   },
   ... (2-3 subtasks total)
 ]
+
+## Budget Weight Guidelines
+
+The budget_weight field determines resource allocation (1.0 = normal baseline):
+- **Complexity**: More complex tasks need more resources (2.0-3.0 for complex, 0.5-1.0 for simple)
+- **Importance**: Critical path tasks should get more budget (2.0-4.0 for critical)
+- **Time**: Longer tasks need more resources (estimate relative time: 2x time = 2x weight)
+
+Examples:
+- Simple config/setup task: 0.5-1.0
+- Standard implementation: 1.0-2.0
+- Complex algorithm or integration: 2.0-4.0
+- Critical core functionality: 3.0-5.0
 
 ## Config Schema by Strategy
 
@@ -72,16 +86,18 @@ Return ONLY valid JSON matching this exact schema:
 **CRITICAL RULES**:
 1. Response must be PURE JSON array (no markdown, no commentary)
 2. Array must contain 2-3 subtasks (not 1, not 4+)
-3. Each subtask MUST have "description" and "config" fields
+3. Each subtask MUST have "description", "budget_weight", and "config" fields
 4. Config MUST include "strategy" and "tool" fields
 5. All required fields for chosen strategy must be present
 6. Temperature: 0.0-2.0, max_tokens: 1-100000
 7. Model names: "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "gemini-flash", etc.
+8. budget_weight: 0.1-10.0 based on complexity, importance, and estimated time
 
 **Example Valid Output (per_operation)**:
 [
   {
     "description": "Research existing authentication libraries and select the most suitable one for our use case",
+    "budget_weight": 1.0,
     "config": {
       "strategy": "per_operation",
       "complexity_evaluation": {
@@ -99,6 +115,7 @@ Return ONLY valid JSON matching this exact schema:
   },
   {
     "description": "Implement user registration with email verification and password hashing",
+    "budget_weight": 3.0,
     "config": {
       "strategy": "heuristic",
       "base": {
@@ -115,6 +132,7 @@ Return ONLY valid JSON matching this exact schema:
 [
   {
     "description": "Research BeautifulSoup library documentation and extract key usage patterns",
+    "budget_weight": 0.8,
     "config": {
       "strategy": "heuristic",
       "base": {
@@ -127,6 +145,7 @@ Return ONLY valid JSON matching this exact schema:
   },
   {
     "description": "Implement basic web scraper with error handling and rate limiting",
+    "budget_weight": 2.5,
     "config": {
       "strategy": "heuristic",
       "base": {
@@ -139,6 +158,7 @@ Return ONLY valid JSON matching this exact schema:
   },
   {
     "description": "Write unit tests for scraper functionality",
+    "budget_weight": 1.5,
     "config": {
       "strategy": "heuristic",
       "base": {

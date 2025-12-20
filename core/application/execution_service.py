@@ -99,7 +99,8 @@ class AgentExecutionService:
         default_worker_tool: str = "claude_code",
         budget_config: BudgetConfig | None = None,
         system_limits: Any | None = None,
-        worker_shortcut_probability: float = 0.0,
+        worker_shortcut_probability: float = 0.3,
+        budget_threshold_ratio: float = 0.02,
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -128,6 +129,7 @@ class AgentExecutionService:
         self.budget_config = budget_config or BudgetConfig()
         self.system_limits = system_limits
         self.worker_shortcut_probability = worker_shortcut_probability
+        self.budget_threshold_ratio = budget_threshold_ratio
         self.initial_boss_budget: float = 0.0
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
@@ -241,10 +243,11 @@ class AgentExecutionService:
             return
 
         if agent.role == AgentRole.PENDING:
-            # Shortcut to worker if: budget < 1% of boss's initial budget OR random chance
-            budget_threshold = self.initial_boss_budget * 0.01
+            # Shortcut to worker if: budget below threshold OR random chance
+            budget_threshold = self.initial_boss_budget * self.budget_threshold_ratio
             if agent.current_budget < budget_threshold:
-                agent.shortcut_to_worker("budget below 1% of initial allocation")
+                pct = self.budget_threshold_ratio * 100
+                agent.shortcut_to_worker(f"budget below {pct:.0f}% of initial allocation")
             elif random.random() < self.worker_shortcut_probability:
                 agent.shortcut_to_worker("randomly selected to skip complexity evaluation")
             else:
@@ -268,9 +271,9 @@ class AgentExecutionService:
         """Create child AgentSessions from ChildSpawned events."""
         child_spawned_events = [e for e in events if isinstance(e, ChildSpawned)]
 
-        # Calculate budget per child (split parent's budget evenly)
-        num_children = len(child_spawned_events)
-        budget_per_child = (parent.current_budget / num_children) if num_children > 0 else 0.0
+        # Calculate weighted budget allocation based on subtask complexity/importance/time
+        total_weight = sum(e.subtask.budget_weight for e in child_spawned_events)
+        available_budget = parent.current_budget
 
         for child_event in child_spawned_events:
             child_config = child_event.child_config
@@ -282,9 +285,11 @@ class AgentExecutionService:
             )
             child.assign_task(child_event.subtask.description)
 
-            # Allocate budget to child
-            if budget_per_child > 0:
-                child.allocate_budget(budget_per_child, source="parent")
+            # Allocate budget proportionally based on subtask weight
+            if total_weight > 0 and available_budget > 0:
+                weight_ratio = child_event.subtask.budget_weight / total_weight
+                child_budget = available_budget * weight_ratio
+                child.allocate_budget(child_budget, source="parent")
 
             for idx, child_evt in enumerate(child.events):
                 await self.event_store.append(child_evt, expected_version=idx)
