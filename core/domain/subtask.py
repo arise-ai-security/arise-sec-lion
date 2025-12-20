@@ -10,12 +10,13 @@ class SubtaskJustification(BaseModel):
 
     model_config = {"frozen": True}
 
-    parent_task: str = Field(..., description="The supervisor's received task being decomposed")
-    split_reason: str = Field(..., description="Why this subtask was split from the parent task")
-    objective: str = Field(..., description="What this subtask aims to achieve")
-    plan: str = Field(..., description="How this subtask will be executed")
-    why_it_may_work: str = Field(..., description="Reasoning for why this approach should succeed")
-    expected_results: str = Field(..., description="What outputs/outcomes are expected")
+    # Defaults for backward compatibility with old events that lack justification
+    parent_task: str = Field(default="(legacy event)", description="The supervisor's received task being decomposed")
+    split_reason: str = Field(default="(legacy event)", description="Why this subtask was split from the parent task")
+    objective: str = Field(default="(legacy event)", description="What this subtask aims to achieve")
+    plan: str = Field(default="(legacy event)", description="How this subtask will be executed")
+    why_it_may_work: str = Field(default="(legacy event)", description="Reasoning for why this approach should succeed")
+    expected_results: str = Field(default="(legacy event)", description="What outputs/outcomes are expected")
 
 
 class Subtask(BaseModel):
@@ -29,8 +30,10 @@ class Subtask(BaseModel):
     model_config = {"frozen": True}
 
     description: str = Field(..., min_length=1)
+    # Default factory for backward compatibility with old events
     justification: SubtaskJustification = Field(
-        ..., description="Supervisor's reasoning for this subtask"
+        default_factory=SubtaskJustification,
+        description="Supervisor's reasoning for this subtask",
     )
     config: dict[str, Any]
     budget_weight: float = Field(
