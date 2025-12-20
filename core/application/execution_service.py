@@ -128,6 +128,7 @@ class AgentExecutionService:
         self.budget_config = budget_config or BudgetConfig()
         self.system_limits = system_limits
         self.worker_shortcut_probability = worker_shortcut_probability
+        self.initial_boss_budget: float = 0.0
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
 
@@ -240,8 +241,12 @@ class AgentExecutionService:
             return
 
         if agent.role == AgentRole.PENDING:
-            if random.random() < self.worker_shortcut_probability:
-                agent.shortcut_to_worker()
+            # Shortcut to worker if: budget < 1% of boss's initial budget OR random chance
+            budget_threshold = self.initial_boss_budget * 0.01
+            if agent.current_budget < budget_threshold:
+                agent.shortcut_to_worker("budget below 1% of initial allocation")
+            elif random.random() < self.worker_shortcut_probability:
+                agent.shortcut_to_worker("randomly selected to skip complexity evaluation")
             else:
                 await agent.evaluate_complexity(self.llm_port, self.prompt_builder)
 
@@ -348,8 +353,10 @@ class AgentExecutionService:
             verifier.mark_changes_as_committed()
 
     async def _handle_parent_notification(self, agent: AgentSession) -> None:
-        """Notify parent when child completes, triggering aggregation if all done."""
-        if agent.status != AgentStatus.COMPLETED or agent.parent_id is None:
+        """Notify parent when child reaches terminal state (COMPLETED or FAILED)."""
+        if agent.parent_id is None:
+            return
+        if agent.status not in (AgentStatus.COMPLETED, AgentStatus.FAILED):
             return
 
         parent_events = await self.event_store.get_events(agent.parent_id)
@@ -359,7 +366,14 @@ class AgentExecutionService:
         parent = AgentSession.load_from_history(parent_events)
         parent_version = parent.version
 
-        parent.handle_child_update(agent.session_id, agent.result or "")
+        if agent.status == AgentStatus.COMPLETED:
+            parent.handle_child_update(agent.session_id, agent.result or "")
+        else:
+            parent.handle_child_failure(
+                child_id=agent.session_id,
+                failure_reason=agent.error_message or "Unknown failure",
+                budget_at_failure=agent.current_budget,
+            )
 
         for event in parent.events:
             await self.event_store.append(event, expected_version=parent_version)
@@ -544,6 +558,7 @@ class AgentExecutionService:
 
         # Allocate initial budget to BOSS agent (default: 1000.0)
         initial_budget = 1000.0
+        self.initial_boss_budget = initial_budget
         boss_agent.allocate_budget(initial_budget, source="initial")
 
         for idx, event in enumerate(boss_agent.events):

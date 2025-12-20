@@ -152,7 +152,7 @@ class AgentSession:
         self._apply(task_event)
         self._changes.append(task_event)
 
-    def shortcut_to_worker(self) -> None:
+    def shortcut_to_worker(self, reason: str = "randomly selected to skip complexity evaluation") -> None:
         """Bypass complexity evaluation and directly become WORKER."""
         assert self.role == AgentRole.PENDING, f"Requires PENDING role, got {self.role}"
         assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
@@ -162,7 +162,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             complexity="simple",
             determined_role=AgentRole.WORKER.value,
-            reasoning="Shortcut: randomly selected to skip complexity evaluation",
+            reasoning=f"Shortcut: {reason}",
         )
         self._apply(complexity_event)
         self._changes.append(complexity_event)
@@ -362,15 +362,23 @@ class AgentSession:
         self._apply(child_completed_event)
         self._changes.append(child_completed_event)
 
-        if len(self.child_results) == len(self.child_ids):
-            aggregated_result = self._aggregate_child_results()
-            work_completed_event = WorkCompleted(
-                aggregate_id=self.session_id,
-                sequence_number=self._next_sequence(),
-                result=aggregated_result,
-            )
-            self._apply(work_completed_event)
-            self._changes.append(work_completed_event)
+        # Check if all children are accounted for (completed + failed)
+        total_done = len(self.child_results) + len(self.child_failures)
+        if total_done == len(self.child_ids):
+            if len(self.child_failures) > 0:
+                # Some children failed, parent fails
+                failed_reasons = [f"{cid}: {r}" for cid, r in self.child_failures.items()]
+                self.fail_with_reason(f"Some children failed: {'; '.join(failed_reasons)}")
+            else:
+                # All succeeded
+                aggregated_result = self._aggregate_child_results()
+                work_completed_event = WorkCompleted(
+                    aggregate_id=self.session_id,
+                    sequence_number=self._next_sequence(),
+                    result=aggregated_result,
+                )
+                self._apply(work_completed_event)
+                self._changes.append(work_completed_event)
 
     def _aggregate_child_results(self) -> str:
         """Combine results from all completed children."""
@@ -1003,6 +1011,11 @@ class AgentSession:
             budget_at_failure: The child's remaining budget when it failed.
             retry_attempted: Whether a retry was attempted before recording failure.
         """
+        assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
+            f"Requires BOSS/MANAGER, got {self.role}"
+        )
+        assert len(self.child_ids) > 0, "Requires agent with children"
+        assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
         assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
 
         failed_event = ChildFailed(
@@ -1015,6 +1028,13 @@ class AgentSession:
         )
         self._apply(failed_event)
         self._changes.append(failed_event)
+
+        # Check if all children are accounted for (completed + failed)
+        total_done = len(self.child_results) + len(self.child_failures)
+        if total_done == len(self.child_ids):
+            # All children done - if any failed, parent fails too
+            failed_reasons = [f"{cid}: {reason}" for cid, reason in self.child_failures.items()]
+            self.fail_with_reason(f"Child agents failed: {'; '.join(failed_reasons)}")
 
     def record_all_children_failed(
         self,
