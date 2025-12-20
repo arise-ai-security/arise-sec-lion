@@ -1,0 +1,184 @@
+# CVE Benchmark Generation Strategy
+
+## Phase 1: Information Gathering
+
+Before decomposing, extract these details from the CVE:
+
+### Required Information
+- **CVE ID**: The identifier (e.g., CVE-2024-12345)
+- **CWE Type**: Vulnerability classification (e.g., CWE-787 Out-of-bounds Write)
+- **Affected Software**: Name and vulnerable versions
+- **Fixed Version**: Version where vulnerability was patched (for gold patch reference)
+- **CVSS Score**: Severity indicator
+- **Attack Vector**: How the vulnerability can be triggered
+
+### Vulnerability Categories & PoC Strategies
+
+| CWE Type | PoC Strategy | Expected Sanitizer |
+|----------|--------------|-------------------|
+| CWE-787 (OOB Write) | Craft input exceeding buffer | AddressSanitizer |
+| CWE-125 (OOB Read) | Craft input causing over-read | AddressSanitizer |
+| CWE-416 (Use-After-Free) | Trigger free then use | AddressSanitizer |
+| CWE-476 (NULL Deref) | Craft input causing NULL access | AddressSanitizer/SIGSEGV |
+| CWE-190 (Integer Overflow) | Craft large values | UBSanitizer |
+| CWE-369 (Divide by Zero) | Craft zero divisor | UBSanitizer/SIGFPE |
+| CWE-122 (Heap Overflow) | Craft input exceeding heap allocation | AddressSanitizer |
+| CWE-121 (Stack Overflow) | Craft deep recursion/large stack | AddressSanitizer |
+
+## Phase 2: Decomposition Decision
+
+### Simple CVEs (2-3 subtasks)
+Characteristics:
+- Single file affected
+- Clear vulnerable function
+- Existing test harness
+- Well-documented fix
+
+Decomposition:
+1. Setup + PoC generation
+2. Patch generation + validation
+
+### Complex CVEs (3-4 subtasks)
+Characteristics:
+- Multiple files affected
+- Complex data flow to vulnerability
+- No existing test harness
+- Architectural fix required
+
+Decomposition:
+1. CVE analysis + environment setup
+2. PoC generation (may need multiple attempts)
+3. Patch generation
+4. Comprehensive validation
+
+## Phase 3: Subtask Configuration
+
+### For CVE Analysis Subtask
+```json
+{
+  "description": "Analyze CVE-XXXX: fetch from NVD, clone repo at vulnerable version, identify vulnerable code path",
+  "config": {
+    "strategy": "heuristic",
+    "base": {
+      "model": "gpt-4o-mini",
+      "temperature": 0.3,
+      "max_tokens": 4000
+    },
+    "tool": "{{ default_tool }}"
+  }
+}
+```
+
+### For PoC Generation Subtask
+```json
+{
+  "description": "Generate PoC for CVE-XXXX that triggers AddressSanitizer error in Docker environment",
+  "config": {
+    "strategy": "heuristic",
+    "base": {
+      "model": "gpt-4o",
+      "temperature": 0.6,
+      "max_tokens": 8000
+    },
+    "tool": "{{ default_tool }}"
+  }
+}
+```
+
+### For Patch Generation Subtask
+```json
+{
+  "description": "Generate minimal security patch for CVE-XXXX that eliminates vulnerability",
+  "config": {
+    "strategy": "heuristic",
+    "base": {
+      "model": "claude-3-5-sonnet-20241022",
+      "temperature": 0.5,
+      "max_tokens": 8000
+    },
+    "tool": "{{ default_tool }}"
+  }
+}
+```
+
+### For Validation Subtask
+```json
+{
+  "description": "Validate: PoC triggers sanitizer error, patch fixes vulnerability, both reproducible",
+  "config": {
+    "strategy": "heuristic",
+    "base": {
+      "model": "gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": 4000
+    },
+    "tool": "{{ default_tool }}"
+  }
+}
+```
+
+## Phase 4: Quality Checks
+
+Before finalizing decomposition, verify:
+
+1. **Coverage**: All pipeline stages have subtasks
+2. **Dependencies**: Subtasks can execute in logical order
+3. **Specificity**: Each subtask has concrete success criteria
+4. **Efficiency**: No redundant work between subtasks
+5. **Validation**: Final subtask validates ALL artifacts
+
+## Common Pitfalls
+
+### Avoid These Decompositions
+
+**Too Granular** (Bad):
+1. "Fetch CVE from NVD"
+2. "Clone repository"
+3. "Checkout vulnerable version"
+4. "Create Dockerfile"
+5. "Build with sanitizers"
+6. "Write PoC"
+7. "Test PoC"
+...
+
+**Too Vague** (Bad):
+1. "Do the security analysis"
+2. "Make the benchmark"
+
+**Missing Validation** (Bad):
+1. "Generate PoC"
+2. "Generate patch"
+(No validation step!)
+
+### Good Decomposition Example
+
+For CVE-2024-1234 (Heap buffer overflow in parse_header()):
+
+```json
+[
+  {
+    "description": "Analyze CVE-2024-1234: fetch details from NVD, clone libfoo at v1.2.3, build Docker with ASan, identify vulnerable parse_header() function",
+    "config": {
+      "strategy": "heuristic",
+      "base": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 4000},
+      "tool": "claude_code"
+    }
+  },
+  {
+    "description": "Generate PoC: craft malformed header input that overflows buffer in parse_header(), must trigger 'ERROR: AddressSanitizer: heap-buffer-overflow'",
+    "config": {
+      "strategy": "heuristic",
+      "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000},
+      "tool": "claude_code"
+    }
+  },
+  {
+    "description": "Generate patch: fix bounds checking in parse_header() to prevent overflow, then validate PoC triggers ASan on unpatched AND does NOT trigger on patched version",
+    "config": {
+      "strategy": "heuristic",
+      "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000},
+      "tool": "claude_code"
+    }
+  }
+]
+```

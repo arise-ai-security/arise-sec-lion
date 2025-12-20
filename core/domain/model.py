@@ -30,7 +30,7 @@ from core.domain.events import (
 from core.domain.exceptions import ToolNotAvailableError
 from core.domain.execution_context import ExecutionContext
 from core.domain.llm_response import LLMResponse
-from core.domain.prompt_builder import PromptBuilder
+from core.domain.prompt_builder import PromptBuilder, is_security_task
 from core.domain.services import SubtaskParser, strip_markdown_code_block
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
@@ -104,16 +104,32 @@ class AgentSession:
         self._changes.append(task_event)
 
     async def evaluate_complexity(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
-        """For PENDING agents: evaluate task complexity to become WORKER or MANAGER."""
+        """For PENDING agents: evaluate task complexity to become WORKER or MANAGER.
+
+        Automatically detects security tasks and provides security-specific
+        complexity evaluation guidance.
+        """
         assert self.role == AgentRole.PENDING, f"Requires PENDING role, got {self.role}"
         assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
         assert self.task_description, "Requires assigned task"
 
+        # Build base complexity evaluation prompt
         prompt = prompt_builder.build_complexity_evaluation_prompt(
             task_description=self.task_description,
             agent_id=self.session_id,
             parent_task=None,
         )
+
+        # Append security-specific guidance for security tasks
+        if is_security_task(self.task_description):
+            try:
+                security_guidance = prompt_builder.env.get_template(
+                    "security/complexity_security.j2"
+                ).render()
+                prompt = f"{prompt}\n\n{security_guidance}"
+            except Exception:
+                # Fall back to base prompt if security template missing
+                pass
 
         llm_config = ConfigResolver.resolve(self.config, operation="complexity_evaluation")
         llm_response = await llm_port.query_with_usage(prompt, llm_config.model_dump())
@@ -158,25 +174,21 @@ class AgentSession:
         Respects execution context limits:
         - max_depth: Forces WORKER role for children at max depth
         - max_children_per_node: Limits number of subtasks spawned
+
+        Automatically detects security tasks and uses appropriate prompts.
         """
         assert self.role in (AgentRole.BOSS, AgentRole.MANAGER), (
             f"Requires BOSS/MANAGER, got {self.role}"
         )
         assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
 
-        if self.role == AgentRole.BOSS:
-            prompt = prompt_builder.build_boss_delegation_prompt(
-                task_description=self.task_description,
-                agent_id=self.session_id,
-                parent_task=None,
-            )
-        else:
-            prompt = prompt_builder.build_manager_decomposition_prompt(
-                task_description=self.task_description,
-                agent_id=self.session_id,
-                agent_role="MANAGER",
-                parent_task=None,
-            )
+        # Use auto_prompt for automatic security task detection
+        prompt = prompt_builder.build_auto_prompt(
+            task_description=self.task_description,
+            agent_id=self.session_id,
+            agent_role=self.role.value.upper(),
+            parent_task=None,
+        )
 
         llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")
         llm_response = await llm_port.query_with_usage(prompt, llm_config.model_dump())
