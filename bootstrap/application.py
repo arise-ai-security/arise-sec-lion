@@ -26,6 +26,7 @@ class ApplicationConfig:
     budget_max_total_cost_usd: float
     budget_cost_warning_threshold: float
     budget_cost_tracking_enabled: bool
+    worker_shortcut_probability: float = 0.0
     progress_callback: ProgressCallback | None = None
     status_callback: StatusCallback | None = None
 
@@ -61,6 +62,7 @@ def get_application(
         status_callback=config.status_callback,
         default_worker_tool=config.default_worker_tool,
         budget_config=budget_config,
+        worker_shortcut_probability=config.worker_shortcut_probability,
     )
 
     return Application(execution_service=execution_service)

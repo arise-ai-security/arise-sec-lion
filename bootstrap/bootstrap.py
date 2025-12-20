@@ -44,6 +44,7 @@ def bootstrap(
             budget_max_total_cost_usd=settings.orchestration.budget.max_total_cost_usd,
             budget_cost_warning_threshold=settings.orchestration.budget.cost_warning_threshold,
             budget_cost_tracking_enabled=settings.orchestration.budget.cost_tracking_enabled,
+            worker_shortcut_probability=settings.orchestration.worker_shortcut_probability,
             progress_callback=format_event_progress if settings.output.verbose else None,
             status_callback=format_status_display if settings.output.verbose else None,
         )

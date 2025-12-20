@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,7 @@ class AgentExecutionService:
         default_worker_tool: str = "claude_code",
         budget_config: BudgetConfig | None = None,
         system_limits: Any | None = None,
+        worker_shortcut_probability: float = 0.0,
     ) -> None:
         """Initialize the execution service with infrastructure ports.
 
@@ -125,6 +127,7 @@ class AgentExecutionService:
         self.status_callback = status_callback
         self.budget_config = budget_config or BudgetConfig()
         self.system_limits = system_limits
+        self.worker_shortcut_probability = worker_shortcut_probability
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
 
@@ -237,7 +240,10 @@ class AgentExecutionService:
             return
 
         if agent.role == AgentRole.PENDING:
-            await agent.evaluate_complexity(self.llm_port, self.prompt_builder)
+            if random.random() < self.worker_shortcut_probability:
+                agent.shortcut_to_worker()
+            else:
+                await agent.evaluate_complexity(self.llm_port, self.prompt_builder)
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
             await agent.evaluate_task(self.llm_port, self.prompt_builder)

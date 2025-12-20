@@ -119,6 +119,7 @@ class OrchestrationConfig(BaseModel):
     llm_timeout: float = Field(gt=0.0)
     worker_timeout: float = Field(gt=0.0)
     default_task_complexity_threshold: int = Field(ge=1, le=10)
+    worker_shortcut_probability: float = Field(ge=0.0, le=1.0, default=0.0)
 
     budget: BudgetConfig
     limits: LimitsConfig

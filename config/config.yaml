@@ -19,6 +19,7 @@ orchestration:
   llm_timeout: 30.0
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
+  worker_shortcut_probability: 0.2  # 20% chance pending agents become workers directly
 
   budget:
     max_total_cost_usd: 10.0

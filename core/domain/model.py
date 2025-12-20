@@ -152,6 +152,21 @@ class AgentSession:
         self._apply(task_event)
         self._changes.append(task_event)
 
+    def shortcut_to_worker(self) -> None:
+        """Bypass complexity evaluation and directly become WORKER."""
+        assert self.role == AgentRole.PENDING, f"Requires PENDING role, got {self.role}"
+        assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
+
+        complexity_event = ComplexityEvaluated(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            complexity="simple",
+            determined_role=AgentRole.WORKER.value,
+            reasoning="Shortcut: randomly selected to skip complexity evaluation",
+        )
+        self._apply(complexity_event)
+        self._changes.append(complexity_event)
+
     async def evaluate_complexity(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
         """For PENDING agents: evaluate task complexity to become WORKER or MANAGER."""
         assert self.role == AgentRole.PENDING, f"Requires PENDING role, got {self.role}"
