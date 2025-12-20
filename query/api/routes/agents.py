@@ -32,6 +32,7 @@ from query.api.schemas import (
     RoleCostBreakdownSchema,
     RoleCountSchema,
     RoleTokensSchema,
+    SubtaskJustificationSchema,
     SubtaskSummarySchema,
     TaskQueueItemSchema,
 )
@@ -265,9 +266,19 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         elif isinstance(event, SubtasksDefined):
             # Store subtasks - we'll match children later
             for subtask in event.subtasks:
+                justification = SubtaskJustificationSchema(
+                    parent_task=subtask.justification.parent_task,
+                    split_reason=subtask.justification.split_reason,
+                    objective=subtask.justification.objective,
+                    plan=subtask.justification.plan,
+                    why_it_may_work=subtask.justification.why_it_may_work,
+                    expected_results=subtask.justification.expected_results,
+                )
                 subtasks_list.append(
                     SubtaskSummarySchema(
                         description=subtask.description,
+                        justification=justification,
+                        budget_weight=subtask.budget_weight,
                         child_id=None,
                         child_status=None,
                     )
@@ -284,8 +295,11 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
             child_events = await event_store.get_events(child_id)
             if child_events:
                 child_agent = AgentSession.load_from_history(child_events)
+                existing = subtasks_list[idx]
                 subtasks_list[idx] = SubtaskSummarySchema(
-                    description=subtasks_list[idx].description,
+                    description=existing.description,
+                    justification=existing.justification,
+                    budget_weight=existing.budget_weight,
                     child_id=str(child_id),
                     child_status=child_agent.status.value,
                 )

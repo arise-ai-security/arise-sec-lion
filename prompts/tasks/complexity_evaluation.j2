@@ -4,6 +4,24 @@ Agent Role: PENDING
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
+{% if justification %}
+<SUPERVISOR_EXPECTATIONS>
+Your supervisor has assigned you this task with the following context and expectations:
+
+**Supervisor's Objective for You**: {{ justification.objective }}
+
+**Why This Subtask Was Created**: {{ justification.split_reason }}
+
+**Suggested Plan/Approach**: {{ justification.plan }}
+
+**Why This Should Work**: {{ justification.why_it_may_work }}
+
+**Expected Results/Deliverables**: {{ justification.expected_results }}
+
+Consider these expectations when evaluating complexity. A task that aligns with a clear plan and well-defined expected results is more likely to be SIMPLE than one with ambiguous goals.
+</SUPERVISOR_EXPECTATIONS>
+
+{% endif %}
 <TASK_DESCRIPTION>
 You are evaluating whether the following task is SIMPLE or COMPLEX:
 

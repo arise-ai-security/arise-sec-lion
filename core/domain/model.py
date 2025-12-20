@@ -46,7 +46,7 @@ from core.domain.events import (
 from core.domain.exceptions import ToolNotAvailableError
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser, strip_markdown_code_block
-from core.domain.subtask import Subtask
+from core.domain.subtask import Subtask, SubtaskJustification
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 
@@ -142,8 +142,12 @@ class AgentSession:
         """Clear uncommitted changes after successful persistence."""
         self._changes.clear()
 
-    def assign_task(self, task_description: str) -> None:
-        """Assign task, transitions to ANALYZING status."""
+    def assign_task(
+        self,
+        task_description: str,
+        justification: SubtaskJustification | None = None,
+    ) -> None:
+        """Assign task with optional supervisor justification, transitions to ANALYZING status."""
         task_event = TaskAssigned(
             aggregate_id=self.session_id,
             sequence_number=self._next_sequence(),
@@ -151,6 +155,10 @@ class AgentSession:
         )
         self._apply(task_event)
         self._changes.append(task_event)
+
+        # Store supervisor's justification for this task (used in prompts)
+        if justification:
+            self.supervisor_justification = justification
 
     def shortcut_to_worker(self, reason: str = "randomly selected to skip complexity evaluation") -> None:
         """Bypass complexity evaluation and directly become WORKER."""
@@ -177,6 +185,7 @@ class AgentSession:
             task_description=self.task_description,
             agent_id=self.session_id,
             parent_task=None,
+            justification=self.supervisor_justification,
         )
 
         llm_config = ConfigResolver.resolve(self.config, operation="complexity_evaluation")
@@ -225,6 +234,7 @@ class AgentSession:
                 task_description=self.task_description,
                 agent_id=self.session_id,
                 parent_task=None,
+                justification=self.supervisor_justification,
             )
         else:
             prompt = prompt_builder.build_manager_decomposition_prompt(
@@ -232,6 +242,7 @@ class AgentSession:
                 agent_id=self.session_id,
                 agent_role="MANAGER",
                 parent_task=None,
+                justification=self.supervisor_justification,
             )
 
         llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")
@@ -313,7 +324,21 @@ class AgentSession:
             "</WORKER_INSTRUCTIONS>\n\n"
         )
 
-        enhanced_description = f"{worker_system_prompt}<TASK>\n{self.task_description}\n</TASK>"
+        supervisor_context = ""
+        if self.supervisor_justification:
+            j = self.supervisor_justification
+            supervisor_context = (
+                "<SUPERVISOR_EXPECTATIONS>\n"
+                "Your supervisor assigned this task with the following context and expectations:\n\n"
+                f"**Objective**: {j.objective}\n\n"
+                f"**Why This Was Assigned to You**: {j.split_reason}\n\n"
+                f"**Suggested Approach**: {j.plan}\n\n"
+                f"**Why This Should Work**: {j.why_it_may_work}\n\n"
+                f"**Expected Deliverables**: {j.expected_results}\n"
+                "</SUPERVISOR_EXPECTATIONS>\n\n"
+            )
+
+        enhanced_description = f"{worker_system_prompt}{supervisor_context}<TASK>\n{self.task_description}\n</TASK>"
 
         if workspace_context:
             enhanced_description += (
@@ -713,6 +738,9 @@ class AgentSession:
         # Multi-model strategy tracking
         self.current_subtask: Subtask | None = None
         self.current_subtask_subordinates: list[UUID] = []
+
+        # Supervisor's justification for this agent's assigned task
+        self.supervisor_justification: SubtaskJustification | None = None
 
     @classmethod
     def load_from_history(cls, events: list[DomainEvent]) -> "AgentSession":

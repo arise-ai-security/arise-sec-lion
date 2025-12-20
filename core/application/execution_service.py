@@ -283,7 +283,10 @@ class AgentExecutionService:
                 config=child_config,
                 parent_id=parent.session_id,
             )
-            child.assign_task(child_event.subtask.description)
+            child.assign_task(
+                child_event.subtask.description,
+                justification=child_event.subtask.justification,
+            )
 
             # Allocate budget proportionally based on subtask weight
             if total_weight > 0 and available_budget > 0:

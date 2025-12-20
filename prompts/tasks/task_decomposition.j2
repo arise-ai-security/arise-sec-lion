@@ -4,6 +4,24 @@ Agent Role: {{ agent_role }}
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
+{% if justification %}
+<SUPERVISOR_EXPECTATIONS>
+Your supervisor has assigned you this decomposition task with the following context:
+
+**Supervisor's Objective for You**: {{ justification.objective }}
+
+**Why This Task Was Delegated to You**: {{ justification.split_reason }}
+
+**Suggested Approach**: {{ justification.plan }}
+
+**Why This Approach Should Work**: {{ justification.why_it_may_work }}
+
+**Expected Deliverables**: {{ justification.expected_results }}
+
+When decomposing your task into subtasks, ensure your subtasks collectively achieve these expected results. Your decomposition should align with the supervisor's plan and objective.
+</SUPERVISOR_EXPECTATIONS>
+
+{% endif %}
 <TASK_DESCRIPTION>
 Your task is to decompose the following task into 2-3 concrete subtasks:
 

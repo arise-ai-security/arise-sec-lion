@@ -111,10 +111,26 @@ class PromptVariablesSchema(BaseModel):
 # Agent Summary Schemas (CQRS Projection)
 
 
+class SubtaskJustificationSchema(BaseModel):
+    """Schema for supervisor's justification of a subtask."""
+
+    parent_task: str = Field("", description="The supervisor's received task being decomposed")
+    split_reason: str = Field("", description="Why this subtask was split from the parent")
+    objective: str = Field("", description="What this subtask aims to achieve")
+    plan: str = Field("", description="How this subtask will be executed")
+    why_it_may_work: str = Field("", description="Reasoning for why this approach should succeed")
+    expected_results: str = Field("", description="What outputs/outcomes are expected")
+
+
 class SubtaskSummarySchema(BaseModel):
     """Schema for a subtask in the agent summary."""
 
     description: str = Field(..., description="Subtask description")
+    justification: SubtaskJustificationSchema = Field(
+        default_factory=SubtaskJustificationSchema,
+        description="Supervisor's reasoning for this subtask",
+    )
+    budget_weight: float = Field(1.0, description="Relative budget weight for this subtask")
     child_id: str | None = Field(None, description="Child agent UUID assigned to this subtask")
     child_status: str | None = Field(None, description="Child agent status")
 

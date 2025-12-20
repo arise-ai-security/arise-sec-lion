@@ -169,23 +169,78 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
       {/* Subtasks (for MANAGER agents) */}
       {summary.subtasks.length > 0 && (
         <Section title={`Subtasks (${summary.subtasks.length})`}>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {summary.subtasks.map((subtask, idx) => (
               <div
                 key={idx}
-                className="bg-gray-50 dark:bg-gray-800 p-2 rounded border-l-2 border-blue-400"
+                className="bg-gray-50 dark:bg-gray-800 p-3 rounded border-l-2 border-blue-400"
               >
-                <p className="text-sm text-gray-700 dark:text-gray-300">
-                  {subtask.description}
-                </p>
-                {subtask.child_status && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className={`px-1.5 py-0.5 text-xs rounded ${
+                {/* Description and status */}
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300 flex-1">
+                    {subtask.description}
+                  </p>
+                  {subtask.child_status && (
+                    <span className={`px-1.5 py-0.5 text-xs rounded shrink-0 ${
                       statusColors[subtask.child_status] || statusColors.pending
                     }`}>
                       {subtask.child_status}
                     </span>
+                  )}
+                </div>
+
+                {/* Budget weight */}
+                {subtask.budget_weight && subtask.budget_weight !== 1.0 && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    <span className="font-medium">Budget weight:</span> {subtask.budget_weight.toFixed(1)}x
                   </div>
+                )}
+
+                {/* Justification (collapsible) */}
+                {subtask.justification && subtask.justification.objective && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer hover:underline">
+                      View supervisor's justification
+                    </summary>
+                    <div className="mt-2 space-y-2 text-xs bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                      {subtask.justification.parent_task && subtask.justification.parent_task !== '(legacy event)' && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Parent Task:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.parent_task}</p>
+                        </div>
+                      )}
+                      {subtask.justification.split_reason && subtask.justification.split_reason !== '(legacy event)' && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Why Split:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.split_reason}</p>
+                        </div>
+                      )}
+                      {subtask.justification.objective && subtask.justification.objective !== '(legacy event)' && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Objective:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.objective}</p>
+                        </div>
+                      )}
+                      {subtask.justification.plan && subtask.justification.plan !== '(legacy event)' && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Plan:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.plan}</p>
+                        </div>
+                      )}
+                      {subtask.justification.why_it_may_work && subtask.justification.why_it_may_work !== '(legacy event)' && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Why It May Work:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.why_it_may_work}</p>
+                        </div>
+                      )}
+                      {subtask.justification.expected_results && subtask.justification.expected_results !== '(legacy event)' && (
+                        <div>
+                          <span className="font-semibold text-gray-600 dark:text-gray-400">Expected Results:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.expected_results}</p>
+                        </div>
+                      )}
+                    </div>
+                  </details>
                 )}
               </div>
             ))}

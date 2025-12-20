@@ -1,9 +1,13 @@
 """Domain service for building hierarchical prompts from Jinja2 templates."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+
+if TYPE_CHECKING:
+    from core.domain.subtask import SubtaskJustification
 
 
 class PromptBuilder:
@@ -29,6 +33,7 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
+        justification: "SubtaskJustification | None" = None,
     ) -> str:
         """Build prompt for PENDING agent complexity evaluation."""
         try:
@@ -38,6 +43,7 @@ class PromptBuilder:
                 task_description=task_description,
                 agent_id=str(agent_id),
                 parent_task=parent_task,
+                justification=justification,
             )
             output_format = self.env.get_template("output_formats/complexity_result.j2").render()
             return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
@@ -51,6 +57,7 @@ class PromptBuilder:
         agent_id: UUID,
         agent_role: str = "MANAGER",
         parent_task: str | None = None,
+        justification: "SubtaskJustification | None" = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition."""
         try:
@@ -66,6 +73,7 @@ class PromptBuilder:
                 agent_role=agent_role,
                 parent_task=parent_task,
                 default_tool=self.default_tool,
+                justification=justification,
             )
             output_format = self.env.get_template("output_formats/subtask_list.j2").render(
                 default_tool=self.default_tool,
@@ -80,6 +88,7 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
+        justification: "SubtaskJustification | None" = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation."""
         try:
@@ -95,6 +104,7 @@ class PromptBuilder:
                 agent_role="BOSS",
                 parent_task=parent_task,
                 default_tool=self.default_tool,
+                justification=justification,
             )
             output_format = self.env.get_template("output_formats/subtask_list.j2").render(
                 default_tool=self.default_tool,

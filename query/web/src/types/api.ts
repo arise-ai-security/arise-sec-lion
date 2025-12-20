@@ -83,8 +83,19 @@ export interface PromptVariables {
 
 // Agent Summary types (CQRS Projection)
 
+export interface SubtaskJustification {
+  parent_task: string;
+  split_reason: string;
+  objective: string;
+  plan: string;
+  why_it_may_work: string;
+  expected_results: string;
+}
+
 export interface SubtaskSummary {
   description: string;
+  justification: SubtaskJustification;
+  budget_weight: number;
   child_id: string | null;
   child_status: string | null;
 }
