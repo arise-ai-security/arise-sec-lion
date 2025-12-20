@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from core.domain.subtask import Subtask
+from core.domain.subtask import Subtask, SubtaskJustification
 
 
 def _utc_now() -> datetime:
@@ -38,6 +38,8 @@ class TaskAssigned(DomainEvent):
 
     task_description: str
     constraints: dict[str, Any] = Field(default_factory=dict)
+    # Supervisor's justification for this task (optional for backward compatibility)
+    justification: SubtaskJustification | None = None
 
 
 class StatusChanged(DomainEvent):

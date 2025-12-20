@@ -152,13 +152,10 @@ class AgentSession:
             aggregate_id=self.session_id,
             sequence_number=self._next_sequence(),
             task_description=task_description,
+            justification=justification,
         )
         self._apply(task_event)
         self._changes.append(task_event)
-
-        # Store supervisor's justification for this task (used in prompts)
-        if justification:
-            self.supervisor_justification = justification
 
     def shortcut_to_worker(self, reason: str = "randomly selected to skip complexity evaluation") -> None:
         """Bypass complexity evaluation and directly become WORKER."""
@@ -432,6 +429,7 @@ class AgentSession:
     def _(self, event: TaskAssigned) -> None:
         self.task_description = event.task_description
         self.status = AgentStatus.ANALYZING
+        self.supervisor_justification = event.justification
         self.version += 1
 
     @_apply.register
