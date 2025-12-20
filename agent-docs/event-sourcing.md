@@ -80,6 +80,8 @@ LLM failures publish `WorkFailed` event because:
 
 ## Domain Events Reference
 
+### Core Agent Events
+
 | Event | Trigger | Key Fields |
 |-------|---------|------------|
 | `AgentCreated` | New agent spawned | `role`, `parent_id`, `config` |
@@ -91,5 +93,57 @@ LLM failures publish `WorkFailed` event because:
 | `ThoughtCaptured` | Worker tool output | `content`, `stream` |
 | `WorkCompleted` | Success | `result` |
 | `WorkFailed` | Failure | `reason` |
+
+### Budget Events
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `BudgetAllocated` | Budget assigned | `amount`, `source` |
+| `BudgetAdjusted` | Budget modified | `adjustment`, `reason`, `new_balance` |
+| `BudgetRecollected` | Parent recollects | `child_id`, `remaining_budget`, `ratio_applied` |
+| `ChildFailed` | Child fails task | `child_id`, `failure_reason`, `budget_at_failure` |
+| `AllChildrenFailed` | All siblings fail | `subtask_description`, `child_ids`, `penalty_ratio` |
+
+### Task Queue Events
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `TaskEnqueued` | Subtask added | `subtask` |
+| `TaskDequeued` | Subtask removed | `subtask` |
+| `SubtaskRetried` | Retry with context | `original_subtask`, `revised_subtask`, `retry_count` |
+
+### Termination Events
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `AgentTerminated` | Agent terminated | `reason`, `final_budget`, `cascade` |
+| `SubtreeAborted` | Subtree cancelled | `subtask_id`, `child_ids_to_terminate`, `reason` |
+
+### Multi-Model Strategy Events
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `SubordinatesSpawned` | Multiple agents spawned | `subtask`, `total_budget_allocated`, `subordinate_configs` |
+| `FirstSuccessRecorded` | First subordinate wins | `winning_child_id`, `sibling_ids_terminated` |
+| `AllSubordinatesFailed` | All failed | `subtask`, `failed_child_ids`, `failure_reasons` |
+
+### Verification Events
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `VerificationInjected` | Verification triggered | `target_subtask`, `target_child_id`, `injection_reason` |
+| `VerifierSpawned` | Verifier created | `verifier_id`, `target_subtask`, `verifier_config` |
+| `VerificationCompleted` | Verifier finished | `verification_passed`, `verification_report`, `issues_found` |
+| `TaskReinjected` | Failed verification | `subtask`, `verification_context`, `retry_count` |
+| `VerificationHeuristicEvaluated` | Heuristic checked | `complexity_score`, `random_roll`, `verification_decided` |
+
+### Cost Tracking Events
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `TokensConsumed` | LLM call completed | `model`, `prompt_tokens`, `completion_tokens`, `cost_usd` |
+| `WorkerCostRecorded` | Worker tool used | `tool_name`, `cost_usd`, `duration_seconds` |
+| `BudgetExceeded` | Budget limit hit | `budget_limit_usd`, `current_total_usd` |
+| `LimitEnforced` | System limit enforced | `limit_type`, `limit_value`, `action_taken` |
 
 All events defined in: `core/domain/events.py`
