@@ -8,7 +8,9 @@ Parent Task: {{ parent_task or "Root task" }}
 <SUPERVISOR_EXPECTATIONS>
 Your supervisor has assigned you this decomposition task with the following context:
 
-**Supervisor's Objective for You**: {{ justification.objective }}
+**Supervisor's Original Task**: {{ justification.parent_task }}
+
+**Objective for This Subtask**: {{ justification.objective }}
 
 **Why This Task Was Delegated to You**: {{ justification.split_reason }}
 
@@ -17,6 +19,8 @@ Your supervisor has assigned you this decomposition task with the following cont
 **Why This Approach Should Work**: {{ justification.why_it_may_work }}
 
 **Expected Deliverables**: {{ justification.expected_results }}
+
+IMPORTANT: Your work and all subtasks you create must align with the supervisor's original task requirements. If the original task specifies a programming language, framework, or technology, you MUST ensure your subtasks use it.
 
 When decomposing your task into subtasks, ensure your subtasks collectively achieve these expected results. Your decomposition should align with the supervisor's plan and objective.
 </SUPERVISOR_EXPECTATIONS>

@@ -8,7 +8,9 @@ Parent Task: {{ parent_task or "Root task" }}
 <SUPERVISOR_EXPECTATIONS>
 Your supervisor has assigned you this task with the following context and expectations:
 
-**Supervisor's Objective for You**: {{ justification.objective }}
+**Supervisor's Original Task**: {{ justification.parent_task }}
+
+**Objective for This Subtask**: {{ justification.objective }}
 
 **Why This Subtask Was Created**: {{ justification.split_reason }}
 
@@ -17,6 +19,8 @@ Your supervisor has assigned you this task with the following context and expect
 **Why This Should Work**: {{ justification.why_it_may_work }}
 
 **Expected Results/Deliverables**: {{ justification.expected_results }}
+
+IMPORTANT: Your work must align with the supervisor's original task requirements. If the original task specifies a programming language, framework, or technology, you MUST use it.
 
 Consider these expectations when evaluating complexity. A task that aligns with a clear plan and well-defined expected results is more likely to be SIMPLE than one with ambiguous goals.
 </SUPERVISOR_EXPECTATIONS>

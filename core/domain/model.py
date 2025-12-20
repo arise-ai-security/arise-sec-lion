@@ -330,7 +330,8 @@ class AgentSession:
             supervisor_context = (
                 "<SUPERVISOR_EXPECTATIONS>\n"
                 "Your supervisor assigned this task with the following context and expectations:\n\n"
-                f"**Objective**: {j.objective}\n\n"
+                f"**Supervisor's Original Task**: {j.parent_task}\n\n"
+                f"**Objective for This Subtask**: {j.objective}\n\n"
                 f"**Why This Was Assigned to You**: {j.split_reason}\n\n"
                 f"**Suggested Approach**: {j.plan}\n\n"
                 f"**Why This Should Work**: {j.why_it_may_work}\n\n"
