@@ -5,6 +5,14 @@ Return ONLY valid JSON matching this exact schema:
 [
   {
     "description": "string (min 10 chars, max 500 chars)",
+    "justification": {
+      "parent_task": "string - the task you received that you are decomposing",
+      "split_reason": "string - why you are splitting this specific subtask from the parent",
+      "objective": "string - what this subtask aims to achieve",
+      "plan": "string - how this subtask will be executed",
+      "why_it_may_work": "string - reasoning for why this approach should succeed",
+      "expected_results": "string - what outputs/outcomes are expected"
+    },
     "budget_weight": number (0.1-10.0, based on complexity/importance/time),
     "config": {
       "strategy": "per_operation" | "heuristic" | "hybrid",
@@ -14,6 +22,16 @@ Return ONLY valid JSON matching this exact schema:
   },
   ... (2-3 subtasks total)
 ]
+
+## Justification Guidelines
+
+Each subtask MUST include a justification object explaining your reasoning:
+- **parent_task**: Quote or summarize the task you received that you're decomposing
+- **split_reason**: Explain why this piece needs to be a separate subtask (e.g., different skills, dependency order, parallel execution)
+- **objective**: Clear statement of what success looks like for this subtask
+- **plan**: Step-by-step approach the worker will take
+- **why_it_may_work**: Your reasoning/hypothesis for why this approach is viable
+- **expected_results**: Concrete deliverables or outcomes
 
 ## Budget Weight Guidelines
 
@@ -86,35 +104,47 @@ Examples:
 **CRITICAL RULES**:
 1. Response must be PURE JSON array (no markdown, no commentary)
 2. Array must contain 2-3 subtasks (not 1, not 4+)
-3. Each subtask MUST have "description", "budget_weight", and "config" fields
-4. Config MUST include "strategy" and "tool" fields
-5. All required fields for chosen strategy must be present
-6. Temperature: 0.0-2.0, max_tokens: 1-100000
-7. Model names: "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "gemini-flash", etc.
-8. budget_weight: 0.1-10.0 based on complexity, importance, and estimated time
+3. Each subtask MUST have "description", "justification", "budget_weight", and "config" fields
+4. Justification MUST include all 6 fields: parent_task, split_reason, objective, plan, why_it_may_work, expected_results
+5. Config MUST include "strategy" and "tool" fields
+6. All required fields for chosen strategy must be present
+7. Temperature: 0.0-2.0, max_tokens: 1-100000
+8. Model names: "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "gemini-flash", etc.
+9. budget_weight: 0.1-10.0 based on complexity, importance, and estimated time
 
-**Example Valid Output (per_operation)**:
+**Example Valid Output (for parent task: "Build a user authentication system")**:
 [
   {
     "description": "Research existing authentication libraries and select the most suitable one for our use case",
+    "justification": {
+      "parent_task": "Build a user authentication system",
+      "split_reason": "Research must happen first to inform implementation decisions; requires different skills than coding",
+      "objective": "Identify the best auth library that balances security, ease of use, and maintenance",
+      "plan": "Survey popular libraries (Passport, Auth0 SDK, custom JWT), compare features, check community support",
+      "why_it_may_work": "Well-established libraries exist with proven track records; comparison approach reduces risk",
+      "expected_results": "A recommendation document with chosen library and rationale"
+    },
     "budget_weight": 1.0,
     "config": {
-      "strategy": "per_operation",
-      "complexity_evaluation": {
+      "strategy": "heuristic",
+      "base": {
         "model": "gpt-4o-mini",
         "temperature": 0.3,
-        "max_tokens": 300
-      },
-      "task_decomposition": {
-        "model": "gpt-4o",
-        "temperature": 0.7,
-        "max_tokens": 1500
+        "max_tokens": 500
       },
       "tool": "{{ default_tool }}"
     }
   },
   {
     "description": "Implement user registration with email verification and password hashing",
+    "justification": {
+      "parent_task": "Build a user authentication system",
+      "split_reason": "Core implementation task that depends on research; complex enough to warrant dedicated focus",
+      "objective": "Create secure user registration flow with proper credential handling",
+      "plan": "Set up user model, implement bcrypt hashing, create email verification endpoints, add validation",
+      "why_it_may_work": "Standard patterns exist for this; bcrypt is battle-tested; email verification is well-documented",
+      "expected_results": "Working registration endpoint, verification email sending, secure password storage"
+    },
     "budget_weight": 3.0,
     "config": {
       "strategy": "heuristic",
@@ -128,10 +158,18 @@ Examples:
   }
 ]
 
-**Example Valid Output (heuristic)**:
+**Example Valid Output (for parent task: "Build a web scraper for product prices")**:
 [
   {
     "description": "Research BeautifulSoup library documentation and extract key usage patterns",
+    "justification": {
+      "parent_task": "Build a web scraper for product prices",
+      "split_reason": "Understanding the library first prevents wasted effort in implementation",
+      "objective": "Understand BeautifulSoup API to inform scraper implementation",
+      "plan": "Read official docs, identify selectors, pagination handling, and error patterns",
+      "why_it_may_work": "BeautifulSoup has extensive documentation and examples",
+      "expected_results": "Summary of key methods and patterns to use in implementation"
+    },
     "budget_weight": 0.8,
     "config": {
       "strategy": "heuristic",
@@ -145,6 +183,14 @@ Examples:
   },
   {
     "description": "Implement basic web scraper with error handling and rate limiting",
+    "justification": {
+      "parent_task": "Build a web scraper for product prices",
+      "split_reason": "Main implementation requiring the most resources and complexity",
+      "objective": "Build robust scraper that handles failures gracefully and respects rate limits",
+      "plan": "Create scraper class, add retry logic, implement rate limiter, handle common HTTP errors",
+      "why_it_may_work": "Modular approach allows testing each component; rate limiting prevents blocks",
+      "expected_results": "Functional scraper module with configurable rate limits and error recovery"
+    },
     "budget_weight": 2.5,
     "config": {
       "strategy": "heuristic",
@@ -158,6 +204,14 @@ Examples:
   },
   {
     "description": "Write unit tests for scraper functionality",
+    "justification": {
+      "parent_task": "Build a web scraper for product prices",
+      "split_reason": "Testing is a separate concern that can run in parallel after implementation starts",
+      "objective": "Ensure scraper reliability through comprehensive test coverage",
+      "plan": "Mock HTTP responses, test error handling paths, verify rate limiting behavior",
+      "why_it_may_work": "Mocking allows testing without hitting real servers; pytest fixtures simplify setup",
+      "expected_results": "Test suite with >80% coverage, CI-ready test configuration"
+    },
     "budget_weight": 1.5,
     "config": {
       "strategy": "heuristic",
