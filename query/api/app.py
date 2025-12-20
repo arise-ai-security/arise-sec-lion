@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app(
-    title: str = "Arise Multi-Agent System",
+    title: str = "Arise Sec Lion",
     static_dir: Path | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
