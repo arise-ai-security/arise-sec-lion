@@ -40,19 +40,29 @@ Inner Layer (Domain Core)
 | `EventStorePort` | Persist/load domain events | `PostgresEventStore` |
 | `LLMPort` | LLM reasoning operations | `LiteLLMAdapter` |
 | `WorkerToolPort` | Execute worker tasks | `ClaudeCodePTYAdapter`, `OpenHandsAdapter` |
+| `RewardMechanismPort` | Budget recollection ratios | `HeuristicRewardAdapter` |
+| `TaskAssignmentPort` | Task retry/terminate decisions | (pluggable) |
+| `VerificationHeuristicsPort` | Verification injection logic | (pluggable) |
+| `CostCalculatorPort` | LLM cost estimation | `CostCalculator` |
 
 ### Key Port Locations
 
-- `core/ports/event_store_port.py:15` - `EventStorePort` Protocol
-- `core/ports/llm_port.py:12` - `LLMPort` Protocol
-- `core/ports/worker_port.py:18` - `WorkerToolPort` Protocol
+- `core/ports/event_store_port.py` - `EventStorePort` Protocol
+- `core/ports/llm_port.py` - `LLMPort` Protocol
+- `core/ports/worker_port.py` - `WorkerToolPort` Protocol
+- `core/ports/reward_mechanism_port.py` - `RewardMechanismPort` Protocol
+- `core/ports/task_assignment_port.py` - `TaskAssignmentPort` Protocol
+- `core/ports/verification_heuristics_port.py` - `VerificationHeuristicsPort` Protocol
+- `core/ports/cost_calculator_port.py` - `CostCalculatorPort` Protocol
 
 ### Key Adapter Locations
 
-- `infrastructure/adapters/postgres_event_store.py:25` - PostgreSQL + asyncpg + OCC
-- `infrastructure/adapters/litellm_adapter.py:18` - Multi-provider LLM
-- `infrastructure/adapters/claude_pty_adapter.py:22` - Claude Code PTY wrapper
-- `infrastructure/adapters/openhands_adapter.py:30` - OpenHands SDK wrapper
+- `infrastructure/adapters/postgres_event_store.py` - PostgreSQL + asyncpg + OCC
+- `infrastructure/adapters/litellm_adapter.py` - Multi-provider LLM
+- `infrastructure/adapters/claude_pty_adapter.py` - Claude Code PTY wrapper
+- `infrastructure/adapters/openhands_adapter.py` - OpenHands SDK wrapper
+- `infrastructure/adapters/heuristic_reward_adapter.py` - Budget recollection heuristics
+- `infrastructure/adapters/cost_calculator.py` - LLM pricing calculator
 
 ## Composition Root (Bootstrap)
 

@@ -1,4 +1,4 @@
-# CLAUDE.md - Arise Multi-Agent System
+# CLAUDE.md - Arise Sec Lion
 
 ## What Is This Project?
 

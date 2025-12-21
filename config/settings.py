@@ -135,6 +135,23 @@ class OutputConfig(BaseModel):
     directory: str
 
 
+class SecurityConfig(BaseModel):
+    """Security benchmark generation settings."""
+
+    enabled: bool = True
+    auto_detect: bool = True  # Auto-detect security tasks from keywords
+    default_model_poc: str = "gpt-4o"  # Model for PoC generation
+    default_model_patch: str = "claude-3-5-sonnet-20241022"  # Model for patch generation
+    default_model_validation: str = "gpt-4o-mini"  # Model for validation
+    poc_temperature: float = Field(default=0.6, ge=0.0, le=2.0)
+    patch_temperature: float = Field(default=0.5, ge=0.0, le=2.0)
+    validation_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_poc_attempts: int = Field(default=3, ge=1, le=10)
+    max_patch_attempts: int = Field(default=3, ge=1, le=10)
+    docker_timeout: int = Field(default=300, gt=0)  # Seconds for Docker operations
+    sanitizer_flags: str = "-fsanitize=address,undefined -g"
+
+
 class Settings(BaseSettings):
     """Root config: secrets from env, everything else from YAML."""
 
@@ -145,6 +162,7 @@ class Settings(BaseSettings):
     worker: WorkerConfig
     orchestration: OrchestrationConfig
     output: OutputConfig
+    security: SecurityConfig = SecurityConfig()  # Optional with defaults
 
     @classmethod
     def _build_from_config(cls, config: dict[str, Any]) -> "Settings":
@@ -160,12 +178,16 @@ class Settings(BaseSettings):
         if postgres_host_override:
             db_config["host"] = postgres_host_override
 
+        # Security config is optional with defaults
+        security_config = config.get("security", {})
+
         return cls(
             database=DatabaseConfig(**db_config),
             llm=LLMConfig(**config.get("llm", {})),
             worker=WorkerConfig(**config.get("worker", {})),
             orchestration=OrchestrationConfig(**config.get("orchestration", {})),
             output=OutputConfig(**config.get("output", {})),
+            security=SecurityConfig(**security_config) if security_config else SecurityConfig(),
         )
 
     @classmethod

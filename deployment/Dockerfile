@@ -1,4 +1,4 @@
-# Arise Multi-Agent System
+# Arise Sec Lion
 # Two-stage build: development (default) and production
 
 # --- Development (default) ---

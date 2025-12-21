@@ -395,7 +395,7 @@ async def _execute_pipeline(
 )
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
-    """Arise Multi-Agent System CLI.
+    """Arise Sec Lion CLI.
 
     A recursive, self-healing multi-agent orchestration platform.
     """
