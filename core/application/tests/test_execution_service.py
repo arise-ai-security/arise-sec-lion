@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from config import OrchestrationConfig
-from core.application.execution_service import AgentExecutionService, BudgetConfig
+from core.application.execution_service import AgentExecutionService
 from core.domain.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.llm_response import LLMResponse, LLMUsage
@@ -34,15 +34,6 @@ def _test_system_limits() -> OrchestrationConfig.LimitsConfig:
         max_total_agents=-1,
         max_concurrent_workers=-1,
         llm_rate_limit_rpm=-1,
-    )
-
-
-def _test_budget_config() -> BudgetConfig:
-    """Create test budget config."""
-    return BudgetConfig(
-        max_total_cost_usd=10.0,
-        cost_warning_threshold=0.8,
-        cost_tracking_enabled=True,
     )
 
 
@@ -92,7 +83,6 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
         poll_interval=0.5,
         output_directory="./test_output",
         default_worker_tool="claude_code",
-        budget_config=_test_budget_config(),
     )
 
 

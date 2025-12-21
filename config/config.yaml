@@ -19,12 +19,7 @@ orchestration:
   llm_timeout: 30.0
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
-
-  budget:
-    max_total_cost_usd: 10.0
-    max_tokens_per_agent: 100000
-    cost_warning_threshold: 0.8
-    cost_tracking_enabled: true
+  # Note: Budget tracking will be added via SharedExecutionContext (context-passing feature)
 
   limits:
     max_depth: 5

@@ -138,18 +138,6 @@ class WorkerCostRecorded(DomainEvent):
     duration_seconds: float = 0.0
 
 
-class BudgetExceeded(DomainEvent):
-    """System budget limit reached - execution halted.
-
-    This is a hard stop event. When emitted, the agent should
-    transition to FAILED status with budget exceeded as reason.
-    """
-
-    budget_limit_usd: float
-    current_total_usd: float
-    exceeded_by_usd: float = 0.0
-
-
 class LimitEnforced(DomainEvent):
     """A system limit was enforced, modifying agent behavior.
 
@@ -158,7 +146,7 @@ class LimitEnforced(DomainEvent):
     (e.g., forcing WORKER role at max depth instead of spawning more managers).
     """
 
-    limit_type: str  # "depth", "children", "agents", "budget"
+    limit_type: str  # "depth", "children", "agents"
     limit_value: int | float
     attempted_value: int | float
-    action_taken: str  # "forced_worker_role", "rejected_children", "halted"
+    action_taken: str  # "forced_worker_role", "rejected_children"

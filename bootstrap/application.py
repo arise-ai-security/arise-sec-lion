@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from config import OrchestrationConfig
 from core.application.execution_service import (
     AgentExecutionService,
-    BudgetConfig,
     ProgressCallback,
 )
 
@@ -22,9 +21,6 @@ class ApplicationConfig:
     model_config: dict[str, str]
     output_directory: str
     default_worker_tool: str
-    budget_max_total_cost_usd: float
-    budget_cost_warning_threshold: float
-    budget_cost_tracking_enabled: bool
     progress_callback: ProgressCallback | None = None
 
 
@@ -40,12 +36,6 @@ def get_application(
     config: ApplicationConfig,
 ) -> Application:
     """Create all application services."""
-    budget_config = BudgetConfig(
-        max_total_cost_usd=config.budget_max_total_cost_usd,
-        cost_warning_threshold=config.budget_cost_warning_threshold,
-        cost_tracking_enabled=config.budget_cost_tracking_enabled,
-    )
-
     execution_service = AgentExecutionService(
         event_store=infrastructure.event_store,
         llm_port=infrastructure.llm_adapter,
@@ -56,7 +46,6 @@ def get_application(
         poll_interval=config.poll_interval,
         output_directory=config.output_directory,
         default_worker_tool=config.default_worker_tool,
-        budget_config=budget_config,
         progress_callback=config.progress_callback,
     )
 

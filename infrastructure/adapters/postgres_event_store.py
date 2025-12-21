@@ -8,7 +8,6 @@ import orjson
 
 from core.domain.events import (
     AgentCreated,
-    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -40,10 +39,9 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "ThoughtCaptured": ThoughtCaptured,
     "ChildCompleted": ChildCompleted,
     "ComplexityEvaluated": ComplexityEvaluated,
-    # Cost tracking events
+    # Cost tracking events (budget enforcement via SharedExecutionContext in future)
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,
-    "BudgetExceeded": BudgetExceeded,
     # Limit enforcement events
     "LimitEnforced": LimitEnforced,
 }

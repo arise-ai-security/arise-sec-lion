@@ -60,9 +60,6 @@ def make_test_app_config(
     model_config: dict[str, str] | None = None,
     output_directory: str = "./test_output",
     default_worker_tool: str = "claude_code",
-    budget_max_total_cost_usd: float = 10.0,
-    budget_cost_warning_threshold: float = 0.8,
-    budget_cost_tracking_enabled: bool = True,
 ) -> ApplicationConfig:
     """Create a complete ApplicationConfig for testing."""
     return ApplicationConfig(
@@ -72,9 +69,6 @@ def make_test_app_config(
         model_config=model_config or {"boss": "gpt-4o"},
         output_directory=output_directory,
         default_worker_tool=default_worker_tool,
-        budget_max_total_cost_usd=budget_max_total_cost_usd,
-        budget_cost_warning_threshold=budget_cost_warning_threshold,
-        budget_cost_tracking_enabled=budget_cost_tracking_enabled,
     )
 
 
@@ -241,11 +235,6 @@ orchestration:
   llm_timeout: 30.0
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
-  budget:
-    max_total_cost_usd: 10.0
-    max_tokens_per_agent: 100000
-    cost_warning_threshold: 0.8
-    cost_tracking_enabled: true
   limits:
     max_depth: -1
     max_children_per_node: -1

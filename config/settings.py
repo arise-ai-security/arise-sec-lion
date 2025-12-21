@@ -78,15 +78,10 @@ class WorkerConfig(BaseModel):
 
 
 class OrchestrationConfig(BaseModel):
-    """Execution behavior settings."""
+    """Execution behavior settings.
 
-    class BudgetConfig(BaseModel):
-        """Cost and token limits."""
-
-        max_total_cost_usd: float = Field(ge=0.0)
-        max_tokens_per_agent: int = Field(gt=0)
-        cost_warning_threshold: float = Field(ge=0.0, le=1.0)
-        cost_tracking_enabled: bool
+    Note: Budget tracking will be added via SharedExecutionContext (context-passing feature).
+    """
 
     class LimitsConfig(BaseModel):
         """Agent hierarchy and concurrency limits."""
@@ -120,7 +115,6 @@ class OrchestrationConfig(BaseModel):
     worker_timeout: float = Field(gt=0.0)
     default_task_complexity_threshold: int = Field(ge=1, le=10)
 
-    budget: BudgetConfig
     limits: LimitsConfig
 
 

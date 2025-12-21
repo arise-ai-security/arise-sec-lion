@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
-from core.domain.events import BudgetExceeded, ChildSpawned, DomainEvent, TokensConsumed
+from core.domain.events import ChildSpawned, DomainEvent
 
 
 if TYPE_CHECKING:
@@ -31,19 +31,11 @@ from core.domain.prompt_builder import PromptBuilder
 ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
-@dataclass
-class BudgetConfig:
-    """Budget configuration for cost tracking and limits."""
-
-    max_total_cost_usd: float
-    cost_warning_threshold: float
-    cost_tracking_enabled: bool
-
-
 class AgentExecutionService:
     """Orchestrates agent workflow: load → dispatch → persist → propagate.
 
-    Supports cost tracking, budget enforcement, and system limits.
+    Supports system limits and agent hierarchy management.
+    Note: Budget tracking will be added via SharedExecutionContext (context-passing feature).
     """
 
     def __init__(
@@ -57,7 +49,6 @@ class AgentExecutionService:
         poll_interval: float,
         output_directory: str,
         default_worker_tool: str,
-        budget_config: BudgetConfig,
         prompt_builder: PromptBuilder | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
@@ -73,11 +64,6 @@ class AgentExecutionService:
         self.progress_callback = progress_callback
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
-
-        # Budget tracking
-        self.budget_config = budget_config
-        self._total_cost_usd: float = 0.0
-        self._warning_emitted: bool = False
 
         # System limits (required, -1 means unlimited)
         self.system_limits = system_limits
@@ -97,73 +83,6 @@ class AgentExecutionService:
         if self.progress_callback is not None:
             with contextlib.suppress(Exception):
                 self.progress_callback(event, agent)
-
-    def _track_cost(self, event: DomainEvent) -> None:
-        """Track costs from TokensConsumed events."""
-        if not self.budget_config.cost_tracking_enabled:
-            return
-
-        if isinstance(event, TokensConsumed):
-            self._total_cost_usd += event.cost_usd
-
-            # Check warning threshold
-            warning_threshold = (
-                self.budget_config.max_total_cost_usd * self.budget_config.cost_warning_threshold
-            )
-            if self._total_cost_usd >= warning_threshold and not self._warning_emitted:
-                self._warning_emitted = True
-                # Log warning (could emit event in future)
-                print(
-                    f"⚠️  Budget warning: ${self._total_cost_usd:.4f} "
-                    f"(>{self.budget_config.cost_warning_threshold * 100:.0f}% of "
-                    f"${self.budget_config.max_total_cost_usd:.2f} limit)"
-                )
-
-    def _is_budget_exceeded(self) -> bool:
-        """Check if total cost exceeds budget limit."""
-        if not self.budget_config.cost_tracking_enabled:
-            return False
-        return self._total_cost_usd >= self.budget_config.max_total_cost_usd
-
-    async def _handle_budget_exceeded(self, agent: AgentSession, current_version: int) -> None:
-        """Emit BudgetExceeded event and fail agent."""
-        budget_event = BudgetExceeded(
-            aggregate_id=agent.session_id,
-            sequence_number=agent._next_sequence(),
-            budget_limit_usd=self.budget_config.max_total_cost_usd,
-            current_total_usd=self._total_cost_usd,
-            exceeded_by_usd=self._total_cost_usd - self.budget_config.max_total_cost_usd,
-        )
-        agent._apply(budget_event)
-        agent._changes.append(budget_event)
-
-        agent.fail_with_reason(
-            f"Budget exceeded: ${self._total_cost_usd:.4f} >= "
-            f"${self.budget_config.max_total_cost_usd:.2f} limit"
-        )
-
-        # Persist budget exceeded and failure events
-        for event in agent.events:
-            await self.event_store.append(event, expected_version=current_version)
-            current_version += 1
-            self._notify_progress(event, agent)
-
-        agent.mark_changes_as_committed()
-
-    async def _check_and_handle_post_action_budget(self, agent_id: UUID) -> bool:
-        """Check budget after action and handle if exceeded. Returns True if halted."""
-        if not self._is_budget_exceeded():
-            return False
-        # Reload agent to get fresh state and fail it
-        events = await self.event_store.get_events(agent_id)
-        agent = AgentSession.load_from_history(events)
-        if not agent.is_terminal():
-            await self._handle_budget_exceeded(agent, agent.version)
-        return True
-
-    def get_total_cost(self) -> float:
-        """Get current total cost across all agents."""
-        return self._total_cost_usd
 
     def _get_workspace_context(self) -> str | None:
         """Return cached file listing for workspace. Enables workers to see each other's files."""
@@ -199,10 +118,7 @@ class AgentExecutionService:
             return None
 
     async def run_agent_step(self, agent_id: UUID) -> None:
-        """Execute one workflow step: load → dispatch → persist with OCC retry.
-
-        Includes cost tracking, budget enforcement, and system limits.
-        """
+        """Execute one workflow step: load → dispatch → persist with OCC retry."""
         retry_count = 0
 
         while retry_count < self.max_retries:
@@ -218,11 +134,6 @@ class AgentExecutionService:
                 if agent_id in self._execution_contexts:
                     agent.set_execution_context(self._execution_contexts[agent_id])
 
-                # Check budget before executing (hard stop)
-                if self._is_budget_exceeded():
-                    await self._handle_budget_exceeded(agent, current_version)
-                    return
-
                 await self._dispatch_agent_action(agent)
 
                 uncommitted_events = list(agent.events)
@@ -230,14 +141,8 @@ class AgentExecutionService:
                     await self.event_store.append(event, expected_version=current_version)
                     current_version += 1
                     self._notify_progress(event, agent)
-                    # Track costs from TokensConsumed events
-                    self._track_cost(event)
 
                 agent.mark_changes_as_committed()
-
-                # Check budget after action (may have just exceeded)
-                if await self._check_and_handle_post_action_budget(agent_id):
-                    return
 
                 await self._handle_child_spawning(agent, uncommitted_events)
                 await self._handle_parent_notification(agent)
@@ -450,7 +355,6 @@ class AgentExecutionService:
         root_context = ExecutionContext.create_root(
             max_depth=self.system_limits.max_depth,
             max_children_per_node=self.system_limits.max_children_per_node,
-            budget_usd=self.budget_config.max_total_cost_usd,
             max_retries=self.max_retries,
         )
         self._execution_contexts[root_id] = root_context
