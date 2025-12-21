@@ -441,38 +441,62 @@ function AgentModal({ agent, onClose }) {
         {/* Subtasks (for managers) */}
         {agent.subtasks && agent.subtasks.length > 0 && (
           <Section title="Subtasks">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {agent.subtasks.map((subtask, index) => (
-                <div
-                  key={index}
-                  style={{
-                    backgroundColor: '#f9fafb',
-                    borderRadius: '6px',
-                    padding: '10px 12px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '12px',
-                  }}
-                >
-                  <span style={{ fontSize: '13px', color: '#374151', flex: 1 }}>{subtask.description}</span>
-                  {subtask.child_status && (
-                    <span
-                      style={{
-                        backgroundColor: (STATUS_BADGES[subtask.child_status] || { bg: '#e5e7eb' }).bg,
-                        color: (STATUS_BADGES[subtask.child_status] || { text: '#374151' }).text,
-                        padding: '2px 8px',
-                        borderRadius: '9999px',
-                        fontSize: '11px',
-                        fontWeight: '500',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {subtask.child_status}
-                    </span>
-                  )}
-                </div>
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {agent.subtasks.map((subtask, index) => {
+                const j = subtask.justification || {};
+                const hasJustification = j.objective || j.plan || j.split_reason || j.why_it_may_work || j.expected_results;
+                return (
+                  <div
+                    key={index}
+                    style={{
+                      backgroundColor: '#f9fafb',
+                      borderRadius: '8px',
+                      padding: '12px',
+                      border: '1px solid #e5e7eb',
+                    }}
+                  >
+                    {/* Header with description and status */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: hasJustification ? '10px' : 0 }}>
+                      <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: '500', flex: 1 }}>{subtask.description}</span>
+                      {subtask.child_status && (
+                        <span
+                          style={{
+                            backgroundColor: (STATUS_BADGES[subtask.child_status] || { bg: '#e5e7eb' }).bg,
+                            color: (STATUS_BADGES[subtask.child_status] || { text: '#374151' }).text,
+                            padding: '2px 8px',
+                            borderRadius: '9999px',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {subtask.child_status}
+                        </span>
+                      )}
+                    </div>
+                    {/* Supervisor Justification */}
+                    {hasJustification && (
+                      <div style={{ fontSize: '12px', color: '#6b7280', display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid #e5e7eb', paddingTop: '10px' }}>
+                        {j.objective && (
+                          <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Objective:</span> {j.objective}</div>
+                        )}
+                        {j.plan && (
+                          <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Plan:</span> {j.plan}</div>
+                        )}
+                        {j.split_reason && (
+                          <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Split Reason:</span> {j.split_reason}</div>
+                        )}
+                        {j.why_it_may_work && (
+                          <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Why It May Work:</span> {j.why_it_may_work}</div>
+                        )}
+                        {j.expected_results && (
+                          <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Expected Results:</span> {j.expected_results}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </Section>
         )}
