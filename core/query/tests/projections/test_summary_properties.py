@@ -8,7 +8,6 @@ from hypothesis import given, settings, strategies as st
 
 from core.domain.events import (
     AgentCreated,
-    BudgetExceeded,
     DomainEvent,
     TokensConsumed,
     WorkerCostRecorded,

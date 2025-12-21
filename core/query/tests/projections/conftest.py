@@ -7,7 +7,6 @@ import pytest
 
 from core.domain.events import (
     AgentCreated,
-    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -333,19 +332,6 @@ def worker_cost_recorded_event() -> WorkerCostRecorded:
         cost_usd=0.50,
         duration_seconds=120.0,
         occurred_at=BASE_TIME + timedelta(seconds=10),
-    )
-
-
-@pytest.fixture
-def budget_exceeded_event() -> BudgetExceeded:
-    """Create a BudgetExceeded event."""
-    return BudgetExceeded(
-        aggregate_id=BOSS_ID,
-        sequence_number=10,
-        budget_limit_usd=1.0,
-        current_total_usd=1.5,
-        exceeded_by_usd=0.5,
-        occurred_at=BASE_TIME + timedelta(seconds=15),
     )
 
 

@@ -12,7 +12,6 @@ from core.domain.agent_config import AgentConfig
 from core.domain.config_resolver import ConfigResolver
 from core.domain.events import (
     AgentCreated,
-    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
@@ -442,11 +441,6 @@ class AgentSession:
     @_apply.register
     def _(self, event: TokensConsumed) -> None:
         # Cost events don't change agent state, just increment version for OCC
-        self.version += 1
-
-    @_apply.register
-    def _(self, event: BudgetExceeded) -> None:
-        # Budget exceeded is informational, actual failure comes from WorkFailed
         self.version += 1
 
     @_apply.register

@@ -7,7 +7,6 @@ from uuid import UUID
 
 from core.domain.events import (
     AgentCreated,
-    BudgetExceeded,
     DomainEvent,
     StatusChanged,
     TokensConsumed,
@@ -146,9 +145,6 @@ class SummaryProjection(Projection):
                 if event.tokens:
                     total_tokens += event.tokens
                     tokens_by_role[role] += event.tokens
-
-            elif isinstance(event, BudgetExceeded):
-                budget_exceeded = True
 
         total_cost = llm_cost + worker_cost
 

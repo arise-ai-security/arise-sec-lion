@@ -4,7 +4,6 @@ from collections import defaultdict
 from collections.abc import Iterable
 
 from core.domain.events import (
-    BudgetExceeded,
     DomainEvent,
     TokensConsumed,
     WorkerCostRecorded,
@@ -73,9 +72,6 @@ class CostProjection(Projection):
                 cost_by_agent[str(event.aggregate_id)] += event.cost_usd
                 if event.tokens:
                     total_tokens += event.tokens
-
-            elif isinstance(event, BudgetExceeded):
-                budget_exceeded = True
 
         total_cost = llm_cost + worker_cost
 

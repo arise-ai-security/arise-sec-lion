@@ -7,7 +7,6 @@ import pytest
 
 from core.domain.events import (
     AgentCreated,
-    BudgetExceeded,
     StatusChanged,
     TaskAssigned,
     TokensConsumed,
@@ -345,31 +344,6 @@ class TestSummaryProjectionCosts:
         assert result.cost is not None
         assert result.cost.budget_exceeded is True
         assert result.cost.budget_remaining_usd == 0.0
-
-    def test_budget_exceeded_event_sets_flag(self) -> None:
-        """Should set budget_exceeded when BudgetExceeded event exists."""
-        events = [
-            AgentCreated(
-                aggregate_id=BOSS_ID,
-                sequence_number=1,
-                role="BOSS",
-                occurred_at=BASE_TIME,
-            ),
-            BudgetExceeded(
-                aggregate_id=BOSS_ID,
-                sequence_number=2,
-                budget_limit_usd=1.0,
-                current_total_usd=1.5,
-                exceeded_by_usd=0.5,
-                occurred_at=BASE_TIME + timedelta(seconds=1),
-            ),
-        ]
-
-        projection = SummaryProjection()
-        result = projection.project(events)
-
-        assert result.cost is not None
-        assert result.cost.budget_exceeded is True
 
     def test_empty_events_has_zero_costs(self) -> None:
         """Should return None cost for empty events."""

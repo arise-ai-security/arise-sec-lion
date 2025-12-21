@@ -1,9 +1,15 @@
-"""Agent Execution Service - orchestrates agent lifecycle and execution."""
+"""Agent Execution Service - orchestrates agent lifecycle and execution.
+
+This is the main orchestration service that coordinates:
+- Agent step execution (load -> dispatch -> persist)
+- Child agent spawning
+- Parent notification on completion
+- System loop for continuous execution
+"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +17,15 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
+from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
+from core.application.services.child_factory import ChildAgentFactory
+from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.query_service import AgentQueryService
+from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.events import ChildSpawned, DomainEvent
+from core.domain.exceptions import ConcurrencyError
+from core.domain.model import AgentRole, AgentSession, AgentStatus
+from core.domain.prompt_builder import PromptBuilder
 
 
 if TYPE_CHECKING:
@@ -22,19 +36,34 @@ if TYPE_CHECKING:
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
-from core.domain.exceptions import ConcurrencyError
-from core.domain.execution_context import ExecutionContext
-from core.domain.model import AgentRole, AgentSession, AgentStatus
-from core.domain.prompt_builder import PromptBuilder
-
 
 ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
-class AgentExecutionService:
-    """Orchestrates agent workflow: load → dispatch → persist → propagate.
+@dataclass(frozen=True)
+class ServiceConfig:
+    """Configuration for AgentExecutionService.
 
-    Supports system limits and agent hierarchy management.
+    Immutable configuration object following the Parameter Object pattern.
+    """
+
+    max_retries: int
+    poll_interval: float
+    output_directory: str
+    default_worker_tool: str
+    model_config: dict[str, str]
+
+
+class AgentExecutionService:
+    """Orchestrates agent workflow using composed services.
+
+    This is a thin coordinator that delegates to specialized services:
+    - AgentRepository: Load/persist agent state
+    - ChildAgentFactory: Create child agents
+    - AgentQueryService: Read operations (CQRS)
+    - ExecutionContextRegistry: Manage execution contexts
+    - WorkspaceContextProvider: Workspace file context
+
     Note: Budget tracking will be added via SharedExecutionContext (context-passing feature).
     """
 
@@ -44,243 +73,111 @@ class AgentExecutionService:
         llm_port: LLMPort,
         worker_tool_port: WorkerToolPort,
         system_limits: SystemLimitsConfig,
-        model_config: dict[str, str],
-        max_retries: int,
-        poll_interval: float,
-        output_directory: str,
-        default_worker_tool: str,
+        config: ServiceConfig,
         prompt_builder: PromptBuilder | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
-        self.event_store = event_store
-        self.llm_port = llm_port
-        self.worker_tool_port = worker_tool_port
-        self.prompt_builder = prompt_builder or PromptBuilder(default_tool=default_worker_tool)
-        self.model_config = model_config
-        self.max_retries = max_retries
-        self.poll_interval = poll_interval
-        self.output_directory = output_directory
-        self.working_directory: str | None = None
-        self.progress_callback = progress_callback
-        self._workspace_context_cache: str | None = None
-        self._workspace_context_scanned: bool = False
+        # Core ports
+        self._event_store = event_store
+        self._llm_port = llm_port
+        self._worker_tool_port = worker_tool_port
 
-        # System limits (required, -1 means unlimited)
-        self.system_limits = system_limits
-        # Semaphore: use large number for "unlimited" when max_concurrent_workers is -1
+        # Configuration
+        self._config = config
+        self._system_limits = system_limits
+        self._prompt_builder = prompt_builder or PromptBuilder(
+            default_tool=config.default_worker_tool
+        )
+
+        # Composed services
+        self._repository = AgentRepository(
+            event_store=event_store,
+            max_retries=config.max_retries,
+            progress_callback=progress_callback,
+        )
+        self._context_registry = ExecutionContextRegistry()
+        self._workspace = WorkspaceContextProvider()
+        self._query_service = AgentQueryService(self._repository)
+        self._child_factory = ChildAgentFactory(
+            repository=self._repository,
+            context_registry=self._context_registry,
+            max_total_agents=system_limits.max_total_agents,
+        )
+
+        # Worker concurrency control
         semaphore_limit = (
             system_limits.max_concurrent_workers
             if system_limits.is_workers_limited()
             else 10000  # Effectively unlimited
         )
         self._worker_semaphore = asyncio.Semaphore(semaphore_limit)
-        self._total_agents_created: int = 0
 
-        # Execution context tracking (maps agent_id -> context)
-        self._execution_contexts: dict[UUID, ExecutionContext] = {}
+        # Progress callback
+        self._progress_callback = progress_callback
 
-    def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
-        if self.progress_callback is not None:
-            with contextlib.suppress(Exception):
-                self.progress_callback(event, agent)
+    # -------------------------------------------------------------------------
+    # Public API
+    # -------------------------------------------------------------------------
 
-    def _get_workspace_context(self) -> str | None:
-        """Return cached file listing for workspace. Enables workers to see each other's files."""
-        if self._workspace_context_scanned:
-            return self._workspace_context_cache
+    async def initialize(self) -> None:
+        """Initialize infrastructure connections."""
+        await self._event_store.connect()
+        await self._event_store.initialize_schema()
 
-        self._workspace_context_scanned = True
+    async def cleanup(self) -> None:
+        """Cleanup infrastructure connections."""
+        await self._event_store.disconnect()
 
-        if not self.working_directory:
-            return None
+    async def create_boss_agent(self, task_description: str) -> UUID:
+        """Create root BOSS agent with task.
 
-        workspace_path = Path(self.working_directory)
-        if not workspace_path.exists():
-            return None
+        Initializes execution context for the agent hierarchy.
+        Returns the agent UUID.
+        """
+        root_id = uuid4()
+        self._reset_for_new_run(root_id)
 
-        try:
-            files = []
-            for item in workspace_path.rglob("*"):
-                if any(part.startswith(".") for part in item.parts):
-                    continue
-                if item.is_file():
-                    rel_path = item.relative_to(workspace_path)
-                    files.append(str(rel_path))
+        # Setup working directory
+        self._setup_working_directory(root_id)
 
-            if not files:
-                return None
+        # Create and persist boss agent
+        boss_agent = self._create_boss_session(root_id, task_description)
+        await self._repository.save_new_agent(boss_agent)
 
-            files.sort()
-            self._workspace_context_cache = "\n".join(f"- {f}" for f in files)
-            return self._workspace_context_cache
-
-        except OSError:
-            return None
+        return root_id
 
     async def run_agent_step(self, agent_id: UUID) -> None:
-        """Execute one workflow step: load → dispatch → persist with OCC retry."""
+        """Execute one workflow step: load -> dispatch -> persist with OCC retry."""
         retry_count = 0
 
-        while retry_count < self.max_retries:
+        while retry_count < self._config.max_retries:
             try:
-                events = await self.event_store.get_events(agent_id)
-                if not events:
-                    raise ValueError(f"Agent {agent_id} not found in event store")
-
-                agent = AgentSession.load_from_history(events)
+                agent = await self._load_agent_with_context(agent_id)
                 current_version = agent.version
 
-                # Set execution context on agent for limit enforcement
-                if agent_id in self._execution_contexts:
-                    agent.set_execution_context(self._execution_contexts[agent_id])
-
                 await self._dispatch_agent_action(agent)
-
-                uncommitted_events = list(agent.events)
-                for event in uncommitted_events:
-                    await self.event_store.append(event, expected_version=current_version)
-                    current_version += 1
-                    self._notify_progress(event, agent)
-
-                agent.mark_changes_as_committed()
-
-                await self._handle_child_spawning(agent, uncommitted_events)
-                await self._handle_parent_notification(agent)
-                return
+                uncommitted = await self._persist_agent_events(agent, current_version)
+                await self._handle_post_step(agent, uncommitted)
+                return  # Success
 
             except ConcurrencyError as e:
                 retry_count += 1
-                if retry_count >= self.max_retries:
+                if retry_count >= self._config.max_retries:
                     raise ConcurrencyError(
                         aggregate_id=str(agent_id),
                         expected_version=e.expected_version,
                         actual_version=e.actual_version,
                     ) from e
+                # Will retry by reloading agent
 
             except Exception as e:
-                try:
-                    events = await self.event_store.get_events(agent_id)
-                    if events:
-                        agent = AgentSession.load_from_history(events)
-                        current_version = agent.version
-                        agent.fail_with_reason(f"Execution error: {e!r}")
-
-                        for event in agent.events:
-                            await self.event_store.append(event, expected_version=current_version)
-                            current_version += 1
-
-                except Exception as persist_error:
-                    raise RuntimeError(
-                        f"Failed to persist error state for agent {agent_id}: {persist_error!r}"
-                    ) from e
+                await self._handle_step_failure(agent_id, e)
                 raise
-
-    async def _dispatch_agent_action(self, agent: AgentSession) -> None:
-        """Dispatch based on role: PENDING→complexity, BOSS/MANAGER→decompose, WORKER→execute.
-
-        Worker execution is rate-limited by max_concurrent_workers semaphore.
-        """
-        if agent.status != AgentStatus.ANALYZING:
-            return
-
-        if agent.role == AgentRole.PENDING:
-            await agent.evaluate_complexity(self.llm_port, self.prompt_builder)
-
-        elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
-            await agent.evaluate_task(self.llm_port, self.prompt_builder)
-
-        elif agent.role == AgentRole.WORKER:
-            # Use semaphore to limit concurrent worker executions
-            async with self._worker_semaphore:
-                workspace_context = self._get_workspace_context()
-                await agent.execute_task(
-                    self.worker_tool_port,
-                    working_directory=self.working_directory,
-                    workspace_context=workspace_context,
-                )
-
-        else:
-            raise ValueError(f"Unknown agent role: {agent.role}")
-
-    async def _handle_child_spawning(self, parent: AgentSession, events: list) -> None:
-        """Create child AgentSessions from ChildSpawned events.
-
-        Propagates execution context to children with incremented depth.
-        Enforces max_total_agents limit.
-        """
-        child_spawned_events = [e for e in events if isinstance(e, ChildSpawned)]
-
-        # Get parent's execution context for propagation
-        parent_context = self._execution_contexts.get(parent.session_id)
-
-        for child_event in child_spawned_events:
-            # Check max_total_agents limit (if enabled)
-            if (
-                self.system_limits.is_agents_limited()
-                and self._total_agents_created >= self.system_limits.max_total_agents
-            ):
-                # Skip creating this child - limit exceeded
-                # The parent will be notified of failure when children don't complete
-                continue
-
-            child_config = child_event.child_config
-            child = AgentSession.create(
-                session_id=child_event.child_id,
-                role=AgentRole(child_event.child_role),
-                config=child_config,
-                parent_id=parent.session_id,
-            )
-            child.assign_task(child_event.subtask.description)
-
-            # Propagate execution context to child (with incremented depth)
-            if parent_context is not None:
-                child_context = parent_context.for_child()
-                self._execution_contexts[child_event.child_id] = child_context
-
-            for idx, child_evt in enumerate(child.events):
-                await self.event_store.append(child_evt, expected_version=idx)
-                self._notify_progress(child_evt, child)
-
-            child.mark_changes_as_committed()
-            self._total_agents_created += 1
-
-    async def _handle_parent_notification(self, agent: AgentSession) -> None:
-        """Notify parent when child completes, triggering aggregation if all done."""
-        if agent.status != AgentStatus.COMPLETED or agent.parent_id is None:
-            return
-
-        parent_events = await self.event_store.get_events(agent.parent_id)
-        if not parent_events:
-            raise ValueError(f"Parent agent {agent.parent_id} not found in event store")
-
-        parent = AgentSession.load_from_history(parent_events)
-        parent_version = parent.version
-
-        parent.handle_child_update(agent.session_id, agent.result or "")
-
-        for event in parent.events:
-            await self.event_store.append(event, expected_version=parent_version)
-            parent_version += 1
-            self._notify_progress(event, parent)
-
-        parent.mark_changes_as_committed()
-
-    async def _get_active_agent_ids(self) -> list[UUID]:
-        """Return agent IDs not in terminal state (COMPLETED/FAILED)."""
-        all_agent_ids = await self.event_store.get_all_aggregate_ids()
-        active_ids = []
-        for agent_id in all_agent_ids:
-            events = await self.event_store.get_events(agent_id)
-            if events:
-                agent = AgentSession.load_from_history(events)
-                if not agent.is_terminal():
-                    active_ids.append(agent_id)
-        return active_ids
 
     async def run_system_loop(self, root_agent_id: UUID) -> None:
         """Poll and execute active agents until all reach terminal state."""
         while True:
-            active_agents = await self._get_active_agent_ids()
+            active_agents = await self._query_service.get_active_agent_ids()
             if not active_agents:
                 break
 
@@ -290,84 +187,54 @@ class AgentExecutionService:
                 except Exception as e:
                     print(f"Error executing agent {agent_id}: {e!r}")
 
-            await asyncio.sleep(self.poll_interval)
+            await asyncio.sleep(self._config.poll_interval)
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
-        events = await self.event_store.get_events(agent_id)
-        if not events:
-            raise ValueError(f"Agent {agent_id} not found")
-
-        agent = AgentSession.load_from_history(events)
-        return AgentResultDTO(
-            agent_id=str(agent.session_id),
-            status=agent.status.value,
-            result=agent.result,
-            task_description=agent.task_description or "",
-            role=agent.role.value,
-        )
+        """Get agent execution result."""
+        return await self._query_service.get_result(agent_id)
 
     async def get_system_statistics(self) -> SystemStatisticsDTO:
-        all_agent_ids = await self.event_store.get_all_aggregate_ids()
+        """Get system-wide agent statistics."""
+        return await self._query_service.get_statistics()
 
-        completed = 0
-        failed = 0
-        active = 0
+    async def _get_active_agent_ids(self) -> list[UUID]:
+        """Return agent IDs not in terminal state (for backward compatibility)."""
+        return await self._query_service.get_active_agent_ids()
 
-        for agent_id in all_agent_ids:
-            events = await self.event_store.get_events(agent_id)
-            if events:
-                agent = AgentSession.load_from_history(events)
-                if agent.status == AgentStatus.COMPLETED:
-                    completed += 1
-                elif agent.status == AgentStatus.FAILED:
-                    failed += 1
-                else:
-                    active += 1
+    # -------------------------------------------------------------------------
+    # Internal Methods
+    # -------------------------------------------------------------------------
 
-        return SystemStatisticsDTO(
-            total_agents=len(all_agent_ids),
-            completed=completed,
-            failed=failed,
-            active=active,
+    def _reset_for_new_run(self, root_id: UUID) -> None:
+        """Reset all state for a new execution run."""
+        self._workspace.reset()
+        self._context_registry.reset()
+        self._child_factory.reset(initial_count=1)  # Count the boss agent
+
+        # Create root execution context
+        self._context_registry.create_root(
+            root_id=root_id,
+            max_depth=self._system_limits.max_depth,
+            max_children_per_node=self._system_limits.max_children_per_node,
+            max_retries=self._config.max_retries,
         )
 
-    async def initialize(self) -> None:
-        await self.event_store.connect()
-        await self.event_store.initialize_schema()
+    def _setup_working_directory(self, root_id: UUID) -> None:
+        """Setup working directory for the run."""
+        if not self._config.output_directory:
+            return
 
-    async def cleanup(self) -> None:
-        await self.event_store.disconnect()
+        base_output = Path(self._config.output_directory).resolve()
+        base_output.mkdir(parents=True, exist_ok=True)
 
-    async def create_boss_agent(self, task_description: str) -> UUID:
-        """Create root BOSS agent with task. Returns agent UUID.
+        run_output_path = base_output / str(root_id)
+        run_output_path.mkdir(parents=True, exist_ok=True)
 
-        Initializes execution context for the agent hierarchy with system limits.
-        """
-        root_id = uuid4()
+        self._workspace.set_working_directory(run_output_path)
 
-        # Reset state for new run
-        self._workspace_context_cache = None
-        self._workspace_context_scanned = False
-        self._total_agents_created = 1  # Count the boss agent
-        self._execution_contexts.clear()
-
-        # Create root execution context from system limits
-        root_context = ExecutionContext.create_root(
-            max_depth=self.system_limits.max_depth,
-            max_children_per_node=self.system_limits.max_children_per_node,
-            max_retries=self.max_retries,
-        )
-        self._execution_contexts[root_id] = root_context
-
-        # Use .resolve() for absolute path - worker tools may run in sandboxed environments
-        if self.output_directory:
-            base_output = Path(self.output_directory).resolve()
-            base_output.mkdir(parents=True, exist_ok=True)
-            run_output_path = base_output / str(root_id)
-            run_output_path.mkdir(parents=True, exist_ok=True)
-            self.working_directory = str(run_output_path)
-
-        boss_model = self.model_config.get("boss", "gpt-4o-mini")
+    def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
+        """Create the root BOSS agent session."""
+        boss_model = self._config.model_config.get("boss", "gpt-4o-mini")
         boss_config = {
             "strategy": "heuristic",
             "base": {
@@ -385,10 +252,150 @@ class AgentExecutionService:
             parent_id=None,
         )
         boss_agent.assign_task(task_description)
+        return boss_agent
 
-        for idx, event in enumerate(boss_agent.events):
-            await self.event_store.append(event, expected_version=idx)
-            self._notify_progress(event, boss_agent)
+    async def _load_agent_with_context(self, agent_id: UUID) -> AgentSession:
+        """Load agent and attach execution context."""
+        agent = await self._repository.load(agent_id)
 
-        boss_agent.mark_changes_as_committed()
-        return root_id
+        context = self._context_registry.get(agent_id)
+        if context is not None:
+            agent.set_execution_context(context)
+
+        return agent
+
+    async def _dispatch_agent_action(self, agent: AgentSession) -> None:
+        """Dispatch based on role: PENDING->complexity, BOSS/MANAGER->decompose, WORKER->execute."""
+        if agent.status != AgentStatus.ANALYZING:
+            return
+
+        if agent.role == AgentRole.PENDING:
+            await agent.evaluate_complexity(self._llm_port, self._prompt_builder)
+
+        elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
+            await agent.evaluate_task(self._llm_port, self._prompt_builder)
+
+        elif agent.role == AgentRole.WORKER:
+            async with self._worker_semaphore:
+                await agent.execute_task(
+                    self._worker_tool_port,
+                    working_directory=self._workspace.working_directory,
+                    workspace_context=self._workspace.get_context(),
+                )
+
+        else:
+            raise ValueError(f"Unknown agent role: {agent.role}")
+
+    async def _persist_agent_events(
+        self,
+        agent: AgentSession,
+        base_version: int,
+    ) -> list[DomainEvent]:
+        """Persist uncommitted events and return them."""
+        uncommitted = list(agent.events)
+        current_version = base_version
+
+        for event in uncommitted:
+            await self._event_store.append(event, expected_version=current_version)
+            current_version += 1
+            self._notify_progress(event, agent)
+
+        agent.mark_changes_as_committed()
+        return uncommitted
+
+    async def _handle_post_step(
+        self,
+        agent: AgentSession,
+        events: list[DomainEvent],
+    ) -> None:
+        """Handle post-step operations: child spawning and parent notification."""
+        # Spawn children
+        child_events = [e for e in events if isinstance(e, ChildSpawned)]
+        if child_events:
+            await self._child_factory.create_children_from_events(
+                child_events,
+                agent.session_id,
+            )
+
+        # Notify parent
+        await self._notify_parent_if_complete(agent)
+
+    async def _notify_parent_if_complete(self, agent: AgentSession) -> None:
+        """Notify parent when child completes."""
+        if agent.status != AgentStatus.COMPLETED or agent.parent_id is None:
+            return
+
+        try:
+            parent = await self._repository.load(agent.parent_id)
+        except AgentNotFoundError:
+            raise ValueError(f"Parent agent {agent.parent_id} not found")
+
+        parent_version = parent.version
+        parent.handle_child_update(agent.session_id, agent.result or "")
+
+        for event in parent.events:
+            await self._event_store.append(event, expected_version=parent_version)
+            parent_version += 1
+            self._notify_progress(event, parent)
+
+        parent.mark_changes_as_committed()
+
+    async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
+        """Handle execution failure by persisting error state."""
+        try:
+            agent = await self._repository.load_if_exists(agent_id)
+            if agent is None:
+                return
+
+            current_version = agent.version
+            agent.fail_with_reason(f"Execution error: {error!r}")
+
+            for event in agent.events:
+                await self._event_store.append(event, expected_version=current_version)
+                current_version += 1
+
+        except Exception as persist_error:
+            raise RuntimeError(
+                f"Failed to persist error state for agent {agent_id}: {persist_error!r}"
+            ) from error
+
+    def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
+        """Notify progress callback if set."""
+        if self._progress_callback is not None:
+            try:
+                self._progress_callback(event, agent)
+            except Exception:
+                pass
+
+
+# Backward compatibility: factory function matching old constructor signature
+def create_execution_service(
+    event_store: EventStorePort,
+    llm_port: LLMPort,
+    worker_tool_port: WorkerToolPort,
+    system_limits: SystemLimitsConfig,
+    model_config: dict[str, str],
+    max_retries: int,
+    poll_interval: float,
+    output_directory: str,
+    default_worker_tool: str,
+    prompt_builder: PromptBuilder | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> AgentExecutionService:
+    """Factory function for backward compatibility with old constructor signature."""
+    config = ServiceConfig(
+        max_retries=max_retries,
+        poll_interval=poll_interval,
+        output_directory=output_directory,
+        default_worker_tool=default_worker_tool,
+        model_config=model_config,
+    )
+    return AgentExecutionService(
+        event_store=event_store,
+        llm_port=llm_port,
+        worker_tool_port=worker_tool_port,
+        system_limits=system_limits,
+        config=config,
+        prompt_builder=prompt_builder,
+        progress_callback=progress_callback,
+    )

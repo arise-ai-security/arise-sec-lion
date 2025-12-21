@@ -19,20 +19,21 @@ The main function should be as thin as possible - just call the CLI.
 
 import sys
 
-from presentation.cli import cli
+from bootstrap import get_click_group
 
 
 def main() -> None:
     """Main entry point.
 
     Responsibilities:
-    1. Invoke the Click CLI
+    1. Invoke the CLI via Composition Root (bootstrap)
     2. Handle interrupts gracefully
 
-    All command handling is done by Click in presentation/cli.py,
-    keeping this entry point clean and focused.
+    All wiring is done by bootstrap layer (Composition Root pattern).
+    Reference: Mark Seemann - "Dependency Injection in .NET"
     """
     try:
+        cli = get_click_group()
         cli()
     except KeyboardInterrupt:
         print()

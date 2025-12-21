@@ -11,38 +11,35 @@ The tests use Click's test utilities for isolated command testing.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from click.testing import CliRunner
+
+from presentation.cli import cli
+from presentation.persistence import RunPersistence
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-from click.testing import CliRunner
-
-from presentation.cli import (
-    cli,
-    get_last_run,
-    get_last_run_id,
-    save_last_run,
-)
+    pass
 
 
 # ==============================================================================
-# Last Run Tracking Tests
+# Last Run Tracking Tests (using RunPersistence)
 # ==============================================================================
 
 
-class TestLastRunTracking:
-    """Tests for .last_run.json handling."""
+class TestRunPersistence:
+    """Tests for RunPersistence class."""
 
     def test_save_last_run_creates_file(self, tmp_path: Path) -> None:
         """Test that save_last_run creates .last_run.json."""
+        persistence = RunPersistence(tmp_path)
         boss_id = uuid4()
-        save_last_run(tmp_path, boss_id, "test task", "completed")
+        persistence.save_last_run(boss_id, "test task", "completed")
 
         last_run_file = tmp_path / ".last_run.json"
         assert last_run_file.exists()
@@ -55,41 +52,46 @@ class TestLastRunTracking:
     def test_save_last_run_creates_directory(self, tmp_path: Path) -> None:
         """Test that save_last_run creates parent directory if needed."""
         output_dir = tmp_path / "nested" / "output"
+        persistence = RunPersistence(output_dir)
         boss_id = uuid4()
 
-        save_last_run(output_dir, boss_id, "test task", "completed")
+        persistence.save_last_run(boss_id, "test task", "completed")
 
         assert output_dir.exists()
         assert (output_dir / ".last_run.json").exists()
 
     def test_get_last_run_returns_data(self, tmp_path: Path) -> None:
         """Test that get_last_run returns saved data."""
+        persistence = RunPersistence(tmp_path)
         boss_id = uuid4()
-        save_last_run(tmp_path, boss_id, "test task", "completed")
+        persistence.save_last_run(boss_id, "test task", "completed")
 
-        result = get_last_run(tmp_path)
+        result = persistence.get_last_run()
 
         assert result is not None
-        assert result["boss_id"] == str(boss_id)
-        assert result["task"] == "test task"
+        assert result.boss_id == boss_id
+        assert result.task == "test task"
 
     def test_get_last_run_returns_none_when_not_found(self, tmp_path: Path) -> None:
         """Test that get_last_run returns None when file doesn't exist."""
-        result = get_last_run(tmp_path)
+        persistence = RunPersistence(tmp_path)
+        result = persistence.get_last_run()
         assert result is None
 
     def test_get_last_run_id_returns_uuid(self, tmp_path: Path) -> None:
         """Test that get_last_run_id returns UUID from saved data."""
+        persistence = RunPersistence(tmp_path)
         boss_id = uuid4()
-        save_last_run(tmp_path, boss_id, "test task", "completed")
+        persistence.save_last_run(boss_id, "test task", "completed")
 
-        result = get_last_run_id(tmp_path)
+        result = persistence.get_last_run_id()
 
         assert result == boss_id
 
     def test_get_last_run_id_returns_none_when_not_found(self, tmp_path: Path) -> None:
         """Test that get_last_run_id returns None when file doesn't exist."""
-        result = get_last_run_id(tmp_path)
+        persistence = RunPersistence(tmp_path)
+        result = persistence.get_last_run_id()
         assert result is None
 
 
@@ -169,20 +171,22 @@ class TestEventsCommand:
         store.get_all_aggregate_ids = AsyncMock(return_value=[])
         return store
 
-    def test_events_requires_agent_id_or_last_run(self, tmp_path: Path) -> None:
+    def test_events_requires_agent_id_or_last_run(self) -> None:
         """Test that events command requires agent-id when no last run exists."""
         runner = CliRunner()
 
         with runner.isolated_filesystem():
-            # Patch to use empty output directory
-            with (
-                patch("presentation.cli._cli_context", {"output_directory": "."}),
-                patch("presentation.cli._get_event_store") as mock_get_store,
-            ):
+            with patch(
+                "presentation.context.event_store_context.EventStoreContext.from_config_path"
+            ) as mock_ctx:
                 mock_store = MagicMock()
                 mock_store.connect = AsyncMock()
                 mock_store.disconnect = AsyncMock()
-                mock_get_store.return_value = mock_store
+
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=mock_store)
+                async_cm.__aexit__ = AsyncMock(return_value=None)
+                mock_ctx.return_value = async_cm
 
                 result = runner.invoke(cli, ["events"])
 
@@ -201,15 +205,20 @@ class TestListCommand:
         """Test that list shows message when no runs exist."""
         runner = CliRunner()
 
-        with patch("presentation.cli._get_event_store") as mock_get_store:
+        with patch(
+            "presentation.context.event_store_context.EventStoreContext.from_config_path"
+        ) as mock_ctx:
             mock_store = MagicMock()
             mock_store.connect = AsyncMock()
             mock_store.disconnect = AsyncMock()
             mock_store.get_all_aggregate_ids = AsyncMock(return_value=[])
-            mock_get_store.return_value = mock_store
 
-            with patch("presentation.cli._cleanup_event_store", new=AsyncMock()):
-                result = runner.invoke(cli, ["list"])
+            async_cm = AsyncMock()
+            async_cm.__aenter__ = AsyncMock(return_value=mock_store)
+            async_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_ctx.return_value = async_cm
+
+            result = runner.invoke(cli, ["list"])
 
         assert "No BOSS runs found" in result.output
 
@@ -217,15 +226,20 @@ class TestListCommand:
         """Test that list --format json outputs JSON."""
         runner = CliRunner()
 
-        with patch("presentation.cli._get_event_store") as mock_get_store:
+        with patch(
+            "presentation.context.event_store_context.EventStoreContext.from_config_path"
+        ) as mock_ctx:
             mock_store = MagicMock()
             mock_store.connect = AsyncMock()
             mock_store.disconnect = AsyncMock()
             mock_store.get_all_aggregate_ids = AsyncMock(return_value=[])
-            mock_get_store.return_value = mock_store
 
-            with patch("presentation.cli._cleanup_event_store", new=AsyncMock()):
-                result = runner.invoke(cli, ["list", "--format", "json"])
+            async_cm = AsyncMock()
+            async_cm.__aenter__ = AsyncMock(return_value=mock_store)
+            async_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_ctx.return_value = async_cm
+
+            result = runner.invoke(cli, ["list", "--format", "json"])
 
         # Should output valid JSON (empty list)
         assert result.exit_code == 0
@@ -251,26 +265,3 @@ class TestCLIConfigPassing:
         # Should fail with file not found, not unrecognized option
         # But --help should still work
         assert "--config" in result.output or "Error" in result.output
-
-
-# ==============================================================================
-# CLIConfig Tests
-# ==============================================================================
-
-
-class TestCLIConfigExtended:
-    """Tests for CLIConfig with output_directory."""
-
-    def test_cli_config_default_output_directory(self) -> None:
-        """Test that CLIConfig has default output_directory."""
-        from presentation.cli import CLIConfig
-
-        config = CLIConfig()
-        assert config.output_directory == "./output"
-
-    def test_cli_config_custom_output_directory(self) -> None:
-        """Test that CLIConfig accepts custom output_directory."""
-        from presentation.cli import CLIConfig
-
-        config = CLIConfig(output_directory="/custom/path")
-        assert config.output_directory == "/custom/path"

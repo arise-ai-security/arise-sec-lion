@@ -2,13 +2,11 @@
 
 These tests verify CLI behavior with mocked application services.
 The CLI should correctly:
-- Parse command line arguments
 - Display appropriate output
 - Delegate to execution service
 - Handle errors gracefully
 """
 
-import sys
 from io import StringIO
 from unittest.mock import patch
 
@@ -19,57 +17,18 @@ from presentation.cli import CLI, CLIConfig
 from .conftest import FakeExecutionService
 
 
-class TestCLIArgumentParsing:
-    """Tests for CLI argument parsing."""
-
-    def test_parse_single_word_task(self, cli_with_fake_service: CLI) -> None:
-        """Test parsing a single word task."""
-        with patch.object(sys, "argv", ["main.py", "test"]):
-            result = cli_with_fake_service._parse_arguments()
-        assert result == "test"
-
-    def test_parse_multi_word_task(self, cli_with_fake_service: CLI) -> None:
-        """Test parsing a multi-word task (words joined with spaces)."""
-        with patch.object(sys, "argv", ["main.py", "Build", "a", "REST", "API"]):
-            result = cli_with_fake_service._parse_arguments()
-        assert result == "Build a REST API"
-
-    def test_parse_quoted_task(self, cli_with_fake_service: CLI) -> None:
-        """Test parsing a quoted task description."""
-        with patch.object(sys, "argv", ["main.py", "Build a REST API with auth"]):
-            result = cli_with_fake_service._parse_arguments()
-        assert result == "Build a REST API with auth"
-
-    def test_parse_no_arguments_returns_none(self, cli_with_fake_service: CLI) -> None:
-        """Test that missing task returns None."""
-        with patch.object(sys, "argv", ["main.py"]):
-            result = cli_with_fake_service._parse_arguments()
-        assert result is None
-
-
 class TestCLIBanner:
     """Tests for CLI banner display."""
 
     def test_print_banner_outputs_header(self, cli_with_fake_service: CLI) -> None:
         """Test that banner prints the application header."""
         captured = StringIO()
-        with patch("sys.stdout", captured):
-            cli_with_fake_service._print_banner()
+        with patch("click.echo", side_effect=lambda x="": captured.write(x + "\n")):
+            cli_with_fake_service._renderer.print_banner()
 
         output = captured.getvalue()
         assert "Recursive Multi-Agent System" in output
         assert "Event Sourcing" in output
-
-    def test_print_usage_shows_examples(self, cli_with_fake_service: CLI) -> None:
-        """Test that usage shows example commands."""
-        captured = StringIO()
-        with patch("sys.stdout", captured):
-            cli_with_fake_service._print_usage()
-
-        output = captured.getvalue()
-        assert "Usage:" in output
-        assert "python main.py" in output
-        assert "Examples:" in output
 
 
 class TestCLIInfrastructureInitialization:
@@ -92,7 +51,7 @@ class TestCLIInfrastructureInitialization:
     ) -> None:
         """Test that verbose mode outputs progress messages."""
         captured = StringIO()
-        with patch("sys.stdout", captured):
+        with patch("click.echo", side_effect=lambda x="": captured.write(x + "\n")):
             await verbose_cli_with_fake_service._initialize_infrastructure()
 
         output = captured.getvalue()
@@ -153,7 +112,7 @@ class TestCLIResultDisplay:
     ) -> None:
         """Test that final result displays status."""
         captured = StringIO()
-        with patch("sys.stdout", captured):
+        with patch("click.echo", side_effect=lambda x="": captured.write(x + "\n")):
             await cli_with_fake_service._display_final_result("test-id")
 
         output = captured.getvalue()
@@ -167,7 +126,7 @@ class TestCLIResultDisplay:
     ) -> None:
         """Test that final result displays agent statistics."""
         captured = StringIO()
-        with patch("sys.stdout", captured):
+        with patch("click.echo", side_effect=lambda x="": captured.write(x + "\n")):
             await cli_with_fake_service._display_final_result("test-id")
 
         output = captured.getvalue()
@@ -200,3 +159,13 @@ class TestCLIConfig:
         """Test that verbose can be disabled."""
         config = CLIConfig(verbose=False)
         assert config.verbose is False
+
+    def test_config_default_output_directory(self) -> None:
+        """Test that CLIConfig has default output_directory."""
+        config = CLIConfig()
+        assert config.output_directory == "./output"
+
+    def test_config_custom_output_directory(self) -> None:
+        """Test that CLIConfig accepts custom output_directory."""
+        config = CLIConfig(output_directory="/custom/path")
+        assert config.output_directory == "/custom/path"

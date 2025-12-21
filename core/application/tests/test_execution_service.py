@@ -10,7 +10,8 @@ from uuid import uuid4
 import pytest
 
 from config import OrchestrationConfig
-from core.application.execution_service import AgentExecutionService
+from core.application.execution_service import AgentExecutionService, ServiceConfig
+from core.application.services.agent_repository import AgentNotFoundError
 from core.domain.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.llm_response import LLMResponse, LLMUsage
@@ -68,21 +69,24 @@ def mock_worker_port():
 @pytest.fixture
 def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
     """Create execution service with mocked ports."""
-    return AgentExecutionService(
-        event_store=mock_event_store,
-        llm_port=mock_llm_port,
-        worker_tool_port=mock_worker_port,
-        system_limits=_test_system_limits(),
+    config = ServiceConfig(
+        max_retries=3,
+        poll_interval=0.5,
+        output_directory="./test_output",
+        default_worker_tool="claude_code",
         model_config={
             "boss": "gpt-4o",
             "manager": "gpt-4o",
             "worker": "gpt-4o",
             "pending": "gpt-4o",
         },
-        max_retries=3,
-        poll_interval=0.5,
-        output_directory="./test_output",
-        default_worker_tool="claude_code",
+    )
+    return AgentExecutionService(
+        event_store=mock_event_store,
+        llm_port=mock_llm_port,
+        worker_tool_port=mock_worker_port,
+        system_limits=_test_system_limits(),
+        config=config,
     )
 
 
@@ -432,14 +436,14 @@ async def test_run_agent_step_marks_failed_on_unexpected_error(
 
 @pytest.mark.asyncio
 async def test_run_agent_step_raises_if_agent_not_found(execution_service, mock_event_store):
-    """Test that missing agent raises ValueError."""
+    """Test that missing agent raises AgentNotFoundError."""
 
     # Given: Agent does not exist
     agent_id = uuid4()
     mock_event_store.get_events.return_value = []
 
-    # When/Then: Should raise ValueError
-    with pytest.raises(ValueError, match="not found"):
+    # When/Then: Should raise AgentNotFoundError
+    with pytest.raises(AgentNotFoundError):
         await execution_service.run_agent_step(agent_id)
 
 
