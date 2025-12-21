@@ -9,7 +9,10 @@ Nodes are color-coded by role:
 
 Features:
   - Click on any node to view detailed agent information in a modal
-  - Shows: Objective, Complexity Evaluation, Configuration, Result/Error
+  - Shows: Objective, Complexity Evaluation, Budget, Configuration, Result/Error
+  - Worker reason badge: shows why agent became WORKER (LLM Evaluation, Low Budget, Random Shortcut)
+  - Subtasks include supervisor justifications (objective, plan, split reason, etc.)
+  - Budget info: allocated, spent, remaining amounts per node
   - Color-coded nodes by role
   - Automatic tree layout
 
@@ -162,6 +165,8 @@ def layout_tree(
         "errorMessage": summary.get("error_message"),
         # Subtasks (for managers)
         "subtasks": summary.get("subtasks", []),
+        # Budget info
+        "budget": summary.get("budget"),
         # Additional info
         "childrenCount": len(children),
         "depth": depth,
@@ -281,6 +286,26 @@ const COMPLEXITY_COLORS = {
   complex: { bg: '#fee2e2', text: '#991b1b' },
 };
 
+// Worker assignment reason detection
+const WORKER_REASONS = {
+  low_budget: { label: 'Low Budget', bg: '#fef3c7', text: '#92400e', icon: '💰' },
+  random: { label: 'Random Shortcut', bg: '#e0e7ff', text: '#3730a3', icon: '🎲' },
+  llm_evaluation: { label: 'LLM Evaluation', bg: '#d1fae5', text: '#065f46', icon: '🤖' },
+};
+
+function getWorkerReason(complexityReasoning) {
+  if (!complexityReasoning) return null;
+  const lower = complexityReasoning.toLowerCase();
+  if (lower.includes('shortcut') && lower.includes('budget')) {
+    return 'low_budget';
+  }
+  if (lower.includes('shortcut') && lower.includes('random')) {
+    return 'random';
+  }
+  // If it has reasoning but not a shortcut, it's from LLM evaluation
+  return 'llm_evaluation';
+}
+
 // Section component for the modal
 function Section({ title, children }) {
   if (!children) return null;
@@ -301,6 +326,10 @@ function AgentModal({ agent, onClose }) {
   const roleColor = ROLE_COLORS[agent.role] || '#6b7280';
   const statusStyle = STATUS_BADGES[agent.status] || { bg: '#e5e7eb', text: '#374151' };
   const complexityStyle = agent.complexity ? (COMPLEXITY_COLORS[agent.complexity] || { bg: '#e5e7eb', text: '#374151' }) : null;
+
+  // For WORKER agents, determine why they became a worker
+  const workerReasonKey = agent.role === 'worker' ? getWorkerReason(agent.complexityReasoning) : null;
+  const workerReason = workerReasonKey ? WORKER_REASONS[workerReasonKey] : null;
 
   const hasConfig = agent.configStrategy || agent.workerTool || (agent.configDetails && Object.keys(agent.configDetails).length > 0);
 
@@ -375,6 +404,20 @@ function AgentModal({ agent, onClose }) {
                 {agent.complexity}
               </span>
             )}
+            {workerReason && (
+              <span
+                style={{
+                  backgroundColor: workerReason.bg,
+                  color: workerReason.text,
+                  padding: '4px 12px',
+                  borderRadius: '9999px',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                }}
+              >
+                {workerReason.icon} {workerReason.label}
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -406,6 +449,33 @@ function AgentModal({ agent, onClose }) {
               <p style={{ fontSize: '14px', color: '#374151', lineHeight: '1.6', margin: 0 }}>
                 {agent.complexityReasoning}
               </p>
+            </div>
+          </Section>
+        )}
+
+        {/* Budget */}
+        {agent.budget && (
+          <Section title="Budget">
+            <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '12px', border: '1px solid #bbf7d0' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Allocated</div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: '#16a34a' }}>${agent.budget.initial_budget?.toFixed(2) || '0.00'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Spent</div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: '#dc2626' }}>${agent.budget.spent?.toFixed(2) || '0.00'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Remaining</div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: '#2563eb' }}>${agent.budget.current_budget?.toFixed(2) || '0.00'}</div>
+                </div>
+              </div>
+              {agent.budget.source && (
+                <div style={{ marginTop: '8px', fontSize: '11px', color: '#6b7280' }}>
+                  Source: <span style={{ fontWeight: '500' }}>{agent.budget.source}</span>
+                </div>
+              )}
             </div>
           </Section>
         )}
@@ -455,24 +525,41 @@ function AgentModal({ agent, onClose }) {
                       border: '1px solid #e5e7eb',
                     }}
                   >
-                    {/* Header with description and status */}
+                    {/* Header with description, budget weight, and status */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: hasJustification ? '10px' : 0 }}>
                       <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: '500', flex: 1 }}>{subtask.description}</span>
-                      {subtask.child_status && (
-                        <span
-                          style={{
-                            backgroundColor: (STATUS_BADGES[subtask.child_status] || { bg: '#e5e7eb' }).bg,
-                            color: (STATUS_BADGES[subtask.child_status] || { text: '#374151' }).text,
-                            padding: '2px 8px',
-                            borderRadius: '9999px',
-                            fontSize: '11px',
-                            fontWeight: '500',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {subtask.child_status}
-                        </span>
-                      )}
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+                        {subtask.budget_weight != null && subtask.budget_weight !== 1.0 && (
+                          <span
+                            style={{
+                              backgroundColor: '#dbeafe',
+                              color: '#1e40af',
+                              padding: '2px 8px',
+                              borderRadius: '9999px',
+                              fontSize: '11px',
+                              fontWeight: '500',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {(subtask.budget_weight * 100).toFixed(0)}% budget
+                          </span>
+                        )}
+                        {subtask.child_status && (
+                          <span
+                            style={{
+                              backgroundColor: (STATUS_BADGES[subtask.child_status] || { bg: '#e5e7eb' }).bg,
+                              color: (STATUS_BADGES[subtask.child_status] || { text: '#374151' }).text,
+                              padding: '2px 8px',
+                              borderRadius: '9999px',
+                              fontSize: '11px',
+                              fontWeight: '500',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {subtask.child_status}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     {/* Supervisor Justification */}
                     {hasJustification && (
