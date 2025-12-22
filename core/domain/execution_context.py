@@ -5,12 +5,13 @@ parent to child agents, enabling depth tracking and limit enforcement.
 
 Limit values of -1 indicate "unlimited" (no limit enforced).
 
-Note: Budget tracking will be added via SharedExecutionContext (context-passing feature).
+Budget tracking is handled via SharedExecutionContext (keyed by root_id).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,12 +24,15 @@ class ExecutionContext:
     Limit values:
         -1 = unlimited (no enforcement)
         >0 = enforced limit
+
+    The root_id references the SharedExecutionContext for this hierarchy.
     """
 
     current_depth: int
     max_depth: int  # -1 = unlimited
     max_children_per_node: int  # -1 = unlimited
     max_retries: int
+    root_id: UUID  # Reference to SharedExecutionContext
 
     def for_child(self) -> ExecutionContext:
         """Create context for child agent (increments depth)."""
@@ -65,6 +69,7 @@ class ExecutionContext:
     @classmethod
     def create_root(
         cls,
+        root_id: UUID,
         max_depth: int,
         max_children_per_node: int,
         max_retries: int,
@@ -72,6 +77,7 @@ class ExecutionContext:
         """Create context for root (BOSS) agent.
 
         Args:
+            root_id: Root agent ID (references SharedExecutionContext)
             max_depth: Maximum hierarchy depth (-1 = unlimited)
             max_children_per_node: Max children per parent (-1 = unlimited)
             max_retries: Max retry attempts
@@ -81,4 +87,5 @@ class ExecutionContext:
             max_depth=max_depth,
             max_children_per_node=max_children_per_node,
             max_retries=max_retries,
+            root_id=root_id,
         )

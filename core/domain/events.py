@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 from core.domain.subtask import Subtask
+from core.domain.context import ChildResult, ParentContext
 
 
 def _utc_now() -> datetime:
@@ -55,12 +56,16 @@ class SubtasksDefined(DomainEvent):
 
 
 class ChildSpawned(DomainEvent):
-    """Parent spawned a child agent with config."""
+    """Parent spawned a child agent with rich context.
+
+    Includes ParentContext for bidirectional context flow.
+    """
 
     child_id: UUID
     child_role: str
     subtask: Subtask
     child_config: dict[str, Any]
+    parent_context: dict[str, Any] = Field(default_factory=dict)  # Serialized ParentContext
 
 
 class WorkCompleted(DomainEvent):
@@ -90,10 +95,14 @@ class ThoughtCaptured(DomainEvent):
 
 
 class ChildCompleted(DomainEvent):
-    """Child agent completed, parent notified."""
+    """Child agent completed, parent notified with structured result.
+
+    Includes ChildResult for rich feedback from child to parent.
+    """
 
     child_id: UUID
-    result: str
+    result: str  # Legacy field for backward compatibility
+    child_result: dict[str, Any] = Field(default_factory=dict)  # Serialized ChildResult
 
 
 class ComplexityEvaluated(DomainEvent):
@@ -150,3 +159,106 @@ class LimitEnforced(DomainEvent):
     limit_value: int | float
     attempted_value: int | float
     action_taken: str  # "forced_worker_role", "rejected_children"
+
+
+# =============================================================================
+# Shared Context Events
+# =============================================================================
+
+
+class SharedContextCreated(DomainEvent):
+    """Shared execution context created for a run.
+
+    One shared context per execution hierarchy (keyed by root_id).
+    Stores initial budget and configuration.
+    """
+
+    root_id: UUID
+    initial_budget_usd: float = 0.0
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactStored(DomainEvent):
+    """Artifact stored in shared context.
+
+    Artifacts are outputs that can be shared across agents:
+    - Code files, documentation, analysis results
+    - Small content stored inline, large content by hash reference
+    """
+
+    key: str  # e.g., "outputs/analysis.json"
+    content_type: str  # MIME type
+    content: str | None = None  # Small content inline
+    content_hash: str | None = None  # SHA256 for large content
+    stored_by: UUID  # Agent that stored the artifact
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecisionRecorded(DomainEvent):
+    """Key decision recorded in shared context.
+
+    Decisions are architectural/design choices that should be
+    consistent across the agent hierarchy.
+    """
+
+    decision_key: str  # e.g., "architecture.database"
+    decision_value: str  # JSON-serialized value
+    rationale: str
+    decided_by: UUID  # Agent that made the decision
+
+
+class ProgressUpdated(DomainEvent):
+    """Progress checkpoint updated in shared context.
+
+    Enables agents to report progress on named checkpoints.
+    """
+
+    checkpoint_key: str
+    status: str  # "started", "in_progress", "completed", "blocked"
+    progress_pct: float = 0.0
+    message: str = ""
+    reported_by: UUID  # Agent reporting progress
+
+
+class ConfigOverrideSet(DomainEvent):
+    """Configuration override set in shared context.
+
+    Allows runtime configuration changes that propagate
+    to all or a subtree of agents.
+    """
+
+    config_key: str
+    config_value: str  # JSON-serialized value
+    set_by: UUID  # Agent that set the override
+    scope: str = "global"  # "global" | "subtree:{agent_id}"
+
+
+# =============================================================================
+# Budget Events (part of shared context)
+# =============================================================================
+
+
+class BudgetConsumed(DomainEvent):
+    """Budget consumption recorded in shared context.
+
+    Event-sourced budget tracking with OCC guarantees.
+    Emitted for each cost-incurring operation.
+    """
+
+    consumed_by: UUID  # Agent that consumed budget
+    amount_usd: float  # Cost of this operation
+    operation: str  # "llm_call", "worker_execution"
+    model: str | None = None  # Model used if applicable
+    tokens: dict[str, int] = Field(default_factory=dict)  # {"prompt": N, "completion": M}
+
+
+class BudgetExceeded(DomainEvent):
+    """Budget limit exceeded, execution should halt.
+
+    Emitted when consumed budget reaches or exceeds the limit.
+    Agents should check for this and stop processing.
+    """
+
+    limit_usd: float
+    consumed_usd: float
+    triggered_by: UUID  # Agent that triggered the limit

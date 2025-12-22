@@ -10,6 +10,12 @@ from pydantic import TypeAdapter
 
 from core.domain.agent_config import AgentConfig
 from core.domain.config_resolver import ConfigResolver
+from core.domain.context import (
+    AncestorInfo,
+    ChildResult,
+    ParentContext,
+    build_parent_context,
+)
 from core.domain.events import (
     AgentCreated,
     ChildCompleted,
@@ -249,6 +255,9 @@ class AgentSession:
 
         child_role = AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
 
+        # Build parent context for children
+        parent_context = self.get_context_for_child()
+
         for subtask in subtasks:
             child_id = uuid4()
             child_event = ChildSpawned(
@@ -258,6 +267,7 @@ class AgentSession:
                 child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
+                parent_context=parent_context.to_dict(),
             )
             self._apply(child_event)
             self._changes.append(child_event)
@@ -336,8 +346,19 @@ class AgentSession:
         except ToolNotAvailableError as e:
             self.fail_with_reason(str(e))
 
-    def handle_child_update(self, child_id: UUID, result: str) -> None:
-        """For BOSS/MANAGER: record child completion, complete self when all children done."""
+    def handle_child_update(
+        self,
+        child_id: UUID,
+        result: str,
+        child_result: ChildResult | None = None,
+    ) -> None:
+        """For BOSS/MANAGER: record child completion, complete self when all children done.
+
+        Args:
+            child_id: ID of completed child
+            result: Result text (for backward compatibility)
+            child_result: Structured ChildResult (optional, preferred)
+        """
         assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
             f"Requires BOSS/MANAGER, got {self.role}"
         )
@@ -345,11 +366,19 @@ class AgentSession:
         assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
         assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
 
+        # Use structured result if provided, otherwise create simple one
+        if child_result is None:
+            child_result = ChildResult.simple(result)
+
+        # Store structured result
+        self.structured_child_results[child_id] = child_result
+
         child_completed_event = ChildCompleted(
             aggregate_id=self.session_id,
             sequence_number=self._next_sequence(),
             child_id=child_id,
             result=result,
+            child_result=child_result.to_dict(),
         )
         self._apply(child_completed_event)
         self._changes.append(child_completed_event)
@@ -484,10 +513,57 @@ class AgentSession:
         self._sequence: int = 0
         # Execution context for limit enforcement (set by ExecutionService)
         self.execution_context: ExecutionContext | None = None
+        # Context passing: parent context received and local state
+        self.parent_context: ParentContext | None = None
+        self.local_decisions: list[str] = []
+        self.local_artifacts: list[str] = []
+        # Structured child results (keyed by child_id)
+        self.structured_child_results: dict[UUID, ChildResult] = {}
 
     def set_execution_context(self, context: ExecutionContext) -> None:
         """Set execution context for limit enforcement."""
         self.execution_context = context
+
+    def set_parent_context(self, parent_context: ParentContext) -> None:
+        """Set parent context received from spawning parent."""
+        self.parent_context = parent_context
+
+    def get_context_for_child(self) -> ParentContext:
+        """Build context to pass to child agents.
+
+        Constructs full ancestry chain and execution limits.
+        """
+        return build_parent_context(self, self.parent_context)
+
+    def record_decision(self, decision: str) -> None:
+        """Record a local decision made during execution."""
+        self.local_decisions.append(decision)
+
+    def record_artifact(self, artifact_key: str) -> None:
+        """Record an artifact produced during execution."""
+        self.local_artifacts.append(artifact_key)
+
+    def build_child_result(self) -> ChildResult:
+        """Build structured result to return to parent.
+
+        Includes result text, artifacts, decisions, and execution summary.
+        """
+        # Build execution summary from cost events if available
+        execution_summary: dict[str, Any] = {}
+        total_cost = 0.0
+        for event in self._changes:
+            if isinstance(event, TokensConsumed):
+                total_cost += event.cost_usd
+        if total_cost > 0:
+            execution_summary["cost_usd"] = total_cost
+
+        return ChildResult(
+            result_text=self.result or "",
+            artifacts=tuple(self.local_artifacts),
+            decisions=tuple(self.local_decisions),
+            context_updates={},
+            execution_summary=execution_summary,
+        )
 
     @classmethod
     def load_from_history(cls, events: list[DomainEvent]) -> "AgentSession":
