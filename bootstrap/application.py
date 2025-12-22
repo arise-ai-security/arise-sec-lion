@@ -51,6 +51,7 @@ def get_application(
         worker_tool_port=infrastructure.worker_tool,
         system_limits=config.system_limits,
         config=service_config,
+        shared_context_port=infrastructure.shared_context,
         progress_callback=config.progress_callback,
     )
 

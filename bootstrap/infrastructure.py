@@ -4,12 +4,14 @@ from dataclasses import dataclass
 
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
+from core.ports.shared_context_port import SharedContextPort
 from core.ports.worker_port import WorkerToolPort
 from infrastructure.adapters.claude_pty_adapter import ClaudeCodePTYAdapter
 from infrastructure.adapters.composite_worker_adapter import CompositeWorkerAdapter
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
 
 
 @dataclass
@@ -29,6 +31,7 @@ class Infrastructure:
     event_store: EventStorePort
     llm_adapter: LLMPort
     worker_tool: WorkerToolPort
+    shared_context: SharedContextPort
 
 
 def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
@@ -50,8 +53,12 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
         default_tool=config.default_worker_tool,
     )
 
+    # Shared context uses the same event store
+    shared_context = PostgresSharedContextAdapter(event_store)
+
     return Infrastructure(
         event_store=event_store,
         llm_adapter=llm_adapter,
         worker_tool=worker_tool,
+        shared_context=shared_context,
     )
