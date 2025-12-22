@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
@@ -104,6 +105,13 @@ class AgentExecutionService:
             repository=self._repository,
             context_registry=self._context_registry,
             max_total_agents=system_limits.max_total_agents,
+        )
+
+        # Agent orchestrator - handles LLM/worker interactions
+        self._orchestrator = AgentOrchestrator(
+            llm_port=llm_port,
+            worker_port=worker_tool_port,
+            prompt_builder=self._prompt_builder,
         )
 
         # Worker concurrency control
@@ -285,20 +293,23 @@ class AgentExecutionService:
         return agent
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
-        """Dispatch based on role: PENDING->complexity, BOSS/MANAGER->decompose, WORKER->execute."""
+        """Dispatch based on role: PENDING->complexity, BOSS/MANAGER->decompose, WORKER->execute.
+
+        Uses AgentOrchestrator to handle LLM/worker interactions, keeping domain pure.
+        """
         if agent.status != AgentStatus.ANALYZING:
             return
 
         if agent.role == AgentRole.PENDING:
-            await agent.evaluate_complexity(self._llm_port, self._prompt_builder)
+            await self._orchestrator.evaluate_complexity(agent)
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
-            await agent.evaluate_task(self._llm_port, self._prompt_builder)
+            await self._orchestrator.evaluate_task(agent)
 
         elif agent.role == AgentRole.WORKER:
             async with self._worker_semaphore:
-                await agent.execute_task(
-                    self._worker_tool_port,
+                await self._orchestrator.execute_task(
+                    agent,
                     working_directory=self._workspace.working_directory,
                     workspace_context=self._workspace.get_context(),
                 )

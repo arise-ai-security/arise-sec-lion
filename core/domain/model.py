@@ -601,3 +601,142 @@ class AgentSession:
         )
         self._apply(failed_event)
         self._changes.append(failed_event)
+
+    # -------------------------------------------------------------------------
+    # Pure Domain Methods (event emission only, no I/O)
+    # These are called by the orchestrator after it performs LLM/worker calls.
+    # -------------------------------------------------------------------------
+
+    def apply_complexity_result(
+        self,
+        complexity: str,
+        reasoning: str,
+        determined_role: AgentRole,
+    ) -> None:
+        """Apply complexity evaluation result (pure domain method).
+
+        Called by orchestrator after LLM call completes.
+        """
+        complexity_event = ComplexityEvaluated(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            complexity=complexity,
+            determined_role=determined_role.value,
+            reasoning=reasoning,
+        )
+        self._apply(complexity_event)
+        self._changes.append(complexity_event)
+
+    def emit_tokens_consumed(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        cost_usd: float,
+        operation: str,
+    ) -> None:
+        """Emit TokensConsumed event (pure domain method).
+
+        Called by orchestrator after LLM call completes.
+        """
+        cost_event = TokensConsumed(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            operation=operation,
+        )
+        self._apply(cost_event)
+        self._changes.append(cost_event)
+
+    def emit_limit_enforced(
+        self,
+        limit_type: str,
+        limit_value: int,
+        attempted_value: int,
+        action_taken: str,
+    ) -> None:
+        """Emit LimitEnforced event (pure domain method)."""
+        limit_event = LimitEnforced(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            limit_type=limit_type,
+            limit_value=limit_value,
+            attempted_value=attempted_value,
+            action_taken=action_taken,
+        )
+        self._apply(limit_event)
+        self._changes.append(limit_event)
+
+    def apply_subtasks_and_spawn_children(
+        self,
+        subtasks: list,
+        child_role: str,
+        parent_context: ParentContext,
+    ) -> list[tuple[UUID, Any]]:
+        """Apply subtask decomposition and spawn children (pure domain method).
+
+        Returns list of (child_id, subtask) tuples for the orchestrator to create.
+        """
+        from core.domain.subtask import Subtask
+
+        subtasks_event = SubtasksDefined(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            subtasks=subtasks,
+        )
+        self._apply(subtasks_event)
+        self._changes.append(subtasks_event)
+
+        children_to_spawn: list[tuple[UUID, Subtask]] = []
+
+        for subtask in subtasks:
+            child_id = uuid4()
+            child_event = ChildSpawned(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                child_id=child_id,
+                child_role=child_role,
+                subtask=subtask,
+                child_config=subtask.config,
+                parent_context=parent_context.to_dict(),
+            )
+            self._apply(child_event)
+            self._changes.append(child_event)
+            children_to_spawn.append((child_id, subtask))
+
+        # Transition to WAITING status
+        status_event = StatusChanged(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            old_status=self.status.value,
+            new_status=AgentStatus.WAITING.value,
+            reason="Decomposed task, waiting for child agents",
+        )
+        self._apply(status_event)
+        self._changes.append(status_event)
+
+        return children_to_spawn
+
+    def start_worker_execution(self, tool_name: str) -> None:
+        """Emit CodeGenerationStarted event (pure domain method)."""
+        started_event = CodeGenerationStarted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            tool_name=tool_name,
+        )
+        self._apply(started_event)
+        self._changes.append(started_event)
+
+    def apply_worker_event(self, tool_event: DomainEvent) -> None:
+        """Apply a worker tool event with corrected sequence number."""
+        event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
+        event_data["aggregate_id"] = self.session_id
+        event_data["sequence_number"] = self._next_sequence()
+        corrected_event = type(tool_event)(**event_data)
+        self._apply(corrected_event)
+        self._changes.append(corrected_event)
