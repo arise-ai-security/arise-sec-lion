@@ -161,14 +161,21 @@ class Settings(BaseSettings):
         """Build Settings from config dict, injecting env vars."""
         db_config = config.get("database", {})
 
+        # Password is required from environment (secrets)
         postgres_password = os.getenv("POSTGRES_PASSWORD")
         if not postgres_password:
             raise ValueError("POSTGRES_PASSWORD environment variable is required")
         db_config["password"] = postgres_password
 
-        postgres_host_override = os.getenv("POSTGRES_HOST")
-        if postgres_host_override:
-            db_config["host"] = postgres_host_override
+        # Allow env overrides for all database settings (useful for dev/cloud DBs)
+        if os.getenv("POSTGRES_HOST"):
+            db_config["host"] = os.getenv("POSTGRES_HOST")
+        if os.getenv("POSTGRES_PORT"):
+            db_config["port"] = int(os.getenv("POSTGRES_PORT"))
+        if os.getenv("POSTGRES_USER"):
+            db_config["user"] = os.getenv("POSTGRES_USER")
+        if os.getenv("POSTGRES_DB"):
+            db_config["name"] = os.getenv("POSTGRES_DB")
 
         # Security config is optional with defaults
         security_config = config.get("security", {})

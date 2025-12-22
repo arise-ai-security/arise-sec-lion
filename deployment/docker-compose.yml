@@ -1,13 +1,15 @@
 # Arise Sec Lion
 #
 # Usage:
-#   docker compose up -d                    # Start dev environment
-#   docker compose --profile prod up -d     # Start production
-#   docker compose --profile test up -d     # Start test DB only
+#   docker compose --profile local up -d           # Start local dev (with local DB)
+#   docker compose --profile dev up -d             # Start dev (Supabase DB, no local DB)
+#   docker compose --profile prod up -d            # Start production
+#   docker compose --profile test up -d            # Start test DB only
 
 services:
-  # API Server (FastAPI)
+  # --- Local profile (local PostgreSQL) ---
   api:
+    profiles: [local]
     build:
       context: ..
       dockerfile: deployment/Dockerfile
@@ -31,8 +33,8 @@ services:
       timeout: 5s
       retries: 5
 
-  # CLI App (for running tasks)
   app:
+    profiles: [local]
     build:
       context: ..
       dockerfile: deployment/Dockerfile
@@ -52,8 +54,8 @@ services:
     stdin_open: true
     tty: true
 
-  # PostgreSQL
   db:
+    profiles: [local]
     image: postgres:16-alpine
     container_name: arise-db
     env_file: .env
@@ -71,6 +73,43 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # --- Dev profile (Supabase external DB) ---
+  api-dev:
+    profiles: [dev]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: development
+    container_name: arise-api-dev
+    volumes:
+      - ..:/app
+      - /app/.venv
+    env_file: .env.dev
+    ports:
+      - "8000:8000"
+    command: uvicorn query.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app-dev:
+    profiles: [dev]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: development
+    container_name: arise-app-dev
+    volumes:
+      - ..:/app
+      - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file: .env.dev
+    command: sleep infinity
+    stdin_open: true
+    tty: true
 
   # --- Production profile ---
   app-prod:
