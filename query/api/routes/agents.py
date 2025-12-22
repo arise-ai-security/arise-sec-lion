@@ -25,7 +25,9 @@ from query.api.schemas import (
     AgentListItemSchema,
     AgentNodeSchema,
     AgentSummarySchema,
+    AggregatedSummarySchema,
     BudgetInfoSchema,
+    ChildWorkerReportSchema,
     CostBreakdownSchema,
     ExecutionSummarySchema,
     ExecutionTimingSchema,
@@ -344,6 +346,68 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
             challenges=agent.worker_report.challenges,
         )
 
+    # Collect child worker reports (for MANAGER/BOSS agents)
+    child_worker_reports_list: list[ChildWorkerReportSchema] = []
+    if agent.role.value in ("boss", "manager"):
+        # Traverse subtree to collect all worker reports
+        collector = HierarchyCollector(event_store)
+        all_child_ids = await collector.collect_agent_ids(agent_id)
+        # Remove self from the set
+        all_child_ids.discard(agent_id)
+
+        for child_id in all_child_ids:
+            child_events = await event_store.get_events(child_id)
+            if not child_events:
+                continue
+            child_agent = AgentSession.load_from_history(child_events)
+            # Only include workers with reports
+            if child_agent.role.value == "worker" and child_agent.worker_report is not None:
+                child_worker_reports_list.append(
+                    ChildWorkerReportSchema(
+                        agent_id=str(child_id)[:8],
+                        task=child_agent.task_description[:100] if child_agent.task_description else "",
+                        status=child_agent.status.value,
+                        report=WorkerReportSchema(
+                            original_task=child_agent.worker_report.original_task,
+                            approach=child_agent.worker_report.approach,
+                            reasoning=child_agent.worker_report.reasoning,
+                            deliverables=child_agent.worker_report.deliverables,
+                            challenges=child_agent.worker_report.challenges,
+                        ),
+                    )
+                )
+
+    # Generate aggregated summary for MANAGER/BOSS agents
+    aggregated_summary: AggregatedSummarySchema | None = None
+    if agent.role.value in ("boss", "manager") and child_worker_reports_list:
+        # Count workers by status
+        total_workers = len(child_worker_reports_list)
+        completed_workers = sum(1 for r in child_worker_reports_list if r.status == "completed")
+        failed_workers = sum(1 for r in child_worker_reports_list if r.status == "failed")
+
+        # Combine deliverables from all workers
+        deliverables_parts = []
+        approach_parts = []
+        challenge_parts = []
+
+        for report in child_worker_reports_list:
+            if report.report:
+                if report.report.deliverables:
+                    deliverables_parts.append(f"[{report.agent_id}] {report.report.deliverables}")
+                if report.report.approach:
+                    approach_parts.append(f"[{report.agent_id}] {report.report.approach}")
+                if report.report.challenges:
+                    challenge_parts.append(f"[{report.agent_id}] {report.report.challenges}")
+
+        aggregated_summary = AggregatedSummarySchema(
+            total_workers=total_workers,
+            completed_workers=completed_workers,
+            failed_workers=failed_workers,
+            combined_deliverables="\n\n".join(deliverables_parts) if deliverables_parts else "",
+            combined_approach="\n\n".join(approach_parts) if approach_parts else "",
+            key_challenges="\n\n".join(challenge_parts) if challenge_parts else "",
+        )
+
     return AgentSummarySchema(
         id=str(agent.session_id),
         role=agent.role.value,
@@ -358,6 +422,8 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         result=agent.result,
         error_message=agent.error_message,
         worker_report=worker_report_schema,
+        child_worker_reports=child_worker_reports_list,
+        aggregated_summary=aggregated_summary,
         budget=budget_info,
         task_queue=task_queue_items,
         queue_size=len(task_queue_items),

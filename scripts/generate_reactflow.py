@@ -13,6 +13,9 @@ Features:
   - Worker reason badge: shows why agent became WORKER (LLM Evaluation, Low Budget, Random Shortcut)
   - Subtasks include supervisor justifications (objective, plan, split reason, etc.)
   - Budget info: allocated, spent, remaining amounts per node
+  - Worker reports: shows approach, reasoning, deliverables, challenges for each worker
+  - Aggregated summary: for MANAGER/BOSS nodes, shows combined deliverables and approaches from all subordinates
+  - Child worker reports: accumulated reports from all workers in the subtree
   - Color-coded nodes by role
   - Automatic tree layout
 
@@ -169,6 +172,10 @@ def layout_tree(
         "budget": summary.get("budget"),
         # Worker report (for workers)
         "workerReport": summary.get("worker_report"),
+        # Child worker reports (for managers/boss)
+        "childWorkerReports": summary.get("child_worker_reports", []),
+        # Aggregated summary (for managers/boss)
+        "aggregatedSummary": summary.get("aggregated_summary"),
         # Additional info
         "childrenCount": len(children),
         "depth": depth,
@@ -608,6 +615,118 @@ function AgentModal({ agent, onClose }) {
                   <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Challenges:</span> {agent.workerReport.challenges}</div>
                 )}
               </div>
+            </div>
+          </Section>
+        )}
+
+        {/* Aggregated Summary (for managers/boss) */}
+        {agent.aggregatedSummary && (
+          <Section title="Aggregated Summary">
+            <div style={{ backgroundColor: '#faf5ff', borderRadius: '8px', padding: '12px', border: '1px solid #e9d5ff' }}>
+              {/* Worker Statistics */}
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '12px', fontSize: '14px' }}>
+                <div>
+                  <span style={{ fontWeight: '600', color: '#7c3aed' }}>{agent.aggregatedSummary.total_workers}</span>
+                  <span style={{ color: '#6b7280', marginLeft: '4px' }}>workers</span>
+                </div>
+                <div>
+                  <span style={{ fontWeight: '600', color: '#16a34a' }}>{agent.aggregatedSummary.completed_workers}</span>
+                  <span style={{ color: '#6b7280', marginLeft: '4px' }}>completed</span>
+                </div>
+                {agent.aggregatedSummary.failed_workers > 0 && (
+                  <div>
+                    <span style={{ fontWeight: '600', color: '#dc2626' }}>{agent.aggregatedSummary.failed_workers}</span>
+                    <span style={{ color: '#6b7280', marginLeft: '4px' }}>failed</span>
+                  </div>
+                )}
+              </div>
+              {/* Combined Deliverables */}
+              {agent.aggregatedSummary.combined_deliverables && (
+                <div style={{ marginBottom: '10px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>Combined Deliverables:</div>
+                  <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                    {agent.aggregatedSummary.combined_deliverables}
+                  </div>
+                </div>
+              )}
+              {/* Combined Approach */}
+              {agent.aggregatedSummary.combined_approach && (
+                <div style={{ marginBottom: '10px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>Combined Approaches:</div>
+                  <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                    {agent.aggregatedSummary.combined_approach}
+                  </div>
+                </div>
+              )}
+              {/* Key Challenges */}
+              {agent.aggregatedSummary.key_challenges && (
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#ea580c', marginBottom: '4px' }}>Key Challenges:</div>
+                  <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                    {agent.aggregatedSummary.key_challenges}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+        )}
+
+        {/* Child Worker Reports (for managers/boss) */}
+        {agent.childWorkerReports && agent.childWorkerReports.length > 0 && (
+          <Section title={`Worker Reports (${agent.childWorkerReports.length})`}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflow: 'auto' }}>
+              {agent.childWorkerReports.map((childReport, index) => (
+                <div
+                  key={index}
+                  style={{
+                    backgroundColor: '#eff6ff',
+                    borderRadius: '8px',
+                    padding: '10px',
+                    border: '1px solid #bfdbfe',
+                  }}
+                >
+                  {/* Header with agent ID and status */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: '11px', backgroundColor: '#dbeafe', padding: '2px 6px', borderRadius: '4px', color: '#1e40af' }}>
+                        {childReport.agent_id}
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#6b7280', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {childReport.task}
+                      </span>
+                    </div>
+                    <span
+                      style={{
+                        backgroundColor: (STATUS_BADGES[childReport.status] || { bg: '#e5e7eb' }).bg,
+                        color: (STATUS_BADGES[childReport.status] || { text: '#374151' }).text,
+                        padding: '2px 8px',
+                        borderRadius: '9999px',
+                        fontSize: '10px',
+                        fontWeight: '500',
+                      }}
+                    >
+                      {childReport.status}
+                    </span>
+                  </div>
+                  {/* Worker Report Details */}
+                  {childReport.report && (
+                    <div style={{ fontSize: '12px', color: '#6b7280', display: 'flex', flexDirection: 'column', gap: '4px', backgroundColor: 'white', padding: '8px', borderRadius: '4px' }}>
+                      {childReport.report.approach && (
+                        <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Approach:</span> {childReport.report.approach}</div>
+                      )}
+                      {childReport.report.reasoning && (
+                        <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Reasoning:</span> {childReport.report.reasoning}</div>
+                      )}
+                      {childReport.report.deliverables && (
+                        <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Deliverables:</span> {childReport.report.deliverables}</div>
+                      )}
+                      {childReport.report.challenges && childReport.report.challenges !== 'No significant challenges encountered' && (
+                        <div><span style={{ fontWeight: '500', color: '#ea580c' }}>Challenges:</span> {childReport.report.challenges}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </Section>
         )}

@@ -132,6 +132,26 @@ class WorkerReportSchema(BaseModel):
     challenges: str = Field("", description="Any challenges encountered and how they were addressed")
 
 
+class ChildWorkerReportSchema(BaseModel):
+    """Schema for a child worker's report with agent context."""
+
+    agent_id: str = Field(..., description="Worker agent ID (short)")
+    task: str = Field("", description="Task description")
+    status: str = Field("", description="Agent status")
+    report: WorkerReportSchema | None = Field(None, description="Worker's report")
+
+
+class AggregatedSummarySchema(BaseModel):
+    """Aggregated summary of all subordinates' work for supervisor/BOSS nodes."""
+
+    total_workers: int = Field(0, description="Total number of workers in subtree")
+    completed_workers: int = Field(0, description="Number of completed workers")
+    failed_workers: int = Field(0, description="Number of failed workers")
+    combined_deliverables: str = Field("", description="Combined summary of all deliverables")
+    combined_approach: str = Field("", description="Combined summary of approaches taken")
+    key_challenges: str = Field("", description="Key challenges encountered across all workers")
+
+
 class SubtaskSummarySchema(BaseModel):
     """Schema for a subtask in the agent summary."""
 
@@ -200,6 +220,18 @@ class AgentSummarySchema(BaseModel):
     # Worker report (for WORKER agents)
     worker_report: WorkerReportSchema | None = Field(
         None, description="Worker's report justifying their work"
+    )
+
+    # Child worker reports (for MANAGER/BOSS agents - accumulated from subtree)
+    child_worker_reports: list[ChildWorkerReportSchema] = Field(
+        default_factory=list,
+        description="Accumulated worker reports from all workers in subtree",
+    )
+
+    # Aggregated summary (for MANAGER/BOSS agents - synthesized from all subordinates)
+    aggregated_summary: AggregatedSummarySchema | None = Field(
+        None,
+        description="Synthesized summary of all subordinates' work",
     )
 
     # Budget information

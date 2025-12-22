@@ -101,6 +101,24 @@ export interface WorkerReport {
   challenges: string;
 }
 
+/** Child worker's report with agent context (for MANAGER/BOSS summary). */
+export interface ChildWorkerReport {
+  agent_id: string;
+  task: string;
+  status: string;
+  report: WorkerReport | null;
+}
+
+/** Aggregated summary of all subordinates' work for supervisor/BOSS nodes. */
+export interface AggregatedSummary {
+  total_workers: number;
+  completed_workers: number;
+  failed_workers: number;
+  combined_deliverables: string;
+  combined_approach: string;
+  key_challenges: string;
+}
+
 export interface SubtaskSummary {
   description: string;
   justification: SubtaskJustification;
@@ -147,6 +165,12 @@ export interface AgentSummary {
 
   // Worker report (for WORKER agents)
   worker_report: WorkerReport | null;
+
+  // Child worker reports (for MANAGER/BOSS agents)
+  child_worker_reports: ChildWorkerReport[];
+
+  // Aggregated summary (for MANAGER/BOSS agents)
+  aggregated_summary: AggregatedSummary | null;
 
   // Budget information
   budget: BudgetInfo | null;

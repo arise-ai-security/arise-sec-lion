@@ -288,6 +288,137 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
         </Section>
       )}
 
+      {/* Accumulated Worker Reports (for MANAGER/BOSS agents) */}
+      {summary.child_worker_reports && summary.child_worker_reports.length > 0 && (
+        <Section title={`Worker Reports (${summary.child_worker_reports.length})`}>
+          <div className="space-y-3">
+            {summary.child_worker_reports.map((childReport, idx) => (
+              <div
+                key={idx}
+                className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border-l-2 border-blue-400"
+              >
+                {/* Header with agent ID and status */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono bg-blue-100 dark:bg-blue-800 px-1.5 py-0.5 rounded text-blue-700 dark:text-blue-300">
+                      {childReport.agent_id}
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]">
+                      {childReport.task}
+                    </span>
+                  </div>
+                  <span className={`px-1.5 py-0.5 text-xs rounded ${
+                    statusColors[childReport.status] || statusColors.pending
+                  }`}>
+                    {childReport.status}
+                  </span>
+                </div>
+
+                {/* Worker Report Details */}
+                {childReport.report && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer hover:underline">
+                      View work report
+                    </summary>
+                    <div className="mt-2 space-y-2 text-xs bg-white dark:bg-gray-800 p-2 rounded">
+                      {childReport.report.approach && (
+                        <div>
+                          <span className="font-semibold text-green-700 dark:text-green-400">Approach:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.approach}</p>
+                        </div>
+                      )}
+                      {childReport.report.reasoning && (
+                        <div>
+                          <span className="font-semibold text-green-700 dark:text-green-400">Reasoning:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.reasoning}</p>
+                        </div>
+                      )}
+                      {childReport.report.deliverables && (
+                        <div>
+                          <span className="font-semibold text-green-700 dark:text-green-400">Deliverables:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.deliverables}</p>
+                        </div>
+                      )}
+                      {childReport.report.challenges && childReport.report.challenges !== 'No significant challenges encountered' && (
+                        <div>
+                          <span className="font-semibold text-orange-700 dark:text-orange-400">Challenges:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.challenges}</p>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Aggregated Summary (for MANAGER/BOSS agents) */}
+      {summary.aggregated_summary && (
+        <Section title="Aggregated Summary">
+          <div className="bg-purple-50 dark:bg-purple-900/20 p-3 rounded border border-purple-200 dark:border-purple-800 space-y-3">
+            {/* Worker Statistics */}
+            <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-1">
+                <span className="text-purple-600 dark:text-purple-400 font-semibold">
+                  {summary.aggregated_summary.total_workers}
+                </span>
+                <span className="text-gray-500 dark:text-gray-400">workers</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-green-600 dark:text-green-400 font-semibold">
+                  {summary.aggregated_summary.completed_workers}
+                </span>
+                <span className="text-gray-500 dark:text-gray-400">completed</span>
+              </div>
+              {summary.aggregated_summary.failed_workers > 0 && (
+                <div className="flex items-center gap-1">
+                  <span className="text-red-600 dark:text-red-400 font-semibold">
+                    {summary.aggregated_summary.failed_workers}
+                  </span>
+                  <span className="text-gray-500 dark:text-gray-400">failed</span>
+                </div>
+              )}
+            </div>
+
+            {/* Combined Deliverables */}
+            {summary.aggregated_summary.combined_deliverables && (
+              <div>
+                <span className="text-xs font-semibold text-purple-700 dark:text-purple-400">Combined Deliverables:</span>
+                <div className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto">
+                  {summary.aggregated_summary.combined_deliverables}
+                </div>
+              </div>
+            )}
+
+            {/* Combined Approach */}
+            {summary.aggregated_summary.combined_approach && (
+              <details className="mt-2">
+                <summary className="text-xs text-purple-600 dark:text-purple-400 cursor-pointer hover:underline">
+                  View combined approaches
+                </summary>
+                <div className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto">
+                  {summary.aggregated_summary.combined_approach}
+                </div>
+              </details>
+            )}
+
+            {/* Key Challenges */}
+            {summary.aggregated_summary.key_challenges && (
+              <details className="mt-2">
+                <summary className="text-xs text-orange-600 dark:text-orange-400 cursor-pointer hover:underline">
+                  View key challenges
+                </summary>
+                <div className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto">
+                  {summary.aggregated_summary.key_challenges}
+                </div>
+              </details>
+            )}
+          </div>
+        </Section>
+      )}
+
       {/* Task Queue (pending tasks) */}
       {summary.queue_size > 0 && (
         <Section title={`Task Queue (${summary.queue_size})`}>
