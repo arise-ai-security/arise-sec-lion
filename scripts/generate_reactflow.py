@@ -621,10 +621,10 @@ function AgentModal({ agent, onClose }) {
 
         {/* Aggregated Summary (for managers/boss) */}
         {agent.aggregatedSummary && (
-          <Section title="Aggregated Summary">
+          <Section title="Work Summary">
             <div style={{ backgroundColor: '#faf5ff', borderRadius: '8px', padding: '12px', border: '1px solid #e9d5ff' }}>
               {/* Worker Statistics */}
-              <div style={{ display: 'flex', gap: '16px', marginBottom: '12px', fontSize: '14px' }}>
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '12px', fontSize: '14px', flexWrap: 'wrap' }}>
                 <div>
                   <span style={{ fontWeight: '600', color: '#7c3aed' }}>{agent.aggregatedSummary.total_workers}</span>
                   <span style={{ color: '#6b7280', marginLeft: '4px' }}>workers</span>
@@ -640,11 +640,11 @@ function AgentModal({ agent, onClose }) {
                   </div>
                 )}
               </div>
-              {/* Combined Deliverables */}
+              {/* Combined Deliverables (includes tools used header) */}
               {agent.aggregatedSummary.combined_deliverables && (
                 <div style={{ marginBottom: '10px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>Combined Deliverables:</div>
-                  <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>Deliverables & Results:</div>
+                  <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '10px', borderRadius: '4px', maxHeight: '250px', overflow: 'auto', lineHeight: '1.5', fontFamily: 'ui-monospace, monospace' }}>
                     {agent.aggregatedSummary.combined_deliverables}
                   </div>
                 </div>
@@ -652,8 +652,8 @@ function AgentModal({ agent, onClose }) {
               {/* Combined Approach */}
               {agent.aggregatedSummary.combined_approach && (
                 <div style={{ marginBottom: '10px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>Combined Approaches:</div>
-                  <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>Approaches & Reasoning:</div>
+                  <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '10px', borderRadius: '4px', maxHeight: '200px', overflow: 'auto', lineHeight: '1.5', fontFamily: 'ui-monospace, monospace' }}>
                     {agent.aggregatedSummary.combined_approach}
                   </div>
                 </div>
@@ -661,8 +661,8 @@ function AgentModal({ agent, onClose }) {
               {/* Key Challenges */}
               {agent.aggregatedSummary.key_challenges && (
                 <div>
-                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#ea580c', marginBottom: '4px' }}>Key Challenges:</div>
-                  <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '500', color: '#ea580c', marginBottom: '4px' }}>Challenges Encountered:</div>
+                  <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'white', padding: '10px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto', lineHeight: '1.5', fontFamily: 'ui-monospace, monospace' }}>
                     {agent.aggregatedSummary.key_challenges}
                   </div>
                 </div>

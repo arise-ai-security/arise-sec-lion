@@ -356,10 +356,10 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
 
       {/* Aggregated Summary (for MANAGER/BOSS agents) */}
       {summary.aggregated_summary && (
-        <Section title="Aggregated Summary">
+        <Section title="Work Summary">
           <div className="bg-purple-50 dark:bg-purple-900/20 p-3 rounded border border-purple-200 dark:border-purple-800 space-y-3">
             {/* Worker Statistics */}
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-4 text-sm flex-wrap">
               <div className="flex items-center gap-1">
                 <span className="text-purple-600 dark:text-purple-400 font-semibold">
                   {summary.aggregated_summary.total_workers}
@@ -382,11 +382,11 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
               )}
             </div>
 
-            {/* Combined Deliverables */}
+            {/* Combined Deliverables (includes tools used header) */}
             {summary.aggregated_summary.combined_deliverables && (
               <div>
-                <span className="text-xs font-semibold text-purple-700 dark:text-purple-400">Combined Deliverables:</span>
-                <div className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto">
+                <span className="text-xs font-semibold text-purple-700 dark:text-purple-400">Deliverables & Results:</span>
+                <div className="text-xs text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-64 overflow-y-auto font-mono leading-relaxed">
                   {summary.aggregated_summary.combined_deliverables}
                 </div>
               </div>
@@ -395,10 +395,10 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
             {/* Combined Approach */}
             {summary.aggregated_summary.combined_approach && (
               <details className="mt-2">
-                <summary className="text-xs text-purple-600 dark:text-purple-400 cursor-pointer hover:underline">
-                  View combined approaches
+                <summary className="text-xs text-purple-600 dark:text-purple-400 cursor-pointer hover:underline font-semibold">
+                  Approaches & Reasoning
                 </summary>
-                <div className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto">
+                <div className="text-xs text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-56 overflow-y-auto font-mono leading-relaxed">
                   {summary.aggregated_summary.combined_approach}
                 </div>
               </details>
@@ -407,10 +407,10 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
             {/* Key Challenges */}
             {summary.aggregated_summary.key_challenges && (
               <details className="mt-2">
-                <summary className="text-xs text-orange-600 dark:text-orange-400 cursor-pointer hover:underline">
-                  View key challenges
+                <summary className="text-xs text-orange-600 dark:text-orange-400 cursor-pointer hover:underline font-semibold">
+                  Challenges Encountered
                 </summary>
-                <div className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto">
+                <div className="text-xs text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap bg-white dark:bg-gray-800 p-2 rounded max-h-48 overflow-y-auto font-mono leading-relaxed">
                   {summary.aggregated_summary.key_challenges}
                 </div>
               </details>

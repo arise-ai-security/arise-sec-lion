@@ -348,6 +348,9 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
 
     # Collect child worker reports (for MANAGER/BOSS agents)
     child_worker_reports_list: list[ChildWorkerReportSchema] = []
+    # Also collect detailed info for aggregated summary
+    worker_details: list[dict] = []
+
     if agent.role.value in ("boss", "manager"):
         # Traverse subtree to collect all worker reports
         collector = HierarchyCollector(event_store)
@@ -360,8 +363,16 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
             if not child_events:
                 continue
             child_agent = AgentSession.load_from_history(child_events)
+
             # Only include workers with reports
             if child_agent.role.value == "worker" and child_agent.worker_report is not None:
+                # Extract worker tool from events
+                child_worker_tool = None
+                for evt in child_events:
+                    if isinstance(evt, CodeGenerationStarted):
+                        child_worker_tool = evt.tool_name
+                        break
+
                 child_worker_reports_list.append(
                     ChildWorkerReportSchema(
                         agent_id=str(child_id)[:8],
@@ -377,33 +388,78 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
                     )
                 )
 
+                # Collect detailed info for aggregated summary
+                worker_details.append({
+                    "agent_id": str(child_id)[:8],
+                    "task": child_agent.task_description or "",
+                    "tool": child_worker_tool or "unknown",
+                    "status": child_agent.status.value,
+                    "approach": child_agent.worker_report.approach,
+                    "reasoning": child_agent.worker_report.reasoning,
+                    "deliverables": child_agent.worker_report.deliverables,
+                    "challenges": child_agent.worker_report.challenges,
+                    "result": child_agent.result or "",
+                })
+
     # Generate aggregated summary for MANAGER/BOSS agents
     aggregated_summary: AggregatedSummarySchema | None = None
-    if agent.role.value in ("boss", "manager") and child_worker_reports_list:
+    if agent.role.value in ("boss", "manager") and worker_details:
         # Count workers by status
-        total_workers = len(child_worker_reports_list)
-        completed_workers = sum(1 for r in child_worker_reports_list if r.status == "completed")
-        failed_workers = sum(1 for r in child_worker_reports_list if r.status == "failed")
+        total_workers = len(worker_details)
+        completed_workers = sum(1 for w in worker_details if w["status"] == "completed")
+        failed_workers = sum(1 for w in worker_details if w["status"] == "failed")
 
-        # Combine deliverables from all workers
+        # Count tools used
+        tools_used: dict[str, int] = {}
+        for w in worker_details:
+            tool = w["tool"]
+            tools_used[tool] = tools_used.get(tool, 0) + 1
+        tools_summary = ", ".join(f"{tool} ({count})" for tool, count in tools_used.items())
+
+        # Build detailed combined deliverables with task alignment
         deliverables_parts = []
-        approach_parts = []
-        challenge_parts = []
+        for w in worker_details:
+            if w["deliverables"]:
+                task_short = w["task"][:80] + "..." if len(w["task"]) > 80 else w["task"]
+                part = f"[{w['agent_id']}] Task: {task_short}\n"
+                part += f"  Tool: {w['tool']}\n"
+                part += f"  Deliverables: {w['deliverables']}"
+                if w["result"]:
+                    result_short = w["result"][:200] + "..." if len(w["result"]) > 200 else w["result"]
+                    part += f"\n  Result: {result_short}"
+                deliverables_parts.append(part)
 
-        for report in child_worker_reports_list:
-            if report.report:
-                if report.report.deliverables:
-                    deliverables_parts.append(f"[{report.agent_id}] {report.report.deliverables}")
-                if report.report.approach:
-                    approach_parts.append(f"[{report.agent_id}] {report.report.approach}")
-                if report.report.challenges:
-                    challenge_parts.append(f"[{report.agent_id}] {report.report.challenges}")
+        # Build detailed approach summary
+        approach_parts = []
+        for w in worker_details:
+            if w["approach"]:
+                task_short = w["task"][:60] + "..." if len(w["task"]) > 60 else w["task"]
+                part = f"[{w['agent_id']}] Task: {task_short}\n"
+                part += f"  Tool: {w['tool']}\n"
+                part += f"  Approach: {w['approach']}"
+                if w["reasoning"]:
+                    part += f"\n  Reasoning: {w['reasoning']}"
+                approach_parts.append(part)
+
+        # Build challenges summary with context
+        challenge_parts = []
+        for w in worker_details:
+            if w["challenges"] and w["challenges"] != "No significant challenges encountered":
+                task_short = w["task"][:60] + "..." if len(w["task"]) > 60 else w["task"]
+                part = f"[{w['agent_id']}] Task: {task_short}\n"
+                part += f"  Tool: {w['tool']}\n"
+                part += f"  Challenges: {w['challenges']}"
+                challenge_parts.append(part)
+
+        # Prepend summary header to deliverables
+        deliverables_header = f"Tools Used: {tools_summary}\n\n"
+        combined_deliverables = deliverables_header + "\n\n".join(deliverables_parts) if deliverables_parts else ""
 
         aggregated_summary = AggregatedSummarySchema(
             total_workers=total_workers,
             completed_workers=completed_workers,
             failed_workers=failed_workers,
-            combined_deliverables="\n\n".join(deliverables_parts) if deliverables_parts else "",
+            combined_deliverables=combined_deliverables,
             combined_approach="\n\n".join(approach_parts) if approach_parts else "",
             key_challenges="\n\n".join(challenge_parts) if challenge_parts else "",
         )
