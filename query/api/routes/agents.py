@@ -35,6 +35,9 @@ from query.api.schemas import (
     SubtaskJustificationSchema,
     SubtaskSummarySchema,
     TaskQueueItemSchema,
+    TreeStatisticsSchema,
+    TreeWorkReportSchema,
+    WorkerReportItemSchema,
     WorkerReportSchema,
 )
 
@@ -473,3 +476,60 @@ async def get_execution_summary(
     summary = projection.project(all_events)
 
     return _projection_summary_to_schema(summary)
+
+
+@router.get("/{agent_id}/work-report", response_model=TreeWorkReportSchema)
+async def get_work_report(agent_id: UUID, event_store: EventStoreDep) -> TreeWorkReportSchema:
+    """Get comprehensive work report for an agent hierarchy.
+
+    This endpoint generates a complete summary of all work done by agents
+    in the hierarchy, including worker reports and justifications.
+
+    Args:
+        agent_id: Root agent UUID (typically BOSS).
+
+    Returns:
+        TreeWorkReportSchema with all worker reports and aggregated deliverables.
+    """
+    from core.query.projections.tree_summary import TreeSummaryGenerator
+
+    # Verify agent exists
+    root_events = await event_store.get_events(agent_id)
+    if not root_events:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    # Generate tree summary
+    generator = TreeSummaryGenerator(event_store)
+    summary = await generator.generate(agent_id)
+
+    # Convert to schema
+    worker_reports_schema = [
+        WorkerReportItemSchema(
+            agent_id=r["agent_id"],
+            task=r.get("task", ""),
+            original_task=r.get("original_task", ""),
+            approach=r.get("approach", ""),
+            reasoning=r.get("reasoning", ""),
+            deliverables=r.get("deliverables", ""),
+            challenges=r.get("challenges", ""),
+            result=r.get("result", ""),
+            depth=r.get("depth", 0),
+        )
+        for r in summary.worker_reports
+    ]
+
+    return TreeWorkReportSchema(
+        boss_id=summary.boss_id,
+        task=summary.task,
+        status=summary.status,
+        statistics=TreeStatisticsSchema(
+            total_agents=summary.total_agents,
+            completed_agents=summary.completed_agents,
+            failed_agents=summary.failed_agents,
+            worker_count=summary.worker_count,
+            manager_count=summary.manager_count,
+            max_depth=summary.max_depth,
+        ),
+        worker_reports=worker_reports_schema,
+        aggregated_deliverables=summary.aggregated_deliverables,
+    )

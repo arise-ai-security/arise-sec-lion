@@ -92,6 +92,15 @@ export interface SubtaskJustification {
   expected_results: string;
 }
 
+/** Worker's report upon completing a task. */
+export interface WorkerReport {
+  original_task: string;
+  approach: string;
+  reasoning: string;
+  deliverables: string;
+  challenges: string;
+}
+
 export interface SubtaskSummary {
   description: string;
   justification: SubtaskJustification;
@@ -135,6 +144,9 @@ export interface AgentSummary {
   // Result/Error
   result: string | null;
   error_message: string | null;
+
+  // Worker report (for WORKER agents)
+  worker_report: WorkerReport | null;
 
   // Budget information
   budget: BudgetInfo | null;

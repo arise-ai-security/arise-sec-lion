@@ -166,6 +166,46 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
         </Section>
       )}
 
+      {/* Worker Report (for WORKER agents that have completed) */}
+      {summary.worker_report && (
+        <Section title="Worker Report">
+          <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded border border-green-200 dark:border-green-800 space-y-3">
+            {summary.worker_report.approach && (
+              <div>
+                <span className="text-xs font-semibold text-green-700 dark:text-green-400">Approach:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
+                  {summary.worker_report.approach}
+                </p>
+              </div>
+            )}
+            {summary.worker_report.reasoning && (
+              <div>
+                <span className="text-xs font-semibold text-green-700 dark:text-green-400">Reasoning:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
+                  {summary.worker_report.reasoning}
+                </p>
+              </div>
+            )}
+            {summary.worker_report.deliverables && (
+              <div>
+                <span className="text-xs font-semibold text-green-700 dark:text-green-400">Deliverables:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
+                  {summary.worker_report.deliverables}
+                </p>
+              </div>
+            )}
+            {summary.worker_report.challenges && summary.worker_report.challenges !== 'No significant challenges encountered' && (
+              <div>
+                <span className="text-xs font-semibold text-orange-700 dark:text-orange-400">Challenges:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
+                  {summary.worker_report.challenges}
+                </p>
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
       {/* Subtasks (for MANAGER agents) */}
       {summary.subtasks.length > 0 && (
         <Section title={`Subtasks (${summary.subtasks.length})`}>

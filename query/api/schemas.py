@@ -366,3 +366,48 @@ class ExecutionSummarySchema(BaseModel):
 
     # Derived fields
     is_complete: bool = Field(False, description="Whether all agents have completed")
+
+
+# =============================================================================
+# Tree Work Report Schemas
+# =============================================================================
+
+
+class WorkerReportItemSchema(BaseModel):
+    """Schema for a single worker's report in the tree summary."""
+
+    agent_id: str = Field(..., description="Short agent ID")
+    task: str = Field("", description="Task description (truncated)")
+    original_task: str = Field("", description="Original task assigned")
+    approach: str = Field("", description="How the worker approached the task")
+    reasoning: str = Field("", description="Why this approach was chosen")
+    deliverables: str = Field("", description="What was delivered")
+    challenges: str = Field("", description="Challenges encountered")
+    result: str = Field("", description="Final result (truncated)")
+    depth: int = Field(0, description="Depth in hierarchy")
+
+
+class TreeStatisticsSchema(BaseModel):
+    """Schema for tree statistics."""
+
+    total_agents: int = Field(0, description="Total number of agents")
+    completed_agents: int = Field(0, description="Number of completed agents")
+    failed_agents: int = Field(0, description="Number of failed agents")
+    worker_count: int = Field(0, description="Number of workers")
+    manager_count: int = Field(0, description="Number of managers")
+    max_depth: int = Field(0, description="Maximum depth of hierarchy")
+
+
+class TreeWorkReportSchema(BaseModel):
+    """Comprehensive work report for a BOSS agent's subtree."""
+
+    boss_id: str = Field(..., description="BOSS agent ID")
+    task: str = Field(..., description="Original task")
+    status: str = Field(..., description="Overall status")
+    statistics: TreeStatisticsSchema = Field(
+        default_factory=TreeStatisticsSchema, description="Tree statistics"
+    )
+    worker_reports: list[WorkerReportItemSchema] = Field(
+        default_factory=list, description="All worker reports"
+    )
+    aggregated_deliverables: str = Field("", description="Aggregated summary of deliverables")
