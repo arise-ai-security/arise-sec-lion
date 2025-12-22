@@ -112,13 +112,15 @@ class PostgresEventStore(EventStorePort):
             ) from e
 
     async def append(self, event: DomainEvent, expected_version: int) -> None:
+        """Append event with OCC via UNIQUE constraint.
+
+        The UNIQUE(aggregate_id, sequence_number) constraint guarantees
+        only one writer succeeds. On conflict, caller reloads and retries.
+        """
         if not self.pool:
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
-            event_dict = event.model_dump(mode="json")
-            event_type = event.__class__.__name__
-
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     """
@@ -135,30 +137,16 @@ class PostgresEventStore(EventStorePort):
                     event.event_id,
                     event.aggregate_id,
                     event.sequence_number,
-                    event_type,
-                    event_dict,
+                    event.__class__.__name__,
+                    event.model_dump(mode="json"),
                     event.occurred_at,
                     event.metadata,
                 )
 
         except asyncpg.UniqueViolationError as e:
-            try:
-                async with self.pool.acquire() as conn:
-                    actual_version = await conn.fetchval(
-                        """
-                        SELECT COALESCE(MAX(sequence_number), 0)
-                        FROM events
-                        WHERE aggregate_id = $1
-                        """,
-                        event.aggregate_id,
-                    )
-            except Exception:
-                actual_version = -1  # Unknown
-
             raise ConcurrencyError(
                 aggregate_id=str(event.aggregate_id),
                 expected_version=expected_version,
-                actual_version=actual_version,
             ) from e
 
         except Exception as e:

@@ -19,6 +19,9 @@ class DomainEvent(BaseModel):
 
     model_config = {"frozen": True}
 
+    # TODO: Add schema_version field when event schema evolution is needed.
+    # This enables upcasters to migrate old events to new schemas.
+
     event_id: UUID = Field(default_factory=uuid4)
     aggregate_id: UUID
     sequence_number: int
