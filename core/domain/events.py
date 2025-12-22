@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from core.domain.subtask import Subtask, SubtaskJustification
+from core.domain.subtask import Subtask, SubtaskJustification, WorkerReport
 
 
 def _utc_now() -> datetime:
@@ -69,6 +69,8 @@ class WorkCompleted(DomainEvent):
     """Agent completed work successfully."""
 
     result: str
+    # Worker's report justifying their work (optional for backward compatibility)
+    worker_report: WorkerReport | None = None
 
 
 class WorkFailed(DomainEvent):
@@ -96,6 +98,8 @@ class ChildCompleted(DomainEvent):
 
     child_id: UUID
     result: str
+    # Worker's report if the child was a worker (optional for backward compatibility)
+    worker_report: WorkerReport | None = None
 
 
 class ComplexityEvaluated(DomainEvent):

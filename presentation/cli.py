@@ -211,6 +211,7 @@ class CLI:
         print("Other commands:")
         print("  python main.py events    - View events for last run")
         print("  python main.py summary   - Show summary projection")
+        print("  python main.py report    - Show comprehensive work report")
         print("  python main.py list      - List past BOSS agent runs")
         print("  python main.py budget    - Show agent budget information")
         print("  python main.py tasks     - Show agent task queues")
@@ -1012,6 +1013,79 @@ def _print_tasks_table(tasks_data: list[dict]) -> None:
                     click.echo(f"      ↺ {task} (retry #{retry})")
 
         click.echo()
+
+
+@cli.command("report")
+@click.option(
+    "--agent-id",
+    type=click.UUID,
+    help="Agent UUID (default: last run)",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "text"]),
+    default="text",
+    help="Output format",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output file path",
+)
+def report(agent_id: UUID | None, fmt: str, output: str | None) -> None:
+    """Show comprehensive work report for a task run.
+
+    Displays a complete summary of all work done by the BOSS agent
+    and its subtree, including worker reports and justifications.
+
+    Examples:
+
+        python main.py report
+
+        python main.py report --format json
+
+        python main.py report --output report.md
+    """
+    asyncio.run(_show_report(agent_id, fmt, output))
+
+
+async def _show_report(agent_id: UUID | None, fmt: str, output: str | None) -> None:
+    from core.query.projections.tree_summary import (
+        TreeSummaryGenerator,
+        format_tree_summary_json,
+        format_tree_summary_text,
+    )
+
+    try:
+        event_store = await _get_event_store()
+        output_dir = _get_output_dir()
+
+        if agent_id is None:
+            agent_id = get_last_run_id(output_dir)
+            if agent_id is None:
+                click.echo("Error: No agent-id specified and no last run found.")
+                click.echo("Run a task first or specify --agent-id")
+                return
+
+        generator = TreeSummaryGenerator(event_store)
+        summary = await generator.generate(agent_id)
+
+        if fmt == "json":
+            import json as json_module
+            result = json_module.dumps(format_tree_summary_json(summary), indent=2)
+        else:
+            result = format_tree_summary_text(summary)
+
+        if output:
+            Path(output).write_text(result)
+            click.echo(f"Report written to {output}")
+        else:
+            click.echo(result)
+
+    finally:
+        await _cleanup_event_store()
 
 
 if __name__ == "__main__":

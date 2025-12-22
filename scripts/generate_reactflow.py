@@ -167,6 +167,8 @@ def layout_tree(
         "subtasks": summary.get("subtasks", []),
         # Budget info
         "budget": summary.get("budget"),
+        # Worker report (for workers)
+        "workerReport": summary.get("worker_report"),
         # Additional info
         "childrenCount": len(children),
         "depth": depth,
@@ -584,6 +586,28 @@ function AgentModal({ agent, onClose }) {
                   </div>
                 );
               })}
+            </div>
+          </Section>
+        )}
+
+        {/* Worker Report (for workers) */}
+        {agent.workerReport && (
+          <Section title="Worker Report">
+            <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '12px', border: '1px solid #bbf7d0' }}>
+              <div style={{ fontSize: '12px', color: '#6b7280', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {agent.workerReport.approach && (
+                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Approach:</span> {agent.workerReport.approach}</div>
+                )}
+                {agent.workerReport.reasoning && (
+                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Reasoning:</span> {agent.workerReport.reasoning}</div>
+                )}
+                {agent.workerReport.deliverables && (
+                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Deliverables:</span> {agent.workerReport.deliverables}</div>
+                )}
+                {agent.workerReport.challenges && agent.workerReport.challenges !== 'No significant challenges encountered' && (
+                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Challenges:</span> {agent.workerReport.challenges}</div>
+                )}
+              </div>
             </div>
           </Section>
         )}

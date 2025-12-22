@@ -380,7 +380,11 @@ class AgentExecutionService:
         parent_version = parent.version
 
         if agent.status == AgentStatus.COMPLETED:
-            parent.handle_child_update(agent.session_id, agent.result or "")
+            parent.handle_child_update(
+                agent.session_id,
+                agent.result or "",
+                worker_report=agent.worker_report,
+            )
         else:
             parent.handle_child_failure(
                 child_id=agent.session_id,
@@ -418,7 +422,11 @@ class AgentExecutionService:
 
             # If child is in terminal state but parent doesn't know, process it
             if child.status == AgentStatus.COMPLETED:
-                parent.handle_child_update(child_id, child.result or "")
+                parent.handle_child_update(
+                    child_id,
+                    child.result or "",
+                    worker_report=child.worker_report,
+                )
                 any_updates = True
             elif child.status == AgentStatus.FAILED:
                 parent.handle_child_failure(

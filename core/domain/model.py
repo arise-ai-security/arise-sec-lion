@@ -48,7 +48,7 @@ from core.domain.execution_context import ExecutionContext
 from core.domain.llm_response import LLMResponse
 from core.domain.prompt_builder import PromptBuilder, is_security_task
 from core.domain.services import SubtaskParser, strip_markdown_code_block
-from core.domain.subtask import Subtask, SubtaskJustification
+from core.domain.subtask import Subtask, SubtaskJustification, WorkerReport
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 
@@ -374,18 +374,95 @@ class AgentSession:
         if working_directory:
             task_context["working_directory"] = working_directory
 
+        # Collect captured thoughts for generating worker report
+        captured_thoughts: list[str] = []
+
         try:
             async for tool_event in tool_port.run_session(task_context):
                 event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
                 event_data["aggregate_id"] = self.session_id
                 event_data["sequence_number"] = self._next_sequence()
+
+                # Collect thought content for report generation
+                if isinstance(tool_event, ThoughtCaptured):
+                    captured_thoughts.append(tool_event.content)
+
+                # If WorkCompleted, enrich with worker report
+                if isinstance(tool_event, WorkCompleted):
+                    worker_report = self._generate_worker_report(
+                        event_data.get("result", ""),
+                        captured_thoughts,
+                    )
+                    event_data["worker_report"] = worker_report
+
                 corrected_event = type(tool_event)(**event_data)
                 self._apply(corrected_event)
                 self._changes.append(corrected_event)
         except ToolNotAvailableError as e:
             self.fail_with_reason(str(e))
 
-    def handle_child_update(self, child_id: UUID, result: str) -> None:
+    def _generate_worker_report(
+        self,
+        result: str,
+        captured_thoughts: list[str],
+    ) -> WorkerReport:
+        """Generate a worker report based on task context and captured output.
+
+        This synthesizes the worker's justification for their work, including:
+        - The original task that was assigned
+        - How they approached it (from captured thoughts)
+        - Why the approach should work (from supervisor expectations)
+        - What was delivered (from result)
+        """
+        # Extract approach from captured thoughts
+        approach_lines = []
+        challenges_lines = []
+        for thought in captured_thoughts:
+            thought_lower = thought.lower()
+            if any(kw in thought_lower for kw in ["error", "failed", "issue", "problem", "fix"]):
+                challenges_lines.append(thought)
+            elif any(kw in thought_lower for kw in ["creating", "writing", "running", "executing", "installing"]):
+                approach_lines.append(thought)
+
+        approach = (
+            "; ".join(approach_lines[:5]) if approach_lines
+            else "Executed task using available tools"
+        )
+
+        challenges = (
+            "; ".join(challenges_lines[:3]) if challenges_lines
+            else "No significant challenges encountered"
+        )
+
+        # Build reasoning from supervisor justification if available
+        reasoning = ""
+        if self.supervisor_justification:
+            j = self.supervisor_justification
+            reasoning = f"Approach based on supervisor guidance: {j.plan}. Expected to work because: {j.why_it_may_work}"
+        else:
+            reasoning = "Followed standard execution approach for the given task"
+
+        # Summarize deliverables from result
+        result_lines = result.split("\n") if result else []
+        deliverables = (
+            "; ".join(line.strip() for line in result_lines[:5] if line.strip())
+            if result_lines else "Task completed"
+        )
+
+        return WorkerReport(
+            original_task=self.task_description or "",
+            approach=approach[:500],  # Truncate to reasonable length
+            reasoning=reasoning[:500],
+            deliverables=deliverables[:500],
+            challenges=challenges[:500],
+        )
+
+    def handle_child_update(
+        self,
+        child_id: UUID,
+        result: str,
+        worker_report: WorkerReport | None = None,
+    ) -> None:
         """For BOSS/MANAGER: record child completion, complete self when all children done."""
         assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
             f"Requires BOSS/MANAGER, got {self.role}"
@@ -399,6 +476,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             child_id=child_id,
             result=result,
+            worker_report=worker_report,
         )
         self._apply(child_completed_event)
         self._changes.append(child_completed_event)
@@ -484,11 +562,14 @@ class AgentSession:
     def _(self, event: WorkCompleted) -> None:
         self.status = AgentStatus.COMPLETED
         self.result = event.result
+        self.worker_report = event.worker_report
         self.version += 1
 
     @_apply.register
     def _(self, event: ChildCompleted) -> None:
         self.child_results[event.child_id] = event.result
+        if event.worker_report is not None:
+            self.child_worker_reports[event.child_id] = event.worker_report
         self.version += 1
 
     @_apply.register
@@ -758,6 +839,12 @@ class AgentSession:
 
         # Supervisor's justification for this agent's assigned task
         self.supervisor_justification: SubtaskJustification | None = None
+
+        # Worker's report upon completion (for WORKER agents)
+        self.worker_report: WorkerReport | None = None
+
+        # Child worker reports (for tracking reports from children)
+        self.child_worker_reports: dict[UUID, WorkerReport] = {}
 
     @classmethod
     def load_from_history(cls, events: list[DomainEvent]) -> "AgentSession":

@@ -19,6 +19,23 @@ class SubtaskJustification(BaseModel):
     expected_results: str = Field(default="(legacy event)", description="What outputs/outcomes are expected")
 
 
+class WorkerReport(BaseModel):
+    """Worker's report upon completing a task.
+
+    Similar to SubtaskJustification, but from the worker's perspective after
+    executing the task. This provides justification for the work done.
+    """
+
+    model_config = {"frozen": True}
+
+    # Defaults for backward compatibility with old events that lack report
+    original_task: str = Field(default="", description="The original task that was assigned")
+    approach: str = Field(default="", description="How the worker approached the task")
+    reasoning: str = Field(default="", description="Why this approach was chosen and why it should work")
+    deliverables: str = Field(default="", description="Summary of what was produced/delivered")
+    challenges: str = Field(default="", description="Any challenges encountered and how they were addressed")
+
+
 class Subtask(BaseModel):
     """Immutable subtask with description, justification, and child agent config.
 

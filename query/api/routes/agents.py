@@ -35,6 +35,7 @@ from query.api.schemas import (
     SubtaskJustificationSchema,
     SubtaskSummarySchema,
     TaskQueueItemSchema,
+    WorkerReportSchema,
 )
 
 
@@ -329,6 +330,17 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         for task in agent.task_queue
     ]
 
+    # Build worker report (for WORKER agents)
+    worker_report_schema: WorkerReportSchema | None = None
+    if agent.worker_report is not None:
+        worker_report_schema = WorkerReportSchema(
+            original_task=agent.worker_report.original_task,
+            approach=agent.worker_report.approach,
+            reasoning=agent.worker_report.reasoning,
+            deliverables=agent.worker_report.deliverables,
+            challenges=agent.worker_report.challenges,
+        )
+
     return AgentSummarySchema(
         id=str(agent.session_id),
         role=agent.role.value,
@@ -342,6 +354,7 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         config_details=config_details,
         result=agent.result,
         error_message=agent.error_message,
+        worker_report=worker_report_schema,
         budget=budget_info,
         task_queue=task_queue_items,
         queue_size=len(task_queue_items),

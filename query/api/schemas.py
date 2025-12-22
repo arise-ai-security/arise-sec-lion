@@ -122,6 +122,16 @@ class SubtaskJustificationSchema(BaseModel):
     expected_results: str = Field("", description="What outputs/outcomes are expected")
 
 
+class WorkerReportSchema(BaseModel):
+    """Schema for worker's report upon completing a task."""
+
+    original_task: str = Field("", description="The original task that was assigned")
+    approach: str = Field("", description="How the worker approached the task")
+    reasoning: str = Field("", description="Why this approach was chosen and why it should work")
+    deliverables: str = Field("", description="Summary of what was produced/delivered")
+    challenges: str = Field("", description="Any challenges encountered and how they were addressed")
+
+
 class SubtaskSummarySchema(BaseModel):
     """Schema for a subtask in the agent summary."""
 
@@ -186,6 +196,11 @@ class AgentSummarySchema(BaseModel):
     # Result/Error
     result: str | None = Field(None, description="Final result (if completed)")
     error_message: str | None = Field(None, description="Error message (if failed)")
+
+    # Worker report (for WORKER agents)
+    worker_report: WorkerReportSchema | None = Field(
+        None, description="Worker's report justifying their work"
+    )
 
     # Budget information
     budget: BudgetInfoSchema | None = Field(None, description="Budget allocation and usage")
