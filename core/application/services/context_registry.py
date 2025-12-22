@@ -38,12 +38,13 @@ class ExecutionContextRegistry:
         """Create and register root execution context.
 
         Args:
-            root_id: The root agent ID
+            root_id: The root agent ID (also used for SharedExecutionContext reference)
             max_depth: Maximum depth limit (-1 for unlimited)
             max_children_per_node: Maximum children per node (-1 for unlimited)
             max_retries: Maximum retry attempts
         """
         context = ExecutionContext.create_root(
+            root_id=root_id,
             max_depth=max_depth,
             max_children_per_node=max_children_per_node,
             max_retries=max_retries,

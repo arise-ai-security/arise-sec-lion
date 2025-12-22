@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from config import OrchestrationConfig
     from core.ports.event_store_port import EventStorePort
     from core.ports.llm_port import LLMPort
+    from core.ports.shared_context_port import SharedContextPort
     from core.ports.worker_port import WorkerToolPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
@@ -63,8 +64,7 @@ class AgentExecutionService:
     - AgentQueryService: Read operations (CQRS)
     - ExecutionContextRegistry: Manage execution contexts
     - WorkspaceContextProvider: Workspace file context
-
-    Note: Budget tracking will be added via SharedExecutionContext (context-passing feature).
+    - SharedContextPort: Shared execution context for budget and artifacts
     """
 
     def __init__(
@@ -74,6 +74,7 @@ class AgentExecutionService:
         worker_tool_port: WorkerToolPort,
         system_limits: SystemLimitsConfig,
         config: ServiceConfig,
+        shared_context_port: SharedContextPort | None = None,
         prompt_builder: PromptBuilder | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
@@ -81,6 +82,7 @@ class AgentExecutionService:
         self._event_store = event_store
         self._llm_port = llm_port
         self._worker_tool_port = worker_tool_port
+        self._shared_context_port = shared_context_port
 
         # Configuration
         self._config = config
@@ -131,7 +133,7 @@ class AgentExecutionService:
     async def create_boss_agent(self, task_description: str) -> UUID:
         """Create root BOSS agent with task.
 
-        Initializes execution context for the agent hierarchy.
+        Initializes execution context and shared context for the agent hierarchy.
         Returns the agent UUID.
         """
         root_id = uuid4()
@@ -140,11 +142,29 @@ class AgentExecutionService:
         # Setup working directory
         self._setup_working_directory(root_id)
 
+        # Create shared context for this execution run
+        await self._create_shared_context(root_id)
+
         # Create and persist boss agent
         boss_agent = self._create_boss_session(root_id, task_description)
         await self._repository.save_new_agent(boss_agent)
 
         return root_id
+
+    async def _create_shared_context(self, root_id: UUID) -> None:
+        """Create shared context for execution run."""
+        if self._shared_context_port is None:
+            return
+
+        # TODO: Get initial budget from config when budget system is fully integrated
+        initial_budget_usd = 0.0  # 0 = unlimited for now
+        shared_context = await self._shared_context_port.get_or_create(
+            root_id=root_id,
+            initial_budget_usd=initial_budget_usd,
+            config={},
+        )
+        # Persist the initial shared context
+        await self._shared_context_port.save(shared_context, expected_version=0)
 
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one workflow step: load -> dispatch -> persist with OCC retry."""
@@ -331,7 +351,15 @@ class AgentExecutionService:
             raise ValueError(f"Parent agent {agent.parent_id} not found")
 
         parent_version = parent.version
-        parent.handle_child_update(agent.session_id, agent.result or "")
+
+        # Build structured child result
+        child_result = agent.build_child_result()
+
+        parent.handle_child_update(
+            child_id=agent.session_id,
+            result=agent.result or "",
+            child_result=child_result,
+        )
 
         for event in parent.events:
             await self._event_store.append(event, expected_version=parent_version)
@@ -379,6 +407,7 @@ def create_execution_service(
     poll_interval: float,
     output_directory: str,
     default_worker_tool: str,
+    shared_context_port: SharedContextPort | None = None,
     prompt_builder: PromptBuilder | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> AgentExecutionService:
@@ -396,6 +425,7 @@ def create_execution_service(
         worker_tool_port=worker_tool_port,
         system_limits=system_limits,
         config=config,
+        shared_context_port=shared_context_port,
         prompt_builder=prompt_builder,
         progress_callback=progress_callback,
     )

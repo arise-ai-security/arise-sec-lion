@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.events import DomainEvent
+from core.domain.events import AgentCreated, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentSession
 
@@ -61,9 +61,17 @@ class AgentRepository:
         return AgentSession.load_from_history(events)
 
     async def load_if_exists(self, agent_id: UUID) -> AgentSession | None:
-        """Load agent if it exists, return None otherwise."""
+        """Load agent if it exists, return None otherwise.
+
+        Returns None if:
+        - No events exist for this aggregate_id
+        - Events exist but don't represent an AgentSession (e.g., SharedExecutionContext)
+        """
         events = await self._event_store.get_events(agent_id)
         if not events:
+            return None
+        # Check if this is actually an AgentSession aggregate
+        if not isinstance(events[0], AgentCreated):
             return None
         return AgentSession.load_from_history(events)
 

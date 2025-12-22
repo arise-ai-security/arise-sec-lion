@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from core.domain.context import ParentContext
 from core.domain.events import ChildSpawned
 from core.domain.model import AgentRole, AgentSession
 
@@ -70,7 +71,7 @@ class ChildAgentFactory:
         """Create a child agent from a ChildSpawned event.
 
         Returns None if at limit, otherwise returns the created agent.
-        Propagates execution context from parent to child.
+        Propagates execution context and parent context to child.
         """
         if self.is_at_limit():
             return None
@@ -85,6 +86,11 @@ class ChildAgentFactory:
 
         # Propagate execution context
         self._context_registry.propagate_to_child(parent_id, event.child_id)
+
+        # Set parent context if available in event
+        if event.parent_context:
+            parent_context = ParentContext.from_dict(event.parent_context)
+            child.set_parent_context(parent_context)
 
         # Persist the new agent
         await self._repository.save_new_agent(child)
