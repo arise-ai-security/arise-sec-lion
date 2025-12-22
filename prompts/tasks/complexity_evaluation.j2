@@ -4,6 +4,31 @@ Agent Role: PENDING
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
+{% if parent_context %}
+<PARENT_CONTEXT>
+Parent Task: {{ parent_context.parent_task }}
+Parent Role: {{ parent_context.parent_role }}
+Depth: {{ parent_context.depth }}
+{% if parent_context.ancestry %}
+Ancestry:
+{% for ancestor in parent_context.ancestry %}
+  - [{{ ancestor.role }}] {{ ancestor.task_summary }}
+{% endfor %}
+{% endif %}
+{% if parent_context.decisions %}
+Parent Decisions:
+{% for decision in parent_context.decisions %}
+  - {{ decision }}
+{% endfor %}
+{% endif %}
+{% if parent_context.execution_limits %}
+Execution Limits:
+  - Depth Remaining: {{ parent_context.execution_limits.get('depth_remaining', 'unlimited') }}
+  - Max Children Per Node: {{ parent_context.execution_limits.get('max_children_per_node', 'unlimited') }}
+{% endif %}
+</PARENT_CONTEXT>
+{% endif %}
+
 <TASK_DESCRIPTION>
 You are evaluating whether the following task is SIMPLE or COMPLEX:
 
