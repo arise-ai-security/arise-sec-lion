@@ -16,8 +16,8 @@ from core.domain.events import (
 )
 from core.domain.model import AgentSession
 from core.query.projections.hierarchy_collector import HierarchyCollector
-from core.query.projections.impl import SummaryProjection
-from core.query.projections.models import CostSummary, ProjectionSummary
+from core.query.projections.impl import AgentListProjection, SummaryProjection
+from core.query.projections.models import AgentListItem, CostSummary, ProjectionSummary
 from query.api.dependencies import EventStoreDep
 from query.api.schemas import (
     AgentHierarchySchema,
@@ -35,6 +35,17 @@ from query.api.schemas import (
 
 
 router = APIRouter()
+
+
+def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
+    """Convert AgentListItem read model to API schema."""
+    return AgentListItemSchema(
+        id=str(item.agent_id),
+        role=item.role,
+        status=item.status,
+        task_description=item.task_description or "",
+        created_at=item.created_at,
+    )
 
 
 def _build_config_details(config: object, strategy: str | None) -> dict:
@@ -82,73 +93,38 @@ async def list_boss_agents(event_store: EventStoreDep) -> list[AgentListItemSche
     Returns only top-level agents that have no parent.
     These represent individual task runs.
 
-    Uses single query to fetch all events for performance with remote DBs.
+    Uses CQRS projection for efficient read model construction.
     """
     # Single query to fetch all events grouped by aggregate
     all_events_grouped = await event_store.get_all_events_grouped()
-    boss_agents = []
 
-    for agent_id, events in all_events_grouped.items():
-        if not events:
-            continue
+    # Use projection to build lightweight read models (no AgentSession reconstruction)
+    projection = AgentListProjection()
+    agents = projection.project_all(all_events_grouped)
+    boss_agents = projection.filter_boss_agents(agents)
 
-        # Skip non-agent aggregates (e.g., SharedExecutionContext)
-        if not isinstance(events[0], AgentCreated):
-            continue
-
-        agent = AgentSession.load_from_history(events)
-
-        # Only include BOSS agents (no parent)
-        if agent.parent_id is None:
-            # Find creation time from AgentCreated event
-            created_at = None
-            for event in events:
-                if isinstance(event, AgentCreated):
-                    created_at = event.occurred_at
-                    break
-
-            boss_agents.append(
-                AgentListItemSchema(
-                    id=str(agent.session_id),
-                    role=agent.role.value,
-                    status=agent.status.value,
-                    task_description=agent.task_description or "",
-                    created_at=created_at,
-                )
-            )
-
-    # Sort by creation time (newest first)
-    boss_agents.sort(key=lambda a: a.created_at or "", reverse=True)
-    return boss_agents
+    # Convert to API schemas
+    return [_agent_list_item_to_schema(agent) for agent in boss_agents]
 
 
 @router.get("/{agent_id}", response_model=AgentListItemSchema)
 async def get_agent(agent_id: UUID, event_store: EventStoreDep) -> AgentListItemSchema:
-    """Get a single agent by ID."""
+    """Get a single agent by ID.
+
+    Uses CQRS projection for efficient read model construction.
+    """
     events = await event_store.get_events(agent_id)
     if not events:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Verify this is an agent aggregate, not SharedExecutionContext
-    if not isinstance(events[0], AgentCreated):
+    # Use projection to build lightweight read model
+    projection = AgentListProjection()
+    agent_item = projection.project(events)
+
+    if agent_item is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    agent = AgentSession.load_from_history(events)
-
-    # Find creation time
-    created_at = None
-    for event in events:
-        if isinstance(event, AgentCreated):
-            created_at = event.occurred_at
-            break
-
-    return AgentListItemSchema(
-        id=str(agent.session_id),
-        role=agent.role.value,
-        status=agent.status.value,
-        task_description=agent.task_description or "",
-        created_at=created_at,
-    )
+    return _agent_list_item_to_schema(agent_item)
 
 
 @router.get("/{agent_id}/hierarchy", response_model=AgentHierarchySchema)
@@ -161,7 +137,7 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
     Returns:
         Complete hierarchy tree with all descendants.
 
-    Uses single query to fetch all events for performance with remote DBs.
+    Uses CQRS projection for efficient read model construction.
     """
     # Single query to fetch all events
     all_events_grouped = await event_store.get_all_events_grouped()
@@ -170,11 +146,9 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
     if agent_id not in all_events_grouped:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Build agent lookup from all events (filter to agents only)
-    agents_by_id: dict[UUID, AgentSession] = {}
-    for aid, events in all_events_grouped.items():
-        if events and isinstance(events[0], AgentCreated):
-            agents_by_id[aid] = AgentSession.load_from_history(events)
+    # Use projection to build lightweight read models (no AgentSession reconstruction)
+    projection = AgentListProjection()
+    agents_by_id = projection.project_all(all_events_grouped)
 
     if agent_id not in agents_by_id:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
@@ -201,14 +175,14 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
                     queue.append(child_id)
                     depth_map[child_id] = current_depth + 1
 
-    # Build tree recursively
+    # Build tree recursively from read models
     def build_node(aid: UUID) -> AgentNodeSchema:
         agent = agents_by_id[aid]
         children = [build_node(cid) for cid in agent.child_ids if cid in agents_by_id]
         return AgentNodeSchema(
             id=str(aid),
-            role=agent.role.value,
-            status=agent.status.value,
+            role=agent.role,
+            status=agent.status,
             task_description=agent.task_description or "",
             parent_id=str(agent.parent_id) if agent.parent_id else None,
             children=children,

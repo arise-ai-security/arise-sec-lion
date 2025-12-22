@@ -8,6 +8,36 @@ from core.domain.events import DomainEvent
 
 
 @dataclass(frozen=True)
+class AgentListItem:
+    """Lightweight read model for agent listing.
+
+    This is a CQRS read model that can be built directly from events
+    without reconstructing the full AgentSession aggregate.
+    """
+
+    agent_id: UUID
+    role: str
+    status: str
+    task_description: str | None
+    parent_id: UUID | None
+    created_at: datetime | None
+    child_ids: tuple[UUID, ...] = field(default_factory=tuple)
+
+    @classmethod
+    def empty(cls, agent_id: UUID) -> "AgentListItem":
+        """Create empty agent list item."""
+        return cls(
+            agent_id=agent_id,
+            role="PENDING",
+            status="pending",
+            task_description=None,
+            parent_id=None,
+            created_at=None,
+            child_ids=(),
+        )
+
+
+@dataclass(frozen=True)
 class NodeCountSummary:
     """Agent node counts by role."""
 

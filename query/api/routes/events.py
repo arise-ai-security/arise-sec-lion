@@ -4,11 +4,15 @@ Provides endpoints for querying events and SSE streaming.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
+
+
+logger = logging.getLogger(__name__)
 
 from core.domain.events import (
     AgentCreated,
@@ -172,9 +176,12 @@ async def sse_events(root_id: UUID, event_store: EventStoreDep) -> EventSourceRe
                 await asyncio.sleep(0.5)
 
             except Exception as e:
+                # Log full error details server-side
+                logger.exception("SSE stream error for root_id=%s", root_id)
+                # Return sanitized error to client
                 yield {
                     "event": "error",
-                    "data": str(e),
+                    "data": '{"message": "Stream error occurred", "retry": true}',
                 }
                 break
 
@@ -225,9 +232,12 @@ async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceR
                 await asyncio.sleep(0.5)
 
             except Exception as e:
+                # Log full error details server-side
+                logger.exception("SSE summary stream error for root_id=%s", root_id)
+                # Return sanitized error to client
                 yield {
                     "event": "error",
-                    "data": str(e),
+                    "data": '{"message": "Summary stream error occurred", "retry": true}',
                 }
                 break
 

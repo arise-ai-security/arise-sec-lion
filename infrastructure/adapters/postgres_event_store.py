@@ -167,21 +167,41 @@ class PostgresEventStore(EventStorePort):
                 original_error=e,
             ) from e
 
-    async def get_events(self, aggregate_id: UUID) -> list[DomainEvent]:
+    async def get_events(
+        self,
+        aggregate_id: UUID,
+        *,
+        limit: int | None = None,
+        after_sequence: int | None = None,
+    ) -> list[DomainEvent]:
         if not self.pool:
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
+            # Build query with optional pagination
+            query_parts = [
+                "SELECT event_type, payload",
+                "FROM events",
+                "WHERE aggregate_id = $1",
+            ]
+            params: list[UUID | int] = [aggregate_id]
+            param_idx = 2
+
+            if after_sequence is not None:
+                query_parts.append(f"AND sequence_number > ${param_idx}")
+                params.append(after_sequence)
+                param_idx += 1
+
+            query_parts.append("ORDER BY sequence_number ASC")
+
+            if limit is not None:
+                query_parts.append(f"LIMIT ${param_idx}")
+                params.append(limit)
+
+            query = "\n".join(query_parts)
+
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT event_type, payload
-                    FROM events
-                    WHERE aggregate_id = $1
-                    ORDER BY sequence_number ASC
-                    """,
-                    aggregate_id,
-                )
+                rows = await conn.fetch(query, *params)
 
             events: list[DomainEvent] = []
             for row in rows:
@@ -241,20 +261,56 @@ class PostgresEventStore(EventStorePort):
                 original_error=e,
             ) from e
 
-    async def get_all_events_grouped(self) -> dict[UUID, list[DomainEvent]]:
-        """Get all events grouped by aggregate_id in a single query."""
+    async def get_all_events_grouped(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get all events grouped by aggregate_id in a single query.
+
+        Args:
+            limit: Maximum number of aggregates to return (None = unlimited).
+            offset: Number of aggregates to skip (for pagination).
+        """
         if not self.pool:
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
+                # First get paginated aggregate IDs
+                if limit is not None:
+                    aggregate_ids_query = """
+                        SELECT DISTINCT aggregate_id
+                        FROM events
+                        ORDER BY aggregate_id
+                        LIMIT $1 OFFSET $2
                     """
-                    SELECT aggregate_id, event_type, payload
-                    FROM events
-                    ORDER BY aggregate_id, sequence_number ASC
-                    """
-                )
+                    aggregate_rows = await conn.fetch(aggregate_ids_query, limit, offset)
+                    aggregate_ids = [row["aggregate_id"] for row in aggregate_rows]
+
+                    if not aggregate_ids:
+                        return {}
+
+                    # Then fetch events only for those aggregates
+                    rows = await conn.fetch(
+                        """
+                        SELECT aggregate_id, event_type, payload
+                        FROM events
+                        WHERE aggregate_id = ANY($1)
+                        ORDER BY aggregate_id, sequence_number ASC
+                        """,
+                        aggregate_ids,
+                    )
+                else:
+                    # No pagination - fetch all (backward compatible)
+                    rows = await conn.fetch(
+                        """
+                        SELECT aggregate_id, event_type, payload
+                        FROM events
+                        ORDER BY aggregate_id, sequence_number ASC
+                        """
+                    )
 
             grouped: dict[UUID, list[DomainEvent]] = {}
             for row in rows:
