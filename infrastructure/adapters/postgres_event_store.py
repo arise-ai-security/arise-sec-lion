@@ -78,6 +78,16 @@ class PostgresEventStore(EventStorePort):
         sql_path = cls.SQL_DIR / filename
         return sql_path.read_text(encoding="utf-8")
 
+    @staticmethod
+    def _deserialize_event(event_type: str, payload: str | dict) -> DomainEvent:
+        """Deserialize event from stored type and payload."""
+        event_class = EVENT_TYPE_REGISTRY.get(event_type)
+        if not event_class:
+            raise EventStoreError(f"Unknown event type: {event_type}")
+
+        payload_dict = orjson.loads(payload) if isinstance(payload, str) else payload
+        return event_class(**payload_dict)
+
     async def connect(self) -> None:
         async def init_connection(conn: asyncpg.Connection) -> None:
             await conn.set_type_codec(
@@ -191,32 +201,10 @@ class PostgresEventStore(EventStorePort):
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(query, *params)
 
-            events: list[DomainEvent] = []
-            for row in rows:
-                event_type = row["event_type"]
-                payload_json = row["payload"]
-
-                event_class = EVENT_TYPE_REGISTRY.get(event_type)
-                if not event_class:
-                    raise EventStoreError(
-                        f"Unknown event type '{event_type}' for aggregate {aggregate_id}"
-                    )
-
-                try:
-                    if isinstance(payload_json, str):
-                        payload_dict = orjson.loads(payload_json)
-                    else:
-                        payload_dict = payload_json
-
-                    event = event_class(**payload_dict)
-                    events.append(event)
-                except Exception as e:
-                    raise EventStoreError(
-                        f"Failed to deserialize event {event_type} for aggregate {aggregate_id}",
-                        original_error=e,
-                    ) from e
-
-            return events
+            return [
+                self._deserialize_event(row["event_type"], row["payload"])
+                for row in rows
+            ]
 
         except EventStoreError:
             raise
@@ -303,21 +291,7 @@ class PostgresEventStore(EventStorePort):
             grouped: dict[UUID, list[DomainEvent]] = {}
             for row in rows:
                 aggregate_id = row["aggregate_id"]
-                event_type = row["event_type"]
-                payload_json = row["payload"]
-
-                event_class = EVENT_TYPE_REGISTRY.get(event_type)
-                if not event_class:
-                    raise EventStoreError(
-                        f"Unknown event type '{event_type}' for aggregate {aggregate_id}"
-                    )
-
-                if isinstance(payload_json, str):
-                    payload_dict = orjson.loads(payload_json)
-                else:
-                    payload_dict = payload_json
-
-                event = event_class(**payload_dict)
+                event = self._deserialize_event(row["event_type"], row["payload"])
 
                 if aggregate_id not in grouped:
                     grouped[aggregate_id] = []
