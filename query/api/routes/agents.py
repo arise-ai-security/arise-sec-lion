@@ -81,13 +81,19 @@ async def list_boss_agents(event_store: EventStoreDep) -> list[AgentListItemSche
 
     Returns only top-level agents that have no parent.
     These represent individual task runs.
+
+    Uses single query to fetch all events for performance with remote DBs.
     """
-    all_ids = await event_store.get_all_aggregate_ids()
+    # Single query to fetch all events grouped by aggregate
+    all_events_grouped = await event_store.get_all_events_grouped()
     boss_agents = []
 
-    for agent_id in all_ids:
-        events = await event_store.get_events(agent_id)
+    for agent_id, events in all_events_grouped.items():
         if not events:
+            continue
+
+        # Skip non-agent aggregates (e.g., SharedExecutionContext)
+        if not isinstance(events[0], AgentCreated):
             continue
 
         agent = AgentSession.load_from_history(events)
@@ -123,6 +129,10 @@ async def get_agent(agent_id: UUID, event_store: EventStoreDep) -> AgentListItem
     if not events:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
+    # Verify this is an agent aggregate, not SharedExecutionContext
+    if not isinstance(events[0], AgentCreated):
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
     agent = AgentSession.load_from_history(events)
 
     # Find creation time
@@ -150,23 +160,46 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
 
     Returns:
         Complete hierarchy tree with all descendants.
+
+    Uses single query to fetch all events for performance with remote DBs.
     """
-    # Verify root agent exists
-    root_events = await event_store.get_events(agent_id)
-    if not root_events:
+    # Single query to fetch all events
+    all_events_grouped = await event_store.get_all_events_grouped()
+
+    # Check root exists
+    if agent_id not in all_events_grouped:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Use HierarchyCollector to traverse the tree
-    collector = HierarchyCollector(event_store)
-    all_agent_ids = await collector.collect_agent_ids(agent_id)
-    depth = await collector.get_hierarchy_depth(agent_id)
-
-    # Build agent lookup
+    # Build agent lookup from all events (filter to agents only)
     agents_by_id: dict[UUID, AgentSession] = {}
-    for aid in all_agent_ids:
-        events = await event_store.get_events(aid)
-        if events:
+    for aid, events in all_events_grouped.items():
+        if events and isinstance(events[0], AgentCreated):
             agents_by_id[aid] = AgentSession.load_from_history(events)
+
+    if agent_id not in agents_by_id:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    # Find all agents in this hierarchy via BFS in memory
+    hierarchy_agents: set[UUID] = set()
+    queue = [agent_id]
+    max_depth = 0
+    depth_map = {agent_id: 0}
+
+    while queue:
+        current_id = queue.pop(0)
+        if current_id in hierarchy_agents:
+            continue
+        hierarchy_agents.add(current_id)
+
+        if current_id in agents_by_id:
+            agent = agents_by_id[current_id]
+            current_depth = depth_map.get(current_id, 0)
+            max_depth = max(max_depth, current_depth)
+
+            for child_id in agent.child_ids:
+                if child_id not in hierarchy_agents and child_id in agents_by_id:
+                    queue.append(child_id)
+                    depth_map[child_id] = current_depth + 1
 
     # Build tree recursively
     def build_node(aid: UUID) -> AgentNodeSchema:
@@ -185,8 +218,8 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
 
     return AgentHierarchySchema(
         root=root_node,
-        total_agents=len(all_agent_ids),
-        depth=depth,
+        total_agents=len(hierarchy_agents),
+        depth=max_depth,
     )
 
 

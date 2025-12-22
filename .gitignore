@@ -228,7 +228,7 @@ celerybeat.pid
 
 # Environments
 .env
-deployment/.env
+deployment/.env*
 .venv
 env/
 venv/

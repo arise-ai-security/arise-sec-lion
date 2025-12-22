@@ -32,3 +32,11 @@ class EventStorePort(Protocol):
     async def get_all_aggregate_ids(self) -> list[UUID]:
         """Get all aggregate UUIDs that have events."""
         ...
+
+    async def get_all_events_grouped(self) -> dict[UUID, list[DomainEvent]]:
+        """Get all events grouped by aggregate_id in a single query.
+
+        Returns:
+            Dict mapping aggregate_id to list of events ordered by sequence_number.
+        """
+        ...

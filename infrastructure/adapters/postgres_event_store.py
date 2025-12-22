@@ -8,12 +8,19 @@ import orjson
 
 from core.domain.events import (
     AgentCreated,
+    ArtifactStored,
+    BudgetConsumed,
+    BudgetExceeded,
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    ConfigOverrideSet,
+    DecisionRecorded,
     DomainEvent,
     LimitEnforced,
+    ProgressUpdated,
+    SharedContextCreated,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -28,6 +35,7 @@ from core.ports.event_store_port import EventStorePort
 
 
 EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
+    # Agent lifecycle events
     "AgentCreated": AgentCreated,
     "TaskAssigned": TaskAssigned,
     "StatusChanged": StatusChanged,
@@ -39,11 +47,20 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "ThoughtCaptured": ThoughtCaptured,
     "ChildCompleted": ChildCompleted,
     "ComplexityEvaluated": ComplexityEvaluated,
-    # Cost tracking events (budget enforcement via SharedExecutionContext in future)
+    # Cost tracking events
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,
     # Limit enforcement events
     "LimitEnforced": LimitEnforced,
+    # Shared context events
+    "SharedContextCreated": SharedContextCreated,
+    "ArtifactStored": ArtifactStored,
+    "DecisionRecorded": DecisionRecorded,
+    "ProgressUpdated": ProgressUpdated,
+    "ConfigOverrideSet": ConfigOverrideSet,
+    # Budget events (part of shared context)
+    "BudgetConsumed": BudgetConsumed,
+    "BudgetExceeded": BudgetExceeded,
 }
 
 
@@ -70,9 +87,11 @@ class PostgresEventStore(EventStorePort):
                 schema="pg_catalog",
             )
 
+        # Use statement_cache_size=0 for compatibility with pgbouncer/Supabase pooler
         self.pool = await asyncpg.create_pool(
             self.connection_string,
             init=init_connection,
+            statement_cache_size=0,
         )
 
     async def disconnect(self) -> None:
@@ -219,5 +238,54 @@ class PostgresEventStore(EventStorePort):
         except Exception as e:
             raise EventStoreError(
                 "Failed to retrieve all aggregate IDs",
+                original_error=e,
+            ) from e
+
+    async def get_all_events_grouped(self) -> dict[UUID, list[DomainEvent]]:
+        """Get all events grouped by aggregate_id in a single query."""
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT aggregate_id, event_type, payload
+                    FROM events
+                    ORDER BY aggregate_id, sequence_number ASC
+                    """
+                )
+
+            grouped: dict[UUID, list[DomainEvent]] = {}
+            for row in rows:
+                aggregate_id = row["aggregate_id"]
+                event_type = row["event_type"]
+                payload_json = row["payload"]
+
+                event_class = EVENT_TYPE_REGISTRY.get(event_type)
+                if not event_class:
+                    raise EventStoreError(
+                        f"Unknown event type '{event_type}' for aggregate {aggregate_id}"
+                    )
+
+                if isinstance(payload_json, str):
+                    payload_dict = orjson.loads(payload_json)
+                else:
+                    payload_dict = payload_json
+
+                event = event_class(**payload_dict)
+
+                if aggregate_id not in grouped:
+                    grouped[aggregate_id] = []
+                grouped[aggregate_id].append(event)
+
+            return grouped
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to retrieve all events grouped",
                 original_error=e,
             ) from e
