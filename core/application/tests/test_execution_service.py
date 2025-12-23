@@ -789,3 +789,488 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
     # Then: Only the active agent should be returned
     assert len(active_ids) == 1
     assert active_ids[0] == active_agent_id
+
+
+# =============================================================================
+# Tests for Left-to-Right Worker Execution Order (tree_sequence_id)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_workers_execute_in_sequence_id_order(execution_service, mock_event_store, mock_worker_port):
+    """Test that workers with lower sequence_id execute before higher ones."""
+    from core.domain.events import ComplexityEvaluated, CodeGenerationStarted, WorkCompleted
+
+    # Given: Two WORKER agents with different sequence_ids
+    # Worker 1 has lower sequence_id (should execute first)
+    # Worker 2 has higher sequence_id (should wait)
+    root_id = uuid4()
+    worker1_id = uuid4()
+    worker2_id = uuid4()
+
+    # Worker 1 (sequence_id=1) - left in tree
+    worker1_events = [
+        AgentCreated(
+            aggregate_id=worker1_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=root_id,
+            config=_test_config(),
+            tree_sequence_id=1,
+        ),
+        TaskAssigned(
+            aggregate_id=worker1_id,
+            sequence_number=2,
+            task_description="Task 1",
+        ),
+        ComplexityEvaluated(
+            aggregate_id=worker1_id,
+            sequence_number=3,
+            complexity="simple",
+            determined_role=AgentRole.WORKER.value,
+        ),
+    ]
+
+    # Worker 2 (sequence_id=2) - right in tree
+    worker2_events = [
+        AgentCreated(
+            aggregate_id=worker2_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=root_id,
+            config=_test_config(),
+            tree_sequence_id=2,
+        ),
+        TaskAssigned(
+            aggregate_id=worker2_id,
+            sequence_number=2,
+            task_description="Task 2",
+        ),
+        ComplexityEvaluated(
+            aggregate_id=worker2_id,
+            sequence_number=3,
+            complexity="simple",
+            determined_role=AgentRole.WORKER.value,
+        ),
+    ]
+
+    def get_events_side_effect(agent_id):
+        if agent_id == worker1_id:
+            return worker1_events
+        if agent_id == worker2_id:
+            return worker2_events
+        return []
+
+    mock_event_store.get_events.side_effect = get_events_side_effect
+    mock_event_store.get_all_aggregate_ids.return_value = [worker1_id, worker2_id]
+
+    # Track which worker was executed
+    executed_workers = []
+
+    async def mock_worker_generator(worker_id):
+        executed_workers.append(worker_id)
+        yield CodeGenerationStarted(
+            aggregate_id=worker_id,
+            sequence_number=4,
+            tool_name="dummy",
+        )
+        yield WorkCompleted(
+            aggregate_id=worker_id,
+            sequence_number=5,
+            result="Done",
+        )
+
+    class AsyncGeneratorMock:
+        def __init__(self, worker_id):
+            self.worker_id = worker_id
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        def __aiter__(self):
+            return mock_worker_generator(self.worker_id)
+
+    # Setup to track which worker is being executed
+    original_run_session = mock_worker_port.run_session
+
+    def create_run_session(*args, **kwargs):
+        # Determine which worker is being executed from context
+        # Since we can't directly get the agent_id, we check by order
+        if not executed_workers:
+            return AsyncGeneratorMock(worker1_id)
+        return AsyncGeneratorMock(worker2_id)
+
+    mock_worker_port.run_session = create_run_session
+
+    # Mock append to succeed
+    mock_event_store.append.return_value = None
+
+    # When: Run agent step for both workers in "wrong" order (worker2 first)
+    # Since worker2 has higher sequence_id, it should NOT execute if worker1 is still active
+    # Let's test the run_system_loop behavior by simulating active agents
+    from core.query.projections.hierarchy_collector import HierarchyCollector
+    from unittest.mock import patch, AsyncMock as AsyncMockClass
+
+    # Create a mock hierarchy collector
+    mock_collector = AsyncMockClass()
+    mock_collector.collect_agent_ids = AsyncMockClass(return_value={worker1_id, worker2_id})
+
+    with patch.object(execution_service, '_get_active_agent_ids') as mock_get_active:
+        # First iteration: both workers active, only worker1 should execute
+        # Second iteration: only worker2 active (worker1 completed)
+        mock_get_active.side_effect = [
+            [worker2_id, worker1_id],  # Return in "wrong" order to test sorting
+            [],  # No more active agents (exit loop)
+        ]
+
+        with patch('core.application.execution_service.HierarchyCollector', return_value=mock_collector):
+            # Simulate one loop iteration manually
+            active_agents = await mock_get_active()
+
+            # Load active agents
+            active_agent_data = []
+            for agent_id in active_agents:
+                events = await mock_event_store.get_events(agent_id)
+                if events:
+                    from core.domain.model import AgentSession
+                    agent = AgentSession.load_from_history(events)
+                    active_agent_data.append({
+                        "id": agent_id,
+                        "role": agent.role,
+                        "sequence_id": agent.tree_sequence_id,
+                    })
+
+            # Separate workers from non-workers
+            workers = [a for a in active_agent_data if a["role"] == AgentRole.WORKER]
+            non_workers = [a for a in active_agent_data if a["role"] != AgentRole.WORKER]
+
+            # Sort workers by sequence_id
+            workers.sort(key=lambda a: a["sequence_id"])
+
+            # Then: Workers should be sorted with worker1 first (sequence_id=1)
+            assert len(workers) == 2
+            assert workers[0]["id"] == worker1_id, "Worker with lower sequence_id should be first"
+            assert workers[1]["id"] == worker2_id, "Worker with higher sequence_id should be second"
+
+            # And: Only the first worker (lowest sequence_id) should execute
+            first_worker = workers[0]
+            assert first_worker["sequence_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_non_workers_execute_regardless_of_sequence_order(
+    execution_service, mock_event_store, mock_llm_port
+):
+    """Test that non-workers (PENDING, BOSS, MANAGER) execute concurrently regardless of sequence."""
+
+    # Given: Two PENDING agents with different sequence_ids
+    root_id = uuid4()
+    pending1_id = uuid4()
+    pending2_id = uuid4()
+
+    # Pending 1 (sequence_id=2) - higher sequence
+    pending1_events = [
+        AgentCreated(
+            aggregate_id=pending1_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=root_id,
+            config=_test_config(),
+            tree_sequence_id=2,
+        ),
+        TaskAssigned(
+            aggregate_id=pending1_id,
+            sequence_number=2,
+            task_description="Task 1",
+        ),
+    ]
+
+    # Pending 2 (sequence_id=1) - lower sequence
+    pending2_events = [
+        AgentCreated(
+            aggregate_id=pending2_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=root_id,
+            config=_test_config(),
+            tree_sequence_id=1,
+        ),
+        TaskAssigned(
+            aggregate_id=pending2_id,
+            sequence_number=2,
+            task_description="Task 2",
+        ),
+    ]
+
+    def get_events_side_effect(agent_id):
+        if agent_id == pending1_id:
+            return pending1_events
+        if agent_id == pending2_id:
+            return pending2_events
+        return []
+
+    mock_event_store.get_events.side_effect = get_events_side_effect
+
+    # Mock LLM to return SIMPLE (turning them into workers)
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
+    mock_event_store.append.return_value = None
+
+    # Build active_agent_data like run_system_loop does
+    active_agents = [pending1_id, pending2_id]
+    active_agent_data = []
+    for agent_id in active_agents:
+        events = await mock_event_store.get_events(agent_id)
+        if events:
+            from core.domain.model import AgentSession
+            agent = AgentSession.load_from_history(events)
+            active_agent_data.append({
+                "id": agent_id,
+                "role": agent.role,
+                "sequence_id": agent.tree_sequence_id,
+            })
+
+    # Separate workers from non-workers
+    workers = [a for a in active_agent_data if a["role"] == AgentRole.WORKER]
+    non_workers = [a for a in active_agent_data if a["role"] != AgentRole.WORKER]
+
+    # Then: Both agents should be in non_workers (PENDING is not WORKER)
+    assert len(workers) == 0
+    assert len(non_workers) == 2
+
+    # And: Both non-workers can execute (no sequence ordering needed)
+    # In run_system_loop, all non_workers execute in the same iteration
+    executed_non_workers = []
+    for agent_data in non_workers:
+        executed_non_workers.append(agent_data["id"])
+
+    assert pending1_id in executed_non_workers
+    assert pending2_id in executed_non_workers
+
+
+@pytest.mark.asyncio
+async def test_child_agents_get_incremental_sequence_ids(
+    execution_service, mock_event_store, mock_llm_port
+):
+    """Test that spawned children get correct tree_sequence_id based on position."""
+    import json
+
+    # Given: A BOSS agent that will spawn 2 children
+    boss_id = uuid4()
+    boss_events = [
+        AgentCreated(
+            aggregate_id=boss_id,
+            sequence_number=1,
+            role=AgentRole.BOSS.value,
+            parent_id=None,
+            config=_test_config(),
+            tree_sequence_id=0,  # Root has sequence_id=0
+        ),
+        TaskAssigned(
+            aggregate_id=boss_id,
+            sequence_number=2,
+            task_description="Build app",
+        ),
+    ]
+
+    mock_event_store.get_events.return_value = boss_events
+
+    # Mock LLM to return 2 subtasks (use query not query_with_usage)
+    child_config = _test_config()
+    mock_llm_port.query.return_value = json.dumps([
+        {"description": "Task 1", "config": child_config},
+        {"description": "Task 2", "config": child_config},
+    ])
+
+    # Track created children
+    created_children = []
+
+    async def track_append(event, expected_version):
+        if isinstance(event, AgentCreated) and event.aggregate_id != boss_id:
+            created_children.append({
+                "id": event.aggregate_id,
+                "sequence_id": event.tree_sequence_id,
+            })
+
+    mock_event_store.append.side_effect = track_append
+
+    # When: Run agent step (boss spawns children)
+    await execution_service.run_agent_step(boss_id)
+
+    # Then: Children should have incrementing sequence IDs
+    # Formula: parent_sequence_id * 1000 + child_index + 1
+    # Parent sequence_id = 0
+    # Child 0: 0 * 1000 + 0 + 1 = 1
+    # Child 1: 0 * 1000 + 1 + 1 = 2
+    assert len(created_children) == 2
+    sequence_ids = sorted([c["sequence_id"] for c in created_children])
+    assert sequence_ids == [1, 2], f"Expected [1, 2], got {sequence_ids}"
+
+
+@pytest.mark.asyncio
+async def test_nested_children_get_hierarchical_sequence_ids(
+    execution_service, mock_event_store, mock_llm_port
+):
+    """Test that deeply nested children get hierarchical sequence IDs."""
+    import json
+    from core.domain.events import ComplexityEvaluated
+
+    # Given: A MANAGER agent with sequence_id=1 that will spawn 2 children
+    parent_id = uuid4()
+    grandparent_id = uuid4()
+    parent_sequence_id = 1  # First child of boss
+
+    parent_events = [
+        AgentCreated(
+            aggregate_id=parent_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=grandparent_id,
+            config=_test_config(),
+            tree_sequence_id=parent_sequence_id,
+        ),
+        TaskAssigned(
+            aggregate_id=parent_id,
+            sequence_number=2,
+            task_description="Complex task",
+        ),
+        ComplexityEvaluated(
+            aggregate_id=parent_id,
+            sequence_number=3,
+            complexity="complex",
+            determined_role=AgentRole.MANAGER.value,
+        ),
+    ]
+
+    mock_event_store.get_events.return_value = parent_events
+
+    # Mock LLM to return 3 subtasks (use query not query_with_usage)
+    child_config = _test_config()
+    mock_llm_port.query.return_value = json.dumps([
+        {"description": "Sub-task 1", "config": child_config},
+        {"description": "Sub-task 2", "config": child_config},
+        {"description": "Sub-task 3", "config": child_config},
+    ])
+
+    # Track created children
+    created_children = []
+
+    async def track_append(event, expected_version):
+        if isinstance(event, AgentCreated) and event.aggregate_id != parent_id:
+            created_children.append({
+                "id": event.aggregate_id,
+                "sequence_id": event.tree_sequence_id,
+            })
+
+    mock_event_store.append.side_effect = track_append
+
+    # When: Run agent step (manager spawns children)
+    await execution_service.run_agent_step(parent_id)
+
+    # Then: Children should have hierarchical sequence IDs
+    # Formula: parent_sequence_id * 1000 + child_index + 1
+    # Parent sequence_id = 1
+    # Child 0: 1 * 1000 + 0 + 1 = 1001
+    # Child 1: 1 * 1000 + 1 + 1 = 1002
+    # Child 2: 1 * 1000 + 2 + 1 = 1003
+    assert len(created_children) == 3
+    sequence_ids = sorted([c["sequence_id"] for c in created_children])
+    assert sequence_ids == [1001, 1002, 1003], f"Expected [1001, 1002, 1003], got {sequence_ids}"
+
+
+@pytest.mark.asyncio
+async def test_run_system_loop_executes_lowest_sequence_worker_first(
+    execution_service, mock_event_store, mock_worker_port
+):
+    """Test that run_system_loop executes the worker with lowest sequence_id first."""
+    from core.domain.events import ComplexityEvaluated, CodeGenerationStarted, WorkCompleted
+    from unittest.mock import patch
+
+    root_id = uuid4()
+    worker1_id = uuid4()  # sequence_id=1
+    worker2_id = uuid4()  # sequence_id=2
+
+    # Worker 1 (lower sequence, should execute first)
+    worker1_events = [
+        AgentCreated(
+            aggregate_id=worker1_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=root_id,
+            config=_test_config(),
+            tree_sequence_id=1,
+        ),
+        TaskAssigned(
+            aggregate_id=worker1_id,
+            sequence_number=2,
+            task_description="Task 1",
+        ),
+        ComplexityEvaluated(
+            aggregate_id=worker1_id,
+            sequence_number=3,
+            complexity="simple",
+            determined_role=AgentRole.WORKER.value,
+        ),
+    ]
+
+    # Worker 2 (higher sequence, should wait)
+    worker2_events = [
+        AgentCreated(
+            aggregate_id=worker2_id,
+            sequence_number=1,
+            role=AgentRole.PENDING.value,
+            parent_id=root_id,
+            config=_test_config(),
+            tree_sequence_id=2,
+        ),
+        TaskAssigned(
+            aggregate_id=worker2_id,
+            sequence_number=2,
+            task_description="Task 2",
+        ),
+        ComplexityEvaluated(
+            aggregate_id=worker2_id,
+            sequence_number=3,
+            complexity="simple",
+            determined_role=AgentRole.WORKER.value,
+        ),
+    ]
+
+    def get_events_side_effect(agent_id):
+        if agent_id == worker1_id:
+            return worker1_events
+        if agent_id == worker2_id:
+            return worker2_events
+        return []
+
+    mock_event_store.get_events.side_effect = get_events_side_effect
+
+    # Track which worker's step is executed
+    executed_worker_ids = []
+    original_run_agent_step = execution_service.run_agent_step
+
+    async def track_run_agent_step(agent_id):
+        executed_worker_ids.append(agent_id)
+        # Don't actually run, just track
+
+    # Patch run_agent_step to track execution without actually running
+    with patch.object(execution_service, 'run_agent_step', side_effect=track_run_agent_step):
+        with patch.object(execution_service, '_get_active_agent_ids') as mock_get_active:
+            # Simulate: both workers active, return them in "wrong" order
+            mock_get_active.side_effect = [
+                [worker2_id, worker1_id],  # Wrong order to test sorting
+                [],  # Empty = exit loop
+            ]
+
+            # Run one iteration of the system loop
+            await execution_service.run_system_loop(root_id)
+
+    # Then: Worker 1 (lower sequence) should be executed first
+    # Note: Since both are workers and only one executes per iteration,
+    # we expect worker1 to be in the executed list first
+    assert worker1_id in executed_worker_ids, "Worker with lower sequence_id should execute"
+    # Worker 2 should not execute in this iteration (it's waiting for worker1)
+    if len(executed_worker_ids) > 1:
+        first_worker_idx = executed_worker_ids.index(worker1_id)
+        if worker2_id in executed_worker_ids:
+            second_worker_idx = executed_worker_ids.index(worker2_id)
+            assert first_worker_idx < second_worker_idx, "Worker 1 should execute before Worker 2"

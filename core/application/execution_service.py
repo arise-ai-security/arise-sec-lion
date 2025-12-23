@@ -280,13 +280,20 @@ class AgentExecutionService:
         total_weight = sum(e.subtask.budget_weight for e in child_spawned_events)
         available_budget = parent.current_budget
 
-        for child_event in child_spawned_events:
+        for child_index, child_event in enumerate(child_spawned_events):
             child_config = child_event.child_config
+
+            # Compute tree sequence ID for left-to-right worker execution ordering
+            # Formula: parent_sequence_id * 1000 + child_index + 1
+            # This gives left-to-right ordering across the entire tree
+            child_sequence_id = parent.tree_sequence_id * 1000 + child_index + 1
+
             child = AgentSession.create(
                 session_id=child_event.child_id,
                 role=AgentRole(child_event.child_role),
                 config=child_config,
                 parent_id=parent.session_id,
+                tree_sequence_id=child_sequence_id,
             )
             child.assign_task(
                 child_event.subtask.description,
@@ -509,6 +516,10 @@ class AgentExecutionService:
 
         Only processes agents within the hierarchy rooted at root_agent_id.
         This ensures that running a new task doesn't process agents from previous runs.
+
+        Workers are executed in left-to-right tree order (by tree_sequence_id) to ensure
+        deterministic workspace modifications. Non-workers (PENDING, BOSS, MANAGER) can
+        execute concurrently as they only perform reasoning/decomposition.
         """
         while True:
             # Only get active agents within this hierarchy
@@ -521,11 +532,42 @@ class AgentExecutionService:
                 agents_status = await self._get_agents_status(root_id=root_agent_id)
                 self._notify_status(agents_status)
 
+            # Load all active agents to check their roles and sequence IDs
+            active_agent_data = []
             for agent_id in active_agents:
+                events = await self.event_store.get_events(agent_id)
+                if events:
+                    agent = AgentSession.load_from_history(events)
+                    active_agent_data.append({
+                        "id": agent_id,
+                        "role": agent.role,
+                        "sequence_id": agent.tree_sequence_id,
+                    })
+
+            # Separate workers from non-workers
+            workers = [a for a in active_agent_data if a["role"] == AgentRole.WORKER]
+            non_workers = [a for a in active_agent_data if a["role"] != AgentRole.WORKER]
+
+            # Execute non-workers concurrently (they don't modify workspace)
+            for agent_data in non_workers:
                 try:
-                    await self.run_agent_step(agent_id)
+                    await self.run_agent_step(agent_data["id"])
                 except Exception as e:
-                    print(f"Error executing agent {agent_id}: {e!r}")
+                    print(f"Error executing agent {agent_data['id']}: {e!r}")
+
+            # Execute workers in sequence ID order (left-to-right in tree)
+            # Only execute a worker if all workers with lower sequence IDs are done
+            if workers:
+                # Sort workers by sequence_id (lower = left in tree)
+                workers.sort(key=lambda a: a["sequence_id"])
+
+                # Execute the first worker in sequence order
+                # Other workers must wait until workers with lower sequence IDs complete
+                first_worker = workers[0]
+                try:
+                    await self.run_agent_step(first_worker["id"])
+                except Exception as e:
+                    print(f"Error executing worker {first_worker['id']}: {e!r}")
 
             await asyncio.sleep(self.poll_interval)
 

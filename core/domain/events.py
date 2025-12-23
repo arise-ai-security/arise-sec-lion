@@ -31,6 +31,11 @@ class AgentCreated(DomainEvent):
     role: str
     parent_id: UUID | None = None
     config: dict[str, Any] = Field(default_factory=dict)
+    # Tree sequence ID for left-to-right execution ordering of workers
+    # Workers with lower sequence IDs must complete before higher ones
+    # Formula: parent_sequence_id * 1000 + child_index (1-based)
+    # This gives left-to-right ordering across the entire tree
+    tree_sequence_id: int = 0
 
 
 class TaskAssigned(DomainEvent):

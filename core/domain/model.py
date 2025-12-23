@@ -122,6 +122,7 @@ class AgentSession:
         role: AgentRole,
         config: dict[str, Any],
         parent_id: UUID | None = None,
+        tree_sequence_id: int = 0,
     ) -> "AgentSession":
         instance = cls(session_id)
         event = AgentCreated(
@@ -130,6 +131,7 @@ class AgentSession:
             role=role.value,
             parent_id=parent_id,
             config=config,
+            tree_sequence_id=tree_sequence_id,
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -533,6 +535,7 @@ class AgentSession:
         adapter = TypeAdapter(AgentConfig)
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
+        self.tree_sequence_id = event.tree_sequence_id
         self.version += 1
 
     @_apply.register
@@ -830,6 +833,10 @@ class AgentSession:
         self.version: int = 0
         self._changes: list[DomainEvent] = []
         self._sequence: int = 0
+
+        # Tree sequence ID for left-to-right worker execution ordering
+        # Workers with lower sequence IDs must complete before higher ones execute
+        self.tree_sequence_id: int = 0
 
         # Budget tracking (reward/penalty mechanism)
         self.current_budget: float = 0.0
