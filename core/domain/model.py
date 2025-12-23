@@ -206,16 +206,29 @@ class AgentSession:
                 pass
 
         llm_config = ConfigResolver.resolve(self.config, operation="complexity_evaluation")
-        response = await llm_port.query(prompt, llm_config.model_dump())
+
+        try:
+            response = await llm_port.query(prompt, llm_config.model_dump())
+        except Exception as e:
+            failed_event = WorkFailed(
+                aggregate_id=self.session_id,
+                sequence_number=self._next_sequence(),
+                reason=f"LLM query failed during complexity evaluation: {e}",
+            )
+            self._apply(failed_event)
+            self._changes.append(failed_event)
+            return
 
         try:
             clean_response = strip_markdown_code_block(response)
+            if not clean_response.strip():
+                raise ValueError("Empty response from LLM")
             data = json.loads(clean_response)
             complexity = data.get("complexity", "").lower()
             reasoning = data.get("reasoning", "")
 
             if complexity not in ("simple", "complex"):
-                raise ValueError(f"Invalid complexity value: {complexity}")
+                raise ValueError(f"Invalid complexity value: '{complexity}'. Expected 'simple' or 'complex'")
 
             determined_role = AgentRole.WORKER if complexity == "simple" else AgentRole.MANAGER
 
@@ -223,7 +236,7 @@ class AgentSession:
             failed_event = WorkFailed(
                 aggregate_id=self.session_id,
                 sequence_number=self._next_sequence(),
-                reason=f"Failed to evaluate complexity: {e}",
+                reason=f"Failed to evaluate complexity: {e}. Response was: {response[:200] if response else 'empty'}",
             )
             self._apply(failed_event)
             self._changes.append(failed_event)
