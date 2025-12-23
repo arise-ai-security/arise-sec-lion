@@ -22,9 +22,8 @@ from core.query.projections.pipeline import (
     ProjectionPipelineBuilder,
 )
 from core.query.projections.registry import RegistryError
-from infrastructure.adapters.sinks import StringSink
 
-from .conftest import BASE_TIME, BOSS_ID, MANAGER_ID, FakeEventStore
+from .conftest import BASE_TIME, BOSS_ID, MANAGER_ID, FakeEventStore, FakeStringSink
 
 
 def _subtask_config() -> dict:
@@ -93,7 +92,7 @@ class TestProjectionPipeline:
     @pytest.mark.asyncio
     async def test_execute_writes_to_sink(self, populated_event_store) -> None:
         """Should write formatted output to sink."""
-        sink = StringSink()
+        sink = FakeStringSink()
         pipeline = ProjectionPipeline(
             event_store=populated_event_store,
             filter_=IncludeAllFilter(),
@@ -110,7 +109,7 @@ class TestProjectionPipeline:
     @pytest.mark.asyncio
     async def test_execute_applies_filter(self, populated_event_store) -> None:
         """Should apply filter to events."""
-        sink = StringSink()
+        sink = FakeStringSink()
         pipeline = ProjectionPipeline(
             event_store=populated_event_store,
             filter_=ErrorOnlyFilter(),
@@ -127,7 +126,7 @@ class TestProjectionPipeline:
     @pytest.mark.asyncio
     async def test_execute_summary_output(self, populated_event_store) -> None:
         """Should execute summary output."""
-        sink = StringSink()
+        sink = FakeStringSink()
         pipeline = ProjectionPipeline(
             event_store=populated_event_store,
             filter_=IncludeAllFilter(),
@@ -149,7 +148,7 @@ class TestProjectionPipeline:
             event_store=populated_event_store,
             filter_=IncludeAllFilter(),
             formatter=JSONFormatter(),
-            sink=StringSink(),
+            sink=FakeStringSink(),
         )
 
         result = await pipeline.execute_events(BOSS_ID)
@@ -165,7 +164,7 @@ class TestProjectionPipeline:
             event_store=populated_event_store,
             filter_=IncludeAllFilter(),
             formatter=JSONFormatter(),
-            sink=StringSink(),
+            sink=FakeStringSink(),
         )
 
         result = await pipeline.execute_summary(BOSS_ID)
@@ -180,7 +179,7 @@ class TestProjectionPipeline:
             event_store=populated_event_store,
             filter_=ErrorOnlyFilter(),
             formatter=JSONFormatter(),
-            sink=StringSink(),
+            sink=FakeStringSink(),
         )
 
         result = await pipeline.execute_events(BOSS_ID)
@@ -259,7 +258,7 @@ class TestProjectionPipelineBuilder:
 
     def test_to_sink_instance(self, fake_event_store) -> None:
         """Should accept pre-configured sink instance."""
-        sink = StringSink()
+        sink = FakeStringSink()
         builder = ProjectionPipelineBuilder(fake_event_store)
         builder.to_sink_instance(sink)
         pipeline = builder.build()
@@ -307,7 +306,7 @@ class TestPipelineIntegration:
     @pytest.mark.asyncio
     async def test_full_pipeline_with_jsonl_output(self, populated_event_store) -> None:
         """Should produce valid JSONL output."""
-        sink = StringSink()
+        sink = FakeStringSink()
         pipeline = (
             ProjectionPipelineBuilder(populated_event_store)
             .with_filter("all")
@@ -326,7 +325,7 @@ class TestPipelineIntegration:
     @pytest.mark.asyncio
     async def test_full_pipeline_errors_only(self, populated_event_store) -> None:
         """Should filter to only errors."""
-        sink = StringSink()
+        sink = FakeStringSink()
         pipeline = (
             ProjectionPipelineBuilder(populated_event_store)
             .with_filter("errors_only")
@@ -348,7 +347,7 @@ class TestPipelineIntegration:
     @pytest.mark.asyncio
     async def test_full_pipeline_summary_output(self, populated_event_store) -> None:
         """Should produce summary output."""
-        sink = StringSink()
+        sink = FakeStringSink()
         pipeline = (
             ProjectionPipelineBuilder(populated_event_store)
             .with_filter("all")

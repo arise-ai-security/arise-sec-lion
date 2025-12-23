@@ -17,10 +17,9 @@ Components:
     - pipeline: Fluent builder for pipeline construction
 
 Note on Sinks (Hexagonal Architecture):
-    ALL sink implementations are in infrastructure layer:
-        from infrastructure.adapters.sinks import StdoutSink, FileSink, StringSink
-
-    The SinkPort protocol (abstract interface) is in core/ports/sink_port.py.
+    Sink implementations live in the infrastructure layer.
+    The SinkPort protocol is in core/query/ports/sink_port.py.
+    Registration happens in the bootstrap layer to maintain layer boundaries.
 """
 
 from core.query.ports.sink_port import SinkPort
