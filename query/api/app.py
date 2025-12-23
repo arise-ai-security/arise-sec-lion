@@ -4,7 +4,7 @@ This module creates and configures the FastAPI application with all routes.
 It properly initializes the event store using the lifespan context manager.
 """
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,8 +13,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import Settings
-from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from core.ports.event_store_port import EventStorePort
 from query.api.routes import agents, config, events, prompts
+
+
+# Factory function injected by bootstrap layer (avoids query→infrastructure dependency)
+_event_store_factory: Callable[[str], EventStorePort] | None = None
+
+
+def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
+    """Set the event store factory function.
+
+    Called by bootstrap layer to inject the concrete implementation.
+    This avoids query layer importing from infrastructure.
+    """
+    global _event_store_factory
+    _event_store_factory = factory
 
 
 @asynccontextmanager
@@ -27,11 +41,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     The event store is attached to app.state for access in routes.
     """
+    if _event_store_factory is None:
+        raise RuntimeError(
+            "Event store factory not configured. "
+            "Ensure bootstrap layer has initialized before starting the API. "
+            "Use query.api.bootstrap:create_app instead of query.api.app:create_app"
+        )
+
     # Load settings from config files and environment variables
     settings = Settings.load()
 
     # Create and connect the event store
-    event_store = PostgresEventStore(settings.database.connection_string)
+    event_store = _event_store_factory(settings.database.connection_string)
     await event_store.connect()
 
     # Attach to app state for dependency injection in routes
