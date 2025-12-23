@@ -451,7 +451,7 @@ async def _execute_pipeline(
         click.echo(f"Written to {output}")
 
 
-# Export for backwards compatibility
+# Convenience alias for progress callback
 format_event_progress = ProgressDisplayFormatter.display
 
 

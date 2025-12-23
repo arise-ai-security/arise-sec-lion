@@ -15,7 +15,7 @@ __all__ = [
     # Event formatting (Strategy pattern)
     "EventFormatter",
     "ProgressDisplayFormatter",
-    "format_event_progress",  # Backward compatibility
+    "format_event_progress",  # Convenience alias
     # Persistence
     "RunPersistence",
     # Async context management
