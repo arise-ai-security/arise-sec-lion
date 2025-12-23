@@ -20,13 +20,48 @@ from core.ports.llm_port import LLMPort
 
 logger = logging.getLogger(__name__)
 
-# Fallback model mappings: primary -> fallback
-MODEL_FALLBACKS: dict[str, str] = {
-    "o3": "gpt-4o",
-    "o3-mini": "gpt-4o-mini",
-    "openai/o3": "openai/gpt-4o",
-    "openai/o3-mini": "openai/gpt-4o-mini",
+# Fallback model chains: primary -> list of fallbacks to try in order
+MODEL_FALLBACK_CHAINS: dict[str, list[str]] = {
+    # OpenAI o3 series
+    "o3": ["gpt-4o", "gpt-4o-mini"],
+    "o3-mini": ["gpt-4o-mini", "gpt-4o"],
+    "openai/o3": ["openai/gpt-4o", "openai/gpt-4o-mini"],
+    "openai/o3-mini": ["openai/gpt-4o-mini", "openai/gpt-4o"],
+    # Anthropic Claude models (need anthropic/ prefix for litellm)
+    "claude-sonnet-4-5-20250514": ["anthropic/claude-sonnet-4-5-20250514", "anthropic/claude-3-5-sonnet-20241022", "gpt-4o", "gpt-4o-mini"],
+    "anthropic/claude-sonnet-4-5-20250514": ["anthropic/claude-3-5-sonnet-20241022", "gpt-4o", "gpt-4o-mini"],
+    "claude-3-5-sonnet-20241022": ["anthropic/claude-3-5-sonnet-20241022", "gpt-4o", "gpt-4o-mini"],
+    "anthropic/claude-3-5-sonnet-20241022": ["gpt-4o", "gpt-4o-mini"],
+    # Google Gemini models
+    "gemini-2.0-flash": ["gemini/gemini-2.0-flash", "gemini/gemini-1.5-flash", "gpt-4o-mini"],
+    "gemini/gemini-2.0-flash": ["gemini/gemini-1.5-flash", "gpt-4o-mini"],
+    "gemini-1.5-pro": ["gemini/gemini-1.5-pro", "gpt-4o", "gpt-4o-mini"],
+    "gemini/gemini-1.5-pro": ["gpt-4o", "gpt-4o-mini"],
 }
+
+
+def _get_models_to_try(model: str) -> list[str]:
+    """Get list of models to try, starting with the requested model."""
+    models = [model]
+    if model in MODEL_FALLBACK_CHAINS:
+        models.extend(MODEL_FALLBACK_CHAINS[model])
+    return models
+
+
+def _is_truncated_json(content: str) -> bool:
+    """Check if response looks like truncated JSON."""
+    content = content.strip()
+    if not content:
+        return True
+    # Check for common JSON truncation patterns
+    if content.startswith("{") and not content.endswith("}"):
+        return True
+    if content.startswith("[") and not content.endswith("]"):
+        return True
+    # Check for truncated string (ends with unclosed quote)
+    if content.endswith('"') and content.count('"') % 2 != 0:
+        return True
+    return False
 
 
 class LiteLLMAdapter(LLMPort):
@@ -71,10 +106,8 @@ class LiteLLMAdapter(LLMPort):
         max_tokens = merged_config.get("max_tokens", 4000)
         top_p = merged_config.get("top_p")
 
-        # Try primary model first, then fallback if available
-        models_to_try = [model]
-        if model in MODEL_FALLBACKS:
-            models_to_try.append(MODEL_FALLBACKS[model])
+        # Try primary model first, then fallbacks in order
+        models_to_try = _get_models_to_try(model)
 
         last_error = None
         for current_model in models_to_try:
@@ -86,6 +119,10 @@ class LiteLLMAdapter(LLMPort):
                 content = response.choices[0].message.content
                 if content is None or content.strip() == "":
                     raise LLMError(f"LLM returned empty response for model '{current_model}'")
+
+                # Check for truncated JSON responses (common with some models)
+                if _is_truncated_json(content):
+                    raise LLMError(f"LLM returned truncated response for model '{current_model}': {content[:100]}...")
 
                 if current_model != model:
                     logger.warning(f"Used fallback model '{current_model}' instead of '{model}'")
@@ -160,10 +197,8 @@ class LiteLLMAdapter(LLMPort):
         max_tokens = merged_config.get("max_tokens", 4000)
         top_p = merged_config.get("top_p")
 
-        # Try primary model first, then fallback if available
-        models_to_try = [model]
-        if model in MODEL_FALLBACKS:
-            models_to_try.append(MODEL_FALLBACKS[model])
+        # Try primary model first, then fallbacks in order
+        models_to_try = _get_models_to_try(model)
 
         last_error = None
         for current_model in models_to_try:
@@ -175,6 +210,10 @@ class LiteLLMAdapter(LLMPort):
                 content = response.choices[0].message.content
                 if content is None or content.strip() == "":
                     raise LLMError(f"LLM returned empty response for model '{current_model}'")
+
+                # Check for truncated JSON responses (common with some models)
+                if _is_truncated_json(content):
+                    raise LLMError(f"LLM returned truncated response for model '{current_model}': {content[:100]}...")
 
                 if current_model != model:
                     logger.warning(f"Used fallback model '{current_model}' instead of '{model}'")

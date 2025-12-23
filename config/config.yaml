@@ -5,11 +5,11 @@ database:
   name: arise_events
 
 llm:
-  model_boss: o3-mini
+  model_boss: gpt-4o-mini
 
 worker:
   tool_type: openhands
-  tool_model: openai/o3
+  tool_model: openai/gpt-4o
   tool_timeout: 300
 
 orchestration:
@@ -45,9 +45,9 @@ output:
 security:
   enabled: true
   auto_detect: true                          # Auto-detect CVE/security tasks from keywords
-  default_model_poc: o3                      # Model for PoC generation (needs creativity)
-  default_model_patch: claude-sonnet-4-5-20250514  # Model for patch generation
-  default_model_validation: o3-mini          # Model for validation (deterministic)
+  default_model_poc: gpt-4o                  # Model for PoC generation (needs creativity)
+  default_model_patch: anthropic/claude-3-5-sonnet-20241022  # Model for patch generation
+  default_model_validation: gpt-4o-mini      # Model for validation (deterministic)
   poc_temperature: 0.6                       # Higher temp for creative exploit generation
   patch_temperature: 0.5                     # Balanced for correctness + minimal change
   validation_temperature: 0.2                # Low temp for deterministic validation

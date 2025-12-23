@@ -37,10 +37,11 @@ from core.query.projections.hierarchy_collector import HierarchyCollector
 
 
 # Default models for multi-model strategy (3 different models)
+# Use provider prefixes for LiteLLM compatibility
 DEFAULT_SUBORDINATE_MODELS = [
-    "claude-sonnet-4-5-20250514",  # Anthropic
-    "gemini-2.0-flash",  # Google
-    "o3",  # OpenAI
+    "anthropic/claude-3-5-sonnet-20241022",  # Anthropic (stable model)
+    "gemini/gemini-1.5-flash",  # Google
+    "gpt-4o",  # OpenAI (stable fallback)
 ]
 
 
