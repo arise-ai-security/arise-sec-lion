@@ -391,15 +391,17 @@ def list_runs(ctx: CLIContext, limit: int, fmt: str) -> None:
 
 
 async def _list_runs(ctx: CLIContext, limit: int, fmt: str) -> None:
-    """List BOSS runs (async implementation)."""
+    """List BOSS runs (async implementation).
+
+    Uses get_all_events_grouped() for single-query efficiency (avoids N+1).
+    """
     from core.domain.events import AgentCreated
 
     async with EventStoreContext.from_config_path(ctx.config_path) as event_store:
-        all_ids = await event_store.get_all_aggregate_ids()
+        all_events = await event_store.get_all_events_grouped()
 
         boss_runs = []
-        for aid in all_ids:
-            events = await event_store.get_events(aid)
+        for aid, events in all_events.items():
             if not events:
                 continue
 

@@ -211,7 +211,8 @@ class TestListCommand:
             mock_store = MagicMock()
             mock_store.connect = AsyncMock()
             mock_store.disconnect = AsyncMock()
-            mock_store.get_all_aggregate_ids = AsyncMock(return_value=[])
+            # Use get_all_events_grouped() - returns empty dict for no runs
+            mock_store.get_all_events_grouped = AsyncMock(return_value={})
 
             async_cm = AsyncMock()
             async_cm.__aenter__ = AsyncMock(return_value=mock_store)
@@ -232,7 +233,8 @@ class TestListCommand:
             mock_store = MagicMock()
             mock_store.connect = AsyncMock()
             mock_store.disconnect = AsyncMock()
-            mock_store.get_all_aggregate_ids = AsyncMock(return_value=[])
+            # Use get_all_events_grouped() - returns empty dict for no runs
+            mock_store.get_all_events_grouped = AsyncMock(return_value={})
 
             async_cm = AsyncMock()
             async_cm.__aenter__ = AsyncMock(return_value=mock_store)

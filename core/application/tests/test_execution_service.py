@@ -759,23 +759,12 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
         ),
     ]
 
-    # Mock event store
-    mock_event_store.get_all_aggregate_ids.return_value = [
-        active_agent_id,
-        completed_agent_id,
-        failed_agent_id,
-    ]
-
-    def get_events_side_effect(agent_id):
-        if agent_id == active_agent_id:
-            return active_events
-        if agent_id == completed_agent_id:
-            return completed_events
-        if agent_id == failed_agent_id:
-            return failed_events
-        return []
-
-    mock_event_store.get_events.side_effect = get_events_side_effect
+    # Mock event store - use get_all_events_grouped() for single-query efficiency
+    mock_event_store.get_all_events_grouped.return_value = {
+        active_agent_id: active_events,
+        completed_agent_id: completed_events,
+        failed_agent_id: failed_events,
+    }
 
     # When: Get active agent IDs
     active_ids = await execution_service._get_active_agent_ids()
