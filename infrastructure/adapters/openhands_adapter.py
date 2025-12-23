@@ -14,6 +14,7 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.ports.worker_port import WorkerToolPort
+from infrastructure.adapters.worker_base import validate_task_context
 
 
 logging.getLogger("openhands").setLevel(logging.WARNING)
@@ -45,17 +46,6 @@ class OpenHandsAdapter(WorkerToolPort):
         self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.timeout_seconds = timeout_seconds
-
-    @staticmethod
-    def _validate_task_context(task_context: dict[str, Any]) -> tuple[str, Any, str]:
-        task_description = task_context.get("task_description")
-        session_id = task_context.get("session_id")
-        if not task_description:
-            raise ValueError("task_context must include 'task_description'")
-        if not session_id:
-            raise ValueError("task_context must include 'session_id'")
-        working_dir = task_context.get("working_directory", str(Path.cwd()))
-        return task_description, session_id, working_dir
 
     @staticmethod
     def _classify_event(event: Any) -> str:
@@ -129,7 +119,7 @@ class OpenHandsAdapter(WorkerToolPort):
 
     async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Execute task via OpenHands SDK, stream ThoughtCaptured, yield final event."""
-        task_description, session_id, working_dir = self._validate_task_context(task_context)
+        task_description, session_id, working_dir = validate_task_context(task_context)
 
         try:
             classified_events, result, error = await asyncio.wait_for(

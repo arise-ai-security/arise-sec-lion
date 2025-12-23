@@ -16,6 +16,7 @@ from core.domain.events import (
     WorkFailed,
 )
 from core.ports.worker_port import WorkerToolPort
+from infrastructure.adapters.worker_base import validate_task_context
 
 
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
@@ -86,17 +87,6 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
             return "progress"
 
         return "output"
-
-    @staticmethod
-    def _validate_task_context(task_context: dict[str, Any]) -> tuple[str, Any, str]:
-        task_description = task_context.get("task_description")
-        session_id = task_context.get("session_id")
-        if not task_description:
-            raise ValueError("task_context must include 'task_description'")
-        if not session_id:
-            raise ValueError("task_context must include 'session_id'")
-        working_dir = task_context.get("working_directory", str(Path.cwd()))
-        return task_description, session_id, working_dir
 
     async def _spawn_process(
         self, task_description: str, working_dir: str
@@ -216,7 +206,7 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
 
     async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Spawn CLI via PTY, stream ThoughtCaptured events, yield final WorkCompleted/Failed."""
-        task_description, session_id, working_dir = self._validate_task_context(task_context)
+        task_description, session_id, working_dir = validate_task_context(task_context)
         master_fd, _slave_fd, process = await self._spawn_process(task_description, working_dir)
 
         try:
