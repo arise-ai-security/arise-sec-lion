@@ -217,21 +217,11 @@ class AgentOrchestrator:
         # Emit start event via pure domain method
         agent.start_worker_execution(tool_name)
 
-        # Build enhanced task description
-        worker_system_prompt = (
-            "<WORKER_INSTRUCTIONS>\n"
-            "You are a WORKER agent with access to terminal and file editing tools.\n"
-            "Your job is to EXECUTE the task by CREATING ACTUAL FILES in the workspace.\n\n"
-            "IMPORTANT RULES:\n"
-            "1. DO NOT just explain or provide code snippets - CREATE the actual files\n"
-            "2. Use the file_editor tool to create/edit files in the workspace\n"
-            "3. Use the terminal tool to run commands (e.g., to test your code)\n"
-            "4. All files should be created in the current working directory\n"
-            "5. After creating files, verify they exist by listing the directory\n"
-            "</WORKER_INSTRUCTIONS>\n\n"
-        )
-
-        enhanced_description = f"{worker_system_prompt}<TASK>\n{agent.task_description}\n</TASK>"
+        # Build enhanced task description using template
+        worker_instructions = self._prompt_builder.env.get_template(
+            "worker/execution_instructions.j2"
+        ).render()
+        enhanced_description = f"{worker_instructions}\n\n<TASK>\n{agent.task_description}\n</TASK>"
 
         if workspace_context:
             enhanced_description += (
