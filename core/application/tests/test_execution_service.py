@@ -4,18 +4,24 @@ These tests verify the orchestration logic using mocked ports.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
 from config import OrchestrationConfig
+from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import AgentExecutionService, ServiceConfig
-from core.application.services.agent_repository import AgentNotFoundError
+from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
+from core.application.services.child_factory import ChildAgentFactory
+from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.query_service import AgentQueryService
+from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.llm_response import LLMResponse, LLMUsage
 from core.domain.model import AgentRole, AgentStatus
+from core.domain.prompt_builder import PromptBuilder
 
 
 def _test_config() -> dict[str, Any]:
@@ -68,7 +74,7 @@ def mock_worker_port():
 
 @pytest.fixture
 def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
-    """Create execution service with mocked ports."""
+    """Create execution service with mocked ports and injected collaborators."""
     config = ServiceConfig(
         max_retries=3,
         poll_interval=0.5,
@@ -81,12 +87,38 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
             "pending": "gpt-4o",
         },
     )
+    system_limits = _test_system_limits()
+
+    # Create collaborators
+    prompt_builder = PromptBuilder(default_tool="claude_code")
+    repository = AgentRepository(
+        event_store=mock_event_store,
+        max_retries=config.max_retries,
+    )
+    context_registry = ExecutionContextRegistry()
+    workspace = WorkspaceContextProvider()
+    query_service = AgentQueryService(repository)
+    child_factory = ChildAgentFactory(
+        repository=repository,
+        context_registry=context_registry,
+        max_total_agents=system_limits.max_total_agents,
+    )
+    orchestrator = AgentOrchestrator(
+        llm_port=mock_llm_port,
+        worker_port=mock_worker_port,
+        prompt_builder=prompt_builder,
+    )
+
     return AgentExecutionService(
         event_store=mock_event_store,
-        llm_port=mock_llm_port,
-        worker_tool_port=mock_worker_port,
-        system_limits=_test_system_limits(),
+        system_limits=system_limits,
         config=config,
+        repository=repository,
+        orchestrator=orchestrator,
+        context_registry=context_registry,
+        child_factory=child_factory,
+        query_service=query_service,
+        workspace=workspace,
     )
 
 
@@ -766,8 +798,8 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
         failed_agent_id: failed_events,
     }
 
-    # When: Get active agent IDs
-    active_ids = await execution_service._get_active_agent_ids()
+    # When: Get active agent IDs via query service
+    active_ids = await execution_service._query_service.get_active_agent_ids()
 
     # Then: Only the active agent should be returned
     assert len(active_ids) == 1

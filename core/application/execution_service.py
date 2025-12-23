@@ -26,15 +26,12 @@ from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.events import ChildSpawned, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
-from core.domain.prompt_builder import PromptBuilder
 
 
 if TYPE_CHECKING:
     from config import OrchestrationConfig
     from core.ports.event_store_port import EventStorePort
-    from core.ports.llm_port import LLMPort
     from core.ports.shared_context_port import SharedContextPort
-    from core.ports.worker_port import WorkerToolPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
@@ -71,48 +68,33 @@ class AgentExecutionService:
     def __init__(
         self,
         event_store: EventStorePort,
-        llm_port: LLMPort,
-        worker_tool_port: WorkerToolPort,
         system_limits: SystemLimitsConfig,
         config: ServiceConfig,
+        # Injected collaborators (DIP)
+        repository: AgentRepository,
+        orchestrator: AgentOrchestrator,
+        context_registry: ExecutionContextRegistry,
+        child_factory: ChildAgentFactory,
+        query_service: AgentQueryService,
+        workspace: WorkspaceContextProvider,
         shared_context_port: SharedContextPort | None = None,
-        prompt_builder: PromptBuilder | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         # Core ports
         self._event_store = event_store
-        self._llm_port = llm_port
-        self._worker_tool_port = worker_tool_port
         self._shared_context_port = shared_context_port
 
         # Configuration
         self._config = config
         self._system_limits = system_limits
-        self._prompt_builder = prompt_builder or PromptBuilder(
-            default_tool=config.default_worker_tool
-        )
 
-        # Composed services
-        self._repository = AgentRepository(
-            event_store=event_store,
-            max_retries=config.max_retries,
-            progress_callback=progress_callback,
-        )
-        self._context_registry = ExecutionContextRegistry()
-        self._workspace = WorkspaceContextProvider()
-        self._query_service = AgentQueryService(self._repository)
-        self._child_factory = ChildAgentFactory(
-            repository=self._repository,
-            context_registry=self._context_registry,
-            max_total_agents=system_limits.max_total_agents,
-        )
-
-        # Agent orchestrator - handles LLM/worker interactions
-        self._orchestrator = AgentOrchestrator(
-            llm_port=llm_port,
-            worker_port=worker_tool_port,
-            prompt_builder=self._prompt_builder,
-        )
+        # Injected collaborators
+        self._repository = repository
+        self._orchestrator = orchestrator
+        self._context_registry = context_registry
+        self._child_factory = child_factory
+        self._query_service = query_service
+        self._workspace = workspace
 
         # Worker concurrency control
         semaphore_limit = (
@@ -224,10 +206,6 @@ class AgentExecutionService:
     async def get_system_statistics(self) -> SystemStatisticsDTO:
         """Get system-wide agent statistics."""
         return await self._query_service.get_statistics()
-
-    async def _get_active_agent_ids(self) -> list[UUID]:
-        """Return agent IDs not in terminal state (for backward compatibility)."""
-        return await self._query_service.get_active_agent_ids()
 
     # -------------------------------------------------------------------------
     # Internal Methods
@@ -405,38 +383,3 @@ class AgentExecutionService:
                 self._progress_callback(event, agent)
             except Exception:
                 pass
-
-
-# Backward compatibility: factory function matching old constructor signature
-def create_execution_service(
-    event_store: EventStorePort,
-    llm_port: LLMPort,
-    worker_tool_port: WorkerToolPort,
-    system_limits: SystemLimitsConfig,
-    model_config: dict[str, str],
-    max_retries: int,
-    poll_interval: float,
-    output_directory: str,
-    default_worker_tool: str,
-    shared_context_port: SharedContextPort | None = None,
-    prompt_builder: PromptBuilder | None = None,
-    progress_callback: ProgressCallback | None = None,
-) -> AgentExecutionService:
-    """Factory function for backward compatibility with old constructor signature."""
-    config = ServiceConfig(
-        max_retries=max_retries,
-        poll_interval=poll_interval,
-        output_directory=output_directory,
-        default_worker_tool=default_worker_tool,
-        model_config=model_config,
-    )
-    return AgentExecutionService(
-        event_store=event_store,
-        llm_port=llm_port,
-        worker_tool_port=worker_tool_port,
-        system_limits=system_limits,
-        config=config,
-        shared_context_port=shared_context_port,
-        prompt_builder=prompt_builder,
-        progress_callback=progress_callback,
-    )
