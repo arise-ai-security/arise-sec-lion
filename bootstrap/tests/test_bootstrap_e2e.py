@@ -15,9 +15,10 @@ Skip if no database:
     uv run pytest bootstrap/tests/ -v -m "not e2e"
 """
 
+import click
 import pytest
 
-from bootstrap import ApplicationConfig, InfrastructureConfig, bootstrap
+from bootstrap import ApplicationConfig, InfrastructureConfig, bootstrap, create_cli_app
 from bootstrap.bootstrap import get_application, get_infrastructure
 from config import OrchestrationConfig
 from presentation.cli import CLI, CLIConfig
@@ -75,17 +76,22 @@ def make_test_app_config(
 class TestBootstrapWiring:
     """Tests for bootstrap dependency injection."""
 
-    def test_bootstrap_returns_cli(self) -> None:
-        """Test that bootstrap returns a CLI instance."""
-        cli = bootstrap(
+    def test_bootstrap_returns_click_group(self) -> None:
+        """Test that bootstrap returns a Click Group."""
+        cli = bootstrap()
+        assert isinstance(cli, click.Group)
+
+    def test_create_cli_app_returns_cli(self) -> None:
+        """Test that create_cli_app returns a CLI instance."""
+        cli = create_cli_app(
             infrastructure_config=make_test_infra_config(),
             application_config=make_test_app_config(),
             cli_config=CLIConfig(verbose=False, output_directory="./test_output"),
         )
         assert isinstance(cli, CLI)
 
-    def test_bootstrap_with_custom_config(self) -> None:
-        """Test that bootstrap accepts custom configurations."""
+    def test_create_cli_app_with_custom_config(self) -> None:
+        """Test that create_cli_app accepts custom configurations."""
         infra_config = make_test_infra_config(
             postgres_connection_string="postgresql://custom:custom@localhost:5432/custom",
             default_worker_tool="openhands",
@@ -104,7 +110,7 @@ class TestBootstrapWiring:
         )
         cli_config = CLIConfig(verbose=True, output_directory="./test_output")
 
-        cli = bootstrap(
+        cli = create_cli_app(
             infrastructure_config=infra_config,
             application_config=app_config,
             cli_config=cli_config,
@@ -112,11 +118,11 @@ class TestBootstrapWiring:
 
         assert cli.config.verbose is True
 
-    def test_bootstrap_uses_config_file_defaults(self, monkeypatch) -> None:
-        """Test that bootstrap loads config from default config file."""
+    def test_create_cli_app_uses_config_file_defaults(self, monkeypatch) -> None:
+        """Test that create_cli_app loads config from default config file."""
         monkeypatch.setenv("POSTGRES_PASSWORD", "test")
 
-        cli = bootstrap()
+        cli = create_cli_app()
         assert isinstance(cli, CLI)
 
 
@@ -208,8 +214,8 @@ class TestFullAgentFlow:
 class TestConfigurationLoading:
     """Tests for configuration file loading."""
 
-    def test_bootstrap_with_yaml_config_path(self, tmp_path, monkeypatch) -> None:
-        """Test that bootstrap can load config from YAML file."""
+    def test_create_cli_app_with_yaml_config_path(self, tmp_path, monkeypatch) -> None:
+        """Test that create_cli_app can load config from YAML file."""
         monkeypatch.setenv("POSTGRES_PASSWORD", "yaml")
 
         config_file = tmp_path / "test_config.yaml"
@@ -249,5 +255,5 @@ output:
   directory: ./output
 """)
 
-        cli = bootstrap(config_path=config_file)
+        cli = create_cli_app(config_path=config_file)
         assert cli.config.verbose is False
