@@ -523,7 +523,7 @@ function AgentModal({ agent, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {agent.subtasks.map((subtask, index) => {
                 const j = subtask.justification || {};
-                const hasJustification = j.objective || j.plan || j.split_reason || j.why_it_may_work || j.expected_results;
+                const hasJustification = j.objective || j.plan || j.split_reason || j.why_it_may_work || j.expected_results || j.budget_allocation;
                 return (
                   <div
                     key={index}
@@ -587,6 +587,21 @@ function AgentModal({ agent, onClose }) {
                         )}
                         {j.expected_results && (
                           <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Expected Results:</span> {j.expected_results}</div>
+                        )}
+                        {/* Budget Allocation Reasoning */}
+                        {j.budget_allocation && (
+                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e9d5ff' }}>
+                            <span style={{ fontWeight: '500', color: '#7c3aed' }}>Budget Allocation:</span> {j.budget_allocation}
+                          </div>
+                        )}
+                        {j.complexity_assessment && (
+                          <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>Complexity:</span> {j.complexity_assessment}</div>
+                        )}
+                        {j.significance_weight && (
+                          <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>Significance:</span> {j.significance_weight}</div>
+                        )}
+                        {j.resource_justification && (
+                          <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>Resource Justification:</span> {j.resource_justification}</div>
                         )}
                       </div>
                     )}

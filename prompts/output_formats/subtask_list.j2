@@ -11,7 +11,11 @@ Return ONLY valid JSON matching this exact schema:
       "objective": "string - what this subtask aims to achieve",
       "plan": "string - how this subtask will be executed",
       "why_it_may_work": "string - reasoning for why this approach should succeed",
-      "expected_results": "string - what outputs/outcomes are expected"
+      "expected_results": "string - what outputs/outcomes are expected",
+      "budget_allocation": "string - percentage of total project budget and computation reasoning",
+      "complexity_assessment": "string - simple/moderate/complex with concrete justification",
+      "significance_weight": "string - how significant relative to siblings (critical path, importance)",
+      "resource_justification": "string - why this budget percentage is appropriate for the task scope"
     },
     "budget_weight": number (0.1-10.0, based on complexity/importance/time),
     "config": {
@@ -32,6 +36,31 @@ Each subtask MUST include a justification object explaining your reasoning:
 - **plan**: Step-by-step approach the worker will take
 - **why_it_may_work**: Your reasoning/hypothesis for why this approach is viable
 - **expected_results**: Concrete deliverables or outcomes
+
+## Budget Allocation Justification (REQUIRED)
+
+Each subtask MUST include detailed budget reasoning to help sub-agents understand resource allocation:
+
+- **budget_allocation**: State the percentage of total project budget allocated:
+  - "X% of total project budget (weight W of total T, computed as W/T × 100%)"
+  - Example: "15% of total project budget (weight 1.5 of total 10.0 across all subtasks)"
+  - This helps sub-agents understand their resource constraints relative to the entire project
+
+- **complexity_assessment**: Assess complexity with concrete evidence:
+  - "SIMPLE: Single-file change, well-documented API, no external dependencies"
+  - "MODERATE: Multi-file changes, some integration, standard patterns"
+  - "COMPLEX: Cross-cutting concerns, novel implementation, research needed"
+
+- **significance_weight**: Explain importance relative to sibling tasks:
+  - "CRITICAL PATH: Must complete before X and Y can start"
+  - "HIGH: Core functionality that other tasks depend on"
+  - "NORMAL: Standard task with no special dependencies"
+  - "LOW: Optional enhancement, nice-to-have"
+
+- **resource_justification**: Justify why the budget percentage matches the scope:
+  - What specific work requires these resources?
+  - Why can't it be done with less? What would be cut?
+  - How does this percentage enable quality vs. just completion?
 
 ## Budget Weight Guidelines
 
@@ -105,7 +134,7 @@ Examples:
 1. Response must be PURE JSON array (no markdown, no commentary)
 2. Array must contain 2-3 subtasks (not 1, not 4+)
 3. Each subtask MUST have "description", "justification", "budget_weight", and "config" fields
-4. Justification MUST include all 6 fields: parent_task, split_reason, objective, plan, why_it_may_work, expected_results
+4. Justification MUST include all 10 fields: parent_task, split_reason, objective, plan, why_it_may_work, expected_results, budget_allocation, complexity_assessment, significance_weight, resource_justification
 5. Config MUST include "strategy" and "tool" fields
 6. All required fields for chosen strategy must be present
 7. Temperature: 0.0-2.0, max_tokens: 1-100000
@@ -122,7 +151,11 @@ Examples:
       "objective": "Identify the best auth library that balances security, ease of use, and maintenance",
       "plan": "Survey popular libraries (Passport, Auth0 SDK, custom JWT), compare features, check community support",
       "why_it_may_work": "Well-established libraries exist with proven track records; comparison approach reduces risk",
-      "expected_results": "A recommendation document with chosen library and rationale"
+      "expected_results": "A recommendation document with chosen library and rationale",
+      "budget_allocation": "25% of total project budget (weight 1.0 of total 4.0 across 2 subtasks)",
+      "complexity_assessment": "SIMPLE: Research task with no code changes, well-documented libraries available",
+      "significance_weight": "HIGH: Must complete before implementation can begin; informs all downstream decisions",
+      "resource_justification": "Research requires multiple library evaluations and documentation review; 25% allows thorough comparison without rushing"
     },
     "budget_weight": 1.0,
     "config": {
@@ -143,7 +176,11 @@ Examples:
       "objective": "Create secure user registration flow with proper credential handling",
       "plan": "Set up user model, implement bcrypt hashing, create email verification endpoints, add validation",
       "why_it_may_work": "Standard patterns exist for this; bcrypt is battle-tested; email verification is well-documented",
-      "expected_results": "Working registration endpoint, verification email sending, secure password storage"
+      "expected_results": "Working registration endpoint, verification email sending, secure password storage",
+      "budget_allocation": "75% of total project budget (weight 3.0 of total 4.0 across 2 subtasks)",
+      "complexity_assessment": "COMPLEX: Multi-file implementation with security-critical code, email service integration, database schema design",
+      "significance_weight": "CRITICAL PATH: Core deliverable that defines project success; security-sensitive implementation",
+      "resource_justification": "Implementation requires model setup, hashing logic, email integration, and input validation; 75% reflects the bulk of actual coding work and security testing needed"
     },
     "budget_weight": 3.0,
     "config": {
@@ -168,7 +205,11 @@ Examples:
       "objective": "Understand BeautifulSoup API to inform scraper implementation",
       "plan": "Read official docs, identify selectors, pagination handling, and error patterns",
       "why_it_may_work": "BeautifulSoup has extensive documentation and examples",
-      "expected_results": "Summary of key methods and patterns to use in implementation"
+      "expected_results": "Summary of key methods and patterns to use in implementation",
+      "budget_allocation": "17% of total project budget (weight 0.8 of total 4.8 across 3 subtasks)",
+      "complexity_assessment": "SIMPLE: Documentation review, no implementation required",
+      "significance_weight": "NORMAL: Useful preparation but implementation can proceed with standard knowledge",
+      "resource_justification": "17% is adequate for documentation review; reduces risk of implementation rework"
     },
     "budget_weight": 0.8,
     "config": {
@@ -189,7 +230,11 @@ Examples:
       "objective": "Build robust scraper that handles failures gracefully and respects rate limits",
       "plan": "Create scraper class, add retry logic, implement rate limiter, handle common HTTP errors",
       "why_it_may_work": "Modular approach allows testing each component; rate limiting prevents blocks",
-      "expected_results": "Functional scraper module with configurable rate limits and error recovery"
+      "expected_results": "Functional scraper module with configurable rate limits and error recovery",
+      "budget_allocation": "52% of total project budget (weight 2.5 of total 4.8 across 3 subtasks)",
+      "complexity_assessment": "MODERATE: Multi-component implementation with HTTP handling, retry logic, and rate limiting",
+      "significance_weight": "CRITICAL PATH: Core deliverable that all other tasks depend on; blocking for tests",
+      "resource_justification": "52% reflects the core implementation work: scraper class, HTTP handling, rate limiter, error recovery; largest code surface area"
     },
     "budget_weight": 2.5,
     "config": {
@@ -210,7 +255,11 @@ Examples:
       "objective": "Ensure scraper reliability through comprehensive test coverage",
       "plan": "Mock HTTP responses, test error handling paths, verify rate limiting behavior",
       "why_it_may_work": "Mocking allows testing without hitting real servers; pytest fixtures simplify setup",
-      "expected_results": "Test suite with >80% coverage, CI-ready test configuration"
+      "expected_results": "Test suite with >80% coverage, CI-ready test configuration",
+      "budget_allocation": "31% of total project budget (weight 1.5 of total 4.8 across 3 subtasks)",
+      "complexity_assessment": "MODERATE: Requires mocking framework setup, multiple test scenarios, coverage configuration",
+      "significance_weight": "HIGH: Quality assurance for production readiness; validates all error handling paths",
+      "resource_justification": "31% needed for comprehensive mocking, edge case coverage, and CI integration; less than implementation but substantial"
     },
     "budget_weight": 1.5,
     "config": {

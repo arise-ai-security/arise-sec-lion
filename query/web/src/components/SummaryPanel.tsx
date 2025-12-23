@@ -279,6 +279,31 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.expected_results}</p>
                         </div>
                       )}
+                      {/* Budget Allocation Reasoning */}
+                      {subtask.justification.budget_allocation && (
+                        <div className="mt-2 pt-2 border-t border-purple-200 dark:border-purple-700">
+                          <span className="font-semibold text-purple-600 dark:text-purple-400">Budget Allocation:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.budget_allocation}</p>
+                        </div>
+                      )}
+                      {subtask.justification.complexity_assessment && (
+                        <div>
+                          <span className="font-semibold text-purple-600 dark:text-purple-400">Complexity:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.complexity_assessment}</p>
+                        </div>
+                      )}
+                      {subtask.justification.significance_weight && (
+                        <div>
+                          <span className="font-semibold text-purple-600 dark:text-purple-400">Significance:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.significance_weight}</p>
+                        </div>
+                      )}
+                      {subtask.justification.resource_justification && (
+                        <div>
+                          <span className="font-semibold text-purple-600 dark:text-purple-400">Resource Justification:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.resource_justification}</p>
+                        </div>
+                      )}
                     </div>
                   </details>
                 )}

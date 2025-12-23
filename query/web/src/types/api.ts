@@ -90,6 +90,11 @@ export interface SubtaskJustification {
   plan: string;
   why_it_may_work: string;
   expected_results: string;
+  // Budget allocation reasoning
+  budget_allocation: string;
+  complexity_assessment: string;
+  significance_weight: string;
+  resource_justification: string;
 }
 
 /** Worker's report upon completing a task. */

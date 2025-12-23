@@ -121,6 +121,12 @@ class SubtaskJustificationSchema(BaseModel):
     why_it_may_work: str = Field("", description="Reasoning for why this approach should succeed")
     expected_results: str = Field("", description="What outputs/outcomes are expected")
 
+    # Budget allocation reasoning
+    budget_allocation: str = Field("", description="Percentage of total project budget and computation")
+    complexity_assessment: str = Field("", description="Simple/moderate/complex with concrete justification")
+    significance_weight: str = Field("", description="How significant relative to siblings (critical path, importance)")
+    resource_justification: str = Field("", description="Why this budget percentage is appropriate for the task scope")
+
 
 class WorkerReportSchema(BaseModel):
     """Schema for worker's report upon completing a task."""

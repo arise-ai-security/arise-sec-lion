@@ -279,6 +279,11 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
                     plan=subtask.justification.plan,
                     why_it_may_work=subtask.justification.why_it_may_work,
                     expected_results=subtask.justification.expected_results,
+                    # Budget allocation reasoning
+                    budget_allocation=subtask.justification.budget_allocation,
+                    complexity_assessment=subtask.justification.complexity_assessment,
+                    significance_weight=subtask.justification.significance_weight,
+                    resource_justification=subtask.justification.resource_justification,
                 )
                 subtasks_list.append(
                     SubtaskSummarySchema(

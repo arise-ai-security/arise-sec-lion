@@ -18,6 +18,24 @@ class SubtaskJustification(BaseModel):
     why_it_may_work: str = Field(default="(legacy event)", description="Reasoning for why this approach should succeed")
     expected_results: str = Field(default="(legacy event)", description="What outputs/outcomes are expected")
 
+    # Budget allocation reasoning (added to capture complexity, significance, weighting)
+    budget_allocation: str = Field(
+        default="",
+        description="The allocated budget amount and how it was computed from parent budget",
+    )
+    complexity_assessment: str = Field(
+        default="",
+        description="Assessment of task complexity (simple/moderate/complex) with concrete justification",
+    )
+    significance_weight: str = Field(
+        default="",
+        description="How significant this subtask is relative to siblings (critical path, dependency, importance)",
+    )
+    resource_justification: str = Field(
+        default="",
+        description="Concrete reasoning for why this budget allocation is appropriate for the task scope",
+    )
+
 
 class WorkerReport(BaseModel):
     """Worker's report upon completing a task.
