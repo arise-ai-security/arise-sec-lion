@@ -7,11 +7,12 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import UUID
 
 import click
 
+from core.domain.model import AgentRole
 from presentation.context import EventStoreContext
 from presentation.formatters import ProgressDisplayFormatter
 from presentation.persistence import RunPersistence
@@ -20,6 +21,20 @@ from presentation.rendering import OutputRenderer
 
 if TYPE_CHECKING:
     from core.application.execution_service import AgentExecutionService
+
+
+# Factory function injected by bootstrap layer (avoids presentation→bootstrap dependency)
+_bootstrap_factory: Callable[[Path | None], CLI] | None = None
+
+
+def set_bootstrap_factory(factory: Callable[[Path | None], CLI]) -> None:
+    """Set the bootstrap factory function.
+
+    Called by bootstrap layer to inject the wiring function.
+    This avoids presentation layer importing from bootstrap.
+    """
+    global _bootstrap_factory
+    _bootstrap_factory = factory
 
 
 @dataclass
@@ -204,9 +219,12 @@ def run(ctx: CLIContext, task: str) -> None:
 
         python main.py run "Analyze this codebase for security issues"
     """
-    from bootstrap import bootstrap
-
-    app = bootstrap(config_path=ctx.config_path)
+    if _bootstrap_factory is None:
+        raise RuntimeError(
+            "Bootstrap factory not configured. "
+            "Ensure bootstrap layer has initialized before running CLI commands."
+        )
+    app = _bootstrap_factory(ctx.config_path)
     asyncio.run(app.run_with_task(task))
 
 
@@ -265,7 +283,6 @@ async def _show_events(
     errors_only: bool,
 ) -> None:
     """Show events for an agent (async implementation)."""
-    import infrastructure.adapters.sinks  # noqa: F401
     from core.query.projections import ProjectionPipelineBuilder
 
     async with EventStoreContext.from_config_path(ctx.config_path) as event_store:
@@ -327,7 +344,6 @@ async def _show_summary(
     output: str | None,
 ) -> None:
     """Show summary for an agent (async implementation)."""
-    import infrastructure.adapters.sinks  # noqa: F401
     from core.query.projections import ProjectionPipelineBuilder
 
     async with EventStoreContext.from_config_path(ctx.config_path) as event_store:
@@ -388,7 +404,7 @@ async def _list_runs(ctx: CLIContext, limit: int, fmt: str) -> None:
                 continue
 
             first_event = events[0]
-            if isinstance(first_event, AgentCreated) and first_event.role.value == "BOSS":
+            if isinstance(first_event, AgentCreated) and first_event.role == AgentRole.BOSS.value:
                 task = _extract_task_description(events)
                 last_event = events[-1]
 

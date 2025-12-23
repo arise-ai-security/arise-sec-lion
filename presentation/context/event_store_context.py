@@ -4,11 +4,25 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from config import Settings
     from core.ports.event_store_port import EventStorePort
+
+
+# Factory function injected by bootstrap layer (avoids presentation→bootstrap dependency)
+_event_store_factory: Callable[[str], EventStorePort] | None = None
+
+
+def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
+    """Set the event store factory function.
+
+    Called by bootstrap layer to inject the concrete implementation.
+    This avoids presentation layer importing from bootstrap.
+    """
+    global _event_store_factory
+    _event_store_factory = factory
 
 
 class EventStoreContext:
@@ -29,9 +43,12 @@ class EventStoreContext:
     @classmethod
     def from_connection_string(cls, connection_string: str) -> EventStoreContext:
         """Create context from PostgreSQL connection string."""
-        from infrastructure.adapters.postgres_event_store import PostgresEventStore
-
-        event_store = PostgresEventStore(connection_string)
+        if _event_store_factory is None:
+            raise RuntimeError(
+                "Event store factory not configured. "
+                "Ensure bootstrap layer has initialized before using EventStoreContext."
+            )
+        event_store = _event_store_factory(connection_string)
         return cls(event_store)
 
     @classmethod
