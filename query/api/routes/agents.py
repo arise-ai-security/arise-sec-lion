@@ -14,7 +14,7 @@ from core.domain.events import (
     ComplexityEvaluated,
     SubtasksDefined,
 )
-from core.domain.model import AgentSession
+from core.domain.model import AgentRole, AgentSession
 from core.query.projections.hierarchy_collector import HierarchyCollector
 from core.query.projections.impl import AgentListProjection, SummaryProjection
 from core.query.projections.models import AgentListItem, CostSummary, ProjectionSummary
@@ -307,20 +307,20 @@ def _projection_summary_to_schema(summary: ProjectionSummary) -> ExecutionSummar
         prompt_tokens=cost.prompt_tokens if cost else 0,
         completion_tokens=cost.completion_tokens if cost else 0,
         cost_by_role=RoleCostBreakdownSchema(
-            BOSS=cost.cost_by_role.get("BOSS", 0.0) if cost else 0.0,
-            MANAGER=cost.cost_by_role.get("MANAGER", 0.0) if cost else 0.0,
-            WORKER=cost.cost_by_role.get("WORKER", 0.0) if cost else 0.0,
-            PENDING=cost.cost_by_role.get("PENDING", 0.0) if cost else 0.0,
+            BOSS=cost.cost_by_role.get(AgentRole.BOSS.name, 0.0) if cost else 0.0,
+            MANAGER=cost.cost_by_role.get(AgentRole.MANAGER.name, 0.0) if cost else 0.0,
+            WORKER=cost.cost_by_role.get(AgentRole.WORKER.name, 0.0) if cost else 0.0,
+            PENDING=cost.cost_by_role.get(AgentRole.PENDING.name, 0.0) if cost else 0.0,
             UNKNOWN=cost.cost_by_role.get("UNKNOWN", 0.0) if cost else 0.0,
         ),
         cost_by_model=dict(cost.cost_by_model) if cost else {},
         cost_by_operation=dict(cost.cost_by_operation) if cost else {},
         cost_by_agent=dict(cost.cost_by_agent) if cost else {},
         tokens_by_role=RoleTokensSchema(
-            BOSS=cost.tokens_by_role.get("BOSS", 0) if cost else 0,
-            MANAGER=cost.tokens_by_role.get("MANAGER", 0) if cost else 0,
-            WORKER=cost.tokens_by_role.get("WORKER", 0) if cost else 0,
-            PENDING=cost.tokens_by_role.get("PENDING", 0) if cost else 0,
+            BOSS=cost.tokens_by_role.get(AgentRole.BOSS.name, 0) if cost else 0,
+            MANAGER=cost.tokens_by_role.get(AgentRole.MANAGER.name, 0) if cost else 0,
+            WORKER=cost.tokens_by_role.get(AgentRole.WORKER.name, 0) if cost else 0,
+            PENDING=cost.tokens_by_role.get(AgentRole.PENDING.name, 0) if cost else 0,
         ),
         budget_limit_usd=cost.budget_limit_usd if cost else None,
         budget_remaining_usd=cost.budget_remaining_usd if cost else None,
@@ -330,10 +330,10 @@ def _projection_summary_to_schema(summary: ProjectionSummary) -> ExecutionSummar
     # Convert node counts
     node_counts = summary.node_counts
     node_counts_schema = RoleCountSchema(
-        BOSS=node_counts.by_role.get("BOSS", 0) if node_counts else 0,
-        MANAGER=node_counts.by_role.get("MANAGER", 0) if node_counts else 0,
-        WORKER=node_counts.by_role.get("WORKER", 0) if node_counts else 0,
-        PENDING=node_counts.by_role.get("PENDING", 0) if node_counts else 0,
+        BOSS=node_counts.by_role.get(AgentRole.BOSS.name, 0) if node_counts else 0,
+        MANAGER=node_counts.by_role.get(AgentRole.MANAGER.name, 0) if node_counts else 0,
+        WORKER=node_counts.by_role.get(AgentRole.WORKER.name, 0) if node_counts else 0,
+        PENDING=node_counts.by_role.get(AgentRole.PENDING.name, 0) if node_counts else 0,
         total=node_counts.total if node_counts else 0,
     )
 
