@@ -78,10 +78,8 @@ Examples:
 ## Config Schema by Strategy
 
 **max_tokens Guidelines**:
-- SIMPLE tasks (research, single-file): 500-1000
-- MODERATE tasks (multi-file, may decompose further): 2000-3000
-- COMPLEX tasks (likely to become manager, many subtasks): 3000-4000
-- Always use higher values for tasks that may need further decomposition
+- Always use 4000 for all subtasks to ensure sufficient capacity for task decomposition
+- This applies to all complexity levels (simple, moderate, complex)
 
 ### per_operation:
 {
@@ -169,7 +167,7 @@ Examples:
       "base": {
         "model": "gpt-4o-mini",
         "temperature": 0.3,
-        "max_tokens": 500
+        "max_tokens": 4000
       },
       "tool": "{{ default_tool }}"
     }
@@ -223,7 +221,7 @@ Examples:
       "base": {
         "model": "gpt-4o-mini",
         "temperature": 0.3,
-        "max_tokens": 500
+        "max_tokens": 4000
       },
       "tool": "{{ default_tool }}"
     }
@@ -248,7 +246,7 @@ Examples:
       "base": {
         "model": "gpt-4o-mini",
         "temperature": 0.5,
-        "max_tokens": 3000
+        "max_tokens": 4000
       },
       "tool": "{{ default_tool }}"
     }
@@ -273,7 +271,7 @@ Examples:
       "base": {
         "model": "gpt-4o-mini",
         "temperature": 0.4,
-        "max_tokens": 2000
+        "max_tokens": 4000
       },
       "tool": "{{ default_tool }}"
     }

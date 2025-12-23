@@ -37,7 +37,7 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
         temperature = merged_config.get("temperature", 0.7)
-        max_tokens = merged_config.get("max_tokens", 1000)
+        max_tokens = merged_config.get("max_tokens", 4000)
         top_p = merged_config.get("top_p")
 
         try:
@@ -108,7 +108,7 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
         temperature = merged_config.get("temperature", 0.7)
-        max_tokens = merged_config.get("max_tokens", 1000)
+        max_tokens = merged_config.get("max_tokens", 4000)
         top_p = merged_config.get("top_p")
 
         try:

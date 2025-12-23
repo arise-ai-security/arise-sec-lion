@@ -47,7 +47,7 @@ class ConfigResolver:
             return LLMConfig(
                 model=base.model,
                 temperature=0.3,
-                max_tokens=min(base.max_tokens, 500),
+                max_tokens=min(base.max_tokens, 1000),
                 top_p=base.top_p,
             )
         if operation == "task_decomposition":
