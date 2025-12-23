@@ -19,7 +19,7 @@ The main function should be as thin as possible - just call the CLI.
 
 import sys
 
-from bootstrap import get_click_group
+from bootstrap import bootstrap
 
 
 def main() -> None:
@@ -33,7 +33,7 @@ def main() -> None:
     Reference: Mark Seemann - "Dependency Injection in .NET"
     """
     try:
-        cli = get_click_group()
+        cli = bootstrap()
         cli()
     except KeyboardInterrupt:
         print()

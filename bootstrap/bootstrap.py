@@ -2,15 +2,35 @@
 
 from pathlib import Path
 
+import click
+
 from config import Settings
-from presentation.cli import CLI, CLIConfig, format_event_progress
+from presentation.cli import CLI, CLIConfig, cli as click_group, format_event_progress
 
 from .application import Application, ApplicationConfig, get_application
 from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastructure
 from .presentation import get_cli
 
 
-def bootstrap(
+def bootstrap() -> click.Group:
+    # Register sinks
+    import infrastructure.adapters.sinks  # noqa: F401
+
+    # Inject event store factory into presentation layer
+    from infrastructure.adapters.postgres_event_store import PostgresEventStore
+    from presentation.context.event_store_context import set_event_store_factory
+
+    set_event_store_factory(PostgresEventStore)
+
+    # Inject CLI app factory for 'run' command
+    from presentation.cli import set_bootstrap_factory
+
+    set_bootstrap_factory(create_cli_app)
+
+    return click_group
+
+
+def create_cli_app(
     config_path: str | Path | None = None,
     infrastructure_config: InfrastructureConfig | None = None,
     application_config: ApplicationConfig | None = None,

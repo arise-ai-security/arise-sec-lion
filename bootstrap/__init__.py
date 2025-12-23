@@ -5,9 +5,13 @@ This follows the Composition Root pattern (Mark Seemann - "Dependency Injection 
 """
 
 from .application import Application, ApplicationConfig, get_application
-from .bootstrap import bootstrap
-from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastructure
-from .presentation import get_cli, get_click_group
+from .bootstrap import bootstrap, create_cli_app
+from .infrastructure import (
+    Infrastructure,
+    InfrastructureConfig,
+    get_infrastructure,
+)
+from .presentation import get_cli
 
 
 __all__ = [
@@ -16,8 +20,8 @@ __all__ = [
     "Infrastructure",
     "InfrastructureConfig",
     "bootstrap",
+    "create_cli_app",
     "get_application",
     "get_cli",
-    "get_click_group",
     "get_infrastructure",
 ]
