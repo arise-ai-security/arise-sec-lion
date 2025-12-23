@@ -121,14 +121,12 @@ Examples:
     "top_p": number (0.0-1.0) | null  # optional
   },
   "overrides": {
-    "complexity_evaluation": {  # optional
-      "model": "string" | null,  # optional override
-      "temperature": number | null,  # optional override
-      "max_tokens": number | null,  # optional override
-      "top_p": number | null  # optional override
+    "complexity_evaluation": {  # optional, only include fields you want to override
+      "temperature": number,  # override temperature only
+      "max_tokens": number    # override max_tokens only
     },
     "task_decomposition": {  # optional
-      # same as above
+      # same as above - only include fields to override
     }
   },
   "tool": "{{ default_tool }}"
