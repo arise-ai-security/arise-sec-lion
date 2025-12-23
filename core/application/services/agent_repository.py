@@ -5,6 +5,7 @@ Encapsulates event store operations with OCC retry logic.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -12,6 +13,8 @@ from uuid import UUID
 from core.domain.events import AgentCreated, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentSession
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -137,4 +140,4 @@ class AgentRepository:
             try:
                 self._progress_callback(event, agent)
             except Exception:
-                pass  # Don't let callback errors break the flow
+                logger.debug("Progress callback failed", exc_info=True)

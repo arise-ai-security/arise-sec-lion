@@ -12,6 +12,7 @@ The orchestrator:
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from core.domain.config_resolver import ConfigResolver
@@ -19,6 +20,8 @@ from core.domain.exceptions import ToolNotAvailableError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder, is_security_task
 from core.domain.services import SubtaskParser, strip_markdown_code_block
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -78,7 +81,7 @@ class AgentOrchestrator:
                 ).render()
                 prompt = f"{prompt}\n\n{security_guidance}"
             except Exception:
-                pass  # Fall back to base prompt if security template missing
+                logger.debug("Security template not found, using base prompt")
 
         # Perform LLM call
         llm_config = ConfigResolver.resolve(agent.config, operation="complexity_evaluation")
