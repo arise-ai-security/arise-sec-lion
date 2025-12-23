@@ -11,7 +11,7 @@ You MUST respond with a valid JSON array containing 2-4 subtask objects.
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "string - gpt-4o | gpt-4o-mini | claude-3-5-sonnet-20241022",
+        "model": "string - o3 | o3-mini | claude-sonnet-4-5-20250514",
         "temperature": "number - 0.2-0.7 depending on task creativity needs",
         "max_tokens": "number - 4000-8000 for security tasks"
       },
@@ -33,11 +33,11 @@ You MUST respond with a valid JSON array containing 2-4 subtask objects.
 
 | Task Type | Model | Temperature | Reasoning |
 |-----------|-------|-------------|-----------|
-| CVE fetch/analysis | gpt-4o-mini | 0.3 | Factual, deterministic |
-| Environment setup | gpt-4o-mini | 0.3 | Standard commands |
-| PoC generation | gpt-4o | 0.5-0.7 | Needs creativity |
+| CVE fetch/analysis | o3-mini | 0.3 | Factual, deterministic |
+| Environment setup | o3-mini | 0.3 | Standard commands |
+| PoC generation | o3 | 0.5-0.7 | Needs creativity |
 | Patch generation | claude-3-5-sonnet | 0.4-0.6 | Balance correctness/minimal |
-| Validation | gpt-4o-mini | 0.2 | Deterministic execution |
+| Validation | o3-mini | 0.2 | Deterministic execution |
 
 ## Example Valid Output
 
@@ -48,7 +48,7 @@ You MUST respond with a valid JSON array containing 2-4 subtask objects.
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o-mini",
+        "model": "o3-mini",
         "temperature": 0.3,
         "max_tokens": 4000
       },
@@ -60,7 +60,7 @@ You MUST respond with a valid JSON array containing 2-4 subtask objects.
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o",
+        "model": "o3",
         "temperature": 0.6,
         "max_tokens": 8000
       },
@@ -72,7 +72,7 @@ You MUST respond with a valid JSON array containing 2-4 subtask objects.
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-5-20250514",
         "temperature": 0.5,
         "max_tokens": 8000
       },

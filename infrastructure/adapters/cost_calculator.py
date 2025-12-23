@@ -78,10 +78,18 @@ class PriceInfo:
 
 # Only used when LiteLLM pricing is unavailable
 FALLBACK_PRICING: dict[str, ModelPricing] = {
+    # OpenAI o3 series (latest reasoning models)
+    "o3": ModelPricing(10.00, 40.00),
+    "o3-mini": ModelPricing(1.10, 4.40),
+    # Legacy GPT-4o models
     "gpt-4o": ModelPricing(2.50, 10.00),
     "gpt-4o-mini": ModelPricing(0.15, 0.60),
+    # Anthropic Claude models
+    "claude-sonnet-4-5-20250514": ModelPricing(3.00, 15.00),
     "claude-3-5-sonnet-20241022": ModelPricing(3.00, 15.00),
     "claude-3-opus-20240229": ModelPricing(15.00, 75.00),
+    # Google Gemini models
+    "gemini-2.0-flash": ModelPricing(0.10, 0.40),
 }
 
 # Conservative default for completely unknown models

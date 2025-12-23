@@ -23,14 +23,14 @@ Example:
   "config": {
     "strategy": "per_operation",
     "complexity_evaluation": {
-      "model": "gpt-4o-mini",
+      "model": "o3-mini",
       "temperature": 0.3,
-      "max_tokens": 300
+      "max_tokens": 1000
     },
     "task_decomposition": {
-      "model": "gpt-4o",
+      "model": "o3",
       "temperature": 0.7,
-      "max_tokens": 1500
+      "max_tokens": 4000
     },
     "tool": "claude_code"
   }
@@ -49,9 +49,9 @@ Example:
   "config": {
     "strategy": "heuristic",
     "base": {
-      "model": "gpt-4o-mini",
+      "model": "o3-mini",
       "temperature": 0.5,
-      "max_tokens": 500
+      "max_tokens": 4000
     },
     "tool": "claude_code"
   }
@@ -66,14 +66,14 @@ Example:
   "config": {
     "strategy": "hybrid",
     "base": {
-      "model": "gpt-4o",
+      "model": "o3",
       "temperature": 0.7,
-      "max_tokens": 1000
+      "max_tokens": 4000
     },
     "overrides": {
       "complexity_evaluation": {
         "temperature": 0.3,
-        "max_tokens": 300
+        "max_tokens": 1000
       }
     },
     "tool": "openhands"
@@ -82,8 +82,8 @@ Example:
 
 # Guidelines
 
-- Use powerful models (gpt-4o, claude-3-5-sonnet) for complex reasoning tasks
-- Use cheaper models (gpt-4o-mini, gemini-flash) for simple classification/research
+- Use powerful models (o3, claude-sonnet-4-5-20250514) for complex reasoning tasks
+- Use efficient models (o3-mini, gemini-2.0-flash) for simple classification/research
 - Lower temperature (0.1-0.4) for deterministic tasks (complexity eval, factual research)
 - Higher temperature (0.6-0.9) for creative tasks (brainstorming, code generation)
 - Choose tool: "claude_code" (default, good for coding) or "openhands" (alternative)

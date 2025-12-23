@@ -42,7 +42,7 @@ class OpenHandsAdapter(WorkerToolPort):
         api_key: str | None = None,
         timeout_seconds: int = 300,
     ) -> None:
-        self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
+        self.model = model or os.getenv("LLM_MODEL", "openai/o3")
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.timeout_seconds = timeout_seconds
 

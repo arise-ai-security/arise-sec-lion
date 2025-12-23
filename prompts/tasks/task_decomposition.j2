@@ -74,14 +74,14 @@ Use this when you want fine-grained control over each operation.
   "config": {
     "strategy": "per_operation",
     "complexity_evaluation": {
-      "model": "gpt-4o-mini",
+      "model": "o3-mini",
       "temperature": 0.3,
-      "max_tokens": 300
+      "max_tokens": 1000
     },
     "task_decomposition": {
-      "model": "gpt-4o",
+      "model": "o3",
       "temperature": 0.7,
-      "max_tokens": 1500
+      "max_tokens": 4000
     },
     "tool": "{{ default_tool }}"
   }
@@ -100,9 +100,9 @@ Use this for simpler subtasks where you trust default heuristics.
   "config": {
     "strategy": "heuristic",
     "base": {
-      "model": "gpt-4o-mini",
+      "model": "o3-mini",
       "temperature": 0.5,
-      "max_tokens": 500
+      "max_tokens": 4000
     },
     "tool": "{{ default_tool }}"
   }
@@ -117,14 +117,14 @@ Specify base config with optional overrides for specific operations.
   "config": {
     "strategy": "hybrid",
     "base": {
-      "model": "gpt-4o",
+      "model": "o3",
       "temperature": 0.7,
-      "max_tokens": 1000
+      "max_tokens": 4000
     },
     "overrides": {
       "complexity_evaluation": {
         "temperature": 0.3,
-        "max_tokens": 300
+        "max_tokens": 1000
       }
     },
     "tool": "{{ default_tool }}"
@@ -136,9 +136,9 @@ Specify base config with optional overrides for specific operations.
 <GUIDELINES>
 
 ## Model Selection
-- **Complex reasoning tasks**: gpt-4o, claude-3-5-sonnet-20241022
-- **Simple classification/research**: gpt-4o-mini, gemini-flash
-- **Default for most tasks**: gpt-4o-mini (cost-effective)
+- **Complex reasoning tasks**: o3, claude-sonnet-4-5-20250514
+- **Simple classification/research**: o3-mini, gemini-2.0-flash
+- **Default for most tasks**: o3-mini (cost-effective)
 
 ## Temperature Settings
 - **Deterministic** (complexity eval, factual research): 0.1-0.4

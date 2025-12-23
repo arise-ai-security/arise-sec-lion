@@ -142,7 +142,7 @@ Examples:
 5. Config MUST include "strategy" and "tool" fields
 6. All required fields for chosen strategy must be present
 7. Temperature: 0.0-2.0, max_tokens: 1-100000
-8. Model names: "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "gemini-flash", etc.
+8. Model names: "o3", "o3-mini", "claude-sonnet-4-5-20250514", "gemini-2.0-flash", etc.
 9. budget_weight: 0.1-10.0 based on complexity, importance, and estimated time
 
 **Example Valid Output (for parent task: "Build a user authentication system")**:
@@ -165,7 +165,7 @@ Examples:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o-mini",
+        "model": "o3-mini",
         "temperature": 0.3,
         "max_tokens": 4000
       },
@@ -190,7 +190,7 @@ Examples:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o",
+        "model": "o3",
         "temperature": 0.6,
         "max_tokens": 4000
       },
@@ -219,7 +219,7 @@ Examples:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o-mini",
+        "model": "o3-mini",
         "temperature": 0.3,
         "max_tokens": 4000
       },
@@ -244,7 +244,7 @@ Examples:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o-mini",
+        "model": "o3-mini",
         "temperature": 0.5,
         "max_tokens": 4000
       },
@@ -269,7 +269,7 @@ Examples:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o-mini",
+        "model": "o3-mini",
         "temperature": 0.4,
         "max_tokens": 4000
       },

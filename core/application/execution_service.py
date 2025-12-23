@@ -39,8 +39,8 @@ from core.query.projections.hierarchy_collector import HierarchyCollector
 # Default models for multi-model strategy (3 different models)
 DEFAULT_SUBORDINATE_MODELS = [
     "claude-sonnet-4-5-20250514",  # Anthropic
-    "gemini-1.5-pro",  # Google
-    "gpt-4o",  # OpenAI
+    "gemini-2.0-flash",  # Google
+    "o3",  # OpenAI
 ]
 
 
@@ -110,7 +110,7 @@ class AgentExecutionService:
             worker_tool_port: Worker tool adapter for task execution.
             prompt_builder: Prompt builder service. If None, creates default instance.
             model_config: Role-to-model mapping (keys: "boss", "manager", "worker", "pending").
-                         If None, uses default gpt-4o-mini for all roles.
+                         If None, uses default o3-mini for all roles.
             max_retries: Maximum OCC retry attempts (default: 3).
             poll_interval: Interval in seconds for polling active agents (default: 0.5).
         """
@@ -139,10 +139,10 @@ class AgentExecutionService:
 
         if model_config is None:
             model_config = {
-                "boss": "gpt-4o-mini",
-                "manager": "gpt-4o-mini",
-                "worker": "gpt-4o-mini",
-                "pending": "gpt-4o-mini",
+                "boss": "o3-mini",
+                "manager": "o3-mini",
+                "worker": "o3-mini",
+                "pending": "o3-mini",
             }
         self.model_config = model_config
 
@@ -641,7 +641,7 @@ class AgentExecutionService:
             run_output_path.mkdir(parents=True, exist_ok=True)
             self.working_directory = str(run_output_path)
 
-        boss_model = self.model_config.get("boss", "gpt-4o-mini")
+        boss_model = self.model_config.get("boss", "o3-mini")
         boss_config = {
             "strategy": "heuristic",
             "base": {

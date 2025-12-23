@@ -38,18 +38,18 @@ Before decomposition, analyze:
 Subtask Analysis:
 │
 ├─ Is it primarily research/documentation/analysis?
-│  └─ YES → Use cheaper model (gpt-4o-mini), low temp (0.3), tool: {{ default_tool }}
+│  └─ YES → Use cheaper model (o3-mini), low temp (0.3), tool: {{ default_tool }}
 │
 ├─ Is it creative/generative (design, brainstorming)?
-│  └─ YES → Use powerful model (gpt-4o), higher temp (0.7-0.9), tool: {{ default_tool }}
+│  └─ YES → Use powerful model (o3), higher temp (0.7-0.9), tool: {{ default_tool }}
 │
 ├─ Is it deterministic/factual (data processing, refactoring)?
-│  └─ YES → Use cheap model (gpt-4o-mini), very low temp (0.1-0.3), tool: {{ default_tool }}
+│  └─ YES → Use cheap model (o3-mini), very low temp (0.1-0.3), tool: {{ default_tool }}
 │
 ├─ Is it complex implementation with multiple tools?
-│  └─ YES → Use powerful model (gpt-4o), medium temp (0.5-0.7), tool: {{ default_tool }}
+│  └─ YES → Use powerful model (o3), medium temp (0.5-0.7), tool: {{ default_tool }}
 │
-└─ Default → gpt-4o-mini, temp 0.5, tool: {{ default_tool }}
+└─ Default → o3-mini, temp 0.5, tool: {{ default_tool }}
 ```
 
 ## Tool Selection Guide
@@ -71,7 +71,7 @@ Use when child will likely be WORKER or subtask is straightforward:
 
 ### hybrid (Balanced)
 Use when you want to set base config but override specific operations:
-- Base: gpt-4o, temp 0.7
+- Base: o3, temp 0.7
 - Override complexity_evaluation: temp 0.3 (more deterministic)
 
 ## Example Decompositions
