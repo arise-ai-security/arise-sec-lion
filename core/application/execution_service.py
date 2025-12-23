@@ -647,7 +647,7 @@ class AgentExecutionService:
             "base": {
                 "model": boss_model,
                 "temperature": 0.7,
-                "max_tokens": 1000,
+                "max_tokens": 4000,  # Increased for detailed subtask decomposition with budget justifications
             },
             "tool": "claude_code",
         }
