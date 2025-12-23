@@ -5,13 +5,16 @@ subtasks and spawn child agents.
 """
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
+from core.application.agent_orchestrator import AgentOrchestrator
 from core.domain.events import (
     ChildSpawned,
+    DomainEvent,
     StatusChanged,
     SubtasksDefined,
     WorkCompleted,
@@ -22,6 +25,7 @@ from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
 from core.domain.subtask import Subtask
 from core.ports.llm_port import LLMPort
+from core.ports.worker_port import WorkerToolPort
 
 
 def _test_agent_config() -> dict[str, Any]:
@@ -90,6 +94,28 @@ class FakeLLM(LLMPort):
         )
 
 
+class FakeWorkerTool(WorkerToolPort):
+    """Stub worker tool for tests that don't need worker execution."""
+
+    async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
+        """No-op implementation."""
+        return
+        yield  # Make this an async generator
+
+
+def _create_orchestrator(
+    llm_port: LLMPort,
+    worker_port: WorkerToolPort | None = None,
+    prompt_builder: PromptBuilder | None = None,
+) -> AgentOrchestrator:
+    """Create an orchestrator with the given ports."""
+    return AgentOrchestrator(
+        llm_port=llm_port,
+        worker_port=worker_port or FakeWorkerTool(),
+        prompt_builder=prompt_builder or PromptBuilder(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_manager_decomposition() -> None:
     """Test that a MANAGER agent can decompose tasks into subtasks."""
@@ -114,9 +140,10 @@ async def test_manager_decomposition() -> None:
             {"description": "Implement URL fetching and HTML parsing", "config": child_config},
         ]
     )
+    orchestrator = _create_orchestrator(llm_port=fake_llm)
 
-    # When: Call agent.evaluate_task(llm_port, prompt_builder)
-    await agent.evaluate_task(llm_port=fake_llm, prompt_builder=PromptBuilder())
+    # When: Call orchestrator.evaluate_task(agent)
+    await orchestrator.evaluate_task(agent)
 
     # Then: Verify 7 events exist
     # (AgentCreated, TaskAssigned, TokensConsumed, SubtasksDefined, ChildSpawned x2, StatusChanged)
@@ -177,9 +204,10 @@ async def test_manager_llm_invalid_json_response() -> None:
 
     # And: Prepare a FakeLLM that returns invalid JSON
     fake_llm = FakeLLM(canned_response="This is not JSON at all!")
+    orchestrator = _create_orchestrator(llm_port=fake_llm)
 
-    # When: Call agent.evaluate_task(llm_port, prompt_builder) with invalid JSON response
-    await agent.evaluate_task(llm_port=fake_llm, prompt_builder=PromptBuilder())
+    # When: Call orchestrator.evaluate_task(agent) with invalid JSON response
+    await orchestrator.evaluate_task(agent)
 
     # Then: Verify 4 events exist (AgentCreated, TaskAssigned, TokensConsumed, WorkFailed)
     assert len(agent.events) == 4, f"Expected 4 events, got {len(agent.events)}"
@@ -362,9 +390,10 @@ async def test_child_evaluates_simple_complexity() -> None:
             }
         )
     )
+    orchestrator = _create_orchestrator(llm_port=fake_llm)
 
     # When: Child evaluates complexity
-    await agent.evaluate_complexity(llm_port=fake_llm, prompt_builder=PromptBuilder())
+    await orchestrator.evaluate_complexity(agent)
 
     # Then: Agent role transitions from PENDING to WORKER
     assert agent.role == AgentRole.WORKER, "Agent should become WORKER for SIMPLE tasks"
@@ -406,9 +435,10 @@ async def test_child_evaluates_complex_complexity() -> None:
             }
         )
     )
+    orchestrator = _create_orchestrator(llm_port=fake_llm)
 
     # When: Child evaluates complexity
-    await agent.evaluate_complexity(llm_port=fake_llm, prompt_builder=PromptBuilder())
+    await orchestrator.evaluate_complexity(agent)
 
     # Then: Agent role transitions from PENDING to MANAGER
     assert agent.role == AgentRole.MANAGER, "Agent should become MANAGER for COMPLEX tasks"
@@ -441,9 +471,10 @@ async def test_complexity_evaluation_invalid_response() -> None:
 
     # And: Prepare FakeLLM that returns invalid JSON
     fake_llm = FakeLLM(canned_response="This is not valid JSON!")
+    orchestrator = _create_orchestrator(llm_port=fake_llm)
 
     # When: Child attempts to evaluate complexity
-    await agent.evaluate_complexity(llm_port=fake_llm, prompt_builder=PromptBuilder())
+    await orchestrator.evaluate_complexity(agent)
 
     # Then: Agent transitions to FAILED status
     assert agent.status == AgentStatus.FAILED, "Agent should fail when complexity evaluation fails"

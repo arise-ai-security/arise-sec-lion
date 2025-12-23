@@ -10,13 +10,17 @@ from uuid import uuid4
 
 import pytest
 
+from core.application.agent_orchestrator import AgentOrchestrator
 from core.domain.events import (
     CodeGenerationStarted,
     DomainEvent,
     ThoughtCaptured,
     WorkCompleted,
 )
+from core.domain.llm_response import LLMResponse, LLMUsage
 from core.domain.model import AgentRole, AgentSession, AgentStatus
+from core.domain.prompt_builder import PromptBuilder
+from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 
 
@@ -71,6 +75,36 @@ class FakeWorkerTool(WorkerToolPort):
         )
 
 
+class FakeLLM(LLMPort):
+    """Stub LLM for tests that don't need LLM calls."""
+
+    async def query(self, prompt: str, config_dict: dict[str, Any]) -> str:
+        """No-op implementation."""
+        return "{}"
+
+    async def query_with_usage(self, prompt: str, config_dict: dict[str, Any]) -> LLMResponse:
+        """No-op implementation."""
+        return LLMResponse(
+            content="{}",
+            usage=LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+            model="fake-model",
+            cost_usd=0.0,
+        )
+
+
+def _create_orchestrator(
+    worker_port: WorkerToolPort,
+    llm_port: LLMPort | None = None,
+    prompt_builder: PromptBuilder | None = None,
+) -> AgentOrchestrator:
+    """Create an orchestrator with the given ports."""
+    return AgentOrchestrator(
+        llm_port=llm_port or FakeLLM(),
+        worker_port=worker_port,
+        prompt_builder=prompt_builder or PromptBuilder(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_worker_execution_flow() -> None:
     """Test that a WORKER agent can execute tasks using a worker tool."""
@@ -97,9 +131,10 @@ async def test_worker_execution_flow() -> None:
         ],
         result="Successfully created fibonacci function with memoization",
     )
+    orchestrator = _create_orchestrator(worker_port=fake_tool)
 
-    # When: Call agent.execute_task with the fake tool
-    await agent.execute_task(tool_port=fake_tool)
+    # When: Call orchestrator.execute_task with the agent
+    await orchestrator.execute_task(agent)
 
     # Then: Verify CodeGenerationStarted event is recorded
     code_gen_events = [e for e in agent.events if isinstance(e, CodeGenerationStarted)]

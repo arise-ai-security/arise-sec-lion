@@ -1,6 +1,5 @@
 """Core domain models for the multi-agent system."""
 
-import json
 from functools import singledispatchmethod
 from typing import Any
 from uuid import UUID, uuid4
@@ -8,7 +7,6 @@ from uuid import UUID, uuid4
 from pydantic import TypeAdapter
 
 from core.domain.agent_config import AgentConfig
-from core.domain.config_resolver import ConfigResolver
 from core.domain.context import (
     ChildResult,
     ParentContext,
@@ -31,13 +29,7 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.exceptions import ToolNotAvailableError
 from core.domain.execution_context import ExecutionContext
-from core.domain.llm_response import LLMResponse
-from core.domain.prompt_builder import PromptBuilder, is_security_task
-from core.domain.services import SubtaskParser, strip_markdown_code_block
-from core.ports.llm_port import LLMPort
-from core.ports.worker_port import WorkerToolPort
 
 
 class AgentSession:
@@ -85,244 +77,6 @@ class AgentSession:
         )
         self._apply(task_event)
         self._changes.append(task_event)
-
-    async def evaluate_complexity(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
-        """For PENDING agents: evaluate task complexity to become WORKER or MANAGER.
-
-        Automatically detects security tasks and provides security-specific
-        complexity evaluation guidance.
-        """
-        assert self.role == AgentRole.PENDING, f"Requires PENDING role, got {self.role}"
-        assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
-        assert self.task_description, "Requires assigned task"
-
-        # Build base complexity evaluation prompt
-        prompt = prompt_builder.build_complexity_evaluation_prompt(
-            task_description=self.task_description,
-            agent_id=self.session_id,
-            parent_task=None,
-        )
-
-        # Append security-specific guidance for security tasks
-        if is_security_task(self.task_description):
-            try:
-                security_guidance = prompt_builder.env.get_template(
-                    "security/complexity_security.j2"
-                ).render()
-                prompt = f"{prompt}\n\n{security_guidance}"
-            except Exception:
-                # Fall back to base prompt if security template missing
-                pass
-
-        llm_config = ConfigResolver.resolve(self.config, operation="complexity_evaluation")
-        llm_response = await llm_port.query_with_usage(prompt, llm_config.model_dump())
-
-        # Emit cost tracking event
-        self._emit_tokens_consumed(llm_response, operation="complexity_evaluation")
-
-        try:
-            clean_response = strip_markdown_code_block(llm_response.content)
-            data = json.loads(clean_response)
-            complexity = data.get("complexity", "").lower()
-            reasoning = data.get("reasoning", "")
-
-            if complexity not in ("simple", "complex"):
-                raise ValueError(f"Invalid complexity value: {complexity}")
-
-            determined_role = AgentRole.WORKER if complexity == "simple" else AgentRole.MANAGER
-
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            failed_event = WorkFailed(
-                aggregate_id=self.session_id,
-                sequence_number=self._next_sequence(),
-                reason=f"Failed to evaluate complexity: {e}",
-            )
-            self._apply(failed_event)
-            self._changes.append(failed_event)
-            return
-
-        complexity_event = ComplexityEvaluated(
-            aggregate_id=self.session_id,
-            sequence_number=self._next_sequence(),
-            complexity=complexity,
-            determined_role=determined_role.value,
-            reasoning=reasoning,
-        )
-        self._apply(complexity_event)
-        self._changes.append(complexity_event)
-
-    async def evaluate_task(self, llm_port: LLMPort, prompt_builder: PromptBuilder) -> None:
-        """For BOSS/MANAGER: decompose task into subtasks and spawn children.
-
-        Respects execution context limits:
-        - max_depth: Forces WORKER role for children at max depth
-        - max_children_per_node: Limits number of subtasks spawned
-
-        Automatically detects security tasks and uses appropriate prompts.
-        """
-        assert self.role in (AgentRole.BOSS, AgentRole.MANAGER), (
-            f"Requires BOSS/MANAGER, got {self.role}"
-        )
-        assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
-
-        # Use auto_prompt for automatic security task detection
-        prompt = prompt_builder.build_auto_prompt(
-            task_description=self.task_description,
-            agent_id=self.session_id,
-            agent_role=self.role.value.upper(),
-            parent_task=None,
-        )
-
-        llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")
-        llm_response = await llm_port.query_with_usage(prompt, llm_config.model_dump())
-
-        # Emit cost tracking event
-        self._emit_tokens_consumed(llm_response, operation="task_decomposition")
-
-        try:
-            subtasks = SubtaskParser.parse_from_llm_response(llm_response.content)
-        except ValueError as e:
-            failed_event = WorkFailed(
-                aggregate_id=self.session_id,
-                sequence_number=self._next_sequence(),
-                reason=f"Failed to parse subtasks: {e}",
-            )
-            self._apply(failed_event)
-            self._changes.append(failed_event)
-            return
-
-        # Enforce max_children_per_node limit (if enabled, -1 = unlimited)
-        if self.execution_context is not None and self.execution_context.is_children_limited():
-            max_children = self.execution_context.max_children_per_node
-            if len(subtasks) > max_children:
-                limit_event = LimitEnforced(
-                    aggregate_id=self.session_id,
-                    sequence_number=self._next_sequence(),
-                    limit_type="children",
-                    limit_value=max_children,
-                    attempted_value=len(subtasks),
-                    action_taken="truncated_subtasks",
-                )
-                self._apply(limit_event)
-                self._changes.append(limit_event)
-                subtasks = subtasks[:max_children]
-
-        subtasks_event = SubtasksDefined(
-            aggregate_id=self.session_id,
-            sequence_number=self._next_sequence(),
-            subtasks=subtasks,
-        )
-        self._apply(subtasks_event)
-        self._changes.append(subtasks_event)
-
-        # Determine child role based on depth limit
-        # At max depth, force WORKER role to prevent infinite recursion
-        force_worker = False
-        if self.execution_context is not None and not self.execution_context.can_spawn_child():
-            force_worker = True
-            limit_event = LimitEnforced(
-                aggregate_id=self.session_id,
-                sequence_number=self._next_sequence(),
-                limit_type="depth",
-                limit_value=self.execution_context.max_depth,
-                attempted_value=self.execution_context.current_depth + 1,
-                action_taken="forced_worker_role",
-            )
-            self._apply(limit_event)
-            self._changes.append(limit_event)
-
-        child_role = AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
-
-        # Build parent context for children
-        parent_context = self.get_context_for_child()
-
-        for subtask in subtasks:
-            child_id = uuid4()
-            child_event = ChildSpawned(
-                aggregate_id=self.session_id,
-                sequence_number=self._next_sequence(),
-                child_id=child_id,
-                child_role=child_role,
-                subtask=subtask,
-                child_config=subtask.config,
-                parent_context=parent_context.to_dict(),
-            )
-            self._apply(child_event)
-            self._changes.append(child_event)
-
-        status_event = StatusChanged(
-            aggregate_id=self.session_id,
-            sequence_number=self._next_sequence(),
-            old_status=self.status.value,
-            new_status=AgentStatus.WAITING.value,
-            reason="Decomposed task, waiting for child agents",
-        )
-        self._apply(status_event)
-        self._changes.append(status_event)
-
-    async def execute_task(
-        self,
-        tool_port: WorkerToolPort,
-        working_directory: str | None = None,
-        workspace_context: str | None = None,
-    ) -> None:
-        """For WORKER: execute task using worker tool (Claude Code, OpenHands)."""
-        assert self.role == AgentRole.WORKER, f"Requires WORKER, got {self.role}"
-        assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
-
-        tool_name = self.config.tool
-
-        started_event = CodeGenerationStarted(
-            aggregate_id=self.session_id,
-            sequence_number=self._next_sequence(),
-            tool_name=tool_name,
-        )
-        self._apply(started_event)
-        self._changes.append(started_event)
-
-        worker_system_prompt = (
-            "<WORKER_INSTRUCTIONS>\n"
-            "You are a WORKER agent with access to terminal and file editing tools.\n"
-            "Your job is to EXECUTE the task by CREATING ACTUAL FILES in the workspace.\n\n"
-            "IMPORTANT RULES:\n"
-            "1. DO NOT just explain or provide code snippets - CREATE the actual files\n"
-            "2. Use the file_editor tool to create/edit files in the workspace\n"
-            "3. Use the terminal tool to run commands (e.g., to test your code)\n"
-            "4. All files should be created in the current working directory\n"
-            "5. After creating files, verify they exist by listing the directory\n"
-            "</WORKER_INSTRUCTIONS>\n\n"
-        )
-
-        enhanced_description = f"{worker_system_prompt}<TASK>\n{self.task_description}\n</TASK>"
-
-        if workspace_context:
-            enhanced_description += (
-                f"\n\n<WORKSPACE_CONTEXT>\n"
-                f"You are working in a shared workspace. Other workers may have created files.\n"
-                f"Current files in workspace:\n{workspace_context}\n"
-                f"</WORKSPACE_CONTEXT>"
-            )
-
-        task_context: dict[str, Any] = {
-            "session_id": self.session_id,
-            "task_description": enhanced_description,
-            "tool_name": tool_name,
-            "config": self.config,
-        }
-
-        if working_directory:
-            task_context["working_directory"] = working_directory
-
-        try:
-            async for tool_event in tool_port.run_session(task_context):
-                event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
-                event_data["aggregate_id"] = self.session_id
-                event_data["sequence_number"] = self._next_sequence()
-                corrected_event = type(tool_event)(**event_data)
-                self._apply(corrected_event)
-                self._changes.append(corrected_event)
-        except ToolNotAvailableError as e:
-            self.fail_with_reason(str(e))
 
     def handle_child_update(
         self,
@@ -454,26 +208,6 @@ class AgentSession:
     def _(self, event: LimitEnforced) -> None:
         # Limit enforcement is informational, tracks when limits affect behavior
         self.version += 1
-
-    def _emit_tokens_consumed(self, llm_response: LLMResponse, operation: str) -> None:
-        """Emit TokensConsumed event after an LLM call.
-
-        Args:
-            llm_response: Response from LLM with usage metadata.
-            operation: Operation type (e.g., "complexity_evaluation", "task_decomposition").
-        """
-        cost_event = TokensConsumed(
-            aggregate_id=self.session_id,
-            sequence_number=self._next_sequence(),
-            model=llm_response.model,
-            prompt_tokens=llm_response.usage.prompt_tokens,
-            completion_tokens=llm_response.usage.completion_tokens,
-            total_tokens=llm_response.usage.total_tokens,
-            cost_usd=llm_response.cost_usd,
-            operation=operation,
-        )
-        self._apply(cost_event)
-        self._changes.append(cost_event)
 
     def _initialize_defaults(self, session_id: UUID) -> None:
         self.session_id: UUID = session_id
