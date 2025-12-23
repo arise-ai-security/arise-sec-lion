@@ -351,8 +351,22 @@ class AgentSession:
                 f"**Suggested Approach**: {j.plan}\n\n"
                 f"**Why This Should Work**: {j.why_it_may_work}\n\n"
                 f"**Expected Deliverables**: {j.expected_results}\n"
-                "</SUPERVISOR_EXPECTATIONS>\n\n"
             )
+            # Add budget allocation context if available
+            if j.budget_allocation:
+                supervisor_context += (
+                    "\n## Budget Allocation Context\n"
+                    "Your supervisor has allocated resources for this task with the following reasoning:\n\n"
+                    f"**Budget Allocation**: {j.budget_allocation}\n\n"
+                    f"**Complexity Assessment**: {j.complexity_assessment}\n\n"
+                    f"**Significance/Priority**: {j.significance_weight}\n\n"
+                    f"**Resource Justification**: {j.resource_justification}\n\n"
+                    "Use this context to calibrate your effort:\n"
+                    "- Higher budget % indicates more thorough work expected\n"
+                    "- The complexity assessment tells you expected difficulty\n"
+                    "- Significance helps prioritize quality vs. speed\n"
+                )
+            supervisor_context += "</SUPERVISOR_EXPECTATIONS>\n\n"
 
         enhanced_description = f"{worker_system_prompt}{supervisor_context}<TASK>\n{self.task_description}\n</TASK>"
 

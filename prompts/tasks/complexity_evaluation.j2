@@ -20,6 +20,25 @@ Your supervisor has assigned you this task with the following context and expect
 
 **Expected Results/Deliverables**: {{ justification.expected_results }}
 
+{% if justification.budget_allocation %}
+## Budget Allocation Context
+Your supervisor has allocated resources for this task with the following reasoning:
+
+**Budget Allocation**: {{ justification.budget_allocation }}
+
+**Complexity Assessment**: {{ justification.complexity_assessment }}
+
+**Significance/Priority**: {{ justification.significance_weight }}
+
+**Resource Justification**: {{ justification.resource_justification }}
+
+Use this budget context to inform your approach:
+- Higher budget % indicates more complex/critical work expected
+- The complexity assessment tells you the expected difficulty level
+- Significance helps you understand priority relative to sibling tasks
+- Resource justification explains what level of effort is appropriate
+{% endif %}
+
 IMPORTANT: Your work must align with the supervisor's original task requirements. If the original task specifies a programming language, framework, or technology, you MUST use it.
 
 Consider these expectations when evaluating complexity. A task that aligns with a clear plan and well-defined expected results is more likely to be SIMPLE than one with ambiguous goals.

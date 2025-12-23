@@ -20,6 +20,25 @@ Your supervisor has assigned you this decomposition task with the following cont
 
 **Expected Deliverables**: {{ justification.expected_results }}
 
+{% if justification.budget_allocation %}
+## Budget Allocation Context
+Your supervisor has allocated resources for this task with the following reasoning:
+
+**Budget Allocation**: {{ justification.budget_allocation }}
+
+**Complexity Assessment**: {{ justification.complexity_assessment }}
+
+**Significance/Priority**: {{ justification.significance_weight }}
+
+**Resource Justification**: {{ justification.resource_justification }}
+
+Use this budget context when creating subtasks:
+- Your total budget should be distributed among subtasks proportionally
+- Higher complexity subtasks should receive higher budget_weight values
+- Critical path subtasks should be prioritized with more resources
+- Include similar budget justification in your subtask definitions
+{% endif %}
+
 IMPORTANT: Your work and all subtasks you create must align with the supervisor's original task requirements. If the original task specifies a programming language, framework, or technology, you MUST ensure your subtasks use it.
 
 When decomposing your task into subtasks, ensure your subtasks collectively achieve these expected results. Your decomposition should align with the supervisor's plan and objective.
