@@ -315,6 +315,11 @@ function getWorkerReason(complexityReasoning) {
   return 'llm_evaluation';
 }
 
+// Helper to check if a field has real content (not legacy placeholder)
+function hasRealContent(value) {
+  return value && value !== '(legacy event)' && value.trim() !== '';
+}
+
 // Section component for the modal
 function Section({ title, children }) {
   if (!children) return null;
@@ -523,7 +528,7 @@ function AgentModal({ agent, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {agent.subtasks.map((subtask, index) => {
                 const j = subtask.justification || {};
-                const hasJustification = j.objective || j.plan || j.split_reason || j.why_it_may_work || j.expected_results || j.budget_allocation;
+                const hasJustification = hasRealContent(j.objective) || hasRealContent(j.plan) || hasRealContent(j.split_reason) || hasRealContent(j.why_it_may_work) || hasRealContent(j.expected_results) || hasRealContent(j.budget_allocation);
                 return (
                   <div
                     key={index}
@@ -573,34 +578,34 @@ function AgentModal({ agent, onClose }) {
                     {/* Supervisor Justification */}
                     {hasJustification && (
                       <div style={{ fontSize: '12px', color: '#6b7280', display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid #e5e7eb', paddingTop: '10px' }}>
-                        {j.objective && (
+                        {hasRealContent(j.objective) && (
                           <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Objective:</span> {j.objective}</div>
                         )}
-                        {j.plan && (
+                        {hasRealContent(j.plan) && (
                           <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Plan:</span> {j.plan}</div>
                         )}
-                        {j.split_reason && (
+                        {hasRealContent(j.split_reason) && (
                           <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Split Reason:</span> {j.split_reason}</div>
                         )}
-                        {j.why_it_may_work && (
+                        {hasRealContent(j.why_it_may_work) && (
                           <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Why It May Work:</span> {j.why_it_may_work}</div>
                         )}
-                        {j.expected_results && (
+                        {hasRealContent(j.expected_results) && (
                           <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Expected Results:</span> {j.expected_results}</div>
                         )}
                         {/* Budget Allocation Reasoning */}
-                        {j.budget_allocation && (
+                        {hasRealContent(j.budget_allocation) && (
                           <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e9d5ff' }}>
                             <span style={{ fontWeight: '500', color: '#7c3aed' }}>Budget Allocation:</span> {j.budget_allocation}
                           </div>
                         )}
-                        {j.complexity_assessment && (
+                        {hasRealContent(j.complexity_assessment) && (
                           <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>Complexity:</span> {j.complexity_assessment}</div>
                         )}
-                        {j.significance_weight && (
+                        {hasRealContent(j.significance_weight) && (
                           <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>Significance:</span> {j.significance_weight}</div>
                         )}
-                        {j.resource_justification && (
+                        {hasRealContent(j.resource_justification) && (
                           <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>Resource Justification:</span> {j.resource_justification}</div>
                         )}
                       </div>
