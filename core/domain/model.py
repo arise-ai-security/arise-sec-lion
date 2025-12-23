@@ -1,7 +1,6 @@
 """Core domain models for the multi-agent system."""
 
 import json
-from enum import Enum
 from functools import singledispatchmethod
 from typing import Any
 from uuid import UUID, uuid4
@@ -11,11 +10,11 @@ from pydantic import TypeAdapter
 from core.domain.agent_config import AgentConfig
 from core.domain.config_resolver import ConfigResolver
 from core.domain.context import (
-    AncestorInfo,
     ChildResult,
     ParentContext,
     build_parent_context,
 )
+from core.domain.enums import AgentRole, AgentStatus
 from core.domain.events import (
     AgentCreated,
     ChildCompleted,
@@ -39,27 +38,6 @@ from core.domain.prompt_builder import PromptBuilder, is_security_task
 from core.domain.services import SubtaskParser, strip_markdown_code_block
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
-
-
-class AgentRole(str, Enum):
-    """Agent role: BOSS (root), PENDING (awaiting eval), MANAGER (decomposes), WORKER (executes)."""
-
-    BOSS = "boss"
-    PENDING = "pending"
-    MANAGER = "manager"
-    WORKER = "worker"
-
-
-class AgentStatus(str, Enum):
-    """Agent execution status."""
-
-    PENDING = "pending"
-    ANALYZING = "analyzing"
-    IN_PROGRESS = "in_progress"
-    WAITING = "waiting"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    BLOCKED = "blocked"
 
 
 class AgentSession:

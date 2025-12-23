@@ -5,6 +5,8 @@ from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
+from core.domain.enums import AgentRole
+
 
 # Keywords that indicate a security-related task
 SECURITY_KEYWORDS = frozenset({
@@ -89,7 +91,7 @@ class PromptBuilder:
         self,
         task_description: str,
         agent_id: UUID,
-        agent_role: str = "MANAGER",
+        agent_role: AgentRole = AgentRole.MANAGER,
         parent_task: str | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition."""
@@ -103,7 +105,7 @@ class PromptBuilder:
             task = self.env.get_template("tasks/task_decomposition.j2").render(
                 task_description=task_description,
                 agent_id=str(agent_id),
-                agent_role=agent_role,
+                agent_role=agent_role.value.upper(),
                 parent_task=parent_task,
                 default_tool=self.default_tool,
             )
@@ -132,7 +134,7 @@ class PromptBuilder:
             task = self.env.get_template("tasks/task_decomposition.j2").render(
                 task_description=task_description,
                 agent_id=str(agent_id),
-                agent_role="BOSS",
+                agent_role=AgentRole.BOSS.value.upper(),
                 parent_task=parent_task,
                 default_tool=self.default_tool,
             )
@@ -173,7 +175,7 @@ class PromptBuilder:
             task = self.env.get_template("tasks/task_decomposition.j2").render(
                 task_description=task_description,
                 agent_id=str(agent_id),
-                agent_role="BOSS",
+                agent_role=AgentRole.BOSS.value.upper(),
                 parent_task=parent_task,
                 default_tool=self.default_tool,
             )
@@ -241,7 +243,7 @@ class PromptBuilder:
             task = self.env.get_template("tasks/task_decomposition.j2").render(
                 task_description=task_description,
                 agent_id=str(agent_id),
-                agent_role="MANAGER",
+                agent_role=AgentRole.MANAGER.value.upper(),
                 parent_task=parent_task,
                 default_tool=self.default_tool,
             )
@@ -257,7 +259,7 @@ class PromptBuilder:
         self,
         task_description: str,
         agent_id: UUID,
-        agent_role: str,
+        agent_role: AgentRole,
         parent_task: str | None = None,
     ) -> str:
         """Automatically select appropriate prompt based on task content.
@@ -275,25 +277,25 @@ class PromptBuilder:
         """
         is_security = is_security_task(task_description)
 
-        if agent_role == "BOSS" and is_security:
+        if agent_role == AgentRole.BOSS and is_security:
             return self.build_security_benchmark_prompt(
                 task_description=task_description,
                 agent_id=agent_id,
                 parent_task=parent_task,
             )
-        if agent_role == "BOSS":
+        if agent_role == AgentRole.BOSS:
             return self.build_boss_delegation_prompt(
                 task_description=task_description,
                 agent_id=agent_id,
                 parent_task=parent_task,
             )
-        if agent_role == "MANAGER" and is_security:
+        if agent_role == AgentRole.MANAGER and is_security:
             return self.build_security_manager_prompt(
                 task_description=task_description,
                 agent_id=agent_id,
                 parent_task=parent_task,
             )
-        if agent_role == "MANAGER":
+        if agent_role == AgentRole.MANAGER:
             return self.build_manager_decomposition_prompt(
                 task_description=task_description,
                 agent_id=agent_id,
