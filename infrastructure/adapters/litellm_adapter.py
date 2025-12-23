@@ -9,6 +9,9 @@ from typing import Any
 
 import litellm
 
+# Drop unsupported params for models that don't support them (e.g., o3 series only supports temperature=1)
+litellm.drop_params = True
+
 from core.domain.exceptions import LLMError
 from core.domain.llm_response import LLMResponse, LLMUsage
 from core.ports.cost_calculator_port import CostCalculatorPort
