@@ -14,7 +14,7 @@ This project strictly adheres to industry-standard design principles. **Always a
 | **S**ingle Responsibility | One reason to change | `AgentSession` handles only agent state |
 | **O**pen-Closed | Open for extension, closed for modification | Ports enable new adapters without changing domain |
 | **L**iskov Substitution | Subtypes replaceable | All adapters implement port interfaces correctly |
-| **I**nterface Segregation | No forced dependencies | Narrow ports: `LLMPort`, `EventStorePort`, `WorkerToolPort` |
+| **I**nterface Segregation | No forced dependencies | `EventStoreReadPort` for read-only clients, composite `EventStorePort` for full access |
 | **D**ependency Inversion | Depend on abstractions | Core depends on ports, not concrete adapters |
 
 ---

@@ -1,6 +1,7 @@
 """FastAPI dependency injection configuration.
 
 This module provides dependency functions for injecting services into routes.
+Uses segregated interfaces (ISP) - read-only endpoints depend on EventStoreReadPort.
 """
 
 from typing import Annotated
@@ -8,17 +9,19 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from core.application.execution_service import AgentExecutionService
-from core.ports.event_store_port import EventStorePort
+from core.ports.event_store_port import EventStoreReadPort
 
 
-def get_event_store(request: Request) -> EventStorePort:
+def get_event_store(request: Request) -> EventStoreReadPort:
     """Get the event store from application state.
+
+    Returns the read-only interface since query routes only need read access.
 
     Args:
         request: FastAPI request object.
 
     Returns:
-        EventStorePort instance.
+        EventStoreReadPort instance.
     """
     return request.app.state.event_store
 
@@ -36,5 +39,6 @@ def get_execution_service(request: Request) -> AgentExecutionService:
 
 
 # Type aliases for cleaner route signatures
-EventStoreDep = Annotated[EventStorePort, Depends(get_event_store)]
+# Query API uses read-only port (ISP - Interface Segregation Principle)
+EventStoreDep = Annotated[EventStoreReadPort, Depends(get_event_store)]
 ExecutionServiceDep = Annotated[AgentExecutionService, Depends(get_execution_service)]

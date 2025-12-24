@@ -5,13 +5,13 @@ from collections.abc import AsyncIterator
 from uuid import UUID
 
 from core.domain.events import ChildSpawned, DomainEvent
-from core.ports.event_store_port import EventStorePort
+from core.ports.event_store_port import EventStoreReadPort
 
 
 class HierarchyCollector:
     """Collects events from BOSS and all descendants via ChildSpawned traversal."""
 
-    def __init__(self, event_store: EventStorePort) -> None:
+    def __init__(self, event_store: EventStoreReadPort) -> None:
         self._event_store = event_store
 
     async def _traverse(

@@ -4,7 +4,7 @@ from typing import Any, Self
 from uuid import UUID
 
 from core.domain.events import DomainEvent
-from core.ports.event_store_port import EventStorePort
+from core.ports.event_store_port import EventStoreReadPort
 from core.query.ports.sink_port import SinkPort
 from core.query.projections.base import EventFilter, Formatter
 from core.query.projections.filters import IncludeAllFilter
@@ -20,7 +20,7 @@ class ProjectionPipeline:
 
     def __init__(
         self,
-        event_store: EventStorePort,
+        event_store: EventStoreReadPort,
         filter_: EventFilter,
         formatter: Formatter,
         sink: SinkPort,
@@ -63,7 +63,7 @@ class ProjectionPipeline:
 class ProjectionPipelineBuilder:
     """Fluent builder for constructing projection pipelines."""
 
-    def __init__(self, event_store: EventStorePort) -> None:
+    def __init__(self, event_store: EventStoreReadPort) -> None:
         self._event_store = event_store
         self._filter: EventFilter = IncludeAllFilter()
         self._output_type: str = "events"

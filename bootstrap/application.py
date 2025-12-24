@@ -6,6 +6,7 @@ from config import OrchestrationConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
+    ExecutionServiceDependencies,
     ProgressCallback,
     ServiceConfig,
 )
@@ -74,10 +75,8 @@ def get_application(
         prompt_builder=prompt_builder,
     )
 
-    execution_service = AgentExecutionService(
-        event_store=infrastructure.event_store,
-        system_limits=config.system_limits,
-        config=service_config,
+    # Group collaborators into dependencies object (Parameter Object pattern)
+    dependencies = ExecutionServiceDependencies(
         repository=repository,
         orchestrator=orchestrator,
         context_registry=context_registry,
@@ -85,6 +84,13 @@ def get_application(
         query_service=query_service,
         workspace=workspace,
         shared_context_port=infrastructure.shared_context,
+    )
+
+    execution_service = AgentExecutionService(
+        event_store=infrastructure.event_store,
+        dependencies=dependencies,
+        config=service_config,
+        system_limits=config.system_limits,
         progress_callback=config.progress_callback,
     )
 

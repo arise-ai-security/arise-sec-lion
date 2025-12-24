@@ -37,22 +37,39 @@ Inner Layer (Domain Core)
 
 | Port | Purpose | Implementation |
 |------|---------|----------------|
-| `EventStorePort` | Persist/load domain events | `PostgresEventStore` |
+| `EventStorePort` | Persist/load domain events (composite) | `PostgresEventStore` |
+| `EventStoreReadPort` | Read-only event queries | (part of composite) |
+| `EventStoreWritePort` | Append events with OCC | (part of composite) |
+| `EventStoreConnectPort` | Connection lifecycle | (part of composite) |
 | `LLMPort` | LLM reasoning operations | `LiteLLMAdapter` |
 | `WorkerToolPort` | Execute worker tasks | `ClaudeCodePTYAdapter`, `OpenHandsAdapter` |
-| `RewardMechanismPort` | Budget recollection ratios | `HeuristicRewardAdapter` |
-| `TaskAssignmentPort` | Task retry/terminate decisions | (pluggable) |
-| `VerificationHeuristicsPort` | Verification injection logic | (pluggable) |
+| `SharedContextPort` | Shared execution context | `SharedContextAdapter` |
 | `CostCalculatorPort` | LLM cost estimation | `CostCalculator` |
+
+### EventStorePort Segregation (ISP)
+
+The event store follows Interface Segregation Principle with three focused interfaces:
+
+```
+EventStoreConnectPort     EventStoreWritePort     EventStoreReadPort
+  - connect()               - append()              - get_events()
+  - disconnect()                                    - get_all_aggregate_ids()
+  - initialize_schema()                             - get_all_events_grouped()
+        │                        │                        │
+        └────────────────────────┴────────────────────────┘
+                                 │
+                          EventStorePort (composite)
+```
+
+**Usage:** Read-only clients (projections, queries, API endpoints) depend on `EventStoreReadPort`.
+Full implementations use the composite `EventStorePort`.
 
 ### Key Port Locations
 
-- `core/ports/event_store_port.py` - `EventStorePort` Protocol
+- `core/ports/event_store_port.py` - `EventStorePort` and segregated interfaces
 - `core/ports/llm_port.py` - `LLMPort` Protocol
 - `core/ports/worker_port.py` - `WorkerToolPort` Protocol
-- `core/ports/reward_mechanism_port.py` - `RewardMechanismPort` Protocol
-- `core/ports/task_assignment_port.py` - `TaskAssignmentPort` Protocol
-- `core/ports/verification_heuristics_port.py` - `VerificationHeuristicsPort` Protocol
+- `core/ports/shared_context_port.py` - `SharedContextPort` Protocol
 - `core/ports/cost_calculator_port.py` - `CostCalculatorPort` Protocol
 
 ### Key Adapter Locations

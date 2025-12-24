@@ -69,6 +69,22 @@ class AgentListItemSchema(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PaginationMetaSchema(BaseModel):
+    """Schema for pagination metadata."""
+
+    limit: int = Field(..., description="Maximum items per page")
+    offset: int = Field(..., description="Number of items skipped")
+    total: int = Field(..., description="Total number of items available")
+    has_more: bool = Field(..., description="Whether more items exist beyond current page")
+
+
+class PaginatedAgentListSchema(BaseModel):
+    """Schema for paginated agent list response."""
+
+    items: list[AgentListItemSchema] = Field(..., description="List of agents")
+    pagination: PaginationMetaSchema = Field(..., description="Pagination metadata")
+
+
 class PromptSchema(BaseModel):
     """Schema for a prompt template."""
 

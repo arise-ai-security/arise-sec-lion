@@ -1,4 +1,13 @@
-"""Event Store port: append-only event log with OCC."""
+"""Event Store port: append-only event log with OCC.
+
+Interfaces are segregated following ISP (Interface Segregation Principle):
+- EventStoreConnectPort: Connection lifecycle management
+- EventStoreWritePort: Append-only write operations with OCC
+- EventStoreReadPort: Read-only query operations
+
+EventStorePort is the composite interface for full implementations.
+Read-only clients can depend only on EventStoreReadPort.
+"""
 
 from typing import Protocol
 from uuid import UUID
@@ -6,8 +15,8 @@ from uuid import UUID
 from core.domain.events import DomainEvent
 
 
-class EventStorePort(Protocol):
-    """Persist events with Optimistic Concurrency Control. Append-only, ordered by sequence."""
+class EventStoreConnectPort(Protocol):
+    """Connection lifecycle management for event store backends."""
 
     async def connect(self) -> None:
         """Connect to backend."""
@@ -21,9 +30,21 @@ class EventStorePort(Protocol):
         """Create tables/schema."""
         ...
 
+
+class EventStoreWritePort(Protocol):
+    """Append-only write operations with Optimistic Concurrency Control."""
+
     async def append(self, event: DomainEvent, expected_version: int) -> None:
         """Append event with OCC. Raises ConcurrencyError if version mismatch."""
         ...
+
+
+class EventStoreReadPort(Protocol):
+    """Read-only query operations for event store.
+
+    Use this interface for read-only clients (projections, queries, API endpoints)
+    that don't need write access to the event store.
+    """
 
     async def get_events(
         self,
@@ -64,3 +85,18 @@ class EventStorePort(Protocol):
             Dict mapping aggregate_id to list of events ordered by sequence_number.
         """
         ...
+
+
+class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadPort, Protocol):
+    """Composite event store interface with full capabilities.
+
+    Combines:
+    - EventStoreConnectPort: Connection lifecycle (connect, disconnect, initialize_schema)
+    - EventStoreWritePort: Append-only writes with OCC
+    - EventStoreReadPort: Read-only queries
+
+    Implementations should inherit from this composite interface.
+    Clients should depend on the narrowest interface they need.
+    """
+
+    pass

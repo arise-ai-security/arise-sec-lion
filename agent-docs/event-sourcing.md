@@ -27,9 +27,21 @@ State is **always** reconstructed from events:
 
 ### Event Store
 
-- `core/ports/event_store_port.py:15` - Port interface
-- `infrastructure/adapters/postgres_event_store.py:25` - PostgreSQL implementation
-- `infrastructure/sql/create_events_table.sql:1` - Schema definition
+The event store uses segregated interfaces (ISP):
+
+| Interface | Purpose | Methods |
+|-----------|---------|---------|
+| `EventStoreReadPort` | Read-only queries | `get_events()`, `get_all_aggregate_ids()`, `get_all_events_grouped()` |
+| `EventStoreWritePort` | Append with OCC | `append()` |
+| `EventStoreConnectPort` | Connection lifecycle | `connect()`, `disconnect()`, `initialize_schema()` |
+| `EventStorePort` | Composite (all above) | Full implementation interface |
+
+**Files:**
+- `core/ports/event_store_port.py` - Port interfaces (segregated + composite)
+- `infrastructure/adapters/postgres_event_store.py` - PostgreSQL implementation
+- `infrastructure/sql/create_events_table.sql` - Schema definition
+
+**Usage:** Read-only clients (projections, API endpoints) depend on `EventStoreReadPort`.
 
 ## Optimistic Concurrency Control (OCC)
 

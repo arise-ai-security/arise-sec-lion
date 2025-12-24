@@ -1,9 +1,14 @@
 """Prompt management API routes.
 
 Provides endpoints for viewing and editing prompt templates.
+Uses async file I/O to prevent blocking the event loop.
 """
 
+import asyncio
 from pathlib import Path
+
+import aiofiles
+import aiofiles.os
 
 from fastapi import APIRouter, HTTPException
 from jinja2 import Environment, TemplateSyntaxError
@@ -58,6 +63,32 @@ def validate_category(category: str) -> None:
         )
 
 
+async def _path_exists(path: Path) -> bool:
+    """Check if path exists asynchronously."""
+    return await aiofiles.os.path.exists(path)
+
+
+async def _read_file(path: Path) -> str:
+    """Read file content asynchronously."""
+    async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
+        return await f.read()
+
+
+async def _write_file(path: Path, content: str) -> None:
+    """Write content to file asynchronously."""
+    async with aiofiles.open(path, mode="w", encoding="utf-8") as f:
+        await f.write(content)
+
+
+async def _glob_templates(directory: Path, pattern: str) -> list[Path]:
+    """Glob for files asynchronously using executor.
+
+    pathlib.glob is synchronous, so we run it in the default executor.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: list(directory.glob(pattern)))
+
+
 @router.get("", response_model=PromptListSchema)
 async def list_all_prompts() -> PromptListSchema:
     """List all prompt templates across all categories."""
@@ -65,18 +96,18 @@ async def list_all_prompts() -> PromptListSchema:
 
     for category in VALID_CATEGORIES:
         category_dir = PROMPTS_DIR / category
-        if category_dir.exists():
-            for template_file in category_dir.glob("*.j2"):
+        if await _path_exists(category_dir):
+            template_files = await _glob_templates(category_dir, "*.j2")
+            for template_file in template_files:
                 name = template_file.stem
-                content = template_file.read_text()
-                stat = template_file.stat()
+                content = await _read_file(template_file)
 
                 prompts.append(
                     PromptSchema(
                         category=category,
                         name=name,
                         content=content,
-                        updated_at=None,  # File mtime could be used
+                        updated_at=None,
                     )
                 )
 
@@ -97,10 +128,11 @@ async def list_category_prompts(category: str) -> PromptListSchema:
     prompts = []
     category_dir = PROMPTS_DIR / category
 
-    if category_dir.exists():
-        for template_file in category_dir.glob("*.j2"):
+    if await _path_exists(category_dir):
+        template_files = await _glob_templates(category_dir, "*.j2")
+        for template_file in template_files:
             name = template_file.stem
-            content = template_file.read_text()
+            content = await _read_file(template_file)
 
             prompts.append(
                 PromptSchema(
@@ -120,10 +152,10 @@ async def get_prompt(category: str, name: str) -> PromptSchema:
     validate_category(category)
 
     path = get_prompt_path(category, name)
-    if not path.exists():
+    if not await _path_exists(path):
         raise HTTPException(status_code=404, detail=f"Prompt '{category}/{name}' not found")
 
-    content = path.read_text()
+    content = await _read_file(path)
 
     return PromptSchema(
         category=category,
@@ -142,7 +174,7 @@ async def update_prompt(category: str, name: str, update: PromptUpdateSchema) ->
     validate_category(category)
 
     path = get_prompt_path(category, name)
-    if not path.exists():
+    if not await _path_exists(path):
         raise HTTPException(status_code=404, detail=f"Prompt '{category}/{name}' not found")
 
     # Validate Jinja2 syntax
@@ -155,8 +187,8 @@ async def update_prompt(category: str, name: str, update: PromptUpdateSchema) ->
             detail=f"Invalid Jinja2 syntax: {e.message} (line {e.lineno})",
         ) from e
 
-    # Save the updated content
-    path.write_text(update.content)
+    # Save the updated content asynchronously
+    await _write_file(path, update.content)
 
     return PromptSchema(
         category=category,
@@ -172,10 +204,10 @@ async def preview_prompt(category: str, name: str) -> RenderedPromptSchema:
     validate_category(category)
 
     path = get_prompt_path(category, name)
-    if not path.exists():
+    if not await _path_exists(path):
         raise HTTPException(status_code=404, detail=f"Prompt '{category}/{name}' not found")
 
-    content = path.read_text()
+    content = await _read_file(path)
 
     # Render with sample variables
     try:
@@ -212,10 +244,10 @@ async def reset_prompt(category: str, name: str) -> PromptSchema:
     validate_category(category)
 
     path = get_prompt_path(category, name)
-    if not path.exists():
+    if not await _path_exists(path):
         raise HTTPException(status_code=404, detail=f"Prompt '{category}/{name}' not found")
 
-    content = path.read_text()
+    content = await _read_file(path)
 
     return PromptSchema(
         category=category,

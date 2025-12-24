@@ -18,31 +18,56 @@ arise-sec-lion/
 ├── core/                    # Domain core (NO infrastructure imports!)
 │   ├── domain/              # Pure business logic
 │   │   ├── model.py         # AgentSession aggregate (THE central entity)
-│   │   ├── events.py        # All domain events
-│   │   └── ...
+│   │   ├── events.py        # All domain events (immutable, frozen dataclasses)
+│   │   ├── enums.py         # AgentRole, AgentStatus enums
+│   │   ├── services.py      # Domain services (SubtaskParser)
+│   │   ├── context.py       # TaskContext value object
+│   │   └── prompt_builder.py
 │   ├── ports/               # Abstract interfaces (Protocol)
 │   │   ├── event_store_port.py
 │   │   ├── llm_port.py
-│   │   └── worker_port.py
-│   └── application/         # Use cases, orchestration
-│       ├── execution_service.py  # "The Brain" - runs everything
-│       └── projections/     # Query/read side (CQRS)
+│   │   ├── worker_port.py
+│   │   ├── shared_context_port.py
+│   │   └── cost_calculator_port.py
+│   ├── application/         # Use cases, orchestration
+│   │   ├── execution_service.py  # "The Brain" - runs everything
+│   │   ├── agent_orchestrator.py # Orchestration logic (extracted from model)
+│   │   └── services/        # Application services
+│   │       ├── agent_repository.py
+│   │       ├── query_service.py
+│   │       ├── child_factory.py
+│   │       └── context_registry.py
+│   └── query/               # CQRS query side
+│       ├── ports/           # Query port interfaces
+│       └── projections/     # Read models
 │
 ├── infrastructure/          # Concrete implementations
 │   ├── adapters/            # Implements ports
 │   │   ├── postgres_event_store.py
 │   │   ├── litellm_adapter.py
 │   │   ├── claude_pty_adapter.py
-│   │   └── openhands_adapter.py
+│   │   ├── openhands_adapter.py
+│   │   ├── worker_base.py   # Shared worker logic
+│   │   ├── shared_context_adapter.py
+│   │   └── cost_calculator.py
+│   ├── repositories/        # Repository implementations
 │   └── sql/                 # Database schemas
 │
 ├── bootstrap/               # Dependency injection (composition root)
+│   ├── bootstrap.py         # Main entry point
+│   ├── infrastructure.py    # Infrastructure wiring
+│   ├── application.py       # Application services wiring
+│   └── presentation.py      # Presentation wiring
 ├── config/                  # YAML settings + pydantic-settings
 ├── presentation/            # User interfaces
 │   ├── cli.py               # Click commands
 │   ├── api/                 # FastAPI REST + SSE
 │   └── web/                 # React dashboard
 ├── prompts/                 # Jinja2 templates for LLM prompts
+│   ├── system/              # System prompts
+│   ├── strategies/          # Decomposition strategies
+│   ├── worker/              # Worker instructions
+│   └── tasks/               # Task-specific prompts
 ├── deployment/              # Docker, docker-compose
 └── agent-docs/              # Detailed documentation (see below)
 ```
@@ -130,10 +155,13 @@ PENDING ────────────────────────
 
 | Concept | Location | Purpose |
 |---------|----------|---------|
-| `AgentSession` | `core/domain/model.py:45` | Aggregate root, all agent state |
+| `AgentSession` | `core/domain/model.py:35` | Aggregate root, all agent state |
 | `DomainEvent` | `core/domain/events.py` | Immutable facts (event sourcing) |
+| `AgentRole` / `AgentStatus` | `core/domain/enums.py` | Agent lifecycle enums |
+| `TaskContext` | `core/domain/context.py` | Immutable context passed to children |
 | `EventStorePort` | `core/ports/event_store_port.py` | Persistence interface |
-| `AgentExecutionService` | `core/application/execution_service.py:25` | Orchestration ("The Brain") |
+| `AgentExecutionService` | `core/application/execution_service.py:56` | Orchestration ("The Brain") |
+| `AgentOrchestrator` | `core/application/agent_orchestrator.py:32` | State machine transitions |
 
 ## Event Sourcing Essentials
 
@@ -234,12 +262,16 @@ grep -r "from infrastructure" core/      # ✓ No dependency violations
 
 ## Implementation Status
 
-- [x] Event Store (PostgreSQL + OCC)
-- [x] Domain Model (AgentSession, Events)
+- [x] Event Store (PostgreSQL + OCC, pagination)
+- [x] Domain Model (AgentSession, immutable Events)
+- [x] AgentOrchestrator (extracted state machine)
 - [x] LiteLLM Adapter (Multi-provider LLM)
 - [x] Claude Code PTY Adapter (Thinking capture)
 - [x] OpenHands Adapter (Alternative worker)
+- [x] Worker Base (shared validation logic)
 - [x] CLI with Click (run, events, summary, list)
-- [x] Projection Pipeline (Query side)
+- [x] CQRS Query Layer (projections, N+1 fixes)
 - [x] REST API (FastAPI + SSE streaming)
 - [x] Agent Dashboard (React + XYFlow)
+- [x] Modular Bootstrap (DI composition root)
+- [x] Context Passing (TaskContext between agents)
