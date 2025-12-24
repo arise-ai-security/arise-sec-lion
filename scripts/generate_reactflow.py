@@ -861,7 +861,7 @@ function AgentModal({ agent, onClose }) {
         )}
 
         {/* Inherited Context (for WORKER - context they received from dashboard) */}
-        {agent.inheritedContext && agent.role === 'worker' && (
+        {agent.role === 'worker' && (
           <Section title="📥 Inherited Knowledge from Dashboard">
             <div style={{ backgroundColor: '#ecfeff', borderRadius: '8px', padding: '12px', borderLeft: '4px solid #06b6d4' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
@@ -869,7 +869,7 @@ function AgentModal({ agent, onClose }) {
                 <span style={{ fontSize: '14px', fontWeight: '500', color: '#374151' }}>Cross-Session Learning Active</span>
               </div>
               <p style={{ fontSize: '12px', color: '#4b5563', marginBottom: '12px' }}>
-                This worker inherited knowledge from {agent.inheritedContext.total_available || 0} available context entries in the global dashboard.
+                This worker inherited knowledge from {agent.inheritedContext?.total_available || 0} available context entries in the global dashboard.
                 Relevant knowledge was automatically identified and provided to help with this task.
               </p>
               {/* Reminder Banner */}
@@ -881,7 +881,7 @@ function AgentModal({ agent, onClose }) {
                   <li>Build upon successful approaches from previous work</li>
                 </ul>
               </div>
-              {agent.inheritedContext.entries && agent.inheritedContext.entries.length > 0 ? (
+              {agent.inheritedContext?.entries && agent.inheritedContext.entries.length > 0 ? (
                 <div>
                   <p style={{ fontSize: '12px', fontWeight: '600', color: '#0891b2', marginBottom: '10px' }}>
                     Inherited {agent.inheritedContext.entries.length} Relevant Context(s):
@@ -942,7 +942,9 @@ function AgentModal({ agent, onClose }) {
                 </div>
               ) : (
                 <p style={{ fontSize: '12px', color: '#6b7280', fontStyle: 'italic' }}>
-                  LLM evaluated {agent.inheritedContext.total_available || 0} available contexts but found none directly relevant to this specific task.
+                  {agent.inheritedContext?.total_available > 0
+                    ? `LLM evaluated ${agent.inheritedContext.total_available} available contexts but found none directly relevant to this specific task.`
+                    : 'No context entries were available in the dashboard when this worker started.'}
                 </p>
               )}
             </div>

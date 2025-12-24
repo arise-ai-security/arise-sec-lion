@@ -635,9 +635,8 @@ class AgentExecutionService:
                 await self._get_relevant_context(agent)
             )
 
-            # Record inherited context event if any context was available
-            if total_available > 0 or inherited_ids:
-                agent.record_context_inherited(inherited_ids, total_available)
+            # Record inherited context event (even if none inherited, to show in UI)
+            agent.record_context_inherited(inherited_ids, total_available)
 
             await agent.execute_task(
                 self.worker_tool_port,

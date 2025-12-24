@@ -541,8 +541,8 @@ async def get_agent_summary(
 
     # For WORKER agents, create inherited context info from the ContextInherited event
     inherited_context: InheritedContextSchema | None = None
-    if agent.role.value == "worker" and (inherited_entry_ids or inherited_total_available > 0):
-        # Fetch full context entries from the dashboard
+    if agent.role.value == "worker":
+        # Fetch full context entries from the dashboard if any were inherited
         inherited_entries: list[ContextEntrySchema] = []
         if context_dashboard and inherited_entry_ids:
             entries = await context_dashboard.get_entries_by_ids(inherited_entry_ids)
