@@ -60,7 +60,7 @@ Decomposition:
   "config": {
     "strategy": "heuristic",
     "base": {
-      "model": "gpt-4o-mini",
+      "model": "o3-mini",
       "temperature": 0.3,
       "max_tokens": 4000
     },
@@ -76,7 +76,7 @@ Decomposition:
   "config": {
     "strategy": "heuristic",
     "base": {
-      "model": "gpt-4o",
+      "model": "o3",
       "temperature": 0.6,
       "max_tokens": 8000
     },
@@ -92,7 +92,7 @@ Decomposition:
   "config": {
     "strategy": "heuristic",
     "base": {
-      "model": "claude-3-5-sonnet-20241022",
+      "model": "claude-sonnet-4-5-20250514",
       "temperature": 0.5,
       "max_tokens": 8000
     },
@@ -108,7 +108,7 @@ Decomposition:
   "config": {
     "strategy": "heuristic",
     "base": {
-      "model": "gpt-4o-mini",
+      "model": "o3-mini",
       "temperature": 0.2,
       "max_tokens": 4000
     },
@@ -160,7 +160,7 @@ For CVE-2024-1234 (Heap buffer overflow in parse_header()):
     "description": "Analyze CVE-2024-1234: fetch details from NVD, clone libfoo at v1.2.3, build Docker with ASan, identify vulnerable parse_header() function",
     "config": {
       "strategy": "heuristic",
-      "base": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 4000},
+      "base": {"model": "o3", "temperature": 0.3, "max_tokens": 4000},
       "tool": "claude_code"
     }
   },
@@ -168,7 +168,7 @@ For CVE-2024-1234 (Heap buffer overflow in parse_header()):
     "description": "Generate PoC: craft malformed header input that overflows buffer in parse_header(), must trigger 'ERROR: AddressSanitizer: heap-buffer-overflow'",
     "config": {
       "strategy": "heuristic",
-      "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000},
+      "base": {"model": "o3", "temperature": 0.6, "max_tokens": 8000},
       "tool": "claude_code"
     }
   },
@@ -176,7 +176,7 @@ For CVE-2024-1234 (Heap buffer overflow in parse_header()):
     "description": "Generate patch: fix bounds checking in parse_header() to prevent overflow, then validate PoC triggers ASan on unpatched AND does NOT trigger on patched version",
     "config": {
       "strategy": "heuristic",
-      "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000},
+      "base": {"model": "claude-sonnet-4-5-20250514", "temperature": 0.5, "max_tokens": 8000},
       "tool": "claude_code"
     }
   }

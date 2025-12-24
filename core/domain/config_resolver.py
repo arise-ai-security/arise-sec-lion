@@ -60,7 +60,9 @@ class ConfigResolver:
         base = config.base
         overrides = config.overrides.get(operation, {})
         merged = base.model_dump()
-        merged.update(overrides)
+        # Filter out None values from overrides to keep base values
+        filtered_overrides = {k: v for k, v in overrides.items() if v is not None}
+        merged.update(filtered_overrides)
         try:
             return LLMConfig(**merged)
         except Exception as e:

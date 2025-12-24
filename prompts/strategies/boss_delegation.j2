@@ -27,9 +27,9 @@ As the BOSS (root coordinator), your decomposition is critical for overall succe
 As BOSS, your configuration decisions cascade down the entire hierarchy. Consider:
 
 ### Model Selection Strategy
-- **Critical path items**: Use most powerful model (gpt-4o, claude-3-5-sonnet-20241022)
-- **Research/exploration**: Balance cost and capability (gpt-4o-mini often sufficient)
-- **Implementation**: Match model to complexity (simple = gpt-4o-mini, complex = gpt-4o)
+- **Critical path items**: Use most powerful model (o3, claude-sonnet-4-5-20250514)
+- **Research/exploration**: Balance cost and capability (o3-mini often sufficient)
+- **Implementation**: Match model to complexity (simple = o3-mini, complex = o3)
 
 ### Temperature Strategy
 - **Creative/design work**: 0.7-0.9 (allow exploration)
@@ -44,12 +44,12 @@ As BOSS, your configuration decisions cascade down the entire hierarchy. Conside
 ## Risk-Based Configuration
 
 High-risk subtasks (uncertain requirements, novel domain):
-- Use more powerful models (gpt-4o)
+- Use more powerful models (o3)
 - Use per_operation strategy for fine-grained control
 - Higher temperature for exploration (0.6-0.8)
 
 Low-risk subtasks (well-understood, standard patterns):
-- Use efficient models (gpt-4o-mini)
+- Use efficient models (o3-mini)
 - Use heuristic strategy (simpler)
 - Lower temperature for consistency (0.3-0.5)
 

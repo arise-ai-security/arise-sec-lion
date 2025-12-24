@@ -31,17 +31,17 @@ async def get_system_config() -> SystemConfigSchema:
 
     return SystemConfigSchema(
         infrastructure=InfrastructureConfigSchema(
-            llm_model_boss=settings.infrastructure.llm_model_boss,
-            worker_tool_type=settings.infrastructure.worker_tool_type,
-            worker_tool_model=settings.infrastructure.worker_tool_model,
-            worker_tool_timeout=settings.infrastructure.worker_tool_timeout,
+            llm_model_boss=settings.llm.model_boss,
+            worker_tool_type=settings.worker.tool_type,
+            worker_tool_model=settings.worker.tool_model,
+            worker_tool_timeout=settings.worker.tool_timeout,
         ),
         application=ApplicationConfigSchema(
-            max_retries=settings.application.max_retries,
-            retry_delay=settings.application.retry_delay,
-            poll_interval=settings.application.poll_interval,
-            llm_timeout=settings.application.llm_timeout,
-            worker_timeout=settings.application.worker_timeout,
-            default_task_complexity_threshold=settings.application.default_task_complexity_threshold,
+            max_retries=settings.orchestration.max_retries,
+            retry_delay=settings.orchestration.retry_delay,
+            poll_interval=settings.orchestration.poll_interval,
+            llm_timeout=settings.orchestration.llm_timeout,
+            worker_timeout=settings.orchestration.worker_timeout,
+            default_task_complexity_threshold=settings.orchestration.default_task_complexity_threshold,
         ),
     )

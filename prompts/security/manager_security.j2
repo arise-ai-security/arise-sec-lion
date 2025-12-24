@@ -55,11 +55,11 @@ Recommended (3 subtasks):
 
 | Subtask Type | Model | Temperature | Tool |
 |--------------|-------|-------------|------|
-| Code Analysis | gpt-4o | 0.3 | claude_code |
-| PoC Generation | gpt-4o | 0.6 | claude_code |
+| Code Analysis | o3 | 0.3 | claude_code |
+| PoC Generation | o3 | 0.6 | claude_code |
 | Patch Generation | claude-3-5-sonnet | 0.5 | claude_code |
-| Environment Setup | gpt-4o-mini | 0.3 | claude_code |
-| Validation | gpt-4o-mini | 0.2 | claude_code |
+| Environment Setup | o3-mini | 0.3 | claude_code |
+| Validation | o3-mini | 0.2 | claude_code |
 
 ### 4. Critical Rules for Security Decomposition
 
@@ -90,11 +90,11 @@ Good decomposition:
 [
   {
     "description": "Setup libfoo v1.2.3 in Docker with AddressSanitizer, then generate PoC that triggers buffer overflow in parse_data()",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   },
   {
     "description": "Generate minimal patch for CVE-2024-5678 buffer overflow, validate PoC no longer triggers sanitizer error",
-    "config": {"strategy": "heuristic", "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "claude-sonnet-4-5-20250514", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   }
 ]
 ```
@@ -107,15 +107,15 @@ Good decomposition:
 [
   {
     "description": "Analyze CVE-2024-9999: trace data flow in connection.c, identify UAF trigger sequence, document in analysis.md",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 4000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.3, "max_tokens": 4000}, "tool": "claude_code"}
   },
   {
     "description": "Generate PoC for CVE-2024-9999 UAF: create input sequence that frees connection then triggers callback, expect 'heap-use-after-free'",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.6, "max_tokens": 8000}, "tool": "claude_code"}
   },
   {
     "description": "Generate patch for CVE-2024-9999: nullify callback after free or restructure ownership, validate UAF is fixed",
-    "config": {"strategy": "heuristic", "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "claude-sonnet-4-5-20250514", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   }
 ]
 ```
@@ -161,7 +161,7 @@ Respond with a JSON array of 2-3 subtask objects:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "gpt-4o | gpt-4o-mini | claude-3-5-sonnet-20241022",
+        "model": "o3 | o3-mini | claude-sonnet-4-5-20250514",
         "temperature": 0.2-0.7,
         "max_tokens": 4000-8000
       },
