@@ -508,10 +508,21 @@ class AgentSession:
         )
 
         # Build reasoning from supervisor justification if available
+        # Skip fields that contain legacy placeholders
         reasoning = ""
         if self.supervisor_justification:
             j = self.supervisor_justification
-            reasoning = f"Approach based on supervisor guidance: {j.plan}. Expected to work because: {j.why_it_may_work}"
+            plan = j.plan if j.plan and j.plan != "(legacy event)" else ""
+            why_it_may_work = j.why_it_may_work if j.why_it_may_work and j.why_it_may_work != "(legacy event)" else ""
+
+            if plan and why_it_may_work:
+                reasoning = f"Approach based on supervisor guidance: {plan}. Expected to work because: {why_it_may_work}"
+            elif plan:
+                reasoning = f"Approach based on supervisor guidance: {plan}"
+            elif why_it_may_work:
+                reasoning = f"Expected to work because: {why_it_may_work}"
+            else:
+                reasoning = "Followed standard execution approach for the given task"
         else:
             reasoning = "Followed standard execution approach for the given task"
 

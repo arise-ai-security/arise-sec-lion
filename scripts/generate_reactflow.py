@@ -512,7 +512,10 @@ function AgentModal({ agent, onClose }) {
               {agent.workerTool && (
                 <div style={{ marginBottom: Object.keys(agent.configDetails || {}).length > 0 ? '12px' : 0 }}>
                   <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Worker Tool</div>
-                  <div style={{ fontSize: '14px', color: '#1f2937', fontFamily: 'monospace' }}>{agent.workerTool}</div>
+                  <div style={{ fontSize: '14px', color: '#1f2937', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>{agent.workerTool === 'claude_code' ? '🤖' : '🔧'}</span>
+                    <span>{agent.workerTool === 'claude_code' ? 'Claude Code' : 'OpenHands'}</span>
+                  </div>
                 </div>
               )}
               {agent.configDetails && Object.keys(agent.configDetails).length > 0 && (
@@ -627,17 +630,17 @@ function AgentModal({ agent, onClose }) {
           <Section title="Worker Report">
             <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '12px', border: '1px solid #bbf7d0' }}>
               <div style={{ fontSize: '12px', color: '#6b7280', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {agent.workerReport.approach && (
+                {agent.workerReport.approach && agent.workerReport.approach !== 'Executed task using available tools' && (
                   <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Approach:</span> {agent.workerReport.approach}</div>
                 )}
-                {agent.workerReport.reasoning && (
+                {agent.workerReport.reasoning && !agent.workerReport.reasoning.includes('(legacy event)') && agent.workerReport.reasoning !== 'Followed standard execution approach for the given task' && (
                   <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Reasoning:</span> {agent.workerReport.reasoning}</div>
                 )}
-                {agent.workerReport.deliverables && (
+                {agent.workerReport.deliverables && agent.workerReport.deliverables !== 'Task completed' && (
                   <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Deliverables:</span> {agent.workerReport.deliverables}</div>
                 )}
                 {agent.workerReport.challenges && agent.workerReport.challenges !== 'No significant challenges encountered' && (
-                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Challenges:</span> {agent.workerReport.challenges}</div>
+                  <div><span style={{ fontWeight: '500', color: '#ea580c' }}>Challenges:</span> {agent.workerReport.challenges}</div>
                 )}
               </div>
             </div>
@@ -736,13 +739,13 @@ function AgentModal({ agent, onClose }) {
                   {/* Worker Report Details */}
                   {childReport.report && (
                     <div style={{ fontSize: '12px', color: '#6b7280', display: 'flex', flexDirection: 'column', gap: '4px', backgroundColor: 'white', padding: '8px', borderRadius: '4px' }}>
-                      {childReport.report.approach && (
+                      {childReport.report.approach && childReport.report.approach !== 'Executed task using available tools' && (
                         <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Approach:</span> {childReport.report.approach}</div>
                       )}
-                      {childReport.report.reasoning && (
+                      {childReport.report.reasoning && !childReport.report.reasoning.includes('(legacy event)') && childReport.report.reasoning !== 'Followed standard execution approach for the given task' && (
                         <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Reasoning:</span> {childReport.report.reasoning}</div>
                       )}
-                      {childReport.report.deliverables && (
+                      {childReport.report.deliverables && childReport.report.deliverables !== 'Task completed' && (
                         <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Deliverables:</span> {childReport.report.deliverables}</div>
                       )}
                       {childReport.report.challenges && childReport.report.challenges !== 'No significant challenges encountered' && (

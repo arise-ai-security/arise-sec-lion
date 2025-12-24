@@ -170,7 +170,7 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
       {summary.worker_report && (
         <Section title="Worker Report">
           <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded border border-green-200 dark:border-green-800 space-y-3">
-            {summary.worker_report.approach && (
+            {summary.worker_report.approach && summary.worker_report.approach !== 'Executed task using available tools' && (
               <div>
                 <span className="text-xs font-semibold text-green-700 dark:text-green-400">Approach:</span>
                 <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
@@ -178,7 +178,7 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                 </p>
               </div>
             )}
-            {summary.worker_report.reasoning && (
+            {summary.worker_report.reasoning && !summary.worker_report.reasoning.includes('(legacy event)') && summary.worker_report.reasoning !== 'Followed standard execution approach for the given task' && (
               <div>
                 <span className="text-xs font-semibold text-green-700 dark:text-green-400">Reasoning:</span>
                 <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
@@ -186,7 +186,7 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                 </p>
               </div>
             )}
-            {summary.worker_report.deliverables && (
+            {summary.worker_report.deliverables && summary.worker_report.deliverables !== 'Task completed' && (
               <div>
                 <span className="text-xs font-semibold text-green-700 dark:text-green-400">Deliverables:</span>
                 <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
@@ -346,19 +346,19 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                       View work report
                     </summary>
                     <div className="mt-2 space-y-2 text-xs bg-white dark:bg-gray-800 p-2 rounded">
-                      {childReport.report.approach && (
+                      {childReport.report.approach && childReport.report.approach !== 'Executed task using available tools' && (
                         <div>
                           <span className="font-semibold text-green-700 dark:text-green-400">Approach:</span>
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.approach}</p>
                         </div>
                       )}
-                      {childReport.report.reasoning && (
+                      {childReport.report.reasoning && !childReport.report.reasoning.includes('(legacy event)') && childReport.report.reasoning !== 'Followed standard execution approach for the given task' && (
                         <div>
                           <span className="font-semibold text-green-700 dark:text-green-400">Reasoning:</span>
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.reasoning}</p>
                         </div>
                       )}
-                      {childReport.report.deliverables && (
+                      {childReport.report.deliverables && childReport.report.deliverables !== 'Task completed' && (
                         <div>
                           <span className="font-semibold text-green-700 dark:text-green-400">Deliverables:</span>
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.deliverables}</p>
