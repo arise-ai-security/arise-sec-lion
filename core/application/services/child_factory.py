@@ -77,7 +77,7 @@ class ChildAgentFactory:
             return None
 
         child = AgentSession.create(
-            session_id=event.child_id,
+            agent_id=event.child_id,
             role=AgentRole(event.child_role),
             config=event.child_config,
             parent_id=parent_id,

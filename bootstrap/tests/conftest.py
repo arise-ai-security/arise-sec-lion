@@ -75,18 +75,18 @@ class FakeWorkerToolPort(WorkerToolPort):
         """Simulate worker tool execution with fake events."""
         self.executions.append(task_context)
 
-        session_id = task_context.get("session_id", UUID(int=0))
+        agent_id = task_context.get("agent_id", UUID(int=0))
 
         # Emit start event
         yield CodeGenerationStarted(
-            aggregate_id=session_id,
+            aggregate_id=agent_id,
             sequence_number=0,
             tool_name="fake-tool",
         )
 
         # Emit some thinking
         yield ThoughtCaptured(
-            aggregate_id=session_id,
+            aggregate_id=agent_id,
             sequence_number=1,
             content="Fake worker executing task...",
             stream="stdout",
@@ -94,7 +94,7 @@ class FakeWorkerToolPort(WorkerToolPort):
 
         # Emit completion
         yield WorkCompleted(
-            aggregate_id=session_id,
+            aggregate_id=agent_id,
             sequence_number=2,
             result="Task completed successfully by fake worker",
         )

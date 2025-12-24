@@ -126,7 +126,7 @@ async def test_manager_decomposition() -> None:
 
     # Create MANAGER agent
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
     )
 
     # Assign a task (transitions to ANALYZING)
@@ -198,7 +198,7 @@ async def test_manager_llm_invalid_json_response() -> None:
     config = _test_agent_config()
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
     )
     agent.assign_task("Build a web scraper for news articles")
 
@@ -247,7 +247,7 @@ async def test_parent_completion_check() -> None:
     config = _test_agent_config()
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
     )
     agent.assign_task("Build a web scraper for news articles")
 
@@ -347,7 +347,7 @@ def test_cannot_spawn_boss_child() -> None:
     config = _test_agent_config()
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
     )
 
     # When/Then: Attempting to spawn a BOSS child raises AssertionError
@@ -375,7 +375,7 @@ async def test_child_evaluates_simple_complexity() -> None:
     config = _test_agent_config()
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
     )
     agent.assign_task("Write a Python function to calculate fibonacci numbers")
 
@@ -420,7 +420,7 @@ async def test_child_evaluates_complex_complexity() -> None:
     config = _test_agent_config()
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
     )
     agent.assign_task("Build a complete web scraping system with monitoring")
 
@@ -465,7 +465,7 @@ async def test_complexity_evaluation_invalid_response() -> None:
     config = _test_agent_config()
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.PENDING, config=config, parent_id=uuid4()
     )
     agent.assign_task("Some task")
 

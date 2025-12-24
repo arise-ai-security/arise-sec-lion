@@ -69,7 +69,7 @@ class AgentOrchestrator:
         # Build complexity evaluation prompt
         prompt = self._prompt_builder.build_complexity_evaluation_prompt(
             task_description=agent.task_description,
-            agent_id=agent.session_id,
+            agent_id=agent.agent_id,
             parent_task=None,
         )
 
@@ -137,7 +137,7 @@ class AgentOrchestrator:
         # Build prompt using auto-detection for security tasks
         prompt = self._prompt_builder.build_auto_prompt(
             task_description=agent.task_description,
-            agent_id=agent.session_id,
+            agent_id=agent.agent_id,
             agent_role=agent.role.value.upper(),
             parent_task=None,
         )
@@ -232,7 +232,7 @@ class AgentOrchestrator:
             )
 
         task_context: dict[str, Any] = {
-            "session_id": agent.session_id,
+            "agent_id": agent.agent_id,
             "task_description": enhanced_description,
             "tool_name": tool_name,
             "config": agent.config,

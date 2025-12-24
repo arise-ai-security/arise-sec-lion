@@ -54,10 +54,10 @@ def test_parse_invalid_json_raises_value_error() -> None:
 
 
 def test_parse_non_list_json_raises_value_error() -> None:
-    """Test that non-list JSON (dict, string, etc.) raises ValueError."""
+    """Test that non-list JSON that doesn't look like subtask raises ValueError."""
 
-    # Given: Valid JSON but not a list
-    llm_response = json.dumps({"description": "Single task as dict"})
+    # Given: Valid JSON but not a list and not a subtask-like dict
+    llm_response = json.dumps({"foo": "bar", "baz": 123})
 
     # When/Then: Parsing raises ValueError with list/array message
     with pytest.raises(ValueError, match=r"(?i)(list|array)"):

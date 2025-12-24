@@ -35,21 +35,21 @@ from core.domain.execution_context import ExecutionContext
 class AgentSession:
     """Event-sourced aggregate for agent sessions. State derived from replaying events."""
 
-    def __init__(self, session_id: UUID) -> None:
+    def __init__(self, agent_id: UUID) -> None:
         """Internal. Use AgentSession.create() or load_from_history() instead."""
-        self._initialize_defaults(session_id)
+        self._initialize_defaults(agent_id)
 
     @classmethod
     def create(
         cls,
-        session_id: UUID,
+        agent_id: UUID,
         role: AgentRole,
         config: dict[str, Any],
         parent_id: UUID | None = None,
     ) -> "AgentSession":
-        instance = cls(session_id)
+        instance = cls(agent_id)
         event = AgentCreated(
-            aggregate_id=session_id,
+            aggregate_id=agent_id,
             sequence_number=instance._next_sequence(),
             role=role.value,
             parent_id=parent_id,
@@ -71,7 +71,7 @@ class AgentSession:
     def assign_task(self, task_description: str) -> None:
         """Assign task, transitions to ANALYZING status."""
         task_event = TaskAssigned(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             task_description=task_description,
         )
@@ -102,11 +102,11 @@ class AgentSession:
         if child_result is None:
             child_result = ChildResult.simple(result)
 
-        # Store structured result
-        self.structured_child_results[child_id] = child_result
+        # NOTE: structured_child_results is populated in _apply(ChildCompleted)
+        # to maintain event sourcing invariant: state only changes through events
 
         child_completed_event = ChildCompleted(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             child_id=child_id,
             result=result,
@@ -118,7 +118,7 @@ class AgentSession:
         if len(self.child_results) == len(self.child_ids):
             aggregated_result = self._aggregate_child_results()
             work_completed_event = WorkCompleted(
-                aggregate_id=self.session_id,
+                aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
                 result=aggregated_result,
             )
@@ -192,6 +192,11 @@ class AgentSession:
     @_apply.register
     def _(self, event: ChildCompleted) -> None:
         self.child_results[event.child_id] = event.result
+        # Reconstruct structured result from event data
+        if event.child_result:
+            self.structured_child_results[event.child_id] = ChildResult.from_dict(
+                event.child_result
+            )
         self.version += 1
 
     @_apply.register
@@ -209,8 +214,8 @@ class AgentSession:
         # Limit enforcement is informational, tracks when limits affect behavior
         self.version += 1
 
-    def _initialize_defaults(self, session_id: UUID) -> None:
-        self.session_id: UUID = session_id
+    def _initialize_defaults(self, agent_id: UUID) -> None:
+        self.agent_id: UUID = agent_id
         self.role: AgentRole = AgentRole.BOSS
         self.status: AgentStatus = AgentStatus.PENDING
         self.parent_id: UUID | None = None
@@ -307,7 +312,7 @@ class AgentSession:
     def fail_with_reason(self, reason: str) -> None:
         """Mark agent as failed with WorkFailed event."""
         failed_event = WorkFailed(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             reason=reason,
         )
@@ -330,7 +335,7 @@ class AgentSession:
         Called by orchestrator after LLM call completes.
         """
         complexity_event = ComplexityEvaluated(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             complexity=complexity,
             determined_role=determined_role.value,
@@ -353,7 +358,7 @@ class AgentSession:
         Called by orchestrator after LLM call completes.
         """
         cost_event = TokensConsumed(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             model=model,
             prompt_tokens=prompt_tokens,
@@ -374,7 +379,7 @@ class AgentSession:
     ) -> None:
         """Emit LimitEnforced event (pure domain method)."""
         limit_event = LimitEnforced(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             limit_type=limit_type,
             limit_value=limit_value,
@@ -397,7 +402,7 @@ class AgentSession:
         from core.domain.subtask import Subtask
 
         subtasks_event = SubtasksDefined(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             subtasks=subtasks,
         )
@@ -409,7 +414,7 @@ class AgentSession:
         for subtask in subtasks:
             child_id = uuid4()
             child_event = ChildSpawned(
-                aggregate_id=self.session_id,
+                aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
                 child_id=child_id,
                 child_role=child_role,
@@ -423,7 +428,7 @@ class AgentSession:
 
         # Transition to WAITING status
         status_event = StatusChanged(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             old_status=self.status.value,
             new_status=AgentStatus.WAITING.value,
@@ -437,7 +442,7 @@ class AgentSession:
     def start_worker_execution(self, tool_name: str) -> None:
         """Emit CodeGenerationStarted event (pure domain method)."""
         started_event = CodeGenerationStarted(
-            aggregate_id=self.session_id,
+            aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             tool_name=tool_name,
         )
@@ -447,7 +452,7 @@ class AgentSession:
     def apply_worker_event(self, tool_event: DomainEvent) -> None:
         """Apply a worker tool event with corrected sequence number."""
         event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
-        event_data["aggregate_id"] = self.session_id
+        event_data["aggregate_id"] = self.agent_id
         event_data["sequence_number"] = self._next_sequence()
         corrected_event = type(tool_event)(**event_data)
         self._apply(corrected_event)

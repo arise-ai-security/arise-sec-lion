@@ -34,7 +34,7 @@ class AncestorInfo:
         """Create AncestorInfo from an AgentSession."""
         task_summary = (agent.task_description or "")[:100]
         return cls(
-            agent_id=str(agent.session_id),
+            agent_id=str(agent.agent_id),
             role=agent.role.value,
             task_summary=task_summary,
         )

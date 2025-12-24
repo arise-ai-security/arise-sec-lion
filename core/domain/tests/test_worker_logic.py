@@ -61,7 +61,7 @@ class FakeWorkerTool(WorkerToolPort):
         # Yield thought events
         for thought in self.thoughts:
             yield ThoughtCaptured(
-                aggregate_id=task_context.get("session_id", uuid4()),
+                aggregate_id=task_context.get("agent_id", uuid4()),
                 sequence_number=0,  # Will be overridden by aggregate
                 content=thought,
                 stream="tool",
@@ -69,7 +69,7 @@ class FakeWorkerTool(WorkerToolPort):
 
         # Yield completion event
         yield WorkCompleted(
-            aggregate_id=task_context.get("session_id", uuid4()),
+            aggregate_id=task_context.get("agent_id", uuid4()),
             sequence_number=0,  # Will be overridden by aggregate
             result=self.result,
         )
@@ -118,7 +118,7 @@ async def test_worker_execution_flow() -> None:
     }
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.WORKER, config=config, parent_id=uuid4()
+        agent_id=agent_id, role=AgentRole.WORKER, config=config, parent_id=uuid4()
     )
     agent.assign_task("Write a Python function to calculate fibonacci numbers")
 

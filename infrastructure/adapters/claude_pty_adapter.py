@@ -105,7 +105,7 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         return master_fd, slave_fd, process
 
     async def _read_output_with_timeout(
-        self, master_fd: int, process: asyncio.subprocess.Process, session_id: Any
+        self, master_fd: int, process: asyncio.subprocess.Process, agent_id: Any
     ) -> tuple[list[DomainEvent], list[str]]:
         """Read PTY output, classify, and collect as ThoughtCaptured events."""
         output_buffer: list[str] = []
@@ -122,7 +122,7 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
                     output_type = self._classify_output(line)
                     collected_events.append(
                         ThoughtCaptured(
-                            aggregate_id=session_id,
+                            aggregate_id=agent_id,
                             sequence_number=sequence,
                             content=line.strip(),
                             stream="stdout",
@@ -159,20 +159,20 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
         self,
         process: asyncio.subprocess.Process,
         output_buffer: list[str],
-        session_id: Any,
+        agent_id: Any,
         sequence: int,
     ) -> DomainEvent:
         if process.returncode == 0:
             result = "\n".join(output_buffer) if output_buffer else "Task completed successfully"
             return WorkCompleted(
-                aggregate_id=session_id,
+                aggregate_id=agent_id,
                 sequence_number=sequence,
                 result=result,
             )
 
         reason = self._format_error_reason(process.returncode, output_buffer)
         return WorkFailed(
-            aggregate_id=session_id,
+            aggregate_id=agent_id,
             sequence_number=sequence,
             reason=reason,
         )
@@ -206,13 +206,13 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
 
     async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Spawn CLI via PTY, stream ThoughtCaptured events, yield final WorkCompleted/Failed."""
-        task_description, session_id, working_dir = validate_task_context(task_context)
+        task_description, agent_id, working_dir = validate_task_context(task_context)
         master_fd, _slave_fd, process = await self._spawn_process(task_description, working_dir)
 
         try:
             try:
                 events_list, output_buffer = await self._read_output_with_timeout(
-                    master_fd, process, session_id
+                    master_fd, process, agent_id
                 )
 
                 for event in events_list:
@@ -220,21 +220,21 @@ class ClaudeCodePTYAdapter(WorkerToolPort):
 
                 final_sequence = 2 + len(events_list)
                 final_event = self._create_final_event(
-                    process, output_buffer, session_id, final_sequence
+                    process, output_buffer, agent_id, final_sequence
                 )
                 yield final_event
 
             except TimeoutError:
                 process.kill()
                 yield WorkFailed(
-                    aggregate_id=session_id,
+                    aggregate_id=agent_id,
                     sequence_number=2,
                     reason=f"Task timed out after {self.timeout_seconds} seconds",
                 )
 
         except Exception as e:
             yield WorkFailed(
-                aggregate_id=session_id,
+                aggregate_id=agent_id,
                 sequence_number=1,
                 reason=f"PTY adapter error: {e!r}",
             )

@@ -113,7 +113,7 @@ class AgentQueryService:
         """
         agent = await self._repository.load(agent_id)
         return AgentResultDTO(
-            agent_id=str(agent.session_id),
+            agent_id=str(agent.agent_id),
             status=agent.status.value,
             result=agent.result,
             task_description=agent.task_description or "",

@@ -53,6 +53,23 @@ class ServiceConfig:
     model_config: dict[str, str]
 
 
+@dataclass(frozen=True)
+class ExecutionServiceDependencies:
+    """Collaborators for AgentExecutionService (Parameter Object pattern).
+
+    Groups the injected dependencies to reduce constructor parameter count.
+    All collaborators follow Dependency Inversion Principle (DIP).
+    """
+
+    repository: AgentRepository
+    orchestrator: AgentOrchestrator
+    context_registry: ExecutionContextRegistry
+    child_factory: ChildAgentFactory
+    query_service: AgentQueryService
+    workspace: WorkspaceContextProvider
+    shared_context_port: SharedContextPort | None = None
+
+
 class AgentExecutionService:
     """Orchestrates agent workflow using composed services.
 
@@ -68,33 +85,35 @@ class AgentExecutionService:
     def __init__(
         self,
         event_store: EventStorePort,
-        system_limits: SystemLimitsConfig,
+        dependencies: ExecutionServiceDependencies,
         config: ServiceConfig,
-        # Injected collaborators (DIP)
-        repository: AgentRepository,
-        orchestrator: AgentOrchestrator,
-        context_registry: ExecutionContextRegistry,
-        child_factory: ChildAgentFactory,
-        query_service: AgentQueryService,
-        workspace: WorkspaceContextProvider,
-        shared_context_port: SharedContextPort | None = None,
+        system_limits: SystemLimitsConfig,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
+        """Initialize execution service.
+
+        Args:
+            event_store: Event store port for persistence.
+            dependencies: Grouped collaborators (repository, orchestrator, etc.).
+            config: Service configuration (retries, intervals, etc.).
+            system_limits: System resource limits (workers, depth, etc.).
+            progress_callback: Optional callback for progress notifications.
+        """
         # Core ports
         self._event_store = event_store
-        self._shared_context_port = shared_context_port
+        self._shared_context_port = dependencies.shared_context_port
 
         # Configuration
         self._config = config
         self._system_limits = system_limits
 
-        # Injected collaborators
-        self._repository = repository
-        self._orchestrator = orchestrator
-        self._context_registry = context_registry
-        self._child_factory = child_factory
-        self._query_service = query_service
-        self._workspace = workspace
+        # Injected collaborators (unpacked from dependencies)
+        self._repository = dependencies.repository
+        self._orchestrator = dependencies.orchestrator
+        self._context_registry = dependencies.context_registry
+        self._child_factory = dependencies.child_factory
+        self._query_service = dependencies.query_service
+        self._workspace = dependencies.workspace
 
         # Worker concurrency control
         semaphore_limit = (
@@ -252,7 +271,7 @@ class AgentExecutionService:
         }
 
         boss_agent = AgentSession.create(
-            session_id=root_id,
+            agent_id=root_id,
             role=AgentRole.BOSS,
             config=boss_config,
             parent_id=None,
@@ -323,7 +342,7 @@ class AgentExecutionService:
         if child_events:
             await self._child_factory.create_children_from_events(
                 child_events,
-                agent.session_id,
+                agent.agent_id,
             )
 
         # Notify parent
@@ -345,7 +364,7 @@ class AgentExecutionService:
         child_result = agent.build_child_result()
 
         parent.handle_child_update(
-            child_id=agent.session_id,
+            child_id=agent.agent_id,
             result=agent.result or "",
             child_result=child_result,
         )

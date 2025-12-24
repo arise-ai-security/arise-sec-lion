@@ -111,12 +111,12 @@ class AgentRepository:
                 retry_count += 1
                 if retry_count >= self._max_retries:
                     raise ConcurrencyError(
-                        aggregate_id=str(agent.session_id),
+                        aggregate_id=str(agent.agent_id),
                         expected_version=e.expected_version,
                         actual_version=e.actual_version,
                     ) from e
                 # Reload agent for retry
-                agent = await self.load(agent.session_id)
+                agent = await self.load(agent.agent_id)
 
         # Should not reach here, but satisfy type checker
         if last_error:

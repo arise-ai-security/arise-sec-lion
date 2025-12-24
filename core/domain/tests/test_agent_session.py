@@ -23,7 +23,7 @@ def test_boss_initialization_flow() -> None:
 
     # When: Create a new AgentSession
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
+        agent_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
     )
 
     # Then: Verify uncommitted events contain exactly 1 AgentCreated event
@@ -52,7 +52,7 @@ def test_task_assignment() -> None:
     }
 
     agent = AgentSession.create(
-        session_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
+        agent_id=agent_id, role=AgentRole.BOSS, config=config, parent_id=None
     )
 
     # When: Assign a task to the agent
@@ -87,7 +87,7 @@ def test_fail_with_reason() -> None:
         "tool": "claude_code",
     }
 
-    boss = AgentSession.create(session_id=boss_id, role=AgentRole.BOSS, config=config)
+    boss = AgentSession.create(agent_id=boss_id, role=AgentRole.BOSS, config=config)
     boss.assign_task("Some task")
 
     # When: Mark agent as failed with a reason

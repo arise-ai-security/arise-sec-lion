@@ -119,7 +119,7 @@ class OpenHandsAdapter(WorkerToolPort):
 
     async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
         """Execute task via OpenHands SDK, stream ThoughtCaptured, yield final event."""
-        task_description, session_id, working_dir = validate_task_context(task_context)
+        task_description, agent_id, working_dir = validate_task_context(task_context)
 
         try:
             classified_events, result, error = await asyncio.wait_for(
@@ -131,7 +131,7 @@ class OpenHandsAdapter(WorkerToolPort):
             for content, output_type in classified_events:
                 if content.strip():
                     yield ThoughtCaptured(
-                        aggregate_id=session_id,
+                        aggregate_id=agent_id,
                         sequence_number=sequence,
                         content=content.strip(),
                         stream="openhands",
@@ -141,27 +141,27 @@ class OpenHandsAdapter(WorkerToolPort):
 
             if error:
                 yield WorkFailed(
-                    aggregate_id=session_id,
+                    aggregate_id=agent_id,
                     sequence_number=sequence,
                     reason=error,
                 )
             else:
                 yield WorkCompleted(
-                    aggregate_id=session_id,
+                    aggregate_id=agent_id,
                     sequence_number=sequence,
                     result=result or "Task completed",
                 )
 
         except TimeoutError:
             yield WorkFailed(
-                aggregate_id=session_id,
+                aggregate_id=agent_id,
                 sequence_number=2,
                 reason=f"Task timed out after {self.timeout_seconds} seconds",
             )
 
         except Exception as e:
             yield WorkFailed(
-                aggregate_id=session_id,
+                aggregate_id=agent_id,
                 sequence_number=2,
                 reason=f"OpenHands adapter error: {e!r}",
             )

@@ -38,7 +38,7 @@ class TestAncestorInfo:
             "tool": "claude_code",
         }
         agent = AgentSession.create(
-            session_id=agent_id,
+            agent_id=agent_id,
             role=AgentRole.BOSS,
             config=config,
         )
@@ -59,7 +59,7 @@ class TestAncestorInfo:
             "tool": "claude_code",
         }
         agent = AgentSession.create(
-            session_id=agent_id,
+            agent_id=agent_id,
             role=AgentRole.BOSS,
             config=config,
         )
@@ -194,7 +194,7 @@ class TestBuildParentContext:
             "tool": "claude_code",
         }
         agent = AgentSession.create(
-            session_id=root_id,
+            agent_id=root_id,
             role=AgentRole.BOSS,
             config=config,
         )
@@ -228,7 +228,7 @@ class TestBuildParentContext:
             "tool": "claude_code",
         }
         child = AgentSession.create(
-            session_id=child_id,
+            agent_id=child_id,
             role=AgentRole.MANAGER,
             config=config,
         )

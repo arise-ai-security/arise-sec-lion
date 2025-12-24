@@ -11,7 +11,11 @@ import pytest
 
 from config import OrchestrationConfig
 from core.application.agent_orchestrator import AgentOrchestrator
-from core.application.execution_service import AgentExecutionService, ServiceConfig
+from core.application.execution_service import (
+    AgentExecutionService,
+    ExecutionServiceDependencies,
+    ServiceConfig,
+)
 from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import ExecutionContextRegistry
@@ -109,16 +113,20 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
         prompt_builder=prompt_builder,
     )
 
-    return AgentExecutionService(
-        event_store=mock_event_store,
-        system_limits=system_limits,
-        config=config,
+    dependencies = ExecutionServiceDependencies(
         repository=repository,
         orchestrator=orchestrator,
         context_registry=context_registry,
         child_factory=child_factory,
         query_service=query_service,
         workspace=workspace,
+    )
+
+    return AgentExecutionService(
+        event_store=mock_event_store,
+        dependencies=dependencies,
+        config=config,
+        system_limits=system_limits,
     )
 
 

@@ -9,22 +9,22 @@ def validate_task_context(task_context: dict[str, Any]) -> tuple[str, UUID, str]
     """Validate and extract required fields from task context.
 
     Args:
-        task_context: Dict containing task_description, session_id, and optional working_directory.
+        task_context: Dict containing task_description, agent_id, and optional working_directory.
 
     Returns:
-        Tuple of (task_description, session_id, working_directory).
+        Tuple of (task_description, agent_id, working_directory).
 
     Raises:
         ValueError: If required fields are missing.
     """
     task_description = task_context.get("task_description")
-    session_id = task_context.get("session_id")
+    agent_id = task_context.get("agent_id")
 
     if not task_description:
         raise ValueError("task_context must include 'task_description'")
-    if not session_id:
-        raise ValueError("task_context must include 'session_id'")
+    if not agent_id:
+        raise ValueError("task_context must include 'agent_id'")
 
     working_dir = task_context.get("working_directory", str(Path.cwd()))
 
-    return task_description, session_id, working_dir
+    return task_description, agent_id, working_dir
