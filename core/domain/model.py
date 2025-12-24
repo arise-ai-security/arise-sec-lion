@@ -454,17 +454,47 @@ class AgentSession:
         - The original task that was assigned
         - How they approached it (from captured thoughts)
         - Why the approach should work (from supervisor expectations)
-        - What was delivered (from result)
+        - What was delivered (specific file names worked on)
         """
+        import re
+
         # Extract approach from captured thoughts
         approach_lines = []
         challenges_lines = []
+        files_worked_on: set[str] = set()
+
+        # Patterns to extract file names from progress messages
+        file_patterns = [
+            r"(?:created|wrote|modified|updated|edited|generated|deleted|added)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)",
+            r"(?:creating|writing|modifying|updating|editing|generating|deleting|adding)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)",
+            r"(?:file|File)\s*[:\s]+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)",
+            r"([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)(?:\s+(?:created|modified|updated|written))",
+        ]
+
         for thought in captured_thoughts:
             thought_lower = thought.lower()
             if any(kw in thought_lower for kw in ["error", "failed", "issue", "problem", "fix"]):
                 challenges_lines.append(thought)
             elif any(kw in thought_lower for kw in ["creating", "writing", "running", "executing", "installing"]):
                 approach_lines.append(thought)
+
+            # Extract file names from progress messages
+            for pattern in file_patterns:
+                matches = re.findall(pattern, thought, re.IGNORECASE)
+                for match in matches:
+                    # Clean up the file path
+                    file_path = match.strip().strip("'\"")
+                    # Skip if it looks like a URL or directory path without extension
+                    if file_path and not file_path.startswith(("http://", "https://", "/")):
+                        files_worked_on.add(file_path)
+
+        # Also extract from result
+        for pattern in file_patterns:
+            matches = re.findall(pattern, result, re.IGNORECASE)
+            for match in matches:
+                file_path = match.strip().strip("'\"")
+                if file_path and not file_path.startswith(("http://", "https://")):
+                    files_worked_on.add(file_path)
 
         approach = (
             "; ".join(approach_lines[:5]) if approach_lines
@@ -484,12 +514,17 @@ class AgentSession:
         else:
             reasoning = "Followed standard execution approach for the given task"
 
-        # Summarize deliverables from result
-        result_lines = result.split("\n") if result else []
-        deliverables = (
-            "; ".join(line.strip() for line in result_lines[:5] if line.strip())
-            if result_lines else "Task completed"
-        )
+        # Build deliverables with specific file names
+        if files_worked_on:
+            sorted_files = sorted(files_worked_on)
+            deliverables = f"Files worked on: {', '.join(sorted_files)}"
+        else:
+            # Fallback: extract any file-like patterns from result
+            result_lines = result.split("\n") if result else []
+            deliverables = (
+                "; ".join(line.strip() for line in result_lines[:5] if line.strip())
+                if result_lines else "Task completed"
+            )
 
         return WorkerReport(
             original_task=self.task_description or "",
