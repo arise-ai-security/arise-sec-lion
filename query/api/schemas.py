@@ -196,9 +196,10 @@ class ContextEntrySchema(BaseModel):
     """Schema for a context entry from the context dashboard."""
 
     entry_id: str = Field(..., description="Context entry UUID")
-    work_title: str = Field(..., description="Descriptive title for the work")
+    work_title: str = Field(..., description="Concise key describing the completed work")
     objective: str = Field(..., description="What the task aimed to achieve")
     justification: str = Field(..., description="Why this task was assigned")
+    work_analysis: str = Field(..., description="Comprehensive analysis of how work was done")
     approach: str | None = Field(None, description="How the worker approached the task")
     challenges: str | None = Field(None, description="Challenges encountered")
     created_at: datetime = Field(..., description="When this entry was created")
@@ -206,12 +207,17 @@ class ContextEntrySchema(BaseModel):
 
 
 class PublishedContextSchema(BaseModel):
-    """Schema for context published by a supervisor."""
+    """Schema for context published by a supervisor - full key-value submission."""
 
     entry_id: str = Field(..., description="Context entry UUID")
-    work_title: str = Field(..., description="Descriptive title for the work")
+    work_title: str = Field(..., description="Concise key describing the completed work")
     worker_id: str = Field(..., description="Worker that completed the task")
     objective: str = Field(..., description="What the task aimed to achieve")
+    justification: str = Field(..., description="Why this task was assigned")
+    work_analysis: str = Field(..., description="Comprehensive analysis of how work was done")
+    approach: str | None = Field(None, description="Worker's approach from report")
+    challenges: str | None = Field(None, description="Challenges encountered")
+    tags: list[str] = Field(default_factory=list, description="Tags for categorization")
     published_at: datetime = Field(..., description="When this was published")
 
 

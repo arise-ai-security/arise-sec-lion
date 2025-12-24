@@ -37,11 +37,11 @@ from core.ports.worker_port import WorkerToolPort
 from core.query.projections.hierarchy_collector import HierarchyCollector
 
 
-# Default models for multi-model strategy (3 different models)
+# Default models for multi-model strategy (3 different GPT models)
 DEFAULT_SUBORDINATE_MODELS = [
-    "claude-sonnet-4-5-20250514",  # Anthropic
-    "gemini-1.5-pro",  # Google
-    "gpt-4o",  # OpenAI
+    "gpt-4o",  # OpenAI flagship
+    "gpt-4o-mini",  # OpenAI efficient
+    "gpt-4-turbo",  # OpenAI turbo
 ]
 
 
@@ -262,25 +262,83 @@ class AgentExecutionService:
         self,
         entries: list,  # list[ContextEntry]
     ) -> str:
-        """Format context entries for injection into worker prompt."""
+        """Format context entries for injection into worker prompt.
+
+        Provides comprehensive context from previous work including:
+        - What was done (objective, approach)
+        - How it was accomplished (work_analysis)
+        - What challenges were encountered (to avoid repeating mistakes)
+        - Clear reminders about not duplicating work
+        """
         if not entries:
             return ""
 
         lines = [
             "<RELEVANT_CONTEXT>",
-            "The following completed work from previous sessions may be helpful:\n",
+            "=" * 60,
+            "KNOWLEDGE FROM PREVIOUS SESSIONS",
+            "=" * 60,
+            "",
+            "IMPORTANT REMINDERS:",
+            "1. DO NOT repeat work that has already been completed below",
+            "2. DO NOT repeat the same mistakes - learn from the challenges encountered",
+            "3. BUILD UPON the successful approaches - leverage what worked",
+            "4. REFERENCE this context when making decisions about your approach",
+            "",
+            "-" * 60,
         ]
 
         for i, entry in enumerate(entries, 1):
-            lines.append(f"## {i}. {entry.work_title}")
+            lines.append(f"\n## [{i}] {entry.work_title}")
+            lines.append("")
             lines.append(f"**Objective:** {entry.objective}")
-            lines.append(f"**Approach:** {entry.worker_report.approach}")
-            if entry.worker_report.challenges:
-                lines.append(f"**Challenges Encountered:** {entry.worker_report.challenges}")
             lines.append("")
 
-        lines.append("Use this context to inform your approach, avoid repeating mistakes,")
-        lines.append("and leverage successful patterns from previous work.")
+            # Include the comprehensive work analysis
+            if entry.work_analysis:
+                lines.append("**How This Work Was Accomplished:**")
+                lines.append(entry.work_analysis)
+                lines.append("")
+
+            # Include the approach
+            if entry.worker_report and entry.worker_report.approach:
+                lines.append(f"**Approach Used:** {entry.worker_report.approach}")
+                lines.append("")
+
+            # Include reasoning if available
+            if entry.worker_report and entry.worker_report.reasoning:
+                lines.append(f"**Reasoning:** {entry.worker_report.reasoning}")
+                lines.append("")
+
+            # Include deliverables to show what was already produced
+            if entry.worker_report and entry.worker_report.deliverables:
+                lines.append(f"**Deliverables Produced:** {entry.worker_report.deliverables}")
+                lines.append("")
+
+            # Highlight challenges as warnings
+            if entry.worker_report and entry.worker_report.challenges:
+                lines.append("**⚠️ CHALLENGES TO AVOID (Learn from these mistakes):**")
+                lines.append(entry.worker_report.challenges)
+                lines.append("")
+
+            # Include tags for context
+            if entry.tags:
+                lines.append(f"**Tags:** {', '.join(entry.tags)}")
+                lines.append("")
+
+            lines.append("-" * 60)
+
+        lines.append("")
+        lines.append("=" * 60)
+        lines.append("END OF PREVIOUS WORK CONTEXT")
+        lines.append("=" * 60)
+        lines.append("")
+        lines.append("Use the above context to:")
+        lines.append("- Avoid duplicating completed work")
+        lines.append("- Learn from challenges and avoid repeating mistakes")
+        lines.append("- Build upon successful approaches and patterns")
+        lines.append("- Make informed decisions based on what has already been tried")
+        lines.append("")
         lines.append("</RELEVANT_CONTEXT>")
 
         return "\n".join(lines)
@@ -378,7 +436,7 @@ class AgentExecutionService:
 
             response = await self.llm_port.generate(
                 prompt=prompt,
-                model=self.model_config.get("PENDING", "gpt-4o-mini"),
+                model="gpt-4o-mini",  # Use GPT model for context key generation
                 max_tokens=100,
             )
 
@@ -424,7 +482,7 @@ class AgentExecutionService:
 
             response = await self.llm_port.generate(
                 prompt=prompt,
-                model=self.model_config.get("PENDING", "gpt-4o-mini"),
+                model="gpt-4o-mini",  # Use GPT model for context analysis
                 max_tokens=800,
             )
 

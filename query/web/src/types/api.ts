@@ -154,18 +154,24 @@ export interface ContextEntry {
   work_title: string;
   objective: string;
   justification: string;
+  work_analysis: string;
   approach: string | null;
   challenges: string | null;
   created_at: string;
   tags: string[];
 }
 
-/** Context published by a supervisor to the dashboard. */
+/** Context published by a supervisor to the dashboard - full key-value submission. */
 export interface PublishedContext {
   entry_id: string;
   work_title: string;
   worker_id: string;
   objective: string;
+  justification: string;
+  work_analysis: string;
+  approach: string | null;
+  challenges: string | null;
+  tags: string[];
   published_at: string;
 }
 

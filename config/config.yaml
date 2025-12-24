@@ -46,7 +46,7 @@ security:
   enabled: true
   auto_detect: true                          # Auto-detect CVE/security tasks from keywords
   default_model_poc: gpt-4o                  # Model for PoC generation (needs creativity)
-  default_model_patch: claude-3-5-sonnet-20241022  # Model for patch generation
+  default_model_patch: gpt-4o                 # Model for patch generation
   default_model_validation: gpt-4o-mini      # Model for validation (deterministic)
   poc_temperature: 0.6                       # Higher temp for creative exploit generation
   patch_temperature: 0.5                     # Balanced for correctness + minimal change

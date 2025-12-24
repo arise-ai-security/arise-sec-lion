@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import Settings
+from infrastructure.adapters.postgres_context_dashboard import PostgresContextDashboard
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from query.api.routes import agents, config, events, prompts
 
@@ -34,12 +35,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     event_store = PostgresEventStore(settings.database.connection_string)
     await event_store.connect()
 
+    # Create and connect the context dashboard
+    context_dashboard = PostgresContextDashboard(settings.database.connection_string)
+    await context_dashboard.connect()
+
     # Attach to app state for dependency injection in routes
     app.state.event_store = event_store
+    app.state.context_dashboard = context_dashboard
 
     yield
 
     # Cleanup on shutdown
+    await context_dashboard.disconnect()
     await event_store.disconnect()
 
 

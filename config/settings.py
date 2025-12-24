@@ -141,7 +141,7 @@ class SecurityConfig(BaseModel):
     enabled: bool = True
     auto_detect: bool = True  # Auto-detect security tasks from keywords
     default_model_poc: str = "gpt-4o"  # Model for PoC generation
-    default_model_patch: str = "claude-3-5-sonnet-20241022"  # Model for patch generation
+    default_model_patch: str = "gpt-4o"  # Model for patch generation
     default_model_validation: str = "gpt-4o-mini"  # Model for validation
     poc_temperature: float = Field(default=0.6, ge=0.0, le=2.0)
     patch_temperature: float = Field(default=0.5, ge=0.0, le=2.0)

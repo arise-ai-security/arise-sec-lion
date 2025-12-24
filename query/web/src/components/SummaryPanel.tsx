@@ -514,32 +514,92 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
       {/* Published Context (for BOSS/MANAGER - context they contributed to dashboard) */}
       {summary.published_context && summary.published_context.length > 0 && (
         <Section title="📤 Context Published to Dashboard">
-          <div className="space-y-2">
+          <div className="space-y-4">
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
               This supervisor published {summary.published_context.length} context{summary.published_context.length !== 1 ? 's' : ''} to the global knowledge dashboard for cross-session learning.
             </p>
-            {summary.published_context.map((ctx, idx) => (
+            {summary.published_context.map((ctx) => (
               <div
                 key={ctx.entry_id}
-                className="bg-purple-50 dark:bg-purple-900/20 p-2 rounded border-l-2 border-purple-400"
+                className="bg-purple-50 dark:bg-purple-900/20 p-3 rounded border-l-2 border-purple-400"
               >
-                <div className="flex items-start gap-2">
-                  <span className="text-purple-500 text-sm">📚</span>
+                {/* Key (work_title) */}
+                <div className="flex items-start gap-2 mb-2">
+                  <span className="text-purple-500 text-sm">🔑</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                    <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold uppercase">Key</p>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
                       {ctx.work_title}
                     </p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                      {ctx.objective}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs text-gray-400">
-                        Worker: {ctx.worker_id.substring(0, 8)}...
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {new Date(ctx.published_at).toLocaleString()}
-                      </span>
+                  </div>
+                </div>
+
+                {/* Value Section */}
+                <div className="ml-6 space-y-2 border-t border-purple-200 dark:border-purple-700 pt-2">
+                  <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold uppercase">Value</p>
+
+                  {/* Objective */}
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Objective:</p>
+                    <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.objective}</p>
+                  </div>
+
+                  {/* Justification */}
+                  {ctx.justification && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Why Assigned:</p>
+                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.justification}</p>
                     </div>
+                  )}
+
+                  {/* Work Analysis (comprehensive) */}
+                  {ctx.work_analysis && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">How It Was Accomplished:</p>
+                      <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-white/50 dark:bg-gray-800/50 p-2 rounded max-h-48 overflow-y-auto">
+                        {ctx.work_analysis}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Approach */}
+                  {ctx.approach && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Approach:</p>
+                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.approach}</p>
+                    </div>
+                  )}
+
+                  {/* Challenges */}
+                  {ctx.challenges && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Challenges:</p>
+                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.challenges}</p>
+                    </div>
+                  )}
+
+                  {/* Tags */}
+                  {ctx.tags && ctx.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {ctx.tags.map((tag, tagIdx) => (
+                        <span
+                          key={tagIdx}
+                          className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Metadata */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-purple-100 dark:border-purple-800">
+                    <span className="text-xs text-gray-400">
+                      Worker: {ctx.worker_id.substring(0, 8)}...
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {new Date(ctx.published_at).toLocaleString()}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -550,32 +610,109 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
 
       {/* Inherited Context (for WORKER - context they received from dashboard) */}
       {summary.inherited_context && summary.role.toLowerCase() === 'worker' && (
-        <Section title="📥 Context from Knowledge Dashboard">
-          <div className="bg-cyan-50 dark:bg-cyan-900/20 p-2 rounded border-l-2 border-cyan-400">
+        <Section title="📥 Inherited Knowledge from Dashboard">
+          <div className="bg-cyan-50 dark:bg-cyan-900/20 p-3 rounded border-l-2 border-cyan-400">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-cyan-500 text-lg">🧠</span>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
-                Cross-Session Learning Enabled
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Cross-Session Learning Active
               </p>
             </div>
-            <p className="text-xs text-gray-600 dark:text-gray-400">
-              This worker had access to the global context dashboard. Relevant knowledge from
-              previous sessions was automatically identified and provided to help with this task.
+            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+              This worker inherited knowledge from {summary.inherited_context.total_available} available context entries in the global dashboard.
+              Relevant knowledge was automatically identified and provided to help with this task.
             </p>
+
+            {/* Reminder Banner */}
+            <div className="bg-amber-50 dark:bg-amber-900/20 p-2 rounded mb-3 border border-amber-200 dark:border-amber-700">
+              <p className="text-xs text-amber-700 dark:text-amber-300 font-medium">
+                ⚠️ Learning Reminders:
+              </p>
+              <ul className="text-xs text-amber-600 dark:text-amber-400 mt-1 space-y-0.5 pl-3">
+                <li>• Do NOT repeat work that has already been completed</li>
+                <li>• Avoid repeating the same mistakes encountered before</li>
+                <li>• Build upon successful approaches from previous work</li>
+              </ul>
+            </div>
+
             {summary.inherited_context.entries.length > 0 ? (
-              <div className="mt-2 space-y-1">
-                <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400">
-                  Inherited {summary.inherited_context.entries.length} relevant context(s):
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                  Inherited {summary.inherited_context.entries.length} Relevant Context(s):
                 </p>
                 {summary.inherited_context.entries.map((entry) => (
-                  <div key={entry.entry_id} className="text-xs text-gray-600 dark:text-gray-400 pl-2">
-                    • {entry.work_title}
+                  <div key={entry.entry_id} className="bg-white dark:bg-gray-800 p-3 rounded border border-cyan-200 dark:border-cyan-700">
+                    {/* Work Title (Key) */}
+                    <div className="flex items-start gap-2 mb-2">
+                      <span className="text-cyan-500 text-sm">🔑</span>
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                        {entry.work_title}
+                      </p>
+                    </div>
+
+                    {/* Objective */}
+                    <div className="ml-6 space-y-2">
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Objective:</p>
+                        <p className="text-xs text-gray-700 dark:text-gray-300">{entry.objective}</p>
+                      </div>
+
+                      {/* Work Analysis - How it was accomplished */}
+                      {entry.work_analysis && (
+                        <div>
+                          <p className="text-xs font-medium text-green-600 dark:text-green-400">How It Was Accomplished:</p>
+                          <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-green-50 dark:bg-green-900/20 p-2 rounded max-h-40 overflow-y-auto">
+                            {entry.work_analysis}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Approach */}
+                      {entry.approach && (
+                        <div>
+                          <p className="text-xs font-medium text-blue-600 dark:text-blue-400">Approach Used:</p>
+                          <p className="text-xs text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                            {entry.approach}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* How This Can Benefit Current Work */}
+                      {entry.justification && (
+                        <div>
+                          <p className="text-xs font-medium text-purple-600 dark:text-purple-400">Why This Is Relevant:</p>
+                          <p className="text-xs text-gray-700 dark:text-gray-300">{entry.justification}</p>
+                        </div>
+                      )}
+
+                      {/* Challenges - What to avoid */}
+                      {entry.challenges && (
+                        <div className="bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-200 dark:border-red-700">
+                          <p className="text-xs font-medium text-red-600 dark:text-red-400">⚠️ Challenges to Avoid:</p>
+                          <p className="text-xs text-gray-700 dark:text-gray-300">{entry.challenges}</p>
+                        </div>
+                      )}
+
+                      {/* Tags */}
+                      {entry.tags && entry.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {entry.tags.map((tag, tagIdx) => (
+                            <span
+                              key={tagIdx}
+                              className="px-1.5 py-0.5 text-xs bg-cyan-100 dark:bg-cyan-800 text-cyan-700 dark:text-cyan-300 rounded"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
-                LLM evaluated available contexts for relevance to this task.
+              <p className="text-xs text-gray-500 dark:text-gray-500 italic">
+                LLM evaluated {summary.inherited_context.total_available} available contexts but found none directly relevant to this specific task.
               </p>
             )}
           </div>

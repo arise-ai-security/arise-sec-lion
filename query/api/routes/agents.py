@@ -20,7 +20,7 @@ from core.domain.model import AgentSession
 from core.query.projections.hierarchy_collector import HierarchyCollector
 from core.query.projections.impl import SummaryProjection
 from core.query.projections.models import CostSummary, ProjectionSummary
-from query.api.dependencies import EventStoreDep
+from query.api.dependencies import ContextDashboardDep, EventStoreDep
 from query.api.schemas import (
     AgentHierarchySchema,
     AgentListItemSchema,
@@ -228,7 +228,11 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
 
 
 @router.get("/{agent_id}/summary", response_model=AgentSummarySchema)
-async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> AgentSummarySchema:
+async def get_agent_summary(
+    agent_id: UUID,
+    event_store: EventStoreDep,
+    context_dashboard: ContextDashboardDep,
+) -> AgentSummarySchema:
     """Get a summary projection for an agent.
 
     This CQRS projection aggregates data from multiple events to provide:
@@ -237,9 +241,11 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
     - For WORKERs: which tool is being used
     - For MANAGERs: subtasks and their child agents
     - Configuration details (hyperparameters)
+    - Context dashboard entries (published and inherited)
 
     Args:
         agent_id: Agent UUID to get summary for.
+        context_dashboard: Optional context dashboard for fetching full entries.
 
     Returns:
         AgentSummarySchema with aggregated agent information.
@@ -261,8 +267,9 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
     initial_budget: float = 0.0
     budget_source: str | None = None
 
-    # Context dashboard tracking
+    # Context dashboard tracking - collect entry IDs to fetch full entries later
     published_context_list: list[PublishedContextSchema] = []
+    published_entry_ids: list[tuple[UUID, UUID, str]] = []  # (entry_id, worker_id, occurred_at)
 
     for event in events:
         if isinstance(event, ComplexityEvaluated):
@@ -308,15 +315,9 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
             child_id_map[child_idx] = event.child_id
 
         elif isinstance(event, ContextPublished):
-            # Track context published by this supervisor
-            published_context_list.append(
-                PublishedContextSchema(
-                    entry_id=str(event.context_entry_id),
-                    work_title=event.work_title,
-                    worker_id=str(event.worker_id),
-                    objective=event.objective,
-                    published_at=event.occurred_at,
-                )
+            # Collect entry IDs to fetch full entries later
+            published_entry_ids.append(
+                (event.context_entry_id, event.worker_id, event.occurred_at)
             )
 
     # Update subtasks with child IDs and statuses
@@ -332,6 +333,46 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
                     budget_weight=existing.budget_weight,
                     child_id=str(child_id),
                     child_status=child_agent.status.value,
+                )
+
+    # Fetch full context entries from the dashboard
+    if context_dashboard and published_entry_ids:
+        entry_ids = [eid for eid, _, _ in published_entry_ids]
+        entries = await context_dashboard.get_entries_by_ids(entry_ids)
+        entry_map = {str(e.worker_id): e for e in entries}
+
+        for entry_id, worker_id, occurred_at in published_entry_ids:
+            entry = entry_map.get(str(worker_id))
+            if entry:
+                published_context_list.append(
+                    PublishedContextSchema(
+                        entry_id=str(entry_id),
+                        work_title=entry.work_title,
+                        worker_id=str(worker_id),
+                        objective=entry.objective,
+                        justification=entry.justification,
+                        work_analysis=entry.work_analysis,
+                        approach=entry.worker_report.approach if entry.worker_report else None,
+                        challenges=entry.worker_report.challenges if entry.worker_report else None,
+                        tags=entry.tags,
+                        published_at=occurred_at,
+                    )
+                )
+            else:
+                # Fallback if entry not found in dashboard
+                published_context_list.append(
+                    PublishedContextSchema(
+                        entry_id=str(entry_id),
+                        work_title="(Entry not found)",
+                        worker_id=str(worker_id),
+                        objective="",
+                        justification="",
+                        work_analysis="",
+                        approach=None,
+                        challenges=None,
+                        tags=[],
+                        published_at=occurred_at,
+                    )
                 )
 
     # Extract config details
