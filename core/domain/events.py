@@ -5,24 +5,20 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 from core.domain.subtask import Subtask
-from core.domain.context import ChildResult, ParentContext
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _deep_copy_dict(v: Any) -> Any:
-    """Deep copy dict to prevent external mutation of frozen event fields.
-
-    Since Pydantic frozen=True only prevents attribute reassignment but not
-    mutation of mutable container contents, we deep copy dicts on construction
-    to ensure true immutability.
-    """
+def _deep_copy_value(v: Any) -> Any:
+    """Deep copy dicts and lists to prevent external mutation."""
     if isinstance(v, dict):
+        return copy.deepcopy(v)
+    if isinstance(v, list):
         return copy.deepcopy(v)
     return v
 
@@ -30,15 +26,15 @@ def _deep_copy_dict(v: Any) -> Any:
 class DomainEvent(BaseModel):
     """Base class for immutable domain events.
 
-    All dict fields are deep copied on construction to ensure true immutability.
-    The frozen=True config prevents attribute reassignment, but mutable containers
-    like dicts could still be mutated externally without the deep copy.
+    All dict and list fields are deep copied on construction to ensure true
+    immutability. The frozen=True config prevents attribute reassignment, but
+    mutable containers could still be mutated externally without the deep copy.
+
+    The model_validator automatically deep-copies all dict/list values in input
+    data, eliminating the need for per-field validators in subclasses.
     """
 
     model_config = {"frozen": True}
-
-    # TODO: Add schema_version field when event schema evolution is needed.
-    # This enables upcasters to migrate old events to new schemas.
 
     event_id: UUID = Field(default_factory=uuid4)
     aggregate_id: UUID
@@ -46,10 +42,17 @@ class DomainEvent(BaseModel):
     occurred_at: datetime = Field(default_factory=_utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("metadata", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _freeze_metadata(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
+    def _deep_copy_mutable_fields(cls, data: Any) -> Any:
+        """Deep copy all dict/list values to ensure immutability.
+
+        This eliminates duplicate field validators across all event subclasses.
+        Runs before field validation, deep-copying any dict or list values.
+        """
+        if isinstance(data, dict):
+            return {k: _deep_copy_value(v) for k, v in data.items()}
+        return data
 
 
 class AgentCreated(DomainEvent):
@@ -59,22 +62,12 @@ class AgentCreated(DomainEvent):
     parent_id: UUID | None = None
     config: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("config", mode="before")
-    @classmethod
-    def _freeze_config(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
-
 
 class TaskAssigned(DomainEvent):
     """Task assigned to agent."""
 
     task_description: str
     constraints: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("constraints", mode="before")
-    @classmethod
-    def _freeze_constraints(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
 
 
 class StatusChanged(DomainEvent):
@@ -102,11 +95,6 @@ class ChildSpawned(DomainEvent):
     subtask: Subtask
     child_config: dict[str, Any]
     parent_context: dict[str, Any] = Field(default_factory=dict)  # Serialized ParentContext
-
-    @field_validator("child_config", "parent_context", mode="before")
-    @classmethod
-    def _freeze_dicts(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
 
 
 class WorkCompleted(DomainEvent):
@@ -144,11 +132,6 @@ class ChildCompleted(DomainEvent):
     child_id: UUID
     result: str  # Simple result text
     child_result: dict[str, Any] = Field(default_factory=dict)  # Rich structured result
-
-    @field_validator("child_result", mode="before")
-    @classmethod
-    def _freeze_child_result(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
 
 
 class ComplexityEvaluated(DomainEvent):
@@ -223,11 +206,6 @@ class SharedContextCreated(DomainEvent):
     initial_budget_usd: float = 0.0
     config: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("config", mode="before")
-    @classmethod
-    def _freeze_config(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
-
 
 class ArtifactStored(DomainEvent):
     """Artifact stored in shared context.
@@ -243,13 +221,6 @@ class ArtifactStored(DomainEvent):
     content_hash: str | None = None  # SHA256 for large content
     stored_by: UUID  # Agent that stored the artifact
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-    # Note: metadata is inherited from DomainEvent but redeclared here.
-    # The parent validator handles it, but we override for clarity.
-    @field_validator("metadata", mode="before")
-    @classmethod
-    def _freeze_artifact_metadata(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
 
 
 class DecisionRecorded(DomainEvent):
@@ -308,11 +279,6 @@ class BudgetConsumed(DomainEvent):
     operation: str  # "llm_call", "worker_execution"
     model: str | None = None  # Model used if applicable
     tokens: dict[str, int] = Field(default_factory=dict)  # {"prompt": N, "completion": M}
-
-    @field_validator("tokens", mode="before")
-    @classmethod
-    def _freeze_tokens(cls, v: Any) -> Any:
-        return _deep_copy_dict(v)
 
 
 class BudgetExceeded(DomainEvent):
