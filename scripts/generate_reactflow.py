@@ -16,6 +16,7 @@ Features:
   - Worker reports: shows approach, reasoning, deliverables, challenges for each worker
   - Aggregated summary: for MANAGER/BOSS nodes, shows combined deliverables and approaches from all subordinates
   - Child worker reports: accumulated reports from all workers in the subtree
+  - Context sharing: Published context (BOSS/MANAGER) and Inherited context (WORKER) from dashboard
   - Color-coded nodes by role
   - Automatic tree layout
 
@@ -176,6 +177,10 @@ def layout_tree(
         "childWorkerReports": summary.get("child_worker_reports", []),
         # Aggregated summary (for managers/boss)
         "aggregatedSummary": summary.get("aggregated_summary"),
+        # Context sharing - published by supervisor (for BOSS/MANAGER)
+        "publishedContext": summary.get("published_context", []),
+        # Context sharing - inherited by worker (for WORKER)
+        "inheritedContext": summary.get("inherited_context"),
         # Additional info
         "childrenCount": len(children),
         "depth": depth,
@@ -769,6 +774,177 @@ function AgentModal({ agent, onClose }) {
               <p style={{ fontSize: '14px', color: '#991b1b', lineHeight: '1.6', margin: 0, whiteSpace: 'pre-wrap' }}>
                 {agent.errorMessage}
               </p>
+            </div>
+          </Section>
+        )}
+
+        {/* Published Context (for BOSS/MANAGER - context they contributed to dashboard) */}
+        {agent.publishedContext && agent.publishedContext.length > 0 && (
+          <Section title="📤 Context Published to Dashboard">
+            <div style={{ marginBottom: '8px' }}>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>
+                This supervisor published {agent.publishedContext.length} context{agent.publishedContext.length !== 1 ? 's' : ''} to the global knowledge dashboard for cross-session learning.
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {agent.publishedContext.map((ctx, index) => (
+                <div
+                  key={ctx.entry_id || index}
+                  style={{
+                    backgroundColor: '#faf5ff',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    borderLeft: '4px solid #a855f7',
+                  }}
+                >
+                  {/* Key (work_title) */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '10px' }}>
+                    <span style={{ color: '#a855f7', fontSize: '14px' }}>🔑</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '11px', color: '#7c3aed', fontWeight: '600', textTransform: 'uppercase', marginBottom: '2px' }}>Key</div>
+                      <div style={{ fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>{ctx.work_title}</div>
+                    </div>
+                  </div>
+                  {/* Value Section */}
+                  <div style={{ marginLeft: '22px', borderTop: '1px solid #e9d5ff', paddingTop: '10px' }}>
+                    <div style={{ fontSize: '11px', color: '#7c3aed', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Value</div>
+                    {/* Objective */}
+                    <div style={{ marginBottom: '8px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>Objective:</div>
+                      <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.objective}</div>
+                    </div>
+                    {/* Justification */}
+                    {ctx.justification && (
+                      <div style={{ marginBottom: '8px' }}>
+                        <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>Why Assigned:</div>
+                        <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.justification}</div>
+                      </div>
+                    )}
+                    {/* Work Analysis */}
+                    {ctx.work_analysis && (
+                      <div style={{ marginBottom: '8px' }}>
+                        <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>How It Was Accomplished:</div>
+                        <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'rgba(255,255,255,0.5)', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                          {ctx.work_analysis}
+                        </div>
+                      </div>
+                    )}
+                    {/* Tags */}
+                    {ctx.tags && ctx.tags.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                        {ctx.tags.map((tag, tagIdx) => (
+                          <span
+                            key={tagIdx}
+                            style={{
+                              backgroundColor: '#e9d5ff',
+                              color: '#7c3aed',
+                              padding: '2px 8px',
+                              borderRadius: '9999px',
+                              fontSize: '11px',
+                            }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {/* Metadata */}
+                    <div style={{ display: 'flex', gap: '12px', paddingTop: '8px', borderTop: '1px solid #f3e8ff', fontSize: '11px', color: '#9ca3af' }}>
+                      <span>Worker: {ctx.worker_id ? ctx.worker_id.substring(0, 8) + '...' : 'N/A'}</span>
+                      {ctx.published_at && <span>{new Date(ctx.published_at).toLocaleString()}</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Inherited Context (for WORKER - context they received from dashboard) */}
+        {agent.inheritedContext && agent.role === 'worker' && (
+          <Section title="📥 Inherited Knowledge from Dashboard">
+            <div style={{ backgroundColor: '#ecfeff', borderRadius: '8px', padding: '12px', borderLeft: '4px solid #06b6d4' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <span style={{ fontSize: '18px' }}>🧠</span>
+                <span style={{ fontSize: '14px', fontWeight: '500', color: '#374151' }}>Cross-Session Learning Active</span>
+              </div>
+              <p style={{ fontSize: '12px', color: '#4b5563', marginBottom: '12px' }}>
+                This worker inherited knowledge from {agent.inheritedContext.total_available || 0} available context entries in the global dashboard.
+                Relevant knowledge was automatically identified and provided to help with this task.
+              </p>
+              {/* Reminder Banner */}
+              <div style={{ backgroundColor: '#fef3c7', padding: '10px', borderRadius: '6px', marginBottom: '12px', border: '1px solid #fcd34d' }}>
+                <p style={{ fontSize: '12px', fontWeight: '500', color: '#92400e', marginBottom: '4px' }}>⚠️ Learning Reminders:</p>
+                <ul style={{ fontSize: '11px', color: '#b45309', margin: 0, paddingLeft: '16px' }}>
+                  <li>Do NOT repeat work that has already been completed</li>
+                  <li>Avoid repeating the same mistakes encountered before</li>
+                  <li>Build upon successful approaches from previous work</li>
+                </ul>
+              </div>
+              {agent.inheritedContext.entries && agent.inheritedContext.entries.length > 0 ? (
+                <div>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#0891b2', marginBottom: '10px' }}>
+                    Inherited {agent.inheritedContext.entries.length} Relevant Context(s):
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {agent.inheritedContext.entries.map((entry, index) => (
+                      <div key={entry.entry_id || index} style={{ backgroundColor: 'white', padding: '12px', borderRadius: '6px', border: '1px solid #a5f3fc' }}>
+                        {/* Work Title (Key) */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '8px' }}>
+                          <span style={{ color: '#06b6d4', fontSize: '14px' }}>🔑</span>
+                          <span style={{ fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>{entry.work_title}</span>
+                        </div>
+                        <div style={{ marginLeft: '22px' }}>
+                          {/* Objective */}
+                          <div style={{ marginBottom: '6px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280' }}>Objective: </span>
+                            <span style={{ fontSize: '12px', color: '#374151' }}>{entry.objective}</span>
+                          </div>
+                          {/* Justification */}
+                          {entry.justification && (
+                            <div style={{ marginBottom: '6px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: '500', color: '#7c3aed' }}>Why This Is Relevant: </span>
+                              <span style={{ fontSize: '12px', color: '#374151' }}>{entry.justification}</span>
+                            </div>
+                          )}
+                          {/* Work Analysis */}
+                          {entry.work_analysis && (
+                            <div style={{ marginBottom: '6px' }}>
+                              <div style={{ fontSize: '11px', fontWeight: '500', color: '#16a34a', marginBottom: '2px' }}>How It Was Accomplished:</div>
+                              <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: '#f0fdf4', padding: '8px', borderRadius: '4px', maxHeight: '120px', overflow: 'auto' }}>
+                                {entry.work_analysis}
+                              </div>
+                            </div>
+                          )}
+                          {/* Tags */}
+                          {entry.tags && entry.tags.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                              {entry.tags.map((tag, tagIdx) => (
+                                <span
+                                  key={tagIdx}
+                                  style={{
+                                    backgroundColor: '#cffafe',
+                                    color: '#0891b2',
+                                    padding: '2px 8px',
+                                    borderRadius: '9999px',
+                                    fontSize: '11px',
+                                  }}
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p style={{ fontSize: '12px', color: '#6b7280', fontStyle: 'italic' }}>
+                  LLM evaluated {agent.inheritedContext.total_available || 0} available contexts but found none directly relevant to this specific task.
+                </p>
+              )}
             </div>
           </Section>
         )}
