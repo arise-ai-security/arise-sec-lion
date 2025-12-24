@@ -31,10 +31,10 @@ async def test_pty_adapter_successful_execution():
         timeout_seconds=10,
     )
 
-    session_id = uuid4()
+    agent_id = uuid4()
     task_context = {
         "task_description": "Write a Python script",
-        "session_id": session_id,
+        "agent_id": agent_id,
     }
 
     # When: Run session
@@ -71,10 +71,10 @@ async def test_pty_adapter_ansi_stripping():
     # Given: PTY adapter
     adapter = ClaudeCodePTYAdapter(command=DUMMY_CLI_PATH)
 
-    session_id = uuid4()
+    agent_id = uuid4()
     task_context = {
         "task_description": "Simple task",
-        "session_id": session_id,
+        "agent_id": agent_id,
     }
 
     # When: Run session
@@ -98,10 +98,10 @@ async def test_pty_adapter_failure_scenario():
     # Given: PTY adapter with task description containing "fail"
     adapter = ClaudeCodePTYAdapter(command=DUMMY_CLI_PATH, timeout_seconds=10)
 
-    session_id = uuid4()
+    agent_id = uuid4()
     task_context = {
         "task_description": "This task will fail intentionally",
-        "session_id": session_id,
+        "agent_id": agent_id,
     }
 
     # When: Run session
@@ -145,10 +145,10 @@ async def test_pty_adapter_timeout():
             timeout_seconds=1,  # 1 second timeout
         )
 
-        session_id = uuid4()
+        agent_id = uuid4()
         task_context = {
             "task_description": sleep_script,  # Pass script path as argument
-            "session_id": session_id,
+            "agent_id": agent_id,
         }
 
         # When: Run session
@@ -174,7 +174,7 @@ async def test_pty_adapter_missing_task_description():
 
     # When: Call run_session without task_description
     task_context = {
-        "session_id": uuid4(),
+        "agent_id": uuid4(),
         # Missing task_description
     }
 
@@ -185,20 +185,20 @@ async def test_pty_adapter_missing_task_description():
 
 
 @pytest.mark.asyncio
-async def test_pty_adapter_missing_session_id():
-    """Test that adapter validates session_id is present."""
+async def test_pty_adapter_missing_agent_id():
+    """Test that adapter validates agent_id is present."""
 
     # Given: PTY adapter
     adapter = ClaudeCodePTYAdapter(command=DUMMY_CLI_PATH)
 
-    # When: Call run_session without session_id
+    # When: Call run_session without agent_id
     task_context = {
         "task_description": "Some task",
-        # Missing session_id
+        # Missing agent_id
     }
 
     # Then: Should raise ValueError
-    with pytest.raises(ValueError, match="session_id"):
+    with pytest.raises(ValueError, match="agent_id"):
         async for _ in adapter.run_session(task_context):
             pass
 
@@ -223,10 +223,10 @@ async def test_pty_adapter_working_directory():
         try:
             adapter = ClaudeCodePTYAdapter(command=pwd_script)
 
-            session_id = uuid4()
+            agent_id = uuid4()
             task_context = {
                 "task_description": "Print working directory",
-                "session_id": session_id,
+                "agent_id": agent_id,
                 "working_directory": temp_dir,
             }
 
@@ -335,10 +335,10 @@ async def test_pty_adapter_captures_python_traceback():
     try:
         adapter = ClaudeCodePTYAdapter(command="python3")
 
-        session_id = uuid4()
+        agent_id = uuid4()
         task_context = {
             "task_description": error_script,
-            "session_id": session_id,
+            "agent_id": agent_id,
         }
 
         # When: Run session
