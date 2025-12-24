@@ -23,6 +23,7 @@ from core.domain.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    ContextInherited,
     ContextPublished,
     DomainEvent,
     FirstSuccessRecorded,
@@ -616,6 +617,29 @@ class AgentSession:
         self._apply(event)
         self._changes.append(event)
 
+    def record_context_inherited(
+        self,
+        entry_ids: list[UUID],
+        total_available: int,
+    ) -> None:
+        """Record that context was inherited from the global dashboard.
+
+        This creates an audit trail event for cross-session learning.
+        The worker received relevant context from previous sessions.
+
+        Args:
+            entry_ids: List of context entry UUIDs that were inherited.
+            total_available: Total number of entries available in the dashboard.
+        """
+        event = ContextInherited(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            entry_ids=entry_ids,
+            total_available=total_available,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply event to update state. Raises TypeError for unregistered event types."""
@@ -915,6 +939,11 @@ class AgentSession:
     @_apply.register
     def _(self, event: ContextPublished) -> None:
         """Apply ContextPublished event (audit trail only, no state change)."""
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ContextInherited) -> None:
+        """Apply ContextInherited event (audit trail only, no state change)."""
         self.version += 1
 
     def _initialize_defaults(self, session_id: UUID) -> None:

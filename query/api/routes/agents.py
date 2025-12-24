@@ -13,6 +13,7 @@ from core.domain.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    ContextInherited,
     ContextPublished,
     SubtasksDefined,
 )
@@ -271,6 +272,10 @@ async def get_agent_summary(
     published_context_list: list[PublishedContextSchema] = []
     published_entry_ids: list[tuple[UUID, UUID, str]] = []  # (entry_id, worker_id, occurred_at)
 
+    # Inherited context tracking (for workers)
+    inherited_entry_ids: list[UUID] = []
+    inherited_total_available: int = 0
+
     for event in events:
         if isinstance(event, ComplexityEvaluated):
             complexity = event.complexity
@@ -319,6 +324,11 @@ async def get_agent_summary(
             published_entry_ids.append(
                 (event.context_entry_id, event.worker_id, event.occurred_at)
             )
+
+        elif isinstance(event, ContextInherited):
+            # Track inherited context for workers
+            inherited_entry_ids = list(event.entry_ids)
+            inherited_total_available = event.total_available
 
     # Update subtasks with child IDs and statuses
     for idx, child_id in child_id_map.items():
@@ -529,14 +539,30 @@ async def get_agent_summary(
             key_challenges="\n\n".join(challenge_parts) if challenge_parts else "",
         )
 
-    # For WORKER agents, create inherited context info (showing it was enabled)
+    # For WORKER agents, create inherited context info from the ContextInherited event
     inherited_context: InheritedContextSchema | None = None
-    if agent.role.value == "worker":
-        # Workers may have inherited context - we show this was available
-        # The actual inherited entries would require querying the context dashboard
+    if agent.role.value == "worker" and (inherited_entry_ids or inherited_total_available > 0):
+        # Fetch full context entries from the dashboard
+        inherited_entries: list[ContextEntrySchema] = []
+        if context_dashboard and inherited_entry_ids:
+            entries = await context_dashboard.get_entries_by_ids(inherited_entry_ids)
+            for entry in entries:
+                inherited_entries.append(
+                    ContextEntrySchema(
+                        entry_id=str(entry.entry_id) if entry.entry_id else str(entry.worker_id),
+                        work_title=entry.work_title,
+                        objective=entry.objective,
+                        justification=entry.justification,
+                        work_analysis=entry.work_analysis,
+                        approach=entry.worker_report.approach if entry.worker_report else None,
+                        challenges=entry.worker_report.challenges if entry.worker_report else None,
+                        created_at=entry.created_at,
+                        tags=entry.tags,
+                    )
+                )
         inherited_context = InheritedContextSchema(
-            entries=[],  # Would require context dashboard query
-            total_available=0,  # Placeholder - dashboard not available in query API
+            entries=inherited_entries,
+            total_available=inherited_total_available,
         )
 
     return AgentSummarySchema(

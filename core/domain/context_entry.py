@@ -18,6 +18,9 @@ class ContextEntry(BaseModel):
 
     model_config = {"frozen": True}
 
+    # Entry ID (assigned when stored in the dashboard)
+    entry_id: UUID | None = Field(None, description="Entry UUID in the dashboard")
+
     # Key: supervisor-generated descriptive title for the work
     work_title: str = Field(
         ...,

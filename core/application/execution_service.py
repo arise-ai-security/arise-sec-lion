@@ -191,7 +191,7 @@ class AgentExecutionService:
         self,
         agent: AgentSession,
         max_entries: int = 5,
-    ) -> str | None:
+    ) -> tuple[str | None, list[UUID], int]:
         """Query context dashboard for relevant previous work.
 
         Uses LLM to evaluate which context entries are relevant to the current task.
@@ -201,16 +201,21 @@ class AgentExecutionService:
             max_entries: Maximum number of entries to include.
 
         Returns:
-            Formatted context string or None if no relevant context found.
+            Tuple of (formatted_context, entry_ids, total_available):
+            - formatted_context: Context string or None if no relevant context
+            - entry_ids: List of inherited entry UUIDs
+            - total_available: Total entries available in the dashboard
         """
         if self.context_dashboard is None:
-            return None
+            return None, [], 0
 
         try:
             # Get all available titles
             titles = await self.context_dashboard.get_all_titles()
             if not titles:
-                return None
+                return None, [], 0
+
+            total_available = len(titles)
 
             # Limit to most recent entries for efficiency
             titles = titles[:100]
@@ -230,17 +235,17 @@ class AgentExecutionService:
             # Parse response to get entry IDs
             relevant_ids = self._parse_relevant_ids(response, max_entries)
             if not relevant_ids:
-                return None
+                return None, [], total_available
 
             # Fetch full entries
             entries = await self.context_dashboard.get_entries_by_ids(relevant_ids)
 
             # Format as context string
-            return self._format_context_for_prompt(entries)
+            return self._format_context_for_prompt(entries), relevant_ids, total_available
 
         except Exception:
             # Don't fail worker execution if context retrieval fails
-            return None
+            return None, [], 0
 
     def _parse_relevant_ids(self, response: str, max_entries: int) -> list[UUID]:
         """Parse LLM response to extract relevant entry IDs."""
@@ -626,7 +631,14 @@ class AgentExecutionService:
         elif agent.role == AgentRole.WORKER:
             workspace_context = self._get_workspace_context()
             # Query context dashboard for relevant cross-session context
-            cross_session_context = await self._get_relevant_context(agent)
+            cross_session_context, inherited_ids, total_available = (
+                await self._get_relevant_context(agent)
+            )
+
+            # Record inherited context event if any context was available
+            if total_available > 0 or inherited_ids:
+                agent.record_context_inherited(inherited_ids, total_available)
+
             await agent.execute_task(
                 self.worker_tool_port,
                 working_directory=self.working_directory,

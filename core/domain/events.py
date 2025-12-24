@@ -622,3 +622,14 @@ class ContextPublished(DomainEvent):
     worker_id: UUID
     objective: str
     justification_summary: str
+
+
+class ContextInherited(DomainEvent):
+    """Context entries inherited from the global dashboard.
+
+    Emitted when a worker receives relevant context from previous
+    sessions to help with the current task.
+    """
+
+    entry_ids: list[UUID]
+    total_available: int

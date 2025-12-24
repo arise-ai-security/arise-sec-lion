@@ -181,6 +181,7 @@ class PostgresContextDashboard(ContextDashboardPort):
             report_data = orjson.loads(report_data)
 
         return ContextEntry(
+            entry_id=row["entry_id"],
             work_title=row["work_title"],
             objective=row["objective"],
             justification=row["justification"],
