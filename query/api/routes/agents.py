@@ -3,21 +3,16 @@
 Provides endpoints for querying agent hierarchy and individual agents.
 """
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from core.domain.events import (
-    AgentCreated,
-    ChildSpawned,
-    CodeGenerationStarted,
-    ComplexityEvaluated,
-    SubtasksDefined,
-)
-from core.domain.model import AgentRole, AgentSession
+from core.domain.model import AgentRole
+from core.query.projections.hierarchy_builder import AgentNode, HierarchyBuilder
 from core.query.projections.hierarchy_collector import HierarchyCollector
-from core.query.projections.impl import AgentListProjection, SummaryProjection
-from core.query.projections.models import AgentListItem, CostSummary, ProjectionSummary
+from core.query.projections.impl import AgentListProjection, AgentSummaryService, SummaryProjection
+from core.query.projections.models import AgentListItem, AgentSummary, ProjectionSummary
 from query.api.dependencies import EventStoreDep
 from query.api.schemas import (
     AgentHierarchySchema,
@@ -27,6 +22,8 @@ from query.api.schemas import (
     CostBreakdownSchema,
     ExecutionSummarySchema,
     ExecutionTimingSchema,
+    PaginatedAgentListSchema,
+    PaginationMetaSchema,
     RoleCostBreakdownSchema,
     RoleCountSchema,
     RoleTokensSchema,
@@ -48,63 +45,102 @@ def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
     )
 
 
-def _build_config_details(config: object, strategy: str | None) -> dict:
-    """Build config details dict based on strategy type."""
-    if strategy == "per_operation":
-        return {
-            "complexity_evaluation": {
-                "model": config.complexity_evaluation.model,
-                "temperature": config.complexity_evaluation.temperature,
-                "max_tokens": config.complexity_evaluation.max_tokens,
-            },
-            "task_decomposition": {
-                "model": config.task_decomposition.model,
-                "temperature": config.task_decomposition.temperature,
-                "max_tokens": config.task_decomposition.max_tokens,
-            },
-            "tool": config.tool,
-        }
-    if strategy == "heuristic":
-        return {
-            "base": {
-                "model": config.base.model,
-                "temperature": config.base.temperature,
-                "max_tokens": config.base.max_tokens,
-            },
-            "tool": config.tool,
-        }
-    if strategy == "hybrid":
-        return {
-            "base": {
-                "model": config.base.model,
-                "temperature": config.base.temperature,
-                "max_tokens": config.base.max_tokens,
-            },
-            "overrides": config.overrides,
-            "tool": config.tool,
-        }
-    return {}
+def _agent_node_to_schema(node: AgentNode) -> AgentNodeSchema:
+    """Convert AgentNode to API schema recursively."""
+    return AgentNodeSchema(
+        id=str(node.id),
+        role=node.role,
+        status=node.status,
+        task_description=node.task_description,
+        parent_id=str(node.parent_id) if node.parent_id else None,
+        children=[_agent_node_to_schema(child) for child in node.children],
+    )
 
 
-@router.get("", response_model=list[AgentListItemSchema])
-async def list_boss_agents(event_store: EventStoreDep) -> list[AgentListItemSchema]:
-    """List all BOSS (root) agents.
+def _agent_summary_to_schema(summary: AgentSummary) -> AgentSummarySchema:
+    """Convert AgentSummary read model to API schema."""
+    return AgentSummarySchema(
+        id=str(summary.agent_id),
+        role=summary.role,
+        status=summary.status,
+        task_description=summary.task_description,
+        complexity=summary.complexity,
+        complexity_reasoning=summary.complexity_reasoning,
+        worker_tool=summary.worker_tool,
+        subtasks=[
+            SubtaskSummarySchema(
+                description=s.description,
+                child_id=str(s.child_id) if s.child_id else None,
+                child_status=s.child_status,
+            )
+            for s in summary.subtasks
+        ],
+        config_strategy=summary.config_strategy,
+        config_details=summary.config_details,
+        result=summary.result,
+        error_message=summary.error_message,
+    )
+
+
+# Pagination constants
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 1000
+
+
+@router.get("", response_model=PaginatedAgentListSchema)
+async def list_boss_agents(
+    event_store: EventStoreDep,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=MAX_LIMIT, description="Maximum number of agents to return"),
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of agents to skip"),
+    ] = 0,
+) -> PaginatedAgentListSchema:
+    """List all BOSS (root) agents with pagination.
 
     Returns only top-level agents that have no parent.
     These represent individual task runs.
 
+    Args:
+        limit: Maximum number of agents to return (1-1000, default 100).
+        offset: Number of agents to skip for pagination (default 0).
+
+    Returns:
+        Paginated list of BOSS agents with pagination metadata.
+
     Uses CQRS projection for efficient read model construction.
     """
-    # Single query to fetch all events grouped by aggregate
-    all_events_grouped = await event_store.get_all_events_grouped()
+    # Single query to fetch events grouped by aggregate with pagination
+    all_events_grouped = await event_store.get_all_events_grouped(
+        limit=limit + 1,  # Fetch one extra to check has_more
+        offset=offset,
+    )
 
     # Use projection to build lightweight read models (no AgentSession reconstruction)
     projection = AgentListProjection()
     agents = projection.project_all(all_events_grouped)
     boss_agents = projection.filter_boss_agents(agents)
 
+    # Check if there are more results
+    has_more = len(boss_agents) > limit
+    if has_more:
+        boss_agents = boss_agents[:limit]
+
     # Convert to API schemas
-    return [_agent_list_item_to_schema(agent) for agent in boss_agents]
+    items = [_agent_list_item_to_schema(agent) for agent in boss_agents]
+
+    return PaginatedAgentListSchema(
+        items=items,
+        pagination=PaginationMetaSchema(
+            limit=limit,
+            offset=offset,
+            total=offset + len(items) + (1 if has_more else 0),  # Approximate total
+            has_more=has_more,
+        ),
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentListItemSchema)
@@ -137,7 +173,7 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
     Returns:
         Complete hierarchy tree with all descendants.
 
-    Uses CQRS projection for efficient read model construction.
+    Uses CQRS projection and HierarchyBuilder for efficient construction.
     """
     # Single query to fetch all events
     all_events_grouped = await event_store.get_all_events_grouped()
@@ -146,54 +182,21 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
     if agent_id not in all_events_grouped:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Use projection to build lightweight read models (no AgentSession reconstruction)
+    # Use projection to build lightweight read models
     projection = AgentListProjection()
     agents_by_id = projection.project_all(all_events_grouped)
 
-    if agent_id not in agents_by_id:
+    # Build hierarchy tree using dedicated service
+    builder = HierarchyBuilder(agents_by_id)
+    try:
+        hierarchy = builder.build(agent_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Find all agents in this hierarchy via BFS in memory
-    hierarchy_agents: set[UUID] = set()
-    queue = [agent_id]
-    max_depth = 0
-    depth_map = {agent_id: 0}
-
-    while queue:
-        current_id = queue.pop(0)
-        if current_id in hierarchy_agents:
-            continue
-        hierarchy_agents.add(current_id)
-
-        if current_id in agents_by_id:
-            agent = agents_by_id[current_id]
-            current_depth = depth_map.get(current_id, 0)
-            max_depth = max(max_depth, current_depth)
-
-            for child_id in agent.child_ids:
-                if child_id not in hierarchy_agents and child_id in agents_by_id:
-                    queue.append(child_id)
-                    depth_map[child_id] = current_depth + 1
-
-    # Build tree recursively from read models
-    def build_node(aid: UUID) -> AgentNodeSchema:
-        agent = agents_by_id[aid]
-        children = [build_node(cid) for cid in agent.child_ids if cid in agents_by_id]
-        return AgentNodeSchema(
-            id=str(aid),
-            role=agent.role,
-            status=agent.status,
-            task_description=agent.task_description or "",
-            parent_id=str(agent.parent_id) if agent.parent_id else None,
-            children=children,
-        )
-
-    root_node = build_node(agent_id)
-
     return AgentHierarchySchema(
-        root=root_node,
-        total_agents=len(hierarchy_agents),
-        depth=max_depth,
+        root=_agent_node_to_schema(hierarchy.root),
+        total_agents=hierarchy.total_agents,
+        depth=hierarchy.depth,
     )
 
 
@@ -214,78 +217,13 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
     Returns:
         AgentSummarySchema with aggregated agent information.
     """
-    events = await event_store.get_events(agent_id)
-    if not events:
+    service = AgentSummaryService(event_store)
+    summary = await service.build(agent_id)
+
+    if summary is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    agent = AgentSession.load_from_history(events)
-
-    # Extract data from events for the projection
-    complexity: str | None = None
-    complexity_reasoning: str | None = None
-    worker_tool: str | None = None
-    subtasks_list: list[SubtaskSummarySchema] = []
-    child_id_map: dict[int, UUID] = {}  # Map subtask index to child_id
-
-    for event in events:
-        if isinstance(event, ComplexityEvaluated):
-            complexity = event.complexity
-            complexity_reasoning = event.reasoning
-
-        elif isinstance(event, CodeGenerationStarted):
-            worker_tool = event.tool_name
-
-        elif isinstance(event, SubtasksDefined):
-            # Store subtasks - we'll match children later
-            for subtask in event.subtasks:
-                subtasks_list.append(
-                    SubtaskSummarySchema(
-                        description=subtask.description,
-                        child_id=None,
-                        child_status=None,
-                    )
-                )
-
-        elif isinstance(event, ChildSpawned):
-            # Match child to subtask by index (children spawned in subtask order)
-            child_idx = len(child_id_map)
-            child_id_map[child_idx] = event.child_id
-
-    # Update subtasks with child IDs and statuses
-    for idx, child_id in child_id_map.items():
-        if idx < len(subtasks_list):
-            child_events = await event_store.get_events(child_id)
-            if child_events:
-                child_agent = AgentSession.load_from_history(child_events)
-                subtasks_list[idx] = SubtaskSummarySchema(
-                    description=subtasks_list[idx].description,
-                    child_id=str(child_id),
-                    child_status=child_agent.status.value,
-                )
-
-    # Extract config details
-    config_strategy: str | None = None
-    config_details: dict = {}
-
-    if hasattr(agent, "config") and agent.config:
-        config = agent.config
-        config_strategy = getattr(config, "strategy", None)
-        config_details = _build_config_details(config, config_strategy)
-
-    return AgentSummarySchema(
-        id=str(agent.session_id),
-        role=agent.role.value,
-        status=agent.status.value,
-        task_description=agent.task_description or "",
-        complexity=complexity,
-        complexity_reasoning=complexity_reasoning,
-        worker_tool=worker_tool,
-        subtasks=subtasks_list,
-        config_strategy=config_strategy,
-        config_details=config_details,
-        result=agent.result,
-        error_message=agent.error_message,
-    )
+    return _agent_summary_to_schema(summary)
 
 
 def _projection_summary_to_schema(summary: ProjectionSummary) -> ExecutionSummarySchema:

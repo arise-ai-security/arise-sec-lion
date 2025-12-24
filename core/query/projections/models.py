@@ -207,3 +207,44 @@ class ProjectionSummary:
             cost=None,
             execution_time=None,
         )
+
+
+@dataclass(frozen=True)
+class SubtaskSummary:
+    """Read model for a subtask with optional child agent info."""
+
+    description: str
+    child_id: UUID | None = None
+    child_status: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentSummary:
+    """Lightweight read model for agent summary projection.
+
+    This is a CQRS read model that aggregates data from multiple events
+    to provide a comprehensive view of an agent's state and configuration.
+    """
+
+    agent_id: UUID
+    role: str
+    status: str
+    task_description: str
+
+    # Complexity evaluation (from ComplexityEvaluated event)
+    complexity: str | None = None
+    complexity_reasoning: str | None = None
+
+    # For WORKER agents (from CodeGenerationStarted event)
+    worker_tool: str | None = None
+
+    # For MANAGER agents (from SubtasksDefined event)
+    subtasks: tuple[SubtaskSummary, ...] = field(default_factory=tuple)
+
+    # Configuration
+    config_strategy: str | None = None
+    config_details: dict = field(default_factory=dict)
+
+    # Result/Error
+    result: str | None = None
+    error_message: str | None = None
