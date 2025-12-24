@@ -552,29 +552,13 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                     </div>
                   )}
 
-                  {/* Work Analysis (comprehensive) */}
+                  {/* Work Analysis (comprehensive - includes approach and challenges) */}
                   {ctx.work_analysis && (
                     <div>
                       <p className="text-xs font-medium text-gray-600 dark:text-gray-400">How It Was Accomplished:</p>
                       <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-white/50 dark:bg-gray-800/50 p-2 rounded max-h-48 overflow-y-auto">
                         {ctx.work_analysis}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Approach */}
-                  {ctx.approach && (
-                    <div>
-                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Approach:</p>
-                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.approach}</p>
-                    </div>
-                  )}
-
-                  {/* Challenges */}
-                  {ctx.challenges && (
-                    <div>
-                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Challenges:</p>
-                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.challenges}</p>
                     </div>
                   )}
 
@@ -657,27 +641,7 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                         <p className="text-xs text-gray-700 dark:text-gray-300">{entry.objective}</p>
                       </div>
 
-                      {/* Work Analysis - How it was accomplished */}
-                      {entry.work_analysis && (
-                        <div>
-                          <p className="text-xs font-medium text-green-600 dark:text-green-400">How It Was Accomplished:</p>
-                          <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-green-50 dark:bg-green-900/20 p-2 rounded max-h-40 overflow-y-auto">
-                            {entry.work_analysis}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Approach */}
-                      {entry.approach && (
-                        <div>
-                          <p className="text-xs font-medium text-blue-600 dark:text-blue-400">Approach Used:</p>
-                          <p className="text-xs text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
-                            {entry.approach}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* How This Can Benefit Current Work */}
+                      {/* Why This Is Relevant */}
                       {entry.justification && (
                         <div>
                           <p className="text-xs font-medium text-purple-600 dark:text-purple-400">Why This Is Relevant:</p>
@@ -685,11 +649,13 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                         </div>
                       )}
 
-                      {/* Challenges - What to avoid */}
-                      {entry.challenges && (
-                        <div className="bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-200 dark:border-red-700">
-                          <p className="text-xs font-medium text-red-600 dark:text-red-400">⚠️ Challenges to Avoid:</p>
-                          <p className="text-xs text-gray-700 dark:text-gray-300">{entry.challenges}</p>
+                      {/* Work Analysis - How it was accomplished (comprehensive - includes approach and challenges) */}
+                      {entry.work_analysis && (
+                        <div>
+                          <p className="text-xs font-medium text-green-600 dark:text-green-400">How It Was Accomplished:</p>
+                          <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-green-50 dark:bg-green-900/20 p-2 rounded max-h-40 overflow-y-auto">
+                            {entry.work_analysis}
+                          </div>
                         </div>
                       )}
 
