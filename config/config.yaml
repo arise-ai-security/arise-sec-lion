@@ -34,6 +34,21 @@ output:
   log_level: INFO
   directory: ./output
 
+# CORS (Cross-Origin Resource Sharing) settings
+cors:
+  allowed_origins:
+    - "http://localhost:5173"  # Vite dev server
+    - "http://localhost:3000"  # Alternative React dev port
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "*"
+  allow_credentials: true
+
 # Security benchmark generation settings
 security:
   enabled: true

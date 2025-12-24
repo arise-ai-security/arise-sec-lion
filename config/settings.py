@@ -144,6 +144,19 @@ class SecurityConfig(BaseModel):
     sanitizer_flags: str = "-fsanitize=address,undefined -g"
 
 
+class CorsConfig(BaseModel):
+    """CORS (Cross-Origin Resource Sharing) settings."""
+
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"]
+    )
+    allowed_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
+    allowed_headers: list[str] = Field(default_factory=lambda: ["*"])
+    allow_credentials: bool = True
+
+
 class Settings(BaseSettings):
     """Root config: secrets from env, everything else from YAML."""
 
@@ -155,6 +168,7 @@ class Settings(BaseSettings):
     orchestration: OrchestrationConfig
     output: OutputConfig
     security: SecurityConfig = SecurityConfig()  # Optional with defaults
+    cors: CorsConfig = CorsConfig()  # Optional with defaults
 
     @classmethod
     def _build_from_config(cls, config: dict[str, Any]) -> "Settings":
@@ -180,6 +194,9 @@ class Settings(BaseSettings):
         # Security config is optional with defaults
         security_config = config.get("security", {})
 
+        # CORS config is optional with defaults
+        cors_config = config.get("cors", {})
+
         return cls(
             database=DatabaseConfig(**db_config),
             llm=LLMConfig(**config.get("llm", {})),
@@ -187,6 +204,7 @@ class Settings(BaseSettings):
             orchestration=OrchestrationConfig(**config.get("orchestration", {})),
             output=OutputConfig(**config.get("output", {})),
             security=SecurityConfig(**security_config) if security_config else SecurityConfig(),
+            cors=CorsConfig(**cors_config) if cors_config else CorsConfig(),
         )
 
     @classmethod

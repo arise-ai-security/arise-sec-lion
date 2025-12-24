@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app(
     title: str = "Arise Sec Lion",
     static_dir: Path | None = None,
+    settings: Settings | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -74,10 +75,15 @@ def create_app(
         title: Application title for OpenAPI docs.
         static_dir: Path to static files directory for React app.
                    If not provided, defaults to query/web/dist if it exists.
+        settings: Application settings. If not provided, loads from config files.
 
     Returns:
         Configured FastAPI application instance.
     """
+    # Load settings if not provided
+    if settings is None:
+        settings = Settings.load()
+
     # Default to web dist directory if not specified
     if static_dir is None:
         default_static = Path(__file__).parent.parent / "web" / "dist"
@@ -93,13 +99,13 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # CORS middleware for development (React dev server on different port)
+    # CORS middleware (configured via config.yaml)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:3000"],  # Vite default ports
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=settings.cors.allowed_origins,
+        allow_credentials=settings.cors.allow_credentials,
+        allow_methods=settings.cors.allowed_methods,
+        allow_headers=settings.cors.allowed_headers,
     )
 
     # Include API routers

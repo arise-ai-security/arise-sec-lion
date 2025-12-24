@@ -1,6 +1,7 @@
 """Configuration via Pydantic Settings with phase-specific YAML support."""
 
 from .settings import (
+    CorsConfig,
     DatabaseConfig,
     LLMConfig,
     OrchestrationConfig,
@@ -12,6 +13,7 @@ from .settings import (
 
 
 __all__ = [
+    "CorsConfig",
     "DatabaseConfig",
     "LLMConfig",
     "OrchestrationConfig",
