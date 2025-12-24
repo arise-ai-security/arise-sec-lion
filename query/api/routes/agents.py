@@ -13,6 +13,7 @@ from core.domain.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    ContextPublished,
     SubtasksDefined,
 )
 from core.domain.model import AgentSession
@@ -28,9 +29,12 @@ from query.api.schemas import (
     AggregatedSummarySchema,
     BudgetInfoSchema,
     ChildWorkerReportSchema,
+    ContextEntrySchema,
     CostBreakdownSchema,
     ExecutionSummarySchema,
     ExecutionTimingSchema,
+    InheritedContextSchema,
+    PublishedContextSchema,
     RoleCostBreakdownSchema,
     RoleCountSchema,
     RoleTokensSchema,
@@ -257,6 +261,9 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
     initial_budget: float = 0.0
     budget_source: str | None = None
 
+    # Context dashboard tracking
+    published_context_list: list[PublishedContextSchema] = []
+
     for event in events:
         if isinstance(event, ComplexityEvaluated):
             complexity = event.complexity
@@ -299,6 +306,18 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
             # Match child to subtask by index (children spawned in subtask order)
             child_idx = len(child_id_map)
             child_id_map[child_idx] = event.child_id
+
+        elif isinstance(event, ContextPublished):
+            # Track context published by this supervisor
+            published_context_list.append(
+                PublishedContextSchema(
+                    entry_id=str(event.context_entry_id),
+                    work_title=event.work_title,
+                    worker_id=str(event.worker_id),
+                    objective=event.objective,
+                    published_at=event.occurred_at,
+                )
+            )
 
     # Update subtasks with child IDs and statuses
     for idx, child_id in child_id_map.items():
@@ -469,6 +488,16 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
             key_challenges="\n\n".join(challenge_parts) if challenge_parts else "",
         )
 
+    # For WORKER agents, create inherited context info (showing it was enabled)
+    inherited_context: InheritedContextSchema | None = None
+    if agent.role.value == "worker":
+        # Workers may have inherited context - we show this was available
+        # The actual inherited entries would require querying the context dashboard
+        inherited_context = InheritedContextSchema(
+            entries=[],  # Would require context dashboard query
+            total_available=0,  # Placeholder - dashboard not available in query API
+        )
+
     return AgentSummarySchema(
         id=str(agent.session_id),
         role=agent.role.value,
@@ -488,6 +517,8 @@ async def get_agent_summary(agent_id: UUID, event_store: EventStoreDep) -> Agent
         budget=budget_info,
         task_queue=task_queue_items,
         queue_size=len(task_queue_items),
+        published_context=published_context_list,
+        inherited_context=inherited_context,
     )
 
 

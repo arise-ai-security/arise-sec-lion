@@ -608,3 +608,17 @@ class LimitEnforced(DomainEvent):
     limit_value: int | float
     attempted_value: int | float
     action_taken: str  # "forced_worker_role", "rejected_children", "halted"
+
+
+class ContextPublished(DomainEvent):
+    """Context entry published to the global context dashboard.
+
+    Emitted when a supervisor receives a ChildCompleted event and
+    publishes the work context for cross-session learning.
+    """
+
+    work_title: str
+    context_entry_id: UUID
+    worker_id: UUID
+    objective: str
+    justification_summary: str

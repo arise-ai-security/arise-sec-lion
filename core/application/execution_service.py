@@ -28,6 +28,7 @@ from core.domain.events import (
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
+from core.ports.context_dashboard_port import ContextDashboardPort
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
 from core.ports.reward_mechanism_port import RewardMechanismPort
@@ -89,6 +90,7 @@ class AgentExecutionService:
         prompt_builder: PromptBuilder | None = None,
         reward_mechanism: RewardMechanismPort | None = None,
         verification_heuristics: VerificationHeuristicsPort | None = None,
+        context_dashboard: ContextDashboardPort | None = None,
         model_config: dict[str, str] | None = None,
         subordinate_models: list[str] | None = None,
         max_retries: int = 3,
@@ -120,6 +122,7 @@ class AgentExecutionService:
         self.prompt_builder = prompt_builder or PromptBuilder(default_tool=default_worker_tool)
         self.reward_mechanism = reward_mechanism
         self.verification_heuristics = verification_heuristics
+        self.context_dashboard = context_dashboard
         self.max_retries = max_retries
         self.poll_interval = poll_interval
         self.output_directory = output_directory
@@ -183,6 +186,231 @@ class AgentExecutionService:
 
         except OSError:
             return None
+
+    async def _get_relevant_context(
+        self,
+        agent: AgentSession,
+        max_entries: int = 5,
+    ) -> str | None:
+        """Query context dashboard for relevant previous work.
+
+        Uses LLM to evaluate which context entries are relevant to the current task.
+
+        Args:
+            agent: The worker agent that needs context.
+            max_entries: Maximum number of entries to include.
+
+        Returns:
+            Formatted context string or None if no relevant context found.
+        """
+        if self.context_dashboard is None:
+            return None
+
+        try:
+            # Get all available titles
+            titles = await self.context_dashboard.get_all_titles()
+            if not titles:
+                return None
+
+            # Limit to most recent entries for efficiency
+            titles = titles[:100]
+
+            # Build relevance query prompt
+            prompt = self.prompt_builder.build_context_relevance_prompt(
+                task_description=agent.task_description,
+                available_titles=titles,
+                justification=agent.supervisor_justification,
+                max_entries=max_entries,
+            )
+
+            # Query LLM for relevant entry IDs
+            llm_config = {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 500}
+            response = await self.llm_port.query(prompt, llm_config)
+
+            # Parse response to get entry IDs
+            relevant_ids = self._parse_relevant_ids(response, max_entries)
+            if not relevant_ids:
+                return None
+
+            # Fetch full entries
+            entries = await self.context_dashboard.get_entries_by_ids(relevant_ids)
+
+            # Format as context string
+            return self._format_context_for_prompt(entries)
+
+        except Exception:
+            # Don't fail worker execution if context retrieval fails
+            return None
+
+    def _parse_relevant_ids(self, response: str, max_entries: int) -> list[UUID]:
+        """Parse LLM response to extract relevant entry IDs."""
+        import json
+        import re
+
+        # Extract JSON array from response
+        match = re.search(r"\[.*?\]", response, re.DOTALL)
+        if not match:
+            return []
+
+        try:
+            ids = json.loads(match.group())
+            return [UUID(id_str) for id_str in ids[:max_entries] if id_str]
+        except (json.JSONDecodeError, ValueError):
+            return []
+
+    def _format_context_for_prompt(
+        self,
+        entries: list,  # list[ContextEntry]
+    ) -> str:
+        """Format context entries for injection into worker prompt."""
+        if not entries:
+            return ""
+
+        lines = [
+            "<RELEVANT_CONTEXT>",
+            "The following completed work from previous sessions may be helpful:\n",
+        ]
+
+        for i, entry in enumerate(entries, 1):
+            lines.append(f"## {i}. {entry.work_title}")
+            lines.append(f"**Objective:** {entry.objective}")
+            lines.append(f"**Approach:** {entry.worker_report.approach}")
+            if entry.worker_report.challenges:
+                lines.append(f"**Challenges Encountered:** {entry.worker_report.challenges}")
+            lines.append("")
+
+        lines.append("Use this context to inform your approach, avoid repeating mistakes,")
+        lines.append("and leverage successful patterns from previous work.")
+        lines.append("</RELEVANT_CONTEXT>")
+
+        return "\n".join(lines)
+
+    async def _publish_worker_context(
+        self,
+        parent: AgentSession,
+        worker: AgentSession,
+    ) -> None:
+        """Publish completed worker context to the global dashboard.
+
+        Called when a supervisor receives a completed worker report.
+
+        Args:
+            parent: The supervisor (BOSS/MANAGER) that received the completion.
+            worker: The worker that completed the task.
+        """
+        from datetime import UTC, datetime
+
+        from core.domain.context_entry import ContextEntry
+
+        if self.context_dashboard is None:
+            return
+
+        # Get supervisor's justification for this worker
+        justification = worker.supervisor_justification
+        if justification is None or worker.worker_report is None:
+            return  # Skip if no justification or report
+
+        # Generate descriptive work title from objective
+        work_title = self._generate_work_title(justification, worker.task_description)
+
+        # Synthesize work analysis from worker report
+        work_analysis = self._synthesize_work_analysis(worker.worker_report)
+
+        # Get root session ID (BOSS) - walk up the tree
+        root_id = await self._get_root_session_id(worker.session_id)
+
+        entry = ContextEntry(
+            work_title=work_title,
+            objective=justification.objective,
+            justification=justification.split_reason,
+            work_analysis=work_analysis,
+            worker_report=worker.worker_report,
+            session_id=root_id,
+            worker_id=worker.session_id,
+            created_at=datetime.now(UTC),
+            tags=self._extract_tags(worker.task_description),
+        )
+
+        try:
+            entry_id = await self.context_dashboard.publish(entry)
+
+            # Record audit event on parent
+            parent.record_context_published(
+                entry_id=entry_id,
+                work_title=work_title,
+                worker_id=worker.session_id,
+                objective=justification.objective,
+                justification_summary=justification.split_reason[:500],
+            )
+        except Exception:
+            # Don't fail parent notification if context publishing fails
+            pass
+
+    def _generate_work_title(
+        self,
+        justification,  # SubtaskJustification
+        task_description: str,
+    ) -> str:
+        """Generate a descriptive title for the work."""
+        # Use objective as primary title, truncate to reasonable length
+        title = justification.objective
+        if len(title) > 200:
+            title = title[:197] + "..."
+        return title
+
+    def _synthesize_work_analysis(self, report) -> str:  # report: WorkerReport
+        """Synthesize work analysis from worker report."""
+        parts = []
+        if report.approach:
+            parts.append(f"Approach: {report.approach}")
+        if report.reasoning:
+            parts.append(f"Reasoning: {report.reasoning}")
+        if report.deliverables:
+            parts.append(f"Deliverables: {report.deliverables}")
+        if report.challenges:
+            parts.append(f"Challenges: {report.challenges}")
+        return "\n".join(parts)
+
+    def _extract_tags(self, task_description: str) -> list[str]:
+        """Extract relevant tags from task description."""
+        tags = []
+        keywords = [
+            "python",
+            "javascript",
+            "typescript",
+            "react",
+            "api",
+            "database",
+            "security",
+            "test",
+            "docker",
+            "config",
+        ]
+        lower_desc = task_description.lower()
+        for keyword in keywords:
+            if keyword in lower_desc:
+                tags.append(keyword)
+        return tags[:5]  # Limit to 5 tags
+
+    async def _get_root_session_id(self, session_id: UUID) -> UUID:
+        """Walk up the parent chain to find the root (BOSS) session ID."""
+        current_id = session_id
+        visited = {current_id}
+
+        while True:
+            events = await self.event_store.get_events(current_id)
+            if not events:
+                return current_id  # Can't find parent, return current
+
+            agent = AgentSession.load_from_history(events)
+            if agent.parent_id is None:
+                return current_id  # Found the root
+
+            if agent.parent_id in visited:
+                return current_id  # Cycle detection
+
+            visited.add(agent.parent_id)
+            current_id = agent.parent_id
 
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one workflow step: load → dispatch → persist with OCC retry."""
@@ -263,10 +491,13 @@ class AgentExecutionService:
 
         elif agent.role == AgentRole.WORKER:
             workspace_context = self._get_workspace_context()
+            # Query context dashboard for relevant cross-session context
+            cross_session_context = await self._get_relevant_context(agent)
             await agent.execute_task(
                 self.worker_tool_port,
                 working_directory=self.working_directory,
                 workspace_context=workspace_context,
+                cross_session_context=cross_session_context,
             )
 
         else:
@@ -392,6 +623,13 @@ class AgentExecutionService:
                 agent.result or "",
                 worker_report=agent.worker_report,
             )
+            # Publish worker context to dashboard for cross-session learning
+            if (
+                agent.role == AgentRole.WORKER
+                and agent.worker_report is not None
+                and self.context_dashboard is not None
+            ):
+                await self._publish_worker_context(parent, agent)
         else:
             parent.handle_child_failure(
                 child_id=agent.session_id,
@@ -622,9 +860,16 @@ class AgentExecutionService:
     async def initialize(self) -> None:
         await self.event_store.connect()
         await self.event_store.initialize_schema()
+        # Initialize context dashboard if enabled
+        if self.context_dashboard is not None:
+            await self.context_dashboard.connect()
+            await self.context_dashboard.initialize_schema()
 
     async def cleanup(self) -> None:
         await self.event_store.disconnect()
+        # Cleanup context dashboard if enabled
+        if self.context_dashboard is not None:
+            await self.context_dashboard.disconnect()
 
     async def create_boss_agent(self, task_description: str) -> UUID:
         """Create root BOSS agent with task. Returns agent UUID."""

@@ -144,6 +144,37 @@ export interface BudgetInfo {
   source: string | null;
 }
 
+// =============================================================================
+// Context Dashboard Types (Cross-Session Knowledge Sharing)
+// =============================================================================
+
+/** Context entry from the global context dashboard. */
+export interface ContextEntry {
+  entry_id: string;
+  work_title: string;
+  objective: string;
+  justification: string;
+  approach: string | null;
+  challenges: string | null;
+  created_at: string;
+  tags: string[];
+}
+
+/** Context published by a supervisor to the dashboard. */
+export interface PublishedContext {
+  entry_id: string;
+  work_title: string;
+  worker_id: string;
+  objective: string;
+  published_at: string;
+}
+
+/** Context inherited by a worker from previous sessions. */
+export interface InheritedContext {
+  entries: ContextEntry[];
+  total_available: number;
+}
+
 export interface AgentSummary {
   id: string;
   role: AgentRole;
@@ -183,6 +214,12 @@ export interface AgentSummary {
   // Task queue
   task_queue: TaskQueueItem[];
   queue_size: number;
+
+  // Context dashboard - published by supervisor (for BOSS/MANAGER)
+  published_context: PublishedContext[];
+
+  // Context dashboard - inherited by worker (for WORKER)
+  inherited_context: InheritedContext | null;
 }
 
 // System Configuration types

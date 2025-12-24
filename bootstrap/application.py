@@ -54,6 +54,7 @@ def get_application(
         event_store=infrastructure.event_store,
         llm_port=infrastructure.llm_adapter,
         worker_tool_port=infrastructure.worker_tool,
+        context_dashboard=infrastructure.context_dashboard,
         system_limits=config.system_limits,
         model_config=config.model_config,
         max_retries=config.max_retries,

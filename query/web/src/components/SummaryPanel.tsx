@@ -510,6 +510,77 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
           </div>
         </Section>
       )}
+
+      {/* Published Context (for BOSS/MANAGER - context they contributed to dashboard) */}
+      {summary.published_context && summary.published_context.length > 0 && (
+        <Section title="📤 Context Published to Dashboard">
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              This supervisor published {summary.published_context.length} context{summary.published_context.length !== 1 ? 's' : ''} to the global knowledge dashboard for cross-session learning.
+            </p>
+            {summary.published_context.map((ctx, idx) => (
+              <div
+                key={ctx.entry_id}
+                className="bg-purple-50 dark:bg-purple-900/20 p-2 rounded border-l-2 border-purple-400"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="text-purple-500 text-sm">📚</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                      {ctx.work_title}
+                    </p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      {ctx.objective}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-gray-400">
+                        Worker: {ctx.worker_id.substring(0, 8)}...
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(ctx.published_at).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Inherited Context (for WORKER - context they received from dashboard) */}
+      {summary.inherited_context && summary.role.toLowerCase() === 'worker' && (
+        <Section title="📥 Context from Knowledge Dashboard">
+          <div className="bg-cyan-50 dark:bg-cyan-900/20 p-2 rounded border-l-2 border-cyan-400">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-cyan-500 text-lg">🧠</span>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                Cross-Session Learning Enabled
+              </p>
+            </div>
+            <p className="text-xs text-gray-600 dark:text-gray-400">
+              This worker had access to the global context dashboard. Relevant knowledge from
+              previous sessions was automatically identified and provided to help with this task.
+            </p>
+            {summary.inherited_context.entries.length > 0 ? (
+              <div className="mt-2 space-y-1">
+                <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400">
+                  Inherited {summary.inherited_context.entries.length} relevant context(s):
+                </p>
+                {summary.inherited_context.entries.map((entry) => (
+                  <div key={entry.entry_id} className="text-xs text-gray-600 dark:text-gray-400 pl-2">
+                    • {entry.work_title}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
+                LLM evaluated available contexts for relevance to this task.
+              </p>
+            )}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }

@@ -19,6 +19,7 @@ from core.domain.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    ContextPublished,
     DomainEvent,
     FirstSuccessRecorded,
     StatusChanged,
@@ -80,6 +81,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "VerifierSpawned": VerifierSpawned,
     "VerificationCompleted": VerificationCompleted,
     "VerificationHeuristicEvaluated": VerificationHeuristicEvaluated,
+    # Context sharing events
+    "ContextPublished": ContextPublished,
 }
 
 

@@ -1,0 +1,41 @@
+<CONTEXT_RELEVANCE_EVALUATION>
+You are evaluating which previous work contexts are relevant to a new task.
+
+## Your Current Task
+{{ task_description }}
+
+{% if justification %}
+## Supervisor Context
+- Objective: {{ justification.objective }}
+- Why assigned: {{ justification.split_reason }}
+{% if justification.plan %}- Expected approach: {{ justification.plan }}{% endif %}
+{% endif %}
+
+## Available Context Entries
+The following work has been completed in previous sessions. Evaluate which entries might provide useful context for your task.
+
+{% for entry_id, title in available_titles %}
+{{ loop.index }}. [{{ entry_id }}] {{ title }}
+{% endfor %}
+
+## Instructions
+1. Review each context entry title
+2. Identify entries that relate to your task (similar technologies, patterns, approaches, problem domains)
+3. Return ONLY the entry IDs that are relevant (maximum {{ max_entries }})
+4. Return empty list if none are relevant
+5. Prioritize entries that could help you:
+   - Avoid repeating past mistakes
+   - Leverage successful approaches
+   - Understand similar implementation patterns
+
+## Output Format
+Return a JSON array of relevant entry IDs (UUID strings):
+```json
+["uuid-1", "uuid-2"]
+```
+
+If none are relevant:
+```json
+[]
+```
+</CONTEXT_RELEVANCE_EVALUATION>

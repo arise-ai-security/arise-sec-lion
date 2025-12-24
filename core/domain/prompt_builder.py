@@ -320,3 +320,33 @@ class PromptBuilder:
             agent_id=agent_id,
             parent_task=parent_task,
         )
+
+    def build_context_relevance_prompt(
+        self,
+        task_description: str,
+        available_titles: list[tuple[UUID, str]],
+        justification: "SubtaskJustification | None" = None,
+        max_entries: int = 5,
+    ) -> str:
+        """Build prompt for LLM to evaluate context relevance.
+
+        Args:
+            task_description: The task the worker will execute.
+            available_titles: List of (entry_id, work_title) tuples from context dashboard.
+            justification: Supervisor's justification for this task.
+            max_entries: Maximum number of relevant entries to return.
+
+        Returns:
+            Prompt string for context relevance evaluation.
+        """
+        try:
+            template = self.env.get_template("context/relevance_query.j2")
+            return template.render(
+                task_description=task_description,
+                available_titles=available_titles,
+                justification=justification,
+                max_entries=max_entries,
+            )
+        except TemplateNotFound as e:
+            msg = f"Required template not found: {e.name}"
+            raise TemplateNotFound(msg) from e

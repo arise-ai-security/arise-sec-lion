@@ -23,6 +23,7 @@ from core.domain.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    ContextPublished,
     DomainEvent,
     FirstSuccessRecorded,
     StatusChanged,
@@ -313,8 +314,16 @@ class AgentSession:
         tool_port: WorkerToolPort,
         working_directory: str | None = None,
         workspace_context: str | None = None,
+        cross_session_context: str | None = None,
     ) -> None:
-        """For WORKER: execute task using worker tool (Claude Code, OpenHands)."""
+        """For WORKER: execute task using worker tool (Claude Code, OpenHands).
+
+        Args:
+            tool_port: Port for worker tool execution.
+            working_directory: Working directory for the tool.
+            workspace_context: File listing from shared workspace.
+            cross_session_context: Relevant context from previous sessions.
+        """
         assert self.role == AgentRole.WORKER, f"Requires WORKER, got {self.role}"
         assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
 
@@ -371,6 +380,10 @@ class AgentSession:
             supervisor_context += "</SUPERVISOR_EXPECTATIONS>\n\n"
 
         enhanced_description = f"{worker_system_prompt}{supervisor_context}<TASK>\n{self.task_description}\n</TASK>"
+
+        # Add cross-session context if available (from context dashboard)
+        if cross_session_context:
+            enhanced_description += f"\n\n{cross_session_context}"
 
         if workspace_context:
             enhanced_description += (
@@ -522,6 +535,38 @@ class AgentSession:
             child_result = self.child_results.get(child_id, "No result")
             lines.append(f"- {child_result}")
         return "\n".join(lines)
+
+    def record_context_published(
+        self,
+        entry_id: UUID,
+        work_title: str,
+        worker_id: UUID,
+        objective: str = "",
+        justification_summary: str = "",
+    ) -> None:
+        """Record that context was published for a completed worker.
+
+        This creates an audit trail event for context sharing. The actual
+        context entry is stored in the context dashboard (external store).
+
+        Args:
+            entry_id: UUID of the context entry in the dashboard.
+            work_title: Descriptive title for the work.
+            worker_id: UUID of the worker that completed the task.
+            objective: What the subtask aimed to achieve.
+            justification_summary: Summary of why task was assigned.
+        """
+        event = ContextPublished(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            work_title=work_title,
+            context_entry_id=entry_id,
+            worker_id=worker_id,
+            objective=objective,
+            justification_summary=justification_summary,
+        )
+        self._apply(event)
+        self._changes.append(event)
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
@@ -817,6 +862,11 @@ class AgentSession:
         """
         # Insert revised subtask at the head of the queue
         self.task_queue.insert(0, event.revised_subtask)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ContextPublished) -> None:
+        """Apply ContextPublished event (audit trail only, no state change)."""
         self.version += 1
 
     def _initialize_defaults(self, session_id: UUID) -> None:

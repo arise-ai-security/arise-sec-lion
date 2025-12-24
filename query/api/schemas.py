@@ -187,6 +187,46 @@ class BudgetInfoSchema(BaseModel):
     source: str | None = Field(None, description="Budget source (initial/parent)")
 
 
+# =============================================================================
+# Context Dashboard Schemas (Cross-Session Knowledge Sharing)
+# =============================================================================
+
+
+class ContextEntrySchema(BaseModel):
+    """Schema for a context entry from the context dashboard."""
+
+    entry_id: str = Field(..., description="Context entry UUID")
+    work_title: str = Field(..., description="Descriptive title for the work")
+    objective: str = Field(..., description="What the task aimed to achieve")
+    justification: str = Field(..., description="Why this task was assigned")
+    approach: str | None = Field(None, description="How the worker approached the task")
+    challenges: str | None = Field(None, description="Challenges encountered")
+    created_at: datetime = Field(..., description="When this entry was created")
+    tags: list[str] = Field(default_factory=list, description="Tags for categorization")
+
+
+class PublishedContextSchema(BaseModel):
+    """Schema for context published by a supervisor."""
+
+    entry_id: str = Field(..., description="Context entry UUID")
+    work_title: str = Field(..., description="Descriptive title for the work")
+    worker_id: str = Field(..., description="Worker that completed the task")
+    objective: str = Field(..., description="What the task aimed to achieve")
+    published_at: datetime = Field(..., description="When this was published")
+
+
+class InheritedContextSchema(BaseModel):
+    """Schema for context inherited by a worker from previous sessions."""
+
+    entries: list[ContextEntrySchema] = Field(
+        default_factory=list,
+        description="Context entries that were relevant to this worker's task",
+    )
+    total_available: int = Field(
+        0, description="Total entries available in dashboard when queried"
+    )
+
+
 class AgentSummarySchema(BaseModel):
     """CQRS projection schema for agent node summary.
 
@@ -248,6 +288,18 @@ class AgentSummarySchema(BaseModel):
         default_factory=list, description="Pending tasks in queue"
     )
     queue_size: int = Field(0, description="Number of tasks in queue")
+
+    # Context dashboard - published by supervisor (for BOSS/MANAGER)
+    published_context: list[PublishedContextSchema] = Field(
+        default_factory=list,
+        description="Context entries this supervisor published to the dashboard",
+    )
+
+    # Context dashboard - inherited by worker (for WORKER)
+    inherited_context: InheritedContextSchema | None = Field(
+        None,
+        description="Context this worker inherited from previous sessions",
+    )
 
 
 # System Configuration Schema
