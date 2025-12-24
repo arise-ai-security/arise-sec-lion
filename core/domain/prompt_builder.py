@@ -350,3 +350,72 @@ class PromptBuilder:
         except TemplateNotFound as e:
             msg = f"Required template not found: {e.name}"
             raise TemplateNotFound(msg) from e
+
+    def build_context_key_prompt(
+        self,
+        task_description: str,
+        objective: str,
+        deliverables: str,
+        approach: str,
+    ) -> str:
+        """Build prompt for generating a concise context dashboard key.
+
+        Args:
+            task_description: The original task description.
+            objective: What the task aimed to achieve.
+            deliverables: What was produced.
+            approach: How it was accomplished.
+
+        Returns:
+            Prompt string for key generation.
+        """
+        try:
+            template = self.env.get_template("context/generate_key.j2")
+            return template.render(
+                task_description=task_description,
+                objective=objective,
+                deliverables=deliverables,
+                approach=approach,
+            )
+        except TemplateNotFound as e:
+            msg = f"Required template not found: {e.name}"
+            raise TemplateNotFound(msg) from e
+
+    def build_context_analysis_prompt(
+        self,
+        task_description: str,
+        objective: str,
+        justification: str,
+        approach: str,
+        reasoning: str,
+        deliverables: str,
+        challenges: str,
+    ) -> str:
+        """Build prompt for synthesizing comprehensive work analysis.
+
+        Args:
+            task_description: The original task description.
+            objective: What the task aimed to achieve.
+            justification: Why this task was assigned.
+            approach: How it was accomplished.
+            reasoning: Reasoning behind decisions.
+            deliverables: What was produced.
+            challenges: Challenges encountered.
+
+        Returns:
+            Prompt string for comprehensive analysis synthesis.
+        """
+        try:
+            template = self.env.get_template("context/synthesize_analysis.j2")
+            return template.render(
+                task_description=task_description,
+                objective=objective,
+                justification=justification,
+                approach=approach,
+                reasoning=reasoning,
+                deliverables=deliverables,
+                challenges=challenges,
+            )
+        except TemplateNotFound as e:
+            msg = f"Required template not found: {e.name}"
+            raise TemplateNotFound(msg) from e

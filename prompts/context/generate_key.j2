@@ -1,0 +1,39 @@
+{# Generate a concise, informative key for the context dashboard entry #}
+You are generating a concise key for a knowledge sharing dashboard. The key should capture the essence of completed work so other agents can quickly identify relevant entries.
+
+## Completed Task Information
+
+**Original Task:**
+{{ task_description }}
+
+**Objective:**
+{{ objective }}
+
+**What Was Delivered:**
+{{ deliverables }}
+
+**Approach Used:**
+{{ approach }}
+
+## Instructions
+
+Generate a SHORT, INFORMATIVE key (max 80 characters) that:
+1. Starts with an action verb (Implemented, Fixed, Configured, Built, Created, etc.)
+2. Captures WHAT was done specifically
+3. Includes key technologies, tools, or patterns used if relevant
+4. Is searchable and descriptive
+
+Good examples:
+- "Implemented JWT auth with RSA signing for API endpoints"
+- "Fixed memory leak in WebSocket connection handler"
+- "Configured PostgreSQL connection pooling with asyncpg"
+- "Built React form validation with Zod schema"
+- "Created Docker multi-stage build for Python app"
+
+Bad examples (too vague):
+- "Did the task"
+- "Fixed bug"
+- "Updated code"
+- "Completed work"
+
+Respond with ONLY the key, no quotes or explanation.

@@ -310,11 +310,15 @@ class AgentExecutionService:
         if justification is None or worker.worker_report is None:
             return  # Skip if no justification or report
 
-        # Generate descriptive work title from objective
-        work_title = self._generate_work_title(justification, worker.task_description)
+        # Generate concise, informative key using LLM
+        work_title = await self._generate_work_title(
+            justification, worker.task_description, worker.worker_report
+        )
 
-        # Synthesize work analysis from worker report
-        work_analysis = self._synthesize_work_analysis(worker.worker_report)
+        # Synthesize comprehensive work analysis using LLM
+        work_analysis = await self._synthesize_work_analysis(
+            justification, worker.task_description, worker.worker_report
+        )
 
         # Get root session ID (BOSS) - walk up the tree
         root_id = await self._get_root_session_id(worker.session_id)
@@ -346,30 +350,102 @@ class AgentExecutionService:
             # Don't fail parent notification if context publishing fails
             pass
 
-    def _generate_work_title(
+    async def _generate_work_title(
         self,
         justification,  # SubtaskJustification
         task_description: str,
+        worker_report,  # WorkerReport
     ) -> str:
-        """Generate a descriptive title for the work."""
-        # Use objective as primary title, truncate to reasonable length
-        title = justification.objective
-        if len(title) > 200:
-            title = title[:197] + "..."
-        return title
+        """Generate a concise, informative key for the context dashboard using LLM.
 
-    def _synthesize_work_analysis(self, report) -> str:  # report: WorkerReport
-        """Synthesize work analysis from worker report."""
+        The key should be short (max 80 chars) but capture the essence of the
+        completed work so other agents can quickly identify relevant entries.
+        """
+        if self.prompt_builder is None:
+            # Fallback: use objective truncated
+            title = justification.objective
+            if len(title) > 80:
+                title = title[:77] + "..."
+            return title
+
+        try:
+            prompt = self.prompt_builder.build_context_key_prompt(
+                task_description=task_description,
+                objective=justification.objective,
+                deliverables=worker_report.deliverables or "",
+                approach=worker_report.approach or "",
+            )
+
+            response = await self.llm_port.generate(
+                prompt=prompt,
+                model=self.model_config.get("PENDING", "gpt-4o-mini"),
+                max_tokens=100,
+            )
+
+            # Clean up the response - take first line, strip quotes
+            key = response.strip().strip('"\'').split('\n')[0]
+            # Ensure max 80 chars
+            if len(key) > 80:
+                key = key[:77] + "..."
+            return key
+
+        except Exception:
+            # Fallback on error
+            title = justification.objective
+            if len(title) > 80:
+                title = title[:77] + "..."
+            return title
+
+    async def _synthesize_work_analysis(
+        self,
+        justification,  # SubtaskJustification
+        task_description: str,
+        worker_report,  # WorkerReport
+    ) -> str:
+        """Synthesize comprehensive work analysis using LLM.
+
+        Creates a detailed analysis of HOW the work was accomplished,
+        including implementation details, lessons learned, and reusable patterns.
+        """
+        if self.prompt_builder is None:
+            # Fallback: basic concatenation
+            return self._basic_work_analysis(worker_report)
+
+        try:
+            prompt = self.prompt_builder.build_context_analysis_prompt(
+                task_description=task_description,
+                objective=justification.objective,
+                justification=justification.split_reason,
+                approach=worker_report.approach or "",
+                reasoning=worker_report.reasoning or "",
+                deliverables=worker_report.deliverables or "",
+                challenges=worker_report.challenges or "",
+            )
+
+            response = await self.llm_port.generate(
+                prompt=prompt,
+                model=self.model_config.get("PENDING", "gpt-4o-mini"),
+                max_tokens=800,
+            )
+
+            return response.strip()
+
+        except Exception:
+            # Fallback on error
+            return self._basic_work_analysis(worker_report)
+
+    def _basic_work_analysis(self, report) -> str:  # report: WorkerReport
+        """Basic work analysis fallback when LLM is unavailable."""
         parts = []
         if report.approach:
-            parts.append(f"Approach: {report.approach}")
+            parts.append(f"**Approach:** {report.approach}")
         if report.reasoning:
-            parts.append(f"Reasoning: {report.reasoning}")
+            parts.append(f"**Reasoning:** {report.reasoning}")
         if report.deliverables:
-            parts.append(f"Deliverables: {report.deliverables}")
+            parts.append(f"**Deliverables:** {report.deliverables}")
         if report.challenges:
-            parts.append(f"Challenges: {report.challenges}")
-        return "\n".join(parts)
+            parts.append(f"**Challenges:** {report.challenges}")
+        return "\n\n".join(parts)
 
     def _extract_tags(self, task_description: str) -> list[str]:
         """Extract relevant tags from task description."""
