@@ -94,7 +94,7 @@ Good decomposition:
   },
   {
     "description": "Generate minimal patch for CVE-2024-5678 buffer overflow, validate PoC no longer triggers sanitizer error",
-    "config": {"strategy": "heuristic", "base": {"model": "claude-sonnet-4-5-20250514", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   }
 ]
 ```
@@ -115,7 +115,7 @@ Good decomposition:
   },
   {
     "description": "Generate patch for CVE-2024-9999: nullify callback after free or restructure ownership, validate UAF is fixed",
-    "config": {"strategy": "heuristic", "base": {"model": "claude-sonnet-4-5-20250514", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   }
 ]
 ```
@@ -161,7 +161,7 @@ Respond with a JSON array of 2-3 subtask objects:
     "config": {
       "strategy": "heuristic",
       "base": {
-        "model": "o3 | o3-mini | claude-sonnet-4-5-20250514",
+        "model": "o3 | o3-mini | gpt-4o",
         "temperature": 0.2-0.7,
         "max_tokens": 4000-8000
       },
