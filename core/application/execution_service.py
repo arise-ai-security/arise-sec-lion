@@ -274,79 +274,325 @@ class AgentExecutionService:
         - How it was accomplished (work_analysis)
         - What challenges were encountered (to avoid repeating mistakes)
         - Clear reminders about not duplicating work
+
+        Also handles SOURCE type entries which contain key information
+        extracted from the Boss's original prompt.
         """
+        from core.domain.context_entry import ContextEntryType
+
         if not entries:
             return ""
+
+        # Separate source context from worker context
+        source_entries = [e for e in entries if e.entry_type == ContextEntryType.SOURCE]
+        worker_entries = [e for e in entries if e.entry_type == ContextEntryType.WORKER]
 
         lines = [
             "<RELEVANT_CONTEXT>",
             "=" * 60,
-            "KNOWLEDGE FROM PREVIOUS SESSIONS",
-            "=" * 60,
-            "",
-            "IMPORTANT REMINDERS:",
-            "1. DO NOT repeat work that has already been completed below",
-            "2. DO NOT repeat the same mistakes - learn from the challenges encountered",
-            "3. BUILD UPON the successful approaches - leverage what worked",
-            "4. REFERENCE this context when making decisions about your approach",
-            "",
-            "-" * 60,
         ]
 
-        for i, entry in enumerate(entries, 1):
-            lines.append(f"\n## [{i}] {entry.work_title}")
+        # Include source context first (key info from original prompt)
+        if source_entries:
+            lines.append("ORIGINAL TASK KEY INFORMATION")
+            lines.append("=" * 60)
             lines.append("")
-            lines.append(f"**Objective:** {entry.objective}")
+            lines.append("The following key information was extracted from the original task:")
             lines.append("")
 
-            # Include the comprehensive work analysis
-            if entry.work_analysis:
-                lines.append("**How This Work Was Accomplished:**")
-                lines.append(entry.work_analysis)
-                lines.append("")
+            for entry in source_entries:
+                if entry.source_context:
+                    sc = entry.source_context
 
-            # Include the approach
-            if entry.worker_report and entry.worker_report.approach:
-                lines.append(f"**Approach Used:** {entry.worker_report.approach}")
-                lines.append("")
+                    if sc.bug_summary:
+                        lines.append("## Bug/Issue Summary")
+                        lines.append(sc.bug_summary)
+                        lines.append("")
 
-            # Include reasoning if available
-            if entry.worker_report and entry.worker_report.reasoning:
-                lines.append(f"**Reasoning:** {entry.worker_report.reasoning}")
-                lines.append("")
+                    if sc.error_messages:
+                        lines.append("## Error Messages")
+                        for err in sc.error_messages:
+                            lines.append(f"- {err}")
+                        lines.append("")
 
-            # Include deliverables to show what was already produced
-            if entry.worker_report and entry.worker_report.deliverables:
-                lines.append(f"**Deliverables Produced:** {entry.worker_report.deliverables}")
-                lines.append("")
+                    if sc.reproduction_steps:
+                        lines.append("## Reproduction Steps")
+                        lines.append(sc.reproduction_steps)
+                        lines.append("")
 
-            # Highlight challenges as warnings
-            if entry.worker_report and entry.worker_report.challenges:
-                lines.append("**⚠️ CHALLENGES TO AVOID (Learn from these mistakes):**")
-                lines.append(entry.worker_report.challenges)
-                lines.append("")
+                    if sc.file_paths:
+                        lines.append("## Referenced Files")
+                        for fp in sc.file_paths:
+                            lines.append(f"- {fp}")
+                        lines.append("")
 
-            # Include tags for context
-            if entry.tags:
-                lines.append(f"**Tags:** {', '.join(entry.tags)}")
-                lines.append("")
+                    if sc.commit_references:
+                        lines.append("## Version/Commit References")
+                        for ref in sc.commit_references:
+                            lines.append(f"- {ref}")
+                        lines.append("")
+
+                    if sc.urls:
+                        lines.append("## Related URLs")
+                        for url in sc.urls:
+                            lines.append(f"- {url}")
+                        lines.append("")
+
+                    if sc.environment:
+                        lines.append("## Environment")
+                        lines.append(sc.environment)
+                        lines.append("")
+
+                    if sc.dependencies:
+                        lines.append("## Dependencies")
+                        for dep in sc.dependencies:
+                            lines.append(f"- {dep}")
+                        lines.append("")
+
+                    if sc.key_facts:
+                        lines.append("## Key Facts & Requirements")
+                        for fact in sc.key_facts:
+                            lines.append(f"- {fact}")
+                        lines.append("")
 
             lines.append("-" * 60)
+            lines.append("")
+
+        # Include worker context (previous work)
+        if worker_entries:
+            lines.append("KNOWLEDGE FROM PREVIOUS SESSIONS")
+            lines.append("=" * 60)
+            lines.append("")
+            lines.append("IMPORTANT REMINDERS:")
+            lines.append("1. DO NOT repeat work that has already been completed below")
+            lines.append("2. DO NOT repeat the same mistakes - learn from the challenges encountered")
+            lines.append("3. BUILD UPON the successful approaches - leverage what worked")
+            lines.append("4. REFERENCE this context when making decisions about your approach")
+            lines.append("")
+            lines.append("-" * 60)
+
+            for i, entry in enumerate(worker_entries, 1):
+                lines.append(f"\n## [{i}] {entry.work_title}")
+                lines.append("")
+                lines.append(f"**Objective:** {entry.objective}")
+                lines.append("")
+
+                # Include the comprehensive work analysis
+                if entry.work_analysis:
+                    lines.append("**How This Work Was Accomplished:**")
+                    lines.append(entry.work_analysis)
+                    lines.append("")
+
+                # Include the approach
+                if entry.worker_report and entry.worker_report.approach:
+                    lines.append(f"**Approach Used:** {entry.worker_report.approach}")
+                    lines.append("")
+
+                # Include reasoning if available
+                if entry.worker_report and entry.worker_report.reasoning:
+                    lines.append(f"**Reasoning:** {entry.worker_report.reasoning}")
+                    lines.append("")
+
+                # Include deliverables to show what was already produced
+                if entry.worker_report and entry.worker_report.deliverables:
+                    lines.append(f"**Deliverables Produced:** {entry.worker_report.deliverables}")
+                    lines.append("")
+
+                # Highlight challenges as warnings
+                if entry.worker_report and entry.worker_report.challenges:
+                    lines.append("**⚠️ CHALLENGES TO AVOID (Learn from these mistakes):**")
+                    lines.append(entry.worker_report.challenges)
+                    lines.append("")
+
+                # Include tags for context
+                if entry.tags:
+                    lines.append(f"**Tags:** {', '.join(entry.tags)}")
+                    lines.append("")
+
+                lines.append("-" * 60)
 
         lines.append("")
         lines.append("=" * 60)
-        lines.append("END OF PREVIOUS WORK CONTEXT")
+        lines.append("END OF CONTEXT")
         lines.append("=" * 60)
         lines.append("")
         lines.append("Use the above context to:")
-        lines.append("- Avoid duplicating completed work")
-        lines.append("- Learn from challenges and avoid repeating mistakes")
-        lines.append("- Build upon successful approaches and patterns")
-        lines.append("- Make informed decisions based on what has already been tried")
+        if source_entries:
+            lines.append("- Reference key information from the original task")
+        if worker_entries:
+            lines.append("- Avoid duplicating completed work")
+            lines.append("- Learn from challenges and avoid repeating mistakes")
+            lines.append("- Build upon successful approaches and patterns")
+        lines.append("- Make informed decisions based on the full context")
         lines.append("")
         lines.append("</RELEVANT_CONTEXT>")
 
         return "\n".join(lines)
+
+    async def _extract_and_publish_source_context(
+        self,
+        boss: AgentSession,
+        task_description: str,
+    ) -> None:
+        """Extract key information from Boss prompt and publish to context dashboard.
+
+        Called immediately after creating the Boss agent. Uses LLM to extract
+        key references (bug reports, file paths, commits, error messages, etc.)
+        from the original user prompt and publishes them as a SOURCE type context
+        entry that all workers can reference.
+
+        Args:
+            boss: The Boss agent session.
+            task_description: The original user prompt.
+        """
+        from datetime import UTC, datetime
+
+        from core.domain.context_entry import (
+            ContextEntry,
+            ContextEntryType,
+        )
+
+        if self.context_dashboard is None:
+            return
+
+        if self.prompt_builder is None:
+            return
+
+        try:
+            # Build the extraction prompt
+            prompt = self.prompt_builder.build_source_context_extraction_prompt(
+                task_description=task_description,
+            )
+
+            # Query LLM to extract key information
+            llm_config = {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 1500}
+            response = await self.llm_port.query(prompt, llm_config)
+
+            # Parse the JSON response
+            source_data = self._parse_source_context_response(response)
+
+            # Only publish if we found meaningful content
+            if not self._has_meaningful_source_context(source_data):
+                return
+
+            # Generate a title for this source context
+            work_title = self._generate_source_context_title(source_data, task_description)
+
+            # Create the context entry
+            entry = ContextEntry(
+                entry_type=ContextEntryType.SOURCE,
+                work_title=work_title,
+                objective="Key information from the original task prompt",
+                justification="Extracted to provide workers with full context",
+                work_analysis="",  # Not applicable for source context
+                worker_report=None,  # Not applicable for source context
+                source_context=source_data,
+                session_id=boss.session_id,
+                worker_id=boss.session_id,  # Boss is the "source" for source context
+                created_at=datetime.now(UTC),
+                tags=self._extract_tags(task_description),
+            )
+
+            # Publish to dashboard
+            entry_id = await self.context_dashboard.publish(entry)
+
+            # Record the extraction event on the Boss
+            boss.record_source_context_extracted(
+                context_entry_id=entry_id,
+                extraction_summary=work_title,
+                key_references=source_data.file_paths + source_data.commit_references,
+                has_bug_report=bool(source_data.bug_summary),
+                has_error_details=bool(source_data.error_messages),
+                has_file_references=bool(source_data.file_paths),
+            )
+
+        except Exception:
+            # Don't fail Boss creation if context extraction fails
+            pass
+
+    def _parse_source_context_response(self, response: str):
+        """Parse LLM response to extract SourceContextData."""
+        import json
+        import re
+
+        from core.domain.context_entry import SourceContextData
+
+        # Extract JSON from response (may be wrapped in markdown code block)
+        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", response)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find raw JSON object
+            json_match = re.search(r"\{[\s\S]*\}", response)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                return SourceContextData()
+
+        try:
+            data = json.loads(json_str)
+            return SourceContextData(
+                bug_summary=data.get("bug_summary", ""),
+                error_messages=data.get("error_messages", []),
+                reproduction_steps=data.get("reproduction_steps", ""),
+                file_paths=data.get("file_paths", []),
+                commit_references=data.get("commit_references", []),
+                urls=data.get("urls", []),
+                environment=data.get("environment", ""),
+                dependencies=data.get("dependencies", []),
+                key_facts=data.get("key_facts", []),
+                original_prompt=response[:5000],  # Preserve original for reference
+            )
+        except json.JSONDecodeError:
+            return SourceContextData()
+
+    def _has_meaningful_source_context(self, data) -> bool:
+        """Check if the extracted source context has meaningful content.
+
+        Args:
+            data: SourceContextData instance to check.
+        """
+        # Consider it meaningful if it has any of these populated
+        return bool(
+            data.bug_summary
+            or data.error_messages
+            or data.file_paths
+            or data.commit_references
+            or data.urls
+            or data.key_facts
+        )
+
+    def _generate_source_context_title(
+        self,
+        data,
+        task_description: str,
+    ) -> str:
+        """Generate a descriptive title for source context entry."""
+        parts = []
+
+        if data.bug_summary:
+            parts.append("Bug Report")
+        if data.error_messages:
+            parts.append("Error Details")
+        if data.file_paths:
+            parts.append(f"{len(data.file_paths)} Files")
+        if data.commit_references:
+            parts.append("Commits/Versions")
+        if data.urls:
+            parts.append("References")
+
+        if parts:
+            title = f"[Source Context] {', '.join(parts)}"
+        else:
+            # Fallback: extract first meaningful words from task
+            words = task_description.split()[:8]
+            title = f"[Source Context] {' '.join(words)}..."
+
+        # Ensure max 80 chars
+        if len(title) > 80:
+            title = title[:77] + "..."
+
+        return title
 
     async def _publish_worker_context(
         self,
@@ -1054,6 +1300,10 @@ class AgentExecutionService:
         initial_budget = 1000.0
         self.initial_boss_budget = initial_budget
         boss_agent.allocate_budget(initial_budget, source="initial")
+
+        # Extract and publish source context from the original prompt
+        # This runs before persisting so we can include any generated events
+        await self._extract_and_publish_source_context(boss_agent, task_description)
 
         for idx, event in enumerate(boss_agent.events):
             await self.event_store.append(event, expected_version=idx)

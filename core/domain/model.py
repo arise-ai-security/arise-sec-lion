@@ -27,6 +27,7 @@ from core.domain.events import (
     ContextPublished,
     DomainEvent,
     FirstSuccessRecorded,
+    SourceContextExtracted,
     StatusChanged,
     SubordinatesSpawned,
     SubtaskRetried,
@@ -651,6 +652,42 @@ class AgentSession:
         self._apply(event)
         self._changes.append(event)
 
+    def record_source_context_extracted(
+        self,
+        context_entry_id: UUID,
+        extraction_summary: str,
+        key_references: list[str] | None = None,
+        has_bug_report: bool = False,
+        has_error_details: bool = False,
+        has_file_references: bool = False,
+    ) -> None:
+        """Record that source context was extracted from the Boss prompt.
+
+        This creates an audit trail event for source context extraction.
+        The Boss extracted key information from the original user prompt
+        and published it to the context dashboard for workers to reference.
+
+        Args:
+            context_entry_id: UUID of the context entry in the dashboard.
+            extraction_summary: Brief summary of what was extracted.
+            key_references: List of key references (files, commits, etc.).
+            has_bug_report: Whether the prompt contained bug report details.
+            has_error_details: Whether the prompt contained error messages.
+            has_file_references: Whether the prompt contained file paths.
+        """
+        event = SourceContextExtracted(
+            aggregate_id=self.session_id,
+            sequence_number=self._next_sequence(),
+            context_entry_id=context_entry_id,
+            extraction_summary=extraction_summary,
+            key_references=key_references or [],
+            has_bug_report=has_bug_report,
+            has_error_details=has_error_details,
+            has_file_references=has_file_references,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply event to update state. Raises TypeError for unregistered event types."""
@@ -955,6 +992,11 @@ class AgentSession:
     @_apply.register
     def _(self, event: ContextInherited) -> None:
         """Apply ContextInherited event (audit trail only, no state change)."""
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SourceContextExtracted) -> None:
+        """Apply SourceContextExtracted event (audit trail only, no state change)."""
         self.version += 1
 
     def _initialize_defaults(self, session_id: UUID) -> None:

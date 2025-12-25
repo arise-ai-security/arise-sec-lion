@@ -633,3 +633,20 @@ class ContextInherited(DomainEvent):
 
     entry_ids: list[UUID]
     total_available: int
+
+
+class SourceContextExtracted(DomainEvent):
+    """Source context extracted from the original Boss prompt.
+
+    Emitted when the Boss agent extracts key information from the user's
+    original prompt and publishes it to the context dashboard. This ensures
+    that rich context (bug reports, commit references, script paths, etc.)
+    from the original prompt is available to all workers in the hierarchy.
+    """
+
+    context_entry_id: UUID
+    extraction_summary: str  # Brief summary of what was extracted
+    key_references: list[str] = []  # List of key references (files, commits, etc.)
+    has_bug_report: bool = False
+    has_error_details: bool = False
+    has_file_references: bool = False

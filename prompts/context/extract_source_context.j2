@@ -1,0 +1,53 @@
+<SOURCE_CONTEXT_EXTRACTION>
+You are extracting key information from a task prompt that will be used to help worker agents understand the full context of their assignments.
+
+## Original Task Prompt
+{{ task_description }}
+
+## Instructions
+Analyze the prompt above and extract all key information that would be valuable for workers to reference. Focus on:
+
+1. **Bug/Issue Information**: If a bug or issue is described, summarize it clearly. Include:
+   - What the problem is
+   - When/how it occurs
+   - Any symptoms or error messages
+
+2. **Error Messages/Stack Traces**: Extract any error messages, exception details, or stack traces verbatim.
+
+3. **Reproduction Steps**: If steps to reproduce an issue are provided, list them clearly.
+
+4. **File References**: Extract all file paths, script names, or code locations mentioned.
+
+5. **Version/Commit References**: Extract commit hashes, version numbers, branch names, or release tags.
+
+6. **URLs**: Extract any URLs to documentation, issues, PRs, or external resources.
+
+7. **Environment Details**: Note any platform, OS, runtime, or configuration details.
+
+8. **Dependencies**: List any libraries, packages, or tool versions mentioned.
+
+9. **Key Facts**: Any other critical information that workers should know.
+
+## Output Format
+Return a JSON object with the following structure:
+```json
+{
+  "bug_summary": "Brief summary of the bug/issue if present",
+  "error_messages": ["error message 1", "error message 2"],
+  "reproduction_steps": "Step by step reproduction if provided",
+  "file_paths": ["/path/to/file.py", "src/component.ts"],
+  "commit_references": ["abc123", "v1.2.3", "main"],
+  "urls": ["https://github.com/repo/issues/123"],
+  "environment": "Linux Ubuntu 22.04, Python 3.12",
+  "dependencies": ["pandas==2.0.0", "numpy>=1.24"],
+  "key_facts": ["Must be backward compatible", "Critical for production"]
+}
+```
+
+Important:
+- Only include fields that have actual content from the prompt
+- Use empty arrays [] or empty strings "" for fields with no relevant content
+- Be comprehensive but accurate - don't invent information
+- Preserve exact error messages and paths as written
+- For key_facts, include any constraints, requirements, or important notes
+</SOURCE_CONTEXT_EXTRACTION>

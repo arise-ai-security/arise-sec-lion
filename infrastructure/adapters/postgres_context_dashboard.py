@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import orjson
 
-from core.domain.context_entry import ContextEntry
+from core.domain.context_entry import ContextEntry, ContextEntryType, SourceContextData
 from core.domain.subtask import WorkerReport
 from core.ports.context_dashboard_port import ContextDashboardPort
 
@@ -80,22 +80,36 @@ class PostgresContextDashboard(ContextDashboardPort):
 
         entry_id = uuid4()
 
+        # Serialize optional fields
+        worker_report_json = (
+            entry.worker_report.model_dump(mode="json")
+            if entry.worker_report
+            else None
+        )
+        source_context_json = (
+            entry.source_context.model_dump(mode="json")
+            if entry.source_context
+            else None
+        )
+
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     """
                     INSERT INTO context_dashboard (
-                        entry_id, work_title, objective, justification,
-                        work_analysis, worker_report, session_id, worker_id,
+                        entry_id, entry_type, work_title, objective, justification,
+                        work_analysis, worker_report, source_context, session_id, worker_id,
                         created_at, tags
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                     """,
                     entry_id,
+                    entry.entry_type.value,
                     entry.work_title,
                     entry.objective,
                     entry.justification,
                     entry.work_analysis,
-                    entry.worker_report.model_dump(mode="json"),
+                    worker_report_json,
+                    source_context_json,
                     entry.session_id,
                     entry.worker_id,
                     entry.created_at,
@@ -175,18 +189,47 @@ class PostgresContextDashboard(ContextDashboardPort):
             ) from e
 
     def _row_to_entry(self, row: asyncpg.Record) -> ContextEntry:
-        """Convert database row to ContextEntry."""
-        report_data = row["worker_report"]
-        if isinstance(report_data, str):
-            report_data = orjson.loads(report_data)
+        """Convert database row to ContextEntry.
+
+        Handles both old schema (without entry_type, source_context) and new schema.
+        """
+        # Safely get column values with defaults for legacy data
+        def safe_get(key: str, default=None):
+            """Safely get a column value, handling missing columns."""
+            try:
+                return row[key]
+            except KeyError:
+                return default
+
+        # Parse worker_report if present
+        worker_report = None
+        report_data = safe_get("worker_report")
+        if report_data:
+            if isinstance(report_data, str):
+                report_data = orjson.loads(report_data)
+            worker_report = WorkerReport(**report_data)
+
+        # Parse source_context if present (new column, may not exist in legacy data)
+        source_context = None
+        source_data = safe_get("source_context")
+        if source_data:
+            if isinstance(source_data, str):
+                source_data = orjson.loads(source_data)
+            source_context = SourceContextData(**source_data)
+
+        # Parse entry_type (default to WORKER for backward compatibility)
+        entry_type_str = safe_get("entry_type", "worker")
+        entry_type = ContextEntryType(entry_type_str) if entry_type_str else ContextEntryType.WORKER
 
         return ContextEntry(
             entry_id=row["entry_id"],
+            entry_type=entry_type,
             work_title=row["work_title"],
             objective=row["objective"],
             justification=row["justification"],
-            work_analysis=row["work_analysis"],
-            worker_report=WorkerReport(**report_data),
+            work_analysis=safe_get("work_analysis", ""),
+            worker_report=worker_report,
+            source_context=source_context,
             session_id=row["session_id"],
             worker_id=row["worker_id"],
             created_at=row["created_at"],

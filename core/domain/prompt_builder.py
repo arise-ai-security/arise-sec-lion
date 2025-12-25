@@ -419,3 +419,28 @@ class PromptBuilder:
         except TemplateNotFound as e:
             msg = f"Required template not found: {e.name}"
             raise TemplateNotFound(msg) from e
+
+    def build_source_context_extraction_prompt(
+        self,
+        task_description: str,
+    ) -> str:
+        """Build prompt for extracting key information from Boss's original prompt.
+
+        This prompt instructs the LLM to extract key references, bug reports,
+        file paths, commit references, error messages, and other critical
+        information from the user's original task description.
+
+        Args:
+            task_description: The original Boss prompt from the user.
+
+        Returns:
+            Prompt string for source context extraction.
+        """
+        try:
+            template = self.env.get_template("context/extract_source_context.j2")
+            return template.render(
+                task_description=task_description,
+            )
+        except TemplateNotFound as e:
+            msg = f"Required template not found: {e.name}"
+            raise TemplateNotFound(msg) from e

@@ -23,6 +23,7 @@ from core.domain.events import (
     ContextPublished,
     DomainEvent,
     FirstSuccessRecorded,
+    SourceContextExtracted,
     StatusChanged,
     SubordinatesSpawned,
     SubtaskRetried,
@@ -85,6 +86,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     # Context sharing events
     "ContextPublished": ContextPublished,
     "ContextInherited": ContextInherited,
+    "SourceContextExtracted": SourceContextExtracted,
 }
 
 
