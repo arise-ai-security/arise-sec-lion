@@ -66,3 +66,18 @@ class ContextDashboardPort(Protocol):
             The ContextEntry or None if not found.
         """
         ...
+
+    async def get_source_context_by_session(self, session_id: UUID) -> list[ContextEntry]:
+        """Get all SOURCE type context entries for a specific session.
+
+        This retrieves the key information extracted from the Boss's original
+        prompt, which should be automatically available to all workers in
+        the session hierarchy.
+
+        Args:
+            session_id: The root (BOSS) session ID.
+
+        Returns:
+            List of source context entries for this session.
+        """
+        ...

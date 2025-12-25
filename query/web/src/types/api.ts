@@ -148,15 +148,30 @@ export interface BudgetInfo {
 // Context Dashboard Types (Cross-Session Knowledge Sharing)
 // =============================================================================
 
+/** Source context data extracted from Boss prompt. */
+export interface SourceContextData {
+  bug_summary: string;
+  error_messages: string[];
+  reproduction_steps: string;
+  file_paths: string[];
+  commit_references: string[];
+  urls: string[];
+  environment: string;
+  dependencies: string[];
+  key_facts: string[];
+}
+
 /** Context entry from the global context dashboard. */
 export interface ContextEntry {
   entry_id: string;
+  entry_type: 'worker' | 'source';
   work_title: string;
   objective: string;
   justification: string;
   work_analysis: string;
   approach: string | null;
   challenges: string | null;
+  source_context: SourceContextData | null;
   created_at: string;
   tags: string[];
 }
@@ -164,6 +179,7 @@ export interface ContextEntry {
 /** Context published by a supervisor to the dashboard - full key-value submission. */
 export interface PublishedContext {
   entry_id: string;
+  entry_type: 'worker' | 'source';
   work_title: string;
   worker_id: string;
   objective: string;
@@ -171,6 +187,7 @@ export interface PublishedContext {
   work_analysis: string;
   approach: string | null;
   challenges: string | null;
+  source_context: SourceContextData | null;
   tags: string[];
   published_at: string;
 }

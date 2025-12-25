@@ -194,54 +194,81 @@ class AgentExecutionService:
     ) -> tuple[str | None, list[UUID], int]:
         """Query context dashboard for relevant previous work.
 
-        Uses LLM to evaluate which context entries are relevant to the current task.
+        Source context (key information from the Boss prompt) is ALWAYS included
+        for workers in the same session. Worker context (previous work) uses
+        LLM to evaluate relevance.
 
         Args:
             agent: The worker agent that needs context.
-            max_entries: Maximum number of entries to include.
+            max_entries: Maximum number of worker context entries to include.
 
         Returns:
             Tuple of (formatted_context, entry_ids, total_available):
             - formatted_context: Context string or None if no relevant context
-            - entry_ids: List of inherited entry UUIDs
+            - entry_ids: List of inherited entry UUIDs (includes source context)
             - total_available: Total entries available in the dashboard
         """
         if self.context_dashboard is None:
             return None, [], 0
 
         try:
-            # Get all available titles
-            titles = await self.context_dashboard.get_all_titles()
-            if not titles:
-                return None, [], 0
+            all_entries = []
+            all_entry_ids = []
 
+            # 1. ALWAYS include source context from the current session
+            # This contains key information from the Boss's original prompt
+            root_session_id = await self._get_root_session_id(agent.session_id)
+            source_entries = await self.context_dashboard.get_source_context_by_session(
+                root_session_id
+            )
+            for entry in source_entries:
+                all_entries.append(entry)
+                if entry.entry_id:
+                    all_entry_ids.append(entry.entry_id)
+
+            # 2. Get worker context using LLM relevance matching
+            titles = await self.context_dashboard.get_all_titles()
             total_available = len(titles)
 
-            # Limit to most recent entries for efficiency
-            titles = titles[:100]
+            if titles and self.prompt_builder:
+                # Filter out source context entries (already included) and limit
+                worker_titles = [
+                    (eid, title) for eid, title in titles
+                    if not title.startswith("[Source Context]")
+                ][:100]
 
-            # Build relevance query prompt
-            prompt = self.prompt_builder.build_context_relevance_prompt(
-                task_description=agent.task_description,
-                available_titles=titles,
-                justification=agent.supervisor_justification,
-                max_entries=max_entries,
-            )
+                if worker_titles:
+                    # Build relevance query prompt
+                    prompt = self.prompt_builder.build_context_relevance_prompt(
+                        task_description=agent.task_description,
+                        available_titles=worker_titles,
+                        justification=agent.supervisor_justification,
+                        max_entries=max_entries,
+                    )
 
-            # Query LLM for relevant entry IDs
-            llm_config = {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 500}
-            response = await self.llm_port.query(prompt, llm_config)
+                    # Query LLM for relevant entry IDs
+                    llm_config = {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 500}
+                    response = await self.llm_port.query(prompt, llm_config)
 
-            # Parse response to get entry IDs
-            relevant_ids = self._parse_relevant_ids(response, max_entries)
-            if not relevant_ids:
+                    # Parse response to get entry IDs
+                    relevant_ids = self._parse_relevant_ids(response, max_entries)
+
+                    if relevant_ids:
+                        # Fetch full worker entries
+                        worker_entries = await self.context_dashboard.get_entries_by_ids(
+                            relevant_ids
+                        )
+                        for entry in worker_entries:
+                            all_entries.append(entry)
+                            if entry.entry_id and entry.entry_id not in all_entry_ids:
+                                all_entry_ids.append(entry.entry_id)
+
+            # If no entries found at all, return empty
+            if not all_entries:
                 return None, [], total_available
 
-            # Fetch full entries
-            entries = await self.context_dashboard.get_entries_by_ids(relevant_ids)
-
             # Format as context string
-            return self._format_context_for_prompt(entries), relevant_ids, total_available
+            return self._format_context_for_prompt(all_entries), all_entry_ids, total_available
 
         except Exception:
             # Don't fail worker execution if context retrieval fails

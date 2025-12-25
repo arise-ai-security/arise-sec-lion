@@ -15,6 +15,7 @@ from core.domain.events import (
     ComplexityEvaluated,
     ContextInherited,
     ContextPublished,
+    SourceContextExtracted,
     SubtasksDefined,
 )
 from core.domain.model import AgentSession
@@ -39,6 +40,7 @@ from query.api.schemas import (
     RoleCostBreakdownSchema,
     RoleCountSchema,
     RoleTokensSchema,
+    SourceContextDataSchema,
     SubtaskJustificationSchema,
     SubtaskSummarySchema,
     TaskQueueItemSchema,
@@ -272,6 +274,9 @@ async def get_agent_summary(
     published_context_list: list[PublishedContextSchema] = []
     published_entry_ids: list[tuple[UUID, UUID, str]] = []  # (entry_id, worker_id, occurred_at)
 
+    # Source context tracking (for BOSS agents)
+    source_context_entry_ids: list[tuple[UUID, str, str]] = []  # (entry_id, summary, occurred_at)
+
     # Inherited context tracking (for workers)
     inherited_entry_ids: list[UUID] = []
     inherited_total_available: int = 0
@@ -330,6 +335,12 @@ async def get_agent_summary(
             inherited_entry_ids = list(event.entry_ids)
             inherited_total_available = event.total_available
 
+        elif isinstance(event, SourceContextExtracted):
+            # Track source context extracted from Boss prompt
+            source_context_entry_ids.append(
+                (event.context_entry_id, event.extraction_summary, event.occurred_at)
+            )
+
     # Update subtasks with child IDs and statuses
     for idx, child_id in child_id_map.items():
         if idx < len(subtasks_list):
@@ -345,7 +356,7 @@ async def get_agent_summary(
                     child_status=child_agent.status.value,
                 )
 
-    # Fetch full context entries from the dashboard
+    # Fetch full context entries from the dashboard (worker context)
     if context_dashboard and published_entry_ids:
         entry_ids = [eid for eid, _, _ in published_entry_ids]
         entries = await context_dashboard.get_entries_by_ids(entry_ids)
@@ -357,6 +368,7 @@ async def get_agent_summary(
                 published_context_list.append(
                     PublishedContextSchema(
                         entry_id=str(entry_id),
+                        entry_type="worker",
                         work_title=entry.work_title,
                         worker_id=str(worker_id),
                         objective=entry.objective,
@@ -364,6 +376,7 @@ async def get_agent_summary(
                         work_analysis=entry.work_analysis,
                         approach=entry.worker_report.approach if entry.worker_report else None,
                         challenges=entry.worker_report.challenges if entry.worker_report else None,
+                        source_context=None,
                         tags=entry.tags,
                         published_at=occurred_at,
                     )
@@ -373,6 +386,7 @@ async def get_agent_summary(
                 published_context_list.append(
                     PublishedContextSchema(
                         entry_id=str(entry_id),
+                        entry_type="worker",
                         work_title="(Entry not found)",
                         worker_id=str(worker_id),
                         objective="",
@@ -380,7 +394,67 @@ async def get_agent_summary(
                         work_analysis="",
                         approach=None,
                         challenges=None,
+                        source_context=None,
                         tags=[],
+                        published_at=occurred_at,
+                    )
+                )
+
+    # Fetch source context entries from the dashboard (Boss prompt extraction)
+    if context_dashboard and source_context_entry_ids:
+        entry_ids = [eid for eid, _, _ in source_context_entry_ids]
+        entries = await context_dashboard.get_entries_by_ids(entry_ids)
+        entry_map = {str(e.entry_id): e for e in entries if e.entry_id}
+
+        for entry_id, summary, occurred_at in source_context_entry_ids:
+            entry = entry_map.get(str(entry_id))
+            if entry and entry.source_context:
+                # Convert domain SourceContextData to schema
+                source_ctx_schema = SourceContextDataSchema(
+                    bug_summary=entry.source_context.bug_summary,
+                    error_messages=list(entry.source_context.error_messages),
+                    reproduction_steps=entry.source_context.reproduction_steps,
+                    file_paths=list(entry.source_context.file_paths),
+                    commit_references=list(entry.source_context.commit_references),
+                    urls=list(entry.source_context.urls),
+                    environment=entry.source_context.environment,
+                    dependencies=list(entry.source_context.dependencies),
+                    key_facts=list(entry.source_context.key_facts),
+                )
+                # Insert source context at the beginning of the list
+                published_context_list.insert(
+                    0,
+                    PublishedContextSchema(
+                        entry_id=str(entry_id),
+                        entry_type="source",
+                        work_title=entry.work_title,
+                        worker_id=str(agent_id),  # Boss is the source
+                        objective=entry.objective,
+                        justification=entry.justification,
+                        work_analysis="",
+                        approach=None,
+                        challenges=None,
+                        source_context=source_ctx_schema,
+                        tags=entry.tags,
+                        published_at=occurred_at,
+                    )
+                )
+            elif entry:
+                # Entry exists but no source_context (shouldn't happen normally)
+                published_context_list.insert(
+                    0,
+                    PublishedContextSchema(
+                        entry_id=str(entry_id),
+                        entry_type="source",
+                        work_title=entry.work_title,
+                        worker_id=str(agent_id),
+                        objective=entry.objective,
+                        justification=entry.justification,
+                        work_analysis="",
+                        approach=None,
+                        challenges=None,
+                        source_context=None,
+                        tags=entry.tags,
                         published_at=occurred_at,
                     )
                 )
@@ -547,19 +621,40 @@ async def get_agent_summary(
         if context_dashboard and inherited_entry_ids:
             entries = await context_dashboard.get_entries_by_ids(inherited_entry_ids)
             for entry in entries:
+                # Convert source_context if present
+                source_ctx_schema = None
+                if entry.source_context:
+                    source_ctx_schema = SourceContextDataSchema(
+                        bug_summary=entry.source_context.bug_summary,
+                        error_messages=list(entry.source_context.error_messages),
+                        reproduction_steps=entry.source_context.reproduction_steps,
+                        file_paths=list(entry.source_context.file_paths),
+                        commit_references=list(entry.source_context.commit_references),
+                        urls=list(entry.source_context.urls),
+                        environment=entry.source_context.environment,
+                        dependencies=list(entry.source_context.dependencies),
+                        key_facts=list(entry.source_context.key_facts),
+                    )
+
                 inherited_entries.append(
                     ContextEntrySchema(
                         entry_id=str(entry.entry_id) if entry.entry_id else str(entry.worker_id),
+                        entry_type=entry.entry_type.value if hasattr(entry.entry_type, 'value') else str(entry.entry_type),
                         work_title=entry.work_title,
                         objective=entry.objective,
                         justification=entry.justification,
                         work_analysis=entry.work_analysis,
                         approach=entry.worker_report.approach if entry.worker_report else None,
                         challenges=entry.worker_report.challenges if entry.worker_report else None,
+                        source_context=source_ctx_schema,
                         created_at=entry.created_at,
                         tags=entry.tags,
                     )
                 )
+
+        # Sort entries so source context appears first
+        inherited_entries.sort(key=lambda e: (0 if e.entry_type == 'source' else 1))
+
         inherited_context = InheritedContextSchema(
             entries=inherited_entries,
             total_available=inherited_total_available,

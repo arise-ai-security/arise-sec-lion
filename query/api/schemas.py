@@ -192,16 +192,34 @@ class BudgetInfoSchema(BaseModel):
 # =============================================================================
 
 
+class SourceContextDataSchema(BaseModel):
+    """Schema for source context extracted from Boss prompt."""
+
+    bug_summary: str = Field("", description="Summary of bug/issue if present")
+    error_messages: list[str] = Field(default_factory=list, description="Error messages mentioned")
+    reproduction_steps: str = Field("", description="Steps to reproduce the issue")
+    file_paths: list[str] = Field(default_factory=list, description="File paths referenced")
+    commit_references: list[str] = Field(default_factory=list, description="Commit/version references")
+    urls: list[str] = Field(default_factory=list, description="URLs referenced")
+    environment: str = Field("", description="Environment/platform details")
+    dependencies: list[str] = Field(default_factory=list, description="Dependencies mentioned")
+    key_facts: list[str] = Field(default_factory=list, description="Other key facts")
+
+
 class ContextEntrySchema(BaseModel):
     """Schema for a context entry from the context dashboard."""
 
     entry_id: str = Field(..., description="Context entry UUID")
+    entry_type: str = Field("worker", description="Entry type: 'worker' or 'source'")
     work_title: str = Field(..., description="Concise key describing the completed work")
     objective: str = Field(..., description="What the task aimed to achieve")
     justification: str = Field(..., description="Why this task was assigned")
     work_analysis: str = Field(..., description="Comprehensive analysis of how work was done")
     approach: str | None = Field(None, description="How the worker approached the task")
     challenges: str | None = Field(None, description="Challenges encountered")
+    source_context: SourceContextDataSchema | None = Field(
+        None, description="Source context data (for 'source' type entries)"
+    )
     created_at: datetime = Field(..., description="When this entry was created")
     tags: list[str] = Field(default_factory=list, description="Tags for categorization")
 
@@ -210,6 +228,7 @@ class PublishedContextSchema(BaseModel):
     """Schema for context published by a supervisor - full key-value submission."""
 
     entry_id: str = Field(..., description="Context entry UUID")
+    entry_type: str = Field("worker", description="Entry type: 'worker' or 'source'")
     work_title: str = Field(..., description="Concise key describing the completed work")
     worker_id: str = Field(..., description="Worker that completed the task")
     objective: str = Field(..., description="What the task aimed to achieve")
@@ -217,6 +236,9 @@ class PublishedContextSchema(BaseModel):
     work_analysis: str = Field(..., description="Comprehensive analysis of how work was done")
     approach: str | None = Field(None, description="Worker's approach from report")
     challenges: str | None = Field(None, description="Challenges encountered")
+    source_context: SourceContextDataSchema | None = Field(
+        None, description="Source context data (for 'source' type entries)"
+    )
     tags: list[str] = Field(default_factory=list, description="Tags for categorization")
     published_at: datetime = Field(..., description="When this was published")
 

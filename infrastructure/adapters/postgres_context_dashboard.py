@@ -188,6 +188,29 @@ class PostgresContextDashboard(ContextDashboardPort):
                 "Failed to get context entry", original_error=e
             ) from e
 
+    async def get_source_context_by_session(self, session_id: UUID) -> list[ContextEntry]:
+        """Get all SOURCE type context entries for a specific session."""
+        if not self.pool:
+            raise ContextDashboardError(
+                "Connection pool not initialized. Call connect() first."
+            )
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM context_dashboard
+                    WHERE session_id = $1 AND entry_type = 'source'
+                    ORDER BY created_at DESC
+                    """,
+                    session_id,
+                )
+            return [self._row_to_entry(row) for row in rows]
+        except Exception as e:
+            raise ContextDashboardError(
+                "Failed to get source context by session", original_error=e
+            ) from e
+
     def _row_to_entry(self, row: asyncpg.Record) -> ContextEntry:
         """Convert database row to ContextEntry.
 

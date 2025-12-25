@@ -521,71 +521,228 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
             {summary.published_context.map((ctx) => (
               <div
                 key={ctx.entry_id}
-                className="bg-purple-50 dark:bg-purple-900/20 p-3 rounded border-l-2 border-purple-400"
+                className={`p-3 rounded border-l-2 ${
+                  ctx.entry_type === 'source'
+                    ? 'bg-cyan-50 dark:bg-cyan-900/20 border-cyan-400'
+                    : 'bg-purple-50 dark:bg-purple-900/20 border-purple-400'
+                }`}
               >
                 {/* Key (work_title) */}
                 <div className="flex items-start gap-2 mb-2">
-                  <span className="text-purple-500 text-sm">🔑</span>
+                  <span className={`text-sm ${ctx.entry_type === 'source' ? 'text-cyan-500' : 'text-purple-500'}`}>
+                    {ctx.entry_type === 'source' ? '📋' : '🔑'}
+                  </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold uppercase">Key</p>
+                    <div className="flex items-center gap-2">
+                      <p className={`text-xs font-semibold uppercase ${
+                        ctx.entry_type === 'source'
+                          ? 'text-cyan-600 dark:text-cyan-400'
+                          : 'text-purple-600 dark:text-purple-400'
+                      }`}>
+                        {ctx.entry_type === 'source' ? 'Source Context' : 'Key'}
+                      </p>
+                      {ctx.entry_type === 'source' && (
+                        <span className="px-1.5 py-0.5 text-xs bg-cyan-100 dark:bg-cyan-800 text-cyan-700 dark:text-cyan-300 rounded">
+                          From Original Prompt
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
                       {ctx.work_title}
                     </p>
                   </div>
                 </div>
 
-                {/* Value Section */}
-                <div className="ml-6 space-y-2 border-t border-purple-200 dark:border-purple-700 pt-2">
-                  <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold uppercase">Value</p>
+                {/* Source Context Data (for source type entries) */}
+                {ctx.entry_type === 'source' && ctx.source_context && (
+                  <div className={`ml-6 space-y-2 border-t pt-2 ${
+                    ctx.entry_type === 'source'
+                      ? 'border-cyan-200 dark:border-cyan-700'
+                      : 'border-purple-200 dark:border-purple-700'
+                  }`}>
+                    <p className="text-xs text-cyan-600 dark:text-cyan-400 font-semibold uppercase">Extracted Key Information</p>
 
-                  {/* Objective */}
-                  <div>
-                    <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Objective:</p>
-                    <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.objective}</p>
-                  </div>
-
-                  {/* Justification */}
-                  {ctx.justification && (
-                    <div>
-                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Why Assigned:</p>
-                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.justification}</p>
-                    </div>
-                  )}
-
-                  {/* Work Analysis (comprehensive - includes approach and challenges) */}
-                  {ctx.work_analysis && (
-                    <div>
-                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">How It Was Accomplished:</p>
-                      <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-white/50 dark:bg-gray-800/50 p-2 rounded max-h-48 overflow-y-auto">
-                        {ctx.work_analysis}
+                    {/* Bug Summary */}
+                    {ctx.source_context.bug_summary && (
+                      <div>
+                        <p className="text-xs font-medium text-red-600 dark:text-red-400">🐛 Bug/Issue Summary:</p>
+                        <p className="text-xs text-gray-700 dark:text-gray-300 bg-red-50 dark:bg-red-900/20 p-2 rounded">
+                          {ctx.source_context.bug_summary}
+                        </p>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* Tags */}
-                  {ctx.tags && ctx.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {ctx.tags.map((tag, tagIdx) => (
-                        <span
-                          key={tagIdx}
-                          className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                    {/* Error Messages */}
+                    {ctx.source_context.error_messages && ctx.source_context.error_messages.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-orange-600 dark:text-orange-400">⚠️ Error Messages:</p>
+                        <ul className="text-xs text-gray-700 dark:text-gray-300 bg-orange-50 dark:bg-orange-900/20 p-2 rounded list-disc list-inside">
+                          {ctx.source_context.error_messages.map((err, idx) => (
+                            <li key={idx} className="font-mono">{err}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
-                  {/* Metadata */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-purple-100 dark:border-purple-800">
-                    <span className="text-xs text-gray-400">
-                      Worker: {ctx.worker_id.substring(0, 8)}...
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {new Date(ctx.published_at).toLocaleString()}
-                    </span>
+                    {/* Reproduction Steps */}
+                    {ctx.source_context.reproduction_steps && (
+                      <div>
+                        <p className="text-xs font-medium text-blue-600 dark:text-blue-400">🔄 Reproduction Steps:</p>
+                        <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                          {ctx.source_context.reproduction_steps}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* File Paths */}
+                    {ctx.source_context.file_paths && ctx.source_context.file_paths.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-green-600 dark:text-green-400">📁 Referenced Files:</p>
+                        <ul className="text-xs text-gray-700 dark:text-gray-300 bg-green-50 dark:bg-green-900/20 p-2 rounded">
+                          {ctx.source_context.file_paths.map((path, idx) => (
+                            <li key={idx} className="font-mono">{path}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Commit References */}
+                    {ctx.source_context.commit_references && ctx.source_context.commit_references.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-purple-600 dark:text-purple-400">🔖 Commit/Version References:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {ctx.source_context.commit_references.map((ref, idx) => (
+                            <span key={idx} className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded font-mono">
+                              {ref}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* URLs */}
+                    {ctx.source_context.urls && ctx.source_context.urls.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-indigo-600 dark:text-indigo-400">🔗 Related URLs:</p>
+                        <ul className="text-xs text-gray-700 dark:text-gray-300 bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded">
+                          {ctx.source_context.urls.map((url, idx) => (
+                            <li key={idx} className="font-mono truncate">{url}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Environment */}
+                    {ctx.source_context.environment && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-600 dark:text-gray-400">💻 Environment:</p>
+                        <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.source_context.environment}</p>
+                      </div>
+                    )}
+
+                    {/* Dependencies */}
+                    {ctx.source_context.dependencies && ctx.source_context.dependencies.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-600 dark:text-gray-400">📦 Dependencies:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {ctx.source_context.dependencies.map((dep, idx) => (
+                            <span key={idx} className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded font-mono">
+                              {dep}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Key Facts */}
+                    {ctx.source_context.key_facts && ctx.source_context.key_facts.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400">⭐ Key Facts & Requirements:</p>
+                        <ul className="text-xs text-gray-700 dark:text-gray-300 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded list-disc list-inside">
+                          {ctx.source_context.key_facts.map((fact, idx) => (
+                            <li key={idx}>{fact}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Tags */}
+                    {ctx.tags && ctx.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {ctx.tags.map((tag, tagIdx) => (
+                          <span
+                            key={tagIdx}
+                            className="px-1.5 py-0.5 text-xs bg-cyan-100 dark:bg-cyan-800 text-cyan-700 dark:text-cyan-300 rounded"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Metadata */}
+                    <div className="flex items-center gap-2 pt-1 border-t border-cyan-100 dark:border-cyan-800">
+                      <span className="text-xs text-gray-400">
+                        Extracted at: {new Date(ctx.published_at).toLocaleString()}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Worker Context Value Section (for worker type entries) */}
+                {ctx.entry_type === 'worker' && (
+                  <div className="ml-6 space-y-2 border-t border-purple-200 dark:border-purple-700 pt-2">
+                    <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold uppercase">Value</p>
+
+                    {/* Objective */}
+                    <div>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Objective:</p>
+                      <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.objective}</p>
+                    </div>
+
+                    {/* Justification */}
+                    {ctx.justification && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Why Assigned:</p>
+                        <p className="text-xs text-gray-700 dark:text-gray-300">{ctx.justification}</p>
+                      </div>
+                    )}
+
+                    {/* Work Analysis (comprehensive - includes approach and challenges) */}
+                    {ctx.work_analysis && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-600 dark:text-gray-400">How It Was Accomplished:</p>
+                        <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-white/50 dark:bg-gray-800/50 p-2 rounded max-h-48 overflow-y-auto">
+                          {ctx.work_analysis}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tags */}
+                    {ctx.tags && ctx.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {ctx.tags.map((tag, tagIdx) => (
+                          <span
+                            key={tagIdx}
+                            className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Metadata */}
+                    <div className="flex items-center gap-2 pt-1 border-t border-purple-100 dark:border-purple-800">
+                      <span className="text-xs text-gray-400">
+                        Worker: {ctx.worker_id.substring(0, 8)}...
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(ctx.published_at).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -604,7 +761,7 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
             </div>
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
               This worker inherited knowledge from {summary.inherited_context.total_available} available context entries in the global dashboard.
-              Relevant knowledge was automatically identified and provided to help with this task.
+              Source context (from original prompt) is always included. Relevant worker context was automatically identified.
             </p>
 
             {/* Reminder Banner */}
@@ -625,54 +782,153 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                   Inherited {summary.inherited_context.entries.length} Relevant Context(s):
                 </p>
                 {summary.inherited_context.entries.map((entry) => (
-                  <div key={entry.entry_id} className="bg-white dark:bg-gray-800 p-3 rounded border border-cyan-200 dark:border-cyan-700">
+                  <div
+                    key={entry.entry_id}
+                    className={`p-3 rounded border ${
+                      entry.entry_type === 'source'
+                        ? 'bg-gradient-to-r from-cyan-50 to-blue-50 dark:from-cyan-900/30 dark:to-blue-900/30 border-cyan-300 dark:border-cyan-600'
+                        : 'bg-white dark:bg-gray-800 border-cyan-200 dark:border-cyan-700'
+                    }`}
+                  >
                     {/* Work Title (Key) */}
                     <div className="flex items-start gap-2 mb-2">
-                      <span className="text-cyan-500 text-sm">🔑</span>
-                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                        {entry.work_title}
-                      </p>
-                    </div>
-
-                    {/* Objective */}
-                    <div className="ml-6 space-y-2">
-                      <div>
-                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Objective:</p>
-                        <p className="text-xs text-gray-700 dark:text-gray-300">{entry.objective}</p>
-                      </div>
-
-                      {/* Why This Is Relevant */}
-                      {entry.justification && (
-                        <div>
-                          <p className="text-xs font-medium text-purple-600 dark:text-purple-400">Why This Is Relevant:</p>
-                          <p className="text-xs text-gray-700 dark:text-gray-300">{entry.justification}</p>
-                        </div>
-                      )}
-
-                      {/* Work Analysis - How it was accomplished (comprehensive - includes approach and challenges) */}
-                      {entry.work_analysis && (
-                        <div>
-                          <p className="text-xs font-medium text-green-600 dark:text-green-400">How It Was Accomplished:</p>
-                          <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-green-50 dark:bg-green-900/20 p-2 rounded max-h-40 overflow-y-auto">
-                            {entry.work_analysis}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Tags */}
-                      {entry.tags && entry.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {entry.tags.map((tag, tagIdx) => (
-                            <span
-                              key={tagIdx}
-                              className="px-1.5 py-0.5 text-xs bg-cyan-100 dark:bg-cyan-800 text-cyan-700 dark:text-cyan-300 rounded"
-                            >
-                              {tag}
+                      <span className={`text-sm ${entry.entry_type === 'source' ? 'text-blue-500' : 'text-cyan-500'}`}>
+                        {entry.entry_type === 'source' ? '📋' : '🔑'}
+                      </span>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                            {entry.work_title}
+                          </p>
+                          {entry.entry_type === 'source' && (
+                            <span className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300 rounded font-medium">
+                              Source Context
                             </span>
-                          ))}
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
+
+                    {/* Source Context Data (for source type entries) */}
+                    {entry.entry_type === 'source' && entry.source_context && (
+                      <div className="ml-6 space-y-2">
+                        {/* Bug Summary */}
+                        {entry.source_context.bug_summary && (
+                          <div>
+                            <p className="text-xs font-medium text-red-600 dark:text-red-400">🐛 Bug/Issue:</p>
+                            <p className="text-xs text-gray-700 dark:text-gray-300 bg-red-50 dark:bg-red-900/20 p-2 rounded">
+                              {entry.source_context.bug_summary}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Error Messages */}
+                        {entry.source_context.error_messages && entry.source_context.error_messages.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-orange-600 dark:text-orange-400">⚠️ Errors:</p>
+                            <ul className="text-xs text-gray-700 dark:text-gray-300 bg-orange-50 dark:bg-orange-900/20 p-2 rounded list-disc list-inside font-mono">
+                              {entry.source_context.error_messages.map((err, idx) => (
+                                <li key={idx}>{err}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* File Paths */}
+                        {entry.source_context.file_paths && entry.source_context.file_paths.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-green-600 dark:text-green-400">📁 Files:</p>
+                            <ul className="text-xs text-gray-700 dark:text-gray-300 bg-green-50 dark:bg-green-900/20 p-2 rounded font-mono">
+                              {entry.source_context.file_paths.map((path, idx) => (
+                                <li key={idx}>{path}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Commit References */}
+                        {entry.source_context.commit_references && entry.source_context.commit_references.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-purple-600 dark:text-purple-400">🔖 Commits/Versions:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {entry.source_context.commit_references.map((ref, idx) => (
+                                <span key={idx} className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded font-mono">
+                                  {ref}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Key Facts */}
+                        {entry.source_context.key_facts && entry.source_context.key_facts.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400">⭐ Key Facts:</p>
+                            <ul className="text-xs text-gray-700 dark:text-gray-300 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded list-disc list-inside">
+                              {entry.source_context.key_facts.map((fact, idx) => (
+                                <li key={idx}>{fact}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Tags */}
+                        {entry.tags && entry.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {entry.tags.map((tag, tagIdx) => (
+                              <span
+                                key={tagIdx}
+                                className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300 rounded"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Worker Context Data (for worker type entries) */}
+                    {entry.entry_type !== 'source' && (
+                      <div className="ml-6 space-y-2">
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Objective:</p>
+                          <p className="text-xs text-gray-700 dark:text-gray-300">{entry.objective}</p>
+                        </div>
+
+                        {/* Why This Is Relevant */}
+                        {entry.justification && (
+                          <div>
+                            <p className="text-xs font-medium text-purple-600 dark:text-purple-400">Why This Is Relevant:</p>
+                            <p className="text-xs text-gray-700 dark:text-gray-300">{entry.justification}</p>
+                          </div>
+                        )}
+
+                        {/* Work Analysis - How it was accomplished */}
+                        {entry.work_analysis && (
+                          <div>
+                            <p className="text-xs font-medium text-green-600 dark:text-green-400">How It Was Accomplished:</p>
+                            <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-green-50 dark:bg-green-900/20 p-2 rounded max-h-40 overflow-y-auto">
+                              {entry.work_analysis}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tags */}
+                        {entry.tags && entry.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {entry.tags.map((tag, tagIdx) => (
+                              <span
+                                key={tagIdx}
+                                className="px-1.5 py-0.5 text-xs bg-cyan-100 dark:bg-cyan-800 text-cyan-700 dark:text-cyan-300 rounded"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
