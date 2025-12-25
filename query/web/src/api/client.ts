@@ -15,6 +15,7 @@ import type {
   PromptVariables,
   SystemConfig,
   ExecutionSummary,
+  PaginatedAgentList,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -50,7 +51,8 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 
 // Agent endpoints
 export async function listBossAgents(): Promise<AgentListItem[]> {
-  return fetchJson<AgentListItem[]>('/agents');
+  const response = await fetchJson<PaginatedAgentList>('/agents');
+  return response.items;
 }
 
 export async function getAgent(agentId: string): Promise<AgentListItem> {

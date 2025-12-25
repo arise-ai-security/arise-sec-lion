@@ -1,143 +1,46 @@
 # CLAUDE.md - Arise Sec Lion
 
-## What Is This Project?
+Recursive, self-healing multi-agent orchestration platform.
+Hexagonal Architecture + Event Sourcing | BOSS → MANAGER → WORKER hierarchy
 
-A **recursive, self-healing multi-agent orchestration platform** that decomposes complex tasks into subtasks executed by specialized agents.
+## Critical Rules
 
-| Aspect | Description |
-|--------|-------------|
-| **Architecture** | Hexagonal (Ports & Adapters) + Event Sourcing |
-| **Agent Hierarchy** | BOSS → MANAGER → WORKER (recursive) |
-| **Execution** | "Black Box" tools (Claude Code, OpenHands) with thinking capture |
-| **Tech Stack** | Python 3.12+, `uv`, `asyncpg`, `litellm`, `pydantic`, `FastAPI`, `React` |
+1. **`core/` must NEVER import from `infrastructure/`**
+   ```
+   Infrastructure → Ports ← Domain Core
+         ↑                      ↑
+      Bootstrap ───────────────┘
+   ```
+   Verify: `grep -r "from infrastructure" core/` returns nothing
 
-## Project Structure Map
+2. **Forbidden Operations** - Claude shall NEVER:
+   - Run `git commit` (user commits manually)
+   - Run `ruff check/format` (user lints manually)
 
-```
-arise-sec-lion/
-├── core/                    # Domain core (NO infrastructure imports!)
-│   ├── domain/              # Pure business logic
-│   │   ├── model.py         # AgentSession aggregate (THE central entity)
-│   │   ├── events.py        # All domain events (immutable, frozen dataclasses)
-│   │   ├── enums.py         # AgentRole, AgentStatus enums
-│   │   ├── services.py      # Domain services (SubtaskParser)
-│   │   ├── context.py       # TaskContext value object
-│   │   └── prompt_builder.py
-│   ├── ports/               # Abstract interfaces (Protocol)
-│   │   ├── event_store_port.py
-│   │   ├── llm_port.py
-│   │   ├── worker_port.py
-│   │   ├── shared_context_port.py
-│   │   └── cost_calculator_port.py
-│   ├── application/         # Use cases, orchestration
-│   │   ├── execution_service.py  # "The Brain" - runs everything
-│   │   ├── agent_orchestrator.py # Orchestration logic (extracted from model)
-│   │   └── services/        # Application services
-│   │       ├── agent_repository.py
-│   │       ├── query_service.py
-│   │       ├── child_factory.py
-│   │       └── context_registry.py
-│   └── query/               # CQRS query side
-│       ├── ports/           # Query port interfaces
-│       └── projections/     # Read models
-│
-├── infrastructure/          # Concrete implementations
-│   ├── adapters/            # Implements ports
-│   │   ├── postgres_event_store.py
-│   │   ├── litellm_adapter.py
-│   │   ├── claude_pty_adapter.py
-│   │   ├── openhands_adapter.py
-│   │   ├── worker_base.py   # Shared worker logic
-│   │   ├── shared_context_adapter.py
-│   │   └── cost_calculator.py
-│   ├── repositories/        # Repository implementations
-│   └── sql/                 # Database schemas
-│
-├── bootstrap/               # Dependency injection (composition root)
-│   ├── bootstrap.py         # Main entry point
-│   ├── infrastructure.py    # Infrastructure wiring
-│   ├── application.py       # Application services wiring
-│   └── presentation.py      # Presentation wiring
-├── config/                  # YAML settings + pydantic-settings
-├── presentation/            # User interfaces
-│   ├── cli.py               # Click commands
-│   ├── api/                 # FastAPI REST + SSE
-│   └── web/                 # React dashboard
-├── prompts/                 # Jinja2 templates for LLM prompts
-│   ├── system/              # System prompts
-│   ├── strategies/          # Decomposition strategies
-│   ├── worker/              # Worker instructions
-│   └── tasks/               # Task-specific prompts
-├── deployment/              # Docker, docker-compose
-└── agent-docs/              # Detailed documentation (see below)
-```
+3. **Off-Limits:** Do not read `user-docs/` directory
 
-## Critical Architectural Rule
+## Development
 
-**`core/` must NEVER import from `infrastructure/`**
-
-Dependencies flow inward:
-```
-Infrastructure → Ports ← Domain Core
-      ↑                      ↑
-   Bootstrap ───────────────┘
-```
-
-Verify: `grep -r "from infrastructure" core/` should return nothing.
-
-## Off-Limits Directory
-
-**Claude shall NOT read docs in the `user-docs/` directory.** This directory contains user-specific content that should not be accessed.
-
-## Forbidden Operations
-
-**In any case, Claude shall NEVER:**
-- **Commit** - Do not run `git commit` or create commits
-- **Lint** - Do not run `ruff check`, `ruff format`, or any linting/formatting commands
-
-The user will handle these operations manually.
-
-## Development Environment
-
-**This project uses Docker Compose for development.** All commands should run inside containers.
-
-### Running the System
+All commands run inside Docker containers:
 
 ```bash
 cd deployment
 
-# First time or after code changes: build and start
-docker compose up --build -d
+# Start services (dev profile uses .env.dev)
+docker compose --profile dev up -d --build
 
-# Run a task (container must be running)
-docker compose exec app python main.py run "Your task description"
+# Run a task
+docker compose --profile dev exec app-dev python main.py run "Your task"
 
-# View logs
-docker compose logs -f app
+# Run tests
+docker compose --profile dev exec app-dev uv run pytest
 
 # View results
-docker compose exec app python main.py events
-docker compose exec app python main.py summary
-docker compose exec app python main.py list
-
-# Stop services
-docker compose down
+docker compose --profile dev exec app-dev python main.py events
+docker compose --profile dev exec app-dev python main.py summary
 ```
 
-### Running Tests
-
-```bash
-docker compose exec app uv run pytest
-docker compose exec app uv run pytest -v --tb=short
-```
-
-### Important
-
-- **DO NOT** suggest bare `uv run` commands - always use `docker compose exec app`
-- The app container has the source mounted for hot reload
-- API keys are configured via `deployment/.env`
-
-## Agent Roles & Flow
+## Agent Flow
 
 ```
 BOSS (root)
@@ -151,127 +54,17 @@ PENDING ────────────────────────
                      └─► spawns ──────┘ (recursive)
 ```
 
-## Key Domain Concepts
+## Documentation
 
-| Concept | Location | Purpose |
-|---------|----------|---------|
-| `AgentSession` | `core/domain/model.py:35` | Aggregate root, all agent state |
-| `DomainEvent` | `core/domain/events.py` | Immutable facts (event sourcing) |
-| `AgentRole` / `AgentStatus` | `core/domain/enums.py` | Agent lifecycle enums |
-| `TaskContext` | `core/domain/context.py` | Immutable context passed to children |
-| `EventStorePort` | `core/ports/event_store_port.py` | Persistence interface |
-| `AgentExecutionService` | `core/application/execution_service.py:56` | Orchestration ("The Brain") |
-| `AgentOrchestrator` | `core/application/agent_orchestrator.py:32` | State machine transitions |
-
-## Event Sourcing Essentials
-
-1. **State = replay of events** - Never store state directly
-2. **OCC required** - All writes use `expected_version` parameter
-3. **Failures are events** - `WorkFailed` event, not exceptions
-4. **Append-only** - Never update/delete events
-
-## Coding Standards
-
-| Standard | Requirement |
-|----------|-------------|
-| Type hints | Mandatory on all functions |
-| Async | All ports/adapters use `async/await` |
-| Docstrings | Required on public classes/methods |
-| Tests | Red-Green-Refactor (TDD), Given-When-Then |
-
-## Configuration Rules
-
-**Separation of config and secrets (12-Factor App principle):**
-
-| Category | Location | Committed to Git? |
-|----------|----------|-------------------|
-| **Secrets** (passwords, API keys) | `deployment/.env` | ❌ Never |
-| **Docker overrides** (host names) | `deployment/.env` | ❌ No |
-| **Base defaults** | `config/config.yaml` | ✅ Yes |
-| **Phase-specific overrides** | `config/config.{env}.yaml` | ✅ Yes |
-
-**Load hierarchy (highest to lowest priority):**
-1. Environment variables (secrets + Docker overrides only)
-2. Phase-specific YAML (`config/config.{ARISE_ENV}.yaml`)
-3. Base YAML (`config/config.yaml`)
-4. Code defaults
-
-**Environment phases** (set via `ARISE_ENV`):
-- `development` (default) - cheaper models, verbose logging
-- `production` - best models, minimal logging
-
-**Rules:**
-- **NEVER** put secrets in any `config/*.yaml` file
-- **NEVER** put application config in `.env` (only secrets belong there)
-- Use flat env var names for secrets (no prefix): `POSTGRES_PASSWORD`, `OPENAI_API_KEY`
-- Use `deployment/.env.example` as a template for required secrets
-
-**Example:**
-```yaml
-# config/config.yaml - base defaults (committed)
-infrastructure:
-  postgres_user: arise
-  llm_model_boss: gpt-4o
-  worker_tool_type: openhands
-application:
-  max_retries: 3
-  poll_interval: 0.5
-```
-
-```yaml
-# config/config.development.yaml - dev overrides (committed)
-infrastructure:
-  llm_model_boss: gpt-4o-mini  # cheaper for dev
-presentation:
-  log_level: DEBUG
-```
-
-```bash
-# deployment/.env - secrets only (NOT committed)
-POSTGRES_PASSWORD=secret123
-OPENAI_API_KEY=sk-xxx
-POSTGRES_HOST=db  # Docker override
-# ARISE_ENV=production  # optional, default: development
-```
-
-## Detailed Documentation
-
-**Before starting work, decide which docs are relevant and read them:**
+**Read relevant doc(s) before implementing changes. Ask if unsure.**
 
 | Document | When to Read |
 |----------|--------------|
-| [`agent-docs/architecture.md`](agent-docs/architecture.md) | Modifying layer boundaries, adding ports/adapters |
-| [`agent-docs/event-sourcing.md`](agent-docs/event-sourcing.md) | Working with events, state, persistence |
-| [`agent-docs/design-principles.md`](agent-docs/design-principles.md) | Understanding code patterns, reviewing code |
-| [`agent-docs/domain-model.md`](agent-docs/domain-model.md) | Modifying agent behavior, lifecycle, domain logic |
-| [`agent-docs/development.md`](agent-docs/development.md) | Building, testing, Docker, coding conventions |
-| [`agent-docs/api.md`](agent-docs/api.md) | REST API endpoints, SSE streaming, schemas |
-| [`agent-docs/dashboard.md`](agent-docs/dashboard.md) | React dashboard, XYFlow visualization |
-| [`agent-docs/deployment.md`](agent-docs/deployment.md) | Docker Compose, services, build stages, networking |
-
-**Instruction:** Read the relevant doc(s) before implementing changes. If unsure which docs apply, ask.
-
-## Pre-Commit Checklist
-
-```bash
-uv run ruff check .                      # ✓ No lint errors
-uv run ruff format . --check             # ✓ Formatting correct
-uv run pytest                            # ✓ All tests pass
-grep -r "from infrastructure" core/      # ✓ No dependency violations
-```
-
-## Implementation Status
-
-- [x] Event Store (PostgreSQL + OCC, pagination)
-- [x] Domain Model (AgentSession, immutable Events)
-- [x] AgentOrchestrator (extracted state machine)
-- [x] LiteLLM Adapter (Multi-provider LLM)
-- [x] Claude Code PTY Adapter (Thinking capture)
-- [x] OpenHands Adapter (Alternative worker)
-- [x] Worker Base (shared validation logic)
-- [x] CLI with Click (run, events, summary, list)
-- [x] CQRS Query Layer (projections, N+1 fixes)
-- [x] REST API (FastAPI + SSE streaming)
-- [x] Agent Dashboard (React + XYFlow)
-- [x] Modular Bootstrap (DI composition root)
-- [x] Context Passing (TaskContext between agents)
+| [`domain-model.md`](agent-docs/domain-model.md) | Modifying agents, events, state machine |
+| [`development.md`](agent-docs/development.md) | Testing, coding standards, adding features |
+| [`configuration.md`](agent-docs/configuration.md) | Config/secrets, environment setup |
+| [`api-reference.md`](agent-docs/api-reference.md) | REST API, SSE, schemas |
+| [`project-structure.md`](agent-docs/project-structure.md) | Directory layout, layer responsibilities |
+| [`architecture-concepts.md`](agent-docs/architecture-concepts.md) | CQRS, OCC, Event Sourcing, Hexagonal, DDD |
+| [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
+| [`user-manual.md`](agent-docs/user-manual.md) | Docker commands reference |

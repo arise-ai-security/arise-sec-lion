@@ -15,6 +15,18 @@ export interface AgentListItem {
   created_at: string | null;
 }
 
+export interface PaginationMeta {
+  limit: number;
+  offset: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface PaginatedAgentList {
+  items: AgentListItem[];
+  pagination: PaginationMeta;
+}
+
 export interface AgentNode {
   id: string;
   role: AgentRole;
