@@ -365,7 +365,7 @@ class AgentSession:
         )
 
         supervisor_context = ""
-        if self.supervisor_justification:
+        if self.supervisor_justification and self.supervisor_justification.has_content():
             j = self.supervisor_justification
             supervisor_context = (
                 "<SUPERVISOR_EXPECTATIONS>\n"

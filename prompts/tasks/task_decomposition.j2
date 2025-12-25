@@ -4,7 +4,7 @@ Agent Role: {{ agent_role }}
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
-{% if justification %}
+{% if justification and justification.has_content() %}
 <SUPERVISOR_EXPECTATIONS>
 Your supervisor has assigned you this decomposition task with the following context:
 

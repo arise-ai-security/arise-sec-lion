@@ -1,6 +1,6 @@
 """Subtask value object for task decomposition."""
 
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,9 @@ class SubtaskJustification(BaseModel):
     """Supervisor's justification for creating a subtask."""
 
     model_config = {"frozen": True}
+
+    # Legacy placeholder constant (ClassVar to exclude from Pydantic fields)
+    LEGACY_PLACEHOLDER: ClassVar[str] = "(legacy event)"
 
     # Defaults for backward compatibility with old events that lack justification
     parent_task: str = Field(default="(legacy event)", description="The supervisor's received task being decomposed")
@@ -35,6 +38,30 @@ class SubtaskJustification(BaseModel):
         default="",
         description="Concrete reasoning for why this budget allocation is appropriate for the task scope",
     )
+
+    def is_legacy(self) -> bool:
+        """Check if this justification contains only legacy placeholder values.
+
+        Returns:
+            True if all primary fields are legacy placeholders, False if any has real content.
+        """
+        legacy = self.LEGACY_PLACEHOLDER
+        return (
+            self.parent_task == legacy
+            and self.split_reason == legacy
+            and self.objective == legacy
+            and self.plan == legacy
+            and self.why_it_may_work == legacy
+            and self.expected_results == legacy
+        )
+
+    def has_content(self) -> bool:
+        """Check if this justification has any meaningful content.
+
+        Returns:
+            True if any primary field has real content (not legacy placeholder).
+        """
+        return not self.is_legacy()
 
 
 class WorkerReport(BaseModel):

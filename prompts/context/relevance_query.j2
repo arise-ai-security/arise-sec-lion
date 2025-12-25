@@ -4,11 +4,11 @@ You are evaluating which previous work contexts are relevant to a new task.
 ## Your Current Task
 {{ task_description }}
 
-{% if justification %}
+{% if justification and justification.has_content() %}
 ## Supervisor Context
 - Objective: {{ justification.objective }}
 - Why assigned: {{ justification.split_reason }}
-{% if justification.plan %}- Expected approach: {{ justification.plan }}{% endif %}
+{% if justification.plan and justification.plan != "(legacy event)" %}- Expected approach: {{ justification.plan }}{% endif %}
 {% endif %}
 
 ## Available Context Entries
