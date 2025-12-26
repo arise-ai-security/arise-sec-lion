@@ -14,7 +14,13 @@ Features:
   - Worker reason badge: shows why agent became WORKER (LLM Evaluation, Low Budget, Random Shortcut)
   - Subtasks include supervisor justifications (objective, plan, split reason, etc.)
   - Budget info: allocated, spent, remaining amounts per node
-  - Worker reports: shows approach, reasoning, deliverables, challenges for each worker
+  - Worker reports: shows detailed work information for each worker
+    * Approach: how the worker tackled the task
+    * 🔍 Observations: key discoveries and findings during execution
+    * 💭 Worker's Reasoning: worker's own justification (not supervisor's guidance)
+    * 📦 Deliverables: specific file changes with descriptions (e.g., "auth.py: added JWT logic")
+    * ✅ Fulfillment Evidence: concrete examples of meeting supervisor expectations
+    * ⚠️ Challenges: issues encountered and how they were addressed
   - Aggregated summary: for MANAGER/BOSS nodes, shows combined deliverables and approaches from all subordinates
   - Child worker reports: accumulated reports from all workers in the subtree
   - Context sharing (consistent with web UI):
@@ -658,14 +664,42 @@ function AgentModal({ agent, onClose }) {
                 {agent.workerReport.approach && agent.workerReport.approach !== 'Executed task using available tools' && (
                   <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Approach:</span> {agent.workerReport.approach}</div>
                 )}
-                {agent.workerReport.reasoning && !agent.workerReport.reasoning.includes('(legacy event)') && agent.workerReport.reasoning !== 'Followed standard execution approach for the given task' && (
-                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Reasoning:</span> {agent.workerReport.reasoning}</div>
+                {agent.workerReport.observations && agent.workerReport.observations !== 'Task executed as planned' && (
+                  <div><span style={{ fontWeight: '500', color: '#2563eb' }}>🔍 Observations:</span> {agent.workerReport.observations}</div>
+                )}
+                {agent.workerReport.reasoning && !agent.workerReport.reasoning.includes('(legacy event)') && agent.workerReport.reasoning !== 'Followed standard execution approach for the given task' && agent.workerReport.reasoning !== 'Task executed using standard approach with successful completion' && (
+                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>💭 Worker's Reasoning:</span> {agent.workerReport.reasoning}</div>
                 )}
                 {agent.workerReport.deliverables && agent.workerReport.deliverables !== 'Task completed' && (
-                  <div><span style={{ fontWeight: '500', color: '#4b5563' }}>Deliverables:</span> {agent.workerReport.deliverables}</div>
+                  <div>
+                    <span style={{ fontWeight: '500', color: '#4b5563' }}>📦 Deliverables:</span>
+                    {agent.workerReport.deliverables.startsWith('Changes made:') ? (
+                      <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                        {agent.workerReport.deliverables.replace('Changes made: ', '').split('; ').map((change, idx) => {
+                          const colonIdx = change.indexOf(':');
+                          if (colonIdx > 0) {
+                            const file = change.substring(0, colonIdx);
+                            const desc = change.substring(colonIdx + 1).trim();
+                            return (
+                              <li key={idx} style={{ marginBottom: '2px' }}>
+                                <code style={{ backgroundColor: '#dbeafe', padding: '1px 4px', borderRadius: '3px', fontFamily: 'monospace', color: '#1e40af', fontSize: '11px' }}>{file}</code>
+                                <span style={{ marginLeft: '6px' }}>{desc}</span>
+                              </li>
+                            );
+                          }
+                          return <li key={idx} style={{ fontFamily: 'monospace' }}>{change}</li>;
+                        })}
+                      </ul>
+                    ) : (
+                      <span style={{ fontFamily: 'monospace' }}> {agent.workerReport.deliverables}</span>
+                    )}
+                  </div>
+                )}
+                {agent.workerReport.fulfillment_evidence && agent.workerReport.fulfillment_evidence !== 'Task completed successfully per assignment' && (
+                  <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>✅ Fulfillment Evidence:</span> {agent.workerReport.fulfillment_evidence}</div>
                 )}
                 {agent.workerReport.challenges && agent.workerReport.challenges !== 'No significant challenges encountered' && (
-                  <div><span style={{ fontWeight: '500', color: '#ea580c' }}>Challenges:</span> {agent.workerReport.challenges}</div>
+                  <div><span style={{ fontWeight: '500', color: '#ea580c' }}>⚠️ Challenges:</span> {agent.workerReport.challenges}</div>
                 )}
               </div>
             </div>
@@ -767,14 +801,42 @@ function AgentModal({ agent, onClose }) {
                       {childReport.report.approach && childReport.report.approach !== 'Executed task using available tools' && (
                         <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Approach:</span> {childReport.report.approach}</div>
                       )}
-                      {childReport.report.reasoning && !childReport.report.reasoning.includes('(legacy event)') && childReport.report.reasoning !== 'Followed standard execution approach for the given task' && (
-                        <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Reasoning:</span> {childReport.report.reasoning}</div>
+                      {childReport.report.observations && childReport.report.observations !== 'Task executed as planned' && (
+                        <div><span style={{ fontWeight: '500', color: '#2563eb' }}>🔍 Observations:</span> {childReport.report.observations}</div>
+                      )}
+                      {childReport.report.reasoning && !childReport.report.reasoning.includes('(legacy event)') && childReport.report.reasoning !== 'Followed standard execution approach for the given task' && childReport.report.reasoning !== 'Task executed using standard approach with successful completion' && (
+                        <div><span style={{ fontWeight: '500', color: '#16a34a' }}>💭 Worker's Reasoning:</span> {childReport.report.reasoning}</div>
                       )}
                       {childReport.report.deliverables && childReport.report.deliverables !== 'Task completed' && (
-                        <div><span style={{ fontWeight: '500', color: '#16a34a' }}>Deliverables:</span> {childReport.report.deliverables}</div>
+                        <div>
+                          <span style={{ fontWeight: '500', color: '#16a34a' }}>📦 Deliverables:</span>
+                          {childReport.report.deliverables.startsWith('Changes made:') ? (
+                            <ul style={{ margin: '4px 0 0 0', paddingLeft: '16px' }}>
+                              {childReport.report.deliverables.replace('Changes made: ', '').split('; ').map((change, idx) => {
+                                const colonIdx = change.indexOf(':');
+                                if (colonIdx > 0) {
+                                  const file = change.substring(0, colonIdx);
+                                  const desc = change.substring(colonIdx + 1).trim();
+                                  return (
+                                    <li key={idx} style={{ marginBottom: '2px' }}>
+                                      <code style={{ backgroundColor: '#dbeafe', padding: '1px 4px', borderRadius: '3px', fontFamily: 'monospace', color: '#1e40af', fontSize: '10px' }}>{file}</code>
+                                      <span style={{ marginLeft: '6px' }}>{desc}</span>
+                                    </li>
+                                  );
+                                }
+                                return <li key={idx} style={{ fontFamily: 'monospace' }}>{change}</li>;
+                              })}
+                            </ul>
+                          ) : (
+                            <span style={{ fontFamily: 'monospace' }}> {childReport.report.deliverables}</span>
+                          )}
+                        </div>
+                      )}
+                      {childReport.report.fulfillment_evidence && childReport.report.fulfillment_evidence !== 'Task completed successfully per assignment' && (
+                        <div><span style={{ fontWeight: '500', color: '#7c3aed' }}>✅ Fulfillment Evidence:</span> {childReport.report.fulfillment_evidence}</div>
                       )}
                       {childReport.report.challenges && childReport.report.challenges !== 'No significant challenges encountered' && (
-                        <div><span style={{ fontWeight: '500', color: '#ea580c' }}>Challenges:</span> {childReport.report.challenges}</div>
+                        <div><span style={{ fontWeight: '500', color: '#ea580c' }}>⚠️ Challenges:</span> {childReport.report.challenges}</div>
                       )}
                     </div>
                   )}
