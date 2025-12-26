@@ -467,13 +467,33 @@ class AgentSession:
         observation_lines = []
         files_worked_on: set[str] = set()
         technical_discoveries: list[str] = []
+        # Track specific changes per file: {file_path: [list of changes/operations]}
+        file_changes: dict[str, list[str]] = {}
 
-        # Patterns to extract file names from progress messages
+        # Patterns to extract file names with their operations from progress messages
         file_patterns = [
             r"(?:created|wrote|modified|updated|edited|generated|deleted|added)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)",
             r"(?:creating|writing|modifying|updating|editing|generating|deleting|adding)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)",
             r"(?:file|File)\s*[:\s]+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)",
             r"([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)(?:\s+(?:created|modified|updated|written))",
+        ]
+
+        # Patterns to extract file + operation context (what was done to the file)
+        file_operation_patterns = [
+            # "created/wrote file.py with/containing X" or "created file.py: X"
+            (r"(created|wrote|generated)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)['\"]?\s*(?:with|containing|:)\s*(.+?)(?:\.|$)", "created"),
+            # "added X to file.py" or "added X in file.py"
+            (r"added\s+(.+?)\s+(?:to|in)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)", "added"),
+            # "updated/modified file.py to X" or "updated file.py with X"
+            (r"(updated|modified)\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)['\"]?\s*(?:to|with|:)\s*(.+?)(?:\.|$)", "updated"),
+            # "implemented X in file.py"
+            (r"implemented\s+(.+?)\s+in\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)", "implemented"),
+            # "fixed X in file.py"
+            (r"fixed\s+(.+?)\s+in\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)", "fixed"),
+            # "refactored X in file.py"
+            (r"refactored\s+(.+?)\s+in\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)", "refactored"),
+            # "removed X from file.py"
+            (r"removed\s+(.+?)\s+from\s+['\"]?([^'\"<>\n]+\.[a-zA-Z0-9]+)", "removed"),
         ]
 
         # Keywords for categorizing thoughts
@@ -518,6 +538,33 @@ class AgentSession:
                     file_path = match.strip().strip("'\"")
                     if file_path and not file_path.startswith(("http://", "https://", "/")):
                         files_worked_on.add(file_path)
+
+            # Extract file + operation context (what specific changes were made)
+            for pattern, op_type in file_operation_patterns:
+                matches = re.findall(pattern, thought, re.IGNORECASE)
+                for match in matches:
+                    if op_type == "added":
+                        # Pattern: added X to/in file.py -> (X, file.py)
+                        change_desc, file_path = match[0], match[1]
+                        change = f"added {change_desc.strip()[:50]}"
+                    elif op_type in ("created", "updated"):
+                        # Pattern: created/updated file.py with X -> (verb, file.py, X)
+                        file_path, change_desc = match[1], match[2]
+                        change = f"{op_type} with {change_desc.strip()[:50]}"
+                    elif op_type in ("implemented", "fixed", "refactored", "removed"):
+                        # Pattern: verb X in/from file.py -> (X, file.py)
+                        change_desc, file_path = match[0], match[1]
+                        change = f"{op_type} {change_desc.strip()[:50]}"
+                    else:
+                        continue
+
+                    file_path = file_path.strip().strip("'\"")
+                    if file_path and not file_path.startswith(("http://", "https://", "/")):
+                        files_worked_on.add(file_path)
+                        if file_path not in file_changes:
+                            file_changes[file_path] = []
+                        if change not in file_changes[file_path]:
+                            file_changes[file_path].append(change)
 
         # Also extract from result
         for pattern in file_patterns:
@@ -576,10 +623,30 @@ class AgentSession:
             else "Task executed using standard approach with successful completion"
         )
 
-        # Build deliverables with specific file names
+        # Build deliverables with specific file changes (not just file names)
         if files_worked_on:
             sorted_files = sorted(files_worked_on)
-            deliverables = f"Files worked on: {', '.join(sorted_files)}"
+            deliverable_parts = []
+
+            for file_path in sorted_files:
+                if file_path in file_changes and file_changes[file_path]:
+                    # Include specific changes for this file
+                    changes = file_changes[file_path][:2]  # Limit to 2 changes per file
+                    change_str = ", ".join(changes)
+                    deliverable_parts.append(f"{file_path}: {change_str}")
+                else:
+                    # Fall back to just the file name if no specific changes captured
+                    deliverable_parts.append(file_path)
+
+            # Format as detailed deliverables
+            if any(file_changes.values()):
+                deliverables = "Changes made: " + "; ".join(deliverable_parts[:8])
+            else:
+                deliverables = f"Files modified: {', '.join(sorted_files[:8])}"
+
+            # Add count if there are more files
+            if len(sorted_files) > 8:
+                deliverables += f" (+{len(sorted_files) - 8} more files)"
         else:
             result_lines = result.split("\n") if result else []
             deliverables = (
