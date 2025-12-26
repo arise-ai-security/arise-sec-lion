@@ -196,10 +196,34 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
             )}
             {summary.worker_report.deliverables && summary.worker_report.deliverables !== 'Task completed' && (
               <div>
-                <span className="text-xs font-semibold text-green-700 dark:text-green-400">Deliverables:</span>
-                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
-                  {summary.worker_report.deliverables}
-                </p>
+                <span className="text-xs font-semibold text-green-700 dark:text-green-400">📦 Deliverables:</span>
+                {summary.worker_report.deliverables.startsWith('Changes made:') ? (
+                  <ul className="text-sm text-gray-700 dark:text-gray-300 mt-1 space-y-1 pl-2">
+                    {summary.worker_report.deliverables
+                      .replace('Changes made: ', '')
+                      .split('; ')
+                      .map((change, idx) => {
+                        const colonIdx = change.indexOf(':');
+                        if (colonIdx > 0) {
+                          const file = change.substring(0, colonIdx);
+                          const desc = change.substring(colonIdx + 1).trim();
+                          return (
+                            <li key={idx} className="flex gap-2">
+                              <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded font-mono text-blue-600 dark:text-blue-400 shrink-0">
+                                {file}
+                              </code>
+                              <span className="text-xs">{desc}</span>
+                            </li>
+                          );
+                        }
+                        return <li key={idx} className="text-xs font-mono">{change}</li>;
+                      })}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5 font-mono">
+                    {summary.worker_report.deliverables}
+                  </p>
+                )}
               </div>
             )}
             {summary.worker_report.fulfillment_evidence && summary.worker_report.fulfillment_evidence !== 'Task completed successfully per assignment' && (
@@ -382,8 +406,32 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                       )}
                       {childReport.report.deliverables && childReport.report.deliverables !== 'Task completed' && (
                         <div>
-                          <span className="font-semibold text-green-700 dark:text-green-400">Deliverables:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.deliverables}</p>
+                          <span className="font-semibold text-green-700 dark:text-green-400">📦 Deliverables:</span>
+                          {childReport.report.deliverables.startsWith('Changes made:') ? (
+                            <ul className="text-gray-700 dark:text-gray-300 mt-1 space-y-1 pl-2">
+                              {childReport.report.deliverables
+                                .replace('Changes made: ', '')
+                                .split('; ')
+                                .map((change, idx) => {
+                                  const colonIdx = change.indexOf(':');
+                                  if (colonIdx > 0) {
+                                    const file = change.substring(0, colonIdx);
+                                    const desc = change.substring(colonIdx + 1).trim();
+                                    return (
+                                      <li key={idx} className="flex gap-2 items-start">
+                                        <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded font-mono text-blue-600 dark:text-blue-400 shrink-0">
+                                          {file}
+                                        </code>
+                                        <span className="text-xs">{desc}</span>
+                                      </li>
+                                    );
+                                  }
+                                  return <li key={idx} className="text-xs font-mono">{change}</li>;
+                                })}
+                            </ul>
+                          ) : (
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5 font-mono text-xs">{childReport.report.deliverables}</p>
+                          )}
                         </div>
                       )}
                       {childReport.report.fulfillment_evidence && childReport.report.fulfillment_evidence !== 'Task completed successfully per assignment' && (
