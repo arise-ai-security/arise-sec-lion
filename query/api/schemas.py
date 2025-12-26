@@ -270,6 +270,11 @@ class AgentSummarySchema(BaseModel):
     status: str = Field(..., description="Current status")
     task_description: str = Field(..., description="Task assigned to this agent")
 
+    # Supervisor's justification (from parent agent who assigned this task)
+    supervisor_justification: SubtaskJustificationSchema | None = Field(
+        None, description="Justification from parent supervisor for this task assignment"
+    )
+
     # Complexity evaluation (from ComplexityEvaluated event)
     complexity: str | None = Field(None, description="Evaluated complexity (simple/complex)")
     complexity_reasoning: str | None = Field(None, description="LLM reasoning for complexity")

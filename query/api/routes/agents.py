@@ -17,6 +17,7 @@ from core.domain.events import (
     ContextPublished,
     SourceContextExtracted,
     SubtasksDefined,
+    TaskAssigned,
 )
 from core.domain.model import AgentSession
 from core.query.projections.hierarchy_collector import HierarchyCollector
@@ -281,6 +282,9 @@ async def get_agent_summary(
     inherited_entry_ids: list[UUID] = []
     inherited_total_available: int = 0
 
+    # Supervisor justification (from TaskAssigned event - what parent assigned to this agent)
+    supervisor_justification_schema: SubtaskJustificationSchema | None = None
+
     for event in events:
         if isinstance(event, ComplexityEvaluated):
             complexity = event.complexity
@@ -292,6 +296,22 @@ async def get_agent_summary(
         elif isinstance(event, BudgetAllocated):
             initial_budget = event.amount
             budget_source = event.source
+
+        elif isinstance(event, TaskAssigned):
+            # Extract supervisor justification (what the parent assigned to this agent)
+            if event.justification and event.justification.has_content():
+                supervisor_justification_schema = SubtaskJustificationSchema(
+                    parent_task=event.justification.parent_task,
+                    split_reason=event.justification.split_reason,
+                    objective=event.justification.objective,
+                    plan=event.justification.plan,
+                    why_it_may_work=event.justification.why_it_may_work,
+                    expected_results=event.justification.expected_results,
+                    budget_allocation=event.justification.budget_allocation,
+                    complexity_assessment=event.justification.complexity_assessment,
+                    significance_weight=event.justification.significance_weight,
+                    resource_justification=event.justification.resource_justification,
+                )
 
         elif isinstance(event, SubtasksDefined):
             # Store subtasks - we'll match children later
@@ -665,6 +685,7 @@ async def get_agent_summary(
         role=agent.role.value,
         status=agent.status.value,
         task_description=agent.task_description or "",
+        supervisor_justification=supervisor_justification_schema,
         complexity=complexity,
         complexity_reasoning=complexity_reasoning,
         worker_tool=worker_tool,

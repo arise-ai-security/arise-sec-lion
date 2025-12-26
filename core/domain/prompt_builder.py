@@ -159,6 +159,7 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
+        justification: "SubtaskJustification | None" = None,
     ) -> str:
         """Build prompt for BOSS agent security benchmark generation.
 
@@ -169,6 +170,7 @@ class PromptBuilder:
             task_description: The security task (should contain CVE details).
             agent_id: The agent's UUID.
             parent_task: Parent task context (usually None for BOSS).
+            justification: Supervisor's justification for this subtask.
 
         Returns:
             Composed prompt string for security benchmark generation.
@@ -186,6 +188,7 @@ class PromptBuilder:
                 agent_role="BOSS",
                 parent_task=parent_task,
                 default_tool=self.default_tool,
+                justification=justification,
             )
             output_format = self.env.get_template("security/output_format_benchmark.j2").render(
                 default_tool=self.default_tool,
@@ -230,6 +233,7 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
+        justification: "SubtaskJustification | None" = None,
     ) -> str:
         """Build prompt for MANAGER agent handling security subtasks.
 
@@ -237,6 +241,7 @@ class PromptBuilder:
             task_description: The security subtask to decompose.
             agent_id: The agent's UUID.
             parent_task: Parent task context.
+            justification: Supervisor's justification for this subtask.
 
         Returns:
             Composed prompt string for security manager.
@@ -254,6 +259,7 @@ class PromptBuilder:
                 agent_role="MANAGER",
                 parent_task=parent_task,
                 default_tool=self.default_tool,
+                justification=justification,
             )
             output_format = self.env.get_template("output_formats/subtask_list.j2").render(
                 default_tool=self.default_tool,
@@ -292,6 +298,7 @@ class PromptBuilder:
                 task_description=task_description,
                 agent_id=agent_id,
                 parent_task=parent_task,
+                justification=justification,
             )
         if agent_role == "BOSS":
             return self.build_boss_delegation_prompt(
@@ -305,6 +312,7 @@ class PromptBuilder:
                 task_description=task_description,
                 agent_id=agent_id,
                 parent_task=parent_task,
+                justification=justification,
             )
         if agent_role == "MANAGER":
             return self.build_manager_decomposition_prompt(
@@ -319,6 +327,7 @@ class PromptBuilder:
             task_description=task_description,
             agent_id=agent_id,
             parent_task=parent_task,
+            justification=justification,
         )
 
     def build_context_relevance_prompt(

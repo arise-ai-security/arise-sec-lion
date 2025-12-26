@@ -80,6 +80,81 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
         </p>
       </Section>
 
+      {/* Supervisor's Justification (for non-BOSS agents - what parent assigned) */}
+      {summary.supervisor_justification && summary.supervisor_justification.objective && summary.supervisor_justification.objective !== '(legacy event)' && (
+        <Section title="📋 Supervisor's Assignment">
+          <div className="bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded border-l-2 border-indigo-400">
+            <p className="text-xs text-indigo-600 dark:text-indigo-400 mb-2 font-medium">
+              This task was assigned by a supervisor with the following context:
+            </p>
+            <div className="space-y-2 text-sm">
+              {summary.supervisor_justification.parent_task && summary.supervisor_justification.parent_task !== '(legacy event)' && (
+                <div>
+                  <span className="font-semibold text-gray-600 dark:text-gray-400 text-xs">Parent's Task:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.parent_task}</p>
+                </div>
+              )}
+              {summary.supervisor_justification.objective && summary.supervisor_justification.objective !== '(legacy event)' && (
+                <div>
+                  <span className="font-semibold text-gray-600 dark:text-gray-400 text-xs">Expected Objective:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.objective}</p>
+                </div>
+              )}
+              {summary.supervisor_justification.split_reason && summary.supervisor_justification.split_reason !== '(legacy event)' && (
+                <div>
+                  <span className="font-semibold text-gray-600 dark:text-gray-400 text-xs">Why Assigned:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.split_reason}</p>
+                </div>
+              )}
+              {summary.supervisor_justification.plan && summary.supervisor_justification.plan !== '(legacy event)' && (
+                <div>
+                  <span className="font-semibold text-gray-600 dark:text-gray-400 text-xs">Suggested Approach:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.plan}</p>
+                </div>
+              )}
+              {summary.supervisor_justification.expected_results && summary.supervisor_justification.expected_results !== '(legacy event)' && (
+                <div>
+                  <span className="font-semibold text-gray-600 dark:text-gray-400 text-xs">Expected Deliverables:</span>
+                  <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.expected_results}</p>
+                </div>
+              )}
+              {/* Budget Allocation Context */}
+              {summary.supervisor_justification.budget_allocation && (
+                <details className="mt-2 pt-2 border-t border-indigo-200 dark:border-indigo-700">
+                  <summary className="text-xs text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline font-semibold">
+                    Budget & Priority Context
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <div>
+                      <span className="font-semibold text-purple-600 dark:text-purple-400 text-xs">Budget Allocation:</span>
+                      <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.budget_allocation}</p>
+                    </div>
+                    {summary.supervisor_justification.complexity_assessment && (
+                      <div>
+                        <span className="font-semibold text-purple-600 dark:text-purple-400 text-xs">Complexity:</span>
+                        <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.complexity_assessment}</p>
+                      </div>
+                    )}
+                    {summary.supervisor_justification.significance_weight && (
+                      <div>
+                        <span className="font-semibold text-purple-600 dark:text-purple-400 text-xs">Significance:</span>
+                        <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.significance_weight}</p>
+                      </div>
+                    )}
+                    {summary.supervisor_justification.resource_justification && (
+                      <div>
+                        <span className="font-semibold text-purple-600 dark:text-purple-400 text-xs">Resource Justification:</span>
+                        <p className="text-gray-700 dark:text-gray-300 text-xs mt-0.5">{summary.supervisor_justification.resource_justification}</p>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
+            </div>
+          </div>
+        </Section>
+      )}
+
       {/* Budget Information */}
       {summary.budget && (
         <Section title="Budget">

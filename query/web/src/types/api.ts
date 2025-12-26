@@ -207,6 +207,9 @@ export interface AgentSummary {
   status: AgentStatus;
   task_description: string;
 
+  // Supervisor's justification (from parent agent who assigned this task)
+  supervisor_justification: SubtaskJustification | null;
+
   // Complexity evaluation
   complexity: string | null;
   complexity_reasoning: string | null;
