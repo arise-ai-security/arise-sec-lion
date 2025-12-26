@@ -390,6 +390,8 @@ class PromptBuilder:
         reasoning: str,
         deliverables: str,
         challenges: str,
+        observations: str = "",
+        fulfillment_evidence: str = "",
     ) -> str:
         """Build prompt for synthesizing comprehensive work analysis.
 
@@ -401,6 +403,8 @@ class PromptBuilder:
             reasoning: Reasoning behind decisions.
             deliverables: What was produced.
             challenges: Challenges encountered.
+            observations: Key observations and discoveries during execution.
+            fulfillment_evidence: Evidence of fulfilling supervisor's expectations.
 
         Returns:
             Prompt string for comprehensive analysis synthesis.
@@ -415,6 +419,8 @@ class PromptBuilder:
                 reasoning=reasoning,
                 deliverables=deliverables,
                 challenges=challenges,
+                observations=observations or "Task executed as planned",
+                fulfillment_evidence=fulfillment_evidence or "Task completed successfully",
             )
         except TemplateNotFound as e:
             msg = f"Required template not found: {e.name}"

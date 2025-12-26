@@ -8,6 +8,7 @@ Nodes are color-coded by role:
   - PENDING: yellow (#eab308)
 
 Features:
+  - Status emojis on nodes: ✅ completed, ❌ failed, 🔄 in_progress, ⏳ pending, etc.
   - Click on any node to view detailed agent information in a modal
   - Shows: Objective, Complexity Evaluation, Budget, Configuration, Result/Error
   - Worker reason badge: shows why agent became WORKER (LLM Evaluation, Low Budget, Random Shortcut)
@@ -16,7 +17,14 @@ Features:
   - Worker reports: shows approach, reasoning, deliverables, challenges for each worker
   - Aggregated summary: for MANAGER/BOSS nodes, shows combined deliverables and approaches from all subordinates
   - Child worker reports: accumulated reports from all workers in the subtree
-  - Context sharing: Published context (BOSS/MANAGER) and Inherited context (WORKER) from dashboard
+  - Context sharing (consistent with web UI):
+    * Published context (BOSS/MANAGER): Shows context published to dashboard
+      - Source context (from original prompt): bug_summary, error_messages, reproduction_steps,
+        file_paths, commit_references, urls, environment, dependencies, key_facts
+      - Worker context: objective, justification, work_analysis, tags
+    * Inherited context (WORKER): Shows knowledge inherited from dashboard
+      - Source context: extracted key information from original prompt
+      - Worker context: previously completed work relevant to current task
   - Color-coded nodes by role
   - Automatic tree layout
 
@@ -46,6 +54,19 @@ ROLE_COLORS = {
     "manager": "#2563eb",  # blue
     "worker": "#16a34a",  # green
     "pending": "#eab308",  # yellow
+}
+
+# Status emoji mapping
+STATUS_EMOJIS = {
+    "pending": "⏳",
+    "analyzing": "🔍",
+    "in_progress": "🔄",
+    "waiting": "⏸️",
+    "completed": "✅",
+    "failed": "❌",
+    "blocked": "🚫",
+    "terminated": "⛔",
+    "verifying": "🔬",
 }
 
 
@@ -150,11 +171,15 @@ def layout_tree(
     # Get summary data for this agent
     summary = summaries.get(node["id"], {})
 
+    # Get status emoji
+    status_emoji = STATUS_EMOJIS.get(status, "❓")
+
     # Build node data with full metadata
     node_data = {
-        "label": f"{role.upper()} ({status})\n{truncate_label(node['task_description'])}",
+        "label": f"{status_emoji} {role.upper()}\n{truncate_label(node['task_description'])}",
         "role": role,
         "status": status,
+        "statusEmoji": status_emoji,
         # Objective
         "taskDescription": node["task_description"],
         # Complexity evaluation
@@ -407,7 +432,7 @@ function AgentModal({ agent, onClose }) {
                 fontWeight: '500',
               }}
             >
-              {agent.status}
+              {agent.statusEmoji} {agent.status}
             </span>
             {complexityStyle && (
               <span
@@ -794,69 +819,187 @@ function AgentModal({ agent, onClose }) {
                 <div
                   key={ctx.entry_id || index}
                   style={{
-                    backgroundColor: '#faf5ff',
+                    backgroundColor: ctx.entry_type === 'source' ? '#ecfeff' : '#faf5ff',
                     borderRadius: '8px',
                     padding: '12px',
-                    borderLeft: '4px solid #a855f7',
+                    borderLeft: ctx.entry_type === 'source' ? '4px solid #06b6d4' : '4px solid #a855f7',
                   }}
                 >
                   {/* Key (work_title) */}
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '10px' }}>
-                    <span style={{ color: '#a855f7', fontSize: '14px' }}>🔑</span>
+                    <span style={{ color: ctx.entry_type === 'source' ? '#06b6d4' : '#a855f7', fontSize: '14px' }}>
+                      {ctx.entry_type === 'source' ? '📋' : '🔑'}
+                    </span>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '11px', color: '#7c3aed', fontWeight: '600', textTransform: 'uppercase', marginBottom: '2px' }}>Key</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ fontSize: '11px', color: ctx.entry_type === 'source' ? '#0891b2' : '#7c3aed', fontWeight: '600', textTransform: 'uppercase', marginBottom: '2px' }}>
+                          {ctx.entry_type === 'source' ? 'Source Context' : 'Key'}
+                        </div>
+                        {ctx.entry_type === 'source' && (
+                          <span style={{ backgroundColor: '#cffafe', color: '#0891b2', padding: '2px 6px', borderRadius: '4px', fontSize: '10px' }}>From Original Prompt</span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>{ctx.work_title}</div>
                     </div>
                   </div>
-                  {/* Value Section */}
-                  <div style={{ marginLeft: '22px', borderTop: '1px solid #e9d5ff', paddingTop: '10px' }}>
-                    <div style={{ fontSize: '11px', color: '#7c3aed', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Value</div>
-                    {/* Objective */}
-                    <div style={{ marginBottom: '8px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>Objective:</div>
-                      <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.objective}</div>
-                    </div>
-                    {/* Justification */}
-                    {ctx.justification && (
-                      <div style={{ marginBottom: '8px' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>Why Assigned:</div>
-                        <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.justification}</div>
-                      </div>
-                    )}
-                    {/* Work Analysis */}
-                    {ctx.work_analysis && (
-                      <div style={{ marginBottom: '8px' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>How It Was Accomplished:</div>
-                        <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'rgba(255,255,255,0.5)', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
-                          {ctx.work_analysis}
+
+                  {/* Source Context Data (for source type entries) */}
+                  {ctx.entry_type === 'source' && ctx.source_context && (
+                    <div style={{ marginLeft: '22px', borderTop: '1px solid #a5f3fc', paddingTop: '10px' }}>
+                      <div style={{ fontSize: '11px', color: '#0891b2', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Extracted Key Information</div>
+                      {/* Bug Summary */}
+                      {ctx.source_context.bug_summary && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#dc2626', marginBottom: '2px' }}>🐛 Bug/Issue Summary:</div>
+                          <div style={{ fontSize: '12px', color: '#374151', backgroundColor: '#fef2f2', padding: '8px', borderRadius: '4px' }}>{ctx.source_context.bug_summary}</div>
                         </div>
+                      )}
+                      {/* Error Messages */}
+                      {ctx.source_context.error_messages && ctx.source_context.error_messages.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#ea580c', marginBottom: '2px' }}>⚠️ Error Messages:</div>
+                          <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#fff7ed', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px', fontFamily: 'monospace' }}>
+                            {ctx.source_context.error_messages.map((err, idx) => (
+                              <li key={idx}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {/* Reproduction Steps */}
+                      {ctx.source_context.reproduction_steps && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#2563eb', marginBottom: '2px' }}>🔄 Reproduction Steps:</div>
+                          <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: '#eff6ff', padding: '8px', borderRadius: '4px' }}>{ctx.source_context.reproduction_steps}</div>
+                        </div>
+                      )}
+                      {/* File Paths */}
+                      {ctx.source_context.file_paths && ctx.source_context.file_paths.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#16a34a', marginBottom: '2px' }}>📁 Referenced Files:</div>
+                          <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#f0fdf4', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px', fontFamily: 'monospace' }}>
+                            {ctx.source_context.file_paths.map((path, idx) => (
+                              <li key={idx}>{path}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {/* Commit References */}
+                      {ctx.source_context.commit_references && ctx.source_context.commit_references.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#7c3aed', marginBottom: '2px' }}>🔖 Commit/Version References:</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {ctx.source_context.commit_references.map((ref, idx) => (
+                              <span key={idx} style={{ backgroundColor: '#f3e8ff', color: '#7c3aed', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' }}>{ref}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* URLs */}
+                      {ctx.source_context.urls && ctx.source_context.urls.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#4f46e5', marginBottom: '2px' }}>🔗 Related URLs:</div>
+                          <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#eef2ff', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px', fontFamily: 'monospace' }}>
+                            {ctx.source_context.urls.map((url, idx) => (
+                              <li key={idx} style={{ wordBreak: 'break-all' }}>{url}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {/* Environment */}
+                      {ctx.source_context.environment && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280', marginBottom: '2px' }}>💻 Environment:</div>
+                          <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.source_context.environment}</div>
+                        </div>
+                      )}
+                      {/* Dependencies */}
+                      {ctx.source_context.dependencies && ctx.source_context.dependencies.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280', marginBottom: '2px' }}>📦 Dependencies:</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {ctx.source_context.dependencies.map((dep, idx) => (
+                              <span key={idx} style={{ backgroundColor: '#f3f4f6', color: '#374151', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' }}>{dep}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* Key Facts */}
+                      {ctx.source_context.key_facts && ctx.source_context.key_facts.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#ca8a04', marginBottom: '2px' }}>⭐ Key Facts & Requirements:</div>
+                          <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#fefce8', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px' }}>
+                            {ctx.source_context.key_facts.map((fact, idx) => (
+                              <li key={idx}>{fact}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {/* Tags */}
+                      {ctx.tags && ctx.tags.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                          {ctx.tags.map((tag, tagIdx) => (
+                            <span key={tagIdx} style={{ backgroundColor: '#cffafe', color: '#0891b2', padding: '2px 8px', borderRadius: '9999px', fontSize: '11px' }}>{tag}</span>
+                          ))}
+                        </div>
+                      )}
+                      {/* Metadata */}
+                      <div style={{ paddingTop: '8px', borderTop: '1px solid #a5f3fc', fontSize: '11px', color: '#9ca3af' }}>
+                        Extracted at: {ctx.published_at && new Date(ctx.published_at).toLocaleString()}
                       </div>
-                    )}
-                    {/* Tags */}
-                    {ctx.tags && ctx.tags.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                        {ctx.tags.map((tag, tagIdx) => (
-                          <span
-                            key={tagIdx}
-                            style={{
-                              backgroundColor: '#e9d5ff',
-                              color: '#7c3aed',
-                              padding: '2px 8px',
-                              borderRadius: '9999px',
-                              fontSize: '11px',
-                            }}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {/* Metadata */}
-                    <div style={{ display: 'flex', gap: '12px', paddingTop: '8px', borderTop: '1px solid #f3e8ff', fontSize: '11px', color: '#9ca3af' }}>
-                      <span>Worker: {ctx.worker_id ? ctx.worker_id.substring(0, 8) + '...' : 'N/A'}</span>
-                      {ctx.published_at && <span>{new Date(ctx.published_at).toLocaleString()}</span>}
                     </div>
-                  </div>
+                  )}
+
+                  {/* Worker Context Value Section (for worker type entries) */}
+                  {ctx.entry_type === 'worker' && (
+                    <div style={{ marginLeft: '22px', borderTop: '1px solid #e9d5ff', paddingTop: '10px' }}>
+                      <div style={{ fontSize: '11px', color: '#7c3aed', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Value</div>
+                      {/* Objective */}
+                      <div style={{ marginBottom: '8px' }}>
+                        <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>Objective:</div>
+                        <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.objective}</div>
+                      </div>
+                      {/* Justification */}
+                      {ctx.justification && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>Why Assigned:</div>
+                          <div style={{ fontSize: '12px', color: '#374151' }}>{ctx.justification}</div>
+                        </div>
+                      )}
+                      {/* Work Analysis */}
+                      {ctx.work_analysis && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '500', color: '#4b5563', marginBottom: '2px' }}>How It Was Accomplished:</div>
+                          <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: 'rgba(255,255,255,0.5)', padding: '8px', borderRadius: '4px', maxHeight: '150px', overflow: 'auto' }}>
+                            {ctx.work_analysis}
+                          </div>
+                        </div>
+                      )}
+                      {/* Tags */}
+                      {ctx.tags && ctx.tags.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                          {ctx.tags.map((tag, tagIdx) => (
+                            <span
+                              key={tagIdx}
+                              style={{
+                                backgroundColor: '#e9d5ff',
+                                color: '#7c3aed',
+                                padding: '2px 8px',
+                                borderRadius: '9999px',
+                                fontSize: '11px',
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* Metadata */}
+                      <div style={{ display: 'flex', gap: '12px', paddingTop: '8px', borderTop: '1px solid #f3e8ff', fontSize: '11px', color: '#9ca3af' }}>
+                        <span>Worker: {ctx.worker_id ? ctx.worker_id.substring(0, 8) + '...' : 'N/A'}</span>
+                        {ctx.published_at && <span>{new Date(ctx.published_at).toLocaleString()}</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -873,7 +1016,7 @@ function AgentModal({ agent, onClose }) {
               </div>
               <p style={{ fontSize: '12px', color: '#4b5563', marginBottom: '12px' }}>
                 This worker inherited knowledge from {agent.inheritedContext?.total_available || 0} available context entries in the global dashboard.
-                Relevant knowledge was automatically identified and provided to help with this task.
+                Source context (from original prompt) is always included. Relevant worker context was automatically identified.
               </p>
               {/* Reminder Banner */}
               <div style={{ backgroundColor: '#fef3c7', padding: '10px', borderRadius: '6px', marginBottom: '12px', border: '1px solid #fcd34d' }}>
@@ -891,54 +1034,142 @@ function AgentModal({ agent, onClose }) {
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {agent.inheritedContext.entries.map((entry, index) => (
-                      <div key={entry.entry_id || index} style={{ backgroundColor: 'white', padding: '12px', borderRadius: '6px', border: '1px solid #a5f3fc' }}>
+                      <div
+                        key={entry.entry_id || index}
+                        style={{
+                          background: entry.entry_type === 'source'
+                            ? 'linear-gradient(to right, #ecfeff, #eff6ff)'
+                            : 'white',
+                          padding: '12px',
+                          borderRadius: '6px',
+                          border: entry.entry_type === 'source' ? '1px solid #67e8f9' : '1px solid #a5f3fc',
+                        }}
+                      >
                         {/* Work Title (Key) */}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '8px' }}>
-                          <span style={{ color: '#06b6d4', fontSize: '14px' }}>🔑</span>
-                          <span style={{ fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>{entry.work_title}</span>
-                        </div>
-                        <div style={{ marginLeft: '22px' }}>
-                          {/* Objective */}
-                          <div style={{ marginBottom: '6px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280' }}>Objective: </span>
-                            <span style={{ fontSize: '12px', color: '#374151' }}>{entry.objective}</span>
+                          <span style={{ color: entry.entry_type === 'source' ? '#2563eb' : '#06b6d4', fontSize: '14px' }}>
+                            {entry.entry_type === 'source' ? '📋' : '🔑'}
+                          </span>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>{entry.work_title}</span>
+                              {entry.entry_type === 'source' && (
+                                <span style={{ backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '500' }}>Source Context</span>
+                              )}
+                            </div>
                           </div>
-                          {/* Justification */}
-                          {entry.justification && (
-                            <div style={{ marginBottom: '6px' }}>
-                              <span style={{ fontSize: '11px', fontWeight: '500', color: '#7c3aed' }}>Why This Is Relevant: </span>
-                              <span style={{ fontSize: '12px', color: '#374151' }}>{entry.justification}</span>
-                            </div>
-                          )}
-                          {/* Work Analysis */}
-                          {entry.work_analysis && (
-                            <div style={{ marginBottom: '6px' }}>
-                              <div style={{ fontSize: '11px', fontWeight: '500', color: '#16a34a', marginBottom: '2px' }}>How It Was Accomplished:</div>
-                              <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: '#f0fdf4', padding: '8px', borderRadius: '4px', maxHeight: '120px', overflow: 'auto' }}>
-                                {entry.work_analysis}
-                              </div>
-                            </div>
-                          )}
-                          {/* Tags */}
-                          {entry.tags && entry.tags.length > 0 && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-                              {entry.tags.map((tag, tagIdx) => (
-                                <span
-                                  key={tagIdx}
-                                  style={{
-                                    backgroundColor: '#cffafe',
-                                    color: '#0891b2',
-                                    padding: '2px 8px',
-                                    borderRadius: '9999px',
-                                    fontSize: '11px',
-                                  }}
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
                         </div>
+
+                        {/* Source Context Data (for source type entries) */}
+                        {entry.entry_type === 'source' && entry.source_context && (
+                          <div style={{ marginLeft: '22px' }}>
+                            {/* Bug Summary */}
+                            {entry.source_context.bug_summary && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '500', color: '#dc2626', marginBottom: '2px' }}>🐛 Bug/Issue:</div>
+                                <div style={{ fontSize: '12px', color: '#374151', backgroundColor: '#fef2f2', padding: '8px', borderRadius: '4px' }}>{entry.source_context.bug_summary}</div>
+                              </div>
+                            )}
+                            {/* Error Messages */}
+                            {entry.source_context.error_messages && entry.source_context.error_messages.length > 0 && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '500', color: '#ea580c', marginBottom: '2px' }}>⚠️ Errors:</div>
+                                <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#fff7ed', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px', fontFamily: 'monospace' }}>
+                                  {entry.source_context.error_messages.map((err, idx) => (
+                                    <li key={idx}>{err}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {/* File Paths */}
+                            {entry.source_context.file_paths && entry.source_context.file_paths.length > 0 && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '500', color: '#16a34a', marginBottom: '2px' }}>📁 Files:</div>
+                                <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#f0fdf4', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px', fontFamily: 'monospace' }}>
+                                  {entry.source_context.file_paths.map((path, idx) => (
+                                    <li key={idx}>{path}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {/* Commit References */}
+                            {entry.source_context.commit_references && entry.source_context.commit_references.length > 0 && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '500', color: '#7c3aed', marginBottom: '2px' }}>🔖 Commits/Versions:</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                  {entry.source_context.commit_references.map((ref, idx) => (
+                                    <span key={idx} style={{ backgroundColor: '#f3e8ff', color: '#7c3aed', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' }}>{ref}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {/* Key Facts */}
+                            {entry.source_context.key_facts && entry.source_context.key_facts.length > 0 && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '500', color: '#ca8a04', marginBottom: '2px' }}>⭐ Key Facts:</div>
+                                <ul style={{ fontSize: '12px', color: '#374151', backgroundColor: '#fefce8', padding: '8px', borderRadius: '4px', margin: 0, paddingLeft: '20px' }}>
+                                  {entry.source_context.key_facts.map((fact, idx) => (
+                                    <li key={idx}>{fact}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {/* Tags */}
+                            {entry.tags && entry.tags.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                                {entry.tags.map((tag, tagIdx) => (
+                                  <span key={tagIdx} style={{ backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '9999px', fontSize: '11px' }}>{tag}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Worker Context Data (for worker type entries) */}
+                        {entry.entry_type !== 'source' && (
+                          <div style={{ marginLeft: '22px' }}>
+                            {/* Objective */}
+                            <div style={{ marginBottom: '6px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: '500', color: '#6b7280' }}>Objective: </span>
+                              <span style={{ fontSize: '12px', color: '#374151' }}>{entry.objective}</span>
+                            </div>
+                            {/* Why This Is Relevant */}
+                            {entry.justification && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '500', color: '#7c3aed' }}>Why This Is Relevant: </span>
+                                <span style={{ fontSize: '12px', color: '#374151' }}>{entry.justification}</span>
+                              </div>
+                            )}
+                            {/* Work Analysis - How it was accomplished */}
+                            {entry.work_analysis && (
+                              <div style={{ marginBottom: '6px' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '500', color: '#16a34a', marginBottom: '2px' }}>How It Was Accomplished:</div>
+                                <div style={{ fontSize: '12px', color: '#374151', whiteSpace: 'pre-wrap', backgroundColor: '#f0fdf4', padding: '8px', borderRadius: '4px', maxHeight: '120px', overflow: 'auto' }}>
+                                  {entry.work_analysis}
+                                </div>
+                              </div>
+                            )}
+                            {/* Tags */}
+                            {entry.tags && entry.tags.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                                {entry.tags.map((tag, tagIdx) => (
+                                  <span
+                                    key={tagIdx}
+                                    style={{
+                                      backgroundColor: '#cffafe',
+                                      color: '#0891b2',
+                                      padding: '2px 8px',
+                                      borderRadius: '9999px',
+                                      fontSize: '11px',
+                                    }}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

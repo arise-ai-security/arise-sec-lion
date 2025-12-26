@@ -68,7 +68,8 @@ class WorkerReport(BaseModel):
     """Worker's report upon completing a task.
 
     Similar to SubtaskJustification, but from the worker's perspective after
-    executing the task. This provides justification for the work done.
+    executing the task. This provides justification for the work done, including
+    actual observations and evidence of fulfilling supervisor expectations.
     """
 
     model_config = {"frozen": True}
@@ -79,6 +80,16 @@ class WorkerReport(BaseModel):
     reasoning: str = Field(default="", description="Why this approach was chosen and why it should work")
     deliverables: str = Field(default="", description="Summary of what was produced/delivered")
     challenges: str = Field(default="", description="Any challenges encountered and how they were addressed")
+
+    # New fields for capturing actual work observations and fulfillment evidence
+    observations: str = Field(
+        default="",
+        description="Key observations and discoveries made during execution (what actually happened)",
+    )
+    fulfillment_evidence: str = Field(
+        default="",
+        description="Concrete examples showing how the work fulfilled supervisor's expectations",
+    )
 
 
 class Subtask(BaseModel):

@@ -455,15 +455,18 @@ class AgentSession:
         This synthesizes the worker's justification for their work, including:
         - The original task that was assigned
         - How they approached it (from captured thoughts)
-        - Why the approach should work (from supervisor expectations)
+        - Key observations and discoveries during execution
         - What was delivered (specific file names worked on)
+        - Evidence showing how supervisor expectations were fulfilled
         """
         import re
 
-        # Extract approach from captured thoughts
+        # Extract approach, observations, and challenges from captured thoughts
         approach_lines = []
         challenges_lines = []
+        observation_lines = []
         files_worked_on: set[str] = set()
+        technical_discoveries: list[str] = []
 
         # Patterns to extract file names from progress messages
         file_patterns = [
@@ -473,20 +476,46 @@ class AgentSession:
             r"([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)(?:\s+(?:created|modified|updated|written))",
         ]
 
+        # Keywords for categorizing thoughts
+        action_keywords = ["creating", "writing", "running", "executing", "installing", "adding", "updating"]
+        challenge_keywords = ["error", "failed", "issue", "problem", "fix", "warning", "retry"]
+        discovery_keywords = ["found", "discovered", "noticed", "realized", "learned", "observed", "detected", "identified"]
+        result_keywords = ["completed", "success", "done", "finished", "passed", "works", "verified", "tested"]
+        # Worker's own reasoning keywords - why they chose an approach or believe it works
+        reasoning_keywords = [
+            "because", "this works", "the reason", "this should", "this will",
+            "decided to", "chose to", "better to", "makes sense", "ensures",
+            "allows", "enables", "prevents", "avoids", "solves", "addresses",
+            "correct", "proper", "appropriate", "necessary", "required",
+        ]
+
+        worker_reasoning_lines: list[str] = []
+
         for thought in captured_thoughts:
             thought_lower = thought.lower()
-            if any(kw in thought_lower for kw in ["error", "failed", "issue", "problem", "fix"]):
-                challenges_lines.append(thought)
-            elif any(kw in thought_lower for kw in ["creating", "writing", "running", "executing", "installing"]):
-                approach_lines.append(thought)
+            thought_clean = thought.strip()
+
+            # Categorize the thought
+            if any(kw in thought_lower for kw in challenge_keywords):
+                challenges_lines.append(thought_clean)
+            elif any(kw in thought_lower for kw in action_keywords):
+                approach_lines.append(thought_clean)
+
+            # Extract observations: discoveries, learnings, and results
+            if any(kw in thought_lower for kw in discovery_keywords):
+                technical_discoveries.append(thought_clean)
+            if any(kw in thought_lower for kw in result_keywords):
+                observation_lines.append(thought_clean)
+
+            # Extract worker's own reasoning about why their approach is justified
+            if any(kw in thought_lower for kw in reasoning_keywords):
+                worker_reasoning_lines.append(thought_clean)
 
             # Extract file names from progress messages
             for pattern in file_patterns:
                 matches = re.findall(pattern, thought, re.IGNORECASE)
                 for match in matches:
-                    # Clean up the file path
                     file_path = match.strip().strip("'\"")
-                    # Skip if it looks like a URL or directory path without extension
                     if file_path and not file_path.startswith(("http://", "https://", "/")):
                         files_worked_on.add(file_path)
 
@@ -498,46 +527,94 @@ class AgentSession:
                 if file_path and not file_path.startswith(("http://", "https://")):
                     files_worked_on.add(file_path)
 
+        # Build approach from actual actions taken
         approach = (
             "; ".join(approach_lines[:5]) if approach_lines
             else "Executed task using available tools"
         )
 
+        # Build challenges from actual issues encountered
         challenges = (
             "; ".join(challenges_lines[:3]) if challenges_lines
             else "No significant challenges encountered"
         )
 
-        # Build reasoning from supervisor justification if available
-        # Skip fields that contain legacy placeholders
-        reasoning = ""
-        if self.supervisor_justification:
-            j = self.supervisor_justification
-            plan = j.plan if j.plan and j.plan != "(legacy event)" else ""
-            why_it_may_work = j.why_it_may_work if j.why_it_may_work and j.why_it_may_work != "(legacy event)" else ""
-
-            if plan and why_it_may_work:
-                reasoning = f"Approach based on supervisor guidance: {plan}. Expected to work because: {why_it_may_work}"
-            elif plan:
-                reasoning = f"Approach based on supervisor guidance: {plan}"
-            elif why_it_may_work:
-                reasoning = f"Expected to work because: {why_it_may_work}"
-            else:
-                reasoning = "Followed standard execution approach for the given task"
+        # Build observations from discoveries and results (NEW)
+        all_observations = technical_discoveries[:3] + observation_lines[:3]
+        if all_observations:
+            observations = "; ".join(all_observations[:5])
         else:
-            reasoning = "Followed standard execution approach for the given task"
+            # Extract meaningful observations from result if no discoveries captured
+            result_lines = [line.strip() for line in result.split("\n") if line.strip()][:3]
+            observations = "; ".join(result_lines) if result_lines else "Task executed as planned"
+
+        # Build reasoning from WORKER'S OWN THOUGHTS about why their work is justified
+        reasoning_parts = []
+
+        # Primary: Worker's own reasoning about why their approach works
+        if worker_reasoning_lines:
+            # Use up to 3 of the worker's reasoning thoughts
+            for line in worker_reasoning_lines[:3]:
+                reasoning_parts.append(line[:150])
+        else:
+            # Fallback: Construct reasoning from what was done and discovered
+            if technical_discoveries:
+                reasoning_parts.append(f"Discovered: {technical_discoveries[0][:100]}")
+            if approach_lines:
+                reasoning_parts.append(f"Approach taken: {approach_lines[0][:100]}")
+            if observation_lines:
+                reasoning_parts.append(f"Verified: {observation_lines[0][:100]}")
+
+        # Add concrete evidence of why the work is valid
+        if files_worked_on:
+            reasoning_parts.append(f"Produced {len(files_worked_on)} deliverable(s)")
+        if observation_lines and "success" in " ".join(observation_lines).lower():
+            reasoning_parts.append("Execution verified successful")
+
+        reasoning = (
+            "; ".join(reasoning_parts) if reasoning_parts
+            else "Task executed using standard approach with successful completion"
+        )
 
         # Build deliverables with specific file names
         if files_worked_on:
             sorted_files = sorted(files_worked_on)
             deliverables = f"Files worked on: {', '.join(sorted_files)}"
         else:
-            # Fallback: extract any file-like patterns from result
             result_lines = result.split("\n") if result else []
             deliverables = (
                 "; ".join(line.strip() for line in result_lines[:5] if line.strip())
                 if result_lines else "Task completed"
             )
+
+        # Build fulfillment evidence linking results to supervisor expectations (NEW)
+        fulfillment_parts = []
+        if self.supervisor_justification and self.supervisor_justification.has_content():
+            j = self.supervisor_justification
+
+            # Check objective fulfillment
+            if j.objective and j.objective != "(legacy event)":
+                fulfillment_parts.append(f"Objective '{j.objective[:50]}...' addressed")
+
+            # Check expected results
+            if j.expected_results and j.expected_results != "(legacy event)":
+                if files_worked_on:
+                    fulfillment_parts.append(
+                        f"Expected deliverables achieved: {len(files_worked_on)} file(s) produced"
+                    )
+                if not challenges_lines or "error" not in " ".join(challenges_lines).lower():
+                    fulfillment_parts.append("Task completed without critical errors")
+
+            # Link plan to actual approach
+            if j.plan and j.plan != "(legacy event)" and approach_lines:
+                fulfillment_parts.append(
+                    f"Supervisor's plan executed via: {approach_lines[0][:80]}"
+                )
+
+        if not fulfillment_parts:
+            fulfillment_parts.append("Task completed successfully per assignment")
+
+        fulfillment_evidence = "; ".join(fulfillment_parts[:4])
 
         return WorkerReport(
             original_task=self.task_description or "",
@@ -545,6 +622,8 @@ class AgentSession:
             reasoning=reasoning[:500],
             deliverables=deliverables[:500],
             challenges=challenges[:500],
+            observations=observations[:500],
+            fulfillment_evidence=fulfillment_evidence[:500],
         )
 
     def handle_child_update(

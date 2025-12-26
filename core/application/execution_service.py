@@ -756,6 +756,8 @@ class AgentExecutionService:
                 reasoning=worker_report.reasoning or "",
                 deliverables=worker_report.deliverables or "",
                 challenges=worker_report.challenges or "",
+                observations=worker_report.observations or "",
+                fulfillment_evidence=worker_report.fulfillment_evidence or "",
             )
 
             response = await self.llm_port.generate(
@@ -781,6 +783,10 @@ class AgentExecutionService:
             parts.append(f"**Deliverables:** {report.deliverables}")
         if report.challenges:
             parts.append(f"**Challenges:** {report.challenges}")
+        if report.observations:
+            parts.append(f"**Observations:** {report.observations}")
+        if report.fulfillment_evidence:
+            parts.append(f"**Fulfillment Evidence:** {report.fulfillment_evidence}")
         return "\n\n".join(parts)
 
     def _extract_tags(self, task_description: str) -> list[str]:
