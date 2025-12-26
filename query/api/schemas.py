@@ -133,9 +133,12 @@ class WorkerReportSchema(BaseModel):
 
     original_task: str = Field("", description="The original task that was assigned")
     approach: str = Field("", description="How the worker approached the task")
-    reasoning: str = Field("", description="Why this approach was chosen and why it should work")
+    reasoning: str = Field("", description="Worker's own reasoning for why their approach works")
     deliverables: str = Field("", description="Summary of what was produced/delivered")
     challenges: str = Field("", description="Any challenges encountered and how they were addressed")
+    # New fields for actual work observations and fulfillment evidence
+    observations: str = Field("", description="Key observations and discoveries made during execution")
+    fulfillment_evidence: str = Field("", description="Concrete examples showing how the work fulfilled supervisor's expectations")
 
 
 class ChildWorkerReportSchema(BaseModel):
@@ -498,9 +501,11 @@ class WorkerReportItemSchema(BaseModel):
     task: str = Field("", description="Task description (truncated)")
     original_task: str = Field("", description="Original task assigned")
     approach: str = Field("", description="How the worker approached the task")
-    reasoning: str = Field("", description="Why this approach was chosen")
+    reasoning: str = Field("", description="Worker's own reasoning for why their approach works")
     deliverables: str = Field("", description="What was delivered")
     challenges: str = Field("", description="Challenges encountered")
+    observations: str = Field("", description="Key observations and discoveries during execution")
+    fulfillment_evidence: str = Field("", description="Evidence of fulfilling supervisor's expectations")
     result: str = Field("", description="Final result (truncated)")
     depth: int = Field(0, description="Depth in hierarchy")
 

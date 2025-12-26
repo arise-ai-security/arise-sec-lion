@@ -104,6 +104,9 @@ export interface WorkerReport {
   reasoning: string;
   deliverables: string;
   challenges: string;
+  // New fields for actual work observations and fulfillment evidence
+  observations: string;
+  fulfillment_evidence: string;
 }
 
 /** Child worker's report with agent context (for MANAGER/BOSS summary). */

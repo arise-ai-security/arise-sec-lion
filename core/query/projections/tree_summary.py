@@ -199,6 +199,8 @@ class TreeSummaryGenerator:
                     "reasoning": summary.worker_report.reasoning,
                     "deliverables": summary.worker_report.deliverables,
                     "challenges": summary.worker_report.challenges,
+                    "observations": summary.worker_report.observations,
+                    "fulfillment_evidence": summary.worker_report.fulfillment_evidence,
                     "result": summary.result[:200] if summary.result else "",
                     "depth": summary.depth,
                 })
@@ -224,8 +226,12 @@ class TreeSummaryGenerator:
             lines.append(f"### Worker {i} [{report['agent_id']}]")
             lines.append(f"**Task:** {report['task']}")
             lines.append(f"**Approach:** {report['approach']}")
+            if report.get('observations') and report['observations'] != "Task executed as planned":
+                lines.append(f"**Observations:** {report['observations']}")
             lines.append(f"**Reasoning:** {report['reasoning']}")
             lines.append(f"**Deliverables:** {report['deliverables']}")
+            if report.get('fulfillment_evidence') and report['fulfillment_evidence'] != "Task completed successfully per assignment":
+                lines.append(f"**Fulfillment Evidence:** {report['fulfillment_evidence']}")
             if report['challenges'] and report['challenges'] != "No significant challenges encountered":
                 lines.append(f"**Challenges:** {report['challenges']}")
             lines.append("")
@@ -261,7 +267,13 @@ def format_tree_summary_text(summary: TreeSummary) -> str:
             lines.append(f"Worker {i} [{report['agent_id']}]:")
             lines.append(f"  Task: {report['task'][:60]}...")
             lines.append(f"  Approach: {report['approach'][:80]}...")
+            if report.get('observations') and report['observations'] != "Task executed as planned":
+                lines.append(f"  Observations: {report['observations'][:80]}...")
+            if report.get('reasoning') and report['reasoning'] not in ("Followed standard execution approach for the given task", "Task executed using standard approach with successful completion"):
+                lines.append(f"  Reasoning: {report['reasoning'][:80]}...")
             lines.append(f"  Deliverables: {report['deliverables'][:80]}...")
+            if report.get('fulfillment_evidence') and report['fulfillment_evidence'] != "Task completed successfully per assignment":
+                lines.append(f"  Fulfillment: {report['fulfillment_evidence'][:80]}...")
             if report['challenges'] and report['challenges'] != "No significant challenges encountered":
                 lines.append(f"  Challenges: {report['challenges'][:60]}...")
             lines.append("")
@@ -291,6 +303,8 @@ def format_tree_summary_json(summary: TreeSummary) -> dict:
                     "reasoning": agent.worker_report.reasoning,
                     "deliverables": agent.worker_report.deliverables,
                     "challenges": agent.worker_report.challenges,
+                    "observations": agent.worker_report.observations,
+                    "fulfillment_evidence": agent.worker_report.fulfillment_evidence,
                 }
                 if agent.worker_report
                 else None

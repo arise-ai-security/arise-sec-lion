@@ -178,9 +178,17 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                 </p>
               </div>
             )}
-            {summary.worker_report.reasoning && !summary.worker_report.reasoning.includes('(legacy event)') && summary.worker_report.reasoning !== 'Followed standard execution approach for the given task' && (
+            {summary.worker_report.observations && summary.worker_report.observations !== 'Task executed as planned' && (
               <div>
-                <span className="text-xs font-semibold text-green-700 dark:text-green-400">Reasoning:</span>
+                <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">🔍 Observations:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
+                  {summary.worker_report.observations}
+                </p>
+              </div>
+            )}
+            {summary.worker_report.reasoning && !summary.worker_report.reasoning.includes('(legacy event)') && summary.worker_report.reasoning !== 'Followed standard execution approach for the given task' && summary.worker_report.reasoning !== 'Task executed using standard approach with successful completion' && (
+              <div>
+                <span className="text-xs font-semibold text-green-700 dark:text-green-400">💭 Worker's Reasoning:</span>
                 <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
                   {summary.worker_report.reasoning}
                 </p>
@@ -194,9 +202,17 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                 </p>
               </div>
             )}
+            {summary.worker_report.fulfillment_evidence && summary.worker_report.fulfillment_evidence !== 'Task completed successfully per assignment' && (
+              <div>
+                <span className="text-xs font-semibold text-purple-700 dark:text-purple-400">✅ Fulfillment Evidence:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
+                  {summary.worker_report.fulfillment_evidence}
+                </p>
+              </div>
+            )}
             {summary.worker_report.challenges && summary.worker_report.challenges !== 'No significant challenges encountered' && (
               <div>
-                <span className="text-xs font-semibold text-orange-700 dark:text-orange-400">Challenges:</span>
+                <span className="text-xs font-semibold text-orange-700 dark:text-orange-400">⚠️ Challenges:</span>
                 <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
                   {summary.worker_report.challenges}
                 </p>
@@ -352,9 +368,15 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.approach}</p>
                         </div>
                       )}
-                      {childReport.report.reasoning && !childReport.report.reasoning.includes('(legacy event)') && childReport.report.reasoning !== 'Followed standard execution approach for the given task' && (
+                      {childReport.report.observations && childReport.report.observations !== 'Task executed as planned' && (
                         <div>
-                          <span className="font-semibold text-green-700 dark:text-green-400">Reasoning:</span>
+                          <span className="font-semibold text-blue-700 dark:text-blue-400">🔍 Observations:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.observations}</p>
+                        </div>
+                      )}
+                      {childReport.report.reasoning && !childReport.report.reasoning.includes('(legacy event)') && childReport.report.reasoning !== 'Followed standard execution approach for the given task' && childReport.report.reasoning !== 'Task executed using standard approach with successful completion' && (
+                        <div>
+                          <span className="font-semibold text-green-700 dark:text-green-400">💭 Worker's Reasoning:</span>
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.reasoning}</p>
                         </div>
                       )}
@@ -364,9 +386,15 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.deliverables}</p>
                         </div>
                       )}
+                      {childReport.report.fulfillment_evidence && childReport.report.fulfillment_evidence !== 'Task completed successfully per assignment' && (
+                        <div>
+                          <span className="font-semibold text-purple-700 dark:text-purple-400">✅ Fulfillment Evidence:</span>
+                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.fulfillment_evidence}</p>
+                        </div>
+                      )}
                       {childReport.report.challenges && childReport.report.challenges !== 'No significant challenges encountered' && (
                         <div>
-                          <span className="font-semibold text-orange-700 dark:text-orange-400">Challenges:</span>
+                          <span className="font-semibold text-orange-700 dark:text-orange-400">⚠️ Challenges:</span>
                           <p className="text-gray-700 dark:text-gray-300 mt-0.5">{childReport.report.challenges}</p>
                         </div>
                       )}
