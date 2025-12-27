@@ -9,7 +9,7 @@ llm:
 
 worker:
   tool_type: claude_code
-  tool_model: claude-sonnet-4-20250514
+  tool_model: claude-opus-4-5-20251101
   tool_timeout: 300
 
 orchestration:

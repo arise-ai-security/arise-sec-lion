@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed, WorkerCostRecorded
 
 
 class EventSequencer:
@@ -91,6 +91,38 @@ class EventSequencer:
             sequence_number=self._sequence,
             reason=reason,
         )
+
+    def cost_recorded(
+        self,
+        tool_name: str,
+        cost_usd: float,
+        duration_seconds: float,
+        model: str | None = None,
+        tokens: int | None = None,
+    ) -> WorkerCostRecorded:
+        """Create a WorkerCostRecorded event and increment sequence.
+
+        Args:
+            tool_name: Worker tool name (e.g., "claude_code", "openhands").
+            cost_usd: Total cost in USD.
+            duration_seconds: Execution duration.
+            model: Underlying model if known.
+            tokens: Total tokens if available.
+
+        Returns:
+            WorkerCostRecorded event with current sequence number.
+        """
+        event = WorkerCostRecorded(
+            aggregate_id=self._agent_id,
+            sequence_number=self._sequence,
+            tool_name=tool_name,
+            model=model,
+            tokens=tokens,
+            cost_usd=cost_usd,
+            duration_seconds=duration_seconds,
+        )
+        self._sequence += 1
+        return event
 
 
 # Tool formatters registry (OCP - extensible without modification)

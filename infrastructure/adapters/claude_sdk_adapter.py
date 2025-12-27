@@ -97,6 +97,14 @@ class ClaudeAgentSDKAdapter(WorkerToolPort):
                     if isinstance(message, ResultMessage):
                         async for event in _drain_queue(tool_queue, sequencer):
                             yield event
+
+                        # Emit cost event before terminal event
+                        cost_event = _make_cost_event(
+                            message, sequencer, self.STREAM_NAME, self.config.model
+                        )
+                        if cost_event:
+                            yield cost_event
+
                         yield _make_result_event(message, sequencer)
                         return
 
@@ -164,6 +172,34 @@ async def _process_message(
         if result:
             content, output_type = result
             yield sequencer.thought(content, output_type)
+
+
+def _make_cost_event(
+    message: ResultMessage,
+    sequencer: EventSequencer,
+    tool_name: str,
+    model: str | None,
+) -> DomainEvent | None:
+    """Create WorkerCostRecorded event from ResultMessage if cost data available."""
+    cost_usd = getattr(message, "total_cost_usd", None)
+    duration_ms = getattr(message, "duration_ms", 0)
+    usage = getattr(message, "usage", None) or {}
+
+    # Only emit if we have cost data
+    if cost_usd is None and not usage:
+        return None
+
+    total_tokens = None
+    if usage:
+        total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+
+    return sequencer.cost_recorded(
+        tool_name=tool_name,
+        cost_usd=cost_usd or 0.0,
+        duration_seconds=duration_ms / 1000.0,
+        model=model,
+        tokens=total_tokens,
+    )
 
 
 def _make_result_event(
