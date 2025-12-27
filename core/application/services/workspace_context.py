@@ -9,46 +9,31 @@ from pathlib import Path
 
 
 class WorkspaceContextProvider:
-    """Provides cached workspace file listing for worker context.
+    """Provides fresh workspace file listing for worker context.
 
-    Single Responsibility: Scan and cache workspace file structure.
+    Always scans fresh so workers see files created by other workers.
     """
 
     def __init__(self) -> None:
-        self._cache: str | None = None
-        self._scanned: bool = False
         self._working_directory: Path | None = None
 
     def set_working_directory(self, path: str | Path | None) -> None:
-        """Set the working directory and invalidate cache."""
+        """Set the working directory."""
         if path is None:
             self._working_directory = None
         else:
             self._working_directory = Path(path)
-        self._invalidate_cache()
-
-    def _invalidate_cache(self) -> None:
-        """Invalidate the cached context."""
-        self._cache = None
-        self._scanned = False
 
     def reset(self) -> None:
         """Reset all state for a new run."""
-        self._cache = None
-        self._scanned = False
         self._working_directory = None
 
     def get_context(self) -> str | None:
-        """Return cached file listing for workspace.
+        """Return fresh file listing for workspace.
 
-        Enables workers to see each other's files.
+        Always scans fresh so workers can see files created by other workers.
         Returns None if no working directory is set or directory is empty.
         """
-        if self._scanned:
-            return self._cache
-
-        self._scanned = True
-
         if self._working_directory is None:
             return None
 
@@ -61,8 +46,7 @@ class WorkspaceContextProvider:
                 return None
 
             files.sort()
-            self._cache = "\n".join(f"- {f}" for f in files)
-            return self._cache
+            return "\n".join(f"- {f}" for f in files)
 
         except OSError:
             return None

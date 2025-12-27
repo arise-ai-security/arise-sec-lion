@@ -8,8 +8,8 @@ llm:
   model_boss: gpt-4o
 
 worker:
-  tool_type: openhands
-  tool_model: openai/gpt-4o
+  tool_type: claude_code
+  tool_model: claude-sonnet-4-20250514
   tool_timeout: 300
 
 orchestration:
