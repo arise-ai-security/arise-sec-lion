@@ -10,13 +10,16 @@ from uuid import uuid4
 import pytest
 
 from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed, WorkerCostRecorded
-from infrastructure.adapters.google_adk_adapter import (
+from infrastructure.adapters.worker.google_adk_adapter import (
     ADKAdapterConfig,
     GoogleADKAdapter,
     execute_command,
-    GEMINI_3_PRO_INPUT_PRICE_PER_M,
-    GEMINI_3_PRO_OUTPUT_PRICE_PER_M,
 )
+from infrastructure.adapters.worker.shared.cost_calculator import get_model_pricing
+
+_pricing = get_model_pricing("gemini-3-pro")
+GEMINI_3_PRO_INPUT_PRICE_PER_M = _pricing.input_per_million
+GEMINI_3_PRO_OUTPUT_PRICE_PER_M = _pricing.output_per_million
 
 
 class TestExecuteCommand:
@@ -124,23 +127,23 @@ class TestGoogleADKAdapter:
 
     def test_calculate_cost(self) -> None:
         """Cost calculation uses correct pricing."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        pricing = get_model_pricing("gemini-3-pro")
 
         # Test with known values
         input_tokens = 1_000_000  # 1M tokens
         output_tokens = 1_000_000  # 1M tokens
 
         expected_cost = GEMINI_3_PRO_INPUT_PRICE_PER_M + GEMINI_3_PRO_OUTPUT_PRICE_PER_M
-        actual_cost = adapter._calculate_cost(input_tokens, output_tokens)
+        actual_cost = pricing.calculate_cost(input_tokens, output_tokens)
 
         assert actual_cost == expected_cost
 
     def test_calculate_cost_fractional(self) -> None:
         """Cost calculation works with fractional token counts."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        pricing = get_model_pricing("gemini-3-pro")
 
         # 1000 input, 500 output tokens
-        cost = adapter._calculate_cost(1000, 500)
+        cost = pricing.calculate_cost(1000, 500)
 
         expected = (1000 / 1_000_000) * GEMINI_3_PRO_INPUT_PRICE_PER_M + \
                    (500 / 1_000_000) * GEMINI_3_PRO_OUTPUT_PRICE_PER_M
@@ -179,7 +182,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 
@@ -199,7 +202,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 
@@ -215,7 +218,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 
@@ -237,7 +240,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 
@@ -253,7 +256,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 
@@ -278,7 +281,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 
@@ -310,7 +313,7 @@ class TestEventProcessing:
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         agent_id = uuid4()
 
-        from infrastructure.adapters.event_helpers import EventSequencer
+        from infrastructure.adapters.worker.shared import EventSequencer
 
         sequencer = EventSequencer(agent_id, stream="google_adk")
 

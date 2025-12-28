@@ -89,8 +89,8 @@ class AgentSession:
 
         Args:
             child_id: ID of completed child
-            result: Result text (for backward compatibility)
-            child_result: Structured ChildResult (optional, preferred)
+            result: Simple result text for the event
+            child_result: Structured ChildResult (optional, provides additional context)
         """
         assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
             f"Requires BOSS/MANAGER, got {self.role}"

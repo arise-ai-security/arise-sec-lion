@@ -15,9 +15,6 @@ from infrastructure.adapters.worker.claude_sdk_adapter import (
     SDKAdapterConfig,
 )
 
-# Import internal functions for testing
-from infrastructure.adapters.claude_sdk_adapter import _format_error, _process_block
-
 # Module path for patching (use actual implementation module)
 SDK_ADAPTER_MODULE = "infrastructure.adapters.worker.claude_sdk_adapter"
 
@@ -74,7 +71,7 @@ class TestProcessBlock:
         with patch(
             f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
         ):
-            result = _process_block(block)
+            result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result == ("Hello world", "output")
 
@@ -85,7 +82,7 @@ class TestProcessBlock:
         with patch(
             f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
         ):
-            result = _process_block(block)
+            result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result is None
 
@@ -97,7 +94,7 @@ class TestProcessBlock:
             f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
-            result = _process_block(block)
+            result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result == ("Tool result: command output here", "tool_result")
 
@@ -109,7 +106,7 @@ class TestProcessBlock:
             f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
-            result = _process_block(block)
+            result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result == ("Tool result: (no output)", "tool_result")
 
@@ -122,7 +119,7 @@ class TestProcessBlock:
             f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
-            result = _process_block(block)
+            result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result is not None
         content, _ = result
@@ -134,7 +131,7 @@ class TestProcessBlock:
         class UnknownBlock:
             pass
 
-        result = _process_block(UnknownBlock())
+        result = ClaudeAgentSDKAdapter._process_block(UnknownBlock())
         assert result is None
 
 
@@ -195,16 +192,18 @@ class TestClaudeAgentSDKAdapter:
 
     def test_format_error_cli_not_found(self) -> None:
         """CLI not found errors get helpful message."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
         error = Exception("CLI not found in PATH")
-        result = _format_error(error)
+        result = adapter._format_error(error)
 
         assert "reinstalling" in result
         assert "pip install" in result
 
     def test_format_error_generic(self) -> None:
         """Generic errors include repr."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
         error = ValueError("Something went wrong")
-        result = _format_error(error)
+        result = adapter._format_error(error)
 
         assert "Claude SDK adapter error" in result
         assert "ValueError" in result

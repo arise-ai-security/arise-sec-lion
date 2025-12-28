@@ -362,12 +362,3 @@ Always explain your reasoning and provide clear output about what you're doing."
                     )
 
         return events
-
-    def _calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Calculate cost using pricing from shared registry.
-
-        Kept for backward compatibility with tests.
-        Uses get_model_pricing() internally.
-        """
-        pricing = get_model_pricing(self.config.model)
-        return pricing.calculate_cost(input_tokens, output_tokens)

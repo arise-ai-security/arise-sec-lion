@@ -340,7 +340,7 @@ class PostgresEventStore(EventStorePort):
                         aggregate_ids,
                     )
                 else:
-                    # No pagination - fetch all (backward compatible)
+                    # No pagination - fetch all events
                     rows = await conn.fetch(
                         """
                         SELECT aggregate_id, event_type, payload
