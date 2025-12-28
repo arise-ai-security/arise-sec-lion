@@ -186,7 +186,14 @@ class TestToolFormattersRegistry:
 
     def test_registry_contains_expected_tools(self) -> None:
         """Registry contains all expected tool formatters."""
-        expected_tools = {"Bash", "Write", "Edit", "Read", "Glob", "Grep"}
+        expected_tools = {
+            # Claude Code tools
+            "Bash", "Write", "Edit", "Read", "Glob", "Grep",
+            # MCP filesystem tools
+            "read_file", "write_file", "list_directory", "create_directory",
+            # Shell execution tools
+            "execute_command", "shell_execute",
+        }
         assert expected_tools == set(TOOL_FORMATTERS.keys())
 
     def test_registry_is_extensible(self) -> None:

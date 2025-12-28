@@ -10,12 +10,16 @@ from uuid import uuid4
 import pytest
 
 from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed
-from infrastructure.adapters.claude_sdk_adapter import (
+from infrastructure.adapters.worker.claude_sdk_adapter import (
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
-    _format_error,
-    _process_block,
 )
+
+# Import internal functions for testing
+from infrastructure.adapters.claude_sdk_adapter import _format_error, _process_block
+
+# Module path for patching (use actual implementation module)
+SDK_ADAPTER_MODULE = "infrastructure.adapters.worker.claude_sdk_adapter"
 
 
 class MockTextBlock:
@@ -68,7 +72,7 @@ class TestProcessBlock:
         block = MockTextBlock("Hello world")
 
         with patch(
-            "infrastructure.adapters.claude_sdk_adapter.TextBlock", MockTextBlock
+            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
         ):
             result = _process_block(block)
 
@@ -79,7 +83,7 @@ class TestProcessBlock:
         block = MockTextBlock("   ")
 
         with patch(
-            "infrastructure.adapters.claude_sdk_adapter.TextBlock", MockTextBlock
+            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
         ):
             result = _process_block(block)
 
@@ -90,7 +94,7 @@ class TestProcessBlock:
         block = MockToolResultBlock("command output here")
 
         with patch(
-            "infrastructure.adapters.claude_sdk_adapter.ToolResultBlock",
+            f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
             result = _process_block(block)
@@ -102,7 +106,7 @@ class TestProcessBlock:
         block = MockToolResultBlock("")
 
         with patch(
-            "infrastructure.adapters.claude_sdk_adapter.ToolResultBlock",
+            f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
             result = _process_block(block)
@@ -115,7 +119,7 @@ class TestProcessBlock:
         block = MockToolResultBlock(long_content)
 
         with patch(
-            "infrastructure.adapters.claude_sdk_adapter.ToolResultBlock",
+            f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
             result = _process_block(block)
@@ -161,7 +165,7 @@ class TestSDKAdapterConfig:
         assert config.model == "claude-sonnet-4"
         assert config.timeout_seconds == 600
         assert config.allowed_tools == ["Read", "Bash"]
-        assert config.permission_mode == "ask"
+        assert config.permission_mode == "default"
 
 
 class TestClaudeAgentSDKAdapter:
@@ -233,7 +237,7 @@ class TestAdapterIntegration:
                 ),
             },
         ):
-            from infrastructure.adapters import claude_sdk_adapter
+            from infrastructure.adapters.worker import claude_sdk_adapter
 
             mock_client = AsyncMock()
             mock_client.query = AsyncMock()
@@ -294,7 +298,7 @@ class TestAdapterIntegration:
                 ),
             },
         ):
-            from infrastructure.adapters import claude_sdk_adapter
+            from infrastructure.adapters.worker import claude_sdk_adapter
 
             mock_client = AsyncMock()
             mock_client.query = AsyncMock()
