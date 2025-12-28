@@ -34,6 +34,8 @@ Count how many of these apply:
 - [ ] Straightforward implementation with known patterns
 - [ ] Single domain/technology
 - [ ] Standard CRUD, refactoring, or bug fix
+- [ ] Concrete executable action (git, docker, file edit, test run)
+- [ ] Environment/infrastructure task with clear steps
 
 ### Step 2: Apply Decision Rule
 
@@ -60,6 +62,61 @@ Ask yourself:
 
 If decomposition wouldn't add value → SIMPLE
 
+## Concrete SIMPLE Task Examples (Always → WORKER)
+
+These tasks should ALWAYS be classified as SIMPLE and executed directly by a WORKER:
+
+### Git Operations
+- "Clone the repository https://github.com/org/repo"
+- "Checkout branch feature/fix-bug-123"
+- "Fetch the latest changes from origin"
+- "Create a new branch called hotfix/security-patch"
+- "Merge branch main into current branch"
+- "Cherry-pick commit abc123"
+- "Revert the last commit"
+
+### File Operations
+- "Edit file src/config.py to change the timeout value to 30"
+- "Create a new file tests/test_parser.py with a basic test skeleton"
+- "Delete the deprecated utils/legacy.py file"
+- "Rename module.py to core_module.py"
+- "Move all files from /tmp/output to /data/results"
+- "Read and analyze the contents of Makefile"
+
+### Docker Operations
+- "Build the Docker image with tag myapp:latest"
+- "Run container from image myapp:latest with port mapping 8080:80"
+- "Stop and remove container named test-runner"
+- "Pull image postgres:15 from Docker Hub"
+- "Execute command 'pytest' inside running container"
+- "Build Docker image with AddressSanitizer enabled"
+
+### Test Execution
+- "Run pytest on the tests/ directory"
+- "Execute the test suite with coverage reporting"
+- "Run specific test file tests/test_auth.py"
+- "Run tests matching pattern 'test_security_*'"
+- "Validate that all unit tests pass"
+
+### Build/Compile Operations
+- "Compile the project with make"
+- "Run npm install and npm build"
+- "Build the project with cmake and ninja"
+- "Compile with sanitizers enabled: make ASAN=1"
+
+### Single-Function Implementation
+- "Write a function to validate email format"
+- "Add NULL check to function parse_input()"
+- "Implement bounds checking in array_access()"
+- "Add logging to the authenticate() function"
+
+### Security-Specific Simple Tasks
+- "Add bounds check to prevent buffer overflow in read_data()"
+- "Insert NULL pointer validation before dereference"
+- "Compile binary with AddressSanitizer (-fsanitize=address)"
+- "Run the PoC input against the vulnerable binary"
+- "Check if sanitizer output shows memory error"
+
 ## Common Pitfalls
 
 ### Over-Complicating (False COMPLEX)
@@ -69,12 +126,24 @@ If decomposition wouldn't add value → SIMPLE
 ❌ "Refactor the User model to use properties instead of direct attribute access"
 → This is SIMPLE (localized change, clear scope)
 
+❌ "Git clone and checkout the vulnerable version"
+→ This is SIMPLE (concrete git commands with clear steps)
+
+❌ "Build Docker environment with ASan"
+→ This is SIMPLE (single dockerfile/build command)
+
 ### Under-Estimating (False SIMPLE)
 ❌ "Implement user authentication"
 → This is COMPLEX (multiple components: registration, login, session, security)
 
 ❌ "Add real-time notifications to the app"
 → This is COMPLEX (WebSocket setup, event system, frontend integration)
+
+❌ "Generate PoC AND patch for CVE-2024-1234"
+→ This is COMPLEX (multiple distinct deliverables)
+
+❌ "Analyze the vulnerability and create exploitation proof"
+→ This is COMPLEX (research + implementation phases)
 
 ## Edge Cases
 

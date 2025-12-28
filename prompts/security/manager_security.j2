@@ -41,25 +41,34 @@ Option B (Complex Fix):
 3. "Validate patch compilation and effectiveness"
 ```
 
-#### Full Pipeline Decomposition
-If your task is end-to-end benchmark:
+#### Full Pipeline Decomposition (BuilderAgent → ExploiterAgent → FixerAgent)
+If your task is end-to-end CVE reproduction:
 
 ```
-Recommended (3 subtasks):
-1. "Setup environment: clone repo, build Docker with sanitizers"
-2. "Generate PoC that triggers sanitizer error"
-3. "Generate patch and validate both artifacts"
+Standard 3-Phase Pattern:
+1. BuilderAgent: "Setup environment: clone repo at commit X, build Docker with ASan"
+2. ExploiterAgent: "Execute PoC command, verify sanitizer crash at expected location"
+3. FixerAgent: "Apply fix to source file, rebuild, verify PoC no longer triggers"
+```
+
+**Real Example (gpac CVE-2023-2838):**
+```
+1. BuilderAgent: "Clone gpac at ba59206b, build with -fsanitize=address using Dockerfile"
+2. ExploiterAgent: "Run ./MP4Box -dash 1000 ./crash_file, verify SEGV in gf_filter_get_stats"
+3. FixerAgent: "Add bounds check for loop at filter_session.c:4131, rebuild, verify fix"
 ```
 
 ### 3. Subtask Configuration for Security Tasks
 
-| Subtask Type | Model | Temperature | Tool |
-|--------------|-------|-------------|------|
-| Code Analysis | o3 | 0.3 | claude_code |
-| PoC Generation | o3 | 0.6 | claude_code |
-| Patch Generation | claude-3-5-sonnet | 0.5 | claude_code |
-| Environment Setup | o3-mini | 0.3 | claude_code |
-| Validation | o3-mini | 0.2 | claude_code |
+| Agent Role | Task Type | Model | Temperature | Tool |
+|------------|-----------|-------|-------------|------|
+| BuilderAgent | Environment Setup | o3-mini | 0.3 | claude_code |
+| BuilderAgent | Docker/Build | o3-mini | 0.3 | claude_code |
+| ExploiterAgent | PoC Execution | o3 | 0.5 | claude_code |
+| ExploiterAgent | Crash Validation | o3-mini | 0.2 | claude_code |
+| FixerAgent | Code Analysis | o3 | 0.3 | claude_code |
+| FixerAgent | Patch Generation | claude-3-5-sonnet | 0.5 | claude_code |
+| FixerAgent | Validation | o3-mini | 0.2 | claude_code |
 
 ### 4. Critical Rules for Security Decomposition
 
@@ -82,39 +91,60 @@ Recommended (3 subtasks):
 
 ### 5. Example Decompositions
 
-#### Example 1: PoC + Patch Task
-Parent task: "Generate PoC and patch for CVE-2024-5678 (buffer overflow in libfoo)"
+#### Example 1: Full CVE Reproduction (gpac CVE-2023-2838)
+Parent task: "Reproduce CVE-2023-2838 out-of-bounds read in gpac filter_session.c"
 
-Good decomposition:
+Good decomposition (3 phases):
 ```json
 [
   {
-    "description": "Setup libfoo v1.2.3 in Docker with AddressSanitizer, then generate PoC that triggers buffer overflow in parse_data()",
-    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+    "description": "[BuilderAgent] Clone gpac at commit ba59206b, build Docker image with AddressSanitizer (-fsanitize=address), verify MP4Box binary compiles and runs",
+    "config": {"strategy": "heuristic", "base": {"model": "o3-mini", "temperature": 0.3, "max_tokens": 4000}, "tool": "claude_code"}
   },
   {
-    "description": "Generate minimal patch for CVE-2024-5678 buffer overflow, validate PoC no longer triggers sanitizer error",
+    "description": "[ExploiterAgent] Execute PoC: ./MP4Box -dash 1000 ./crash_file, verify ASan reports SEGV in gf_filter_get_stats at filter_session.c:4149",
+    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.5, "max_tokens": 4000}, "tool": "claude_code"}
+  },
+  {
+    "description": "[FixerAgent] Add bounds check for loop iterator in gf_filter_get_stats (line 4131), rebuild with ASan, verify PoC no longer triggers crash",
     "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   }
 ]
 ```
 
-#### Example 2: Complex Vulnerability Analysis
+#### Example 2: Buffer Overflow with Known Location
+Parent task: "Generate PoC and patch for CVE-2024-5678 (buffer overflow in libfoo parse_data)"
+
+Good decomposition (2 phases if environment exists):
+```json
+[
+  {
+    "description": "[ExploiterAgent] Generate PoC for CVE-2024-5678: craft input that overflows buffer in parse_data(), expect heap-buffer-overflow at libfoo.c:142",
+    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.6, "max_tokens": 8000}, "tool": "claude_code"}
+  },
+  {
+    "description": "[FixerAgent] Add bounds check before buffer write in parse_data() at line 142, validate PoC no longer triggers sanitizer",
+    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
+  }
+]
+```
+
+#### Example 3: Complex UAF Analysis
 Parent task: "Analyze and create benchmark for CVE-2024-9999 use-after-free in connection handling"
 
 Good decomposition:
 ```json
 [
   {
-    "description": "Analyze CVE-2024-9999: trace data flow in connection.c, identify UAF trigger sequence, document in analysis.md",
-    "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.3, "max_tokens": 4000}, "tool": "claude_code"}
+    "description": "[BuilderAgent] Setup environment with ASan, clone repo at vulnerable commit, compile with debug symbols",
+    "config": {"strategy": "heuristic", "base": {"model": "o3-mini", "temperature": 0.3, "max_tokens": 4000}, "tool": "claude_code"}
   },
   {
-    "description": "Generate PoC for CVE-2024-9999 UAF: create input sequence that frees connection then triggers callback, expect 'heap-use-after-free'",
+    "description": "[ExploiterAgent] Trigger CVE-2024-9999 UAF: execute sequence that frees connection object then invokes callback, capture heap-use-after-free output",
     "config": {"strategy": "heuristic", "base": {"model": "o3", "temperature": 0.6, "max_tokens": 8000}, "tool": "claude_code"}
   },
   {
-    "description": "Generate patch for CVE-2024-9999: nullify callback after free or restructure ownership, validate UAF is fixed",
+    "description": "[FixerAgent] Fix UAF by nullifying callback pointer after free in connection.c, rebuild, verify clean execution",
     "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
   }
 ]

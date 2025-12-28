@@ -82,19 +82,71 @@ Your classification determines your next role:
 
 <EXAMPLES>
 
-### SIMPLE Examples
+### SIMPLE Examples - Direct Executable Tasks (→ WORKER)
+
+**Git Operations:**
+- "Clone repository https://github.com/project/vulnerable-app"
+- "Checkout the vulnerable version tag v1.2.3"
+- "Fetch latest changes from upstream"
+- "Create branch fix/CVE-2024-1234"
+
+**Docker/Container Operations:**
+- "Build Docker image with ASan: docker build -t app:asan ."
+- "Run container and execute tests inside it"
+- "Pull base image and start development environment"
+- "Build with sanitizers enabled using provided Dockerfile"
+
+**File Editing:**
+- "Edit src/parser.c to add bounds check on line 142"
+- "Modify config.yaml to set timeout to 30 seconds"
+- "Add NULL check before pointer dereference in validate.c"
+- "Insert logging statement in authentication function"
+
+**Test Execution:**
+- "Run pytest on tests/ directory"
+- "Execute make test with coverage"
+- "Run specific test: pytest tests/test_security.py"
+- "Validate binary with fuzzer input corpus"
+
+**Build/Compile:**
+- "Compile project with make ASAN=1"
+- "Build with cmake -DCMAKE_BUILD_TYPE=Debug"
+- "Run npm install && npm build"
+- "Compile with -fsanitize=address,undefined"
+
+**Security-Specific Simple:**
+- "Add bounds check to prevent buffer overflow in read_buffer()"
+- "Insert NULL validation before line 87 in parser.c"
+- "Run PoC input against compiled binary and capture sanitizer output"
+- "Verify patch by re-running the PoC test case"
+
+**Single-Function Implementation:**
 - "Write a Python function to calculate Fibonacci numbers"
 - "Add input validation to the UserService.create_user method"
-- "Refactor the User model to use properties instead of direct attributes"
-- "Fix bug where logout doesn't clear session cookie"
-- "Research BeautifulSoup library documentation"
+- "Implement email format validation using regex"
+- "Add rate limiting check to API endpoint"
 
-### COMPLEX Examples
-- "Build a web scraper for news articles" (research + implementation + testing + deployment)
-- "Implement user authentication system" (database schema + API + security + sessions)
-- "Create a recommendation engine" (data collection + algorithm + training + deployment)
-- "Add real-time notifications" (WebSocket + event system + frontend integration)
-- "Migrate from REST API to GraphQL" (schema design + server setup + client updates)
+### COMPLEX Examples - Requires Decomposition (→ MANAGER)
+
+**Multiple Deliverables:**
+- "Generate PoC AND patch for CVE-2024-5678" (2 distinct artifacts)
+- "Build a web scraper for news articles" (research + implementation + testing)
+- "Create security benchmark with environment, PoC, and patch"
+
+**Research Required:**
+- "Analyze use-after-free vulnerability to find trigger conditions"
+- "Investigate authentication bypass and propose fix"
+- "Find and exploit race condition in file handler"
+
+**Multi-System Coordination:**
+- "Implement user authentication system" (database + API + sessions)
+- "Add real-time notifications" (WebSocket + events + frontend)
+- "Migrate from REST API to GraphQL" (schema + server + clients)
+
+**Architectural Changes:**
+- "Redesign memory ownership model to prevent UAF"
+- "Refactor parser to use safe string handling throughout"
+- "Implement defense-in-depth for input validation"
 
 </EXAMPLES>
 
