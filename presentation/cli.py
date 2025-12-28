@@ -43,6 +43,7 @@ class CLIConfig:
 
     verbose: bool = True
     output_directory: str = "./output"
+    default_worker_tool: str = "claude_code"
 
 
 class CLI:
@@ -68,7 +69,12 @@ class CLI:
             self._renderer.print_step(1, 5, "Initializing infrastructure adapters...")
             self._renderer.print_success("Event Store: PostgreSQL")
             self._renderer.print_success("LLM Adapter: LiteLLM")
-            self._renderer.print_success("Worker Tools: Claude Code PTY, OpenHands (routed by config)")
+            worker_display = {
+                "claude_code": "Claude Code (Agent SDK)",
+                "openhands": "OpenHands",
+                "google_adk": "Google ADK (Gemini)",
+            }.get(self.config.default_worker_tool, self.config.default_worker_tool)
+            self._renderer.print_success(f"Worker Tool: {worker_display}")
             click.echo()
 
         if self.config.verbose:

@@ -165,6 +165,67 @@ class PostgresEventStore(EventStorePort):
                 original_error=e,
             ) from e
 
+    async def append_batch(
+        self,
+        events: list[DomainEvent],
+        expected_version: int,
+    ) -> None:
+        """Append multiple events atomically in a single transaction.
+
+        This is significantly faster than individual appends for workers
+        that produce many events (thoughts, tool uses, etc.).
+
+        Args:
+            events: List of events to persist.
+            expected_version: Expected version before first event.
+        """
+        if not events:
+            return
+
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(
+                        """
+                        INSERT INTO events (
+                            event_id,
+                            aggregate_id,
+                            sequence_number,
+                            event_type,
+                            payload,
+                            occurred_at,
+                            metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        [
+                            (
+                                event.event_id,
+                                event.aggregate_id,
+                                event.sequence_number,
+                                event.__class__.__name__,
+                                event.model_dump(mode="json"),
+                                event.occurred_at,
+                                event.metadata,
+                            )
+                            for event in events
+                        ],
+                    )
+
+        except asyncpg.UniqueViolationError as e:
+            raise ConcurrencyError(
+                aggregate_id=str(events[0].aggregate_id),
+                expected_version=expected_version,
+            ) from e
+
+        except Exception as e:
+            raise EventStoreError(
+                f"Failed to append batch for aggregate {events[0].aggregate_id}",
+                original_error=e,
+            ) from e
+
     async def get_events(
         self,
         aggregate_id: UUID,

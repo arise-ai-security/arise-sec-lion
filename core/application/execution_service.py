@@ -204,9 +204,16 @@ class AgentExecutionService:
                 raise
 
     async def run_system_loop(self, root_agent_id: UUID) -> None:
-        """Poll and execute active agents until all reach terminal state."""
+        """Poll and execute active agents until all reach terminal state.
+
+        Args:
+            root_agent_id: Root agent ID to filter hierarchy. Only agents
+                           in this hierarchy will be processed.
+        """
         while True:
-            active_agents = await self._query_service.get_active_agent_ids()
+            active_agents = await self._query_service.get_active_agent_ids(
+                root_id=root_agent_id
+            )
             if not active_agents:
                 break
 
@@ -319,13 +326,22 @@ class AgentExecutionService:
         agent: AgentSession,
         base_version: int,
     ) -> list[DomainEvent]:
-        """Persist uncommitted events and return them."""
-        uncommitted = list(agent.events)
-        current_version = base_version
+        """Persist uncommitted events and return them.
 
+        Uses batch persistence for efficiency when there are multiple events.
+        """
+        uncommitted = list(agent.events)
+        if not uncommitted:
+            return uncommitted
+
+        # Use batch append for multiple events (much faster for workers)
+        if len(uncommitted) > 1:
+            await self._event_store.append_batch(uncommitted, expected_version=base_version)
+        else:
+            await self._event_store.append(uncommitted[0], expected_version=base_version)
+
+        # Notify progress for each event after successful persistence
         for event in uncommitted:
-            await self._event_store.append(event, expected_version=current_version)
-            current_version += 1
             self._notify_progress(event, agent)
 
         agent.mark_changes_as_committed()
@@ -369,10 +385,15 @@ class AgentExecutionService:
             child_result=child_result,
         )
 
-        for event in parent.events:
-            await self._event_store.append(event, expected_version=parent_version)
-            parent_version += 1
-            self._notify_progress(event, parent)
+        uncommitted = list(parent.events)
+        if uncommitted:
+            if len(uncommitted) > 1:
+                await self._event_store.append_batch(uncommitted, expected_version=parent_version)
+            else:
+                await self._event_store.append(uncommitted[0], expected_version=parent_version)
+
+            for event in uncommitted:
+                self._notify_progress(event, parent)
 
         parent.mark_changes_as_committed()
 
@@ -386,9 +407,12 @@ class AgentExecutionService:
             current_version = agent.version
             agent.fail_with_reason(f"Execution error: {error!r}")
 
-            for event in agent.events:
-                await self._event_store.append(event, expected_version=current_version)
-                current_version += 1
+            uncommitted = list(agent.events)
+            if uncommitted:
+                if len(uncommitted) > 1:
+                    await self._event_store.append_batch(uncommitted, expected_version=current_version)
+                else:
+                    await self._event_store.append(uncommitted[0], expected_version=current_version)
 
         except Exception as persist_error:
             raise RuntimeError(

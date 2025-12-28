@@ -138,7 +138,7 @@ class AgentOrchestrator:
         prompt = self._prompt_builder.build_auto_prompt(
             task_description=agent.task_description,
             agent_id=agent.agent_id,
-            agent_role=agent.role.value.upper(),
+            agent_role=agent.role,
             parent_task=None,
         )
 

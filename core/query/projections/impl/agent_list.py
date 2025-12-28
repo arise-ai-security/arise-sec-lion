@@ -9,9 +9,12 @@ from uuid import UUID
 from core.domain.events import (
     AgentCreated,
     ChildSpawned,
+    CodeGenerationStarted,
     DomainEvent,
     StatusChanged,
     TaskAssigned,
+    WorkCompleted,
+    WorkFailed,
 )
 from core.query.projections.models import AgentListItem
 
@@ -59,6 +62,15 @@ class AgentListProjection:
 
             elif isinstance(event, StatusChanged):
                 status = event.new_status
+
+            elif isinstance(event, CodeGenerationStarted):
+                status = "in_progress"
+
+            elif isinstance(event, WorkCompleted):
+                status = "completed"
+
+            elif isinstance(event, WorkFailed):
+                status = "failed"
 
             elif isinstance(event, ChildSpawned):
                 child_ids.append(event.child_id)

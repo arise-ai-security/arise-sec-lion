@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g @anthropic-ai/claude-code \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 appuser
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -23,9 +24,10 @@ RUN uv sync --frozen --no-install-project
 
 # Copy app and install
 COPY . .
-RUN uv sync --frozen
+RUN uv sync --frozen && chown -R appuser:appuser /app
 
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+USER appuser
 
 CMD ["python", "main.py"]
 

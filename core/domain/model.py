@@ -27,6 +27,7 @@ from core.domain.events import (
     ThoughtCaptured,
     TokensConsumed,
     WorkCompleted,
+    WorkerCostRecorded,
     WorkFailed,
 )
 from core.domain.execution_context import ExecutionContext
@@ -212,6 +213,11 @@ class AgentSession:
     @_apply.register
     def _(self, event: LimitEnforced) -> None:
         # Limit enforcement is informational, tracks when limits affect behavior
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: WorkerCostRecorded) -> None:
+        # Worker cost events are informational, just increment version for OCC
         self.version += 1
 
     def _initialize_defaults(self, agent_id: UUID) -> None:

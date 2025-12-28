@@ -12,6 +12,7 @@ from uuid import UUID
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import (
     AgentCreated,
+    CodeGenerationStarted,
     DomainEvent,
     StatusChanged,
     TaskAssigned,
@@ -47,7 +48,7 @@ class AgentSummaryReadModel:
         Only processes the events needed to extract summary fields:
         - AgentCreated: role, parent_id
         - TaskAssigned: task_description
-        - StatusChanged/WorkCompleted/WorkFailed: current status
+        - StatusChanged/CodeGenerationStarted/WorkCompleted/WorkFailed: current status
 
         Args:
             events: List of domain events for an aggregate.
@@ -78,6 +79,8 @@ class AgentSummaryReadModel:
                 status = "analyzing"  # TaskAssigned transitions to ANALYZING
             elif isinstance(event, StatusChanged):
                 status = event.new_status
+            elif isinstance(event, CodeGenerationStarted):
+                status = "in_progress"
             elif isinstance(event, WorkCompleted):
                 status = "completed"
             elif isinstance(event, WorkFailed):
@@ -153,23 +156,71 @@ class AgentQueryService:
             active=active,
         )
 
-    async def get_active_agent_ids(self) -> list[UUID]:
+    async def get_active_agent_ids(self, root_id: UUID | None = None) -> list[UUID]:
         """Return agent IDs not in terminal state (COMPLETED/FAILED).
+
+        Args:
+            root_id: If provided, only return agents in this hierarchy.
+                     Filters to agents where parent chain leads to root_id.
 
         Uses get_all_events_grouped() for single-query efficiency (avoids N+1).
         Uses lightweight read model instead of full aggregate reconstruction.
         """
         all_events = await self._repository.get_all_events_grouped()
-        active_ids = []
 
+        # Build summaries for all agents
+        summaries: dict[UUID, AgentSummaryReadModel] = {}
         for agent_id, events in all_events.items():
             summary = AgentSummaryReadModel.from_events(events)
-            if summary is not None and not summary.is_terminal:
-                active_ids.append(agent_id)
+            if summary is not None:
+                summaries[agent_id] = summary
 
-        return active_ids
+        # If root_id specified, filter to only agents in that hierarchy
+        if root_id is not None:
+            hierarchy_ids = self._get_hierarchy_ids(root_id, summaries)
+            summaries = {k: v for k, v in summaries.items() if k in hierarchy_ids}
+
+        # Return non-terminal agents
+        return [
+            agent_id
+            for agent_id, summary in summaries.items()
+            if not summary.is_terminal
+        ]
+
+    def _get_hierarchy_ids(
+        self,
+        root_id: UUID,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+    ) -> set[UUID]:
+        """Get all agent IDs that belong to a hierarchy rooted at root_id.
+
+        Traverses the tree top-down from root to find all descendants.
+        """
+        if root_id not in summaries:
+            return set()
+
+        # Build parent->children map for efficient traversal
+        children_map: dict[UUID | None, list[UUID]] = {}
+        for agent_id, summary in summaries.items():
+            parent = summary.parent_id
+            if parent not in children_map:
+                children_map[parent] = []
+            children_map[parent].append(agent_id)
+
+        # BFS from root to collect all descendants
+        hierarchy: set[UUID] = {root_id}
+        queue = [root_id]
+
+        while queue:
+            current = queue.pop(0)
+            for child_id in children_map.get(current, []):
+                if child_id not in hierarchy:
+                    hierarchy.add(child_id)
+                    queue.append(child_id)
+
+        return hierarchy
 
     async def is_hierarchy_complete(self, root_id: UUID) -> bool:
         """Check if all agents in hierarchy have reached terminal state."""
-        active_ids = await self.get_active_agent_ids()
+        active_ids = await self.get_active_agent_ids(root_id=root_id)
         return len(active_ids) == 0

@@ -160,3 +160,47 @@ def test_parse_extra_fields_ignored() -> None:
     # Then: Successfully creates Subtask (extra fields ignored)
     assert len(subtasks) == 1
     assert subtasks[0].description == "Research libraries"
+
+
+def test_parse_wrapped_subtasks_dict() -> None:
+    """Test parsing when LLM wraps subtasks in a dict with 'subtasks' key."""
+
+    # Given: LLM response wrapped in {"subtasks": [...]}
+    config = _test_config_json()
+    llm_response = json.dumps(
+        {
+            "subtasks": [
+                {"description": "First task", "config": config},
+                {"description": "Second task", "config": config},
+            ]
+        }
+    )
+
+    # When: Parse the response
+    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+
+    # Then: Successfully extracts subtasks from wrapper
+    assert len(subtasks) == 2
+    assert subtasks[0].description == "First task"
+    assert subtasks[1].description == "Second task"
+
+
+def test_parse_wrapped_tasks_dict() -> None:
+    """Test parsing when LLM wraps subtasks in a dict with 'tasks' key."""
+
+    # Given: LLM response wrapped in {"tasks": [...]}
+    config = _test_config_json()
+    llm_response = json.dumps(
+        {
+            "tasks": [
+                {"description": "Only task", "config": config},
+            ]
+        }
+    )
+
+    # When: Parse the response
+    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+
+    # Then: Successfully extracts from 'tasks' wrapper
+    assert len(subtasks) == 1
+    assert subtasks[0].description == "Only task"

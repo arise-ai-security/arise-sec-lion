@@ -38,6 +38,18 @@ class EventStoreWritePort(Protocol):
         """Append event with OCC. Raises ConcurrencyError if version mismatch."""
         ...
 
+    async def append_batch(self, events: list[DomainEvent], expected_version: int) -> None:
+        """Append multiple events atomically in a single transaction.
+
+        Significantly faster than individual appends for workers
+        that produce many events (thoughts, tool uses, etc.).
+
+        Args:
+            events: List of events to persist.
+            expected_version: Expected version before first event.
+        """
+        ...
+
 
 class EventStoreReadPort(Protocol):
     """Read-only query operations for event store.

@@ -36,13 +36,21 @@ class SubtaskParser:
         except json.JSONDecodeError as e:
             raise ValueError(f"LLM response is not valid JSON: {e}") from e
 
-        # Handle case where LLM returns a single subtask as dict instead of list
+        # Handle case where LLM wraps response in a dict
         if isinstance(data, dict):
-            # Check if it looks like a subtask (has description or config)
-            if "description" in data or "config" in data:
-                data = [data]
+            # Check if dict contains a "subtasks" or "tasks" key with a list
+            for key in ("subtasks", "tasks", "items", "children"):
+                if key in data and isinstance(data[key], list):
+                    data = data[key]
+                    break
             else:
-                raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")
+                # Check if it looks like a single subtask (has description or config)
+                if "description" in data or "config" in data:
+                    data = [data]
+                else:
+                    raise ValueError(
+                        f"Expected list of subtasks, got dict with keys: {list(data.keys())}"
+                    )
 
         if not isinstance(data, list):
             raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")

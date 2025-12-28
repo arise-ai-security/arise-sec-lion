@@ -106,6 +106,7 @@ services:
       - ..:/app
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.claude:/home/appuser/.claude  # Mount local Claude config (API key + debug logs)
     env_file: .env.dev
     command: sleep infinity
     stdin_open: true

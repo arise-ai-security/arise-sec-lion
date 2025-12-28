@@ -70,6 +70,7 @@ def create_cli_app(
         cli_config = CLIConfig(
             verbose=settings.output.verbose,
             output_directory=settings.output.directory,
+            default_worker_tool=settings.worker.tool_type,
         )
 
     cli: CLI = get_cli(application.execution_service, cli_config)

@@ -13,6 +13,8 @@ from core.domain.events import (
     DomainEvent,
     StatusChanged,
     SubtasksDefined,
+    WorkCompleted,
+    WorkFailed,
 )
 from core.domain.model import AgentSession
 from core.ports.event_store_port import EventStoreReadPort
@@ -177,6 +179,12 @@ class AgentSummaryService:
             for event in events:
                 if isinstance(event, StatusChanged):
                     status = event.new_status
+                elif isinstance(event, CodeGenerationStarted):
+                    status = "in_progress"
+                elif isinstance(event, WorkCompleted):
+                    status = "completed"
+                elif isinstance(event, WorkFailed):
+                    status = "failed"
             return child_id, status
 
         results = await asyncio.gather(*[get_status(cid) for cid in child_ids])
