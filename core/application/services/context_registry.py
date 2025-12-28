@@ -78,6 +78,23 @@ class ExecutionContextRegistry:
         """Check if agent has a registered execution context."""
         return agent_id in self._contexts
 
+    def get_root_id(self, agent_id: UUID) -> UUID:
+        """Get root ID for an agent's execution context.
+
+        Args:
+            agent_id: The agent to get root ID for.
+
+        Returns:
+            The root_id from the agent's ExecutionContext.
+
+        Raises:
+            KeyError: If agent has no registered context.
+        """
+        context = self._contexts.get(agent_id)
+        if context is None:
+            raise KeyError(f"No execution context for agent {agent_id}")
+        return context.root_id
+
     def __len__(self) -> int:
         """Return number of registered contexts."""
         return len(self._contexts)

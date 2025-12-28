@@ -23,6 +23,7 @@ from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import ExecutionContextRegistry
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
+from core.domain.context_update_parser import parse_context_update
 from core.domain.events import ChildSpawned, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from config import OrchestrationConfig
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
+    from core.ports.sibling_context_port import SiblingContextPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
@@ -67,7 +69,8 @@ class ExecutionServiceDependencies:
     child_factory: ChildAgentFactory
     query_service: AgentQueryService
     workspace: WorkspaceContextProvider
-    shared_context_port: SharedContextPort | None = None
+    shared_context_port: SharedContextPort
+    sibling_context_port: SiblingContextPort
 
 
 class AgentExecutionService:
@@ -102,6 +105,7 @@ class AgentExecutionService:
         # Core ports
         self._event_store = event_store
         self._shared_context_port = dependencies.shared_context_port
+        self._sibling_context_port = dependencies.sibling_context_port
 
         # Configuration
         self._config = config
@@ -162,11 +166,8 @@ class AgentExecutionService:
 
     async def _create_shared_context(self, root_id: UUID) -> None:
         """Create shared context for execution run."""
-        if self._shared_context_port is None:
-            return
-
         # TODO: Get initial budget from config when budget system is fully integrated
-        initial_budget_usd = 0.0  # 0 = unlimited for now
+        initial_budget_usd = 0.0
         shared_context = await self._shared_context_port.get_or_create(
             root_id=root_id,
             initial_budget_usd=initial_budget_usd,
@@ -316,10 +317,18 @@ class AgentExecutionService:
 
         elif agent.role == AgentRole.WORKER:
             async with self._worker_semaphore:
+                root_id = self._context_registry.get_root_id(agent.agent_id)
+                sibling_context = await self._sibling_context_port.build_context(
+                    agent_id=agent.agent_id,
+                    parent_id=agent.parent_id,
+                    root_id=root_id,
+                )
+
                 await self._orchestrator.execute_task(
                     agent,
                     working_directory=self._workspace.working_directory,
                     workspace_context=self._workspace.get_context(),
+                    sibling_context=sibling_context,
                 )
 
         else:
@@ -356,7 +365,7 @@ class AgentExecutionService:
         agent: AgentSession,
         events: list[DomainEvent],
     ) -> None:
-        """Handle post-step operations: child spawning and parent notification."""
+        """Handle post-step operations: child spawning, context updates, and parent notification."""
         # Spawn children
         child_events = [e for e in events if isinstance(e, ChildSpawned)]
         if child_events:
@@ -364,6 +373,10 @@ class AgentExecutionService:
                 child_events,
                 agent.agent_id,
             )
+
+        # Process context updates from completed workers (Event Sourcing)
+        if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
+            await self._process_worker_context_updates(agent)
 
         # Notify parent
         await self._notify_parent_if_complete(agent)
@@ -400,6 +413,45 @@ class AgentExecutionService:
                 self._notify_progress(event, parent)
 
         parent.mark_changes_as_committed()
+
+    async def _process_worker_context_updates(self, agent: AgentSession) -> None:
+        """Extract and store context updates from worker result."""
+        if agent.result is None:
+            return
+
+        parsed = parse_context_update(agent.result)
+        if parsed is None:
+            return
+
+        root_id = self._context_registry.get_root_id(agent.agent_id)
+        context = await self._shared_context_port.get(root_id)
+        if context is None:
+            return
+
+        current_version = context.version
+
+        # Store decisions via existing DecisionRecorded event
+        for decision in parsed.decisions:
+            context.record_decision(
+                decision_key=decision.key,
+                decision_value=decision.value,
+                rationale=decision.rationale,
+                decided_by=agent.agent_id,
+            )
+
+        # Store outputs via existing ArtifactStored event
+        for output in parsed.outputs:
+            context.store_artifact(
+                key=output.key,
+                content_type="text/plain",
+                stored_by=agent.agent_id,
+                content=output.description,
+            )
+
+        # Persist if any updates (Event Sourcing)
+        if context.events:
+            await self._shared_context_port.save(context, expected_version=current_version)
+            context.mark_changes_as_committed()
 
     async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
         """Handle execution failure by persisting error state."""

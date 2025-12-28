@@ -1,6 +1,9 @@
 """Domain service for building hierarchical prompts from Jinja2 templates."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any, Self
 from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
@@ -8,63 +11,104 @@ from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 from core.domain.enums import AgentRole
 
 
-# Keywords that indicate a security-related task
-SECURITY_KEYWORDS = frozenset({
-    "cve",
-    "cwe",
-    "vulnerability",
-    "exploit",
-    "poc",
-    "proof-of-concept",
-    "proof of concept",
-    "sanitizer",
-    "addresssanitizer",
-    "asan",
-    "ubsan",
-    "msan",
-    "security benchmark",
-    "security patch",
-    "heap overflow",
-    "buffer overflow",
-    "use-after-free",
-    "null pointer",
-    "integer overflow",
-    "memory corruption",
-    "nvd",
-    "cvss",
-})
+class TemplateChain:
+    """Fluent builder for chaining template renders."""
 
-
-def is_security_task(task_description: str) -> bool:
-    """Detect if a task is security-related based on keywords.
-
-    Args:
-        task_description: The task description to analyze.
-
-    Returns:
-        True if the task appears to be security-related.
-    """
-    lower_desc = task_description.lower()
-    return any(keyword in lower_desc for keyword in SECURITY_KEYWORDS)
-
-
-class PromptBuilder:
-    """Compose hierarchical prompts: system → strategy → task → output format."""
+    __slots__ = ("_env", "_parts", "_error_context")
 
     def __init__(
         self,
-        template_dir: str | Path = "prompts",
-        default_tool: str = "claude_code",
+        env: Environment,
+        error_context: str = "template",
+    ) -> None:
+        self._env = env
+        self._parts: list[str] = []
+        self._error_context = error_context
+
+    def _template_exists(self, name: str) -> bool:
+        """Check if a template exists without raising."""
+        try:
+            self._env.get_template(name)
+            return True
+        except TemplateNotFound:
+            return False
+
+    def render(self, template: str, **kwargs: Any) -> Self:
+        """Render a template and add to chain."""
+        try:
+            self._parts.append(self._env.get_template(template).render(**kwargs))
+        except TemplateNotFound as e:
+            raise TemplateNotFound(f"Required {self._error_context} not found: {e.name}") from e
+        return self
+
+    def render_if(self, condition: Any, template: str, **kwargs: Any) -> Self:
+        """Render a template only if condition is truthy."""
+        if condition:
+            return self.render(template, **kwargs)
+        return self
+
+    def render_optional(self, template: str, **kwargs: Any) -> Self:
+        """Render a template if it exists, skip silently otherwise."""
+        if self._template_exists(template):
+            self._parts.append(self._env.get_template(template).render(**kwargs))
+        return self
+
+    def with_security(self, overlay_name: str, **kwargs: Any) -> Self:
+        """Inject security template if it exists. Looks in security/ directory."""
+        return self.render_optional(f"security/{overlay_name}", **kwargs)
+
+    def text(self, content: str) -> Self:
+        """Add raw text to chain."""
+        self._parts.append(content)
+        return self
+
+    def text_if(self, condition: Any, content: str) -> Self:
+        """Add raw text only if condition is truthy."""
+        if condition:
+            self._parts.append(content)
+        return self
+
+    def build(self, separator: str = "\n\n") -> str:
+        """Join all parts into final prompt."""
+        return separator.join(self._parts)
+
+
+class PromptBuilder:
+    """Compose hierarchical prompts with automatic security injection."""
+
+    def __init__(
+        self,
+        template_dir: str | Path,
+        default_tool: str,
     ) -> None:
         self.template_dir = Path(template_dir)
         self.default_tool = default_tool
-        # Autoescape disabled: templates generate LLM prompts (plain text), not HTML
         self.env = Environment(
             loader=FileSystemLoader(str(self.template_dir)),
-            autoescape=False,  # noqa: S701
+            autoescape=False,  # noqa: S701 - plain text prompts, not HTML
             trim_blocks=True,
             lstrip_blocks=True,
         )
+
+    def chain(self) -> TemplateChain:
+        """Create a new template chain builder."""
+        return TemplateChain(self.env, "template")
+
+    def _task_context(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        agent_role: AgentRole,
+        parent_task: str | None = None,
+    ) -> dict[str, Any]:
+        """Build common task context dict."""
+        return {
+            "task_description": task_description,
+            "agent_id": str(agent_id),
+            "agent_role": agent_role.value.upper(),
+            "parent_task": parent_task,
+            "default_tool": self.default_tool,
+        }
 
     def build_complexity_evaluation_prompt(
         self,
@@ -73,19 +117,18 @@ class PromptBuilder:
         parent_task: str | None = None,
     ) -> str:
         """Build prompt for PENDING agent complexity evaluation."""
-        try:
-            system = self.env.get_template("system/role_pending.j2").render()
-            strategy = self.env.get_template("strategies/complexity_evaluation.j2").render()
-            task = self.env.get_template("tasks/complexity_evaluation.j2").render(
-                task_description=task_description,
-                agent_id=str(agent_id),
-                parent_task=parent_task,
-            )
-            output_format = self.env.get_template("output_formats/complexity_result.j2").render()
-            return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
-        except TemplateNotFound as e:
-            msg = f"Required template not found: {e.name}"
-            raise TemplateNotFound(msg) from e
+        return (
+            self.chain()
+            .render("system/role_pending.j2")
+            .render("strategies/complexity_evaluation.j2")
+            .render("tasks/complexity_evaluation.j2",
+                    task_description=task_description,
+                    agent_id=str(agent_id),
+                    parent_task=parent_task)
+            .render("output_formats/complexity_result.j2")
+            .with_security("complexity_security.j2")
+            .build()
+        )
 
     def build_manager_decomposition_prompt(
         self,
@@ -95,27 +138,17 @@ class PromptBuilder:
         parent_task: str | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition."""
-        try:
-            system = self.env.get_template("system/role_manager.j2").render(
-                default_tool=self.default_tool,
-            )
-            strategy = self.env.get_template("strategies/manager_decomposition.j2").render(
-                default_tool=self.default_tool,
-            )
-            task = self.env.get_template("tasks/task_decomposition.j2").render(
-                task_description=task_description,
-                agent_id=str(agent_id),
-                agent_role=agent_role.value.upper(),
-                parent_task=parent_task,
-                default_tool=self.default_tool,
-            )
-            output_format = self.env.get_template("output_formats/subtask_list.j2").render(
-                default_tool=self.default_tool,
-            )
-            return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
-        except TemplateNotFound as e:
-            msg = f"Required template not found: {e.name}"
-            raise TemplateNotFound(msg) from e
+        ctx = self._task_context(task_description, agent_id, agent_role, parent_task)
+        tool = self.default_tool
+        return (
+            self.chain()
+            .render("system/role_manager.j2", default_tool=tool)
+            .with_security("manager_security.j2", default_tool=tool)
+            .render("strategies/manager_decomposition.j2", default_tool=tool)
+            .render("tasks/task_decomposition.j2", **ctx)
+            .render("output_formats/subtask_list.j2", default_tool=tool)
+            .build()
+        )
 
     def build_boss_delegation_prompt(
         self,
@@ -124,136 +157,19 @@ class PromptBuilder:
         parent_task: str | None = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation."""
-        try:
-            system = self.env.get_template("system/role_boss.j2").render(
-                default_tool=self.default_tool,
-            )
-            strategy = self.env.get_template("strategies/boss_delegation.j2").render(
-                default_tool=self.default_tool,
-            )
-            task = self.env.get_template("tasks/task_decomposition.j2").render(
-                task_description=task_description,
-                agent_id=str(agent_id),
-                agent_role=AgentRole.BOSS.value.upper(),
-                parent_task=parent_task,
-                default_tool=self.default_tool,
-            )
-            output_format = self.env.get_template("output_formats/subtask_list.j2").render(
-                default_tool=self.default_tool,
-            )
-            return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
-        except TemplateNotFound as e:
-            msg = f"Required template not found: {e.name}"
-            raise TemplateNotFound(msg) from e
-
-    def build_security_benchmark_prompt(
-        self,
-        task_description: str,
-        agent_id: UUID,
-        parent_task: str | None = None,
-    ) -> str:
-        """Build prompt for BOSS agent security benchmark generation.
-
-        Uses security-specific templates that provide CVE analysis guidance,
-        PoC generation strategies, and patch generation patterns.
-
-        Args:
-            task_description: The security task (should contain CVE details).
-            agent_id: The agent's UUID.
-            parent_task: Parent task context (usually None for BOSS).
-
-        Returns:
-            Composed prompt string for security benchmark generation.
-        """
-        try:
-            system = self.env.get_template("security/role_boss_security.j2").render(
-                default_tool=self.default_tool,
-            )
-            strategy = self.env.get_template("security/strategy_cve_benchmark.j2").render(
-                default_tool=self.default_tool,
-            )
-            task = self.env.get_template("tasks/task_decomposition.j2").render(
-                task_description=task_description,
-                agent_id=str(agent_id),
-                agent_role=AgentRole.BOSS.value.upper(),
-                parent_task=parent_task,
-                default_tool=self.default_tool,
-            )
-            output_format = self.env.get_template("security/output_format_benchmark.j2").render(
-                default_tool=self.default_tool,
-            )
-            return f"{system}\n\n{strategy}\n\n{task}\n\n{output_format}"
-        except TemplateNotFound as e:
-            msg = f"Required security template not found: {e.name}"
-            raise TemplateNotFound(msg) from e
-
-    def build_security_worker_prompt(
-        self,
-        task_description: str,
-        agent_id: UUID,
-        task_type: str = "poc",
-    ) -> str:
-        """Build prompt for WORKER agent security task execution.
-
-        Args:
-            task_description: The specific security task.
-            agent_id: The agent's UUID.
-            task_type: Type of security task ('poc' or 'patch').
-
-        Returns:
-            Composed prompt string for security worker.
-        """
-        template_map = {
-            "poc": "security/worker_poc_generation.j2",
-            "patch": "security/worker_patch_generation.j2",
-        }
-        template_name = template_map.get(task_type, "security/worker_poc_generation.j2")
-
-        try:
-            guidance = self.env.get_template(template_name).render()
-            worker_role = self.env.get_template("system/role_worker.j2").render()
-            return f"{worker_role}\n\n{guidance}\n\nYour task:\n{task_description}"
-        except TemplateNotFound as e:
-            msg = f"Required security worker template not found: {e.name}"
-            raise TemplateNotFound(msg) from e
-
-    def build_security_manager_prompt(
-        self,
-        task_description: str,
-        agent_id: UUID,
-        parent_task: str | None = None,
-    ) -> str:
-        """Build prompt for MANAGER agent handling security subtasks.
-
-        Args:
-            task_description: The security subtask to decompose.
-            agent_id: The agent's UUID.
-            parent_task: Parent task context.
-
-        Returns:
-            Composed prompt string for security manager.
-        """
-        try:
-            system = self.env.get_template("system/role_manager.j2").render(
-                default_tool=self.default_tool,
-            )
-            security_strategy = self.env.get_template("security/manager_security.j2").render(
-                default_tool=self.default_tool,
-            )
-            task = self.env.get_template("tasks/task_decomposition.j2").render(
-                task_description=task_description,
-                agent_id=str(agent_id),
-                agent_role=AgentRole.MANAGER.value.upper(),
-                parent_task=parent_task,
-                default_tool=self.default_tool,
-            )
-            output_format = self.env.get_template("output_formats/subtask_list.j2").render(
-                default_tool=self.default_tool,
-            )
-            return f"{system}\n\n{security_strategy}\n\n{task}\n\n{output_format}"
-        except TemplateNotFound as e:
-            msg = f"Required security manager template not found: {e.name}"
-            raise TemplateNotFound(msg) from e
+        ctx = self._task_context(task_description, agent_id, AgentRole.BOSS, parent_task)
+        tool = self.default_tool
+        return (
+            self.chain()
+            .render("system/role_boss.j2", default_tool=tool)
+            .with_security("role_boss_security.j2", default_tool=tool)
+            .render("strategies/boss_delegation.j2", default_tool=tool)
+            .with_security("strategy_cve_benchmark.j2", default_tool=tool)
+            .render("tasks/task_decomposition.j2", **ctx)
+            .render("output_formats/subtask_list.j2", default_tool=tool)
+            .with_security("output_format_benchmark.j2", default_tool=tool)
+            .build()
+        )
 
     def build_auto_prompt(
         self,
@@ -262,49 +178,39 @@ class PromptBuilder:
         agent_role: AgentRole,
         parent_task: str | None = None,
     ) -> str:
-        """Automatically select appropriate prompt based on task content.
+        """Automatically select appropriate prompt based on agent role."""
+        match agent_role:
+            case AgentRole.BOSS:
+                return self.build_boss_delegation_prompt(task_description, agent_id, parent_task)
+            case AgentRole.MANAGER:
+                return self.build_manager_decomposition_prompt(
+                    task_description, agent_id, agent_role, parent_task
+                )
+            case _:
+                return self.build_complexity_evaluation_prompt(task_description, agent_id, parent_task)
 
-        Detects security tasks and routes to security-specific prompts.
+    def build_worker_prompt(
+        self,
+        task_description: str,
+        sibling_context: Any = None,
+        workspace_context: str | None = None,
+    ) -> str:
+        """Build prompt for WORKER agent task execution."""
+        chain = self.chain()
 
-        Args:
-            task_description: The task description.
-            agent_id: The agent's UUID.
-            agent_role: The agent's role (BOSS, MANAGER, etc.).
-            parent_task: Parent task context.
+        # Sibling context (if provided)
+        if sibling_context is not None:
+            chain.render("worker/sibling_context.j2", **sibling_context.to_template_dict())
 
-        Returns:
-            Composed prompt string using appropriate templates.
-        """
-        is_security = is_security_task(task_description)
+        # Instructions + security overlay
+        chain.render("worker/execution_instructions.j2")
+        chain.with_security("worker_guidance.j2")
 
-        if agent_role == AgentRole.BOSS and is_security:
-            return self.build_security_benchmark_prompt(
-                task_description=task_description,
-                agent_id=agent_id,
-                parent_task=parent_task,
-            )
-        if agent_role == AgentRole.BOSS:
-            return self.build_boss_delegation_prompt(
-                task_description=task_description,
-                agent_id=agent_id,
-                parent_task=parent_task,
-            )
-        if agent_role == AgentRole.MANAGER and is_security:
-            return self.build_security_manager_prompt(
-                task_description=task_description,
-                agent_id=agent_id,
-                parent_task=parent_task,
-            )
-        if agent_role == AgentRole.MANAGER:
-            return self.build_manager_decomposition_prompt(
-                task_description=task_description,
-                agent_id=agent_id,
-                agent_role=agent_role,
-                parent_task=parent_task,
-            )
-        # Default to complexity evaluation for PENDING
-        return self.build_complexity_evaluation_prompt(
-            task_description=task_description,
-            agent_id=agent_id,
-            parent_task=parent_task,
-        )
+        # Task description
+        chain.text(f"<TASK>\n{task_description}\n</TASK>")
+
+        # Workspace context (if provided)
+        if workspace_context:
+            chain.render("worker/workspace_context.j2", files=workspace_context)
+
+        return chain.build()

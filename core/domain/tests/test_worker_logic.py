@@ -101,7 +101,7 @@ def _create_orchestrator(
     return AgentOrchestrator(
         llm_port=llm_port or FakeLLM(),
         worker_port=worker_port,
-        prompt_builder=prompt_builder or PromptBuilder(),
+        prompt_builder=prompt_builder or PromptBuilder("prompts", "claude_code"),
     )
 
 

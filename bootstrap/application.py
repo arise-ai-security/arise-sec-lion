@@ -14,6 +14,7 @@ from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import ExecutionContextRegistry
 from core.application.services.query_service import AgentQueryService
+from core.application.services.sibling_context_builder import SiblingContextBuilder
 from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.prompt_builder import PromptBuilder
 
@@ -54,7 +55,7 @@ def get_application(
     )
 
     # Create collaborators (composition root wiring)
-    prompt_builder = PromptBuilder(default_tool=config.default_worker_tool)
+    prompt_builder = PromptBuilder("prompts", config.default_worker_tool)
 
     repository = AgentRepository(
         event_store=infrastructure.event_store,
@@ -75,6 +76,12 @@ def get_application(
         prompt_builder=prompt_builder,
     )
 
+    # Create sibling context builder (implements SiblingContextPort)
+    sibling_context_builder = SiblingContextBuilder(
+        repository=repository,
+        shared_context_port=infrastructure.shared_context,
+    )
+
     # Group collaborators into dependencies object (Parameter Object pattern)
     dependencies = ExecutionServiceDependencies(
         repository=repository,
@@ -84,6 +91,7 @@ def get_application(
         query_service=query_service,
         workspace=workspace,
         shared_context_port=infrastructure.shared_context,
+        sibling_context_port=sibling_context_builder,
     )
 
     execution_service = AgentExecutionService(

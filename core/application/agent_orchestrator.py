@@ -18,13 +18,14 @@ from typing import TYPE_CHECKING, Any
 from core.domain.config_resolver import ConfigResolver
 from core.domain.exceptions import ToolNotAvailableError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
-from core.domain.prompt_builder import PromptBuilder, is_security_task
+from core.domain.prompt_builder import PromptBuilder
 from core.domain.services import SubtaskParser, strip_markdown_code_block
 
 logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from core.domain.sibling_context import WorkerSiblingContext
     from core.ports.llm_port import LLMPort
     from core.ports.worker_port import WorkerToolPort
 
@@ -66,22 +67,12 @@ class AgentOrchestrator:
         assert agent.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {agent.status}"
         assert agent.task_description, "Requires assigned task"
 
-        # Build complexity evaluation prompt
+        # Build complexity evaluation prompt (auto-injects security templates if needed)
         prompt = self._prompt_builder.build_complexity_evaluation_prompt(
             task_description=agent.task_description,
             agent_id=agent.agent_id,
             parent_task=None,
         )
-
-        # Append security-specific guidance for security tasks
-        if is_security_task(agent.task_description):
-            try:
-                security_guidance = self._prompt_builder.env.get_template(
-                    "security/complexity_security.j2"
-                ).render()
-                prompt = f"{prompt}\n\n{security_guidance}"
-            except Exception:
-                logger.debug("Security template not found, using base prompt")
 
         # Perform LLM call
         llm_config = ConfigResolver.resolve(agent.config, operation="complexity_evaluation")
@@ -201,6 +192,7 @@ class AgentOrchestrator:
         agent: AgentSession,
         working_directory: str | None = None,
         workspace_context: str | None = None,
+        sibling_context: WorkerSiblingContext | None = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -208,6 +200,7 @@ class AgentOrchestrator:
             agent: The agent to execute (must be WORKER with ANALYZING status).
             working_directory: Optional working directory for the worker.
             workspace_context: Optional context about existing workspace files.
+            sibling_context: Optional sibling context for coordinated execution.
         """
         assert agent.role == AgentRole.WORKER, f"Requires WORKER, got {agent.role}"
         assert agent.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {agent.status}"
@@ -217,19 +210,12 @@ class AgentOrchestrator:
         # Emit start event via pure domain method
         agent.start_worker_execution(tool_name)
 
-        # Build enhanced task description using template
-        worker_instructions = self._prompt_builder.env.get_template(
-            "worker/execution_instructions.j2"
-        ).render()
-        enhanced_description = f"{worker_instructions}\n\n<TASK>\n{agent.task_description}\n</TASK>"
-
-        if workspace_context:
-            enhanced_description += (
-                f"\n\n<WORKSPACE_CONTEXT>\n"
-                f"You are working in a shared workspace. Other workers may have created files.\n"
-                f"Current files in workspace:\n{workspace_context}\n"
-                f"</WORKSPACE_CONTEXT>"
-            )
+        # Build worker prompt (security templates always injected if they exist)
+        enhanced_description = self._prompt_builder.build_worker_prompt(
+            task_description=agent.task_description,
+            sibling_context=sibling_context,
+            workspace_context=workspace_context,
+        )
 
         task_context: dict[str, Any] = {
             "agent_id": agent.agent_id,

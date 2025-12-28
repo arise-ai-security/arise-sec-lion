@@ -77,7 +77,13 @@ def mock_worker_port():
 
 
 @pytest.fixture
-def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
+def context_registry():
+    """Create context registry for tests."""
+    return ExecutionContextRegistry()
+
+
+@pytest.fixture
+def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context_registry):
     """Create execution service with mocked ports and injected collaborators."""
     config = ServiceConfig(
         max_retries=3,
@@ -93,13 +99,11 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
     )
     system_limits = _test_system_limits()
 
-    # Create collaborators
-    prompt_builder = PromptBuilder(default_tool="claude_code")
+    prompt_builder = PromptBuilder("prompts", "claude_code")
     repository = AgentRepository(
         event_store=mock_event_store,
         max_retries=config.max_retries,
     )
-    context_registry = ExecutionContextRegistry()
     workspace = WorkspaceContextProvider()
     query_service = AgentQueryService(repository)
     child_factory = ChildAgentFactory(
@@ -113,6 +117,17 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
         prompt_builder=prompt_builder,
     )
 
+    # Mock sibling context to return empty context
+    from core.domain.sibling_context import WorkerSiblingContext
+
+    sibling_context_mock = AsyncMock()
+    sibling_context_mock.build_context.return_value = WorkerSiblingContext(
+        current_agent_id="test",
+        parent_task=None,
+        sibling_tasks=(),
+        shared_decisions=(),
+    )
+
     dependencies = ExecutionServiceDependencies(
         repository=repository,
         orchestrator=orchestrator,
@@ -120,6 +135,8 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port):
         child_factory=child_factory,
         query_service=query_service,
         workspace=workspace,
+        shared_context_port=AsyncMock(),
+        sibling_context_port=sibling_context_mock,
     )
 
     return AgentExecutionService(
@@ -165,12 +182,9 @@ async def test_run_agent_step_pending_role_calls_evaluate_complexity(
     # Then: LLM should have been called for complexity evaluation
     assert mock_llm_port.query_with_usage.called, "evaluate_complexity should call LLM"
 
-    # And: Events should have been appended to event store
-    assert mock_event_store.append.called, "Should save events to event store"
-
-    # Verify ComplexityEvaluated event was saved
-    saved_calls = mock_event_store.append.call_args_list
-    assert len(saved_calls) > 0, "Should save at least one event"
+    # And: Events should have been appended to event store (append or append_batch)
+    events_persisted = mock_event_store.append.called or mock_event_store.append_batch.called
+    assert events_persisted, "Should save events to event store"
 
 
 @pytest.mark.asyncio
@@ -212,8 +226,9 @@ async def test_run_agent_step_boss_role_calls_evaluate_task(
     # Then: LLM should have been called for task evaluation
     assert mock_llm_port.query_with_usage.called, "evaluate_task should call LLM"
 
-    # And: Events should have been saved
-    assert mock_event_store.append.called, "Should save SubtasksDefined event"
+    # And: Events should have been saved (append or append_batch)
+    events_persisted = mock_event_store.append.called or mock_event_store.append_batch.called
+    assert events_persisted, "Should save SubtasksDefined event"
 
 
 @pytest.mark.asyncio
@@ -270,18 +285,21 @@ async def test_run_agent_step_manager_role_calls_evaluate_task(
 
 @pytest.mark.asyncio
 async def test_run_agent_step_worker_role_calls_execute_task(
-    execution_service, mock_event_store, mock_worker_port
+    execution_service, mock_event_store, mock_worker_port, context_registry
 ):
     """Test that WORKER agent calls execute_task."""
 
     # Given: A WORKER agent in ANALYZING status (no parent for this isolated test)
     agent_id = uuid4()
 
+    # Register as root context (required for sibling context lookup)
+    context_registry.create_root(agent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
+
     event1 = AgentCreated(
         aggregate_id=agent_id,
         sequence_number=1,
         role=AgentRole.PENDING.value,
-        parent_id=None,  # No parent for this isolated test
+        parent_id=None,
         config=_test_config(),
     )
 
@@ -376,13 +394,11 @@ async def test_run_agent_step_retries_on_concurrency_error(
     mock_event_store.get_events.return_value = [event1, event2]
     mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
-    # First append fails with ConcurrencyError, subsequent appends succeed
-    # After retry: TokensConsumed, ComplexityEvaluated, StatusChanged events
-    mock_event_store.append.side_effect = [
+    # First append_batch fails with ConcurrencyError, retry succeeds
+    # (Multiple events use append_batch, not append)
+    mock_event_store.append_batch.side_effect = [
         ConcurrencyError(aggregate_id=str(agent_id), expected_version=2, actual_version=3),
-        None,  # Retry succeeds - TokensConsumed
-        None,  # ComplexityEvaluated
-        None,  # StatusChanged
+        None,  # Retry succeeds
     ]
 
     # When: Run agent step
@@ -419,8 +435,8 @@ async def test_run_agent_step_raises_after_max_retries(
     mock_event_store.get_events.return_value = [event1, event2]
     mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
-    # All appends fail with ConcurrencyError
-    mock_event_store.append.side_effect = ConcurrencyError(
+    # All appends fail with ConcurrencyError (use append_batch for multiple events)
+    mock_event_store.append_batch.side_effect = ConcurrencyError(
         aggregate_id=str(agent_id), expected_version=2, actual_version=3
     )
 
@@ -465,13 +481,10 @@ async def test_run_agent_step_marks_failed_on_unexpected_error(
     with pytest.raises(RuntimeError, match="LLM service unavailable"):
         await execution_service.run_agent_step(agent_id)
 
-    # Then: Should have called append to save WorkFailed event
+    # Then: Should have called append/append_batch to save WorkFailed event
     # The service reloads and saves failure event
-    assert mock_event_store.append.called, "Should save WorkFailed event"
-
-    # Verify WorkFailed was in the saved events
-    saved_calls = list(mock_event_store.append.call_args_list)
-    assert len(saved_calls) > 0, "Should save failure event"
+    events_persisted = mock_event_store.append.called or mock_event_store.append_batch.called
+    assert events_persisted, "Should save WorkFailed event"
 
 
 @pytest.mark.asyncio
@@ -527,7 +540,8 @@ async def test_run_agent_step_skips_non_analyzing_agents(
     assert not mock_llm_port.query_with_usage.called, "Should skip non-ANALYZING agents"
 
     # And: Should not append any new events (no uncommitted changes)
-    assert not mock_event_store.append.called, "Should not save events for completed agent"
+    no_events_persisted = not mock_event_store.append.called and not mock_event_store.append_batch.called
+    assert no_events_persisted, "Should not save events for completed agent"
 
 
 # =============================================================================
@@ -572,39 +586,43 @@ async def test_run_agent_step_creates_children_when_boss_spawns(
         )
     )
 
-    # Track all append calls to verify child creation
-    append_calls = []
+    # Track all append/append_batch calls to verify child creation
+    all_events = []
 
     async def track_append(event, expected_version):
-        append_calls.append((event, expected_version))
+        all_events.append(event)
+
+    async def track_append_batch(events, expected_version):
+        all_events.extend(events)
 
     mock_event_store.append.side_effect = track_append
+    mock_event_store.append_batch.side_effect = track_append_batch
 
     # When: Run agent step
     await execution_service.run_agent_step(agent_id)
 
     # Then: Should have saved parent's events AND child creation events
-    # Parent events: SubtasksDefined, ChildSpawned(x2), StatusChanged (WAITING)
+    # Parent events: TokensConsumed, SubtasksDefined, ChildSpawned(x2), StatusChanged (WAITING)
     # Child 1 events: AgentCreated, TaskAssigned
     # Child 2 events: AgentCreated, TaskAssigned
-    assert len(append_calls) > 4, "Should save parent events + child creation events"
+    assert len(all_events) > 4, "Should save parent events + child creation events"
 
     # Verify child creation events exist
     child_created_events = [
-        e for e, _ in append_calls if isinstance(e, AgentCreated) and e.aggregate_id != agent_id
+        e for e in all_events if isinstance(e, AgentCreated) and e.aggregate_id != agent_id
     ]
     assert len(child_created_events) == 2, "Should create 2 child agents"
 
     # Verify child task assignment events exist
     child_task_events = [
-        e for e, _ in append_calls if isinstance(e, TaskAssigned) and e.aggregate_id != agent_id
+        e for e in all_events if isinstance(e, TaskAssigned) and e.aggregate_id != agent_id
     ]
     assert len(child_task_events) == 2, "Should assign tasks to 2 children"
 
 
 @pytest.mark.asyncio
 async def test_run_agent_step_notifies_parent_when_child_completes(
-    execution_service, mock_event_store, mock_worker_port
+    execution_service, mock_event_store, mock_worker_port, context_registry
 ):
     """Test that parent is notified when child agent completes."""
     from core.domain.events import ChildCompleted
@@ -612,6 +630,10 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     # Given: A WORKER child that's about to complete
     parent_id = uuid4()
     child_id = uuid4()
+
+    # Register contexts (parent is root, child inherits)
+    context_registry.create_root(parent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
+    context_registry.propagate_to_child(parent_id, child_id)
 
     # Child events (WORKER that completes)
     child_event1 = AgentCreated(
@@ -710,20 +732,24 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
 
     mock_worker_port.run_session = AsyncGeneratorMock(mock_worker_events)
 
-    # Track append calls
-    append_calls = []
+    # Track append/append_batch calls
+    all_events = []
 
     async def track_append(event, expected_version):
-        append_calls.append((event, expected_version))
+        all_events.append(event)
+
+    async def track_append_batch(events, expected_version):
+        all_events.extend(events)
 
     mock_event_store.append.side_effect = track_append
+    mock_event_store.append_batch.side_effect = track_append_batch
 
     # When: Run child agent step (which will complete)
     await execution_service.run_agent_step(child_id)
 
     # Then: Should have saved child completion events AND parent notification
     # Verify ChildCompleted event was sent to parent
-    child_completed_events = [e for e, _ in append_calls if isinstance(e, ChildCompleted)]
+    child_completed_events = [e for e in all_events if isinstance(e, ChildCompleted)]
     assert len(child_completed_events) == 1, "Should notify parent of child completion"
     assert child_completed_events[0].aggregate_id == parent_id
     assert child_completed_events[0].child_id == child_id

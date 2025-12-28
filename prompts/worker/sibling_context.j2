@@ -1,0 +1,52 @@
+{# Sibling context template for worker coordination #}
+{# Uses XML tags for structure #}
+
+{% if parent_task %}
+<parent-context>
+Parent Task: {{ parent_task }}
+</parent-context>
+{% endif %}
+
+{% if sibling_tasks %}
+<sibling-tasks>
+You are one of {{ total_siblings }} sibling worker(s). {{ completed_count }} completed, {{ in_progress_count }} in progress.
+Workers execute left-to-right. Earlier workers' results are available to you.
+
+{% for sibling in sibling_tasks %}
+{% if sibling.agent_id != current_agent_id %}
+<task index="{{ sibling.sibling_index + 1 }}" status="{{ sibling.status }}">
+  <description>{{ sibling.task_summary }}</description>
+{% if sibling.status == 'completed' and sibling.result_summary %}
+  <result>{{ sibling.result_summary }}</result>
+{% endif %}
+</task>
+{% endif %}
+{% endfor %}
+</sibling-tasks>
+{% endif %}
+
+{% if shared_decisions %}
+<shared-decisions>
+Key decisions made during this execution (follow these for consistency):
+{% for decision in shared_decisions %}
+<decision key="{{ decision.key }}">
+  <value>{{ decision.value }}</value>
+  <rationale>{{ decision.rationale }}</rationale>
+</decision>
+{% endfor %}
+</shared-decisions>
+{% endif %}
+
+<context-update-instructions>
+If you make important decisions or produce outputs that sibling workers should know about, include at the END of your response:
+
+<context-update>
+<decision key="your_decision_key">
+  <value>The decision you made</value>
+  <rationale>Why you made this decision</rationale>
+</decision>
+<output key="artifact_name">Brief description of what you created</output>
+</context-update>
+
+This is optional. Only include if you have meaningful context to share.
+</context-update-instructions>
