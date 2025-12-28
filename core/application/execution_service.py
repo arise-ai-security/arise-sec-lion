@@ -209,10 +209,14 @@ class AgentExecutionService:
         Args:
             root_agent_id: Root agent ID to filter hierarchy. Only agents
                            in this hierarchy will be processed.
+
+        Workers execute one at a time in left-to-right tree order.
+        Non-workers (BOSS, MANAGER, PENDING) execute in parallel for decomposition.
         """
         while True:
             active_agents = await self._query_service.get_active_agent_ids(
-                root_id=root_agent_id
+                root_id=root_agent_id,
+                sequential_workers=True,  # Always enforce left-to-right worker order
             )
             if not active_agents:
                 break

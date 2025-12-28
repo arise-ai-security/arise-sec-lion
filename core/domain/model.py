@@ -47,6 +47,7 @@ class AgentSession:
         role: AgentRole,
         config: dict[str, Any],
         parent_id: UUID | None = None,
+        sibling_index: int = 0,
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -55,6 +56,7 @@ class AgentSession:
             role=role.value,
             parent_id=parent_id,
             config=config,
+            sibling_index=sibling_index,
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -146,6 +148,7 @@ class AgentSession:
         adapter = TypeAdapter(AgentConfig)
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
+        self.sibling_index = event.sibling_index
         self.version += 1
 
     @_apply.register
@@ -242,6 +245,8 @@ class AgentSession:
         self.local_artifacts: list[str] = []
         # Structured child results (keyed by child_id)
         self.structured_child_results: dict[UUID, ChildResult] = {}
+        # Position among siblings for left-to-right ordering (0 = first/leftmost)
+        self.sibling_index: int = 0
 
     def set_execution_context(self, context: ExecutionContext) -> None:
         """Set execution context for limit enforcement."""
@@ -417,7 +422,7 @@ class AgentSession:
 
         children_to_spawn: list[tuple[UUID, Subtask]] = []
 
-        for subtask in subtasks:
+        for sibling_index, subtask in enumerate(subtasks):
             child_id = uuid4()
             child_event = ChildSpawned(
                 aggregate_id=self.agent_id,
@@ -427,6 +432,7 @@ class AgentSession:
                 subtask=subtask,
                 child_config=subtask.config,
                 parent_context=parent_context.to_dict(),
+                sibling_index=sibling_index,
             )
             self._apply(child_event)
             self._changes.append(child_event)

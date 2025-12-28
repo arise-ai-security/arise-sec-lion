@@ -40,13 +40,14 @@ class AgentSummaryReadModel:
     parent_id: UUID | None
     task_summary: str
     is_terminal: bool
+    sibling_index: int  # Position among siblings for left-to-right ordering
 
     @classmethod
     def from_events(cls, events: list[DomainEvent]) -> "AgentSummaryReadModel | None":
         """Build read model from events without full aggregate reconstruction.
 
         Only processes the events needed to extract summary fields:
-        - AgentCreated: role, parent_id
+        - AgentCreated: role, parent_id, sibling_index
         - TaskAssigned: task_description
         - StatusChanged/CodeGenerationStarted/WorkCompleted/WorkFailed: current status
 
@@ -67,6 +68,7 @@ class AgentSummaryReadModel:
         agent_id = first_event.aggregate_id
         role = first_event.role
         parent_id = first_event.parent_id
+        sibling_index = first_event.sibling_index
 
         # Default values
         task_summary = ""
@@ -95,6 +97,7 @@ class AgentSummaryReadModel:
             parent_id=parent_id,
             task_summary=task_summary,
             is_terminal=is_terminal,
+            sibling_index=sibling_index,
         )
 
 
@@ -156,12 +159,19 @@ class AgentQueryService:
             active=active,
         )
 
-    async def get_active_agent_ids(self, root_id: UUID | None = None) -> list[UUID]:
+    async def get_active_agent_ids(
+        self,
+        root_id: UUID | None = None,
+        sequential_workers: bool = False,
+    ) -> list[UUID]:
         """Return agent IDs not in terminal state (COMPLETED/FAILED).
 
         Args:
             root_id: If provided, only return agents in this hierarchy.
                      Filters to agents where parent chain leads to root_id.
+            sequential_workers: If True, only return one WORKER at a time in
+                     left-to-right order. Non-workers (BOSS, MANAGER, PENDING)
+                     are still returned in parallel for decomposition.
 
         Uses get_all_events_grouped() for single-query efficiency (avoids N+1).
         Uses lightweight read model instead of full aggregate reconstruction.
@@ -180,12 +190,63 @@ class AgentQueryService:
             hierarchy_ids = self._get_hierarchy_ids(root_id, summaries)
             summaries = {k: v for k, v in summaries.items() if k in hierarchy_ids}
 
-        # Return non-terminal agents
-        return [
-            agent_id
+        # Get non-terminal agents
+        active_agents = [
+            (agent_id, summary)
             for agent_id, summary in summaries.items()
             if not summary.is_terminal
         ]
+
+        if not sequential_workers:
+            return [agent_id for agent_id, _ in active_agents]
+
+        # Sequential workers mode: separate workers from non-workers
+        non_workers = [
+            agent_id
+            for agent_id, summary in active_agents
+            if summary.role != "worker"
+        ]
+        workers = [
+            (agent_id, summary)
+            for agent_id, summary in active_agents
+            if summary.role == "worker"
+        ]
+
+        if not workers:
+            return non_workers
+
+        # Compute hierarchical paths for workers and sort left-to-right
+        worker_paths = [
+            (agent_id, self._compute_hierarchical_path(agent_id, summaries))
+            for agent_id, _ in workers
+        ]
+        worker_paths.sort(key=lambda x: x[1])
+
+        # Return non-workers + only the leftmost worker
+        leftmost_worker_id = worker_paths[0][0]
+        return non_workers + [leftmost_worker_id]
+
+    def _compute_hierarchical_path(
+        self,
+        agent_id: UUID,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+    ) -> tuple[int, ...]:
+        """Compute hierarchical path for an agent.
+
+        Returns a tuple of sibling indices from root to the agent.
+        E.g., (0,) for root, (0, 1) for second child of root.
+        This allows lexicographic sorting for left-to-right order.
+        """
+        path: list[int] = []
+        current_id = agent_id
+
+        while current_id is not None and current_id in summaries:
+            summary = summaries[current_id]
+            path.append(summary.sibling_index)
+            current_id = summary.parent_id
+
+        # Reverse to get root-to-leaf order
+        return tuple(reversed(path))
 
     def _get_hierarchy_ids(
         self,

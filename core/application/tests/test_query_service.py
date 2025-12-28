@@ -1,0 +1,309 @@
+"""Test cases for AgentQueryService sequential worker ordering."""
+
+from uuid import UUID, uuid4
+
+import pytest
+
+from core.application.services.query_service import AgentSummaryReadModel
+
+
+class TestAgentSummaryReadModel:
+    """Tests for AgentSummaryReadModel sibling_index handling."""
+
+    def test_sibling_index_extracted_from_agent_created(self) -> None:
+        """Test that sibling_index is correctly extracted from AgentCreated event."""
+        from core.domain.events import AgentCreated
+
+        # Given: An AgentCreated event with sibling_index=2
+        agent_id = uuid4()
+        event = AgentCreated(
+            aggregate_id=agent_id,
+            sequence_number=1,
+            role="worker",
+            parent_id=uuid4(),
+            config={},
+            sibling_index=2,
+        )
+
+        # When: Building read model from events
+        summary = AgentSummaryReadModel.from_events([event])
+
+        # Then: sibling_index is correctly extracted
+        assert summary is not None
+        assert summary.sibling_index == 2
+
+    def test_sibling_index_defaults_to_zero(self) -> None:
+        """Test that sibling_index defaults to 0 for root agents."""
+        from core.domain.events import AgentCreated
+
+        # Given: An AgentCreated event without explicit sibling_index
+        agent_id = uuid4()
+        event = AgentCreated(
+            aggregate_id=agent_id,
+            sequence_number=1,
+            role="boss",
+            parent_id=None,
+            config={},
+        )
+
+        # When: Building read model from events
+        summary = AgentSummaryReadModel.from_events([event])
+
+        # Then: sibling_index defaults to 0
+        assert summary is not None
+        assert summary.sibling_index == 0
+
+
+class TestHierarchicalPathComputation:
+    """Tests for _compute_hierarchical_path method."""
+
+    def _build_summaries(
+        self,
+        tree_structure: list[tuple[UUID, UUID | None, int]],
+    ) -> dict[UUID, AgentSummaryReadModel]:
+        """Build test summaries from tree structure.
+
+        Args:
+            tree_structure: List of (agent_id, parent_id, sibling_index) tuples.
+        """
+        return {
+            agent_id: AgentSummaryReadModel(
+                agent_id=agent_id,
+                role="worker",
+                status="analyzing",
+                parent_id=parent_id,
+                task_summary="test",
+                is_terminal=False,
+                sibling_index=sibling_index,
+            )
+            for agent_id, parent_id, sibling_index in tree_structure
+        }
+
+    def test_root_agent_path(self) -> None:
+        """Test that root agent has path (0,)."""
+        from core.application.services.query_service import AgentQueryService
+
+        # Given: A root agent with sibling_index=0
+        root_id = uuid4()
+        summaries = self._build_summaries([(root_id, None, 0)])
+
+        # When: Computing path
+        service = AgentQueryService.__new__(AgentQueryService)
+        path = service._compute_hierarchical_path(root_id, summaries)
+
+        # Then: Path is (0,)
+        assert path == (0,)
+
+    def test_child_agent_path(self) -> None:
+        """Test that child agent has path (parent_sibling, child_sibling)."""
+        from core.application.services.query_service import AgentQueryService
+
+        # Given: A tree with root and second child (sibling_index=1)
+        root_id = uuid4()
+        child_id = uuid4()
+        summaries = self._build_summaries([
+            (root_id, None, 0),
+            (child_id, root_id, 1),  # Second child
+        ])
+
+        # When: Computing path for child
+        service = AgentQueryService.__new__(AgentQueryService)
+        path = service._compute_hierarchical_path(child_id, summaries)
+
+        # Then: Path is (0, 1) - root's index 0, child's index 1
+        assert path == (0, 1)
+
+    def test_grandchild_agent_path(self) -> None:
+        """Test that grandchild has correct 3-level path."""
+        from core.application.services.query_service import AgentQueryService
+
+        # Given: A 3-level tree
+        root_id = uuid4()
+        child_id = uuid4()
+        grandchild_id = uuid4()
+        summaries = self._build_summaries([
+            (root_id, None, 0),
+            (child_id, root_id, 2),       # Third child of root
+            (grandchild_id, child_id, 1),  # Second child of child
+        ])
+
+        # When: Computing path for grandchild
+        service = AgentQueryService.__new__(AgentQueryService)
+        path = service._compute_hierarchical_path(grandchild_id, summaries)
+
+        # Then: Path is (0, 2, 1)
+        assert path == (0, 2, 1)
+
+    def test_path_ordering_is_left_to_right(self) -> None:
+        """Test that lexicographic sorting gives left-to-right order."""
+        from core.application.services.query_service import AgentQueryService
+
+        # Given: A tree like:
+        #        BOSS (0)
+        #       /    \
+        #     M1(0)  M2(1)
+        #    /  \    /  \
+        #   W1  W2  W3  W4
+        #   (0) (1) (0) (1)
+        root_id = uuid4()
+        m1_id, m2_id = uuid4(), uuid4()
+        w1_id, w2_id, w3_id, w4_id = uuid4(), uuid4(), uuid4(), uuid4()
+
+        summaries = self._build_summaries([
+            (root_id, None, 0),
+            (m1_id, root_id, 0),
+            (m2_id, root_id, 1),
+            (w1_id, m1_id, 0),
+            (w2_id, m1_id, 1),
+            (w3_id, m2_id, 0),
+            (w4_id, m2_id, 1),
+        ])
+
+        # When: Computing paths for all workers
+        service = AgentQueryService.__new__(AgentQueryService)
+        worker_paths = [
+            (w_id, service._compute_hierarchical_path(w_id, summaries))
+            for w_id in [w1_id, w2_id, w3_id, w4_id]
+        ]
+
+        # Then: Sorting by path gives left-to-right order
+        worker_paths.sort(key=lambda x: x[1])
+        sorted_ids = [w_id for w_id, _ in worker_paths]
+
+        assert sorted_ids == [w1_id, w2_id, w3_id, w4_id]
+
+
+class TestSequentialWorkerOrdering:
+    """Tests for get_active_agent_ids with sequential_workers=True."""
+
+    @pytest.fixture
+    def mock_repository(self):
+        """Create a mock repository that returns predefined events."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.domain.events import AgentCreated, TaskAssigned
+
+        def create_events_for_agent(
+            agent_id: UUID,
+            role: str,
+            parent_id: UUID | None,
+            sibling_index: int,
+            status: str = "analyzing",
+        ) -> list:
+            events = [
+                AgentCreated(
+                    aggregate_id=agent_id,
+                    sequence_number=1,
+                    role=role,
+                    parent_id=parent_id,
+                    config={},
+                    sibling_index=sibling_index,
+                ),
+                TaskAssigned(
+                    aggregate_id=agent_id,
+                    sequence_number=2,
+                    task_description="test task",
+                ),
+            ]
+            return events
+
+        # Create the repository mock
+        repository = MagicMock()
+        repository.get_all_events_grouped = AsyncMock()
+
+        return repository, create_events_for_agent
+
+    @pytest.mark.asyncio
+    async def test_sequential_workers_returns_only_leftmost_worker(
+        self, mock_repository
+    ) -> None:
+        """Test that sequential_workers=True returns only the leftmost active worker."""
+        from core.application.services.query_service import AgentQueryService
+
+        repository, create_events = mock_repository
+
+        # Given: A tree with two workers
+        root_id = uuid4()
+        w1_id, w2_id = uuid4(), uuid4()
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "completed"),
+            w1_id: create_events(w1_id, "worker", root_id, 0),
+            w2_id: create_events(w2_id, "worker", root_id, 1),
+        }
+
+        # Mark boss as completed
+        from core.domain.events import WorkCompleted
+
+        repository.get_all_events_grouped.return_value[root_id].append(
+            WorkCompleted(aggregate_id=root_id, sequence_number=3, result="done")
+        )
+
+        # When: Getting active agents with sequential_workers=True
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=True)
+
+        # Then: Only w1 (leftmost) should be returned
+        assert w1_id in active
+        assert w2_id not in active
+
+    @pytest.mark.asyncio
+    async def test_non_workers_returned_in_parallel(self, mock_repository) -> None:
+        """Test that non-workers are still returned even with sequential_workers."""
+        from core.application.services.query_service import AgentQueryService
+
+        repository, create_events = mock_repository
+
+        # Given: A manager and workers
+        root_id = uuid4()
+        m1_id = uuid4()
+        w1_id, w2_id = uuid4(), uuid4()
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            m1_id: create_events(m1_id, "manager", root_id, 0),
+            w1_id: create_events(w1_id, "worker", root_id, 1),
+            w2_id: create_events(w2_id, "worker", root_id, 2),
+        }
+
+        # When: Getting active agents with sequential_workers=True
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=True)
+
+        # Then: Manager and root (non-workers) are returned
+        # Plus only leftmost worker
+        assert root_id in active
+        assert m1_id in active
+        assert w1_id in active
+        assert w2_id not in active
+
+    @pytest.mark.asyncio
+    async def test_sequential_false_returns_all_workers(self, mock_repository) -> None:
+        """Test that sequential_workers=False returns all active workers."""
+        from core.application.services.query_service import AgentQueryService
+
+        repository, create_events = mock_repository
+
+        # Given: A tree with two workers
+        root_id = uuid4()
+        w1_id, w2_id = uuid4(), uuid4()
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "completed"),
+            w1_id: create_events(w1_id, "worker", root_id, 0),
+            w2_id: create_events(w2_id, "worker", root_id, 1),
+        }
+
+        from core.domain.events import WorkCompleted
+
+        repository.get_all_events_grouped.return_value[root_id].append(
+            WorkCompleted(aggregate_id=root_id, sequence_number=3, result="done")
+        )
+
+        # When: Getting active agents with sequential_workers=False (default)
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=False)
+
+        # Then: Both workers are returned
+        assert w1_id in active
+        assert w2_id in active

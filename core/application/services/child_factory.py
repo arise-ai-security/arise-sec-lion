@@ -81,6 +81,7 @@ class ChildAgentFactory:
             role=AgentRole(event.child_role),
             config=event.child_config,
             parent_id=parent_id,
+            sibling_index=event.sibling_index,
         )
         child.assign_task(event.subtask.description)
 

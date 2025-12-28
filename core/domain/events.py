@@ -56,11 +56,16 @@ class DomainEvent(BaseModel):
 
 
 class AgentCreated(DomainEvent):
-    """Agent session created."""
+    """Agent session created.
+
+    sibling_index tracks position among siblings for left-to-right ordering.
+    Root agents (BOSS) have sibling_index=0.
+    """
 
     role: str
     parent_id: UUID | None = None
     config: dict[str, Any] = Field(default_factory=dict)
+    sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
 
 
 class TaskAssigned(DomainEvent):
@@ -88,6 +93,8 @@ class ChildSpawned(DomainEvent):
     """Parent spawned a child agent with rich context.
 
     Includes ParentContext for bidirectional context flow.
+    sibling_index tracks the child's position among siblings (0-indexed)
+    for left-to-right execution ordering.
     """
 
     child_id: UUID
@@ -95,6 +102,7 @@ class ChildSpawned(DomainEvent):
     subtask: Subtask
     child_config: dict[str, Any]
     parent_context: dict[str, Any] = Field(default_factory=dict)  # Serialized ParentContext
+    sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
 
 
 class WorkCompleted(DomainEvent):
