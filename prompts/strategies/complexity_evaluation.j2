@@ -5,177 +5,149 @@
 Your task is to make a **binary classification**: Is this task SIMPLE or COMPLEX?
 
 This decision determines your next role:
-- **SIMPLE** → You become a WORKER (execute directly)
-- **COMPLEX** → You become a MANAGER (decompose into subtasks)
+- **SIMPLE** → You become a WORKER (execute directly without further planning)
+- **COMPLEX** → You become a MANAGER (decompose into coordinated subtasks)
 
-## Decision Framework
+## Core Principle: Favor Thoughtful Decomposition
 
-Use this systematic approach:
+**Default stance: When in doubt, choose COMPLEX.**
 
-### Step 1: Identify Complexity Indicators
+Decomposition provides critical benefits:
+- Clearer reasoning chains through intermediate checkpoints
+- Better error isolation and recovery
+- Improved coordination of dependent steps
+- Higher quality through focused sub-agents
 
-Count how many of these apply:
+A WORKER should only handle tasks that are truly **atomic** - tasks where adding a coordination layer would provide zero benefit.
 
-**COMPLEX Indicators:**
-- [ ] Multiple distinct domains/technologies (e.g., frontend + backend + DB)
-- [ ] Requires research or exploration before execution
-- [ ] Ambiguous or underspecified requirements
-- [ ] Multiple subtasks with dependencies
-- [ ] Needs architectural or design decisions
-- [ ] Involves coordinating multiple systems/services
-- [ ] Estimated >1 hour of focused work
-- [ ] Novel problem without established patterns
+## The Three Critical Tests
 
-**SIMPLE Indicators:**
-- [ ] Single well-defined task
-- [ ] Clear, unambiguous requirements
-- [ ] Can be executed in one session (<1 hour)
-- [ ] No external dependencies beyond standard libraries
-- [ ] Straightforward implementation with known patterns
-- [ ] Single domain/technology
-- [ ] Standard CRUD, refactoring, or bug fix
-- [ ] Concrete executable action (git, docker, file edit, test run)
-- [ ] Environment/infrastructure task with clear steps
+Before classifying as SIMPLE, ALL three tests must pass:
 
-### Step 2: Apply Decision Rule
+### Test 1: Atomicity Test
+**Question:** "Is this task a single indivisible action with no meaningful intermediate states?"
 
-```
-If COMPLEX indicators >= 3:
-    → Classification: COMPLEX
-    → Reasoning: Multiple complexity factors present
+SIMPLE if:
+- The task is a single command, single file edit, or single well-bounded operation
+- There is no point where pausing and reviewing progress would be useful
+- Failure at any point means complete restart (no partial progress makes sense)
 
-Else if SIMPLE indicators >= 5:
-    → Classification: SIMPLE
-    → Reasoning: Straightforward, well-scoped task
+COMPLEX if:
+- The task has distinct phases (prepare → execute → validate)
+- Progress can be meaningfully measured (50% done is meaningful)
+- Intermediate outputs exist that could be reviewed or reused
 
-Else if ambiguous:
-    → Default to SIMPLE if task can reasonably be executed by single agent
-    → Bias toward action over planning
-```
+### Test 2: Scope Certainty Test
+**Question:** "Do I know EXACTLY what to do and where to do it?"
 
-### Step 3: Sanity Check
+SIMPLE if:
+- The target file(s), function(s), and change(s) are explicitly specified
+- No exploration, research, or discovery is needed
+- The approach is unambiguous - any competent agent would do the same thing
 
-Ask yourself:
-1. "Would breaking this down actually help, or just add overhead?"
-2. "Can a single WORKER execute this effectively in one session?"
-3. "Are there truly distinct subtasks, or just sequential steps?"
+COMPLEX if:
+- The task requires finding or identifying targets
+- Multiple valid approaches exist that require choosing
+- Understanding the problem is part of the work
 
-If decomposition wouldn't add value → SIMPLE
+### Test 3: Single-Session Test
+**Question:** "Can this realistically complete in one focused execution without interruption?"
 
-## Concrete SIMPLE Task Examples (Always → WORKER)
+SIMPLE if:
+- One tool invocation or a few tightly coupled operations
+- No need to wait for results and adapt approach
+- Expected duration: minutes, not hours
 
-These tasks should ALWAYS be classified as SIMPLE and executed directly by a WORKER:
+COMPLEX if:
+- Multiple rounds of execution and evaluation needed
+- Results from early steps inform later steps
+- Any "if X then Y, else Z" decision points exist
 
-### Git Operations
-- "Clone the repository https://github.com/org/repo"
-- "Checkout branch feature/fix-bug-123"
-- "Fetch the latest changes from origin"
-- "Create a new branch called hotfix/security-patch"
-- "Merge branch main into current branch"
-- "Cherry-pick commit abc123"
-- "Revert the last commit"
+## Decision Matrix
 
-### File Operations
-- "Edit file src/config.py to change the timeout value to 30"
-- "Create a new file tests/test_parser.py with a basic test skeleton"
-- "Delete the deprecated utils/legacy.py file"
-- "Rename module.py to core_module.py"
-- "Move all files from /tmp/output to /data/results"
-- "Read and analyze the contents of Makefile"
+| Atomicity | Scope Certainty | Single-Session | Classification |
+|-----------|-----------------|----------------|----------------|
+| ✓         | ✓               | ✓              | **SIMPLE**     |
+| ✓         | ✓               | ✗              | COMPLEX        |
+| ✓         | ✗               | ✓              | COMPLEX        |
+| ✓         | ✗               | ✗              | COMPLEX        |
+| ✗         | ✓               | ✓              | COMPLEX        |
+| ✗         | ✓               | ✗              | COMPLEX        |
+| ✗         | ✗               | ✓              | COMPLEX        |
+| ✗         | ✗               | ✗              | COMPLEX        |
 
-### Docker Operations
-- "Build the Docker image with tag myapp:latest"
-- "Run container from image myapp:latest with port mapping 8080:80"
-- "Stop and remove container named test-runner"
-- "Pull image postgres:15 from Docker Hub"
-- "Execute command 'pytest' inside running container"
-- "Build Docker image with AddressSanitizer enabled"
+**Only when ALL THREE tests pass → SIMPLE**
 
-### Test Execution
-- "Run pytest on the tests/ directory"
-- "Execute the test suite with coverage reporting"
-- "Run specific test file tests/test_auth.py"
-- "Run tests matching pattern 'test_security_*'"
-- "Validate that all unit tests pass"
+## Complexity Indicators (Any ONE = Likely COMPLEX)
 
-### Build/Compile Operations
-- "Compile the project with make"
-- "Run npm install and npm build"
-- "Build the project with cmake and ninja"
-- "Compile with sanitizers enabled: make ASAN=1"
+- **Multiple deliverables**: Task produces more than one distinct artifact
+- **Conditional logic**: "If X works, then Y; otherwise Z"
+- **Research component**: "Analyze", "investigate", "find", "determine"
+- **Coordination needed**: Multiple systems, files, or components must align
+- **Verification loop**: Need to check results and potentially retry/adjust
+- **Design decisions**: Choosing between architectures, patterns, or approaches
+- **Multi-phase work**: Setup → Execute → Validate as distinct phases
+- **Dependency chain**: Step B cannot start until Step A completes and is verified
 
-### Single-Function Implementation
-- "Write a function to validate email format"
-- "Add NULL check to function parse_input()"
-- "Implement bounds checking in array_access()"
-- "Add logging to the authenticate() function"
+## Simplicity Indicators (Need ALL of these for SIMPLE)
 
-### Security-Specific Simple Tasks
-- "Add bounds check to prevent buffer overflow in read_data()"
-- "Insert NULL pointer validation before dereference"
-- "Compile binary with AddressSanitizer (-fsanitize=address)"
-- "Run the PoC input against the vulnerable binary"
-- "Check if sanitizer output shows memory error"
+- **Explicit target**: Exact file path, function name, or command specified
+- **Obvious action**: What to do is immediately clear from the task description
+- **Self-contained**: No dependencies on external discovery or decisions
+- **Reversible/cheap**: If it fails, minimal cost to retry from scratch
+- **Deterministic**: Same input always produces same output
 
-## Common Pitfalls
+## What Decomposition Actually Provides
 
-### Over-Complicating (False COMPLEX)
-❌ "Write a function to calculate Fibonacci"
-→ This is SIMPLE (single function, well-known algorithm)
+When you become a MANAGER, you gain:
+1. **Checkpoint reasoning**: Review intermediate results before proceeding
+2. **Error boundaries**: Failure in one subtask doesn't corrupt others
+3. **Parallel execution**: Independent subtasks can run simultaneously
+4. **Specialized focus**: Each worker has a narrow, clear objective
+5. **Adaptive planning**: Adjust remaining subtasks based on early results
 
-❌ "Refactor the User model to use properties instead of direct attribute access"
-→ This is SIMPLE (localized change, clear scope)
+Ask: "Would any of these benefits improve this task's outcome?"
+If YES → COMPLEX
 
-❌ "Git clone and checkout the vulnerable version"
-→ This is SIMPLE (concrete git commands with clear steps)
+## Classification Guidelines
 
-❌ "Build Docker environment with ASan"
-→ This is SIMPLE (single dockerfile/build command)
+### Likely SIMPLE (direct WORKER execution):
+- Explicit single-file edits with line numbers or specific locations
+- Running a single command that was explicitly specified
+- Applying a known fix to a known location
+- Reading or fetching specific, identified resources
 
-### Under-Estimating (False SIMPLE)
-❌ "Implement user authentication"
-→ This is COMPLEX (multiple components: registration, login, session, security)
+### Likely COMPLEX (MANAGER decomposition):
+- Tasks described at goal-level rather than action-level
+- Anything involving "and" connecting distinct activities
+- Tasks requiring understanding before action
+- Multi-file or multi-component changes
+- Tasks with success criteria that require verification
+- Anything that could benefit from review between steps
 
-❌ "Add real-time notifications to the app"
-→ This is COMPLEX (WebSocket setup, event system, frontend integration)
+## Anti-Patterns to Avoid
 
-❌ "Generate PoC AND patch for CVE-2024-1234"
-→ This is COMPLEX (multiple distinct deliverables)
+### False SIMPLE (under-decomposition):
+These LOOK simple but benefit from decomposition:
+- "Fix the bug" → Need to: locate → understand → fix → verify
+- "Add validation" → Need to: identify inputs → determine rules → implement → test
+- "Update the config" → Need to: understand current state → plan changes → apply → verify
 
-❌ "Analyze the vulnerability and create exploitation proof"
-→ This is COMPLEX (research + implementation phases)
-
-## Edge Cases
-
-### "Implement X feature"
-- If X is a single component with clear scope → SIMPLE
-- If X involves multiple systems/layers → COMPLEX
-
-### "Research and implement Y"
-- Research + Implementation = 2 distinct subtasks → COMPLEX
-
-### "Fix bug Z"
-- If bug is localized and understood → SIMPLE
-- If bug requires investigation across multiple modules → COMPLEX
-
-## Confidence Calibration
-
-Be decisive, but acknowledge uncertainty:
-
-**High Confidence SIMPLE**: "Write unit tests for UserService"
-**High Confidence COMPLEX**: "Build microservices architecture"
-**Medium Confidence**: "Implement caching layer"
-  → Analyze: Does it involve Redis + application code + cache invalidation? (COMPLEX)
-  → Or: Simple in-memory cache decorator? (SIMPLE)
+### Excessive decomposition:
+A truly atomic operation doesn't need a manager:
+- Running an explicitly specified command
+- Making a single, precisely defined edit
+- Reading a specific file that was named
 
 ## Output Requirements
 
 Your classification must include:
 1. **Decision**: "SIMPLE" or "COMPLEX" (exactly these words)
-2. **Reasoning**: Brief explanation (1-3 sentences) citing specific indicators
+2. **Reasoning**: Explain which tests passed/failed
 
-Example good reasoning:
-- "SIMPLE: Single well-defined task (write one function) with clear requirements and no dependencies"
-- "COMPLEX: Requires multiple distinct subtasks (database schema + API endpoints + frontend), spans multiple domains, and needs architectural decisions"
+Strong reasoning examples:
+- "SIMPLE: All three tests pass - explicit target (src/util.py:42), atomic action (add NULL check), single command execution"
+- "COMPLEX: Fails atomicity test - requires setup phase, execution phase, and verification phase as distinct steps that should be coordinated"
+- "COMPLEX: Fails scope certainty - need to first identify which files contain the vulnerable code before fixing"
 
 </COMPLEXITY_EVALUATION_STRATEGY>

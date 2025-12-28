@@ -39,9 +39,7 @@ Use this budget context to inform your approach:
 - Resource justification explains what level of effort is appropriate
 {% endif %}
 
-IMPORTANT: Your work must align with the supervisor's original task requirements. If the original task specifies a programming language, framework, or technology, you MUST use it.
-
-Consider these expectations when evaluating complexity. A task that aligns with a clear plan and well-defined expected results is more likely to be SIMPLE than one with ambiguous goals.
+IMPORTANT: Your work must align with the supervisor's original task requirements.
 </SUPERVISOR_EXPECTATIONS>
 
 {% endif %}
@@ -59,99 +57,75 @@ Your classification determines your next role:
 
 <EVALUATION_CRITERIA>
 
-## SIMPLE Task Characteristics
-- Single well-defined task
-- Clear, unambiguous requirements
-- Can be executed in one session (<1 hour of focused work)
-- No external dependencies beyond standard libraries
-- Straightforward implementation using known patterns
-- Single domain/technology
-- Standard operations (CRUD, refactoring, bug fixes)
+## Default Stance: Favor Decomposition
 
-## COMPLEX Task Characteristics
-- Multiple distinct domains/technologies (frontend + backend + database)
-- Requires research or exploration before execution
-- Ambiguous or underspecified requirements
-- Multiple subtasks with potential dependencies
-- Needs architectural or design decisions
-- Coordinates multiple systems/services
-- Estimated >1 hour of focused work
-- Novel problem without established solution patterns
+**When uncertain, choose COMPLEX.** Decomposition improves:
+- Quality through focused execution
+- Error isolation and recovery
+- Reasoning clarity via intermediate checkpoints
+
+Only classify as SIMPLE when decomposition adds zero value.
+
+## The Three Tests (ALL must pass for SIMPLE)
+
+### Test 1: Atomicity
+"Is this a single indivisible action?"
+- SIMPLE: One command, one edit, one bounded operation
+- COMPLEX: Has phases (prepare → execute → verify) or intermediate checkpoints
+
+### Test 2: Scope Certainty
+"Do I know EXACTLY what to do and where?"
+- SIMPLE: Explicit target (file, function, line) with obvious action
+- COMPLEX: Requires discovery, exploration, or choosing between approaches
+
+### Test 3: Single-Session
+"Can this complete in one uninterrupted execution?"
+- SIMPLE: Minutes, not hours; no decision points mid-execution
+- COMPLEX: Results from early steps inform later steps
+
+## Complexity Signals (Any ONE = likely COMPLEX)
+
+- Multiple deliverables or artifacts
+- Words like "analyze", "investigate", "find", "determine"
+- Conditional logic ("if X then Y")
+- Multi-phase work (setup → execute → validate)
+- Verification or testing required after action
+- Multiple files or components affected
+- Design decisions to be made
+
+## Simplicity Requirements (ALL must be true)
+
+- Explicit target specified (not discovered)
+- Obvious action (no ambiguity)
+- Self-contained (no dependencies on discovery)
+- Truly atomic (no meaningful intermediate state)
 
 </EVALUATION_CRITERIA>
 
-<EXAMPLES>
+<DECISION_GUIDANCE>
 
-### SIMPLE Examples - Direct Executable Tasks (→ WORKER)
+## SIMPLE: Truly Atomic Operations
+These have explicit targets and obvious actions with no phases:
+- "Run command X" (specified command)
+- "Edit file Y at line Z to add W" (explicit location and change)
+- "Apply this specific fix to this specific location"
 
-**Git Operations:**
-- "Clone repository https://github.com/project/vulnerable-app"
-- "Checkout the vulnerable version tag v1.2.3"
-- "Fetch latest changes from upstream"
-- "Create branch fix/CVE-2024-1234"
+## COMPLEX: Goal-Level Tasks
+These describe WHAT to achieve rather than HOW to achieve it:
+- "Fix the bug" → Locate → Understand → Fix → Verify
+- "Add validation" → Identify scope → Determine rules → Implement → Test
+- "Build and test" → Build → Run tests → Analyze results
+- "Set up environment and run X" → Setup phase + Execution phase
 
-**Docker/Container Operations:**
-- "Build Docker image with ASan: docker build -t app:asan ."
-- "Run container and execute tests inside it"
-- "Pull base image and start development environment"
-- "Build with sanitizers enabled using provided Dockerfile"
+## Key Insight
+If the task description is at the "goal" level rather than "action" level, it's COMPLEX.
+If you need to figure out what to do or make decisions along the way, it's COMPLEX.
 
-**File Editing:**
-- "Edit src/parser.c to add bounds check on line 142"
-- "Modify config.yaml to set timeout to 30 seconds"
-- "Add NULL check before pointer dereference in validate.c"
-- "Insert logging statement in authentication function"
-
-**Test Execution:**
-- "Run pytest on tests/ directory"
-- "Execute make test with coverage"
-- "Run specific test: pytest tests/test_security.py"
-- "Validate binary with fuzzer input corpus"
-
-**Build/Compile:**
-- "Compile project with make ASAN=1"
-- "Build with cmake -DCMAKE_BUILD_TYPE=Debug"
-- "Run npm install && npm build"
-- "Compile with -fsanitize=address,undefined"
-
-**Security-Specific Simple:**
-- "Add bounds check to prevent buffer overflow in read_buffer()"
-- "Insert NULL validation before line 87 in parser.c"
-- "Run PoC input against compiled binary and capture sanitizer output"
-- "Verify patch by re-running the PoC test case"
-
-**Single-Function Implementation:**
-- "Write a Python function to calculate Fibonacci numbers"
-- "Add input validation to the UserService.create_user method"
-- "Implement email format validation using regex"
-- "Add rate limiting check to API endpoint"
-
-### COMPLEX Examples - Requires Decomposition (→ MANAGER)
-
-**Multiple Deliverables:**
-- "Generate PoC AND patch for CVE-2024-5678" (2 distinct artifacts)
-- "Build a web scraper for news articles" (research + implementation + testing)
-- "Create security benchmark with environment, PoC, and patch"
-
-**Research Required:**
-- "Analyze use-after-free vulnerability to find trigger conditions"
-- "Investigate authentication bypass and propose fix"
-- "Find and exploit race condition in file handler"
-
-**Multi-System Coordination:**
-- "Implement user authentication system" (database + API + sessions)
-- "Add real-time notifications" (WebSocket + events + frontend)
-- "Migrate from REST API to GraphQL" (schema + server + clients)
-
-**Architectural Changes:**
-- "Redesign memory ownership model to prevent UAF"
-- "Refactor parser to use safe string handling throughout"
-- "Implement defense-in-depth for input validation"
-
-</EXAMPLES>
+</DECISION_GUIDANCE>
 
 <SUCCESS_CRITERIA>
-- Make a clear binary decision: SIMPLE or COMPLEX
-- Provide specific reasoning citing task characteristics
-- Be decisive and confident in your classification
+- Make a binary decision: SIMPLE or COMPLEX
+- Reference which of the three tests passed or failed
+- If COMPLEX, note what phases or decomposition would help
+- Be decisive but favor COMPLEX when uncertain
 </SUCCESS_CRITERIA>
