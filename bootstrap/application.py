@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from config import OrchestrationConfig
+from config import BossConfig, ManagerConfig, OrchestrationConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -29,7 +29,8 @@ class ApplicationConfig:
     system_limits: OrchestrationConfig.LimitsConfig
     max_retries: int
     poll_interval: float
-    model_config: dict[str, str]
+    boss_config: BossConfig
+    manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
     progress_callback: ProgressCallback | None = None
@@ -52,7 +53,8 @@ def get_application(
         poll_interval=config.poll_interval,
         output_directory=config.output_directory,
         default_worker_tool=config.default_worker_tool,
-        model_config=config.model_config,
+        boss_config=config.boss_config,
+        manager_config=config.manager_config,
     )
 
     # Create collaborators (composition root wiring)
@@ -70,6 +72,7 @@ def get_application(
         repository=repository,
         context_registry=context_registry,
         max_total_agents=config.system_limits.max_total_agents,
+        manager_config=config.manager_config,
     )
     orchestrator = AgentOrchestrator(
         llm_port=infrastructure.llm_adapter,

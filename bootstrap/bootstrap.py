@@ -12,6 +12,7 @@ from uuid import UUID
 
 from config import Settings
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from presentation.cli import CLI, CLIConfig
 
 from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
@@ -140,22 +141,21 @@ async def _list_runs(args: argparse.Namespace) -> None:
 
 
 def _create_cli(settings: Settings, progress_callback=None):
-    from presentation.cli import CLI, CLIConfig
-
     infra = get_infrastructure(InfrastructureConfig(
         postgres_connection_string=settings.database.connection_string,
-        default_worker_tool=settings.worker.tool_type,
-        worker_tool_model=settings.worker.tool_model,
-        worker_tool_timeout=settings.worker.tool_timeout,
+        default_worker_tool=settings.worker.tool,
+        worker_tool_model=settings.worker.model,
+        worker_tool_timeout=settings.worker.timeout,
     ))
 
     app = get_application(infra, ApplicationConfig(
         system_limits=settings.orchestration.limits,
         max_retries=settings.orchestration.max_retries,
         poll_interval=settings.orchestration.poll_interval,
-        model_config={"boss": settings.llm.model_boss},
+        boss_config=settings.boss,
+        manager_config=settings.manager,
         output_directory=settings.output.directory,
-        default_worker_tool=settings.worker.tool_type,
+        default_worker_tool=settings.worker.tool,
         progress_callback=progress_callback,
     ))
 
@@ -164,6 +164,8 @@ def _create_cli(settings: Settings, progress_callback=None):
         config=CLIConfig(
             verbose=settings.output.verbose,
             output_directory=settings.output.directory,
-            default_worker_tool=settings.worker.tool_type,
+            default_worker_tool=settings.worker.tool,
         ),
     )
+
+

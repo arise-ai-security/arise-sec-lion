@@ -86,17 +86,18 @@ def context_registry():
 @pytest.fixture
 def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context_registry):
     """Create execution service with mocked ports and injected collaborators."""
+    from config import BossConfig, ManagerConfig
+
+    boss_config = BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000)
+    manager_config = ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000)
+
     config = ServiceConfig(
         max_retries=3,
         poll_interval=0.5,
         output_directory="./test_output",
         default_worker_tool="claude_code",
-        model_config={
-            "boss": "gpt-4o",
-            "manager": "gpt-4o",
-            "worker": "gpt-4o",
-            "pending": "gpt-4o",
-        },
+        boss_config=boss_config,
+        manager_config=manager_config,
     )
     system_limits = _test_system_limits()
 
@@ -111,6 +112,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
         repository=repository,
         context_registry=context_registry,
         max_total_agents=system_limits.max_total_agents,
+        manager_config=manager_config,
     )
     orchestrator = AgentOrchestrator(
         llm_port=mock_llm_port,

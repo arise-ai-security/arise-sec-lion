@@ -16,7 +16,13 @@ from uuid import UUID
 
 import pytest
 
-from bootstrap import InfrastructureConfig, bootstrap
+from bootstrap import (
+    ApplicationConfig,
+    InfrastructureConfig,
+    get_application,
+    get_infrastructure,
+)
+from config import BossConfig, ManagerConfig, OrchestrationConfig
 from core.domain.events import (
     CodeGenerationStarted,
     DomainEvent,
@@ -26,6 +32,37 @@ from core.domain.events import (
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 from presentation.cli import CLI, CLIConfig
+
+
+def _create_test_cli(
+    infrastructure_config: InfrastructureConfig,
+    cli_config: CLIConfig | None = None,
+) -> CLI:
+    """Create a fully wired CLI for E2E tests with default configs."""
+    infra = get_infrastructure(infrastructure_config)
+
+    # Default configs for testing
+    boss_config = BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000)
+    manager_config = ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000)
+
+    app_config = ApplicationConfig(
+        system_limits=OrchestrationConfig.LimitsConfig(
+            max_depth=5,
+            max_children_per_node=10,
+            max_total_agents=100,
+            max_concurrent_workers=5,
+            llm_rate_limit_rpm=60,
+        ),
+        max_retries=3,
+        poll_interval=0.5,
+        boss_config=boss_config,
+        manager_config=manager_config,
+        output_directory="./output",
+        default_worker_tool=infrastructure_config.default_worker_tool,
+    )
+
+    app = get_application(infra, app_config)
+    return CLI(execution_service=app.execution_service, config=cli_config)
 
 
 # ============================================================================
@@ -140,7 +177,12 @@ def fake_worker_tool() -> FakeWorkerToolPort:
 @pytest.fixture
 def infrastructure_config(e2e_postgres_url: str) -> InfrastructureConfig:
     """Provide infrastructure config for E2E tests."""
-    return InfrastructureConfig(postgres_connection_string=e2e_postgres_url)
+    return InfrastructureConfig(
+        postgres_connection_string=e2e_postgres_url,
+        default_worker_tool="claude_code",
+        worker_tool_model="claude-sonnet-4-20250514",
+        worker_tool_timeout=300,
+    )
 
 
 @pytest.fixture
@@ -151,7 +193,7 @@ def e2e_cli(infrastructure_config: InfrastructureConfig) -> CLI:
     For true E2E with real LLM, set appropriate API keys.
     """
     cli_config = CLIConfig(verbose=False)
-    return bootstrap(
+    return _create_test_cli(
         infrastructure_config=infrastructure_config,
         cli_config=cli_config,
     )

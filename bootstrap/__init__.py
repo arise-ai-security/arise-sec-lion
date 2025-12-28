@@ -1,12 +1,8 @@
-"""Bootstrap layer - Composition Root for dependency injection.
-
-Entry point: bootstrap.bootstrap.main()
-"""
-
 from .application import Application, ApplicationConfig, get_application
 from .bootstrap import main
 from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastructure
 from .presentation import get_cli
+
 
 __all__ = [
     "main",

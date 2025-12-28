@@ -63,18 +63,28 @@ class DatabaseConfig(BaseModel):
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
 
 
-class LLMConfig(BaseModel):
-    """LLM provider settings."""
+class BossConfig(BaseModel):
+    """Boss agent LLM settings."""
 
-    model_boss: str
+    model: str
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=1000, gt=0, le=100000)
+
+
+class ManagerConfig(BaseModel):
+    """Manager agent LLM settings."""
+
+    model: str
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=1000, gt=0, le=100000)
 
 
 class WorkerConfig(BaseModel):
     """Worker tool settings."""
 
-    tool_type: Literal["claude_code", "openhands", "google_adk"]
-    tool_model: str
-    tool_timeout: int
+    model: str
+    tool: Literal["claude_code", "openhands", "google_adk"]
+    timeout: int = Field(default=300, gt=0)
 
 
 class OrchestrationConfig(BaseModel):
@@ -163,7 +173,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     database: DatabaseConfig
-    llm: LLMConfig
+    boss: BossConfig
+    manager: ManagerConfig
     worker: WorkerConfig
     orchestration: OrchestrationConfig
     output: OutputConfig
@@ -199,7 +210,8 @@ class Settings(BaseSettings):
 
         return cls(
             database=DatabaseConfig(**db_config),
-            llm=LLMConfig(**config.get("llm", {})),
+            boss=BossConfig(**config.get("boss", {})),
+            manager=ManagerConfig(**config.get("manager", {})),
             worker=WorkerConfig(**config.get("worker", {})),
             orchestration=OrchestrationConfig(**config.get("orchestration", {})),
             output=OutputConfig(**config.get("output", {})),

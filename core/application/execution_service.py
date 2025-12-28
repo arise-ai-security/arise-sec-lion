@@ -31,7 +31,7 @@ from core.domain.model import AgentRole, AgentSession, AgentStatus
 
 
 if TYPE_CHECKING:
-    from config import OrchestrationConfig
+    from config import BossConfig, ManagerConfig, OrchestrationConfig
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
     from core.ports.sibling_context_port import SiblingContextPort
@@ -53,7 +53,8 @@ class ServiceConfig:
     poll_interval: float
     output_directory: str
     default_worker_tool: str
-    model_config: dict[str, str]
+    boss_config: BossConfig
+    manager_config: ManagerConfig
 
 
 @dataclass(frozen=True)
@@ -274,15 +275,15 @@ class AgentExecutionService:
 
     def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
         """Create the root BOSS agent session."""
-        boss_model = self._config.model_config.get("boss", "gpt-4o-mini")
+        boss_cfg = self._config.boss_config
         boss_config = {
             "strategy": "heuristic",
             "base": {
-                "model": boss_model,
-                "temperature": 0.7,
-                "max_tokens": 1000,
+                "model": boss_cfg.model,
+                "temperature": boss_cfg.temperature,
+                "max_tokens": boss_cfg.max_tokens,
             },
-            "tool": "claude_code",
+            "tool": self._config.default_worker_tool,
         }
 
         boss_agent = AgentSession.create(

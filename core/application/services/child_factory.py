@@ -6,7 +6,7 @@ Handles child agent creation with execution context propagation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.domain.context import ParentContext
@@ -15,6 +15,7 @@ from core.domain.model import AgentRole, AgentSession
 
 
 if TYPE_CHECKING:
+    from config import ManagerConfig
     from core.application.services.agent_repository import AgentRepository
     from core.application.services.context_registry import ExecutionContextRegistry
 
@@ -35,6 +36,7 @@ class ChildAgentFactory:
     Enforces:
     - max_total_agents limit
     - Execution context propagation to children
+    - Manager config defaults for PENDING children
     """
 
     def __init__(
@@ -42,10 +44,12 @@ class ChildAgentFactory:
         repository: AgentRepository,
         context_registry: ExecutionContextRegistry,
         max_total_agents: int = -1,  # -1 means unlimited
+        manager_config: ManagerConfig | None = None,
     ) -> None:
         self._repository = repository
         self._context_registry = context_registry
         self._max_total_agents = max_total_agents
+        self._manager_config = manager_config
         self._total_created: int = 0
 
     def reset(self, initial_count: int = 0) -> None:
@@ -63,6 +67,23 @@ class ChildAgentFactory:
             return False
         return self._total_created >= self._max_total_agents
 
+    def _apply_manager_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Apply manager config defaults to child config."""
+        if self._manager_config is None:
+            return config
+
+        # Deep copy to avoid mutating original
+        result = dict(config)
+
+        # Apply manager model/temperature/max_tokens to base config
+        if "base" in result and isinstance(result["base"], dict):
+            result["base"] = dict(result["base"])
+            result["base"]["model"] = self._manager_config.model
+            result["base"]["temperature"] = self._manager_config.temperature
+            result["base"]["max_tokens"] = self._manager_config.max_tokens
+
+        return result
+
     async def create_from_event(
         self,
         event: ChildSpawned,
@@ -72,14 +93,22 @@ class ChildAgentFactory:
 
         Returns None if at limit, otherwise returns the created agent.
         Propagates execution context and parent context to child.
+        Applies manager config defaults for PENDING children.
         """
         if self.is_at_limit():
             return None
 
+        child_role = AgentRole(event.child_role)
+        child_config = event.child_config
+
+        # Apply manager config for PENDING children (they may become MANAGER)
+        if child_role == AgentRole.PENDING:
+            child_config = self._apply_manager_config(child_config)
+
         child = AgentSession.create(
             agent_id=event.child_id,
-            role=AgentRole(event.child_role),
-            config=event.child_config,
+            role=child_role,
+            config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
         )
