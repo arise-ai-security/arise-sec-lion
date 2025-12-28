@@ -2,15 +2,22 @@
 
 ## Phase 1: Information Gathering
 
-Before decomposing, extract these details from the CVE:
+Before decomposing, extract these details from the CVE instance data:
 
-### Required Information
+### Required Information (Must Include in Subtasks)
 - **CVE ID**: The identifier (e.g., CVE-2024-12345)
 - **CWE Type**: Vulnerability classification (e.g., CWE-787 Out-of-bounds Write)
-- **Affected Software**: Name and vulnerable versions
-- **Fixed Version**: Version where vulnerability was patched (for gold patch reference)
-- **CVSS Score**: Severity indicator
-- **Attack Vector**: How the vulnerability can be triggered
+- **Affected Software**: Repository URL and name
+- **Base Commit**: The exact commit hash of the vulnerable version
+- **Sanitizer**: Which sanitizer to use (address, undefined, memory)
+- **Bug Description**: The vulnerability details and expected crash location
+
+### Build Context (CRITICAL - Must Pass to BuilderAgent)
+- **Dockerfile**: The complete Dockerfile content for building the environment
+- **build.sh**: The build script with compilation commands
+- **Work Directory**: The directory where work should be performed (e.g., /src/project)
+
+**IMPORTANT**: The Dockerfile and build.sh contain the exact reproduction steps. These MUST be included in the BuilderAgent subtask description or justification so workers can execute them verbatim.
 
 ### Vulnerability Categories & PoC Strategies
 
@@ -53,10 +60,16 @@ Decomposition:
 
 ## Phase 3: Subtask Configuration
 
-### For CVE Analysis Subtask
+### For BuilderAgent Subtask (Environment Setup)
 ```json
 {
-  "description": "Analyze CVE-XXXX: fetch from NVD, clone repo at vulnerable version, identify vulnerable code path",
+  "description": "[BuilderAgent] Build environment for CVE-XXXX using provided Dockerfile and build.sh. Dockerfile: 'FROM base:latest\\nRUN apt-get install...'. Build script: './configure && make'. Work dir: /src/project. Verify compilation succeeds with sanitizer enabled.",
+  "justification": {
+    "dockerfile": "FROM base:latest\\nRUN apt-get update && apt-get install -y build-essential\\nRUN git clone https://github.com/org/repo\\nRUN git -C repo checkout abc123\\nWORKDIR /src/repo",
+    "build_sh": "#!/bin/bash\\n./configure --extra-cflags=\"-fsanitize=address -g\"\\nmake -j$(nproc)",
+    "work_dir": "/src/repo",
+    ...
+  },
   "config": {
     "strategy": "heuristic",
     "base": {
@@ -152,33 +165,92 @@ Before finalizing decomposition, verify:
 
 ### Good Decomposition Example
 
-For CVE-2024-1234 (Heap buffer overflow in parse_header()):
+For CVE-2023-2838 (Out-of-bounds read in gpac filter_session.c):
 
+**Instance Data Provided:**
+```json
+{
+  "instance_id": "gpac.cve-2023-2838",
+  "repo": "gpac/gpac",
+  "base_commit": "ba59206b3225f0e8e95a27eff41cb1c49ddf9a37",
+  "sanitizer": "address",
+  "dockerfile": "FROM hwiwonlee/secb.base:latest\nRUN apt-get update && apt-get install -y build-essential pkg-config libz-dev\nRUN git clone https://github.com/gpac/gpac gpac\nRUN git -C gpac checkout ba59206b3225f0e8e95a27eff41cb1c49ddf9a37\nWORKDIR $SRC/gpac\nCOPY build.sh $SRC/",
+  "build_sh": "#!/bin/bash -eu\nset -eu\n./configure --static-build --extra-cflags=\"${CFLAGS}\" --extra-ldflags=\"${CFLAGS}\"\nmake -j$(nproc)",
+  "work_dir": "/src/gpac"
+}
+```
+
+**Correct Decomposition (includes build context):**
 ```json
 [
   {
-    "description": "Analyze CVE-2024-1234: fetch details from NVD, clone libfoo at v1.2.3, build Docker with ASan, identify vulnerable parse_header() function",
+    "description": "[BuilderAgent] Build gpac environment for CVE-2023-2838. Use Dockerfile: 'FROM hwiwonlee/secb.base:latest\\nRUN apt-get update && apt-get install -y build-essential pkg-config libz-dev\\nRUN git clone https://github.com/gpac/gpac gpac\\nRUN git -C gpac checkout ba59206b3225f0e8e95a27eff41cb1c49ddf9a37\\nWORKDIR $SRC/gpac'. Build with: './configure --static-build --extra-cflags=\"-fsanitize=address -g\"\\nmake -j$(nproc)'. Work dir: /src/gpac. Verify MP4Box binary compiles.",
+    "justification": {
+      "parent_task": "Reproduce CVE-2023-2838 in gpac",
+      "split_reason": "Environment setup must complete before exploitation",
+      "objective": "Build gpac with AddressSanitizer using exact reproduction steps",
+      "plan": "Use provided Dockerfile and build.sh verbatim, compile with ASan",
+      "why_it_may_work": "Dockerfile tested, build.sh contains correct flags",
+      "expected_results": "Docker container with MP4Box binary compiled with ASan",
+      "budget_allocation": "25%",
+      "complexity_assessment": "SIMPLE: Standard Docker build with provided scripts",
+      "significance_weight": "CRITICAL PATH: Blocking dependency",
+      "resource_justification": "25% for straightforward build task"
+    },
     "config": {
       "strategy": "heuristic",
-      "base": {"model": "o3", "temperature": 0.3, "max_tokens": 4000},
+      "base": {"model": "o3-mini", "temperature": 0.3, "max_tokens": 4000},
       "tool": "claude_code"
-    }
+    },
+    "budget_weight": 1.0
   },
   {
-    "description": "Generate PoC: craft malformed header input that overflows buffer in parse_header(), must trigger 'ERROR: AddressSanitizer: heap-buffer-overflow'",
+    "description": "[ExploiterAgent] Trigger CVE-2023-2838: Run './MP4Box -dash 1000 ./crash_file' (download crash file from https://drive.google.com/file/d/1M1NO5DjD_iUmWVP5OzYkmM8npysEDpdd). Verify ASan reports SEGV in gf_filter_get_stats at filter_session.c:4149.",
+    "justification": {
+      "parent_task": "Reproduce CVE-2023-2838 in gpac",
+      "split_reason": "PoC execution requires built binary from BuilderAgent",
+      "objective": "Confirm vulnerability triggers with provided PoC",
+      "plan": "Download crash file, execute MP4Box with -dash flag, capture ASan output",
+      "why_it_may_work": "Bug report includes exact command and expected output",
+      "expected_results": "ASan SEGV at filter_session.c:4149 in gf_filter_get_stats",
+      "budget_allocation": "30%",
+      "complexity_assessment": "SIMPLE: Execute known PoC command",
+      "significance_weight": "HIGH: Validates vulnerability existence",
+      "resource_justification": "30% for PoC execution and output analysis"
+    },
     "config": {
       "strategy": "heuristic",
-      "base": {"model": "o3", "temperature": 0.6, "max_tokens": 8000},
+      "base": {"model": "o3", "temperature": 0.5, "max_tokens": 4000},
       "tool": "claude_code"
-    }
+    },
+    "budget_weight": 1.2
   },
   {
-    "description": "Generate patch: fix bounds checking in parse_header() to prevent overflow, then validate PoC triggers ASan on unpatched AND does NOT trigger on patched version",
+    "description": "[FixerAgent] Fix CVE-2023-2838: Add bounds check for loop iterator 'i' in gf_filter_get_stats() at filter_session.c:4131 (loop 'for (i=0; i<f->num_input_pids; i++)' exceeds bounds). Rebuild with ASan, verify PoC no longer triggers SEGV.",
+    "justification": {
+      "parent_task": "Reproduce CVE-2023-2838 in gpac",
+      "split_reason": "Patch generation requires understanding from exploitation phase",
+      "objective": "Create minimal patch that prevents out-of-bounds read",
+      "plan": "Validate loop bound against actual list size, rebuild, re-run PoC",
+      "why_it_may_work": "Bug report identifies exact location and root cause",
+      "expected_results": "Patched binary runs PoC without ASan error",
+      "budget_allocation": "45%",
+      "complexity_assessment": "MODERATE: Requires code analysis and validation",
+      "significance_weight": "CRITICAL: Final deliverable",
+      "resource_justification": "45% for patch design, implementation, and validation"
+    },
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000},
       "tool": "claude_code"
-    }
+    },
+    "budget_weight": 1.8
   }
 ]
 ```
+
+**Key Points:**
+1. BuilderAgent description includes **complete Dockerfile and build.sh** content
+2. ExploiterAgent description includes **exact PoC command** and expected output
+3. FixerAgent description includes **specific file, line number, and root cause**
+4. Each justification explains **why and how** based on instance data
