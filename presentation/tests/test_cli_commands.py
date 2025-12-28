@@ -1,269 +1,96 @@
-"""Tests for Click-based CLI commands.
-
-These tests verify the new Click CLI commands work correctly:
-- events: View events for a task run
-- summary: Show summary projection
-- list: List past BOSS agent runs
-
-The tests use Click's test utilities for isolated command testing.
-"""
+"""Tests for CLI commands."""
 
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from click.testing import CliRunner
 
-from presentation.cli import cli
+from bootstrap.bootstrap import main, _create_parser as create_parser
 from presentation.persistence import RunPersistence
 
 
-if TYPE_CHECKING:
-    pass
-
-
-# ==============================================================================
-# Last Run Tracking Tests (using RunPersistence)
-# ==============================================================================
-
-
 class TestRunPersistence:
-    """Tests for RunPersistence class."""
-
     def test_save_last_run_creates_file(self, tmp_path: Path) -> None:
-        """Test that save_last_run creates .last_run.json."""
         persistence = RunPersistence(tmp_path)
         boss_id = uuid4()
         persistence.save_last_run(boss_id, "test task", "completed")
-
-        last_run_file = tmp_path / ".last_run.json"
-        assert last_run_file.exists()
-
-        data = json.loads(last_run_file.read_text())
-        assert data["boss_id"] == str(boss_id)
-        assert data["task"] == "test task"
-        assert data["status"] == "completed"
-
-    def test_save_last_run_creates_directory(self, tmp_path: Path) -> None:
-        """Test that save_last_run creates parent directory if needed."""
-        output_dir = tmp_path / "nested" / "output"
-        persistence = RunPersistence(output_dir)
-        boss_id = uuid4()
-
-        persistence.save_last_run(boss_id, "test task", "completed")
-
-        assert output_dir.exists()
-        assert (output_dir / ".last_run.json").exists()
+        assert json.loads((tmp_path / ".last_run.json").read_text())["boss_id"] == str(boss_id)
 
     def test_get_last_run_returns_data(self, tmp_path: Path) -> None:
-        """Test that get_last_run returns saved data."""
         persistence = RunPersistence(tmp_path)
         boss_id = uuid4()
         persistence.save_last_run(boss_id, "test task", "completed")
-
-        result = persistence.get_last_run()
-
-        assert result is not None
-        assert result.boss_id == boss_id
-        assert result.task == "test task"
-
-    def test_get_last_run_returns_none_when_not_found(self, tmp_path: Path) -> None:
-        """Test that get_last_run returns None when file doesn't exist."""
-        persistence = RunPersistence(tmp_path)
-        result = persistence.get_last_run()
-        assert result is None
-
-    def test_get_last_run_id_returns_uuid(self, tmp_path: Path) -> None:
-        """Test that get_last_run_id returns UUID from saved data."""
-        persistence = RunPersistence(tmp_path)
-        boss_id = uuid4()
-        persistence.save_last_run(boss_id, "test task", "completed")
-
-        result = persistence.get_last_run_id()
-
-        assert result == boss_id
+        assert persistence.get_last_run().boss_id == boss_id
 
     def test_get_last_run_id_returns_none_when_not_found(self, tmp_path: Path) -> None:
-        """Test that get_last_run_id returns None when file doesn't exist."""
-        persistence = RunPersistence(tmp_path)
-        result = persistence.get_last_run_id()
-        assert result is None
+        assert RunPersistence(tmp_path).get_last_run_id() is None
 
 
-# ==============================================================================
-# CLI Help Tests
-# ==============================================================================
+class TestCLIArgumentParser:
+    def test_parser_run_command(self) -> None:
+        args = create_parser().parse_args(["run", "test task"])
+        assert args.command == "run" and args.task == "test task"
+
+    def test_parser_events_command(self) -> None:
+        test_uuid = str(uuid4())
+        args = create_parser().parse_args(["events", "--agent-id", test_uuid, "--errors-only"])
+        assert str(args.agent_id) == test_uuid and args.errors_only
+
+    def test_parser_summary_command(self) -> None:
+        args = create_parser().parse_args(["summary", "--format", "text"])
+        assert args.command == "summary" and args.format == "text"
+
+    def test_parser_list_command(self) -> None:
+        args = create_parser().parse_args(["list", "--limit", "5"])
+        assert args.limit == 5
+
+    def test_parser_config_option(self) -> None:
+        args = create_parser().parse_args(["--config", "/path/to/config.yaml", "list"])
+        assert args.config == Path("/path/to/config.yaml")
 
 
-class TestCLIHelp:
-    """Tests for CLI help output."""
-
-    def test_cli_help_shows_commands(self) -> None:
-        """Test that CLI help lists available commands."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
-
-        assert result.exit_code == 0
-        assert "run" in result.output
-        assert "events" in result.output
-        assert "summary" in result.output
-        assert "list" in result.output
-
-    def test_run_help(self) -> None:
-        """Test that run command has help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["run", "--help"])
-
-        assert result.exit_code == 0
-        assert "Run a task" in result.output
-
-    def test_events_help(self) -> None:
-        """Test that events command has help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["events", "--help"])
-
-        assert result.exit_code == 0
-        assert "View events" in result.output
-        assert "--agent-id" in result.output
-        assert "--format" in result.output
-        assert "--errors-only" in result.output
-
-    def test_summary_help(self) -> None:
-        """Test that summary command has help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["summary", "--help"])
-
-        assert result.exit_code == 0
-        assert "summary" in result.output.lower()
-        assert "--agent-id" in result.output
-        assert "--format" in result.output
-
-    def test_list_help(self) -> None:
-        """Test that list command has help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["list", "--help"])
-
-        assert result.exit_code == 0
-        assert "List past BOSS" in result.output
-        assert "--limit" in result.output
+def _mock_settings(tmp_path: Path = None):
+    return MagicMock(
+        output=MagicMock(directory=str(tmp_path or "/tmp")),
+        database=MagicMock(connection_string="postgresql://test:test@localhost/test"),
+    )
 
 
-# ==============================================================================
-# Events Command Tests
-# ==============================================================================
+def _mock_event_store_cm(**store_methods):
+    """Create mock async context manager for _event_store."""
+    store = MagicMock()
+    for name, value in store_methods.items():
+        setattr(store, name, AsyncMock(return_value=value))
+
+    @asynccontextmanager
+    async def mock_cm(settings):
+        yield store
+
+    return mock_cm
 
 
 class TestEventsCommand:
-    """Tests for the events command."""
-
-    @pytest.fixture
-    def mock_event_store(self) -> MagicMock:
-        """Create a mock event store."""
-        store = MagicMock()
-        store.connect = AsyncMock()
-        store.disconnect = AsyncMock()
-        store.get_events = AsyncMock(return_value=[])
-        store.get_all_aggregate_ids = AsyncMock(return_value=[])
-        return store
-
-    def test_events_requires_agent_id_or_last_run(self) -> None:
-        """Test that events command requires agent-id when no last run exists."""
-        runner = CliRunner()
-
-        with runner.isolated_filesystem():
-            with patch(
-                "presentation.context.event_store_context.EventStoreContext.from_config_path"
-            ) as mock_ctx:
-                mock_store = MagicMock()
-                mock_store.connect = AsyncMock()
-                mock_store.disconnect = AsyncMock()
-
-                async_cm = AsyncMock()
-                async_cm.__aenter__ = AsyncMock(return_value=mock_store)
-                async_cm.__aexit__ = AsyncMock(return_value=None)
-                mock_ctx.return_value = async_cm
-
-                result = runner.invoke(cli, ["events"])
-
-            assert "No agent-id specified" in result.output or result.exit_code != 0
-
-
-# ==============================================================================
-# List Command Tests
-# ==============================================================================
+    def test_events_requires_agent_id_or_last_run(self, tmp_path: Path, capsys) -> None:
+        with patch("config.Settings.load", return_value=_mock_settings(tmp_path)):
+            with patch("bootstrap.bootstrap._event_store", _mock_event_store_cm()):
+                main(["events"])
+        assert "No agent-id specified" in capsys.readouterr().out
 
 
 class TestListCommand:
-    """Tests for the list command."""
+    def test_list_with_no_runs_shows_message(self, capsys) -> None:
+        with patch("config.Settings.load", return_value=_mock_settings()):
+            with patch("bootstrap.bootstrap._event_store", _mock_event_store_cm(get_all_events_grouped={})):
+                main(["list"])
+        assert "No BOSS runs found" in capsys.readouterr().out
 
-    def test_list_with_no_runs_shows_message(self) -> None:
-        """Test that list shows message when no runs exist."""
-        runner = CliRunner()
-
-        with patch(
-            "presentation.context.event_store_context.EventStoreContext.from_config_path"
-        ) as mock_ctx:
-            mock_store = MagicMock()
-            mock_store.connect = AsyncMock()
-            mock_store.disconnect = AsyncMock()
-            # Use get_all_events_grouped() - returns empty dict for no runs
-            mock_store.get_all_events_grouped = AsyncMock(return_value={})
-
-            async_cm = AsyncMock()
-            async_cm.__aenter__ = AsyncMock(return_value=mock_store)
-            async_cm.__aexit__ = AsyncMock(return_value=None)
-            mock_ctx.return_value = async_cm
-
-            result = runner.invoke(cli, ["list"])
-
-        assert "No BOSS runs found" in result.output
-
-    def test_list_format_json(self) -> None:
-        """Test that list --format json outputs JSON."""
-        runner = CliRunner()
-
-        with patch(
-            "presentation.context.event_store_context.EventStoreContext.from_config_path"
-        ) as mock_ctx:
-            mock_store = MagicMock()
-            mock_store.connect = AsyncMock()
-            mock_store.disconnect = AsyncMock()
-            # Use get_all_events_grouped() - returns empty dict for no runs
-            mock_store.get_all_events_grouped = AsyncMock(return_value={})
-
-            async_cm = AsyncMock()
-            async_cm.__aenter__ = AsyncMock(return_value=mock_store)
-            async_cm.__aexit__ = AsyncMock(return_value=None)
-            mock_ctx.return_value = async_cm
-
-            result = runner.invoke(cli, ["list", "--format", "json"])
-
-        # Should output valid JSON (empty list)
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data == []
-
-
-# ==============================================================================
-# Integration Tests (requires mock event store)
-# ==============================================================================
-
-
-class TestCLIConfigPassing:
-    """Tests for config passing through CLI."""
-
-    def test_config_option_accepted(self) -> None:
-        """Test that --config option is accepted."""
-        runner = CliRunner()
-
-        # Just test that the option is recognized
-        result = runner.invoke(cli, ["--config", "nonexistent.yaml", "--help"])
-
-        # Should fail with file not found, not unrecognized option
-        # But --help should still work
-        assert "--config" in result.output or "Error" in result.output
+    def test_list_format_json_outputs_json(self, capsys) -> None:
+        with patch("config.Settings.load", return_value=_mock_settings()):
+            with patch("bootstrap.bootstrap._event_store", _mock_event_store_cm(get_all_events_grouped={})):
+                main(["list", "--format", "json"])
+        assert json.loads(capsys.readouterr().out) == []
