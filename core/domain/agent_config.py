@@ -24,7 +24,7 @@ class PerOperationConfig(BaseModel):
     strategy: Literal["per_operation"] = "per_operation"
     complexity_evaluation: LLMConfig
     task_decomposition: LLMConfig
-    tool: Literal["claude_code", "openhands"] = "claude_code"
+    tool: Literal["claude_code", "openhands", "google_adk"] = "claude_code"
 
 
 class HeuristicConfig(BaseModel):
@@ -34,7 +34,7 @@ class HeuristicConfig(BaseModel):
 
     strategy: Literal["heuristic"] = "heuristic"
     base: LLMConfig
-    tool: Literal["claude_code", "openhands"] = "claude_code"
+    tool: Literal["claude_code", "openhands", "google_adk"] = "claude_code"
 
 
 class HybridConfig(BaseModel):
@@ -45,7 +45,7 @@ class HybridConfig(BaseModel):
     strategy: Literal["hybrid"] = "hybrid"
     base: LLMConfig
     overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    tool: Literal["claude_code", "openhands"] = "claude_code"
+    tool: Literal["claude_code", "openhands", "google_adk"] = "claude_code"
 
 
 AgentConfig = PerOperationConfig | HeuristicConfig | HybridConfig

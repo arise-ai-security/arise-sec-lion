@@ -72,7 +72,7 @@ class LLMConfig(BaseModel):
 class WorkerConfig(BaseModel):
     """Worker tool settings."""
 
-    tool_type: Literal["claude_code", "openhands"]
+    tool_type: Literal["claude_code", "openhands", "google_adk"]
     tool_model: str
     tool_timeout: int
 
