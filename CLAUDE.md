@@ -21,12 +21,14 @@ Hexagonal Architecture + Event Sourcing | BOSS → MANAGER → WORKER hierarchy
 
 ## Development
 
-All commands run inside Docker containers:
+All commands run inside Docker containers via profiles:
 
 ```bash
 cd deployment
 
-# Start services (dev profile uses .env.dev)
+# Profiles: local (local DB), dev (external DB), prod, test
+
+# Start services
 docker compose --profile dev up -d --build
 
 # Run a task
@@ -36,6 +38,7 @@ docker compose --profile dev exec app-dev python main.py run "Your task"
 docker compose --profile dev exec app-dev uv run pytest
 
 # View results
+docker compose --profile dev exec app-dev python main.py list
 docker compose --profile dev exec app-dev python main.py events
 docker compose --profile dev exec app-dev python main.py summary
 ```
