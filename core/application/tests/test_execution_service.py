@@ -19,6 +19,7 @@ from core.application.execution_service import (
 from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.events import AgentCreated, TaskAssigned
@@ -128,6 +129,11 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
         shared_decisions=(),
     )
 
+    parent_notifier = ParentNotificationService(
+        repository=repository,
+        progress_callback=None,
+    )
+
     dependencies = ExecutionServiceDependencies(
         repository=repository,
         orchestrator=orchestrator,
@@ -137,6 +143,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
         workspace=workspace,
         shared_context_port=AsyncMock(),
         sibling_context_port=sibling_context_mock,
+        parent_notifier=parent_notifier,
     )
 
     return AgentExecutionService(

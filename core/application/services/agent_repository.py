@@ -130,6 +130,48 @@ class AgentRepository:
             self._notify_progress(event, agent)
         agent.mark_changes_as_committed()
 
+    async def persist_events(
+        self,
+        agent: AgentSession,
+        expected_version: int,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[DomainEvent]:
+        """Persist uncommitted events with batch optimization.
+
+        This method consolidates the event persistence pattern used across
+        the application, eliminating DRY violations.
+
+        Args:
+            agent: The agent with uncommitted events.
+            expected_version: The expected version for OCC.
+            progress_callback: Optional callback for each persisted event.
+                             If None, uses the repository's default callback.
+
+        Returns:
+            The list of persisted events for post-processing.
+        """
+        uncommitted = list(agent.events)
+        if not uncommitted:
+            return uncommitted
+
+        # Batch for efficiency when multiple events
+        if len(uncommitted) > 1:
+            await self._event_store.append_batch(uncommitted, expected_version=expected_version)
+        else:
+            await self._event_store.append(uncommitted[0], expected_version=expected_version)
+
+        # Notify progress (use provided callback or fall back to repository default)
+        callback = progress_callback if progress_callback is not None else self._progress_callback
+        if callback is not None:
+            for event in uncommitted:
+                try:
+                    callback(event, agent)
+                except Exception:
+                    pass
+
+        agent.mark_changes_as_committed()
+        return uncommitted
+
     async def get_all_agent_ids(self) -> list[UUID]:
         """Get all agent IDs from event store."""
         return await self._event_store.get_all_aggregate_ids()

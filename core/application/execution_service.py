@@ -18,9 +18,10 @@ from uuid import UUID, uuid4
 
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
-from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
+from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.context_update_parser import parse_context_update
@@ -71,6 +72,7 @@ class ExecutionServiceDependencies:
     workspace: WorkspaceContextProvider
     shared_context_port: SharedContextPort
     sibling_context_port: SiblingContextPort
+    parent_notifier: ParentNotificationService
 
 
 class AgentExecutionService:
@@ -118,6 +120,7 @@ class AgentExecutionService:
         self._child_factory = dependencies.child_factory
         self._query_service = dependencies.query_service
         self._workspace = dependencies.workspace
+        self._parent_notifier = dependencies.parent_notifier
 
         # Worker concurrency control
         semaphore_limit = (
@@ -341,24 +344,11 @@ class AgentExecutionService:
     ) -> list[DomainEvent]:
         """Persist uncommitted events and return them.
 
-        Uses batch persistence for efficiency when there are multiple events.
+        Delegates to repository for batch optimization and progress notification.
         """
-        uncommitted = list(agent.events)
-        if not uncommitted:
-            return uncommitted
-
-        # Use batch append for multiple events (much faster for workers)
-        if len(uncommitted) > 1:
-            await self._event_store.append_batch(uncommitted, expected_version=base_version)
-        else:
-            await self._event_store.append(uncommitted[0], expected_version=base_version)
-
-        # Notify progress for each event after successful persistence
-        for event in uncommitted:
-            self._notify_progress(event, agent)
-
-        agent.mark_changes_as_committed()
-        return uncommitted
+        return await self._repository.persist_events(
+            agent, base_version, self._progress_callback
+        )
 
     async def _handle_post_step(
         self,
@@ -382,37 +372,11 @@ class AgentExecutionService:
         await self._notify_parent_if_complete(agent)
 
     async def _notify_parent_if_complete(self, agent: AgentSession) -> None:
-        """Notify parent when child completes."""
-        if agent.status != AgentStatus.COMPLETED or agent.parent_id is None:
-            return
+        """Notify parent when child completes.
 
-        try:
-            parent = await self._repository.load(agent.parent_id)
-        except AgentNotFoundError:
-            raise ValueError(f"Parent agent {agent.parent_id} not found")
-
-        parent_version = parent.version
-
-        # Build structured child result
-        child_result = agent.build_child_result()
-
-        parent.handle_child_update(
-            child_id=agent.agent_id,
-            result=agent.result or "",
-            child_result=child_result,
-        )
-
-        uncommitted = list(parent.events)
-        if uncommitted:
-            if len(uncommitted) > 1:
-                await self._event_store.append_batch(uncommitted, expected_version=parent_version)
-            else:
-                await self._event_store.append(uncommitted[0], expected_version=parent_version)
-
-            for event in uncommitted:
-                self._notify_progress(event, parent)
-
-        parent.mark_changes_as_committed()
+        Delegates to ParentNotificationService for the full workflow.
+        """
+        await self._parent_notifier.notify_if_complete(agent)
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
         """Extract and store context updates from worker result."""
@@ -460,25 +424,11 @@ class AgentExecutionService:
             if agent is None:
                 return
 
-            current_version = agent.version
             agent.fail_with_reason(f"Execution error: {error!r}")
-
-            uncommitted = list(agent.events)
-            if uncommitted:
-                if len(uncommitted) > 1:
-                    await self._event_store.append_batch(uncommitted, expected_version=current_version)
-                else:
-                    await self._event_store.append(uncommitted[0], expected_version=current_version)
-
+            await self._repository.persist_events(
+                agent, agent.version, self._progress_callback
+            )
         except Exception as persist_error:
             raise RuntimeError(
                 f"Failed to persist error state for agent {agent_id}: {persist_error!r}"
             ) from error
-
-    def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
-        """Notify progress callback if set."""
-        if self._progress_callback is not None:
-            try:
-                self._progress_callback(event, agent)
-            except Exception:
-                pass

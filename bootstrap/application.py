@@ -13,6 +13,7 @@ from core.application.execution_service import (
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.sibling_context_builder import SiblingContextBuilder
 from core.application.services.workspace_context import WorkspaceContextProvider
@@ -82,6 +83,12 @@ def get_application(
         shared_context_port=infrastructure.shared_context,
     )
 
+    # Create parent notification service
+    parent_notifier = ParentNotificationService(
+        repository=repository,
+        progress_callback=config.progress_callback,
+    )
+
     # Group collaborators into dependencies object (Parameter Object pattern)
     dependencies = ExecutionServiceDependencies(
         repository=repository,
@@ -92,6 +99,7 @@ def get_application(
         workspace=workspace,
         shared_context_port=infrastructure.shared_context,
         sibling_context_port=sibling_context_builder,
+        parent_notifier=parent_notifier,
     )
 
     execution_service = AgentExecutionService(
