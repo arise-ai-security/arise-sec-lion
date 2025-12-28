@@ -207,6 +207,14 @@ class SourceContextDataSchema(BaseModel):
     environment: str = Field("", description="Environment/platform details")
     dependencies: list[str] = Field(default_factory=list, description="Dependencies mentioned")
     key_facts: list[str] = Field(default_factory=list, description="Other key facts")
+    # Security/CVE build context fields
+    dockerfile: str = Field("", description="Dockerfile content for building environment")
+    build_script: str = Field("", description="Build script (build.sh) content")
+    work_dir: str = Field("", description="Working directory inside container")
+    poc_command: str = Field("", description="Command to execute the PoC")
+    sanitizer: str = Field("", description="Sanitizer type (address, undefined, memory)")
+    cve_id: str = Field("", description="CVE identifier if vulnerability task")
+    repo_url: str = Field("", description="Repository URL for cloning")
 
 
 class ContextEntrySchema(BaseModel):

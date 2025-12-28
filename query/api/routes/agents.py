@@ -440,6 +440,14 @@ async def get_agent_summary(
                     environment=entry.source_context.environment,
                     dependencies=list(entry.source_context.dependencies),
                     key_facts=list(entry.source_context.key_facts),
+                    # Security/CVE build context fields
+                    dockerfile=entry.source_context.dockerfile,
+                    build_script=entry.source_context.build_script,
+                    work_dir=entry.source_context.work_dir,
+                    poc_command=entry.source_context.poc_command,
+                    sanitizer=entry.source_context.sanitizer,
+                    cve_id=entry.source_context.cve_id,
+                    repo_url=entry.source_context.repo_url,
                 )
                 # Insert source context at the beginning of the list
                 published_context_list.insert(
@@ -475,6 +483,25 @@ async def get_agent_summary(
                         challenges=None,
                         source_context=None,
                         tags=entry.tags,
+                        published_at=occurred_at,
+                    )
+                )
+            else:
+                # Entry not found in dashboard - create placeholder from event data
+                published_context_list.insert(
+                    0,
+                    PublishedContextSchema(
+                        entry_id=str(entry_id),
+                        entry_type="source",
+                        work_title=f"[Source Context] {summary[:60]}..." if len(summary) > 60 else f"[Source Context] {summary}",
+                        worker_id=str(agent_id),
+                        objective="Source context extracted from original prompt",
+                        justification="Entry not found in dashboard - may need database sync",
+                        work_analysis="",
+                        approach=None,
+                        challenges=None,
+                        source_context=None,
+                        tags=[],
                         published_at=occurred_at,
                     )
                 )
@@ -654,6 +681,14 @@ async def get_agent_summary(
                         environment=entry.source_context.environment,
                         dependencies=list(entry.source_context.dependencies),
                         key_facts=list(entry.source_context.key_facts),
+                        # Security/CVE build context fields
+                        dockerfile=entry.source_context.dockerfile,
+                        build_script=entry.source_context.build_script,
+                        work_dir=entry.source_context.work_dir,
+                        poc_command=entry.source_context.poc_command,
+                        sanitizer=entry.source_context.sanitizer,
+                        cve_id=entry.source_context.cve_id,
+                        repo_url=entry.source_context.repo_url,
                     )
 
                 inherited_entries.append(

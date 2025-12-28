@@ -817,6 +817,83 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                       </div>
                     )}
 
+                    {/* Security/CVE Build Context Section */}
+                    {(ctx.source_context.cve_id || ctx.source_context.dockerfile || ctx.source_context.build_script) && (
+                      <div className="border-t border-cyan-300 dark:border-cyan-600 pt-2 mt-2">
+                        <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 uppercase mb-2">🔒 Security Build Context</p>
+
+                        {/* CVE ID */}
+                        {ctx.source_context.cve_id && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-red-600 dark:text-red-400">🎯 CVE ID:</p>
+                            <span className="px-2 py-1 text-xs bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-300 rounded font-mono font-bold">
+                              {ctx.source_context.cve_id}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Repository URL */}
+                        {ctx.source_context.repo_url && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-blue-600 dark:text-blue-400">📦 Repository:</p>
+                            <p className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-blue-50 dark:bg-blue-900/20 p-1 rounded truncate">
+                              {ctx.source_context.repo_url}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Dockerfile */}
+                        {ctx.source_context.dockerfile && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-green-600 dark:text-green-400">🐳 Dockerfile:</p>
+                            <pre className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-green-50 dark:bg-green-900/20 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap">
+                              {ctx.source_context.dockerfile}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Build Script */}
+                        {ctx.source_context.build_script && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-orange-600 dark:text-orange-400">🔨 Build Script:</p>
+                            <pre className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-orange-50 dark:bg-orange-900/20 p-2 rounded overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap">
+                              {ctx.source_context.build_script}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Work Directory */}
+                        {ctx.source_context.work_dir && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-gray-600 dark:text-gray-400">📂 Work Directory:</p>
+                            <code className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
+                              {ctx.source_context.work_dir}
+                            </code>
+                          </div>
+                        )}
+
+                        {/* PoC Command */}
+                        {ctx.source_context.poc_command && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-purple-600 dark:text-purple-400">💥 PoC Command:</p>
+                            <pre className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-purple-50 dark:bg-purple-900/20 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                              {ctx.source_context.poc_command}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Sanitizer */}
+                        {ctx.source_context.sanitizer && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-indigo-600 dark:text-indigo-400">🛡️ Sanitizer:</p>
+                            <span className="px-1.5 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 rounded font-mono">
+                              {ctx.source_context.sanitizer}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Tags */}
                     {ctx.tags && ctx.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 pt-1">
@@ -1020,6 +1097,67 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                                 <li key={idx}>{fact}</li>
                               ))}
                             </ul>
+                          </div>
+                        )}
+
+                        {/* Security/CVE Build Context (for inherited source context) */}
+                        {(entry.source_context.cve_id || entry.source_context.dockerfile || entry.source_context.build_script) && (
+                          <div className="border-t border-cyan-300 dark:border-cyan-600 pt-2 mt-2">
+                            <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 uppercase mb-2">🔒 Build Context</p>
+
+                            {entry.source_context.cve_id && (
+                              <div className="mb-1">
+                                <span className="text-xs font-medium text-red-600 dark:text-red-400">CVE: </span>
+                                <span className="px-1.5 py-0.5 text-xs bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-300 rounded font-mono font-bold">
+                                  {entry.source_context.cve_id}
+                                </span>
+                              </div>
+                            )}
+
+                            {entry.source_context.dockerfile && (
+                              <div className="mb-1">
+                                <p className="text-xs font-medium text-green-600 dark:text-green-400">🐳 Dockerfile:</p>
+                                <pre className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-green-50 dark:bg-green-900/20 p-2 rounded overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap">
+                                  {entry.source_context.dockerfile}
+                                </pre>
+                              </div>
+                            )}
+
+                            {entry.source_context.build_script && (
+                              <div className="mb-1">
+                                <p className="text-xs font-medium text-orange-600 dark:text-orange-400">🔨 Build Script:</p>
+                                <pre className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-orange-50 dark:bg-orange-900/20 p-2 rounded overflow-x-auto max-h-20 overflow-y-auto whitespace-pre-wrap">
+                                  {entry.source_context.build_script}
+                                </pre>
+                              </div>
+                            )}
+
+                            {entry.source_context.work_dir && (
+                              <div className="mb-1">
+                                <span className="text-xs font-medium text-gray-600 dark:text-gray-400">📂 Work Dir: </span>
+                                <code className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">
+                                  {entry.source_context.work_dir}
+                                </code>
+                              </div>
+                            )}
+
+                            {entry.source_context.poc_command && (
+                              <div className="mb-1">
+                                <p className="text-xs font-medium text-purple-600 dark:text-purple-400">💥 PoC Command:</p>
+                                <pre className="text-xs text-gray-700 dark:text-gray-300 font-mono bg-purple-50 dark:bg-purple-900/20 p-1 rounded overflow-x-auto whitespace-pre-wrap">
+                                  {entry.source_context.poc_command}
+                                </pre>
+                              </div>
+                            )}
+
+                            {entry.source_context.sanitizer && (
+                              <div className="mb-1">
+                                <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">🛡️ Sanitizer: </span>
+                                <span className="px-1.5 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 rounded font-mono">
+                                  {entry.source_context.sanitizer}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
 

@@ -162,6 +162,14 @@ export interface SourceContextData {
   environment: string;
   dependencies: string[];
   key_facts: string[];
+  // Security/CVE build context fields
+  dockerfile: string;
+  build_script: string;
+  work_dir: string;
+  poc_command: string;
+  sanitizer: string;
+  cve_id: string;
+  repo_url: string;
 }
 
 /** Context entry from the global context dashboard. */

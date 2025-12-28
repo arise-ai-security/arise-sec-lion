@@ -568,6 +568,14 @@ class AgentExecutionService:
                 environment=data.get("environment", ""),
                 dependencies=data.get("dependencies", []),
                 key_facts=data.get("key_facts", []),
+                # Security/CVE build context fields
+                dockerfile=data.get("dockerfile", ""),
+                build_script=data.get("build_script", ""),
+                work_dir=data.get("work_dir", ""),
+                poc_command=data.get("poc_command", ""),
+                sanitizer=data.get("sanitizer", ""),
+                cve_id=data.get("cve_id", ""),
+                repo_url=data.get("repo_url", ""),
                 original_prompt=response[:5000],  # Preserve original for reference
             )
         except json.JSONDecodeError:
@@ -587,6 +595,11 @@ class AgentExecutionService:
             or data.commit_references
             or data.urls
             or data.key_facts
+            # Security/CVE build context fields
+            or data.dockerfile
+            or data.build_script
+            or data.cve_id
+            or data.poc_command
         )
 
     def _generate_source_context_title(
@@ -597,6 +610,13 @@ class AgentExecutionService:
         """Generate a descriptive title for source context entry."""
         parts = []
 
+        # Security/CVE context takes priority
+        if data.cve_id:
+            parts.append(data.cve_id)
+        if data.dockerfile or data.build_script:
+            parts.append("Build Context")
+        if data.poc_command:
+            parts.append("PoC Command")
         if data.bug_summary:
             parts.append("Bug Report")
         if data.error_messages:

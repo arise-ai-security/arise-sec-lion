@@ -26,6 +26,7 @@ class SourceContextData(BaseModel):
     - Error messages and stack traces
     - Environment details
     - Reproduction steps
+    - Security build context (dockerfile, build_sh, etc.)
     """
 
     model_config = {"frozen": True}
@@ -63,6 +64,36 @@ class SourceContextData(BaseModel):
     key_facts: list[str] = Field(
         default_factory=list,
         description="Other key facts extracted from the prompt",
+    )
+
+    # Security/CVE build context (for vulnerability reproduction)
+    dockerfile: str = Field(
+        "",
+        description="Dockerfile content for building the vulnerable environment",
+    )
+    build_script: str = Field(
+        "",
+        description="Build script (build.sh) content with compilation commands",
+    )
+    work_dir: str = Field(
+        "",
+        description="Working directory inside the container",
+    )
+    poc_command: str = Field(
+        "",
+        description="Command to execute the PoC/trigger the vulnerability",
+    )
+    sanitizer: str = Field(
+        "",
+        description="Sanitizer to use (address, undefined, memory)",
+    )
+    cve_id: str = Field(
+        "",
+        description="CVE identifier if this is a vulnerability task",
+    )
+    repo_url: str = Field(
+        "",
+        description="Repository URL for cloning",
     )
 
     # Original prompt preserved for full context

@@ -28,6 +28,15 @@ Analyze the prompt above and extract all key information that would be valuable 
 
 9. **Key Facts**: Any other critical information that workers should know.
 
+10. **Security/CVE Build Context** (CRITICAL for security tasks):
+    - **dockerfile**: Complete Dockerfile content if provided (preserve exact content with newlines as \n)
+    - **build_script**: Build script (build.sh) content if provided (preserve exact content)
+    - **work_dir**: Working directory inside the container (e.g., /src/project)
+    - **poc_command**: Command to trigger the vulnerability/execute PoC
+    - **sanitizer**: Sanitizer type (address, undefined, memory)
+    - **cve_id**: CVE identifier if this is a vulnerability task
+    - **repo_url**: Repository URL for cloning the vulnerable code
+
 ## Output Format
 Return a JSON object with the following structure:
 ```json
@@ -40,7 +49,14 @@ Return a JSON object with the following structure:
   "urls": ["https://github.com/repo/issues/123"],
   "environment": "Linux Ubuntu 22.04, Python 3.12",
   "dependencies": ["pandas==2.0.0", "numpy>=1.24"],
-  "key_facts": ["Must be backward compatible", "Critical for production"]
+  "key_facts": ["Must be backward compatible", "Critical for production"],
+  "dockerfile": "FROM base:latest\nRUN apt-get update...",
+  "build_script": "#!/bin/bash\n./configure && make",
+  "work_dir": "/src/project",
+  "poc_command": "./binary -input crash_file",
+  "sanitizer": "address",
+  "cve_id": "CVE-2023-1234",
+  "repo_url": "https://github.com/org/repo"
 }
 ```
 
@@ -50,4 +66,5 @@ Important:
 - Be comprehensive but accurate - don't invent information
 - Preserve exact error messages and paths as written
 - For key_facts, include any constraints, requirements, or important notes
+- **CRITICAL**: For dockerfile and build_script, preserve the EXACT content verbatim - workers need these to reproduce the environment. Encode newlines as \n in the JSON string.
 </SOURCE_CONTEXT_EXTRACTION>
