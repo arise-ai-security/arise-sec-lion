@@ -4,7 +4,25 @@ Agent Role: PENDING
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
-{% if parent_context %}
+{% if justification and justification.has_content() %}
+<SUPERVISOR_EXPECTATIONS>
+Your supervisor has assigned you this task with the following context and expectations:
+
+**Supervisor's Original Task**: {{ justification.parent_task }}
+
+**Objective for This Subtask**: {{ justification.objective }}
+
+**Why This Subtask Was Created**: {{ justification.split_reason }}
+
+**Suggested Plan/Approach**: {{ justification.plan }}
+
+**Why This Should Work**: {{ justification.why_it_may_work }}
+
+**Expected Results/Deliverables**: {{ justification.expected_results }}
+
+IMPORTANT: Your work must align with the supervisor's original task requirements.
+</SUPERVISOR_EXPECTATIONS>
+{% elif parent_context %}
 <PARENT_CONTEXT>
 Parent Task: {{ parent_context.parent_task }}
 Parent Role: {{ parent_context.parent_role }}
@@ -42,6 +60,13 @@ Your classification determines your next role:
 </TASK_DESCRIPTION>
 
 <EVALUATION_CRITERIA>
+
+## Default Stance: Favor Decomposition
+
+**When uncertain, choose COMPLEX.** Decomposition improves:
+- Quality through focused execution
+- Error isolation and recovery
+- Parallel execution opportunities
 
 ## SIMPLE Task Characteristics
 - Single well-defined task

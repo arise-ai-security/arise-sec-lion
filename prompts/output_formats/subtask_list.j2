@@ -5,6 +5,14 @@ Return ONLY valid JSON matching this exact schema:
 [
   {
     "description": "string (min 10 chars, max 500 chars)",
+    "justification": {
+      "parent_task": "string - the task you received that you are decomposing",
+      "split_reason": "string - why you are splitting this specific subtask from the parent",
+      "objective": "string - what this subtask aims to achieve",
+      "plan": "string - how this subtask will be executed",
+      "why_it_may_work": "string - reasoning for why this approach should succeed",
+      "expected_results": "string - what outputs/outcomes are expected"
+    },
     "config": {
       "strategy": "per_operation" | "heuristic" | "hybrid",
       "tool": "{{ default_tool }}",
@@ -13,6 +21,16 @@ Return ONLY valid JSON matching this exact schema:
   },
   ... (2-3 subtasks total)
 ]
+
+## Justification Guidelines
+
+Each subtask MUST include a justification object explaining your reasoning:
+- **parent_task**: Quote or summarize the task you received that you're decomposing
+- **split_reason**: Explain why this piece needs to be a separate subtask (e.g., different skills, dependency order, parallel execution)
+- **objective**: Clear statement of what success looks like for this subtask
+- **plan**: Step-by-step approach the worker will take
+- **why_it_may_work**: Your reasoning/hypothesis for why this approach is viable
+- **expected_results**: Concrete deliverables or outcomes
 
 ## Config Schema by Strategy
 
@@ -72,16 +90,25 @@ Return ONLY valid JSON matching this exact schema:
 **CRITICAL RULES**:
 1. Response must be PURE JSON array (no markdown, no commentary)
 2. Array must contain 2-3 subtasks (not 1, not 4+)
-3. Each subtask MUST have "description" and "config" fields
-4. Config MUST include "strategy" and "tool" fields
-5. All required fields for chosen strategy must be present
-6. Temperature: 0.0-2.0, max_tokens: 1-100000
-7. Model names: "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "gemini-flash", etc.
+3. Each subtask MUST have "description", "justification", and "config" fields
+4. Justification MUST include all 6 fields: parent_task, split_reason, objective, plan, why_it_may_work, expected_results
+5. Config MUST include "strategy" and "tool" fields
+6. All required fields for chosen strategy must be present
+7. Temperature: 0.0-2.0, max_tokens: 1-100000
+8. Model names: "o3", "o3-mini", "gpt-4o", "gpt-4o-mini", etc.
 
 **Example Valid Output (per_operation)**:
 [
   {
     "description": "Research existing authentication libraries and select the most suitable one for our use case",
+    "justification": {
+      "parent_task": "Implement user authentication system for web application",
+      "split_reason": "Research must be completed before implementation to select optimal library",
+      "objective": "Identify and recommend the best authentication library based on security, ease of use, and maintenance",
+      "plan": "1. Review popular auth libraries (Passport, Auth0, Firebase Auth) 2. Compare security features 3. Evaluate documentation quality 4. Make recommendation",
+      "why_it_may_work": "Thorough research prevents costly rewrites later and ensures we choose a well-maintained solution",
+      "expected_results": "A detailed comparison document with clear recommendation and rationale"
+    },
     "config": {
       "strategy": "per_operation",
       "complexity_evaluation": {
@@ -99,6 +126,14 @@ Return ONLY valid JSON matching this exact schema:
   },
   {
     "description": "Implement user registration with email verification and password hashing",
+    "justification": {
+      "parent_task": "Implement user authentication system for web application",
+      "split_reason": "Registration is a self-contained feature that can be developed and tested independently",
+      "objective": "Create secure user registration flow with email verification",
+      "plan": "1. Create registration endpoint 2. Implement password hashing with bcrypt 3. Add email verification token generation 4. Build verification endpoint",
+      "why_it_may_work": "Using industry-standard bcrypt for hashing and time-limited tokens for verification follows security best practices",
+      "expected_results": "Working registration API with tests, email verification flow, and secure password storage"
+    },
     "config": {
       "strategy": "heuristic",
       "base": {
@@ -115,6 +150,14 @@ Return ONLY valid JSON matching this exact schema:
 [
   {
     "description": "Research BeautifulSoup library documentation and extract key usage patterns",
+    "justification": {
+      "parent_task": "Build web scraper to extract product data from e-commerce sites",
+      "split_reason": "Understanding the library API is prerequisite for implementation",
+      "objective": "Document key BeautifulSoup patterns for HTML parsing and data extraction",
+      "plan": "1. Read official documentation 2. Identify common selectors (CSS, XPath) 3. Note error handling patterns 4. Document findings",
+      "why_it_may_work": "BeautifulSoup is well-documented and widely used; patterns will be well-established",
+      "expected_results": "Cheat sheet of BeautifulSoup patterns applicable to our scraping needs"
+    },
     "config": {
       "strategy": "heuristic",
       "base": {
@@ -127,6 +170,14 @@ Return ONLY valid JSON matching this exact schema:
   },
   {
     "description": "Implement basic web scraper with error handling and rate limiting",
+    "justification": {
+      "parent_task": "Build web scraper to extract product data from e-commerce sites",
+      "split_reason": "Core scraping logic is the main deliverable and should be a focused task",
+      "objective": "Create robust scraper that handles network errors and respects rate limits",
+      "plan": "1. Set up requests with retry logic 2. Implement rate limiting 3. Parse HTML with BeautifulSoup 4. Extract product data to structured format",
+      "why_it_may_work": "Rate limiting prevents IP bans; retry logic handles transient failures",
+      "expected_results": "Functional scraper that can extract data from target site without getting blocked"
+    },
     "config": {
       "strategy": "heuristic",
       "base": {
@@ -139,6 +190,14 @@ Return ONLY valid JSON matching this exact schema:
   },
   {
     "description": "Write unit tests for scraper functionality",
+    "justification": {
+      "parent_task": "Build web scraper to extract product data from e-commerce sites",
+      "split_reason": "Testing is independent and ensures quality without blocking other work",
+      "objective": "Achieve high test coverage for scraper reliability",
+      "plan": "1. Mock HTTP responses 2. Test parsing logic with sample HTML 3. Test error handling paths 4. Test rate limiting behavior",
+      "why_it_may_work": "Mocking allows fast, deterministic tests without hitting real sites",
+      "expected_results": "Test suite with >80% coverage, testing both happy path and error cases"
+    },
     "config": {
       "strategy": "heuristic",
       "base": {
