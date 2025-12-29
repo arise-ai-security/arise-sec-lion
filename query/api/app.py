@@ -14,11 +14,14 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Settings
 from core.ports.event_store_port import EventStorePort
-from query.api.routes import agents, config, events, prompts
+from core.ports.task_registry_port import TaskRegistryPort
+from query.api.routes import agents, config, events, prompts, tasks
 
 
-# Factory function injected by bootstrap layer (avoids query→infrastructure dependency)
+# Factory functions injected by bootstrap layer (avoids query→infrastructure dependency)
 _event_store_factory: Callable[[str], EventStorePort] | None = None
+# Task registry factory takes event_store (concrete type varies by implementation)
+_task_registry_factory: Callable[..., TaskRegistryPort] | None = None
 
 
 def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
@@ -31,15 +34,24 @@ def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
     _event_store_factory = factory
 
 
+def set_task_registry_factory(factory: Callable[..., TaskRegistryPort]) -> None:
+    """Set the task registry factory function.
+
+    Called by bootstrap layer to inject the concrete implementation.
+    """
+    global _task_registry_factory
+    _task_registry_factory = factory
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifespan - startup and shutdown.
 
     This context manager:
-    1. On startup: Connects to the database
+    1. On startup: Connects to the database, creates task registry
     2. On shutdown: Disconnects from the database
 
-    The event store is attached to app.state for access in routes.
+    The event store and task registry are attached to app.state for access in routes.
     """
     if _event_store_factory is None:
         raise RuntimeError(
@@ -55,8 +67,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     event_store = _event_store_factory(settings.database.connection_string)
     await event_store.connect()
 
+    # Create task registry (shares event_store's pool)
+    task_registry = None
+    if _task_registry_factory is not None:
+        task_registry = _task_registry_factory(event_store)
+        await task_registry.ensure_table_exists()
+
     # Attach to app state for dependency injection in routes
     app.state.event_store = event_store
+    app.state.task_registry = task_registry
 
     yield
 
@@ -113,6 +132,7 @@ def create_app(
     app.include_router(events.router, prefix="/api/events", tags=["events"])
     app.include_router(prompts.router, prefix="/api/prompts", tags=["prompts"])
     app.include_router(config.router, prefix="/api/config", tags=["config"])
+    app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 
     # Health check endpoint
     @app.get("/api/health", tags=["health"])

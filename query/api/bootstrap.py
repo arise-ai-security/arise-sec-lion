@@ -10,8 +10,9 @@ Usage:
 from fastapi import FastAPI
 
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from infrastructure.adapters.task_registry_adapter import PostgresTaskRegistryAdapter
 from query.api.app import create_app as _create_app
-from query.api.app import set_event_store_factory
+from query.api.app import set_event_store_factory, set_task_registry_factory
 
 
 def create_app() -> FastAPI:
@@ -19,9 +20,11 @@ def create_app() -> FastAPI:
 
     This is the proper entry point for uvicorn. It:
     1. Injects the event store factory
-    2. Returns the configured FastAPI app
+    2. Injects the task registry factory
+    3. Returns the configured FastAPI app
     """
-    # Inject event store factory (bootstrap → query, not query → infrastructure)
+    # Inject factories (bootstrap → query, not query → infrastructure)
     set_event_store_factory(PostgresEventStore)
+    set_task_registry_factory(PostgresTaskRegistryAdapter)
 
     return _create_app()

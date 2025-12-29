@@ -326,3 +326,48 @@ class ExecutionSummarySchema(BaseModel):
 
     # Derived fields
     is_complete: bool = Field(False, description="Whether all agents have completed")
+
+
+# =============================================================================
+# Task Registry Schemas (for deduplication visibility)
+# =============================================================================
+
+
+class RegisteredTaskSchema(BaseModel):
+    """Schema for a registered task in the global registry."""
+
+    task_key: str = Field(..., description="Normalized hash of task description (16 chars)")
+    task_description: str = Field(..., description="Original task description (truncated to 200 chars)")
+    registered_by: str = Field(..., description="Agent UUID that registered this task")
+    parent_id: str | None = Field(None, description="Parent agent UUID")
+
+
+class RegisteredTaskListSchema(BaseModel):
+    """Schema for list of registered tasks."""
+
+    tasks: list[RegisteredTaskSchema] = Field(default_factory=list)
+    total: int = Field(..., description="Total number of registered tasks")
+
+
+# =============================================================================
+# Prompt Schemas (for observability)
+# =============================================================================
+
+
+class AgentPromptSchema(BaseModel):
+    """Schema for a prompt sent by an agent."""
+
+    prompt: str = Field(..., description="Full prompt text")
+    prompt_type: str = Field(
+        ..., description="Type of prompt (complexity_evaluation, task_decomposition, worker_execution)"
+    )
+    target: str = Field(..., description="Where prompt was sent (llm, claude_code, openhands, etc.)")
+    occurred_at: datetime = Field(..., description="When the prompt was sent")
+
+
+class AgentPromptsSchema(BaseModel):
+    """Schema for list of prompts for an agent."""
+
+    agent_id: str = Field(..., description="Agent UUID")
+    prompts: list[AgentPromptSchema] = Field(default_factory=list)
+    total: int = Field(..., description="Total number of prompts")
