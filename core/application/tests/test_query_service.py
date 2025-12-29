@@ -371,6 +371,51 @@ class TestSequentialWorkerOrdering:
         assert w_right_id in active  # No longer blocked
 
     @pytest.mark.asyncio
+    async def test_workers_blocked_by_incomplete_nested_subtree(
+        self, mock_repository
+    ) -> None:
+        """Test that workers wait for nested left subtrees to complete.
+
+        Scenario: Left manager is completed but has children still working.
+        Right worker should NOT execute until entire left subtree is done.
+        """
+        from core.application.services.query_service import AgentQueryService
+
+        repository, create_events = mock_repository
+
+        # Given: Left manager completed, but has a child manager still working
+        root_id = uuid4()
+        m_left_id = uuid4()  # Left manager - completed
+        m_left_child_id = uuid4()  # Child of left manager - still working!
+        w_right_id = uuid4()  # Right worker
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            m_left_id: create_events(m_left_id, "manager", root_id, 0, "completed"),
+            m_left_child_id: create_events(
+                m_left_child_id, "manager", m_left_id, 0
+            ),  # Not terminal
+            w_right_id: create_events(w_right_id, "worker", root_id, 1),
+        }
+
+        # Mark left manager as completed (but child is NOT completed)
+        from core.domain.events import WorkCompleted
+
+        repository.get_all_events_grouped.return_value[m_left_id].append(
+            WorkCompleted(aggregate_id=m_left_id, sequence_number=3, result="done")
+        )
+
+        # When: Getting active agents with sequential_workers=True
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=True)
+
+        # Then: Worker is blocked because left subtree has incomplete child
+        assert root_id in active
+        assert m_left_id not in active  # Terminal (completed)
+        assert m_left_child_id in active  # Non-worker, still working
+        assert w_right_id not in active  # Blocked! Left subtree not fully complete
+
+    @pytest.mark.asyncio
     async def test_sequential_false_returns_all_workers(self, mock_repository) -> None:
         """Test that sequential_workers=False returns all active workers."""
         from core.application.services.query_service import AgentQueryService

@@ -296,6 +296,31 @@ class AgentQueryService:
 
         return hierarchy
 
+    def _is_subtree_complete(
+        self,
+        root_id: UUID,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+    ) -> bool:
+        """Check if entire subtree rooted at root_id is complete.
+
+        A subtree is complete when ALL nodes (root and all descendants)
+        are in terminal state (COMPLETED or FAILED).
+        """
+        if root_id not in summaries:
+            return True
+
+        summary = summaries[root_id]
+        if not summary.is_terminal:
+            return False
+
+        # Recursively check all children
+        for child_id in children_map.get(root_id, []):
+            if not self._is_subtree_complete(child_id, summaries, children_map):
+                return False
+
+        return True
+
     def _has_incomplete_left_siblings(
         self,
         agent_id: UUID,
@@ -305,7 +330,8 @@ class AgentQueryService:
         """Check if agent has any incomplete left sibling subtrees.
 
         Walks up ancestor chain, checking at each level for left siblings
-        (lower sibling_index) not in terminal state. O(depth * siblings).
+        (lower sibling_index). For each left sibling, verifies the ENTIRE
+        subtree is complete (all descendants terminal), not just the root.
         """
         current_id = agent_id
 
@@ -314,14 +340,15 @@ class AgentQueryService:
             parent_id = summary.parent_id
 
             if parent_id is not None:
-                # Check siblings via children_map (O(siblings) per level)
+                # Check siblings via children_map
                 for sibling_id in children_map.get(parent_id, []):
                     sibling = summaries[sibling_id]
-                    if (
-                        sibling.sibling_index < summary.sibling_index
-                        and not sibling.is_terminal
-                    ):
-                        return True
+                    if sibling.sibling_index < summary.sibling_index:
+                        # Check if ENTIRE subtree is complete, not just the root
+                        if not self._is_subtree_complete(
+                            sibling_id, summaries, children_map
+                        ):
+                            return True
 
             current_id = parent_id
 
