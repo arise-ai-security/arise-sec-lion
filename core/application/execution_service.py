@@ -267,8 +267,10 @@ class AgentExecutionService:
             if not all_entries:
                 return None, [], total_available
 
-            # Format as context string
-            return self._format_context_for_prompt(all_entries), all_entry_ids, total_available
+            # Format as context string (pass task description for CWE pattern selection)
+            return self._format_context_for_prompt(
+                all_entries, task_description=agent.task_description
+            ), all_entry_ids, total_available
 
         except Exception:
             # Don't fail worker execution if context retrieval fails
@@ -293,6 +295,7 @@ class AgentExecutionService:
     def _format_context_for_prompt(
         self,
         entries: list,  # list[ContextEntry]
+        task_description: str = "",
     ) -> str:
         """Format context entries for injection into worker prompt.
 
@@ -304,6 +307,11 @@ class AgentExecutionService:
 
         Also handles SOURCE type entries which contain key information
         extracted from the Boss's original prompt.
+
+        Args:
+            entries: List of context entries to format.
+            task_description: The worker's task description, used to determine
+                whether to include PoC or patch fix patterns.
         """
         from core.domain.context_entry import ContextEntryType
 
@@ -381,6 +389,59 @@ class AgentExecutionService:
                         for fact in sc.key_facts:
                             lines.append(f"- {fact}")
                         lines.append("")
+
+                    # CWE Pattern Information (inferred by BOSS from bug analysis)
+                    if sc.inferred_cwes:
+                        lines.append("## ⚠️ INFERRED CWE PATTERNS")
+                        lines.append("The following CWE patterns were identified from the bug report:")
+                        lines.append("")
+                        for cwe in sc.inferred_cwes:
+                            confidence = sc.cwe_confidence.get(cwe, "unknown")
+                            reasoning = sc.cwe_reasoning.get(cwe, "")
+                            fix_pattern = sc.fix_patterns.get(cwe, "")
+                            lines.append(f"### {cwe} (Confidence: {confidence})")
+                            if reasoning:
+                                lines.append(f"**Why this CWE:** {reasoning}")
+                            if fix_pattern:
+                                lines.append(f"**Recommended Fix Pattern:** {fix_pattern}")
+                            lines.append("")
+
+                    if sc.recommended_sanitizers:
+                        lines.append("## Recommended Sanitizers for Verification")
+                        for san in sc.recommended_sanitizers:
+                            lines.append(f"- {san}")
+                        lines.append("")
+
+            # Collect all inferred CWEs across all source entries
+            all_cwes: list[str] = []
+            for entry in source_entries:
+                if entry.source_context and entry.source_context.inferred_cwes:
+                    all_cwes.extend(entry.source_context.inferred_cwes)
+
+            # Remove duplicates while preserving order
+            seen: set[str] = set()
+            unique_cwes: list[str] = []
+            for cwe in all_cwes:
+                if cwe not in seen:
+                    seen.add(cwe)
+                    unique_cwes.append(cwe)
+
+            # Add detailed CWE fix patterns from security knowledge base
+            if unique_cwes and self.prompt_builder:
+                # Determine task type based on task description keywords
+                task_lower = task_description.lower() if task_description else ""
+
+                if "poc" in task_lower or "exploit" in task_lower or "trigger" in task_lower:
+                    task_type = "poc"
+                else:
+                    task_type = "patch"
+
+                cwe_guidance = self.prompt_builder.get_cwe_guidance_for_worker(
+                    inferred_cwes=unique_cwes,
+                    task_type=task_type,
+                )
+                if cwe_guidance:
+                    lines.append(cwe_guidance)
 
             lines.append("-" * 60)
             lines.append("")
