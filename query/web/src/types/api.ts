@@ -251,3 +251,51 @@ export interface ExecutionSummary {
   /** Whether all agents have completed. */
   is_complete: boolean;
 }
+
+// =============================================================================
+// Task Registry Types (for deduplication visibility)
+// =============================================================================
+
+/** Registered task in the global deduplication registry. */
+export interface RegisteredTask {
+  /** Normalized hash of task description (16 chars). */
+  task_key: string;
+  /** Original task description (truncated to 200 chars). */
+  task_description: string;
+  /** Agent UUID that registered this task. */
+  registered_by: string;
+  /** Parent agent UUID. */
+  parent_id: string | null;
+}
+
+/** List of registered tasks. */
+export interface RegisteredTaskList {
+  tasks: RegisteredTask[];
+  total: number;
+}
+
+// =============================================================================
+// Prompt Types (for observability)
+// =============================================================================
+
+/** A prompt sent by an agent. */
+export interface AgentPrompt {
+  /** Full prompt text. */
+  prompt: string;
+  /** Type of prompt (complexity_evaluation, task_decomposition, worker_execution). */
+  prompt_type: string;
+  /** Where prompt was sent (llm, claude_code, openhands, etc.). */
+  target: string;
+  /** When the prompt was sent. */
+  occurred_at: string;
+}
+
+/** List of prompts for an agent. */
+export interface AgentPrompts {
+  /** Agent UUID. */
+  agent_id: string;
+  /** List of prompts. */
+  prompts: AgentPrompt[];
+  /** Total number of prompts. */
+  total: number;
+}

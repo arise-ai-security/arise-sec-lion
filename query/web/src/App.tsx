@@ -9,11 +9,13 @@ import { AgentTree } from './components/AgentTree';
 import { ConfigPanel } from './components/ConfigPanel';
 import { CostPanel } from './components/CostPanel';
 import { EventPanel } from './components/EventPanel';
+import { PromptsPanel } from './components/PromptsPanel';
+import { RegisteredTasksPanel } from './components/RegisteredTasksPanel';
 import { SummaryPanel } from './components/SummaryPanel';
 import { useSSE } from './hooks/useSSE';
 import { useSummarySSE } from './hooks/useSummarySSE';
 import * as api from './api/client';
-import type { AgentListItem, AgentHierarchy, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
+import type { AgentListItem, AgentHierarchy, AgentPrompt, AgentSummary, CategorizedEvents, DomainEvent, RegisteredTask } from './types/api';
 
 function App() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
@@ -24,12 +26,18 @@ function App() {
   const [realtimeEvents, setRealtimeEvents] = useState<DomainEvent[]>([]);
   const [summary, setSummary] = useState<AgentSummary | null>(null);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
-  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events' | 'costs'>('summary');
+  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events' | 'costs' | 'tasks' | 'prompts'>('summary');
 
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [registeredTasks, setRegisteredTasks] = useState<RegisteredTask[]>([]);
+  const [registeredTasksTotal, setRegisteredTasksTotal] = useState(0);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [nodePrompts, setNodePrompts] = useState<AgentPrompt[]>([]);
+  const [nodePromptsTotal, setNodePromptsTotal] = useState(0);
+  const [loadingPrompts, setLoadingPrompts] = useState(false);
 
   // Use refs for values needed in callbacks to avoid dependency loops
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -157,6 +165,60 @@ function App() {
     };
   }, [selectedNodeId]);
 
+  // Fetch registered tasks when agent is selected
+  const loadRegisteredTasks = useCallback(async () => {
+    if (!selectedAgentId) {
+      setRegisteredTasks([]);
+      setRegisteredTasksTotal(0);
+      return;
+    }
+
+    setLoadingTasks(true);
+    try {
+      const data = await api.getRegisteredTasks(selectedAgentId);
+      setRegisteredTasks(data.tasks);
+      setRegisteredTasksTotal(data.total);
+    } catch (error) {
+      console.error('Failed to load registered tasks:', error);
+      setRegisteredTasks([]);
+      setRegisteredTasksTotal(0);
+    } finally {
+      setLoadingTasks(false);
+    }
+  }, [selectedAgentId]);
+
+  // Load registered tasks when agent changes
+  useEffect(() => {
+    loadRegisteredTasks();
+  }, [loadRegisteredTasks]);
+
+  // Fetch prompts for selected node
+  const loadNodePrompts = useCallback(async () => {
+    if (!selectedNodeId) {
+      setNodePrompts([]);
+      setNodePromptsTotal(0);
+      return;
+    }
+
+    setLoadingPrompts(true);
+    try {
+      const data = await api.getAgentPrompts(selectedNodeId);
+      setNodePrompts(data.prompts);
+      setNodePromptsTotal(data.total);
+    } catch (error) {
+      console.error('Failed to load prompts:', error);
+      setNodePrompts([]);
+      setNodePromptsTotal(0);
+    } finally {
+      setLoadingPrompts(false);
+    }
+  }, [selectedNodeId]);
+
+  // Load prompts when node changes
+  useEffect(() => {
+    loadNodePrompts();
+  }, [loadNodePrompts]);
+
   // Debounced hierarchy refresh - stable callback using ref
   const refreshHierarchy = useCallback(() => {
     // Cancel any pending refresh
@@ -199,8 +261,12 @@ function App() {
     const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed'];
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
+      // Also refresh registered tasks when new agents are created
+      if (event.event_type === 'ChildSpawned') {
+        loadRegisteredTasks();
+      }
     }
-  }, [refreshHierarchy]);
+  }, [refreshHierarchy, loadRegisteredTasks]);
 
   // SSE connection for real-time updates
   const { isConnected } = useSSE({
@@ -330,6 +396,36 @@ function App() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setRightPanelView('tasks')}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                rightPanelView === 'tasks'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Tasks
+              {registeredTasksTotal > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-purple-600 rounded-full">
+                  {registeredTasksTotal}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setRightPanelView('prompts')}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                rightPanelView === 'prompts'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Prompts
+              {nodePromptsTotal > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-orange-600 rounded-full">
+                  {nodePromptsTotal}
+                </span>
+              )}
+            </button>
           </div>
         </div>
 
@@ -339,11 +435,25 @@ function App() {
             <SummaryPanel summary={summary} loading={loadingSummary} />
           ) : rightPanelView === 'events' ? (
             <EventPanel events={events} loading={loadingEvents} />
-          ) : (
+          ) : rightPanelView === 'costs' ? (
             <CostPanel
               summary={executionSummary}
               loading={!executionSummary && !!selectedAgentId}
               isConnected={isSummaryConnected}
+            />
+          ) : rightPanelView === 'tasks' ? (
+            <RegisteredTasksPanel
+              tasks={registeredTasks}
+              total={registeredTasksTotal}
+              loading={loadingTasks}
+              onRefresh={loadRegisteredTasks}
+            />
+          ) : (
+            <PromptsPanel
+              prompts={nodePrompts}
+              total={nodePromptsTotal}
+              loading={loadingPrompts}
+              onRefresh={loadNodePrompts}
             />
           )}
         </div>

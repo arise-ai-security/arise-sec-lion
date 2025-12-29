@@ -5,6 +5,7 @@
 import type {
   AgentListItem,
   AgentHierarchy,
+  AgentPrompts,
   AgentSummary,
   DomainEvent,
   CategorizedEvents,
@@ -16,6 +17,7 @@ import type {
   SystemConfig,
   ExecutionSummary,
   PaginatedAgentList,
+  RegisteredTaskList,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -153,4 +155,24 @@ export async function getExecutionSummary(agentId: string): Promise<ExecutionSum
  */
 export function createSummaryEventSource(rootId: string): EventSource {
   return new EventSource(`${API_BASE}/events/sse/${rootId}/summary`);
+}
+
+// Task Registry endpoints
+
+/**
+ * Get all registered tasks for a root agent (execution run).
+ * Shows tasks in the deduplication registry.
+ */
+export async function getRegisteredTasks(rootId: string): Promise<RegisteredTaskList> {
+  return fetchJson<RegisteredTaskList>(`/tasks/${rootId}`);
+}
+
+// Prompt endpoints
+
+/**
+ * Get all prompts sent by an agent.
+ * Returns prompts for complexity evaluation, task decomposition, and worker execution.
+ */
+export async function getAgentPrompts(agentId: string): Promise<AgentPrompts> {
+  return fetchJson<AgentPrompts>(`/events/${agentId}/prompts`);
 }
