@@ -10,6 +10,7 @@ This is the main orchestration service that coordinates:
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,6 +133,15 @@ class AgentExecutionService:
         )
         self._worker_semaphore = asyncio.Semaphore(semaphore_limit)
 
+        # LLM concurrency control (prevents API rate limiting)
+        llm_limit = (
+            system_limits.max_concurrent_llm_calls
+            if system_limits.is_llm_limited()
+            else 10000  # Effectively unlimited
+        )
+        self._llm_semaphore = asyncio.Semaphore(llm_limit)
+        self._llm_jitter_max_ms = system_limits.llm_jitter_max_ms
+
         # Progress callback
         self._progress_callback = progress_callback
 
@@ -226,32 +236,59 @@ class AgentExecutionService:
             root_agent_id: Root agent ID to filter hierarchy. Only agents
                            in this hierarchy will be processed.
 
-        Workers execute one at a time in left-to-right tree order.
-        Non-workers (BOSS, MANAGER, PENDING) execute in parallel for decomposition.
+        Uses fire-and-forget pattern for non-blocking execution:
+        - Continuously polls for new agents without waiting for LLM calls
+        - Managers decompose in parallel, spawning children immediately
+        - Workers execute one at a time in left-to-right tree order
         """
+        in_progress: set[UUID] = set()
+        tasks: dict[UUID, asyncio.Task] = {}
+
         while True:
+            # Clean up completed tasks
+            completed = [aid for aid, task in tasks.items() if task.done()]
+            for aid in completed:
+                in_progress.discard(aid)
+                task = tasks.pop(aid)
+                # Log any exceptions
+                if task.exception():
+                    print(f"Error executing agent {aid}: {task.exception()!r}")
+
+            # Get active agents not already being processed
             active_agents = await self._query_service.get_active_agent_ids(
                 root_id=root_agent_id,
-                sequential_workers=True,  # Always enforce left-to-right worker order
+                sequential_workers=True,
             )
-            if not active_agents:
-                break
+            new_agents = [aid for aid in active_agents if aid not in in_progress]
 
-            # Execute all active agents concurrently
-            # - Non-workers (managers) decompose in parallel
-            # - Workers are already limited to one by get_active_agent_ids
-            # - Worker semaphore provides additional concurrency control
-            await asyncio.gather(
-                *(self._run_agent_step_safe(agent_id) for agent_id in active_agents),
-                return_exceptions=True,
-            )
+            # Spawn tasks for new agents (fire-and-forget)
+            for agent_id in new_agents:
+                in_progress.add(agent_id)
+                tasks[agent_id] = asyncio.create_task(
+                    self._run_agent_step_safe(agent_id)
+                )
+
+            # Exit when no active agents and no in-progress tasks
+            if not active_agents and not in_progress:
+                break
 
             await asyncio.sleep(self._config.poll_interval)
 
+        # Wait for any remaining tasks to complete
+        if tasks:
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
+
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
-        """Execute agent step with exception handling for gather()."""
+        """Execute agent step with exception handling, jitter, and rate limiting."""
         try:
-            await self.run_agent_step(agent_id)
+            # Apply jitter to spread out API calls
+            if self._llm_jitter_max_ms > 0:
+                jitter_ms = random.randint(0, self._llm_jitter_max_ms)
+                await asyncio.sleep(jitter_ms / 1000.0)
+
+            # Use LLM semaphore to limit concurrent API calls
+            async with self._llm_semaphore:
+                await self.run_agent_step(agent_id)
         except Exception as e:
             print(f"Error executing agent {agent_id}: {e!r}")
 

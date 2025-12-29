@@ -101,6 +101,8 @@ class OrchestrationConfig(BaseModel):
         max_total_agents: int
         max_concurrent_workers: int
         llm_rate_limit_rpm: int
+        max_concurrent_llm_calls: int = 5  # Concurrent LLM API calls (-1 = unlimited)
+        llm_jitter_max_ms: int = 500  # Max jitter before LLM calls in ms (0 = disabled)
 
         def is_depth_limited(self) -> bool:
             """Check if depth limit is enabled."""
@@ -118,9 +120,13 @@ class OrchestrationConfig(BaseModel):
             """Check if concurrent workers limit is enabled."""
             return self.max_concurrent_workers > 0
 
+        def is_llm_limited(self) -> bool:
+            """Check if concurrent LLM calls limit is enabled."""
+            return self.max_concurrent_llm_calls > 0
+
     max_retries: int = Field(ge=0, le=10)
     retry_delay: float = Field(ge=0.0)
-    poll_interval: float = Field(ge=0.1)
+    poll_interval: float = Field(ge=0.01)  # Minimum 10ms
     llm_timeout: float = Field(gt=0.0)
     worker_timeout: float = Field(gt=0.0)
     default_task_complexity_threshold: int = Field(ge=1, le=10)
