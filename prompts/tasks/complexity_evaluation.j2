@@ -61,12 +61,14 @@ Your classification determines your next role:
 
 <EVALUATION_CRITERIA>
 
-## Default Stance: Favor Decomposition
+## Default Stance: Favor Execution
 
-**When uncertain, choose COMPLEX.** Decomposition improves:
-- Quality through focused execution
-- Error isolation and recovery
-- Parallel execution opportunities
+**When uncertain, choose SIMPLE.** Over-decomposition causes:
+- Exponential task explosion
+- Redundant work across subtasks
+- Coordination overhead exceeding task value
+
+**Decompose ONLY when the task genuinely requires multiple distinct artifacts or phases.**
 
 ## SIMPLE Task Characteristics
 - Single well-defined task
@@ -91,19 +93,30 @@ Your classification determines your next role:
 
 <EXAMPLES>
 
-### SIMPLE Examples
+### SIMPLE Examples (execute directly)
 - "Write a Python function to calculate Fibonacci numbers"
 - "Add input validation to the UserService.create_user method"
 - "Refactor the User model to use properties instead of direct attributes"
 - "Fix bug where logout doesn't clear session cookie"
 - "Research BeautifulSoup library documentation"
+- "Clone repository and setup Docker environment"
+- "Generate a PoC exploit for a vulnerability"
+- "Implement a patch for a bug"
+- "Run tests and document results"
+- "Analyze code to find root cause"
 
-### COMPLEX Examples
-- "Build a web scraper for news articles" (research + implementation + testing + deployment)
-- "Implement user authentication system" (database schema + API + security + sessions)
-- "Create a recommendation engine" (data collection + algorithm + training + deployment)
-- "Add real-time notifications" (WebSocket + event system + frontend integration)
-- "Migrate from REST API to GraphQL" (schema design + server setup + client updates)
+### COMPLEX Examples (decompose into subtasks)
+- "Build a complete web application from scratch" (multiple systems required)
+- "Implement full user authentication system" (registration + login + session + security + API)
+- "Create end-to-end ML pipeline" (data + training + serving + monitoring)
+
+### FALSE COMPLEX (should be SIMPLE)
+❌ "Clone repo and setup environment" → SIMPLE (single setup task)
+❌ "Generate PoC for CVE" → SIMPLE (single focused task)
+❌ "Analyze vulnerability root cause" → SIMPLE (single analysis task)
+❌ "Implement patch for bug" → SIMPLE (single implementation task)
+
+**If the task can be done by one person in one sitting → SIMPLE**
 
 </EXAMPLES>
 
