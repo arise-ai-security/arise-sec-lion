@@ -27,9 +27,11 @@ Features:
     * Published context (BOSS/MANAGER): Shows context published to dashboard
       - Source context (from original prompt): bug_summary, error_messages, reproduction_steps,
         file_paths, commit_references, urls, environment, dependencies, key_facts
+      - CWE Pattern Analysis: inferred_cwes, cwe_reasoning, cwe_confidence, fix_patterns, recommended_sanitizers
       - Worker context: objective, justification, work_analysis, tags
     * Inherited context (WORKER): Shows knowledge inherited from dashboard
       - Source context: extracted key information from original prompt
+      - CWE information: inferred CWEs and fix patterns passed down to workers
       - Worker context: previously completed work relevant to current task
   - Color-coded nodes by role
   - Automatic tree layout
@@ -996,6 +998,77 @@ function AgentModal({ agent, onClose }) {
                           </ul>
                         </div>
                       )}
+                      {/* CWE Information */}
+                      {ctx.source_context.inferred_cwes && ctx.source_context.inferred_cwes.length > 0 && (
+                        <div style={{ marginBottom: '8px', backgroundColor: '#fef2f2', padding: '12px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '600', color: '#dc2626', marginBottom: '8px', textTransform: 'uppercase' }}>🛡️ CWE Pattern Analysis</div>
+                          {/* CWE IDs */}
+                          <div style={{ marginBottom: '8px' }}>
+                            <div style={{ fontSize: '11px', fontWeight: '500', color: '#991b1b', marginBottom: '4px' }}>Inferred CWEs:</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {ctx.source_context.inferred_cwes.map((cwe, idx) => (
+                                <span key={idx} style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', fontFamily: 'monospace' }}>{cwe}</span>
+                              ))}
+                            </div>
+                          </div>
+                          {/* CWE Reasoning */}
+                          {ctx.source_context.cwe_reasoning && Object.keys(ctx.source_context.cwe_reasoning).length > 0 && (
+                            <div style={{ marginBottom: '8px' }}>
+                              <div style={{ fontSize: '11px', fontWeight: '500', color: '#991b1b', marginBottom: '4px' }}>Analysis Reasoning:</div>
+                              <div style={{ backgroundColor: 'white', padding: '8px', borderRadius: '4px', fontSize: '12px' }}>
+                                {Object.entries(ctx.source_context.cwe_reasoning).map(([cwe, reason], idx) => (
+                                  <div key={idx} style={{ marginBottom: idx < Object.keys(ctx.source_context.cwe_reasoning).length - 1 ? '6px' : 0 }}>
+                                    <span style={{ fontWeight: '600', color: '#dc2626' }}>{cwe}:</span>
+                                    <span style={{ color: '#374151', marginLeft: '6px' }}>{reason}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* CWE Confidence */}
+                          {ctx.source_context.cwe_confidence && Object.keys(ctx.source_context.cwe_confidence).length > 0 && (
+                            <div style={{ marginBottom: '8px' }}>
+                              <div style={{ fontSize: '11px', fontWeight: '500', color: '#991b1b', marginBottom: '4px' }}>Confidence Levels:</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {Object.entries(ctx.source_context.cwe_confidence).map(([cwe, conf], idx) => {
+                                  const confColor = conf === 'high' ? '#16a34a' : conf === 'medium' ? '#ca8a04' : '#6b7280';
+                                  return (
+                                    <span key={idx} style={{ backgroundColor: '#f9fafb', padding: '3px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                                      <span style={{ fontFamily: 'monospace', fontWeight: '500' }}>{cwe}</span>
+                                      <span style={{ marginLeft: '4px', color: confColor, fontWeight: '600' }}>{conf}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          {/* Fix Patterns */}
+                          {ctx.source_context.fix_patterns && Object.keys(ctx.source_context.fix_patterns).length > 0 && (
+                            <div style={{ marginBottom: '8px' }}>
+                              <div style={{ fontSize: '11px', fontWeight: '500', color: '#16a34a', marginBottom: '4px' }}>🔧 Recommended Fix Patterns:</div>
+                              <div style={{ backgroundColor: '#f0fdf4', padding: '8px', borderRadius: '4px', fontSize: '12px' }}>
+                                {Object.entries(ctx.source_context.fix_patterns).map(([cwe, pattern], idx) => (
+                                  <div key={idx} style={{ marginBottom: idx < Object.keys(ctx.source_context.fix_patterns).length - 1 ? '6px' : 0 }}>
+                                    <span style={{ fontWeight: '600', color: '#15803d', fontFamily: 'monospace' }}>{cwe}:</span>
+                                    <span style={{ color: '#374151', marginLeft: '6px' }}>{pattern}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* Recommended Sanitizers */}
+                          {ctx.source_context.recommended_sanitizers && ctx.source_context.recommended_sanitizers.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: '11px', fontWeight: '500', color: '#7c3aed', marginBottom: '4px' }}>🧪 Recommended Sanitizers:</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {ctx.source_context.recommended_sanitizers.map((san, idx) => (
+                                  <span key={idx} style={{ backgroundColor: '#f3e8ff', color: '#7c3aed', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' }}>{san}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {/* Tags */}
                       {ctx.tags && ctx.tags.length > 0 && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
@@ -1174,6 +1247,30 @@ function AgentModal({ agent, onClose }) {
                                     <li key={idx}>{fact}</li>
                                   ))}
                                 </ul>
+                              </div>
+                            )}
+                            {/* CWE Information (inherited) */}
+                            {entry.source_context.inferred_cwes && entry.source_context.inferred_cwes.length > 0 && (
+                              <div style={{ marginBottom: '6px', backgroundColor: '#fef2f2', padding: '10px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '600', color: '#dc2626', marginBottom: '6px' }}>🛡️ CWE Pattern Analysis</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
+                                  {entry.source_context.inferred_cwes.map((cwe, idx) => (
+                                    <span key={idx} style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', fontFamily: 'monospace' }}>{cwe}</span>
+                                  ))}
+                                </div>
+                                {entry.source_context.fix_patterns && Object.keys(entry.source_context.fix_patterns).length > 0 && (
+                                  <div>
+                                    <div style={{ fontSize: '10px', fontWeight: '500', color: '#16a34a', marginBottom: '2px' }}>🔧 Fix Patterns:</div>
+                                    <div style={{ fontSize: '11px', color: '#374151', backgroundColor: 'white', padding: '6px', borderRadius: '4px' }}>
+                                      {Object.entries(entry.source_context.fix_patterns).map(([cwe, pattern], idx) => (
+                                        <div key={idx} style={{ marginBottom: idx < Object.keys(entry.source_context.fix_patterns).length - 1 ? '4px' : 0 }}>
+                                          <span style={{ fontWeight: '500', color: '#15803d', fontFamily: 'monospace' }}>{cwe}:</span>
+                                          <span style={{ marginLeft: '4px' }}>{pattern}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                             {/* Tags */}

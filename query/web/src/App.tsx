@@ -30,6 +30,7 @@ function App() {
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
 
   // Use refs for values needed in callbacks to avoid dependency loops
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -45,6 +46,7 @@ function App() {
     try {
       const data = await api.listBossAgents();
       setAgents(data);
+      setAgentsError(null);
 
       // Auto-select first agent only if none selected (use ref to avoid loop)
       if (!selectedAgentIdRef.current && data.length > 0) {
@@ -53,6 +55,8 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to load agents:', error);
+      const message = error instanceof Error ? error.message : 'Failed to connect to API';
+      setAgentsError(message);
     } finally {
       setLoadingAgents(false);
     }
@@ -297,6 +301,7 @@ function App() {
           selectedId={selectedAgentId}
           onSelect={handleAgentSelect}
           loading={loadingAgents}
+          error={agentsError}
         />
       </div>
 
@@ -344,7 +349,7 @@ function App() {
               <div className="animate-pulse text-gray-500">Loading hierarchy...</div>
             </div>
           ) : (
-            <AgentTree hierarchy={hierarchy} onNodeClick={handleNodeClick} />
+            <AgentTree hierarchy={hierarchy} onNodeClick={handleNodeClick} hasAgents={agents.length > 0} />
           )}
         </div>
       </div>
