@@ -96,6 +96,28 @@ class SourceContextData(BaseModel):
         description="Repository URL for cloning",
     )
 
+    # CWE Pattern Inference (inferred from bug report analysis)
+    inferred_cwes: list[str] = Field(
+        default_factory=list,
+        description="Inferred CWE IDs based on bug report analysis (e.g., ['CWE-787', 'CWE-125'])",
+    )
+    cwe_reasoning: dict[str, str] = Field(
+        default_factory=dict,
+        description="Reasoning for each inferred CWE (e.g., {'CWE-787': 'Buffer overflow in memcpy...'})",
+    )
+    cwe_confidence: dict[str, str] = Field(
+        default_factory=dict,
+        description="Confidence level for each CWE (e.g., {'CWE-787': 'high', 'CWE-125': 'medium'})",
+    )
+    recommended_sanitizers: list[str] = Field(
+        default_factory=list,
+        description="Recommended sanitizers based on CWE patterns (e.g., ['-fsanitize=address'])",
+    )
+    fix_patterns: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recommended fix patterns per CWE (e.g., {'CWE-787': 'Add bounds check before memcpy'})",
+    )
+
     # Original prompt preserved for full context
     original_prompt: str = Field("", description="The original Boss prompt")
 

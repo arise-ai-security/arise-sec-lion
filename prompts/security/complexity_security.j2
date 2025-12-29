@@ -89,13 +89,93 @@ COMPLEX if:
 
 The vulnerability type informs complexity:
 
-| CWE Category | When SIMPLE | When COMPLEX |
-|--------------|-------------|--------------|
-| **Buffer overflows (787, 125)** | Single bounds check at known location | Multiple access points or unknown location |
-| **Use-after-free (416)** | Simple NULL-after-free | Lifetime/ownership redesign needed |
-| **NULL pointer (476)** | Single NULL check | Multiple dereference sites |
-| **Race conditions (362)** | Usually COMPLEX | Synchronization requires analysis |
-| **Integer overflow (190)** | Single arithmetic check | Overflow propagates through code |
+### Memory Safety CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-787** | Out-of-bounds Write | Single bounds check at known location | Multiple write sites or unknown location |
+| **CWE-125** | Out-of-bounds Read | Single bounds check at known location | Multiple read sites across functions |
+| **CWE-122** | Heap-based Buffer Overflow | Single heap allocation site | Dynamic allocation patterns |
+| **CWE-121** | Stack-based Buffer Overflow | Single stack buffer usage | Multiple functions with stack buffers |
+| **CWE-416** | Use-After-Free | Simple NULL-after-free at one site | Lifetime/ownership redesign across files |
+| **CWE-415** | Double Free | Single error path fix | Multiple code paths can trigger free |
+| **CWE-476** | NULL Pointer Dereference | Single NULL check addition | Multiple dereference sites or complex control flow |
+| **CWE-824** | Uninitialized Pointer | Single initialization fix | Multiple uninitialized paths |
+
+### Integer CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-190** | Integer Overflow | Single arithmetic operation | Overflow propagates through multiple calculations |
+| **CWE-191** | Integer Underflow | Single subtraction check | Underflow affects control flow |
+| **CWE-369** | Divide by Zero | Single divisor check | Multiple division sites |
+| **CWE-681** | Incorrect Type Conversion | Single cast fix | Type flows through function calls |
+| **CWE-129** | Improper Array Index Validation | Single index check | Array accessed in loop or multiple locations |
+
+### Injection CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-78** | OS Command Injection | Switch from system() to execv() | Input flows through multiple functions |
+| **CWE-89** | SQL Injection | Single query parameterization | Multiple queries or dynamic SQL construction |
+| **CWE-22** | Path Traversal | Single path validation | Multiple file operations |
+| **CWE-134** | Format String | Single format specifier fix | Format string built dynamically |
+| **CWE-79** | XSS | Single output encoding | Multiple output contexts (HTML, JS, CSS) |
+
+### Concurrency CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-362** | Race Condition | Add single lock | Redesign synchronization across module |
+| **CWE-667** | Improper Locking | Add unlock on error path | Lock ordering or deadlock prevention |
+| **CWE-366** | Race Condition in Thread | Single atomic operation | Multiple shared resources |
+
+### Resource Management CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-401** | Memory Leak | Add free on error path | Ownership unclear, multiple paths |
+| **CWE-775** | File Descriptor Leak | Add close on error path | FD passed between functions |
+| **CWE-770** | Resource Exhaustion | Add size limit | Rate limiting or quota system needed |
+| **CWE-400** | Resource Consumption | Add single limit | Distributed resource tracking |
+
+### Cryptographic CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-327** | Broken Crypto Algorithm | Replace MD5 with SHA-256 | Key management or protocol changes |
+| **CWE-338** | Weak PRNG | Replace rand() with RAND_bytes() | Seed management across system |
+| **CWE-326** | Inadequate Key Length | Increase key size | Key rotation needed |
+
+### Error Handling CWEs
+
+| CWE | Name | When SIMPLE | When COMPLEX |
+|-----|------|-------------|--------------|
+| **CWE-617** | Reachable Assertion | Replace assert with error check | Assert used for program logic |
+| **CWE-252** | Unchecked Return Value | Add return value check | Error propagation through call chain |
+| **CWE-754** | Improper Check for Unusual Condition | Add condition check | Complex state machine |
+
+## CWE Complexity Decision Matrix
+
+Use this matrix for quick complexity assessment:
+
+```
+SIMPLE if ALL conditions met:
+├── Single file affected
+├── Fix is a guard/check addition (not restructuring)
+├── Vulnerable location exactly specified (file:line)
+├── No data flow analysis needed
+└── Pattern matches standard fix (bounds check, NULL check, etc.)
+
+COMPLEX if ANY condition met:
+├── Multiple files affected
+├── Fix requires restructuring (ownership, locking, lifetime)
+├── Vulnerable location needs discovery
+├── Data flow analysis required (taint tracking)
+├── CWE is inherently complex (362, 667, 416 with ownership issues)
+├── Fix pattern non-obvious or requires design decision
+└── Integer overflow propagates through calculations
+```
 
 ## Decision Flow for Security Tasks
 

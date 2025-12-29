@@ -21,16 +21,93 @@ Before decomposing, extract these details from the CVE instance data:
 
 ### Vulnerability Categories & PoC Strategies
 
-| CWE Type | PoC Strategy | Expected Sanitizer |
-|----------|--------------|-------------------|
-| CWE-787 (OOB Write) | Craft input exceeding buffer | AddressSanitizer |
-| CWE-125 (OOB Read) | Craft input causing over-read | AddressSanitizer |
-| CWE-416 (Use-After-Free) | Trigger free then use | AddressSanitizer |
-| CWE-476 (NULL Deref) | Craft input causing NULL access | AddressSanitizer/SIGSEGV |
-| CWE-190 (Integer Overflow) | Craft large values | UBSanitizer |
-| CWE-369 (Divide by Zero) | Craft zero divisor | UBSanitizer/SIGFPE |
-| CWE-122 (Heap Overflow) | Craft input exceeding heap allocation | AddressSanitizer |
-| CWE-121 (Stack Overflow) | Craft deep recursion/large stack | AddressSanitizer |
+#### Memory Safety Vulnerabilities
+
+| CWE | Name | PoC Strategy | Expected Sanitizer | Fix Pattern |
+|-----|------|--------------|-------------------|-------------|
+| CWE-787 | Out-of-bounds Write | Craft input exceeding buffer size | `AddressSanitizer: heap/stack-buffer-overflow` | Add bounds check before write |
+| CWE-125 | Out-of-bounds Read | Craft input causing over-read | `AddressSanitizer: heap-buffer-overflow READ` | Add bounds check before read |
+| CWE-122 | Heap Buffer Overflow | Exceed heap allocation size | `AddressSanitizer: heap-buffer-overflow` | Validate size before memcpy/strcpy |
+| CWE-121 | Stack Buffer Overflow | Exceed stack buffer size | `AddressSanitizer: stack-buffer-overflow` | Use strncpy, add size parameter |
+| CWE-416 | Use-After-Free | Trigger free() then access | `AddressSanitizer: heap-use-after-free` | Nullify pointer after free |
+| CWE-415 | Double Free | Trigger free() twice | `AddressSanitizer: double-free` | Nullify after free, check before free |
+| CWE-476 | NULL Pointer Deref | Make pointer NULL then deref | `SEGV on address 0x000000000000` | Add NULL check before dereference |
+| CWE-824 | Uninitialized Pointer | Skip initialization path | `MemorySanitizer: use-of-uninitialized` | Always initialize pointers |
+
+#### Integer Vulnerabilities
+
+| CWE | Name | PoC Strategy | Expected Sanitizer | Fix Pattern |
+|-----|------|--------------|-------------------|-------------|
+| CWE-190 | Integer Overflow | Craft values causing overflow | `runtime error: integer overflow` | Check before arithmetic |
+| CWE-191 | Integer Underflow | Craft values causing underflow | `runtime error: integer overflow` | Check before subtraction |
+| CWE-369 | Divide by Zero | Make divisor zero | `runtime error: division by zero` | Check divisor != 0 |
+| CWE-681 | Incorrect Type Conversion | Cause truncation or sign issues | `runtime error: implicit conversion` | Use safe cast or check range |
+| CWE-129 | Improper Array Index | Provide out-of-range index | `AddressSanitizer` on array access | Validate index bounds |
+
+#### Injection Vulnerabilities
+
+| CWE | Name | PoC Strategy | Expected Output | Fix Pattern |
+|-----|------|--------------|-----------------|-------------|
+| CWE-78 | OS Command Injection | Inject `; id` or `$(cmd)` | Evidence of command execution | Use execv(), sanitize input |
+| CWE-89 | SQL Injection | Inject `' OR 1=1--` | Auth bypass or data leak | Parameterized queries |
+| CWE-22 | Path Traversal | Inject `../../../etc/passwd` | Access to sensitive file | realpath() + prefix check |
+| CWE-134 | Format String | Inject `%s%s%s` or `%n` | Crash or memory write | Fixed format specifier |
+| CWE-79 | XSS | Inject `<script>alert(1)</script>` | Script execution | HTML encode output |
+
+#### Concurrency Vulnerabilities
+
+| CWE | Name | PoC Strategy | Expected Sanitizer | Fix Pattern |
+|-----|------|--------------|-------------------|-------------|
+| CWE-362 | Race Condition | Concurrent access or TOCTOU | `ThreadSanitizer: data race` | Add mutex or atomic ops |
+| CWE-667 | Improper Locking | Trigger error path holding lock | Deadlock | Release lock on all paths |
+| CWE-366 | Race in Thread | Concurrent read/write | `ThreadSanitizer: data race` | Proper synchronization |
+
+#### Resource Management
+
+| CWE | Name | PoC Strategy | Expected Sanitizer | Fix Pattern |
+|-----|------|--------------|-------------------|-------------|
+| CWE-401 | Memory Leak | Trigger error paths repeatedly | `LeakSanitizer: detected memory leaks` | Free on all error paths |
+| CWE-775 | FD Leak | Trigger error paths repeatedly | File descriptor exhaustion | Close on all error paths |
+| CWE-770 | Resource Exhaustion | Request large/many resources | OOM or service denial | Add resource limits |
+
+#### Error Handling
+
+| CWE | Name | PoC Strategy | Expected Output | Fix Pattern |
+|-----|------|--------------|-----------------|-------------|
+| CWE-617 | Reachable Assertion | Violate assertion condition | `Assertion failed` | Replace with error handling |
+| CWE-252 | Unchecked Return | Trigger function to fail | Undefined behavior | Check all return values |
+
+#### Cryptographic Issues
+
+| CWE | Name | PoC Strategy | Expected Output | Fix Pattern |
+|-----|------|--------------|-----------------|-------------|
+| CWE-327 | Broken Crypto | N/A (code review) | Presence of MD5/SHA1 | Use SHA-256+ |
+| CWE-338 | Weak PRNG | N/A (code review) | Predictable random values | Use CSPRNG |
+
+### CWE Quick Reference for Workers
+
+**Memory CWEs (use `-fsanitize=address`):**
+- 787, 125, 122, 121: Buffer overflow → bounds check
+- 416, 415: Use-after-free/double-free → nullify pointer
+- 476: NULL deref → NULL check
+- 824: Uninitialized → always initialize
+
+**Integer CWEs (use `-fsanitize=undefined`):**
+- 190, 191: Over/underflow → check before arithmetic
+- 369: Divide by zero → check divisor
+- 129: Array index → validate bounds
+
+**Injection CWEs (no sanitizer, test behavior):**
+- 78: Command → use execv, not system
+- 89: SQL → parameterized queries
+- 22: Path → realpath + validate prefix
+- 134: Format → fixed format string
+
+**Concurrency CWEs (use `-fsanitize=thread`):**
+- 362, 366, 667: Race → mutex/atomic operations
+
+**Resource CWEs (use `-fsanitize=leak`):**
+- 401, 775: Leak → cleanup on all paths
 
 ## Phase 2: Decomposition Decision
 

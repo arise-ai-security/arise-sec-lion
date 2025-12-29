@@ -52,46 +52,377 @@ docker run --rm vuln-test ./poc_input
 # Expected output: AddressSanitizer or UBSan error
 ```
 
-## CWE-Specific Strategies
+## CWE-Specific Exploitation Strategies
 
-### CWE-787 (Out-of-bounds Write)
+### Memory Corruption Vulnerabilities
+
+#### CWE-787/CWE-122 (Heap/Stack Buffer Overflow - Write)
 ```c
 // Vulnerable: no bounds check
 void copy_data(char *dst, char *src, int len) {
     memcpy(dst, src, len);  // len can exceed dst size
 }
+```
+**Exploitation Strategy:**
+1. Find allocation size of `dst` buffer
+2. Craft input with `len` > buffer size
+3. For heap overflow: overflow into adjacent heap metadata or objects
+4. For stack overflow: overflow into return address or saved registers
 
-// PoC: provide len > sizeof(dst)
+**Expected Sanitizer Output:**
+```
+ERROR: AddressSanitizer: heap-buffer-overflow on address 0x...
+WRITE of size N at 0x... thread T0
 ```
 
-### CWE-125 (Out-of-bounds Read)
+#### CWE-125 (Out-of-bounds Read)
 ```c
 // Vulnerable: index not validated
 char get_char(char *buf, int index) {
     return buf[index];  // index can be negative or too large
 }
+```
+**Exploitation Strategy:**
+1. Identify valid buffer range (0 to size-1)
+2. Provide index = size (read one past end) OR index = -1 (read before start)
+3. For signed index: use large negative number for underflow
 
-// PoC: provide index outside valid range
+**Expected Sanitizer Output:**
+```
+ERROR: AddressSanitizer: heap-buffer-overflow on address 0x...
+READ of size N at 0x... thread T0
 ```
 
-### CWE-416 (Use-After-Free)
+#### CWE-121 (Stack-based Buffer Overflow)
+```c
+// Vulnerable: strcpy with unbounded input
+void process(const char *input) {
+    char buffer[64];
+    strcpy(buffer, input);  // No bounds check
+}
+```
+**Exploitation Strategy:**
+1. Identify buffer size on stack (e.g., 64 bytes)
+2. Send input of length > buffer size
+3. Include recognizable pattern (e.g., "AAAA...") for easy detection
+
+**Expected Sanitizer Output:**
+```
+ERROR: AddressSanitizer: stack-buffer-overflow on address 0x...
+```
+
+#### CWE-416 (Use-After-Free)
 ```c
 // Vulnerable: use after free
 free(ptr);
 // ... later ...
 ptr->field = value;  // Use after free!
+```
+**Exploitation Strategy:**
+1. Trigger the `free()` call (often via specific API sequence or error path)
+2. Optionally: allocate new object of same size to reuse freed memory
+3. Trigger the use of the freed pointer
+4. Sequence timing is critical - may need specific operation order
 
-// PoC: trigger the free, then the use
+**Expected Sanitizer Output:**
+```
+ERROR: AddressSanitizer: heap-use-after-free on address 0x...
+READ/WRITE of size N at 0x...
+    freed by thread T0 here:
+        #0 ... free ...
+    previously allocated by thread T0 here:
+        #0 ... malloc ...
 ```
 
-### CWE-476 (NULL Pointer Dereference)
+#### CWE-415 (Double Free)
+```c
+// Vulnerable: freed twice
+free(ptr);
+// ... error path or logic error ...
+free(ptr);  // Second free
+```
+**Exploitation Strategy:**
+1. Trigger first `free()` (normal path)
+2. Trigger second `free()` (often via error handling or race condition)
+3. May require specific API call sequence or error injection
+
+**Expected Sanitizer Output:**
+```
+ERROR: AddressSanitizer: attempting double-free on 0x...
+```
+
+#### CWE-476 (NULL Pointer Dereference)
 ```c
 // Vulnerable: no NULL check
 void process(struct obj *o) {
     o->method();  // o might be NULL
 }
+```
+**Exploitation Strategy:**
+1. Find code path where pointer is not initialized or set to NULL
+2. Provide input that skips initialization or triggers NULL assignment
+3. Trigger dereference of NULL pointer
 
-// PoC: provide input that makes o = NULL
+**Expected Sanitizer Output:**
+```
+ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000
+    #0 ... in process ...
+```
+
+### Integer Vulnerabilities
+
+#### CWE-190 (Integer Overflow)
+```c
+// Vulnerable: multiplication overflow
+size_t alloc_size = count * elem_size;
+char *buf = malloc(alloc_size);  // Wraps to small value!
+memcpy(buf, src, count * elem_size);  // Writes beyond allocation
+```
+**Exploitation Strategy:**
+1. Find multiplication/addition used for size calculation
+2. Choose values where: `a * b` overflows but `a * b mod 2^N` is small
+3. Example: `count=0x100000001, elem_size=0x100` → wraps to 0x100
+4. Subsequent copy uses original large size, causing overflow
+
+**Expected Sanitizer Output:**
+```
+runtime error: unsigned integer overflow: X * Y cannot be represented in type 'size_t'
+```
+Or heap overflow when small allocation is used with large size.
+
+#### CWE-191 (Integer Underflow)
+```c
+// Vulnerable: subtraction underflow
+size_t remaining = total - consumed;  // Underflows if consumed > total
+memcpy(dst, src, remaining);  // Huge copy!
+```
+**Exploitation Strategy:**
+1. Find subtraction used for size/length calculation
+2. Ensure minuend < subtrahend (e.g., total=5, consumed=10 → wraps to huge number)
+3. Trigger operation using underflowed value
+
+**Expected Sanitizer Output:**
+```
+runtime error: unsigned integer overflow: X - Y cannot be represented in type 'size_t'
+```
+
+#### CWE-369 (Divide by Zero)
+```c
+// Vulnerable: no zero check
+int avg = total / count;  // count may be 0
+```
+**Exploitation Strategy:**
+1. Find division/modulo operation
+2. Provide input that makes divisor = 0
+3. For modulo: same approach
+
+**Expected Sanitizer Output:**
+```
+runtime error: division by zero
+```
+Or `SIGFPE` signal.
+
+### Format String Vulnerabilities
+
+#### CWE-134 (Use of Externally-Controlled Format String)
+```c
+// Vulnerable: user input as format string
+printf(user_input);  // Attacker can use %s, %x, %n
+```
+**Exploitation Strategy:**
+1. Provide format specifiers in input: `%x%x%x%x` (leak stack)
+2. Use `%s` with crafted address to read memory
+3. Use `%n` to write to memory (if enabled)
+
+**PoC Input Examples:**
+- Stack leak: `AAAA%08x.%08x.%08x.%08x`
+- Crash: `%s%s%s%s%s`
+- Read specific: `%7$s` (read 7th stack argument as string)
+
+### Concurrency Vulnerabilities
+
+#### CWE-362 (Race Condition / TOCTOU)
+```c
+// Vulnerable: time-of-check to time-of-use
+if (access(filename, W_OK) == 0) {  // Check
+    fd = open(filename, O_WRONLY);   // Use (window for attack)
+}
+```
+**Exploitation Strategy:**
+1. Create symlink pointing to allowed file
+2. Start the vulnerable operation
+3. Race: change symlink to point to sensitive file between check and use
+4. May require many attempts; use tight loop
+
+**Expected Sanitizer Output:**
+```
+WARNING: ThreadSanitizer: data race
+```
+Or observe access to unintended file.
+
+#### CWE-667 (Improper Locking)
+```c
+// Vulnerable: lock not released on error
+pthread_mutex_lock(&lock);
+if (error) return -1;  // Lock held forever!
+pthread_mutex_unlock(&lock);
+```
+**Exploitation Strategy:**
+1. Trigger error condition that causes early return
+2. Subsequent operations will deadlock waiting for lock
+
+### Injection Vulnerabilities
+
+#### CWE-78 (OS Command Injection)
+```c
+// Vulnerable: user input in system()
+char cmd[256];
+snprintf(cmd, sizeof(cmd), "echo %s", user_input);
+system(cmd);
+```
+**Exploitation Strategy:**
+1. Use shell metacharacters: `; | & $ \` ` ( )`
+2. PoC input: `hello; id` or `hello$(id)` or `hello\`id\``
+
+**Expected Output:**
+Look for command execution evidence (e.g., output of `id` command).
+
+#### CWE-89 (SQL Injection)
+```c
+// Vulnerable: string concatenation in SQL
+snprintf(query, sizeof(query),
+         "SELECT * FROM users WHERE name='%s'", user_input);
+```
+**Exploitation Strategy:**
+1. Close string with quote, inject SQL: `' OR '1'='1`
+2. Comment rest: `' OR 1=1--`
+3. Union-based: `' UNION SELECT * FROM secrets--`
+
+#### CWE-22 (Path Traversal)
+```c
+// Vulnerable: user input in file path
+snprintf(path, sizeof(path), "/data/%s", user_input);
+fd = open(path, O_RDONLY);
+```
+**Exploitation Strategy:**
+1. Use `../` sequences: `../../../etc/passwd`
+2. URL encoding: `%2e%2e%2f`
+3. Double encoding if filtered: `%252e%252e%252f`
+
+### Resource Exhaustion
+
+#### CWE-401 (Memory Leak)
+```c
+// Vulnerable: no free on error path
+buf = malloc(size);
+if (parse(buf) < 0) {
+    return -1;  // buf not freed!
+}
+```
+**Exploitation Strategy:**
+1. Trigger error path repeatedly
+2. Monitor memory usage growth
+3. Eventually: OOM condition
+
+**Expected Sanitizer Output:**
+```
+ERROR: LeakSanitizer: detected memory leaks
+Direct leak of N bytes in M objects
+```
+
+#### CWE-770 (Resource Exhaustion)
+```c
+// Vulnerable: unbounded allocation
+size_t size = atoi(user_input);
+buf = malloc(size);  // User controls size!
+```
+**Exploitation Strategy:**
+1. Provide very large size value
+2. Monitor memory allocation
+3. Goal: exhaust memory or trigger integer overflow in size calculation
+
+### Assertion and Error Handling
+
+#### CWE-617 (Reachable Assertion)
+```c
+// Vulnerable: assertion on user-controllable condition
+void process(int *data, size_t len) {
+    assert(len <= MAX_SIZE);  // User controls len
+}
+```
+**Exploitation Strategy:**
+1. Provide input that violates assertion condition
+2. Goal: trigger `SIGABRT`
+
+**Expected Output:**
+```
+program: file.c:123: process: Assertion `len <= MAX_SIZE' failed.
+Aborted (core dumped)
+```
+
+### Type Confusion
+
+#### CWE-843 (Type Confusion)
+```c
+// Vulnerable: wrong type cast
+struct TypeA *a = (struct TypeA *)generic_ptr;
+a->field_only_in_A = value;  // generic_ptr might be TypeB!
+```
+**Exploitation Strategy:**
+1. Cause object of TypeB to be stored where TypeA expected
+2. Trigger access using TypeA layout on TypeB data
+3. May cause OOB access, arbitrary read/write
+
+### Uninitialized Memory
+
+#### CWE-824/CWE-908 (Use of Uninitialized Resource)
+```c
+// Vulnerable: use before initialization
+struct config cfg;  // Not initialized
+if (condition) {
+    init_config(&cfg);
+}
+use_config(&cfg);  // cfg may contain garbage
+```
+**Exploitation Strategy:**
+1. Skip initialization by not meeting `condition`
+2. Trigger use of uninitialized data
+
+**Expected Sanitizer Output:**
+```
+ERROR: MemorySanitizer: use-of-uninitialized-value
+```
+
+## Crafting Binary PoC Files
+
+For file format vulnerabilities, craft minimal malformed files:
+
+```bash
+# Create minimal crash file with Python
+python3 -c "
+import struct
+# Example: malformed header with oversized length field
+header = b'MAGIC'
+length = struct.pack('<I', 0xFFFFFFFF)  # Huge length to trigger overflow
+payload = b'A' * 100
+with open('poc.bin', 'wb') as f:
+    f.write(header + length + payload)
+"
+```
+
+## Fuzzer-Assisted PoC Discovery
+
+If manual crafting is difficult, use fuzzers:
+
+```bash
+# AFL++
+afl-fuzz -i seeds/ -o findings/ -- ./target @@
+
+# libFuzzer (if target has harness)
+./target_fuzzer -max_len=1000 corpus/
+
+# Hongfuzz
+honggfuzz -i seeds/ -- ./target ___FILE___
 ```
 
 ## Output Format

@@ -172,7 +172,162 @@ Good decomposition:
 ]
 ```
 
-### 6. Anti-Patterns to Avoid
+### 6. CWE-Specific Decomposition Patterns
+
+Use these patterns based on the vulnerability type:
+
+#### Memory Safety CWEs (787, 125, 122, 121, 416, 415, 476)
+
+**Pattern: Standard Memory Bug Pipeline**
+```json
+[
+  {
+    "description": "[BuilderAgent] Build with AddressSanitizer: CFLAGS='-fsanitize=address -g'",
+    "config": {"base": {"model": "o3-mini", "temperature": 0.3}}
+  },
+  {
+    "description": "[ExploiterAgent] Trigger CWE-XXX at FILE:LINE, capture ASan output",
+    "config": {"base": {"model": "o3", "temperature": 0.5}}
+  },
+  {
+    "description": "[FixerAgent] Add bounds/NULL check at FILE:LINE, verify ASan clean",
+    "config": {"base": {"model": "gpt-4o", "temperature": 0.5}}
+  }
+]
+```
+
+**CWE-416 (Use-After-Free) Special Handling:**
+```json
+[
+  {
+    "description": "[ExploiterAgent] Identify UAF sequence: trigger free() at LOCATION, then use at LOCATION",
+    "note": "UAF often requires specific API call sequence"
+  },
+  {
+    "description": "[FixerAgent] Nullify pointer after free OR restructure ownership model",
+    "note": "Simple nullify vs ownership redesign determines complexity"
+  }
+]
+```
+
+#### Integer CWEs (190, 191, 369)
+
+**Pattern: Integer Safety Pipeline**
+```json
+[
+  {
+    "description": "[BuilderAgent] Build with UBSanitizer: CFLAGS='-fsanitize=undefined -g'",
+    "note": "UBSan catches integer overflow/underflow"
+  },
+  {
+    "description": "[ExploiterAgent] Trigger integer overflow with boundary values (SIZE_MAX, INT_MAX, etc.)",
+    "note": "Craft input to cause wrap-around in size calculations"
+  },
+  {
+    "description": "[FixerAgent] Add overflow check before arithmetic: if (a > MAX/b) return ERROR",
+    "note": "Use __builtin_mul_overflow or manual check"
+  }
+]
+```
+
+#### Injection CWEs (78, 89, 22, 134)
+
+**CWE-78 (Command Injection):**
+```json
+[
+  {
+    "description": "[ExploiterAgent] Inject shell metacharacters: '; id' or '$(id)'",
+    "note": "No sanitizer - look for command execution evidence"
+  },
+  {
+    "description": "[FixerAgent] Replace system() with execv() or sanitize input",
+    "note": "execv() avoids shell interpretation"
+  }
+]
+```
+
+**CWE-89 (SQL Injection):**
+```json
+[
+  {
+    "description": "[ExploiterAgent] Inject SQL: ' OR 1=1-- or UNION SELECT",
+    "note": "Look for authentication bypass or data leak"
+  },
+  {
+    "description": "[FixerAgent] Use parameterized queries with prepared statements",
+    "note": "Never concatenate user input into SQL"
+  }
+]
+```
+
+**CWE-22 (Path Traversal):**
+```json
+[
+  {
+    "description": "[ExploiterAgent] Inject path: ../../../etc/passwd",
+    "note": "Verify access to file outside intended directory"
+  },
+  {
+    "description": "[FixerAgent] Validate with realpath() and check prefix",
+    "note": "Canonicalize then verify within allowed directory"
+  }
+]
+```
+
+#### Concurrency CWEs (362, 667)
+
+**CWE-362 (Race Condition):**
+```json
+[
+  {
+    "description": "[BuilderAgent] Build with ThreadSanitizer: CFLAGS='-fsanitize=thread -g'",
+    "note": "TSan detects data races"
+  },
+  {
+    "description": "[ExploiterAgent] Trigger race with concurrent operations or TOCTOU attack",
+    "note": "May need multiple attempts due to timing"
+  },
+  {
+    "description": "[FixerAgent] Add mutex protection or use atomic operations",
+    "note": "Complex: may require redesign of synchronization"
+  }
+]
+```
+
+#### Resource CWEs (401, 775)
+
+**CWE-401 (Memory Leak):**
+```json
+[
+  {
+    "description": "[BuilderAgent] Build with LeakSanitizer: CFLAGS='-fsanitize=leak -g'",
+    "note": "LSan reports unreachable allocations at exit"
+  },
+  {
+    "description": "[ExploiterAgent] Trigger leak by hitting error path repeatedly",
+    "note": "Monitor memory growth with repeated operations"
+  },
+  {
+    "description": "[FixerAgent] Add free() on all error paths before return",
+    "note": "Consider goto cleanup pattern for C"
+  }
+]
+```
+
+### 7. Sanitizer Selection by CWE
+
+| CWE Type | Recommended Sanitizer | Build Flag |
+|----------|----------------------|------------|
+| Memory safety (787, 125, 416, 415, 476) | AddressSanitizer | `-fsanitize=address` |
+| Integer (190, 191, 369) | UndefinedBehaviorSanitizer | `-fsanitize=undefined` |
+| Uninitialized (824, 908) | MemorySanitizer | `-fsanitize=memory` |
+| Race condition (362, 366) | ThreadSanitizer | `-fsanitize=thread` |
+| Memory leak (401) | LeakSanitizer | `-fsanitize=leak` |
+| Mixed memory + integer | Combined | `-fsanitize=address,undefined` |
+
+**Note:** Some sanitizers cannot be combined (e.g., ASan + MSan, ASan + TSan).
+
+### 8. Anti-Patterns to Avoid
 
 **Too Granular:**
 ```json
@@ -199,6 +354,14 @@ Good decomposition:
 [
   {"description": "Create a PoC for the CVE"},
   {"description": "Create a patch for the CVE"}
+]
+```
+
+**Wrong Sanitizer for CWE:**
+```json
+[
+  {"description": "Build with ThreadSanitizer for buffer overflow"},
+  {"note": "WRONG: Use AddressSanitizer for buffer overflow"}
 ]
 ```
 

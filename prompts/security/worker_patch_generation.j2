@@ -66,54 +66,408 @@ make test
 
 ## CWE-Specific Fix Patterns
 
-### CWE-787/CWE-122 (Buffer Overflow)
+### Memory Safety (C/C++)
+
+#### CWE-787/CWE-122 (Heap/Stack Buffer Overflow - Write)
 ```c
 // BEFORE (vulnerable)
 void copy(char *dst, const char *src, size_t len) {
     memcpy(dst, src, len);
 }
 
-// AFTER (fixed)
+// AFTER (fixed) - Option 1: Add bounds check
 void copy(char *dst, size_t dst_size, const char *src, size_t len) {
     if (len > dst_size) {
         len = dst_size;  // Truncate to fit
     }
     memcpy(dst, src, len);
 }
-```
 
-### CWE-190 (Integer Overflow)
+// AFTER (fixed) - Option 2: Use safe functions
+void copy(char *dst, size_t dst_size, const char *src, size_t len) {
+    memcpy_s(dst, dst_size, src, len);  // Safe variant
+}
+```
+**Sanitizer**: `ERROR: AddressSanitizer: heap-buffer-overflow` / `stack-buffer-overflow`
+
+#### CWE-125 (Out-of-bounds Read)
+```c
+// BEFORE (vulnerable)
+char get_char(char *buf, size_t buflen, int index) {
+    return buf[index];  // No bounds check
+}
+
+// AFTER (fixed)
+char get_char(char *buf, size_t buflen, int index) {
+    if (index < 0 || (size_t)index >= buflen) {
+        return '\0';  // Or return error
+    }
+    return buf[index];
+}
+```
+**Sanitizer**: `ERROR: AddressSanitizer: heap-buffer-overflow` (read)
+
+#### CWE-121 (Stack-based Buffer Overflow)
+```c
+// BEFORE (vulnerable)
+void process_input(const char *input) {
+    char buffer[256];
+    strcpy(buffer, input);  // No length check
+}
+
+// AFTER (fixed)
+void process_input(const char *input) {
+    char buffer[256];
+    strncpy(buffer, input, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+}
+```
+**Sanitizer**: `ERROR: AddressSanitizer: stack-buffer-overflow`
+
+#### CWE-190 (Integer Overflow)
 ```c
 // BEFORE (vulnerable)
 size_t total = count * size;  // Can overflow
 
-// AFTER (fixed)
-if (count > SIZE_MAX / size) {
+// AFTER (fixed) - Option 1: Check before multiplication
+if (size != 0 && count > SIZE_MAX / size) {
     return ERROR_OVERFLOW;
 }
 size_t total = count * size;
-```
 
-### CWE-416 (Use-After-Free)
+// AFTER (fixed) - Option 2: Use safe arithmetic (GCC/Clang)
+size_t total;
+if (__builtin_mul_overflow(count, size, &total)) {
+    return ERROR_OVERFLOW;
+}
+```
+**Sanitizer**: `runtime error: signed integer overflow` / `unsigned integer overflow`
+
+#### CWE-191 (Integer Underflow)
+```c
+// BEFORE (vulnerable)
+size_t remaining = total - used;  // Can underflow if used > total
+
+// AFTER (fixed)
+if (used > total) {
+    return ERROR_UNDERFLOW;
+}
+size_t remaining = total - used;
+```
+**Sanitizer**: `runtime error: unsigned integer overflow` (wraps)
+
+#### CWE-416 (Use-After-Free)
 ```c
 // BEFORE (vulnerable)
 free(ptr);
 // ... ptr used later ...
+ptr->field = value;
+
+// AFTER (fixed) - Option 1: Nullify after free
+free(ptr);
+ptr = NULL;
+// ... NULL check before any use ...
+if (ptr != NULL) {
+    ptr->field = value;
+}
+
+// AFTER (fixed) - Option 2: Restructure ownership
+// Move free() to after all uses, or use reference counting
+```
+**Sanitizer**: `ERROR: AddressSanitizer: heap-use-after-free`
+
+#### CWE-415 (Double Free)
+```c
+// BEFORE (vulnerable)
+free(ptr);
+// ... later, possibly in error path ...
+free(ptr);  // Double free!
 
 // AFTER (fixed)
 free(ptr);
-ptr = NULL;  // Prevent use after free
-// ... NULL check before any use ...
+ptr = NULL;  // Nullify prevents double free
+// ... later ...
+free(ptr);  // Safe: free(NULL) is no-op
 ```
+**Sanitizer**: `ERROR: AddressSanitizer: attempting double-free`
 
-### CWE-476 (NULL Pointer Dereference)
+#### CWE-476 (NULL Pointer Dereference)
 ```c
 // BEFORE (vulnerable)
 obj->method();
 
-// AFTER (fixed)
+// AFTER (fixed) - Option 1: Guard with NULL check
 if (obj != NULL) {
     obj->method();
+}
+
+// AFTER (fixed) - Option 2: Early return
+if (obj == NULL) {
+    return ERROR_NULL_POINTER;
+}
+obj->method();
+```
+**Sanitizer**: `SEGV` / `runtime error: member access within null pointer`
+
+#### CWE-824 (Access of Uninitialized Pointer)
+```c
+// BEFORE (vulnerable)
+char *ptr;
+if (condition) {
+    ptr = malloc(size);
+}
+use(ptr);  // ptr may be uninitialized
+
+// AFTER (fixed)
+char *ptr = NULL;  // Always initialize
+if (condition) {
+    ptr = malloc(size);
+}
+if (ptr != NULL) {
+    use(ptr);
+}
+```
+**Sanitizer**: `ERROR: MemorySanitizer: use-of-uninitialized-value`
+
+### Format String Vulnerabilities
+
+#### CWE-134 (Format String Vulnerability)
+```c
+// BEFORE (vulnerable)
+printf(user_input);  // User controls format string
+syslog(LOG_INFO, user_input);
+
+// AFTER (fixed)
+printf("%s", user_input);  // Fixed format specifier
+syslog(LOG_INFO, "%s", user_input);
+```
+**Sanitizer**: May not catch; look for `%n` in input or unexpected output
+
+### Concurrency Issues
+
+#### CWE-362 (Race Condition / TOCTOU)
+```c
+// BEFORE (vulnerable) - Time-of-check to time-of-use
+if (access(filename, W_OK) == 0) {  // Check
+    fd = open(filename, O_WRONLY);   // Use - file may have changed!
+}
+
+// AFTER (fixed) - Use atomic operations
+fd = open(filename, O_WRONLY);  // Atomic check-and-use
+if (fd < 0) {
+    handle_error();
+}
+
+// AFTER (fixed) - For shared data, use locking
+pthread_mutex_lock(&lock);
+// ... critical section ...
+pthread_mutex_unlock(&lock);
+```
+**Sanitizer**: `WARNING: ThreadSanitizer: data race`
+
+#### CWE-667 (Improper Locking)
+```c
+// BEFORE (vulnerable) - Lock not released on error path
+pthread_mutex_lock(&lock);
+if (error_condition) {
+    return ERROR;  // Lock not released!
+}
+pthread_mutex_unlock(&lock);
+
+// AFTER (fixed)
+pthread_mutex_lock(&lock);
+if (error_condition) {
+    pthread_mutex_unlock(&lock);  // Release before return
+    return ERROR;
+}
+pthread_mutex_unlock(&lock);
+```
+
+### Injection Vulnerabilities
+
+#### CWE-78 (OS Command Injection)
+```c
+// BEFORE (vulnerable)
+char cmd[256];
+sprintf(cmd, "ls %s", user_input);
+system(cmd);  // Command injection!
+
+// AFTER (fixed) - Option 1: Use execv with argument array
+char *args[] = {"ls", user_input, NULL};
+execv("/bin/ls", args);  // No shell interpretation
+
+// AFTER (fixed) - Option 2: Validate/sanitize input
+if (!is_safe_filename(user_input)) {
+    return ERROR_INVALID_INPUT;
+}
+```
+
+#### CWE-89 (SQL Injection)
+```c
+// BEFORE (vulnerable)
+char query[512];
+sprintf(query, "SELECT * FROM users WHERE name='%s'", user_input);
+mysql_query(conn, query);
+
+// AFTER (fixed) - Use parameterized queries
+MYSQL_STMT *stmt = mysql_stmt_init(conn);
+mysql_stmt_prepare(stmt, "SELECT * FROM users WHERE name=?", -1);
+mysql_stmt_bind_param(stmt, &bind);
+mysql_stmt_execute(stmt);
+```
+
+#### CWE-22 (Path Traversal)
+```c
+// BEFORE (vulnerable)
+char path[PATH_MAX];
+snprintf(path, sizeof(path), "/data/%s", user_input);
+fd = open(path, O_RDONLY);  // "../../../etc/passwd" attack!
+
+// AFTER (fixed) - Validate and canonicalize path
+char path[PATH_MAX], resolved[PATH_MAX];
+snprintf(path, sizeof(path), "/data/%s", user_input);
+if (realpath(path, resolved) == NULL) {
+    return ERROR_INVALID_PATH;
+}
+if (strncmp(resolved, "/data/", 6) != 0) {
+    return ERROR_PATH_TRAVERSAL;  // Escaped allowed directory
+}
+fd = open(resolved, O_RDONLY);
+```
+
+### Cryptographic Issues
+
+#### CWE-327 (Broken/Risky Crypto Algorithm)
+```c
+// BEFORE (vulnerable)
+MD5(data, len, hash);  // MD5 is broken
+
+// AFTER (fixed)
+SHA256(data, len, hash);  // Use SHA-256 or stronger
+```
+
+#### CWE-338 (Weak PRNG)
+```c
+// BEFORE (vulnerable)
+int token = rand();  // Predictable!
+
+// AFTER (fixed)
+unsigned char token[16];
+RAND_bytes(token, sizeof(token));  // Cryptographically secure
+```
+
+### Resource Management
+
+#### CWE-401 (Memory Leak)
+```c
+// BEFORE (vulnerable)
+char *buf = malloc(size);
+if (error_condition) {
+    return ERROR;  // Memory leak!
+}
+
+// AFTER (fixed)
+char *buf = malloc(size);
+if (error_condition) {
+    free(buf);  // Free before return
+    return ERROR;
+}
+```
+**Sanitizer**: `ERROR: LeakSanitizer: detected memory leaks`
+
+#### CWE-775 (Missing Release of File Descriptor)
+```c
+// BEFORE (vulnerable)
+int fd = open(path, O_RDONLY);
+if (error_condition) {
+    return ERROR;  // fd leak!
+}
+
+// AFTER (fixed)
+int fd = open(path, O_RDONLY);
+if (error_condition) {
+    close(fd);  // Close before return
+    return ERROR;
+}
+```
+
+### Assertion and Error Handling
+
+#### CWE-617 (Reachable Assertion)
+```c
+// BEFORE (vulnerable)
+void process(int *data, size_t len) {
+    assert(len > 0);  // Can be triggered by user input
+    // ...
+}
+
+// AFTER (fixed) - Use proper error handling
+void process(int *data, size_t len) {
+    if (len == 0) {
+        return;  // Handle gracefully, don't assert
+    }
+    // ...
+}
+```
+
+#### CWE-369 (Divide by Zero)
+```c
+// BEFORE (vulnerable)
+int avg = total / count;  // count may be 0
+
+// AFTER (fixed)
+if (count == 0) {
+    return ERROR_DIVIDE_BY_ZERO;
+}
+int avg = total / count;
+```
+**Sanitizer**: `runtime error: division by zero`
+
+### Web Security (for web-exposed C/C++ code)
+
+#### CWE-79 (Cross-Site Scripting - XSS) Context
+```c
+// When generating HTML output from C:
+// BEFORE (vulnerable)
+fprintf(out, "<div>%s</div>", user_input);
+
+// AFTER (fixed) - HTML encode special characters
+char *escaped = html_escape(user_input);  // Escapes <>&"'
+fprintf(out, "<div>%s</div>", escaped);
+free(escaped);
+```
+
+### Loop and Index Safety
+
+#### CWE-606 (Unchecked Loop Condition)
+```c
+// BEFORE (vulnerable)
+for (int i = 0; i < user_count; i++) {  // user_count could be huge
+    process(array[i]);
+}
+
+// AFTER (fixed)
+if (user_count > MAX_ALLOWED || user_count > array_size) {
+    return ERROR_INVALID_COUNT;
+}
+for (int i = 0; i < user_count; i++) {
+    process(array[i]);
+}
+```
+
+#### CWE-129 (Improper Validation of Array Index)
+```c
+// BEFORE (vulnerable)
+int get_item(int *arr, int size, int index) {
+    return arr[index];  // No validation
+}
+
+// AFTER (fixed)
+int get_item(int *arr, int size, int index) {
+    if (index < 0 || index >= size) {
+        return -1;  // Error value or throw
+    }
+    return arr[index];
 }
 ```
 
