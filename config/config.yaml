@@ -22,18 +22,20 @@ worker:
 orchestration:
   max_retries: 3
   retry_delay: 0.1
-  poll_interval: 0.5
+  poll_interval: 0.05  # Reduced from 0.5s for faster scaling
   llm_timeout: 30.0
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
   # Note: Budget tracking will be added via SharedExecutionContext (context-passing feature)
 
   limits:
-    max_depth: 5
-    max_children_per_node: 10
-    max_total_agents: 100
-    max_concurrent_workers: 5
-    llm_rate_limit_rpm: 60
+    max_depth: 4               # Force workers at depth 4 to prevent explosion
+    max_children_per_node: 5   # Limit subtasks per decomposition
+    max_total_agents: 50       # Safety limit on total agents
+    max_concurrent_workers: -1 # -1 = unlimited
+    llm_rate_limit_rpm: -1     # -1 = unlimited
+    max_concurrent_llm_calls: 5  # Concurrent LLM API calls (-1 = unlimited)
+    llm_jitter_max_ms: 50       # Max random jitter before LLM calls in ms (0 = disabled)
 
 output:
   verbose: true
