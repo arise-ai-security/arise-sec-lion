@@ -21,7 +21,8 @@ services:
         condition: service_healthy
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
-      VITE_API_URL: http://localhost:8000
+      # Proxy target for Vite dev server to forward /api requests
+      VITE_API_PROXY_TARGET: http://api:8000
 
   # API Server (FastAPI)
   api:
