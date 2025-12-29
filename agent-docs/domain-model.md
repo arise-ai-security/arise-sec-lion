@@ -146,6 +146,8 @@ IN_PROGRESS + WorkFailed → FAILED
 
 ## Context Passing
 
+### Parent Context (Hierarchical)
+
 Defined in `core/domain/context.py`:
 
 ```python
@@ -159,3 +161,14 @@ class ParentContext:
 ```
 
 Children receive context via `ChildSpawned.parent_context` field.
+
+### Shared Execution Context (Global)
+
+For cross-agent state sharing (artifacts, decisions, budget), see [`context-passing-mechanism.md`](context-passing-mechanism.md).
+
+```python
+# One SharedExecutionContext per execution hierarchy (root_id)
+context = await shared_context_port.get(root_id)
+context.store_artifact(key="poc", content="...", stored_by=agent_id)
+context.record_decision(key="framework", value="django", ...)
+```

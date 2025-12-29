@@ -289,6 +289,60 @@ Terms used consistently in code and conversation:
 
 ---
 
+## Shared Execution Context
+
+**What it is:** A centralized, event-sourced store for cross-agent state sharing within a single execution run. One SharedExecutionContext exists per hierarchy (keyed by root_id).
+
+**Problem it solves:** In a recursive multi-agent system, agents need to share:
+- Artifacts (files, code, analysis results)
+- Decisions (architectural choices, tool selections)
+- Progress checkpoints
+- Budget tracking
+
+**In this codebase:**
+
+```
+SharedExecutionContext (Facade)
+├── ArtifactStore      - Shared outputs between agents
+├── DecisionLog        - Architectural/design decisions
+├── ProgressTracker    - Progress checkpoints
+└── BudgetAccount      - Cost tracking with enforcement
+```
+
+**Usage pattern:**
+```python
+# Get or create context for this run
+context = await shared_context_port.get_or_create(root_id)
+
+# Record a decision
+context.record_decision(
+    decision_key="target_framework",
+    decision_value="django",
+    rationale="Based on requirements.txt analysis",
+    decided_by=agent_id,
+)
+
+# Store an artifact
+context.store_artifact(
+    key="exploit_poc",
+    content_type="text/python",
+    content="import requests...",
+    stored_by=agent_id,
+)
+
+# Save with OCC
+await shared_context_port.save(context, expected_version=context.version)
+```
+
+**Key files:**
+- `core/domain/shared_context.py` — Domain model
+- `core/ports/shared_context_port.py` — Port interface
+- `infrastructure/adapters/shared_context_adapter.py` — PostgreSQL adapter
+
+See [`context-passing-mechanism.md`](context-passing-mechanism.md) for detailed documentation.
+
+---
+
 ## Quick Reference
 
 | Pattern | Problem It Solves | Where in Code |
@@ -298,3 +352,4 @@ Terms used consistently in code and conversation:
 | OCC | Concurrent writes without locks | `event_store.append(expected_version)` |
 | Hexagonal | Swap infrastructure without domain changes | `core/ports/`, `infrastructure/adapters/` |
 | DDD | Business logic clarity, ubiquitous language | `core/domain/` |
+| Shared Context | Cross-agent state sharing | `core/domain/shared_context.py` |

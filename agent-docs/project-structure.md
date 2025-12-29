@@ -35,6 +35,7 @@ Pure business logic, no I/O.
 | `events.py` | All domain events (frozen dataclasses) |
 | `enums.py` | `AgentRole`, `AgentStatus` |
 | `context.py` | `ParentContext`, `ChildResult` value objects |
+| `shared_context.py` | `SharedExecutionContext` for cross-agent state |
 | `services.py` | `SubtaskParser` domain service |
 | `prompt_builder.py` | Builds LLM prompts from templates |
 | `agent_config.py` | `AgentConfig` Pydantic model |
@@ -50,6 +51,7 @@ Abstract interfaces (Protocol classes).
 | `llm_port.py` | `LLMPort` - LLM queries |
 | `worker_port.py` | `WorkerToolPort` - worker execution |
 | `shared_context_port.py` | `SharedContextPort` - cross-agent state |
+| `sibling_context_port.py` | `SiblingContextPort` - sibling worker context |
 | `cost_calculator_port.py` | `CostCalculatorPort` - token pricing |
 
 ### Application (`core/application/`)
@@ -64,6 +66,8 @@ Use cases and orchestration.
 | `services/query_service.py` | Read operations (CQRS) |
 | `services/child_factory.py` | Create child agents |
 | `services/context_registry.py` | Manage execution contexts |
+| `services/sibling_context_builder.py` | Build sibling worker context |
+| `services/parent_notifier.py` | Notify parent on child completion |
 
 ### Query (`core/query/`)
 

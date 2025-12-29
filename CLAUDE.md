@@ -70,4 +70,5 @@ PENDING ────────────────────────
 | [`project-structure.md`](agent-docs/project-structure.md) | Directory layout, layer responsibilities |
 | [`architecture-concepts.md`](agent-docs/architecture-concepts.md) | CQRS, OCC, Event Sourcing, Hexagonal, DDD |
 | [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
+| [`context-passing-mechanism.md`](agent-docs/context-passing-mechanism.md) | SharedContext, artifacts, decisions, budget |
 | [`user-manual.md`](agent-docs/user-manual.md) | Docker commands reference |
