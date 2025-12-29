@@ -36,10 +36,11 @@ CREATE TABLE IF NOT EXISTS task_registry (
     CONSTRAINT unique_root_task UNIQUE (root_id, task_key)
 );
 
--- Index for listing all tasks in a run (for prompt context)
--- Query: SELECT * FROM task_registry WHERE root_id = $1
-CREATE INDEX IF NOT EXISTS idx_task_registry_root_id
-ON task_registry (root_id);
+-- Composite index for listing all tasks in a run (for prompt context)
+-- Query: SELECT * FROM task_registry WHERE root_id = $1 ORDER BY created_at
+-- Composite index allows index-only scan with pre-sorted results (no extra sort)
+CREATE INDEX IF NOT EXISTS idx_task_registry_root_id_created
+ON task_registry (root_id, created_at);
 
 -- Index for cleanup queries (delete old runs by date)
 -- Query: DELETE FROM task_registry WHERE created_at < $1
