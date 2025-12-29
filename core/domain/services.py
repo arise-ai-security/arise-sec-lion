@@ -1,12 +1,60 @@
 """Domain services: parsing and utility functions."""
 
+from __future__ import annotations
+
+import hashlib
 import json
 import re
+from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
 
 from core.domain.agent_config import AgentConfig
 from core.domain.subtask import Subtask
+
+
+# ---------------------------------------------------------------------------
+# Value Objects
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RegisteredTask:
+    """Value object representing a registered task for deduplication."""
+
+    task_key: str
+    task_description: str
+    registered_by: UUID
+    parent_id: UUID | None
+
+
+# ---------------------------------------------------------------------------
+# Domain Services
+# ---------------------------------------------------------------------------
+
+
+class TaskKeyGenerator:
+    """Generate normalized task keys for deduplication.
+
+    Uses SHA256 hash of normalized description to create a compact,
+    deterministic key for task deduplication.
+    """
+
+    @staticmethod
+    def generate_key(description: str) -> str:
+        """Generate normalized key from task description.
+
+        Args:
+            description: The task description to hash.
+
+        Returns:
+            16-character hex string (first 64 bits of SHA256).
+        """
+        # Normalize: lowercase, strip, collapse whitespace
+        normalized = description.lower().strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
 MARKDOWN_CODE_BLOCK_PATTERN = re.compile(

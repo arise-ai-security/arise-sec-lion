@@ -6,10 +6,12 @@ from typing import Literal
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
 from core.ports.shared_context_port import SharedContextPort
+from core.ports.task_registry_port import TaskRegistryPort
 from core.ports.worker_port import WorkerToolPort
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
+from infrastructure.adapters.task_registry_adapter import PostgresTaskRegistryAdapter
 from infrastructure.adapters.worker import (
     ADKAdapterConfig,
     ClaudeAgentSDKAdapter,
@@ -40,6 +42,7 @@ class Infrastructure:
     llm_adapter: LLMPort
     worker_tool: WorkerToolPort
     shared_context: SharedContextPort
+    task_registry: TaskRegistryPort
 
 
 def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
@@ -76,10 +79,12 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     llm_adapter = LiteLLMAdapter()
     worker_tool = _create_worker_adapter(config)
     shared_context = PostgresSharedContextAdapter(event_store)
+    task_registry = PostgresTaskRegistryAdapter(event_store)
 
     return Infrastructure(
         event_store=event_store,
         llm_adapter=llm_adapter,
         worker_tool=worker_tool,
         shared_context=shared_context,
+        task_registry=task_registry,
     )

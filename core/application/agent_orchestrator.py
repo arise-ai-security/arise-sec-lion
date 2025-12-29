@@ -19,14 +19,17 @@ from core.domain.config_resolver import ConfigResolver
 from core.domain.exceptions import ToolNotAvailableError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
-from core.domain.services import SubtaskParser, strip_markdown_code_block
+from core.domain.services import SubtaskParser, TaskKeyGenerator, strip_markdown_code_block
+from core.domain.subtask import Subtask
 
 logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from core.domain.services import RegisteredTask
     from core.domain.sibling_context import WorkerSiblingContext
     from core.ports.llm_port import LLMPort
+    from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort
 
 
@@ -42,6 +45,7 @@ class AgentOrchestrator:
         llm_port: LLMPort,
         worker_port: WorkerToolPort,
         prompt_builder: PromptBuilder,
+        task_registry_port: TaskRegistryPort,
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -49,10 +53,12 @@ class AgentOrchestrator:
             llm_port: Port for LLM interactions.
             worker_port: Port for worker tool execution.
             prompt_builder: Builder for constructing prompts.
+            task_registry_port: Port for task deduplication.
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
+        self._task_registry_port = task_registry_port
 
     async def evaluate_complexity(self, agent: AgentSession) -> None:
         """Evaluate task complexity for a PENDING agent.
@@ -116,6 +122,7 @@ class AgentOrchestrator:
 
         Performs LLM call, parses subtasks, and spawns children via pure domain methods.
         Respects execution context limits (max_depth, max_children_per_node).
+        Deduplicates subtasks via TaskRegistryPort.
 
         Args:
             agent: The agent to evaluate (must be BOSS/MANAGER with ANALYZING status).
@@ -127,8 +134,15 @@ class AgentOrchestrator:
 
         # Get CVE instance from execution context if available
         cve_instance = None
+        root_id = None
         if agent.execution_context is not None:
             cve_instance = agent.execution_context.cve_instance
+            root_id = agent.execution_context.root_id
+
+        # Get registered tasks for prompt context (soft guidance)
+        registered_tasks: list[RegisteredTask] | None = None
+        if root_id is not None:
+            registered_tasks = await self._task_registry_port.get_all_for_root(root_id)
 
         # Build prompt using auto-detection for security tasks
         prompt = self._prompt_builder.build_auto_prompt(
@@ -137,6 +151,7 @@ class AgentOrchestrator:
             agent_role=agent.role,
             parent_task=None,
             cve_instance=cve_instance,
+            registered_tasks=registered_tasks,
         )
 
         # Perform LLM call
@@ -159,6 +174,10 @@ class AgentOrchestrator:
         except ValueError as e:
             agent.fail_with_reason(f"Failed to parse subtasks: {e}")
             return
+
+        # Deduplicate subtasks via TaskRegistryPort (hard enforcement)
+        if root_id is not None:
+            subtasks = await self._deduplicate_and_register(subtasks, agent, root_id)
 
         # Enforce max_children_per_node limit
         if agent.execution_context is not None and agent.execution_context.is_children_limited():
@@ -192,6 +211,59 @@ class AgentOrchestrator:
             child_role=child_role,
             parent_context=parent_context,
         )
+
+    async def _deduplicate_and_register(
+        self,
+        subtasks: list[Subtask],
+        agent: AgentSession,
+        root_id: Any,
+    ) -> list[Subtask]:
+        """Filter duplicate subtasks via CQRS projection table.
+
+        Uses TaskRegistryPort to atomically register new tasks.
+        Duplicates are skipped (already being worked on).
+
+        Args:
+            subtasks: Parsed subtasks from LLM response.
+            agent: Current agent (for parent_id tracking).
+            root_id: Root agent ID (execution run identifier).
+
+        Returns:
+            List of non-duplicate subtasks that were successfully registered.
+        """
+        kept: list[Subtask] = []
+
+        for subtask in subtasks:
+            task_key = TaskKeyGenerator.generate_key(subtask.description)
+
+            # Atomic check-and-register via projection table with advisory lock
+            registered = await self._task_registry_port.register_if_not_exists(
+                root_id=root_id,
+                task_key=task_key,
+                task_description=subtask.description,
+                registered_by=agent.agent_id,
+                parent_id=agent.parent_id,
+            )
+
+            if registered:
+                kept.append(subtask)
+            else:
+                logger.info(
+                    "Skipping duplicate task: agent=%s key=%s desc=%s",
+                    agent.agent_id,
+                    task_key,
+                    subtask.description[:50],
+                )
+
+        if len(kept) < len(subtasks):
+            logger.info(
+                "Deduplication: kept %d/%d subtasks for agent=%s",
+                len(kept),
+                len(subtasks),
+                agent.agent_id,
+            )
+
+        return kept
 
     async def execute_task(
         self,

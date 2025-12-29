@@ -114,10 +114,16 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
         max_total_agents=system_limits.max_total_agents,
         manager_config=manager_config,
     )
+    task_registry_mock = AsyncMock()
+    task_registry_mock.get_all_for_root.return_value = []
+    task_registry_mock.register_if_not_exists.return_value = True
+    task_registry_mock.ensure_table_exists.return_value = None
+
     orchestrator = AgentOrchestrator(
         llm_port=mock_llm_port,
         worker_port=mock_worker_port,
         prompt_builder=prompt_builder,
+        task_registry_port=task_registry_mock,
     )
 
     # Mock sibling context to return empty context
@@ -146,6 +152,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
         shared_context_port=AsyncMock(),
         sibling_context_port=sibling_context_mock,
         parent_notifier=parent_notifier,
+        task_registry=task_registry_mock,
     )
 
     return AgentExecutionService(
