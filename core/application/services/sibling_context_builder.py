@@ -60,15 +60,16 @@ class SiblingContextBuilder:
         if parent_id is None:
             return []
 
-        all_events = await self._repository.get_all_events_grouped()
+        # Optimized: fetch only children of this parent (not all events)
+        children_events = await self._repository.get_children_events_grouped(parent_id)
 
         siblings: list[SiblingTaskInfo] = []
-        for agg_id, events in all_events.items():
+        for agg_id, events in children_events.items():
             if agg_id == agent_id:
-                continue
+                continue  # Exclude self
 
             summary = AgentSummaryReadModel.from_events(events)
-            if summary is None or summary.parent_id != parent_id:
+            if summary is None:
                 continue
 
             result_summary = None

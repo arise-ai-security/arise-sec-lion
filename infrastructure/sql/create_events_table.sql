@@ -24,3 +24,8 @@ ON events (aggregate_id, sequence_number);
 CREATE INDEX IF NOT EXISTS idx_events_boss_agents
 ON events (occurred_at DESC, aggregate_id)
 WHERE event_type = 'AgentCreated' AND payload->>'role' = 'boss';
+
+-- Index for children queries (filters on AgentCreated events by parent_id)
+CREATE INDEX IF NOT EXISTS idx_events_parent_id
+ON events ((payload->>'parent_id'))
+WHERE event_type = 'AgentCreated' AND payload->>'parent_id' IS NOT NULL;

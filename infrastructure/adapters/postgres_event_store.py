@@ -424,3 +424,109 @@ class PostgresEventStore(EventStorePort):
                 "Failed to retrieve BOSS agents events",
                 original_error=e,
             ) from e
+
+    async def get_hierarchy_events_grouped(
+        self,
+        root_id: UUID,
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for an agent hierarchy using recursive CTE.
+
+        Uses PostgreSQL recursive CTE to traverse ChildSpawned events
+        and fetch all events for the hierarchy in a single query.
+
+        Performance: Single round trip vs N+1 queries for N agents.
+        """
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                # Recursive CTE to find all agents in hierarchy
+                query = """
+                    WITH RECURSIVE hierarchy AS (
+                        -- Base case: root agent
+                        SELECT $1::uuid AS agent_id
+
+                        UNION
+
+                        -- Recursive case: children via ChildSpawned events
+                        SELECT (e.payload->>'child_id')::uuid AS agent_id
+                        FROM events e
+                        INNER JOIN hierarchy h ON e.aggregate_id = h.agent_id
+                        WHERE e.event_type = 'ChildSpawned'
+                    )
+                    SELECT e.aggregate_id, e.event_type, e.payload
+                    FROM events e
+                    INNER JOIN hierarchy h ON e.aggregate_id = h.agent_id
+                    ORDER BY e.aggregate_id, e.sequence_number ASC
+                """
+                rows = await conn.fetch(query, root_id)
+
+            grouped: dict[UUID, list[DomainEvent]] = {}
+            for row in rows:
+                aggregate_id = row["aggregate_id"]
+                event = self._deserialize_event(row["event_type"], row["payload"])
+
+                if aggregate_id not in grouped:
+                    grouped[aggregate_id] = []
+                grouped[aggregate_id].append(event)
+
+            return grouped
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                f"Failed to retrieve hierarchy events for {root_id}",
+                original_error=e,
+            ) from e
+
+    async def get_children_events_grouped(
+        self,
+        parent_id: UUID,
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for all children of a parent agent.
+
+        Filters at database level using parent_id from AgentCreated payload.
+
+        Performance: Single query vs fetching all events + Python filter.
+        """
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                # Single query: find children by parent_id in AgentCreated payload
+                query = """
+                    SELECT e.aggregate_id, e.event_type, e.payload
+                    FROM events e
+                    WHERE e.aggregate_id IN (
+                        SELECT aggregate_id
+                        FROM events
+                        WHERE event_type = 'AgentCreated'
+                          AND (payload->>'parent_id')::uuid = $1
+                    )
+                    ORDER BY e.aggregate_id, e.sequence_number ASC
+                """
+                rows = await conn.fetch(query, parent_id)
+
+            grouped: dict[UUID, list[DomainEvent]] = {}
+            for row in rows:
+                aggregate_id = row["aggregate_id"]
+                event = self._deserialize_event(row["event_type"], row["payload"])
+
+                if aggregate_id not in grouped:
+                    grouped[aggregate_id] = []
+                grouped[aggregate_id].append(event)
+
+            return grouped
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                f"Failed to retrieve children events for parent {parent_id}",
+                original_error=e,
+            ) from e

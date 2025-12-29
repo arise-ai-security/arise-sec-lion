@@ -119,6 +119,42 @@ class EventStoreReadPort(Protocol):
         """
         ...
 
+    async def get_hierarchy_events_grouped(
+        self,
+        root_id: UUID,
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for an agent hierarchy using recursive CTE.
+
+        Efficiently fetches only events belonging to the specified hierarchy
+        (root agent and all descendants via ChildSpawned events).
+        Much faster than get_all_events_grouped + Python filter.
+
+        Args:
+            root_id: Root agent UUID to start hierarchy traversal.
+
+        Returns:
+            Dict mapping aggregate_id to list of events for hierarchy only.
+        """
+        ...
+
+    async def get_children_events_grouped(
+        self,
+        parent_id: UUID,
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for all children of a parent agent.
+
+        Filters at database level for agents with matching parent_id
+        in their AgentCreated event payload.
+        Much faster than get_all_events_grouped + Python filter.
+
+        Args:
+            parent_id: Parent agent UUID to find children for.
+
+        Returns:
+            Dict mapping aggregate_id to list of events for children only.
+        """
+        ...
+
 
 class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadPort, Protocol):
     """Composite event store interface with full capabilities.

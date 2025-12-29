@@ -172,18 +172,18 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
     Returns:
         Complete hierarchy tree with all descendants.
 
-    Uses CQRS projection and HierarchyBuilder for efficient construction.
+    Uses optimized recursive CTE query to fetch only hierarchy events.
     """
-    # Single query to fetch all events
-    all_events_grouped = await event_store.get_all_events_grouped()
+    # Optimized: fetch only events for this hierarchy using recursive CTE
+    hierarchy_events = await event_store.get_hierarchy_events_grouped(agent_id)
 
     # Check root exists
-    if agent_id not in all_events_grouped:
+    if not hierarchy_events:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     # Use projection to build lightweight read models
     projection = AgentListProjection()
-    agents_by_id = projection.project_all(all_events_grouped)
+    agents_by_id = projection.project_all(hierarchy_events)
 
     # Build hierarchy tree using dedicated service
     builder = HierarchyBuilder(agents_by_id)

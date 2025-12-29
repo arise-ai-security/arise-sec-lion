@@ -184,6 +184,21 @@ class AgentRepository:
         """
         return await self._event_store.get_all_events_grouped()
 
+    async def get_children_events_grouped(
+        self, parent_id: UUID
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for all children of a parent agent.
+
+        Optimized query that filters at database level.
+
+        Args:
+            parent_id: Parent agent UUID to find children for.
+
+        Returns:
+            Dict mapping aggregate_id to list of events for children only.
+        """
+        return await self._event_store.get_children_events_grouped(parent_id)
+
     def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
         """Notify progress callback if set."""
         if self._progress_callback is not None:
