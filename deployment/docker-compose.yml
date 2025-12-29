@@ -44,12 +44,14 @@ services:
       - ..:/app
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
+      - secbench_output:/app/output  # Shared volume for SEC-bench artifacts
     depends_on:
       db:
         condition: service_healthy
     env_file: .env
     environment:
       ARISE_INFRA_POSTGRES_HOST: db
+      DOCKER_HOST: unix:///var/run/docker.sock  # Enable DooD for SEC-bench workers
     command: sleep infinity
     stdin_open: true
     tty: true
@@ -107,7 +109,10 @@ services:
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
       - ~/.claude:/home/appuser/.claude  # Mount local Claude config (API key + debug logs)
+      - secbench_output:/app/output  # Shared volume for SEC-bench artifacts (PoC, patches, logs)
     env_file: .env.dev
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock  # Enable DooD for SEC-bench workers
     command: sleep infinity
     stdin_open: true
     tty: true
@@ -151,3 +156,4 @@ services:
 
 volumes:
   postgres_data:
+  secbench_output:  # Shared volume for SEC-bench artifacts between containers

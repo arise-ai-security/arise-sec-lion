@@ -125,12 +125,18 @@ class AgentOrchestrator:
         )
         assert agent.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {agent.status}"
 
+        # Get CVE instance from execution context if available
+        cve_instance = None
+        if agent.execution_context is not None:
+            cve_instance = agent.execution_context.cve_instance
+
         # Build prompt using auto-detection for security tasks
         prompt = self._prompt_builder.build_auto_prompt(
             task_description=agent.task_description,
             agent_id=agent.agent_id,
             agent_role=agent.role,
             parent_task=None,
+            cve_instance=cve_instance,
         )
 
         # Perform LLM call
@@ -210,11 +216,18 @@ class AgentOrchestrator:
         # Emit start event via pure domain method
         agent.start_worker_execution(tool_name)
 
+        # Get CVE instance from execution context if available
+        cve_instance = None
+        if agent.execution_context is not None:
+            cve_instance = agent.execution_context.cve_instance
+
         # Build worker prompt (security templates always injected if they exist)
         enhanced_description = self._prompt_builder.build_worker_prompt(
             task_description=agent.task_description,
             sibling_context=sibling_context,
             workspace_context=workspace_context,
+            cve_instance=cve_instance,
+            parent_context=agent.parent_context,
         )
 
         task_context: dict[str, Any] = {

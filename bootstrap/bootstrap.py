@@ -51,6 +51,11 @@ def _create_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("run", help="Run a task with the multi-agent system")
     p.add_argument("task", help="The task description to execute")
+    p.add_argument(
+        "--cve-file",
+        type=Path,
+        help="Path to SEC-bench CVE instance JSON file for benchmark runs",
+    )
 
     for name, help_text, extra_args in [
         ("events", "View events for a task run", [("--errors-only", {"action": "store_true"})]),
@@ -86,7 +91,8 @@ async def _run_task(args: argparse.Namespace) -> None:
 
     settings = Settings.from_yaml(args.config) if args.config else Settings.load()
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
-    await _create_cli(settings, callback).run_task(args.task)
+    cve_file = getattr(args, "cve_file", None)
+    await _create_cli(settings, callback).run_task(args.task, cve_file=cve_file)
 
 
 async def _query_projection(args: argparse.Namespace, output_type: str) -> None:

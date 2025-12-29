@@ -5,9 +5,13 @@ Tracks execution context for each agent in the hierarchy.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from core.domain.execution_context import ExecutionContext
+
+if TYPE_CHECKING:
+    from core.domain.cve_instance import CVEInstance
 
 
 class ExecutionContextRegistry:
@@ -34,6 +38,7 @@ class ExecutionContextRegistry:
         max_depth: int,
         max_children_per_node: int,
         max_retries: int,
+        cve_instance: CVEInstance | None = None,
     ) -> ExecutionContext:
         """Create and register root execution context.
 
@@ -42,12 +47,14 @@ class ExecutionContextRegistry:
             max_depth: Maximum depth limit (-1 for unlimited)
             max_children_per_node: Maximum children per node (-1 for unlimited)
             max_retries: Maximum retry attempts
+            cve_instance: Optional SEC-bench CVE instance for benchmark runs
         """
         context = ExecutionContext.create_root(
             root_id=root_id,
             max_depth=max_depth,
             max_children_per_node=max_children_per_node,
             max_retries=max_retries,
+            cve_instance=cve_instance,
         )
         self._contexts[root_id] = context
         return context

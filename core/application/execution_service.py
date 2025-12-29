@@ -32,6 +32,7 @@ from core.domain.model import AgentRole, AgentSession, AgentStatus
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig, OrchestrationConfig
+    from core.domain.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
     from core.ports.sibling_context_port import SiblingContextPort
@@ -147,14 +148,24 @@ class AgentExecutionService:
         """Cleanup infrastructure connections."""
         await self._event_store.disconnect()
 
-    async def create_boss_agent(self, task_description: str) -> UUID:
+    async def create_boss_agent(
+        self,
+        task_description: str,
+        cve_instance: CVEInstance | None = None,
+    ) -> UUID:
         """Create root BOSS agent with task.
 
         Initializes execution context and shared context for the agent hierarchy.
-        Returns the agent UUID.
+
+        Args:
+            task_description: The task to execute.
+            cve_instance: Optional SEC-bench CVE instance for benchmark runs.
+
+        Returns:
+            The root agent UUID.
         """
         root_id = uuid4()
-        self._reset_for_new_run(root_id)
+        self._reset_for_new_run(root_id, cve_instance=cve_instance)
 
         # Setup working directory
         self._setup_working_directory(root_id)
@@ -246,7 +257,11 @@ class AgentExecutionService:
     # Internal Methods
     # -------------------------------------------------------------------------
 
-    def _reset_for_new_run(self, root_id: UUID) -> None:
+    def _reset_for_new_run(
+        self,
+        root_id: UUID,
+        cve_instance: CVEInstance | None = None,
+    ) -> None:
         """Reset all state for a new execution run."""
         self._workspace.reset()
         self._context_registry.reset()
@@ -258,6 +273,7 @@ class AgentExecutionService:
             max_depth=self._system_limits.max_depth,
             max_children_per_node=self._system_limits.max_children_per_node,
             max_retries=self._config.max_retries,
+            cve_instance=cve_instance,
         )
 
     def _setup_working_directory(self, root_id: UUID) -> None:

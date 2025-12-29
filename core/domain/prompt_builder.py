@@ -3,12 +3,41 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
 from core.domain.enums import AgentRole
+
+if TYPE_CHECKING:
+    from core.domain.context import ParentContext
+    from core.domain.cve_instance import CVEInstance
+
+
+def _detect_benchmark_branch(parent_context: ParentContext | None) -> str | None:
+    """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
+
+    Checks ancestry chain for top-level subtask keywords.
+    Returns None if not in a benchmark run or branch not determinable.
+    """
+    if parent_context is None:
+        return None
+
+    # Check each ancestor's task summary (starting from immediate parent)
+    for ancestor in parent_context.ancestry:
+        task_lower = ancestor.task_summary.lower()
+        # Builder keywords
+        if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
+            return "builder"
+        # Exploiter keywords
+        if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
+            return "exploiter"
+        # Fixer keywords
+        if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
+            return "fixer"
+
+    return None
 
 
 class TemplateChain:
@@ -56,6 +85,22 @@ class TemplateChain:
     def with_security(self, overlay_name: str, **kwargs: Any) -> Self:
         """Inject security template if it exists. Looks in security/ directory."""
         return self.render_optional(f"security/{overlay_name}", **kwargs)
+
+    def with_secbench(self, template_name: str, **kwargs: Any) -> Self:
+        """Inject SEC-bench template if it exists. Looks in secbench/ directory."""
+        return self.render_optional(f"secbench/{template_name}", **kwargs)
+
+    def with_cve_context(self, cve_instance: CVEInstance | None) -> Self:
+        """Inject SEC-bench CVE context if available.
+
+        Renders secbench/cve_context.j2 with CVE instance data.
+        """
+        if cve_instance is not None:
+            return self.render_optional(
+                "secbench/cve_context.j2",
+                **cve_instance.to_template_context(),
+            )
+        return self
 
     def text(self, content: str) -> Self:
         """Add raw text to chain."""
@@ -155,21 +200,37 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
+        cve_instance: CVEInstance | None = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation."""
         ctx = self._task_context(task_description, agent_id, AgentRole.BOSS, parent_task)
         tool = self.default_tool
-        return (
-            self.chain()
-            .render("system/role_boss.j2", default_tool=tool)
-            .with_security("role_boss_security.j2", default_tool=tool)
-            .render("strategies/boss_delegation.j2", default_tool=tool)
-            .with_security("strategy_cve_benchmark.j2", default_tool=tool)
-            .render("tasks/task_decomposition.j2", **ctx)
-            .render("output_formats/subtask_list.j2", default_tool=tool)
-            .with_security("output_format_benchmark.j2", default_tool=tool)
-            .build()
-        )
+
+        chain = self.chain()
+
+        # Base role and security
+        chain.render("system/role_boss.j2", default_tool=tool)
+        chain.with_security("role_boss_security.j2", default_tool=tool)
+
+        # SEC-bench specific guidance if CVE context present
+        if cve_instance is not None:
+            cve_ctx = cve_instance.to_template_context()
+            chain.with_cve_context(cve_instance)
+            chain.with_secbench("role_boss.j2", **cve_ctx, default_tool=tool)
+
+        # Strategy and task
+        chain.render("strategies/boss_delegation.j2", default_tool=tool)
+        chain.with_security("strategy_cve_benchmark.j2", default_tool=tool)
+        chain.render("tasks/task_decomposition.j2", **ctx)
+
+        # Output format - use SEC-bench format if CVE context present
+        if cve_instance is not None:
+            chain.with_secbench("output_format.j2", default_tool=tool)
+        else:
+            chain.render("output_formats/subtask_list.j2", default_tool=tool)
+            chain.with_security("output_format_benchmark.j2", default_tool=tool)
+
+        return chain.build()
 
     def build_auto_prompt(
         self,
@@ -177,11 +238,14 @@ class PromptBuilder:
         agent_id: UUID,
         agent_role: AgentRole,
         parent_task: str | None = None,
+        cve_instance: CVEInstance | None = None,
     ) -> str:
         """Automatically select appropriate prompt based on agent role."""
         match agent_role:
             case AgentRole.BOSS:
-                return self.build_boss_delegation_prompt(task_description, agent_id, parent_task)
+                return self.build_boss_delegation_prompt(
+                    task_description, agent_id, parent_task, cve_instance
+                )
             case AgentRole.MANAGER:
                 return self.build_manager_decomposition_prompt(
                     task_description, agent_id, agent_role, parent_task
@@ -194,13 +258,37 @@ class PromptBuilder:
         task_description: str,
         sibling_context: Any = None,
         workspace_context: str | None = None,
+        cve_instance: CVEInstance | None = None,
+        parent_context: ParentContext | None = None,
     ) -> str:
-        """Build prompt for WORKER agent task execution."""
+        """Build prompt for WORKER agent task execution.
+
+        Args:
+            task_description: The task to execute.
+            sibling_context: Context from sibling workers (completed tasks).
+            workspace_context: Files in the workspace.
+            cve_instance: SEC-bench CVE instance for benchmark runs.
+            parent_context: Parent context for branch detection.
+        """
         chain = self.chain()
 
         # Sibling context (if provided)
         if sibling_context is not None:
             chain.render("worker/sibling_context.j2", **sibling_context.to_template_dict())
+
+        # SEC-bench branch-specific template injection
+        if cve_instance is not None:
+            cve_ctx = cve_instance.to_template_context()
+            chain.with_cve_context(cve_instance)
+
+            # Detect which branch (builder/exploiter/fixer) and inject appropriate template
+            branch = _detect_benchmark_branch(parent_context)
+            if branch == "builder":
+                chain.with_secbench("worker_builder.j2", **cve_ctx)
+            elif branch == "exploiter":
+                chain.with_secbench("worker_exploiter.j2", **cve_ctx)
+            elif branch == "fixer":
+                chain.with_secbench("worker_fixer.j2", **cve_ctx)
 
         # Instructions + security overlay
         chain.render("worker/execution_instructions.j2")

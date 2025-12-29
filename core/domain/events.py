@@ -299,3 +299,51 @@ class BudgetExceeded(DomainEvent):
     limit_usd: float
     consumed_usd: float
     triggered_by: UUID  # Agent that triggered the limit
+
+
+# =============================================================================
+# SEC-bench Benchmark Events
+# =============================================================================
+
+
+class BenchmarkStarted(DomainEvent):
+    """SEC-bench benchmark run started.
+
+    Emitted by BOSS when a CVE benchmark run begins.
+    """
+
+    instance_id: str  # e.g., "gpac.cve-2023-2838"
+    cve_id: str  # e.g., "cve-2023-2838"
+    docker_image: str  # Pre-built image name
+    sanitizer: str  # "address" | "memory" | "undefined"
+
+
+class BenchmarkStageCompleted(DomainEvent):
+    """A SEC-bench stage completed with result.
+
+    Emitted by each worker when their stage (builder/exploiter/fixer) completes.
+    """
+
+    instance_id: str
+    stage: str  # "builder" | "exploiter" | "fixer"
+    success: bool
+    details: str  # Success message or error description
+    sanitizer_output: str | None = None  # For exploiter/fixer stages
+    duration_seconds: float = 0.0
+    worker_agent_id: UUID  # The worker that completed this stage
+
+
+class BenchmarkCompleted(DomainEvent):
+    """SEC-bench benchmark run finished.
+
+    Emitted by BOSS when all stages complete (success or failure).
+    Aggregates all stage results for easy querying.
+    """
+
+    instance_id: str
+    overall_success: bool
+    builder_success: bool | None = None
+    exploiter_success: bool | None = None
+    fixer_success: bool | None = None
+    total_duration_seconds: float = 0.0
+    total_cost_usd: float = 0.0

@@ -23,6 +23,7 @@ from presentation.rendering import OutputRenderer
 
 if TYPE_CHECKING:
     from core.application.execution_service import AgentExecutionService
+    from core.domain.cve_instance import CVEInstance
 
 
 @dataclass
@@ -80,18 +81,25 @@ class CLI:
             self._renderer.print_database_error(e)
             sys.exit(1)
 
-    async def _bootstrap_boss_agent(self, task_description: str) -> UUID:
+    async def _bootstrap_boss_agent(
+        self,
+        task_description: str,
+        cve_instance: CVEInstance | None = None,
+    ) -> UUID:
         """Create the root BOSS agent."""
         if self.config.verbose:
             self._renderer.print_step(3, 5, "Creating root BOSS agent...")
 
         try:
             root_id = await self.execution_service.create_boss_agent(
-                task_description=task_description
+                task_description=task_description,
+                cve_instance=cve_instance,
             )
             if self.config.verbose:
                 self._renderer.print_success(f"BOSS Agent Created (ID: {root_id})")
                 self._renderer.print_success(f"Task Assigned: {task_description}")
+                if cve_instance is not None:
+                    self._renderer.print_success(f"SEC-bench CVE: {cve_instance.instance_id}")
                 print()
             return root_id
         except Exception as e:
@@ -139,7 +147,11 @@ class CLI:
         if self.config.verbose:
             self._renderer.print_shutdown()
 
-    async def run_task(self, task_description: str) -> None:
+    async def run_task(
+        self,
+        task_description: str,
+        cve_file: Path | None = None,
+    ) -> None:
         """Execute a task from start to finish.
 
         This is the main entry point for task execution. It:
@@ -148,9 +160,21 @@ class CLI:
         3. Runs the orchestration loop
         4. Displays results
         5. Cleans up resources
+
+        Args:
+            task_description: The task to execute.
+            cve_file: Optional path to SEC-bench CVE instance JSON file.
         """
         self._renderer.print_banner()
         print(f"Task: {task_description}")
+
+        # Load CVE instance if provided
+        cve_instance: CVEInstance | None = None
+        if cve_file is not None:
+            from core.domain.cve_instance import CVEInstance
+
+            cve_instance = CVEInstance.from_json_file(cve_file)
+            print(f"SEC-bench CVE: {cve_instance.instance_id}")
         print()
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -159,7 +183,7 @@ class CLI:
 
         try:
             await self._initialize_infrastructure()
-            root_id = await self._bootstrap_boss_agent(task_description)
+            root_id = await self._bootstrap_boss_agent(task_description, cve_instance)
             await self._run_orchestration_loop(root_id)
             await self._display_final_result(root_id)
             status = "completed"
