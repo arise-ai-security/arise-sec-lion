@@ -13,6 +13,7 @@ from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.domain.events import (
     AgentCreated,
     CodeGenerationStarted,
+    ComplexityEvaluated,
     DomainEvent,
     StatusChanged,
     TaskAssigned,
@@ -47,8 +48,9 @@ class AgentSummaryReadModel:
         """Build read model from events without full aggregate reconstruction.
 
         Only processes the events needed to extract summary fields:
-        - AgentCreated: role, parent_id, sibling_index
+        - AgentCreated: initial role, parent_id, sibling_index
         - TaskAssigned: task_description
+        - ComplexityEvaluated: updated role (PENDING -> WORKER/MANAGER)
         - StatusChanged/CodeGenerationStarted/WorkCompleted/WorkFailed: current status
 
         Args:
@@ -74,11 +76,16 @@ class AgentSummaryReadModel:
         task_summary = ""
         status = "pending"  # Default after creation
 
-        # Process events to extract status and task (only relevant event types)
+        # Process events to extract status, task, and role changes
         for event in events:
             if isinstance(event, TaskAssigned):
                 task_summary = event.task_description[:100]  # Truncate for summary
                 status = "analyzing"  # TaskAssigned transitions to ANALYZING
+            elif isinstance(event, ComplexityEvaluated):
+                # CRITICAL: Update role when complexity evaluation determines WORKER/MANAGER
+                # Without this, PENDING agents that become WORKER are not detected as workers
+                # and bypass the sequential execution check!
+                role = event.determined_role
             elif isinstance(event, StatusChanged):
                 status = event.new_status
             elif isinstance(event, CodeGenerationStarted):
