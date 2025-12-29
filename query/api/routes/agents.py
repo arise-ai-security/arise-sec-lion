@@ -448,6 +448,12 @@ async def get_agent_summary(
                     sanitizer=entry.source_context.sanitizer,
                     cve_id=entry.source_context.cve_id,
                     repo_url=entry.source_context.repo_url,
+                    # CWE Pattern Inference fields
+                    inferred_cwes=list(entry.source_context.inferred_cwes),
+                    cwe_reasoning=dict(entry.source_context.cwe_reasoning),
+                    cwe_confidence=dict(entry.source_context.cwe_confidence),
+                    recommended_sanitizers=list(entry.source_context.recommended_sanitizers),
+                    fix_patterns=dict(entry.source_context.fix_patterns),
                 )
                 # Insert source context at the beginning of the list
                 published_context_list.insert(
@@ -689,6 +695,12 @@ async def get_agent_summary(
                         sanitizer=entry.source_context.sanitizer,
                         cve_id=entry.source_context.cve_id,
                         repo_url=entry.source_context.repo_url,
+                        # CWE Pattern Inference fields
+                        inferred_cwes=list(entry.source_context.inferred_cwes),
+                        cwe_reasoning=dict(entry.source_context.cwe_reasoning),
+                        cwe_confidence=dict(entry.source_context.cwe_confidence),
+                        recommended_sanitizers=list(entry.source_context.recommended_sanitizers),
+                        fix_patterns=dict(entry.source_context.fix_patterns),
                     )
 
                 inherited_entries.append(
