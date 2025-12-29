@@ -650,3 +650,8 @@ class SourceContextExtracted(DomainEvent):
     has_bug_report: bool = False
     has_error_details: bool = False
     has_file_references: bool = False
+    # CWE pattern inference fields - published to dashboard for visibility
+    inferred_cwes: list[str] = []  # Inferred CWE IDs (e.g., ["CWE-787", "CWE-125"])
+    cwe_reasoning: dict[str, str] = {}  # Reasoning per CWE
+    recommended_sanitizers: list[str] = []  # Recommended build flags
+    fix_patterns: dict[str, str] = {}  # Fix pattern per CWE

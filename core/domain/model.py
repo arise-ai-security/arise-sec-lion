@@ -806,6 +806,10 @@ class AgentSession:
         has_bug_report: bool = False,
         has_error_details: bool = False,
         has_file_references: bool = False,
+        inferred_cwes: list[str] | None = None,
+        cwe_reasoning: dict[str, str] | None = None,
+        recommended_sanitizers: list[str] | None = None,
+        fix_patterns: dict[str, str] | None = None,
     ) -> None:
         """Record that source context was extracted from the Boss prompt.
 
@@ -820,6 +824,10 @@ class AgentSession:
             has_bug_report: Whether the prompt contained bug report details.
             has_error_details: Whether the prompt contained error messages.
             has_file_references: Whether the prompt contained file paths.
+            inferred_cwes: Inferred CWE IDs from bug report analysis.
+            cwe_reasoning: Reasoning for each inferred CWE.
+            recommended_sanitizers: Recommended sanitizers based on CWE types.
+            fix_patterns: Recommended fix patterns per CWE.
         """
         event = SourceContextExtracted(
             aggregate_id=self.session_id,
@@ -830,6 +838,10 @@ class AgentSession:
             has_bug_report=has_bug_report,
             has_error_details=has_error_details,
             has_file_references=has_file_references,
+            inferred_cwes=inferred_cwes or [],
+            cwe_reasoning=cwe_reasoning or {},
+            recommended_sanitizers=recommended_sanitizers or [],
+            fix_patterns=fix_patterns or {},
         )
         self._apply(event)
         self._changes.append(event)

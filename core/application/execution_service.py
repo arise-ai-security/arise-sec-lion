@@ -523,7 +523,7 @@ class AgentExecutionService:
             # Publish to dashboard
             entry_id = await self.context_dashboard.publish(entry)
 
-            # Record the extraction event on the Boss
+            # Record the extraction event on the Boss (includes CWE patterns)
             boss.record_source_context_extracted(
                 context_entry_id=entry_id,
                 extraction_summary=work_title,
@@ -531,6 +531,11 @@ class AgentExecutionService:
                 has_bug_report=bool(source_data.bug_summary),
                 has_error_details=bool(source_data.error_messages),
                 has_file_references=bool(source_data.file_paths),
+                # CWE pattern inference - published to dashboard for visibility
+                inferred_cwes=source_data.inferred_cwes,
+                cwe_reasoning=source_data.cwe_reasoning,
+                recommended_sanitizers=source_data.recommended_sanitizers,
+                fix_patterns=source_data.fix_patterns,
             )
 
         except Exception:
@@ -576,6 +581,12 @@ class AgentExecutionService:
                 sanitizer=data.get("sanitizer", ""),
                 cve_id=data.get("cve_id", ""),
                 repo_url=data.get("repo_url", ""),
+                # CWE pattern inference fields
+                inferred_cwes=data.get("inferred_cwes", []),
+                cwe_reasoning=data.get("cwe_reasoning", {}),
+                cwe_confidence=data.get("cwe_confidence", {}),
+                recommended_sanitizers=data.get("recommended_sanitizers", []),
+                fix_patterns=data.get("fix_patterns", {}),
                 original_prompt=response[:5000],  # Preserve original for reference
             )
         except json.JSONDecodeError:
@@ -600,6 +611,8 @@ class AgentExecutionService:
             or data.build_script
             or data.cve_id
             or data.poc_command
+            # CWE pattern inference fields
+            or data.inferred_cwes
         )
 
     def _generate_source_context_title(
@@ -613,6 +626,10 @@ class AgentExecutionService:
         # Security/CVE context takes priority
         if data.cve_id:
             parts.append(data.cve_id)
+        # CWE patterns - high priority for security tasks
+        if data.inferred_cwes:
+            cwe_str = "/".join(data.inferred_cwes[:3])  # Show up to 3 CWEs
+            parts.append(f"[{cwe_str}]")
         if data.dockerfile or data.build_script:
             parts.append("Build Context")
         if data.poc_command:
@@ -635,9 +652,9 @@ class AgentExecutionService:
             words = task_description.split()[:8]
             title = f"[Source Context] {' '.join(words)}..."
 
-        # Ensure max 80 chars
-        if len(title) > 80:
-            title = title[:77] + "..."
+        # Ensure max 100 chars for better CWE visibility
+        if len(title) > 100:
+            title = title[:97] + "..."
 
         return title
 

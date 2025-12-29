@@ -37,6 +37,46 @@ Analyze the prompt above and extract all key information that would be valuable 
     - **cve_id**: CVE identifier if this is a vulnerability task
     - **repo_url**: Repository URL for cloning the vulnerable code
 
+11. **CWE Pattern Inference** (CRITICAL - analyze bug report to infer CWE types):
+    Analyze the bug description, error messages, stack traces, and any available code context to infer the most likely CWE patterns. For each inferred CWE, provide:
+    - **inferred_cwes**: List of CWE IDs (e.g., ["CWE-787", "CWE-125"])
+    - **cwe_reasoning**: For EACH CWE, explain WHY you believe it applies based on evidence in the prompt
+    - **cwe_confidence**: Confidence level ("high", "medium", "low") for each CWE
+    - **recommended_sanitizers**: Build flags to detect this type of issue
+    - **fix_patterns**: Recommended fix approach for each CWE
+
+    Use these indicators to infer CWE types:
+
+    **Memory Safety Indicators → CWE-787/125/122/121 (Buffer Overflow)**
+    - Keywords: "buffer overflow", "out-of-bounds", "heap corruption", "stack smashing"
+    - Error patterns: AddressSanitizer errors, SEGV, memcpy/strcpy issues
+    - Fix: Add bounds checking before memory operations
+
+    **Use-After-Free Indicators → CWE-416/415**
+    - Keywords: "use-after-free", "double free", "dangling pointer"
+    - Error patterns: "heap-use-after-free", freed memory access
+    - Fix: Nullify pointers after free, fix object lifetime
+
+    **NULL Pointer Indicators → CWE-476**
+    - Keywords: "null pointer", "nullptr dereference", "SEGV on 0x0"
+    - Error patterns: Crash at address 0x0, missing null check
+    - Fix: Add NULL check before dereference
+
+    **Integer Overflow Indicators → CWE-190/191/369**
+    - Keywords: "integer overflow", "underflow", "division by zero", "wrap-around"
+    - Error patterns: Unexpected large values, negative sizes
+    - Fix: Check arithmetic before operations
+
+    **Injection Indicators → CWE-78/89/22/134**
+    - Keywords: "command injection", "SQL injection", "path traversal", "format string"
+    - Error patterns: Unsanitized input in system()/SQL/file paths
+    - Fix: Input validation, parameterized queries, safe APIs
+
+    **Race Condition Indicators → CWE-362/667**
+    - Keywords: "race condition", "TOCTOU", "data race", "deadlock"
+    - Error patterns: ThreadSanitizer warnings, inconsistent state
+    - Fix: Add synchronization (mutex, atomic operations)
+
 ## Output Format
 Return a JSON object with the following structure:
 ```json
@@ -56,7 +96,21 @@ Return a JSON object with the following structure:
   "poc_command": "./binary -input crash_file",
   "sanitizer": "address",
   "cve_id": "CVE-2023-1234",
-  "repo_url": "https://github.com/org/repo"
+  "repo_url": "https://github.com/org/repo",
+  "inferred_cwes": ["CWE-787", "CWE-125"],
+  "cwe_reasoning": {
+    "CWE-787": "Bug report mentions 'heap-buffer-overflow' in AddressSanitizer output when memcpy copies beyond buffer boundary",
+    "CWE-125": "Stack trace shows out-of-bounds read in array indexing with user-controlled index"
+  },
+  "cwe_confidence": {
+    "CWE-787": "high",
+    "CWE-125": "medium"
+  },
+  "recommended_sanitizers": ["-fsanitize=address", "-fsanitize=undefined"],
+  "fix_patterns": {
+    "CWE-787": "Add bounds check: if (len > dst_size) len = dst_size; before memcpy",
+    "CWE-125": "Validate array index: if (index < 0 || index >= array_len) return ERROR"
+  }
 }
 ```
 
