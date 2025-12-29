@@ -185,9 +185,12 @@ class AgentQueryService:
             if summary is not None:
                 summaries[agent_id] = summary
 
+        # Build children map once for efficient tree operations
+        children_map = self._build_children_map(summaries)
+
         # If root_id specified, filter to only agents in that hierarchy
         if root_id is not None:
-            hierarchy_ids = self._get_hierarchy_ids(root_id, summaries)
+            hierarchy_ids = self._get_hierarchy_ids(root_id, summaries, children_map)
             summaries = {k: v for k, v in summaries.items() if k in hierarchy_ids}
 
         # Get non-terminal agents
@@ -215,16 +218,19 @@ class AgentQueryService:
         if not workers:
             return non_workers
 
-        # Compute hierarchical paths for workers and sort left-to-right
-        worker_paths = [
+        # Filter workers blocked by incomplete left sibling subtrees
+        eligible_workers = [
             (agent_id, self._compute_hierarchical_path(agent_id, summaries))
             for agent_id, _ in workers
+            if not self._has_incomplete_left_siblings(agent_id, summaries, children_map)
         ]
-        worker_paths.sort(key=lambda x: x[1])
 
-        # Return non-workers + only the leftmost worker
-        leftmost_worker_id = worker_paths[0][0]
-        return non_workers + [leftmost_worker_id]
+        if not eligible_workers:
+            return non_workers
+
+        # Sort by path and return only the leftmost eligible worker
+        eligible_workers.sort(key=lambda x: x[1])
+        return non_workers + [eligible_workers[0][0]]
 
     def _compute_hierarchical_path(
         self,
@@ -248,10 +254,24 @@ class AgentQueryService:
         # Reverse to get root-to-leaf order
         return tuple(reversed(path))
 
+    def _build_children_map(
+        self,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+    ) -> dict[UUID | None, list[UUID]]:
+        """Build parent->children map for efficient tree traversal. O(n)."""
+        children_map: dict[UUID | None, list[UUID]] = {}
+        for agent_id, summary in summaries.items():
+            parent = summary.parent_id
+            if parent not in children_map:
+                children_map[parent] = []
+            children_map[parent].append(agent_id)
+        return children_map
+
     def _get_hierarchy_ids(
         self,
         root_id: UUID,
         summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]] | None = None,
     ) -> set[UUID]:
         """Get all agent IDs that belong to a hierarchy rooted at root_id.
 
@@ -260,13 +280,8 @@ class AgentQueryService:
         if root_id not in summaries:
             return set()
 
-        # Build parent->children map for efficient traversal
-        children_map: dict[UUID | None, list[UUID]] = {}
-        for agent_id, summary in summaries.items():
-            parent = summary.parent_id
-            if parent not in children_map:
-                children_map[parent] = []
-            children_map[parent].append(agent_id)
+        if children_map is None:
+            children_map = self._build_children_map(summaries)
 
         # BFS from root to collect all descendants
         hierarchy: set[UUID] = {root_id}
@@ -280,6 +295,37 @@ class AgentQueryService:
                     queue.append(child_id)
 
         return hierarchy
+
+    def _has_incomplete_left_siblings(
+        self,
+        agent_id: UUID,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+    ) -> bool:
+        """Check if agent has any incomplete left sibling subtrees.
+
+        Walks up ancestor chain, checking at each level for left siblings
+        (lower sibling_index) not in terminal state. O(depth * siblings).
+        """
+        current_id = agent_id
+
+        while current_id is not None and current_id in summaries:
+            summary = summaries[current_id]
+            parent_id = summary.parent_id
+
+            if parent_id is not None:
+                # Check siblings via children_map (O(siblings) per level)
+                for sibling_id in children_map.get(parent_id, []):
+                    sibling = summaries[sibling_id]
+                    if (
+                        sibling.sibling_index < summary.sibling_index
+                        and not sibling.is_terminal
+                    ):
+                        return True
+
+            current_id = parent_id
+
+        return False
 
     async def is_hierarchy_complete(self, root_id: UUID) -> bool:
         """Check if all agents in hierarchy have reached terminal state."""

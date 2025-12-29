@@ -254,28 +254,121 @@ class TestSequentialWorkerOrdering:
 
         repository, create_events = mock_repository
 
-        # Given: A manager and workers
+        # Given: A manager (completed) and workers as siblings under root
         root_id = uuid4()
         m1_id = uuid4()
         w1_id, w2_id = uuid4(), uuid4()
 
         repository.get_all_events_grouped.return_value = {
             root_id: create_events(root_id, "boss", None, 0, "waiting"),
-            m1_id: create_events(m1_id, "manager", root_id, 0),
+            m1_id: create_events(m1_id, "manager", root_id, 0, "completed"),
             w1_id: create_events(w1_id, "worker", root_id, 1),
             w2_id: create_events(w2_id, "worker", root_id, 2),
         }
+
+        # Mark manager as completed so workers can proceed
+        from core.domain.events import WorkCompleted
+
+        repository.get_all_events_grouped.return_value[m1_id].append(
+            WorkCompleted(aggregate_id=m1_id, sequence_number=3, result="done")
+        )
 
         # When: Getting active agents with sequential_workers=True
         service = AgentQueryService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
-        # Then: Manager and root (non-workers) are returned
-        # Plus only leftmost worker
+        # Then: Root (non-worker) is returned plus only leftmost worker
+        # Manager is terminal so not in active list
         assert root_id in active
-        assert m1_id in active
+        assert m1_id not in active  # Manager completed
         assert w1_id in active
         assert w2_id not in active
+
+    @pytest.mark.asyncio
+    async def test_workers_blocked_by_incomplete_left_sibling_subtree(
+        self, mock_repository
+    ) -> None:
+        """Test that workers wait for incomplete left sibling subtrees.
+
+        Scenario: Left subtree has a manager still decomposing (no workers yet),
+        right subtree has workers ready. Workers in right subtree should NOT execute
+        until the left subtree is complete.
+        """
+        from core.application.services.query_service import AgentQueryService
+
+        repository, create_events = mock_repository
+
+        # Given: Two sibling managers, left still decomposing, right has workers
+        root_id = uuid4()
+        m_left_id = uuid4()  # Left manager, still analyzing
+        m_right_id = uuid4()  # Right manager, completed
+        w_right_id = uuid4()  # Worker under right manager
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            m_left_id: create_events(m_left_id, "manager", root_id, 0),  # Not terminal
+            m_right_id: create_events(m_right_id, "manager", root_id, 1, "completed"),
+            w_right_id: create_events(w_right_id, "worker", m_right_id, 0),
+        }
+
+        # Mark right manager as completed
+        from core.domain.events import WorkCompleted
+
+        repository.get_all_events_grouped.return_value[m_right_id].append(
+            WorkCompleted(aggregate_id=m_right_id, sequence_number=3, result="done")
+        )
+
+        # When: Getting active agents with sequential_workers=True
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=True)
+
+        # Then: Worker is blocked because left sibling subtree is incomplete
+        assert root_id in active  # Non-worker, still active
+        assert m_left_id in active  # Non-worker, still active (decomposing)
+        assert m_right_id not in active  # Terminal
+        assert w_right_id not in active  # Blocked by incomplete left sibling
+
+    @pytest.mark.asyncio
+    async def test_workers_unblocked_when_left_sibling_complete(
+        self, mock_repository
+    ) -> None:
+        """Test that workers can proceed once left sibling subtrees are complete."""
+        from core.application.services.query_service import AgentQueryService
+
+        repository, create_events = mock_repository
+
+        # Given: Two sibling managers, both completed, right has workers
+        root_id = uuid4()
+        m_left_id = uuid4()
+        m_right_id = uuid4()
+        w_right_id = uuid4()
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            m_left_id: create_events(m_left_id, "manager", root_id, 0, "completed"),
+            m_right_id: create_events(m_right_id, "manager", root_id, 1, "completed"),
+            w_right_id: create_events(w_right_id, "worker", m_right_id, 0),
+        }
+
+        # Mark both managers as completed
+        from core.domain.events import WorkCompleted
+
+        repository.get_all_events_grouped.return_value[m_left_id].append(
+            WorkCompleted(aggregate_id=m_left_id, sequence_number=3, result="done")
+        )
+        repository.get_all_events_grouped.return_value[m_right_id].append(
+            WorkCompleted(aggregate_id=m_right_id, sequence_number=3, result="done")
+        )
+
+        # When: Getting active agents with sequential_workers=True
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=True)
+
+        # Then: Worker can proceed (left sibling is complete)
+        assert root_id in active
+        assert m_left_id not in active  # Terminal
+        assert m_right_id not in active  # Terminal
+        assert w_right_id in active  # No longer blocked
 
     @pytest.mark.asyncio
     async def test_sequential_false_returns_all_workers(self, mock_repository) -> None:
