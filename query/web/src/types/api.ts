@@ -170,6 +170,12 @@ export interface SourceContextData {
   sanitizer: string;
   cve_id: string;
   repo_url: string;
+  // CWE Pattern Inference (inferred from bug report analysis)
+  inferred_cwes: string[];
+  cwe_reasoning: Record<string, string>;
+  cwe_confidence: Record<string, string>;
+  recommended_sanitizers: string[];
+  fix_patterns: Record<string, string>;
 }
 
 /** Context entry from the global context dashboard. */

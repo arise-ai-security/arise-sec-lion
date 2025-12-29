@@ -894,6 +894,79 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                       </div>
                     )}
 
+                    {/* CWE Pattern Inference Section */}
+                    {ctx.source_context?.inferred_cwes && ctx.source_context.inferred_cwes.length > 0 && (
+                      <div className="border-t border-amber-300 dark:border-amber-600 pt-2 mt-2">
+                        <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase mb-2">🎯 Inferred CWE Patterns</p>
+
+                        {/* CWE IDs with confidence */}
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {ctx.source_context.inferred_cwes.map((cwe, idx) => (
+                            <div key={idx} className="flex items-center gap-1">
+                              <span className="px-2 py-1 text-xs bg-amber-100 dark:bg-amber-800 text-amber-700 dark:text-amber-300 rounded font-mono font-bold">
+                                {cwe}
+                              </span>
+                              {ctx.source_context?.cwe_confidence?.[cwe] && (
+                                <span className={`px-1.5 py-0.5 text-xs rounded ${
+                                  ctx.source_context?.cwe_confidence?.[cwe] === 'high'
+                                    ? 'bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300'
+                                    : ctx.source_context?.cwe_confidence?.[cwe] === 'medium'
+                                    ? 'bg-yellow-100 dark:bg-yellow-800 text-yellow-700 dark:text-yellow-300'
+                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                                }`}>
+                                  {ctx.source_context?.cwe_confidence?.[cwe]}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* CWE Reasoning */}
+                        {ctx.source_context?.cwe_reasoning && Object.keys(ctx.source_context.cwe_reasoning).length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-amber-600 dark:text-amber-400">💡 Reasoning:</p>
+                            <div className="space-y-1">
+                              {Object.entries(ctx.source_context.cwe_reasoning).map(([cwe, reasoning]) => (
+                                <div key={cwe} className="text-xs bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
+                                  <span className="font-mono font-bold text-amber-700 dark:text-amber-300">{cwe}:</span>
+                                  <span className="text-gray-700 dark:text-gray-300 ml-1">{reasoning}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Recommended Sanitizers */}
+                        {ctx.source_context?.recommended_sanitizers && ctx.source_context.recommended_sanitizers.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-blue-600 dark:text-blue-400">🛡️ Recommended Sanitizers:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {ctx.source_context.recommended_sanitizers.map((san, idx) => (
+                                <code key={idx} className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300 rounded font-mono">
+                                  {san}
+                                </code>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Fix Patterns */}
+                        {ctx.source_context?.fix_patterns && Object.keys(ctx.source_context.fix_patterns).length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-green-600 dark:text-green-400">🔧 Fix Patterns:</p>
+                            <div className="space-y-1">
+                              {Object.entries(ctx.source_context.fix_patterns).map(([cwe, pattern]) => (
+                                <div key={cwe} className="text-xs bg-green-50 dark:bg-green-900/20 p-2 rounded">
+                                  <span className="font-mono font-bold text-green-700 dark:text-green-300">{cwe}:</span>
+                                  <span className="text-gray-700 dark:text-gray-300 ml-1">{pattern}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Tags */}
                     {ctx.tags && ctx.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 pt-1">
@@ -1156,6 +1229,26 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                                 <span className="px-1.5 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 rounded font-mono">
                                   {entry.source_context.sanitizer}
                                 </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* CWE Pattern Inference Section (Inherited) */}
+                        {entry.source_context?.inferred_cwes && entry.source_context.inferred_cwes.length > 0 && (
+                          <div className="border-t border-amber-300 dark:border-amber-600 pt-2 mt-2">
+                            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase mb-1">🎯 Inferred CWEs</p>
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {entry.source_context.inferred_cwes.map((cwe, idx) => (
+                                <span key={idx} className="px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-800 text-amber-700 dark:text-amber-300 rounded font-mono font-bold">
+                                  {cwe}
+                                </span>
+                              ))}
+                            </div>
+                            {entry.source_context?.fix_patterns && Object.keys(entry.source_context.fix_patterns).length > 0 && (
+                              <div className="text-xs text-gray-600 dark:text-gray-400">
+                                <span className="font-medium">Fix: </span>
+                                {Object.values(entry.source_context.fix_patterns)[0]}
                               </div>
                             )}
                           </div>

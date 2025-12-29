@@ -215,6 +215,27 @@ class SourceContextDataSchema(BaseModel):
     sanitizer: str = Field("", description="Sanitizer type (address, undefined, memory)")
     cve_id: str = Field("", description="CVE identifier if vulnerability task")
     repo_url: str = Field("", description="Repository URL for cloning")
+    # CWE Pattern Inference (inferred from bug report analysis)
+    inferred_cwes: list[str] = Field(
+        default_factory=list,
+        description="Inferred CWE IDs (e.g., ['CWE-787', 'CWE-125'])",
+    )
+    cwe_reasoning: dict[str, str] = Field(
+        default_factory=dict,
+        description="Reasoning for each inferred CWE",
+    )
+    cwe_confidence: dict[str, str] = Field(
+        default_factory=dict,
+        description="Confidence level per CWE (high/medium/low)",
+    )
+    recommended_sanitizers: list[str] = Field(
+        default_factory=list,
+        description="Recommended sanitizers based on CWE patterns",
+    )
+    fix_patterns: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recommended fix patterns per CWE",
+    )
 
 
 class ContextEntrySchema(BaseModel):
