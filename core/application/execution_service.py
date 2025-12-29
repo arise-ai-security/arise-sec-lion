@@ -1088,8 +1088,11 @@ class AgentExecutionService:
                     parent_id=parent.session_id,
                 )
 
-                # Assign the subtask to the child
-                child.assign_task(sub_event.subtask.description)
+                # Assign the subtask to the child with justification
+                child.assign_task(
+                    sub_event.subtask.description,
+                    justification=sub_event.subtask.justification,
+                )
 
                 # Allocate budget if specified
                 if "budget" in config:
