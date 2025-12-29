@@ -21,6 +21,7 @@ from core.domain.events import (
     ComplexityEvaluated,
     DomainEvent,
     LimitEnforced,
+    PromptSent,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -223,6 +224,11 @@ class AgentSession:
         # Worker cost events are informational, just increment version for OCC
         self.version += 1
 
+    @_apply.register
+    def _(self, event: PromptSent) -> None:
+        # Prompt events are for observability, just increment version for OCC
+        self.version += 1
+
     def _initialize_defaults(self, agent_id: UUID) -> None:
         self.agent_id: UUID = agent_id
         self.role: AgentRole = AgentRole.BOSS
@@ -399,6 +405,31 @@ class AgentSession:
         )
         self._apply(limit_event)
         self._changes.append(limit_event)
+
+    def emit_prompt_sent(
+        self,
+        prompt: str,
+        prompt_type: str,
+        target: str,
+    ) -> None:
+        """Emit PromptSent event for observability (pure domain method).
+
+        Called by orchestrator before LLM/worker calls to capture prompts.
+
+        Args:
+            prompt: The full prompt text being sent.
+            prompt_type: Type of prompt (complexity_evaluation, task_decomposition, worker_execution).
+            target: Where prompt is sent (llm, claude_code, openhands, etc.).
+        """
+        prompt_event = PromptSent(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            prompt=prompt,
+            prompt_type=prompt_type,
+            target=target,
+        )
+        self._apply(prompt_event)
+        self._changes.append(prompt_event)
 
     def apply_subtasks_and_spawn_children(
         self,

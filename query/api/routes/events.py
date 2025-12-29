@@ -22,6 +22,7 @@ from core.domain.events import (
     CodeGenerationStarted,
     ComplexityEvaluated,
     DomainEvent,
+    PromptSent,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -34,7 +35,13 @@ from core.query.projections.hierarchy_collector import HierarchyCollector
 from core.query.projections.impl import SummaryProjection
 from query.api.dependencies import EventStoreDep
 from query.api.routes.agents import _projection_summary_to_schema
-from query.api.schemas import CategorizedEventsSchema, EventSchema, ExecutionSummarySchema
+from query.api.schemas import (
+    AgentPromptSchema,
+    AgentPromptsSchema,
+    CategorizedEventsSchema,
+    EventSchema,
+    ExecutionSummarySchema,
+)
 
 
 router = APIRouter()
@@ -330,3 +337,32 @@ async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceR
                 break
 
     return EventSourceResponse(summary_generator())
+
+
+@router.get("/{agent_id}/prompts", response_model=AgentPromptsSchema)
+async def get_agent_prompts(agent_id: UUID, event_store: EventStoreDep) -> AgentPromptsSchema:
+    """Get all prompts sent by an agent.
+
+    Returns prompts for complexity evaluation, task decomposition, and worker execution.
+    """
+    events = await event_store.get_events(agent_id)
+    if not events:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    prompts = []
+    for event in events:
+        if isinstance(event, PromptSent):
+            prompts.append(
+                AgentPromptSchema(
+                    prompt=event.prompt,
+                    prompt_type=event.prompt_type,
+                    target=event.target,
+                    occurred_at=event.occurred_at,
+                )
+            )
+
+    return AgentPromptsSchema(
+        agent_id=str(agent_id),
+        prompts=prompts,
+        total=len(prompts),
+    )

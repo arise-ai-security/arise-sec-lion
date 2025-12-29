@@ -156,9 +156,9 @@ async def test_manager_decomposition() -> None:
     # When: Call orchestrator.evaluate_task(agent)
     await orchestrator.evaluate_task(agent)
 
-    # Then: Verify 7 events exist
-    # (AgentCreated, TaskAssigned, TokensConsumed, SubtasksDefined, ChildSpawned x2, StatusChanged)
-    assert len(agent.events) == 7, f"Expected 7 events, got {len(agent.events)}"
+    # Then: Verify 8 events exist
+    # (AgentCreated, TaskAssigned, PromptSent, TokensConsumed, SubtasksDefined, ChildSpawned x2, StatusChanged)
+    assert len(agent.events) == 8, f"Expected 8 events, got {len(agent.events)}"
 
     # And: Find specific events
     subtasks_event = None
@@ -220,8 +220,8 @@ async def test_manager_llm_invalid_json_response() -> None:
     # When: Call orchestrator.evaluate_task(agent) with invalid JSON response
     await orchestrator.evaluate_task(agent)
 
-    # Then: Verify 4 events exist (AgentCreated, TaskAssigned, TokensConsumed, WorkFailed)
-    assert len(agent.events) == 4, f"Expected 4 events, got {len(agent.events)}"
+    # Then: Verify 5 events exist (AgentCreated, TaskAssigned, PromptSent, TokensConsumed, WorkFailed)
+    assert len(agent.events) == 5, f"Expected 5 events, got {len(agent.events)}"
 
     # And: Find the WorkFailed event
     work_failed_event = None

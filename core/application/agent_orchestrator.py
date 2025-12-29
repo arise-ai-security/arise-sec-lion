@@ -80,6 +80,9 @@ class AgentOrchestrator:
             parent_task=None,
         )
 
+        # Emit prompt for observability
+        agent.emit_prompt_sent(prompt, prompt_type="complexity_evaluation", target="llm")
+
         # Perform LLM call
         llm_config = ConfigResolver.resolve(agent.config, operation="complexity_evaluation")
         llm_response = await self._llm_port.query_with_usage(prompt, llm_config.model_dump())
@@ -153,6 +156,9 @@ class AgentOrchestrator:
             cve_instance=cve_instance,
             registered_tasks=registered_tasks,
         )
+
+        # Emit prompt for observability
+        agent.emit_prompt_sent(prompt, prompt_type="task_decomposition", target="llm")
 
         # Perform LLM call
         llm_config = ConfigResolver.resolve(agent.config, operation="task_decomposition")
@@ -301,6 +307,9 @@ class AgentOrchestrator:
             cve_instance=cve_instance,
             parent_context=agent.parent_context,
         )
+
+        # Emit prompt for observability
+        agent.emit_prompt_sent(enhanced_description, prompt_type="worker_execution", target=tool_name)
 
         task_context: dict[str, Any] = {
             "agent_id": agent.agent_id,

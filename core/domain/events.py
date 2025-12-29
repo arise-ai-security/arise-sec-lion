@@ -131,6 +131,17 @@ class ThoughtCaptured(DomainEvent):
     output_type: str = "output"
 
 
+class PromptSent(DomainEvent):
+    """Prompt sent to LLM or worker tool for processing.
+
+    Captures the full prompt for observability and debugging.
+    """
+
+    prompt: str
+    prompt_type: str  # "complexity_evaluation", "task_decomposition", "worker_execution"
+    target: str  # "llm" or tool name like "claude_code", "openhands"
+
+
 class ChildCompleted(DomainEvent):
     """Child agent completed, parent notified with structured result.
 
