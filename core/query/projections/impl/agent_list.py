@@ -52,6 +52,9 @@ class AgentListProjection:
         # Default status
         status = "analyzing"
 
+        # Terminal states should not be overwritten
+        terminal_states = {"completed", "failed"}
+
         # Track task description and child IDs
         task_description: str | None = None
         child_ids: list[UUID] = []
@@ -61,10 +64,13 @@ class AgentListProjection:
                 task_description = event.task_description
 
             elif isinstance(event, StatusChanged):
-                status = event.new_status
+                # Only update if not already in terminal state
+                if status not in terminal_states:
+                    status = event.new_status
 
             elif isinstance(event, CodeGenerationStarted):
-                status = "in_progress"
+                if status not in terminal_states:
+                    status = "in_progress"
 
             elif isinstance(event, WorkCompleted):
                 status = "completed"
