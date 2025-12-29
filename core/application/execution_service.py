@@ -237,13 +237,23 @@ class AgentExecutionService:
             if not active_agents:
                 break
 
-            for agent_id in active_agents:
-                try:
-                    await self.run_agent_step(agent_id)
-                except Exception as e:
-                    print(f"Error executing agent {agent_id}: {e!r}")
+            # Execute all active agents concurrently
+            # - Non-workers (managers) decompose in parallel
+            # - Workers are already limited to one by get_active_agent_ids
+            # - Worker semaphore provides additional concurrency control
+            await asyncio.gather(
+                *(self._run_agent_step_safe(agent_id) for agent_id in active_agents),
+                return_exceptions=True,
+            )
 
             await asyncio.sleep(self._config.poll_interval)
+
+    async def _run_agent_step_safe(self, agent_id: UUID) -> None:
+        """Execute agent step with exception handling for gather()."""
+        try:
+            await self.run_agent_step(agent_id)
+        except Exception as e:
+            print(f"Error executing agent {agent_id}: {e!r}")
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
         """Get agent execution result."""

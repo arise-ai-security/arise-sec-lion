@@ -46,11 +46,14 @@ def make_infra_config(**overrides) -> InfrastructureConfig:
 
 def make_app_config(**overrides) -> ApplicationConfig:
     """Create ApplicationConfig with sensible defaults."""
+    from config import BossConfig, ManagerConfig
+
     defaults = {
         "system_limits": make_test_limits(),
         "max_retries": 3,
         "poll_interval": 0.5,
-        "model_config": {"boss": "gpt-4o"},
+        "boss_config": BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
+        "manager_config": ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
         "output_directory": "./test_output",
         "default_worker_tool": "claude_code",
     }

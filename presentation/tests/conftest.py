@@ -50,7 +50,11 @@ class FakeExecutionService:
         """Simulate infrastructure cleanup."""
         self.cleaned_up = True
 
-    async def create_boss_agent(self, task_description: str) -> str:
+    async def create_boss_agent(
+        self,
+        task_description: str,
+        cve_instance: object | None = None,
+    ) -> str:
         """Simulate BOSS agent creation."""
         self.last_task_description = task_description
         self.created_boss_id = str(uuid4())

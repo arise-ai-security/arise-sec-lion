@@ -98,6 +98,27 @@ class EventStoreReadPort(Protocol):
         """
         ...
 
+    async def get_boss_agents_grouped(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for BOSS agents only, using optimized single-query approach.
+
+        Filters at database level for role='boss' in AgentCreated events,
+        then fetches all events for those aggregates in a single subquery.
+        Much faster than get_all_events_grouped + Python filter.
+
+        Args:
+            limit: Maximum number of BOSS agents to return (None = unlimited).
+            offset: Number of BOSS agents to skip (for pagination).
+
+        Returns:
+            Dict mapping aggregate_id to list of events for BOSS agents only.
+        """
+        ...
+
 
 class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadPort, Protocol):
     """Composite event store interface with full capabilities.

@@ -19,3 +19,8 @@ ON events (aggregate_id);
 -- Composite index for ordered event retrieval
 CREATE INDEX IF NOT EXISTS idx_events_aggregate_sequence
 ON events (aggregate_id, sequence_number);
+
+-- Index for BOSS agent queries (filters on AgentCreated events with role='boss')
+CREATE INDEX IF NOT EXISTS idx_events_boss_agents
+ON events (occurred_at DESC, aggregate_id)
+WHERE event_type = 'AgentCreated' AND payload->>'role' = 'boss';

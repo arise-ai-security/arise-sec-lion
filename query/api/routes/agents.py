@@ -111,18 +111,17 @@ async def list_boss_agents(
     Returns:
         Paginated list of BOSS agents with pagination metadata.
 
-    Uses CQRS projection for efficient read model construction.
+    Uses optimized single-query approach that filters BOSS agents at database level.
     """
-    # Single query to fetch events grouped by aggregate with pagination
-    all_events_grouped = await event_store.get_all_events_grouped(
+    # Optimized: filter BOSS agents at database level (single round trip)
+    boss_events_grouped = await event_store.get_boss_agents_grouped(
         limit=limit + 1,  # Fetch one extra to check has_more
         offset=offset,
     )
 
     # Use projection to build lightweight read models (no AgentSession reconstruction)
     projection = AgentListProjection()
-    agents = projection.project_all(all_events_grouped)
-    boss_agents = projection.filter_boss_agents(agents)
+    boss_agents = list(projection.project_all(boss_events_grouped).values())
 
     # Check if there are more results
     has_more = len(boss_agents) > limit
