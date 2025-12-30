@@ -155,6 +155,7 @@ class AgentOrchestrator:
             parent_task=None,
             cve_instance=cve_instance,
             registered_tasks=registered_tasks,
+            parent_context=agent.parent_context,
         )
 
         # Emit prompt for observability

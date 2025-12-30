@@ -100,9 +100,10 @@ class PostgresTaskRegistryAdapter(TaskRegistryPort):
                 # This serializes concurrent registrations for the same task_key
                 await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_id)
 
-                # Check if task already exists (O(1) via primary key)
+                # Check if task already exists in THIS run (O(1) via unique constraint)
                 exists = await conn.fetchval(
-                    "SELECT 1 FROM task_registry WHERE task_key = $1",
+                    "SELECT 1 FROM task_registry WHERE root_id = $1 AND task_key = $2",
+                    root_id,
                     task_key,
                 )
                 if exists:

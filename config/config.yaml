@@ -5,19 +5,19 @@ database:
   name: arise_events
 
 boss:
-  model: gpt-4o
-  temperature: 0.7
-  max_tokens: 1000
+  model: gpt-4o-mini
+  temperature: 0.5
+  max_tokens: 500
 
 manager:
-  model: gpt-4o
-  temperature: 0.7
-  max_tokens: 1000
+  model: gpt-4o-mini
+  temperature: 0.5
+  max_tokens: 500
 
 worker:
-  model: claude-opus-4-5-20251101
+  model: claude-sonnet-4-20250514
   tool: claude_code
-  timeout: 300
+  timeout: 120
 
 orchestration:
   max_retries: 3
@@ -29,13 +29,13 @@ orchestration:
   # Note: Budget tracking will be added via SharedExecutionContext (context-passing feature)
 
   limits:
-    max_depth: 4               # Force workers at depth 4 to prevent explosion
-    max_children_per_node: 5   # Limit subtasks per decomposition
-    max_total_agents: 50       # Safety limit on total agents
+    max_depth: 4               # Force workers at depth 2 (faster execution)
+    max_children_per_node: 2   # Limit subtasks per decomposition (faster)
+    max_total_agents: 15       # Safety limit on total agents
     max_concurrent_workers: -1 # -1 = unlimited
     llm_rate_limit_rpm: -1     # -1 = unlimited
-    max_concurrent_llm_calls: 5  # Concurrent LLM API calls (-1 = unlimited)
-    llm_jitter_max_ms: 50       # Max random jitter before LLM calls in ms (0 = disabled)
+    max_concurrent_llm_calls: 10  # Concurrent LLM API calls (-1 = unlimited)
+    llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
 
 output:
   verbose: true

@@ -35,6 +35,7 @@ class CVEInstance:
     exit_code: int  # Expected exit code after patched execution
     sanitizer_report: str  # Expected sanitizer output
     bug_report: str  # Original GitHub issue/bug report
+    candidate_fixes: str = ""  # Candidate fix commit hashes/URLs
 
     @property
     def cve_id(self) -> str:
@@ -103,6 +104,7 @@ class CVEInstance:
             "exit_code": self.exit_code,
             "sanitizer_report": self.sanitizer_report,
             "bug_report": self.bug_report,
+            "candidate_fixes": self.candidate_fixes,
         }
 
     @classmethod
@@ -124,6 +126,7 @@ class CVEInstance:
             exit_code=data.get("exit_code", 0),
             sanitizer_report=data.get("sanitizer_report", ""),
             bug_report=data.get("bug_report", ""),
+            candidate_fixes=data.get("candidate_fixes", ""),
         )
 
     @classmethod
@@ -167,6 +170,7 @@ class CVEInstance:
             # Vulnerability info
             "bug_description": self.bug_description,
             "expected_error": self.expected_sanitizer_error,
+            "candidate_fixes": self.candidate_fixes,
             # Availability flags
             "has_gold_patch": self.has_gold_patch,
             "has_dockerfile": self.has_dockerfile,

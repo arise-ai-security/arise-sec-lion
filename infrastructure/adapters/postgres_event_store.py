@@ -20,6 +20,7 @@ from core.domain.events import (
     DomainEvent,
     LimitEnforced,
     ProgressUpdated,
+    PromptSent,
     SharedContextCreated,
     StatusChanged,
     SubtasksDefined,
@@ -47,6 +48,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "ThoughtCaptured": ThoughtCaptured,
     "ChildCompleted": ChildCompleted,
     "ComplexityEvaluated": ComplexityEvaluated,
+    # Observability events
+    "PromptSent": PromptSent,
     # Cost tracking events
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,

@@ -28,12 +28,10 @@ CREATE TABLE IF NOT EXISTS task_registry (
     -- Timestamp for cleanup queries
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    -- Primary key: task_key is globally unique
-    PRIMARY KEY (task_key),
-
-    -- Unique constraint: one task_key per root_id (belt + suspenders)
-    -- This handles edge case where same task_key appears in different runs
-    CONSTRAINT unique_root_task UNIQUE (root_id, task_key)
+    -- Composite primary key: task deduplication is scoped per execution run
+    -- Same task description CAN exist in different runs (different root_id)
+    -- Same task description CANNOT exist twice in the same run
+    PRIMARY KEY (root_id, task_key)
 );
 
 -- Composite index for listing all tasks in a run (for prompt context)

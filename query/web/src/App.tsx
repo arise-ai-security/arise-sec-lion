@@ -355,7 +355,7 @@ function App() {
       <div className="w-96 flex-shrink-0 bg-white dark:bg-gray-800 border-l dark:border-gray-700">
         {/* Tab header */}
         <div className="h-14 flex items-center justify-between px-4 border-b dark:border-gray-700">
-          <div className="flex gap-1">
+          <div className="flex gap-1 overflow-x-auto">
             <button
               onClick={() => setRightPanelView('summary')}
               className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
