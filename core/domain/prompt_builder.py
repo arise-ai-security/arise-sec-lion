@@ -212,8 +212,13 @@ class PromptBuilder:
             elif any(kw in task_lower for kw in ("[fixer]", "fixer", "patch", "fix")):
                 branch = "fixer"
 
-        # Use SEC-bench specific manager prompts if in benchmark branch
-        if branch:
+        # SEC-bench manager templates are ONLY for depth-1 managers (direct BOSS children)
+        # e.g., [Builder], [Exploiter], [Fixer] - NOT for nested managers like [Builder-5]
+        # parent_context.depth == 0 means parent is BOSS (depth 0)
+        is_direct_boss_child = parent_context is not None and parent_context.depth == 0
+
+        # Use SEC-bench specific manager prompts only for top-level phase managers
+        if branch and is_direct_boss_child:
             return (
                 self.chain()
                 .render("core/roles/manager.j2", default_tool=tool)

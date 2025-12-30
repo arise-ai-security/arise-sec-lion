@@ -57,18 +57,37 @@ class TaskKeyGenerator:
         return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
-MARKDOWN_CODE_BLOCK_PATTERN = re.compile(
+# Patterns for extracting JSON from LLM responses
+# Pattern 1: Full match - entire response is wrapped in code block
+_FULL_CODE_BLOCK_PATTERN = re.compile(
     r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+# Pattern 2: Search - code block anywhere in response (handles extra text after)
+_SEARCH_CODE_BLOCK_PATTERN = re.compile(
+    r"```(?:json)?\s*\n(.*?)\n\s*```",
     re.DOTALL | re.IGNORECASE,
 )
 
 
 def strip_markdown_code_block(text: str) -> str:
-    """Extract content from markdown code block wrapper (```json...```)."""
-    match = MARKDOWN_CODE_BLOCK_PATTERN.match(text.strip())
+    """Extract content from markdown code block wrapper (```json...```).
+
+    Handles cases where LLM adds explanatory text before or after the JSON block.
+    """
+    stripped = text.strip()
+
+    # First try exact match (entire response is the code block)
+    match = _FULL_CODE_BLOCK_PATTERN.match(stripped)
     if match:
         return match.group(1).strip()
-    return text.strip()
+
+    # Fall back to search (code block somewhere in response)
+    match = _SEARCH_CODE_BLOCK_PATTERN.search(stripped)
+    if match:
+        return match.group(1).strip()
+
+    return stripped
 
 
 class SubtaskParser:
