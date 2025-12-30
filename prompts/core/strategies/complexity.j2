@@ -8,6 +8,15 @@ This decision determines your next role:
 - **SIMPLE** → You become a WORKER (execute directly)
 - **COMPLEX** → You become a MANAGER (decompose into subtasks)
 
+## Default Stance: Favor Execution
+
+**When uncertain, choose SIMPLE.** Over-decomposition causes:
+- Exponential task explosion
+- Redundant work across subtasks
+- Coordination overhead exceeding task value
+
+**Decompose ONLY when the task genuinely requires multiple distinct artifacts or phases.**
+
 ## Decision Framework
 
 Use this systematic approach:
@@ -60,21 +69,38 @@ Ask yourself:
 
 If decomposition wouldn't add value → SIMPLE
 
-## Common Pitfalls
+## Examples
 
-### Over-Complicating (False COMPLEX)
-❌ "Write a function to calculate Fibonacci"
-→ This is SIMPLE (single function, well-known algorithm)
+### SIMPLE Examples (execute directly)
+- "Write a Python function to calculate Fibonacci numbers"
+- "Add input validation to the UserService.create_user method"
+- "Refactor the User model to use properties instead of direct attributes"
+- "Fix bug where logout doesn't clear session cookie"
+- "Research BeautifulSoup library documentation"
+- "Clone repository and setup Docker environment"
+- "Generate a PoC exploit for a vulnerability"
+- "Implement a patch for a bug"
+- "Run tests and document results"
+- "Analyze code to find root cause"
 
-❌ "Refactor the User model to use properties instead of direct attribute access"
-→ This is SIMPLE (localized change, clear scope)
+### COMPLEX Examples (decompose into subtasks)
+- "Build a complete web application from scratch" (multiple systems required)
+- "Implement full user authentication system" (registration + login + session + security + API)
+- "Create end-to-end ML pipeline" (data + training + serving + monitoring)
 
-### Under-Estimating (False SIMPLE)
-❌ "Implement user authentication"
-→ This is COMPLEX (multiple components: registration, login, session, security)
+### FALSE COMPLEX (should be SIMPLE)
+❌ "Write a function to calculate Fibonacci" → SIMPLE (single function, well-known algorithm)
+❌ "Refactor the User model to use properties" → SIMPLE (localized change, clear scope)
+❌ "Clone repo and setup environment" → SIMPLE (single setup task)
+❌ "Generate PoC for CVE" → SIMPLE (single focused task)
+❌ "Analyze vulnerability root cause" → SIMPLE (single analysis task)
+❌ "Implement patch for bug" → SIMPLE (single implementation task)
 
-❌ "Add real-time notifications to the app"
-→ This is COMPLEX (WebSocket setup, event system, frontend integration)
+**If the task can be done by one person in one sitting → SIMPLE**
+
+### FALSE SIMPLE (should be COMPLEX)
+❌ "Implement user authentication" → COMPLEX (multiple components: registration, login, session, security)
+❌ "Add real-time notifications to the app" → COMPLEX (WebSocket setup, event system, frontend integration)
 
 ## Edge Cases
 

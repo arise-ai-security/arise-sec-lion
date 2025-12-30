@@ -38,22 +38,57 @@ CVE Data → Environment Setup → PoC Generation → Patch Generation → Valid
 - Apply patch and re-execute → must NOT trigger sanitizer error
 - Both artifacts must be reproducible
 
+## CVE Analysis - Information Gathering
+
+Before decomposing, extract these details from the CVE:
+
+### Required Information
+- **CVE ID**: The identifier (e.g., CVE-2024-12345)
+- **CWE Type**: Vulnerability classification (e.g., CWE-787 Out-of-bounds Write)
+- **Affected Software**: Name and vulnerable versions
+- **Fixed Version**: Version where vulnerability was patched
+- **CVSS Score**: Severity indicator
+- **Attack Vector**: How the vulnerability can be triggered
+
+### Vulnerability Categories & PoC Strategies
+
+| CWE Type | PoC Strategy | Expected Sanitizer |
+|----------|--------------|-------------------|
+| CWE-787 (OOB Write) | Craft input exceeding buffer | AddressSanitizer |
+| CWE-125 (OOB Read) | Craft input causing over-read | AddressSanitizer |
+| CWE-416 (Use-After-Free) | Trigger free then use | AddressSanitizer |
+| CWE-476 (NULL Deref) | Craft input causing NULL access | AddressSanitizer/SIGSEGV |
+| CWE-190 (Integer Overflow) | Craft large values | UBSanitizer |
+| CWE-369 (Divide by Zero) | Craft zero divisor | UBSanitizer/SIGFPE |
+
 ## Decomposition Guidelines
 
 **Optimal subtask count**: 3-4 subtasks for security benchmarks
 
-**Recommended decomposition patterns**:
+### Recommended Decomposition Patterns
 
-Pattern A (Sequential):
+**Pattern A (Sequential)**:
 1. "Analyze CVE and setup Docker environment with sanitizers"
 2. "Generate PoC that triggers sanitizer error"
 3. "Generate patch and validate both artifacts"
 
-Pattern B (Parallel PoC/Patch):
+**Pattern B (Parallel PoC/Patch)**:
 1. "Analyze CVE, clone repo, build Docker with sanitizers"
 2. "Generate proof-of-concept exploit" (can parallelize with 3)
 3. "Generate security patch" (can parallelize with 2)
 4. "Validate PoC triggers error, patch fixes it"
+
+### Simple CVEs (2-3 subtasks)
+- Single file affected
+- Clear vulnerable function
+- Existing test harness
+- Well-documented fix
+
+### Complex CVEs (3-4 subtasks)
+- Multiple files affected
+- Complex data flow to vulnerability
+- No existing test harness
+- Architectural fix required
 
 ## Model Selection for Security Tasks
 

@@ -94,11 +94,11 @@ class TemplateChain:
     def with_cve_context(self, cve_instance: CVEInstance | None) -> Self:
         """Inject SEC-bench CVE context if available.
 
-        Renders secbench/cve_context.j2 with CVE instance data.
+        Renders secbench/context.j2 with CVE instance data.
         """
         if cve_instance is not None:
             return self.render_optional(
-                "secbench/cve_context.j2",
+                "secbench/context.j2",
                 **cve_instance.to_template_context(),
             )
         return self
@@ -165,14 +165,12 @@ class PromptBuilder:
         """Build prompt for PENDING agent complexity evaluation."""
         return (
             self.chain()
-            .render("system/role_pending.j2")
-            .render("strategies/complexity_evaluation.j2")
-            .render("tasks/complexity_evaluation.j2",
-                    task_description=task_description,
-                    agent_id=str(agent_id),
-                    parent_task=parent_task)
-            .render("output_formats/complexity_result.j2")
-            .with_security("complexity_security.j2")
+            .render("core/roles/pending.j2")
+            .render("core/strategies/complexity.j2")
+            .text(f"<TASK_TO_EVALUATE>\n{task_description}\n</TASK_TO_EVALUATE>")
+            .text_if(parent_task, f"<PARENT_TASK>\n{parent_task}\n</PARENT_TASK>")
+            .render("core/output/complexity.j2")
+            .with_security("complexity_overlay.j2")
             .build()
         )
 
@@ -183,6 +181,8 @@ class PromptBuilder:
         agent_role: AgentRole = AgentRole.MANAGER,
         parent_task: str | None = None,
         registered_tasks: list[RegisteredTask] | None = None,
+        cve_instance: CVEInstance | None = None,
+        parent_context: ParentContext | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
 
@@ -192,21 +192,46 @@ class PromptBuilder:
             agent_role: Agent role (should be MANAGER).
             parent_task: Parent task description.
             registered_tasks: List of already-registered tasks (for dedup hint).
+            cve_instance: SEC-bench CVE instance for benchmark runs.
+            parent_context: Parent context for branch detection.
         """
         ctx = self._task_context(task_description, agent_id, agent_role, parent_task)
         tool = self.default_tool
+        cve_ctx = cve_instance.to_template_context() if cve_instance else {}
+
+        # Detect SEC-bench branch for specialized manager prompts
+        branch = _detect_benchmark_branch(parent_context) if cve_instance else None
+
+        # Also detect branch from task description if parent_context is None
+        if branch is None and cve_instance:
+            task_lower = task_description.lower()
+            if any(kw in task_lower for kw in ("[builder]", "builder", "environment", "setup")):
+                branch = "builder"
+            elif any(kw in task_lower for kw in ("[exploiter]", "exploiter", "poc", "exploit")):
+                branch = "exploiter"
+            elif any(kw in task_lower for kw in ("[fixer]", "fixer", "patch", "fix")):
+                branch = "fixer"
+
+        # Use SEC-bench specific manager prompts if in benchmark branch
+        if branch:
+            return (
+                self.chain()
+                .render("core/roles/manager.j2", default_tool=tool)
+                .with_cve_context(cve_instance)
+                .render_if(branch == "builder", "secbench/manager/builder.j2", **cve_ctx, default_tool=tool)
+                .render_if(branch == "exploiter", "secbench/manager/exploiter.j2", **cve_ctx, default_tool=tool)
+                .render_if(branch == "fixer", "secbench/manager/fixer.j2", **cve_ctx, default_tool=tool)
+                .build()
+            )
+
+        # Standard manager decomposition prompt
         return (
             self.chain()
-            .render("system/role_manager.j2", default_tool=tool)
-            .with_security("manager_security.j2", default_tool=tool)
-            .render("strategies/manager_decomposition.j2", default_tool=tool)
-            .render_if(
-                registered_tasks,
-                "tasks/registered_tasks_context.j2",
-                registered_tasks=registered_tasks,
-            )
-            .render("tasks/task_decomposition.j2", **ctx)
-            .render("output_formats/subtask_list.j2", default_tool=tool)
+            .render("core/roles/manager.j2", default_tool=tool)
+            .with_security("manager_overlay.j2", default_tool=tool)
+            .render("core/strategies/decomposition.j2", default_tool=tool)
+            .render("core/context/task.j2", **ctx, registered_tasks=registered_tasks)
+            .render("core/output/subtasks.j2", default_tool=tool)
             .build()
         )
 
@@ -231,24 +256,24 @@ class PromptBuilder:
         tool = self.default_tool
         cve_ctx = cve_instance.to_template_context() if cve_instance else {}
 
+        # SEC-bench mode: use streamlined boss prompt
+        if cve_instance:
+            return (
+                self.chain()
+                .render("core/roles/boss.j2", default_tool=tool)
+                .with_cve_context(cve_instance)
+                .render("secbench/boss.j2", **cve_ctx, default_tool=tool)
+                .build()
+            )
+
+        # General mode: layered composition
         return (
             self.chain()
-            # Base role and security
-            .render("system/role_boss.j2", default_tool=tool)
-            .with_security("role_boss_security.j2", default_tool=tool)
-            # SEC-bench specific guidance (conditional on CVE context)
-            .with_cve_context(cve_instance)
-            .render_if(cve_instance, "secbench/role_boss.j2", **cve_ctx, default_tool=tool)
-            # Strategy and task
-            .render("strategies/boss_delegation.j2", default_tool=tool)
-            .with_security("strategy_cve_benchmark.j2", default_tool=tool)
-            # Registered tasks context (for deduplication hint)
-            .render_if(registered_tasks, "tasks/registered_tasks_context.j2", registered_tasks=registered_tasks)
-            .render("tasks/task_decomposition.j2", **ctx)
-            # Output format (SEC-bench vs standard)
-            .render_if(cve_instance, "secbench/output_format.j2", default_tool=tool)
-            .render_if(not cve_instance, "output_formats/subtask_list.j2", default_tool=tool)
-            .render_if(not cve_instance, "security/output_format_benchmark.j2", default_tool=tool)
+            .render("core/roles/boss.j2", default_tool=tool)
+            .with_security("boss_overlay.j2", default_tool=tool)
+            .render("core/strategies/decomposition.j2", default_tool=tool)
+            .render("core/context/task.j2", **ctx, registered_tasks=registered_tasks)
+            .render("core/output/subtasks.j2", default_tool=tool)
             .build()
         )
 
@@ -260,6 +285,7 @@ class PromptBuilder:
         parent_task: str | None = None,
         cve_instance: CVEInstance | None = None,
         registered_tasks: list[RegisteredTask] | None = None,
+        parent_context: ParentContext | None = None,
     ) -> str:
         """Automatically select appropriate prompt based on agent role.
 
@@ -270,6 +296,7 @@ class PromptBuilder:
             parent_task: Parent task description.
             cve_instance: SEC-bench CVE instance for benchmark runs.
             registered_tasks: List of already-registered tasks (for dedup hint).
+            parent_context: Parent context for branch detection.
         """
         match agent_role:
             case AgentRole.BOSS:
@@ -287,6 +314,8 @@ class PromptBuilder:
                     agent_role,
                     parent_task,
                     registered_tasks,
+                    cve_instance,
+                    parent_context,
                 )
             case _:
                 return self.build_complexity_evaluation_prompt(
@@ -315,21 +344,25 @@ class PromptBuilder:
         cve_ctx = cve_instance.to_template_context() if cve_instance else {}
         branch = _detect_benchmark_branch(parent_context) if cve_instance else None
 
+        # SEC-bench mode: use streamlined worker prompts
+        if branch:
+            return (
+                self.chain()
+                .render_if(sibling_context, "core/context/sibling.j2", **sibling_ctx)
+                .with_cve_context(cve_instance)
+                .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
+                .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
+                .render_if(branch == "fixer", "secbench/worker/fixer.j2", **cve_ctx)
+                .build()
+            )
+
+        # General mode: layered composition
         return (
             self.chain()
-            # Sibling context
-            .render_if(sibling_context, "worker/sibling_context.j2", **sibling_ctx)
-            # SEC-bench CVE context and branch-specific templates
-            .with_cve_context(cve_instance)
-            .render_if(branch == "builder", "secbench/worker_builder.j2", **cve_ctx)
-            .render_if(branch == "exploiter", "secbench/worker_exploiter.j2", **cve_ctx)
-            .render_if(branch == "fixer", "secbench/worker_fixer.j2", **cve_ctx)
-            # Instructions + security overlay
-            .render("worker/execution_instructions.j2")
-            .with_security("worker_guidance.j2")
-            # Task description
+            .render_if(sibling_context, "core/context/sibling.j2", **sibling_ctx)
+            .render("core/roles/worker.j2")
+            .render("core/worker/execution.j2")
             .text(f"<TASK>\n{task_description}\n</TASK>")
-            # Workspace context
-            .render_if(workspace_context, "worker/workspace_context.j2", files=workspace_context)
+            .render_if(workspace_context, "core/context/workspace.j2", files=workspace_context)
             .build()
         )

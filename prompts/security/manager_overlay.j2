@@ -80,47 +80,7 @@ Recommended (3 subtasks):
    - 2-3 subtasks is optimal for security tasks
    - Each subtask should produce a concrete artifact
 
-### 5. Example Decompositions
-
-#### Example 1: PoC + Patch Task
-Parent task: "Generate PoC and patch for CVE-2024-5678 (buffer overflow in libfoo)"
-
-Good decomposition:
-```json
-[
-  {
-    "description": "Setup libfoo v1.2.3 in Docker with AddressSanitizer, then generate PoC that triggers buffer overflow in parse_data()",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
-  },
-  {
-    "description": "Generate minimal patch for CVE-2024-5678 buffer overflow, validate PoC no longer triggers sanitizer error",
-    "config": {"strategy": "heuristic", "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
-  }
-]
-```
-
-#### Example 2: Complex Vulnerability Analysis
-Parent task: "Analyze and create benchmark for CVE-2024-9999 use-after-free in connection handling"
-
-Good decomposition:
-```json
-[
-  {
-    "description": "Analyze CVE-2024-9999: trace data flow in connection.c, identify UAF trigger sequence, document in analysis.md",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 4000}, "tool": "claude_code"}
-  },
-  {
-    "description": "Generate PoC for CVE-2024-9999 UAF: create input sequence that frees connection then triggers callback, expect 'heap-use-after-free'",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000}, "tool": "claude_code"}
-  },
-  {
-    "description": "Generate patch for CVE-2024-9999: nullify callback after free or restructure ownership, validate UAF is fixed",
-    "config": {"strategy": "heuristic", "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000}, "tool": "claude_code"}
-  }
-]
-```
-
-### 6. Anti-Patterns to Avoid
+### 5. Anti-Patterns to Avoid
 
 **Too Granular:**
 ```json
@@ -128,8 +88,6 @@ Good decomposition:
   {"description": "Clone the repository"},
   {"description": "Checkout the vulnerable version"},
   {"description": "Create Dockerfile"},
-  {"description": "Build with sanitizers"},
-  {"description": "Write PoC code"},
   ...
 ]
 ```
