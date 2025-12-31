@@ -1,6 +1,6 @@
-"""Agent configuration models with multiple resolution strategies."""
+"""Agent configuration models - simplified to heuristic strategy only."""
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -13,18 +13,6 @@ class LLMConfig(BaseModel):
     model: str = Field(..., min_length=1)
     temperature: float = Field(..., ge=0.0, le=2.0)
     max_tokens: int = Field(..., gt=0, le=100000)
-    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
-
-
-class PerOperationConfig(BaseModel):
-    """Strategy: parent specifies exact config per operation."""
-
-    model_config = {"frozen": True}
-
-    strategy: Literal["per_operation"] = "per_operation"
-    complexity_evaluation: LLMConfig
-    task_decomposition: LLMConfig
-    tool: Literal["claude_code", "openhands", "google_adk"] = "claude_code"
 
 
 class HeuristicConfig(BaseModel):
@@ -37,15 +25,4 @@ class HeuristicConfig(BaseModel):
     tool: Literal["claude_code", "openhands", "google_adk"] = "claude_code"
 
 
-class HybridConfig(BaseModel):
-    """Strategy: base config with optional per-operation overrides."""
-
-    model_config = {"frozen": True}
-
-    strategy: Literal["hybrid"] = "hybrid"
-    base: LLMConfig
-    overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    tool: Literal["claude_code", "openhands", "google_adk"] = "claude_code"
-
-
-AgentConfig = PerOperationConfig | HeuristicConfig | HybridConfig
+type AgentConfig = HeuristicConfig

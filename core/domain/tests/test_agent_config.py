@@ -2,17 +2,14 @@
 
 This module tests the type-safe configuration models that enable
 parent agents to control child configurations dynamically.
+
+Simplified to heuristic strategy only.
 """
 
 import pytest
 from pydantic import ValidationError
 
-from core.domain.values.agent_config import (
-    HeuristicConfig,
-    HybridConfig,
-    LLMConfig,
-    PerOperationConfig,
-)
+from core.domain.values.agent_config import HeuristicConfig, LLMConfig
 
 
 class TestLLMConfig:
@@ -28,17 +25,6 @@ class TestLLMConfig:
         assert config.model == "gpt-4o"
         assert config.temperature == 0.7
         assert config.max_tokens == 1000
-        assert config.top_p is None
-
-    def test_valid_config_with_top_p(self):
-        """Test LLMConfig with optional top_p parameter."""
-        config = LLMConfig(
-            model="gemini-pro",
-            temperature=0.5,
-            max_tokens=500,
-            top_p=0.9,
-        )
-        assert config.top_p == 0.9
 
     def test_temperature_bounds(self):
         """Test that temperature is validated within bounds."""
@@ -89,48 +75,6 @@ class TestLLMConfig:
             config.temperature = 0.5  # type: ignore
 
 
-class TestPerOperationConfig:
-    """Test PerOperationConfig strategy model."""
-
-    def test_valid_per_operation_config(self):
-        """Test that valid PerOperationConfig is created successfully."""
-        config = PerOperationConfig(
-            complexity_evaluation=LLMConfig(
-                model="gpt-4o-mini",
-                temperature=0.3,
-                max_tokens=300,
-            ),
-            task_decomposition=LLMConfig(
-                model="gpt-4o",
-                temperature=0.7,
-                max_tokens=1500,
-            ),
-            tool="claude_code",
-        )
-        assert config.strategy == "per_operation"
-        assert config.complexity_evaluation.model == "gpt-4o-mini"
-        assert config.task_decomposition.model == "gpt-4o"
-        assert config.tool == "claude_code"
-
-    def test_tool_validation(self):
-        """Test that tool must be valid literal."""
-        # Valid tools
-        config = PerOperationConfig(
-            complexity_evaluation=LLMConfig(model="gpt-4o", temperature=0.3, max_tokens=300),
-            task_decomposition=LLMConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-            tool="openhands",
-        )
-        assert config.tool == "openhands"
-
-        # Invalid tool
-        with pytest.raises(ValidationError):
-            PerOperationConfig(
-                complexity_evaluation=LLMConfig(model="gpt-4o", temperature=0.3, max_tokens=300),
-                task_decomposition=LLMConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-                tool="invalid_tool",  # type: ignore
-            )
-
-
 class TestHeuristicConfig:
     """Test HeuristicConfig strategy model."""
 
@@ -153,53 +97,33 @@ class TestHeuristicConfig:
         config = HeuristicConfig(base=LLMConfig(model="gpt-4o", temperature=0.5, max_tokens=500))
         assert config.tool == "claude_code"
 
+    def test_tool_validation(self):
+        """Test that tool must be valid literal."""
+        # Valid tools
+        for tool in ["claude_code", "openhands", "google_adk"]:
+            config = HeuristicConfig(
+                base=LLMConfig(model="gpt-4o", temperature=0.5, max_tokens=500),
+                tool=tool,  # type: ignore
+            )
+            assert config.tool == tool
 
-class TestHybridConfig:
-    """Test HybridConfig strategy model."""
+        # Invalid tool
+        with pytest.raises(ValidationError):
+            HeuristicConfig(
+                base=LLMConfig(model="gpt-4o", temperature=0.5, max_tokens=500),
+                tool="invalid_tool",  # type: ignore
+            )
 
-    def test_valid_hybrid_config_no_overrides(self):
-        """Test HybridConfig with no overrides."""
-        config = HybridConfig(
-            base=LLMConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-            tool="claude_code",
+    def test_immutability(self):
+        """Test that HeuristicConfig is immutable (frozen)."""
+        config = HeuristicConfig(
+            base=LLMConfig(model="gpt-4o", temperature=0.5, max_tokens=500)
         )
-        assert config.strategy == "hybrid"
-        assert config.base.model == "gpt-4o"
-        assert config.overrides == {}
+        with pytest.raises(ValidationError):
+            config.tool = "openhands"  # type: ignore
 
-    def test_valid_hybrid_config_with_overrides(self):
-        """Test HybridConfig with operation-specific overrides."""
-        config = HybridConfig(
-            base=LLMConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-            overrides={
-                "complexity_evaluation": {
-                    "temperature": 0.3,
-                    "max_tokens": 300,
-                }
-            },
-            tool="openhands",
-        )
-        assert config.overrides["complexity_evaluation"]["temperature"] == 0.3
-        assert config.overrides["complexity_evaluation"]["max_tokens"] == 300
-
-
-class TestAgentConfigUnion:
-    """Test AgentConfig discriminated union."""
-
-    def test_discriminates_by_strategy_field(self):
-        """Test that Pydantic correctly discriminates strategies."""
-        # PerOperationConfig
-        config_dict = {
-            "strategy": "per_operation",
-            "complexity_evaluation": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 300},
-            "task_decomposition": {"model": "gpt-4o", "temperature": 0.7, "max_tokens": 1000},
-            "tool": "claude_code",
-        }
-        # TypeAdapter would be used in production, but for tests we can validate directly
-        config = PerOperationConfig(**config_dict)
-        assert isinstance(config, PerOperationConfig)
-
-        # HeuristicConfig
+    def test_from_dict(self):
+        """Test creating HeuristicConfig from dict (as parser would)."""
         config_dict = {
             "strategy": "heuristic",
             "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 500},
@@ -207,13 +131,4 @@ class TestAgentConfigUnion:
         }
         config = HeuristicConfig(**config_dict)
         assert isinstance(config, HeuristicConfig)
-
-        # HybridConfig
-        config_dict = {
-            "strategy": "hybrid",
-            "base": {"model": "gpt-4o", "temperature": 0.7, "max_tokens": 1000},
-            "overrides": {},
-            "tool": "claude_code",
-        }
-        config = HybridConfig(**config_dict)
-        assert isinstance(config, HybridConfig)
+        assert config.base.model == "gpt-4o"
