@@ -242,8 +242,8 @@ def test_constraint_failure_matches_rejects_other_dicts() -> None:
         assert ConstraintFailure.matches(data) is False
 
 
-def test_constraint_failure_from_dict() -> None:
-    """Test that ConstraintFailure.from_dict() creates correct object."""
+def test_constraint_failure_from_llm_response() -> None:
+    """Test that ConstraintFailure.from_llm_response() creates correct object."""
     # Given: Full constraint failure response
     data = {
         "status": "constraints_unsatisfiable",
@@ -254,8 +254,8 @@ def test_constraint_failure_from_dict() -> None:
         },
     }
 
-    # When: Create from dict
-    failure = ConstraintFailure.from_dict(data)
+    # When: Create from LLM response
+    failure = ConstraintFailure.from_llm_response(data)
 
     # Then: All fields populated correctly
     assert failure.reason == "Cannot split further"
@@ -263,13 +263,13 @@ def test_constraint_failure_from_dict() -> None:
     assert failure.minimum_depth == 2
 
 
-def test_constraint_failure_from_dict_with_defaults() -> None:
-    """Test that ConstraintFailure.from_dict() handles missing fields."""
+def test_constraint_failure_from_llm_response_with_defaults() -> None:
+    """Test that ConstraintFailure.from_llm_response() handles missing fields."""
     # Given: Minimal constraint failure response
     data = {"status": "constraints_unsatisfiable"}
 
-    # When: Create from dict
-    failure = ConstraintFailure.from_dict(data)
+    # When: Create from LLM response
+    failure = ConstraintFailure.from_llm_response(data)
 
     # Then: Defaults applied
     assert failure.reason == "Unknown reason"

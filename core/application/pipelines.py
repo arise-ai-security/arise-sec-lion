@@ -9,7 +9,7 @@ Each pipeline is a sequence of focused, testable steps that together
 implement the orchestration logic previously in AgentOrchestrator methods.
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING
 
@@ -41,7 +41,7 @@ from core.application.pipeline.steps.validation import (
 from core.application.pipeline.steps.worker import RunWorkerSession
 
 if TYPE_CHECKING:
-    from core.domain.services.prompt_builder import PromptBuilder
+    from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
     from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort
@@ -63,10 +63,10 @@ class PipelineFactory:
 
     def __init__(
         self,
-        llm_port: LLMPort,
-        worker_port: WorkerToolPort,
-        prompt_builder: PromptBuilder,
-        task_registry_port: TaskRegistryPort,
+        llm_port: "LLMPort",
+        worker_port: "WorkerToolPort",
+        prompt_builder: "PromptBuilder",
+        task_registry_port: "TaskRegistryPort",
     ) -> None:
         """Initialize factory with required ports.
 

@@ -6,7 +6,7 @@ with PostgreSQL advisory locks for atomic registration.
 This is a CQRS read model - separate from the event-sourced SharedContext.
 """
 
-from __future__ import annotations
+
 
 import hashlib
 import logging

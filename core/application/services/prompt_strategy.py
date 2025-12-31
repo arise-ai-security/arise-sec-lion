@@ -4,7 +4,7 @@ This module implements the Strategy Pattern to separate SEC-bench specific
 prompt logic from generic tree prompts, following SRP and OCP principles.
 """
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from core.domain.values.context import ParentContext
     from core.domain.values.cve_instance import CVEInstance
     from core.domain.values.execution_context import ExecutionContext
-    from core.domain.services.prompt_builder import TemplateChain
+    from core.application.services.prompt_builder import TemplateChain
     from core.domain.services import RegisteredTask
 
 
@@ -29,10 +29,10 @@ class PromptContext:
     agent_role: AgentRole
     default_tool: str
     parent_task: str | None = None
-    parent_context: ParentContext | None = None
-    execution_context: ExecutionContext | None = None
-    cve_instance: CVEInstance | None = None
-    registered_tasks: list[RegisteredTask] | None = None
+    parent_context: "ParentContext | None" = None
+    execution_context: "ExecutionContext | None" = None
+    cve_instance: "CVEInstance | None" = None
+    registered_tasks: "list[RegisteredTask] | None" = None
     sibling_context: Any = None
     workspace_context: str | None = None
 
@@ -70,7 +70,7 @@ class DefaultPromptStrategy:
         return None
 
 
-def _detect_benchmark_branch(parent_context: ParentContext | None) -> str | None:
+def _detect_benchmark_branch(parent_context: "ParentContext | None") -> str | None:
     """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
 
     Checks ancestry chain for top-level subtask keywords.
@@ -110,7 +110,7 @@ class SecBenchPromptStrategy:
     builder/exploiter/fixer phase detection.
     """
 
-    def __init__(self, chain_factory: Callable[[], TemplateChain]) -> None:
+    def __init__(self, chain_factory: "Callable[[], TemplateChain]") -> None:
         """Initialize with a factory for creating template chains.
 
         Args:

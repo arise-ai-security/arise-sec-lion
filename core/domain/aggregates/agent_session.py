@@ -114,7 +114,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             child_id=child_id,
             result=result,
-            child_result=child_result.to_dict(),
+            child_result=child_result.model_dump(),
         )
         self._apply(child_completed_event)
         self._changes.append(child_completed_event)
@@ -199,7 +199,7 @@ class AgentSession:
         self.child_results[event.child_id] = event.result
         # Reconstruct structured result from event data
         if event.child_result:
-            self.structured_child_results[event.child_id] = ChildResult.from_dict(
+            self.structured_child_results[event.child_id] = ChildResult.model_validate(
                 event.child_result
             )
         self.version += 1
@@ -462,7 +462,7 @@ class AgentSession:
                 child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
-                parent_context=parent_context.to_dict(),
+                parent_context=parent_context.model_dump(),
                 sibling_index=sibling_index,
             )
             self._apply(child_event)

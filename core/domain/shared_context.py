@@ -10,7 +10,7 @@ Composed of focused aggregates following Single Responsibility Principle:
 All changes are event-sourced for OCC and auditability.
 """
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 from functools import singledispatchmethod
@@ -685,7 +685,7 @@ class SharedExecutionContext:
         root_id: UUID,
         initial_budget_usd: float = 0.0,
         config: dict[str, Any] | None = None,
-    ) -> SharedExecutionContext:
+    ) -> "SharedExecutionContext":
         """Create new shared context for an execution run.
 
         Args:
@@ -709,7 +709,7 @@ class SharedExecutionContext:
         return instance
 
     @classmethod
-    def load_from_history(cls, events: list[DomainEvent]) -> SharedExecutionContext:
+    def load_from_history(cls, events: list[DomainEvent]) -> "SharedExecutionContext":
         """Reconstruct SharedExecutionContext by replaying events.
 
         Args:

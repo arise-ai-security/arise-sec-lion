@@ -1,6 +1,6 @@
 """Output rendering for CLI display (SRP compliant)."""
 
-from __future__ import annotations
+
 
 import click
 

@@ -8,7 +8,7 @@ LiteLLM pricing source:
 - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
 """
 
-from __future__ import annotations
+
 
 import logging
 from dataclasses import dataclass

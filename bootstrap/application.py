@@ -17,8 +17,8 @@ from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.sibling_context_builder import SiblingContextBuilder
 from core.application.services.workspace_context import WorkspaceContextProvider
-from core.domain.services.prompt_builder import PromptBuilder
-from core.domain.services.prompt_strategy import SecBenchPromptStrategy
+from core.application.services.prompt_builder import PromptBuilder
+from core.application.services.prompt_strategy import SecBenchPromptStrategy
 
 from .infrastructure import Infrastructure
 

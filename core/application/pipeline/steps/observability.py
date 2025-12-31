@@ -4,7 +4,7 @@ These steps emit events for monitoring, cost tracking, and debugging.
 They call pure domain methods on AgentSession to emit events.
 """
 
-from __future__ import annotations
+
 
 from core.application.pipeline.context import PipelineContext, StepResult
 

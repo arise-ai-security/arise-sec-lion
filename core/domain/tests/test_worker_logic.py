@@ -20,7 +20,7 @@ from core.domain.events.events import (
 )
 from core.domain.values.llm_response import LLMResponse, LLMUsage
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.services.prompt_builder import PromptBuilder
+from core.application.services.prompt_builder import PromptBuilder
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 

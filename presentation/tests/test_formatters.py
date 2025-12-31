@@ -4,7 +4,7 @@ These tests verify the EventFormatter correctly formats different
 event types using the registered strategy classes.
 """
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass
 from io import StringIO

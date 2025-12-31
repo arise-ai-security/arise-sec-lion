@@ -3,7 +3,7 @@
 Provides workspace file context to workers so they can see each other's files.
 """
 
-from __future__ import annotations
+
 
 from pathlib import Path
 

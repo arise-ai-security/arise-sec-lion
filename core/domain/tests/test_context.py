@@ -72,14 +72,14 @@ class TestAncestorInfo:
         assert info.task_summary == "A" * 100
 
     def test_serialization_roundtrip(self) -> None:
-        """Test to_dict and from_dict roundtrip."""
+        """Test model_dump and model_validate roundtrip."""
         info = AncestorInfo(
             agent_id="123",
             role="manager",
             task_summary="Some task",
         )
-        data = info.to_dict()
-        restored = AncestorInfo.from_dict(data)
+        data = info.model_dump()
+        restored = AncestorInfo.model_validate(data)
 
         assert restored == info
 
@@ -109,7 +109,7 @@ class TestParentContext:
         assert context.constraints == {"max_cost": 100}
 
     def test_serialization_roundtrip(self) -> None:
-        """Test to_dict and from_dict roundtrip."""
+        """Test model_dump and model_validate roundtrip."""
         context = ParentContext(
             parent_task="Build web app",
             parent_role="boss",
@@ -122,8 +122,8 @@ class TestParentContext:
             execution_limits={"depth_remaining": 3, "max_children_per_node": 5},
         )
 
-        data = context.to_dict()
-        restored = ParentContext.from_dict(data)
+        data = context.model_dump()
+        restored = ParentContext.model_validate(data)
 
         assert restored.parent_task == context.parent_task
         assert restored.parent_role == context.parent_role
@@ -163,7 +163,7 @@ class TestChildResult:
         assert result.execution_summary == {}
 
     def test_serialization_roundtrip(self) -> None:
-        """Test to_dict and from_dict roundtrip."""
+        """Test model_dump and model_validate roundtrip."""
         result = ChildResult(
             result_text="Done",
             artifacts=("a.txt",),
@@ -172,8 +172,8 @@ class TestChildResult:
             execution_summary={"cost_usd": 1.0},
         )
 
-        data = result.to_dict()
-        restored = ChildResult.from_dict(data)
+        data = result.model_dump()
+        restored = ChildResult.model_validate(data)
 
         assert restored.result_text == result.result_text
         assert restored.artifacts == result.artifacts

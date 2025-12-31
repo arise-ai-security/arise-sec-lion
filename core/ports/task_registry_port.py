@@ -10,7 +10,7 @@ This port follows Interface Segregation Principle:
 - Separate from SharedContextPort (which is event-sourced)
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID

@@ -1,15 +1,18 @@
-from dataclasses import dataclass
-from typing import Any
+"""Value object for constraint failures from LLM responses."""
+
+from typing import Any, Self
+
+from pydantic import BaseModel
 
 
-@dataclass(frozen=True, slots=True)
-class ConstraintFailure:
-    """Value object for when LLM cannot satisfy execution constraints.
+class ConstraintFailure(BaseModel):
+    """When LLM cannot satisfy execution constraints.
 
     Returned when LLM responds with constraints_unsatisfiable instead of
-    a valid subtask list. This allows graceful failure rather than
-    spawning doomed workers.
+    a valid subtask list. Allows graceful failure rather than spawning doomed workers.
     """
+
+    model_config = {"frozen": True}
 
     reason: str
     minimum_subtasks: int | None = None
@@ -21,8 +24,8 @@ class ConstraintFailure:
         return isinstance(data, dict) and data.get("status") == "constraints_unsatisfiable"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'ConstraintFailure':
-        """Create from LLM response dict."""
+    def from_llm_response(cls, data: dict[str, Any]) -> Self:
+        """Create from LLM response dict with nested minimum_required."""
         minimum_required = data.get("minimum_required", {})
         return cls(
             reason=data.get("reason", "Unknown reason"),

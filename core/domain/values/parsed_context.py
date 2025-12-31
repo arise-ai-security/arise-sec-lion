@@ -1,24 +1,24 @@
-from dataclasses import dataclass, asdict
-from typing import Any, Self
+"""Parsed context value objects from worker XML output."""
+
+from typing import Self
 from xml.etree import ElementTree as ET
 
-from core.domain.services.context_update_parser import _text
+from pydantic import BaseModel
 
 
-@dataclass(frozen=True, slots=True)
-class ParsedDecision:
+def _text(elem: ET.Element | None) -> str:
+    """Extract stripped text from element, or empty string if None."""
+    return (elem.text or "").strip() if elem is not None else ""
+
+
+class ParsedDecision(BaseModel):
     """A decision extracted from worker output."""
+
+    model_config = {"frozen": True}
 
     key: str
     value: str
     rationale: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(**{k: v for k, v in data.items() if k in cls.__slots__})
 
     @classmethod
     def from_element(cls, elem: ET.Element) -> Self | None:
@@ -34,19 +34,13 @@ class ParsedDecision:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class ParsedOutput:
+class ParsedOutput(BaseModel):
     """An output/artifact extracted from worker output."""
+
+    model_config = {"frozen": True}
 
     key: str
     description: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(**{k: v for k, v in data.items() if k in cls.__slots__})
 
     @classmethod
     def from_element(cls, elem: ET.Element) -> Self | None:
@@ -56,25 +50,13 @@ class ParsedOutput:
         return cls(key=key, description=_text(elem))
 
 
-@dataclass(frozen=True, slots=True)
-class ParsedContextUpdate:
+class ParsedContextUpdate(BaseModel):
     """Parsed context update containing decisions and outputs."""
+
+    model_config = {"frozen": True}
 
     decisions: tuple[ParsedDecision, ...] = ()
     outputs: tuple[ParsedOutput, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "decisions": [d.to_dict() for d in self.decisions],
-            "outputs": [o.to_dict() for o in self.outputs],
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(
-            decisions=tuple(ParsedDecision.from_dict(d) for d in data.get("decisions", [])),
-            outputs=tuple(ParsedOutput.from_dict(o) for o in data.get("outputs", [])),
-        )
 
     def __bool__(self) -> bool:
         """True if any decisions or outputs were parsed."""

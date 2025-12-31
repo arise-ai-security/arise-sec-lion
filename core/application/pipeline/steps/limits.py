@@ -6,7 +6,7 @@ These steps enforce system limits on agent hierarchies:
 - max_depth: Soft enforcement (force WORKER role)
 """
 
-from __future__ import annotations
+
 
 from typing import Any
 

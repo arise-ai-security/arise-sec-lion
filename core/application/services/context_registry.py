@@ -3,7 +3,7 @@
 Tracks execution context for each agent in the hierarchy.
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -39,7 +39,7 @@ class ExecutionContextRegistry:
         max_children_per_node: int,
         max_retries: int,
         max_total_agents: int = -1,
-        cve_instance: CVEInstance | None = None,
+        cve_instance: "CVEInstance | None" = None,
     ) -> ExecutionContext:
         """Create and register root execution context.
 

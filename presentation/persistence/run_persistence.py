@@ -1,6 +1,6 @@
 """Run persistence for tracking last run state (SRP compliant)."""
 
-from __future__ import annotations
+
 
 import json
 from dataclasses import dataclass

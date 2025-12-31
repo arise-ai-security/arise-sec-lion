@@ -3,7 +3,7 @@
 Handles child agent creation with execution context propagation.
 """
 
-from __future__ import annotations
+
 
 import logging
 from dataclasses import dataclass
@@ -44,10 +44,10 @@ class ChildAgentFactory:
 
     def __init__(
         self,
-        repository: AgentRepository,
-        context_registry: ExecutionContextRegistry,
+        repository: "AgentRepository",
+        context_registry: "ExecutionContextRegistry",
         max_total_agents: int = -1,  # -1 means unlimited
-        manager_config: ManagerConfig | None = None,
+        manager_config: "ManagerConfig | None" = None,
     ) -> None:
         self._repository = repository
         self._context_registry = context_registry
@@ -142,7 +142,7 @@ class ChildAgentFactory:
 
         # Set parent context if available in event
         if event.parent_context:
-            parent_context = ParentContext.from_dict(event.parent_context)
+            parent_context = ParentContext.model_validate(event.parent_context)
             child.set_parent_context(parent_context)
 
         # Persist the new agent

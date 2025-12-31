@@ -3,7 +3,7 @@
 Handles statistics, results, and active agent queries.
 """
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -113,7 +113,7 @@ class AgentQueryService:
     CQRS pattern: Separates read operations from write operations.
     """
 
-    def __init__(self, repository: AgentRepository) -> None:
+    def __init__(self, repository: "AgentRepository") -> None:
         self._repository = repository
 
     async def get_result(self, agent_id: UUID) -> AgentResultDTO:

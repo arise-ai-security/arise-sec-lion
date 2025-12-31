@@ -4,7 +4,7 @@ Handles notifying parent agents when children complete their execution.
 Extracted from ExecutionService to follow Single Responsibility Principle.
 """
 
-from __future__ import annotations
+
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any

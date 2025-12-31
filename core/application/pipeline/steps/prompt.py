@@ -4,7 +4,7 @@ These steps construct prompts for LLM calls using the PromptBuilder.
 Each prompt type has its own step for clarity and testability.
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING
 
@@ -12,7 +12,7 @@ from core.application.pipeline.context import PipelineContext, StepResult
 from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
-    from core.domain.services.prompt_builder import PromptBuilder
+    from core.application.services.prompt_builder import PromptBuilder
 
 
 class BuildComplexityPrompt:
@@ -22,7 +22,7 @@ class BuildComplexityPrompt:
     to evaluate whether a task is simple (WORKER) or complex (MANAGER).
     """
 
-    def __init__(self, prompt_builder: PromptBuilder) -> None:
+    def __init__(self, prompt_builder: "PromptBuilder") -> None:
         """Initialize with prompt builder.
 
         Args:
@@ -53,7 +53,7 @@ class BuildDecompositionPrompt:
     The prompt includes limit-aware context from ExecutionContext.
     """
 
-    def __init__(self, prompt_builder: PromptBuilder) -> None:
+    def __init__(self, prompt_builder: "PromptBuilder") -> None:
         """Initialize with prompt builder.
 
         Args:
@@ -96,7 +96,7 @@ class BuildWorkerPrompt:
     - Parent context for hierarchy awareness
     """
 
-    def __init__(self, prompt_builder: PromptBuilder) -> None:
+    def __init__(self, prompt_builder: "PromptBuilder") -> None:
         """Initialize with prompt builder.
 
         Args:

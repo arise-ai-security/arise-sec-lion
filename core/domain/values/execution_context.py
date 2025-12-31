@@ -9,18 +9,17 @@ Budget tracking is handled via SharedExecutionContext (keyed by root_id).
 CVE instance is optionally attached for SEC-bench benchmark runs.
 """
 
-from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+
+from typing import Self
 from uuid import UUID
 
-if TYPE_CHECKING:
-    from core.domain.values.cve_instance import CVEInstance
+from pydantic import BaseModel
+
+from core.domain.values.cve_instance import CVEInstance
 
 
-@dataclass(frozen=True, slots=True)
-class ExecutionContext:
+class ExecutionContext(BaseModel):
     """Immutable context passed down agent hierarchy.
 
     Tracks current position in the hierarchy and enforces limits.
@@ -34,6 +33,8 @@ class ExecutionContext:
     CVE instance is optionally attached for SEC-bench benchmark runs.
     """
 
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
+
     current_depth: int
     max_depth: int  # -1 = unlimited
     max_children_per_node: int  # -1 = unlimited
@@ -43,9 +44,9 @@ class ExecutionContext:
     current_total_agents: int = 0  # Snapshot of total agents created so far
     cve_instance: CVEInstance | None = None  # SEC-bench CVE context
 
-    def for_child(self) -> ExecutionContext:
+    def for_child(self) -> Self:
         """Create context for child agent (increments depth)."""
-        return replace(self, current_depth=self.current_depth + 1)
+        return self.model_copy(update={"current_depth": self.current_depth + 1})
 
     def is_depth_limited(self) -> bool:
         """Check if depth limit is enabled."""
@@ -68,17 +69,16 @@ class ExecutionContext:
             return -1
         return max(0, self.max_total_agents - self.current_total_agents)
 
-    def with_agent_counts(
-        self, current_total: int, max_total: int
-    ) -> ExecutionContext:
+    def with_agent_counts(self, current_total: int, max_total: int) -> Self:
         """Create new context with updated agent counts.
 
         Used to refresh agent count snapshot before each agent step.
         """
-        return replace(
-            self,
-            current_total_agents=current_total,
-            max_total_agents=max_total,
+        return self.model_copy(
+            update={
+                "current_total_agents": current_total,
+                "max_total_agents": max_total,
+            }
         )
 
     def can_spawn_child(self) -> bool:
@@ -105,9 +105,9 @@ class ExecutionContext:
         """Check if this is a CVE-based security benchmark task."""
         return self.cve_instance is not None
 
-    def with_cve_instance(self, cve: CVEInstance) -> ExecutionContext:
+    def with_cve_instance(self, cve: CVEInstance) -> Self:
         """Create new context with CVE instance attached."""
-        return replace(self, cve_instance=cve)
+        return self.model_copy(update={"cve_instance": cve})
 
     @classmethod
     def create_root(
@@ -118,7 +118,7 @@ class ExecutionContext:
         max_retries: int,
         max_total_agents: int = -1,
         cve_instance: CVEInstance | None = None,
-    ) -> ExecutionContext:
+    ) -> Self:
         """Create context for root (BOSS) agent.
 
         Args:

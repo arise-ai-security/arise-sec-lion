@@ -3,7 +3,7 @@
 These steps handle task registry operations for avoiding duplicate work.
 """
 
-from __future__ import annotations
+
 
 import logging
 from typing import TYPE_CHECKING
@@ -24,7 +24,7 @@ class FetchRegisteredTasks:
     which helps the LLM avoid generating duplicates.
     """
 
-    def __init__(self, task_registry_port: TaskRegistryPort) -> None:
+    def __init__(self, task_registry_port: "TaskRegistryPort") -> None:
         """Initialize with task registry port.
 
         Args:
@@ -49,7 +49,7 @@ class DeduplicateSubtasks:
     Duplicates are filtered out (already being worked on).
     """
 
-    def __init__(self, task_registry_port: TaskRegistryPort) -> None:
+    def __init__(self, task_registry_port: "TaskRegistryPort") -> None:
         """Initialize with task registry port.
 
         Args:

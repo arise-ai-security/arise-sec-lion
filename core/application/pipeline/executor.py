@@ -4,7 +4,7 @@ Executes a sequence of steps, short-circuiting on first failure.
 Follows Chain of Responsibility pattern with explicit step ordering.
 """
 
-from __future__ import annotations
+
 
 import logging
 from typing import TYPE_CHECKING
@@ -45,7 +45,7 @@ class Pipeline:
             agent.fail_with_reason(result.failure_reason)
     """
 
-    def __init__(self, steps: list[PipelineStep], name: str = "") -> None:
+    def __init__(self, steps: "list[PipelineStep]", name: str = "") -> None:
         """Initialize pipeline with steps.
 
         Args:
@@ -60,7 +60,7 @@ class Pipeline:
         """Pipeline name for logging."""
         return self._name
 
-    async def execute(self, initial_ctx: PipelineContext) -> StepResult:
+    async def execute(self, initial_ctx: "PipelineContext") -> "StepResult":
         """Execute all steps in order.
 
         Short-circuits on first failure, returning that failure result.

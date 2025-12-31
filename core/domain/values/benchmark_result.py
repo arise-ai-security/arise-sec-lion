@@ -4,46 +4,27 @@ Tracks success/failure of each benchmark stage (Builder, Exploiter, Fixer)
 and provides aggregation for overall benchmark success determination.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass, replace
-from typing import Any
 
 
-@dataclass(frozen=True, slots=True)
-class StageResult:
+from typing import Self
+
+from pydantic import BaseModel, computed_field
+
+
+class StageResult(BaseModel):
     """Result of a single benchmark stage.
 
     Captures the outcome of a Builder, Exploiter, or Fixer stage
     with details for debugging and reporting.
     """
 
+    model_config = {"frozen": True}
+
     stage: str  # "builder" | "exploiter" | "fixer"
     success: bool
     details: str  # Success message or error description
     sanitizer_output: str | None = None  # For exploiter/fixer stages
     duration_seconds: float = 0.0
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize for storage."""
-        return {
-            "stage": self.stage,
-            "success": self.success,
-            "details": self.details,
-            "sanitizer_output": self.sanitizer_output,
-            "duration_seconds": self.duration_seconds,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> StageResult:
-        """Deserialize from dictionary."""
-        return cls(
-            stage=data["stage"],
-            success=data["success"],
-            details=data.get("details", ""),
-            sanitizer_output=data.get("sanitizer_output"),
-            duration_seconds=data.get("duration_seconds", 0.0),
-        )
 
     @classmethod
     def success_result(
@@ -52,7 +33,7 @@ class StageResult:
         details: str,
         sanitizer_output: str | None = None,
         duration_seconds: float = 0.0,
-    ) -> StageResult:
+    ) -> Self:
         """Create a successful stage result."""
         return cls(
             stage=stage,
@@ -69,7 +50,7 @@ class StageResult:
         details: str,
         sanitizer_output: str | None = None,
         duration_seconds: float = 0.0,
-    ) -> StageResult:
+    ) -> Self:
         """Create a failed stage result."""
         return cls(
             stage=stage,
@@ -80,13 +61,14 @@ class StageResult:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class BenchmarkResult:
+class BenchmarkResult(BaseModel):
     """Aggregated result for a CVE benchmark run.
 
     Combines results from all three stages (Builder, Exploiter, Fixer)
     to determine overall benchmark success.
     """
+
+    model_config = {"frozen": True}
 
     instance_id: str
     builder: StageResult | None = None
@@ -94,15 +76,10 @@ class BenchmarkResult:
     fixer: StageResult | None = None
     total_cost_usd: float = 0.0
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def overall_success(self) -> bool:
-        """True if all three stages succeeded.
-
-        A benchmark is considered successful only if:
-        1. Builder stage succeeded (environment set up)
-        2. Exploiter stage succeeded (PoC triggers sanitizer)
-        3. Fixer stage succeeded (patch fixes vulnerability)
-        """
+        """True if all three stages succeeded."""
         return (
             self.builder is not None
             and self.builder.success
@@ -112,6 +89,7 @@ class BenchmarkResult:
             and self.fixer.success
         )
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total_duration_seconds(self) -> float:
         """Sum of all stage durations."""
@@ -124,6 +102,7 @@ class BenchmarkResult:
             total += self.fixer.duration_seconds
         return total
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def stages_completed(self) -> int:
         """Count of stages that have completed (success or failure)."""
@@ -136,44 +115,22 @@ class BenchmarkResult:
             count += 1
         return count
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_complete(self) -> bool:
         """True if all three stages have completed."""
         return self.stages_completed == 3
 
-    def with_stage_result(self, stage_result: StageResult) -> BenchmarkResult:
+    def with_stage_result(self, stage_result: StageResult) -> Self:
         """Return new BenchmarkResult with the given stage result added."""
         if stage_result.stage == "builder":
-            return replace(self, builder=stage_result)
+            return self.model_copy(update={"builder": stage_result})
         elif stage_result.stage == "exploiter":
-            return replace(self, exploiter=stage_result)
+            return self.model_copy(update={"exploiter": stage_result})
         elif stage_result.stage == "fixer":
-            return replace(self, fixer=stage_result)
+            return self.model_copy(update={"fixer": stage_result})
         else:
             raise ValueError(f"Unknown stage: {stage_result.stage}")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize for storage."""
-        return {
-            "instance_id": self.instance_id,
-            "builder": self.builder.to_dict() if self.builder else None,
-            "exploiter": self.exploiter.to_dict() if self.exploiter else None,
-            "fixer": self.fixer.to_dict() if self.fixer else None,
-            "total_cost_usd": self.total_cost_usd,
-            "overall_success": self.overall_success,
-            "total_duration_seconds": self.total_duration_seconds,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> BenchmarkResult:
-        """Deserialize from dictionary."""
-        return cls(
-            instance_id=data["instance_id"],
-            builder=StageResult.from_dict(data["builder"]) if data.get("builder") else None,
-            exploiter=StageResult.from_dict(data["exploiter"]) if data.get("exploiter") else None,
-            fixer=StageResult.from_dict(data["fixer"]) if data.get("fixer") else None,
-            total_cost_usd=data.get("total_cost_usd", 0.0),
-        )
 
     def to_report(self) -> str:
         """Generate human-readable benchmark report."""

@@ -1,6 +1,6 @@
 """Domain services: parsing and utility functions."""
 
-from __future__ import annotations
+
 
 import hashlib
 import json
@@ -79,7 +79,7 @@ def parse_subtasks_from_llm(response: str) -> list[Subtask] | ConstraintFailure:
 
     # Objects recognize themselves - Tell, Don't Ask
     if ConstraintFailure.matches(data):
-        return ConstraintFailure.from_dict(data)
+        return ConstraintFailure.from_llm_response(data)
 
     items = _extract_subtask_list(data)
     return _validate_subtasks(items)

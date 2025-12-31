@@ -31,4 +31,4 @@ def parse_context_update(result: str) -> ParsedContextUpdate | None:
     decisions = tuple(filter(None, (ParsedDecision.from_element(e) for e in root.findall("decision"))))
     outputs = tuple(filter(None, (ParsedOutput.from_element(e) for e in root.findall("output"))))
 
-    return ParsedContextUpdate(decisions, outputs) or None
+    return ParsedContextUpdate(decisions=decisions, outputs=outputs) or None

@@ -3,7 +3,7 @@
 This step handles the actual LLM call using the injected LLM port.
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING
 
@@ -21,10 +21,10 @@ class QueryLLM:
     then calls the LLM port and stores the response in context.
     """
 
-    _llm_port: LLMPort
+    _llm_port: "LLMPort"
     _operation: OperationType
 
-    def __init__(self, llm_port: LLMPort, operation: OperationType) -> None:
+    def __init__(self, llm_port: "LLMPort", operation: OperationType) -> None:
         """Initialize with LLM port and operation type.
 
         Args:

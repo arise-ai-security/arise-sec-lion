@@ -4,7 +4,7 @@ Uses the same event store as AgentSession for consistency.
 Events are keyed by a derived aggregate_id (from root_id) to avoid PK collision.
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING
 from uuid import UUID

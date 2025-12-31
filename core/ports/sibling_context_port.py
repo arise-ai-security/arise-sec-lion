@@ -6,7 +6,7 @@ Follows Hexagonal Architecture:
 - Depends on core/domain types only
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID

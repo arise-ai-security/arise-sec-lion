@@ -7,7 +7,7 @@ between pipeline steps:
 - StepResult: Represents success (with updated context) or failure (with reason)
 """
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -38,23 +38,23 @@ class PipelineContext:
     - Only carries ephemeral step-to-step state
     """
 
-    agent: AgentSession
+    agent: "AgentSession"
 
     # Step-to-step ephemeral state (NOT duplicated from ExecutionContext)
     prompt: str | None = None
-    llm_response: LLMResponse | None = None
+    llm_response: "LLMResponse | None" = None
     operation: str = ""
 
     # Decomposition-specific
-    registered_tasks: list[RegisteredTask] | None = None
-    subtasks: list[Subtask] | None = None
+    registered_tasks: "list[RegisteredTask] | None" = None
+    subtasks: "list[Subtask] | None" = None
     child_role: str | None = None
     force_worker: bool = False
 
     # Worker-specific
     working_directory: str | None = None
     workspace_context: str | None = None
-    sibling_context: WorkerSiblingContext | None = None
+    sibling_context: "WorkerSiblingContext | None" = None
 
     # Parsing results
     complexity: str | None = None
@@ -62,12 +62,12 @@ class PipelineContext:
 
     # DELEGATION: Access limits via existing domain ExecutionContext
     @property
-    def execution_context(self) -> ExecutionContext | None:
+    def execution_context(self) -> "ExecutionContext | None":
         """Get the agent's execution context (limit tracking)."""
         return self.agent.execution_context
 
     @property
-    def cve_instance(self) -> CVEInstance | None:
+    def cve_instance(self) -> "CVEInstance | None":
         """Get CVE instance from execution context."""
         ctx = self.execution_context
         return ctx.cve_instance if ctx else None
@@ -79,29 +79,29 @@ class PipelineContext:
         return ctx.root_id if ctx else None
 
     # Builder methods for immutable updates
-    def with_prompt(self, prompt: str) -> PipelineContext:
+    def with_prompt(self, prompt: str) -> "PipelineContext":
         """Create new context with prompt set."""
         return replace(self, prompt=prompt)
 
-    def with_llm_response(self, response: LLMResponse) -> PipelineContext:
+    def with_llm_response(self, response: "LLMResponse") -> "PipelineContext":
         """Create new context with LLM response set."""
         return replace(self, llm_response=response)
 
-    def with_registered_tasks(self, tasks: list[RegisteredTask]) -> PipelineContext:
+    def with_registered_tasks(self, tasks: "list[RegisteredTask]") -> "PipelineContext":
         """Create new context with registered tasks set."""
         return replace(self, registered_tasks=tasks)
 
-    def with_subtasks(self, subtasks: list[Subtask]) -> PipelineContext:
+    def with_subtasks(self, subtasks: "list[Subtask]") -> "PipelineContext":
         """Create new context with parsed subtasks set."""
         return replace(self, subtasks=subtasks)
 
-    def with_child_role(self, role: str, force_worker: bool = False) -> PipelineContext:
+    def with_child_role(self, role: str, force_worker: bool = False) -> "PipelineContext":
         """Create new context with child role determined."""
         return replace(self, child_role=role, force_worker=force_worker)
 
     def with_complexity_result(
         self, complexity: str, reasoning: str
-    ) -> PipelineContext:
+    ) -> "PipelineContext":
         """Create new context with complexity evaluation result."""
         return replace(self, complexity=complexity, reasoning=reasoning)
 
@@ -109,8 +109,8 @@ class PipelineContext:
         self,
         working_directory: str | None = None,
         workspace_context: str | None = None,
-        sibling_context: WorkerSiblingContext | None = None,
-    ) -> PipelineContext:
+        sibling_context: "WorkerSiblingContext | None" = None,
+    ) -> "PipelineContext":
         """Create new context with worker execution parameters."""
         return replace(
             self,
@@ -136,15 +136,15 @@ class StepResult:
     """
 
     success: bool
-    context: PipelineContext | None = None
+    context: "PipelineContext | None" = None
     failure_reason: str | None = None
 
     @classmethod
-    def ok(cls, ctx: PipelineContext) -> StepResult:
+    def ok(cls, ctx: "PipelineContext") -> "StepResult":
         """Create success result with updated context."""
         return cls(success=True, context=ctx)
 
     @classmethod
-    def fail(cls, reason: str) -> StepResult:
+    def fail(cls, reason: str) -> "StepResult":
         """Create failure result with reason."""
         return cls(success=False, failure_reason=reason)

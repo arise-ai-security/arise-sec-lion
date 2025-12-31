@@ -28,8 +28,8 @@ class TestSiblingTaskInfo:
         assert info.task_summary == "Fix authentication bug"
         assert info.result_summary == "Fixed the bug in auth.py"
 
-    def test_to_dict_serialization(self) -> None:
-        """Test to_dict() serialization."""
+    def test_model_dump_serialization(self) -> None:
+        """Test model_dump() serialization."""
         info = SiblingTaskInfo(
             agent_id="agent-123",
             sibling_index=1,
@@ -38,7 +38,7 @@ class TestSiblingTaskInfo:
             result_summary=None,
         )
 
-        data = info.to_dict()
+        data = info.model_dump()
 
         assert data["agent_id"] == "agent-123"
         assert data["sibling_index"] == 1
@@ -46,8 +46,8 @@ class TestSiblingTaskInfo:
         assert data["task_summary"] == "Write tests"
         assert data["result_summary"] is None
 
-    def test_from_dict_deserialization(self) -> None:
-        """Test from_dict() deserialization."""
+    def test_model_validate_deserialization(self) -> None:
+        """Test model_validate() deserialization."""
         data = {
             "agent_id": "agent-456",
             "sibling_index": 2,
@@ -56,7 +56,7 @@ class TestSiblingTaskInfo:
             "result_summary": None,
         }
 
-        info = SiblingTaskInfo.from_dict(data)
+        info = SiblingTaskInfo.model_validate(data)
 
         assert info.agent_id == "agent-456"
         assert info.sibling_index == 2
@@ -65,7 +65,9 @@ class TestSiblingTaskInfo:
         assert info.result_summary is None
 
     def test_immutability(self) -> None:
-        """Test that SiblingTaskInfo is immutable (frozen dataclass)."""
+        """Test that SiblingTaskInfo is immutable (frozen)."""
+        from pydantic import ValidationError
+
         info = SiblingTaskInfo(
             agent_id="agent-123",
             sibling_index=0,
@@ -74,7 +76,7 @@ class TestSiblingTaskInfo:
             result_summary=None,
         )
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError, match="frozen"):
             info.status = "completed"  # type: ignore[misc]
 
 
@@ -95,8 +97,8 @@ class TestDecisionInfo:
         assert info.rationale == "Better async support"
         assert info.decided_by == "agent-123"
 
-    def test_to_dict_serialization(self) -> None:
-        """Test to_dict() serialization."""
+    def test_model_dump_serialization(self) -> None:
+        """Test model_dump() serialization."""
         info = DecisionInfo(
             key="orm_framework",
             value="SQLAlchemy",
@@ -104,15 +106,15 @@ class TestDecisionInfo:
             decided_by="agent-456",
         )
 
-        data = info.to_dict()
+        data = info.model_dump()
 
         assert data["key"] == "orm_framework"
         assert data["value"] == "SQLAlchemy"
         assert data["rationale"] == "Type hints support"
         assert data["decided_by"] == "agent-456"
 
-    def test_from_dict_deserialization(self) -> None:
-        """Test from_dict() deserialization."""
+    def test_model_validate_deserialization(self) -> None:
+        """Test model_validate() deserialization."""
         data = {
             "key": "testing_framework",
             "value": "pytest",
@@ -120,7 +122,7 @@ class TestDecisionInfo:
             "decided_by": "agent-789",
         }
 
-        info = DecisionInfo.from_dict(data)
+        info = DecisionInfo.model_validate(data)
 
         assert info.key == "testing_framework"
         assert info.value == "pytest"
@@ -243,7 +245,7 @@ class TestWorkerSiblingContext:
         assert template_dict["in_progress_count"] == 0
 
     def test_roundtrip_serialization(self) -> None:
-        """Test to_dict() -> from_dict() roundtrip."""
+        """Test model_dump() -> model_validate() roundtrip."""
         sibling = SiblingTaskInfo(
             agent_id="sibling-1",
             sibling_index=0,
@@ -265,8 +267,8 @@ class TestWorkerSiblingContext:
             shared_decisions=(decision,),
         )
 
-        data = original.to_dict()
-        restored = WorkerSiblingContext.from_dict(data)
+        data = original.model_dump()
+        restored = WorkerSiblingContext.model_validate(data)
 
         assert restored.current_agent_id == original.current_agent_id
         assert restored.parent_task == original.parent_task

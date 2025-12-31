@@ -1,12 +1,14 @@
-from __future__ import annotations
+"""Value object for task registry deduplication."""
 
-from dataclasses import dataclass
 from uuid import UUID
 
+from pydantic import BaseModel
 
-@dataclass(frozen=True, slots=True)
-class RegisteredTask:
-    """Value object representing a registered task for deduplication."""
+
+class RegisteredTask(BaseModel):
+    """Registered task for deduplication."""
+
+    model_config = {"frozen": True}
 
     task_key: str
     task_description: str

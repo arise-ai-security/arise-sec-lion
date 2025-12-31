@@ -7,7 +7,7 @@ This is the main orchestration service that coordinates:
 - System loop for continuous execution
 """
 
-from __future__ import annotations
+
 
 import asyncio
 import random
@@ -56,8 +56,8 @@ class ServiceConfig:
     poll_interval: float
     output_directory: str
     default_worker_tool: str
-    boss_config: BossConfig
-    manager_config: ManagerConfig
+    boss_config: "BossConfig"
+    manager_config: "ManagerConfig"
 
 
 @dataclass(frozen=True)
@@ -74,10 +74,10 @@ class ExecutionServiceDependencies:
     child_factory: ChildAgentFactory
     query_service: AgentQueryService
     workspace: WorkspaceContextProvider
-    shared_context_port: SharedContextPort
-    sibling_context_port: SiblingContextPort
+    shared_context_port: "SharedContextPort"
+    sibling_context_port: "SiblingContextPort"
     parent_notifier: ParentNotificationService
-    task_registry: TaskRegistryPort
+    task_registry: "TaskRegistryPort"
 
 
 class AgentExecutionService:
@@ -94,10 +94,10 @@ class AgentExecutionService:
 
     def __init__(
         self,
-        event_store: EventStorePort,
+        event_store: "EventStorePort",
         dependencies: ExecutionServiceDependencies,
         config: ServiceConfig,
-        system_limits: SystemLimitsConfig,
+        system_limits: "SystemLimitsConfig",
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         """Initialize execution service.
@@ -165,7 +165,7 @@ class AgentExecutionService:
     async def create_boss_agent(
         self,
         task_description: str,
-        cve_instance: CVEInstance | None = None,
+        cve_instance: "CVEInstance | None" = None,
     ) -> UUID:
         """Create root BOSS agent with task.
 
@@ -308,7 +308,7 @@ class AgentExecutionService:
     def _reset_for_new_run(
         self,
         root_id: UUID,
-        cve_instance: CVEInstance | None = None,
+        cve_instance: "CVEInstance | None" = None,
     ) -> None:
         """Reset all state for a new execution run."""
         self._workspace.reset()

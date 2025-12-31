@@ -6,15 +6,15 @@ Immutable value objects enabling workers to see:
 - Shared decisions from SharedExecutionContext
 """
 
-from __future__ import annotations
+from typing import Any
 
-from dataclasses import asdict, dataclass
-from typing import Any, Self
+from pydantic import BaseModel, computed_field
 
 
-@dataclass(frozen=True, slots=True)
-class SiblingTaskInfo:
+class SiblingTaskInfo(BaseModel):
     """Sibling task info for worker coordination."""
+
+    model_config = {"frozen": True}
 
     agent_id: str
     sibling_index: int
@@ -22,76 +22,43 @@ class SiblingTaskInfo:
     task_summary: str
     result_summary: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(**{k: v for k, v in data.items() if k in cls.__slots__})
-
-
-@dataclass(frozen=True, slots=True)
-class DecisionInfo:
+class DecisionInfo(BaseModel):
     """Shared decision visible to sibling workers."""
+
+    model_config = {"frozen": True}
 
     key: str
     value: str
     rationale: str = ""
     decided_by: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(**{k: v for k, v in data.items() if k in cls.__slots__})
-
-
-@dataclass(frozen=True, slots=True)
-class WorkerSiblingContext:
+class WorkerSiblingContext(BaseModel):
     """Complete sibling context passed to worker prompts."""
+
+    model_config = {"frozen": True}
 
     current_agent_id: str
     parent_task: str | None
     sibling_tasks: tuple[SiblingTaskInfo, ...] = ()
     shared_decisions: tuple[DecisionInfo, ...] = ()
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total_siblings(self) -> int:
         return len(self.sibling_tasks)
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def completed_count(self) -> int:
         return sum(1 for s in self.sibling_tasks if s.status == "completed")
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def in_progress_count(self) -> int:
         return sum(1 for s in self.sibling_tasks if s.status in ("analyzing", "in_progress"))
 
     def to_template_dict(self) -> dict[str, Any]:
-        """Convert to dict for Jinja2 template rendering."""
-        return {
-            **asdict(self),
-            "sibling_tasks": [s.to_dict() for s in self.sibling_tasks],
-            "shared_decisions": [d.to_dict() for d in self.shared_decisions],
-            "total_siblings": self.total_siblings,
-            "completed_count": self.completed_count,
-            "in_progress_count": self.in_progress_count,
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "current_agent_id": self.current_agent_id,
-            "parent_task": self.parent_task,
-            "sibling_tasks": [s.to_dict() for s in self.sibling_tasks],
-            "shared_decisions": [d.to_dict() for d in self.shared_decisions],
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(
-            current_agent_id=data["current_agent_id"],
-            parent_task=data.get("parent_task"),
-            sibling_tasks=tuple(SiblingTaskInfo.from_dict(s) for s in data.get("sibling_tasks", [])),
-            shared_decisions=tuple(DecisionInfo.from_dict(d) for d in data.get("shared_decisions", [])),
-        )
+        """Convert to dict for Jinja2 template rendering (includes computed fields)."""
+        return self.model_dump()

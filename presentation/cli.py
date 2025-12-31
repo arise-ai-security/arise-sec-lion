@@ -9,7 +9,7 @@ Architecture:
     bootstrap/cli_main.py (argparse + wiring) -> CLI class (pure, testable)
 """
 
-from __future__ import annotations
+
 
 import sys
 from dataclasses import dataclass

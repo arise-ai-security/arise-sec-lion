@@ -1,6 +1,6 @@
 """Bootstrap - Composition Root: argument parsing, dependency wiring, command dispatch."""
 
-from __future__ import annotations
+
 
 import argparse
 import asyncio

@@ -4,7 +4,7 @@ Defines the interface that all pipeline steps must implement.
 Uses Python's Protocol for structural typing (duck typing with type checking).
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Protocol
 
@@ -33,7 +33,7 @@ class PipelineStep(Protocol):
                 return StepResult.ok(ctx.with_some_field(result))
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, ctx: "PipelineContext") -> "StepResult":
         """Execute the step.
 
         Args:

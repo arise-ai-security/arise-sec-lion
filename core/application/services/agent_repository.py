@@ -3,7 +3,7 @@
 Encapsulates event store operations with OCC retry logic.
 """
 
-from __future__ import annotations
+
 
 import logging
 from collections.abc import Callable
@@ -40,7 +40,7 @@ class AgentRepository:
 
     def __init__(
         self,
-        event_store: EventStorePort,
+        event_store: "EventStorePort",
         max_retries: int = 3,
         progress_callback: ProgressCallback | None = None,
     ) -> None:

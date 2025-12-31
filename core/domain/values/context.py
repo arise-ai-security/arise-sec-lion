@@ -6,29 +6,31 @@ These immutable value objects enable rich context passing between agents:
 - AncestorInfo: Lightweight ancestor summary for ancestry chain
 """
 
-from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+
+from typing import TYPE_CHECKING, Any, Self
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
 
 
-@dataclass(frozen=True, slots=True)
-class AncestorInfo:
+class AncestorInfo(BaseModel):
     """Lightweight ancestor summary for ancestry chain.
 
     Provides minimal context about each ancestor in the hierarchy,
     enabling children to understand their position and lineage.
     """
 
+    model_config = {"frozen": True}
+
     agent_id: str
     role: str
     task_summary: str  # First 100 chars of task description
 
     @classmethod
-    def from_agent(cls, agent: AgentSession) -> AncestorInfo:
+    def from_agent(cls, agent: "AgentSession") -> Self:
         """Create AncestorInfo from an AgentSession."""
         task_summary = (agent.task_description or "")[:100]
         return cls(
@@ -37,26 +39,8 @@ class AncestorInfo:
             task_summary=task_summary,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "agent_id": self.agent_id,
-            "role": self.role,
-            "task_summary": self.task_summary,
-        }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AncestorInfo:
-        """Deserialize from dictionary."""
-        return cls(
-            agent_id=data["agent_id"],
-            role=data["role"],
-            task_summary=data["task_summary"],
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ParentContext:
+class ParentContext(BaseModel):
     """Context passed from parent to child at spawn time.
 
     Provides children with:
@@ -68,6 +52,8 @@ class ParentContext:
     - Execution limits (budget, depth remaining, etc.)
     """
 
+    model_config = {"frozen": True}
+
     parent_task: str
     parent_role: str
     depth: int
@@ -76,34 +62,8 @@ class ParentContext:
     constraints: dict[str, Any]
     execution_limits: dict[str, Any]
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dictionary for event storage."""
-        return {
-            "parent_task": self.parent_task,
-            "parent_role": self.parent_role,
-            "depth": self.depth,
-            "ancestry": [a.to_dict() for a in self.ancestry],
-            "decisions": list(self.decisions),
-            "constraints": self.constraints,
-            "execution_limits": self.execution_limits,
-        }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ParentContext:
-        """Deserialize from dictionary."""
-        return cls(
-            parent_task=data["parent_task"],
-            parent_role=data["parent_role"],
-            depth=data["depth"],
-            ancestry=tuple(AncestorInfo.from_dict(a) for a in data.get("ancestry", [])),
-            decisions=tuple(data.get("decisions", [])),
-            constraints=data.get("constraints", {}),
-            execution_limits=data.get("execution_limits", {}),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ChildResult:
+class ChildResult(BaseModel):
     """Structured result from child to parent.
 
     Provides rich feedback beyond just the result text:
@@ -114,47 +74,22 @@ class ChildResult:
     - Execution summary: Cost, duration, tokens used
     """
 
+    model_config = {"frozen": True}
+
     result_text: str
-    artifacts: tuple[str, ...]
-    decisions: tuple[str, ...]
-    context_updates: dict[str, Any]
-    execution_summary: dict[str, Any]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dictionary for event storage."""
-        return {
-            "result_text": self.result_text,
-            "artifacts": list(self.artifacts),
-            "decisions": list(self.decisions),
-            "context_updates": self.context_updates,
-            "execution_summary": self.execution_summary,
-        }
+    artifacts: tuple[str, ...] = ()
+    decisions: tuple[str, ...] = ()
+    context_updates: dict[str, Any] = {}
+    execution_summary: dict[str, Any] = {}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChildResult:
-        """Deserialize from dictionary."""
-        return cls(
-            result_text=data["result_text"],
-            artifacts=tuple(data.get("artifacts", [])),
-            decisions=tuple(data.get("decisions", [])),
-            context_updates=data.get("context_updates", {}),
-            execution_summary=data.get("execution_summary", {}),
-        )
-
-    @classmethod
-    def simple(cls, result_text: str) -> ChildResult:
+    def simple(cls, result_text: str) -> Self:
         """Create a simple result with just text."""
-        return cls(
-            result_text=result_text,
-            artifacts=(),
-            decisions=(),
-            context_updates={},
-            execution_summary={},
-        )
+        return cls(result_text=result_text)
 
 
 def build_parent_context(
-    agent: AgentSession,
+    agent: "AgentSession",
     parent_context: ParentContext | None = None,
 ) -> ParentContext:
     """Build ParentContext from agent for passing to children.

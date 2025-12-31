@@ -3,7 +3,7 @@
 These steps parse LLM responses into domain objects.
 """
 
-from __future__ import annotations
+
 
 import json
 import logging

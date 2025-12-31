@@ -12,7 +12,7 @@ Each pipeline is a sequence of focused, testable steps that together
 implement the orchestration logic.
 """
 
-from __future__ import annotations
+
 
 import logging
 from typing import TYPE_CHECKING
@@ -22,7 +22,7 @@ from core.application.pipelines import PipelineFactory
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
-    from core.domain.services.prompt_builder import PromptBuilder
+    from core.application.services.prompt_builder import PromptBuilder
     from core.domain.values.sibling_context import WorkerSiblingContext
     from core.ports.llm_port import LLMPort
     from core.ports.task_registry_port import TaskRegistryPort
@@ -48,10 +48,10 @@ class AgentOrchestrator:
 
     def __init__(
         self,
-        llm_port: LLMPort,
-        worker_port: WorkerToolPort,
-        prompt_builder: PromptBuilder,
-        task_registry_port: TaskRegistryPort,
+        llm_port: "LLMPort",
+        worker_port: "WorkerToolPort",
+        prompt_builder: "PromptBuilder",
+        task_registry_port: "TaskRegistryPort",
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -73,7 +73,7 @@ class AgentOrchestrator:
         self._decomposition_pipeline = self._pipeline_factory.create_decomposition_pipeline()
         self._worker_pipeline = self._pipeline_factory.create_worker_pipeline()
 
-    async def evaluate_complexity(self, agent: AgentSession) -> None:
+    async def evaluate_complexity(self, agent: "AgentSession") -> None:
         """Evaluate task complexity for a PENDING agent.
 
         Performs LLM call and applies result to agent via pure domain methods.
@@ -93,7 +93,7 @@ class AgentOrchestrator:
             )
             agent.fail_with_reason(result.failure_reason or "Unknown failure")
 
-    async def evaluate_task(self, agent: AgentSession) -> None:
+    async def evaluate_task(self, agent: "AgentSession") -> None:
         """Decompose task into subtasks for a BOSS/MANAGER agent.
 
         Performs LLM call, parses subtasks, and spawns children via pure domain methods.
@@ -116,10 +116,10 @@ class AgentOrchestrator:
 
     async def execute_task(
         self,
-        agent: AgentSession,
+        agent: "AgentSession",
         working_directory: str | None = None,
         workspace_context: str | None = None,
-        sibling_context: WorkerSiblingContext | None = None,
+        sibling_context: "WorkerSiblingContext | None" = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 

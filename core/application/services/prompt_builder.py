@@ -1,6 +1,6 @@
 """Domain service for building hierarchical prompts from Jinja2 templates."""
 
-from __future__ import annotations
+
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -9,7 +9,7 @@ from uuid import UUID
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
 from core.domain.values.enums import AgentRole
-from core.domain.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
+from core.application.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
     from core.domain.values.context import ParentContext
@@ -68,7 +68,7 @@ class TemplateChain:
         """Inject SEC-bench template if it exists. Looks in secbench/ directory."""
         return self.render_optional(f"secbench/{template_name}", **kwargs)
 
-    def with_cve_context(self, cve_instance: CVEInstance | None) -> Self:
+    def with_cve_context(self, cve_instance: "CVEInstance | None") -> Self:
         """Inject SEC-bench CVE context if available.
 
         Renders secbench/context.j2 with CVE instance data.
@@ -156,7 +156,7 @@ class PromptBuilder:
 
     def _limits_context(
         self,
-        execution_context: ExecutionContext | None,
+        execution_context: "ExecutionContext | None",
     ) -> dict[str, Any]:
         """Build limits context dict for templates.
 
@@ -234,10 +234,10 @@ class PromptBuilder:
         agent_id: UUID,
         agent_role: AgentRole = AgentRole.MANAGER,
         parent_task: str | None = None,
-        registered_tasks: list[RegisteredTask] | None = None,
-        cve_instance: CVEInstance | None = None,
-        parent_context: ParentContext | None = None,
-        execution_context: ExecutionContext | None = None,
+        registered_tasks: "list[RegisteredTask] | None" = None,
+        cve_instance: "CVEInstance | None" = None,
+        parent_context: "ParentContext | None" = None,
+        execution_context: "ExecutionContext | None" = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
 
@@ -287,9 +287,9 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
-        cve_instance: CVEInstance | None = None,
-        registered_tasks: list[RegisteredTask] | None = None,
-        execution_context: ExecutionContext | None = None,
+        cve_instance: "CVEInstance | None" = None,
+        registered_tasks: "list[RegisteredTask] | None" = None,
+        execution_context: "ExecutionContext | None" = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation.
 
@@ -336,8 +336,8 @@ class PromptBuilder:
         task_description: str,
         sibling_context: Any = None,
         workspace_context: str | None = None,
-        cve_instance: CVEInstance | None = None,
-        parent_context: ParentContext | None = None,
+        cve_instance: "CVEInstance | None" = None,
+        parent_context: "ParentContext | None" = None,
     ) -> str:
         """Build prompt for WORKER agent task execution.
 

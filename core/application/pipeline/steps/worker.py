@@ -3,7 +3,7 @@
 These steps handle worker tool execution (Claude Code, OpenHands, etc.).
 """
 
-from __future__ import annotations
+
 
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +22,7 @@ class RunWorkerSession:
     for WORKER agents.
     """
 
-    def __init__(self, worker_port: WorkerToolPort) -> None:
+    def __init__(self, worker_port: "WorkerToolPort") -> None:
         """Initialize with worker port.
 
         Args:

@@ -245,7 +245,7 @@ class TestParsedDecision:
             rationale="Better async",
         )
 
-        data = decision.to_dict()
+        data = decision.model_dump()
 
         assert data["key"] == "framework"
         assert data["value"] == "FastAPI"
@@ -259,7 +259,7 @@ class TestParsedDecision:
             "rationale": "Better async",
         }
 
-        decision = ParsedDecision.from_dict(data)
+        decision = ParsedDecision.model_validate(data)
 
         assert decision.key == "framework"
         assert decision.value == "FastAPI"
@@ -272,7 +272,7 @@ class TestParsedDecision:
             "value": "FastAPI",
         }
 
-        decision = ParsedDecision.from_dict(data)
+        decision = ParsedDecision.model_validate(data)
 
         assert decision.rationale == ""
 
@@ -287,7 +287,7 @@ class TestParsedOutput:
             description="Created User model in models/",
         )
 
-        data = output.to_dict()
+        data = output.model_dump()
 
         assert data["key"] == "user_model"
         assert data["description"] == "Created User model in models/"
@@ -299,7 +299,7 @@ class TestParsedOutput:
             "description": "Created User model",
         }
 
-        output = ParsedOutput.from_dict(data)
+        output = ParsedOutput.model_validate(data)
 
         assert output.key == "user_model"
         assert output.description == "Created User model"
@@ -319,7 +319,7 @@ class TestParsedContextUpdate:
             ),
         )
 
-        data = update.to_dict()
+        data = update.model_dump()
 
         assert len(data["decisions"]) == 1
         assert len(data["outputs"]) == 1
@@ -337,7 +337,7 @@ class TestParsedContextUpdate:
             ],
         }
 
-        update = ParsedContextUpdate.from_dict(data)
+        update = ParsedContextUpdate.model_validate(data)
 
         assert len(update.decisions) == 1
         assert len(update.outputs) == 1
@@ -348,7 +348,7 @@ class TestParsedContextUpdate:
         """Test from_dict() with empty decisions/outputs."""
         data = {}
 
-        update = ParsedContextUpdate.from_dict(data)
+        update = ParsedContextUpdate.model_validate(data)
 
         assert update.decisions == ()
         assert update.outputs == ()
