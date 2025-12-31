@@ -45,7 +45,7 @@ class CLI:
 
     def __init__(
         self,
-        execution_service: AgentExecutionService,
+        execution_service: "AgentExecutionService",
         config: CLIConfig | None = None,
     ) -> None:
         self.execution_service = execution_service
@@ -84,7 +84,7 @@ class CLI:
     async def _bootstrap_boss_agent(
         self,
         task_description: str,
-        cve_instance: CVEInstance | None = None,
+        cve_instance: "CVEInstance | None" = None,
     ) -> UUID:
         """Create the root BOSS agent."""
         if self.config.verbose:

@@ -1,7 +1,5 @@
 """Run persistence for tracking last run state (SRP compliant)."""
 
-
-
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,7 +26,7 @@ class LastRunInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> LastRunInfo:
+    def from_dict(cls, data: dict) -> "LastRunInfo":
         """Deserialize from dictionary."""
         return cls(
             boss_id=UUID(data["boss_id"]),

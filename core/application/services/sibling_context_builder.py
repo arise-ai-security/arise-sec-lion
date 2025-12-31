@@ -20,8 +20,8 @@ class SiblingViewBuilder:
 
     def __init__(
         self,
-        repository: AgentRepository,
-        shared_context_port: SharedContextPort | None = None,
+        repository: "AgentRepository",
+        shared_context_port: "SharedContextPort | None" = None,
     ) -> None:
         self._repository = repository
         self._shared_context_port = shared_context_port

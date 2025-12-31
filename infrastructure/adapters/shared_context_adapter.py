@@ -30,7 +30,7 @@ class PostgresSharedContextAdapter(SharedContextPort):
     This ensures OCC via the existing UNIQUE constraint.
     """
 
-    def __init__(self, event_store: PostgresEventStore) -> None:
+    def __init__(self, event_store: "PostgresEventStore") -> None:
         """Initialize with existing event store.
 
         Args:
