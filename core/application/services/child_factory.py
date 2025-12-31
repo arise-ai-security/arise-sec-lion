@@ -1,16 +1,14 @@
 """Child agent factory for creating agents from ChildSpawned events.
 
-Handles child agent creation with execution context propagation.
+Handles child agent creation with hierarchy limits propagation.
 """
-
-
 
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.values.context import ParentContext
+from core.domain.values.context import SpawnPayload
 from core.domain.events.events import ChildSpawned
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from config import ManagerConfig
     from core.application.services.agent_repository import AgentRepository
-    from core.application.services.context_registry import ExecutionContextRegistry
+    from core.application.services.context_registry import HierarchyLimitsRegistry
 
 
 @dataclass
@@ -34,23 +32,23 @@ class ChildCreationResult:
 class ChildAgentFactory:
     """Factory for creating child agents from ChildSpawned events.
 
-    Single Responsibility: Create child agents with proper context propagation.
+    Single Responsibility: Create child agents with proper limits propagation.
 
     Enforces:
     - max_total_agents limit
-    - Execution context propagation to children
+    - Hierarchy limits propagation to children
     - Manager config defaults for PENDING children
     """
 
     def __init__(
         self,
         repository: "AgentRepository",
-        context_registry: "ExecutionContextRegistry",
+        limits_registry: "HierarchyLimitsRegistry",
         max_total_agents: int = -1,  # -1 means unlimited
         manager_config: "ManagerConfig | None" = None,
     ) -> None:
         self._repository = repository
-        self._context_registry = context_registry
+        self._limits_registry = limits_registry
         self._max_total_agents = max_total_agents
         self._manager_config = manager_config
         self._total_created: int = 0
@@ -116,7 +114,7 @@ class ChildAgentFactory:
         """Create a child agent from a ChildSpawned event.
 
         Caller (create_children_from_events) is responsible for limit checking.
-        Propagates execution context and parent context to child.
+        Propagates hierarchy limits and spawn payload to child.
         Applies manager config defaults for PENDING children.
         """
         child_role = AgentRole(event.child_role)
@@ -137,13 +135,13 @@ class ChildAgentFactory:
         )
         child.assign_task(event.subtask.description)
 
-        # Propagate execution context
-        self._context_registry.propagate_to_child(parent_id, event.child_id)
+        # Propagate hierarchy limits
+        self._limits_registry.propagate_to_child(parent_id, event.child_id)
 
-        # Set parent context if available in event
+        # Set spawn payload if available in event
         if event.parent_context:
-            parent_context = ParentContext.model_validate(event.parent_context)
-            child.set_parent_context(parent_context)
+            spawn_payload = SpawnPayload.model_validate(event.parent_context)
+            child.set_spawn_payload(spawn_payload)
 
         # Persist the new agent
         await self._repository.save_new_agent(child)

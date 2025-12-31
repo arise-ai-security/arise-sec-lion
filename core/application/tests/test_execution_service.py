@@ -18,7 +18,7 @@ from core.application.execution_service import (
 )
 from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.context_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
@@ -78,13 +78,13 @@ def mock_worker_port():
 
 
 @pytest.fixture
-def context_registry():
-    """Create context registry for tests."""
-    return ExecutionContextRegistry()
+def limits_registry():
+    """Create limits registry for tests."""
+    return HierarchyLimitsRegistry()
 
 
 @pytest.fixture
-def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context_registry):
+def execution_service(mock_event_store, mock_llm_port, mock_worker_port, limits_registry):
     """Create execution service with mocked ports and injected collaborators."""
     from config import BossConfig, ManagerConfig
 
@@ -110,7 +110,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
     query_service = AgentQueryService(repository)
     child_factory = ChildAgentFactory(
         repository=repository,
-        context_registry=context_registry,
+        limits_registry=limits_registry,
         max_total_agents=system_limits.max_total_agents,
         manager_config=manager_config,
     )
@@ -126,11 +126,11 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
         task_registry_port=task_registry_mock,
     )
 
-    # Mock sibling context to return empty context
-    from core.domain.values.sibling_context import WorkerSiblingContext
+    # Mock sibling view to return empty view
+    from core.domain.values.context import SiblingView
 
-    sibling_context_mock = AsyncMock()
-    sibling_context_mock.build_context.return_value = WorkerSiblingContext(
+    sibling_view_mock = AsyncMock()
+    sibling_view_mock.build_view.return_value = SiblingView(
         current_agent_id="test",
         parent_task=None,
         sibling_tasks=(),
@@ -145,12 +145,12 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
     dependencies = ExecutionServiceDependencies(
         repository=repository,
         orchestrator=orchestrator,
-        context_registry=context_registry,
+        limits_registry=limits_registry,
         child_factory=child_factory,
         query_service=query_service,
         workspace=workspace,
         shared_context_port=AsyncMock(),
-        sibling_context_port=sibling_context_mock,
+        sibling_view_port=sibling_view_mock,
         parent_notifier=parent_notifier,
         task_registry=task_registry_mock,
     )
@@ -301,15 +301,15 @@ async def test_run_agent_step_manager_role_calls_evaluate_task(
 
 @pytest.mark.asyncio
 async def test_run_agent_step_worker_role_calls_execute_task(
-    execution_service, mock_event_store, mock_worker_port, context_registry
+    execution_service, mock_event_store, mock_worker_port, limits_registry
 ):
     """Test that WORKER agent calls execute_task."""
 
     # Given: A WORKER agent in ANALYZING status (no parent for this isolated test)
     agent_id = uuid4()
 
-    # Register as root context (required for sibling context lookup)
-    context_registry.create_root(agent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
+    # Register as root limits (required for sibling view lookup)
+    limits_registry.create_root(agent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
 
     event1 = AgentCreated(
         aggregate_id=agent_id,
@@ -638,7 +638,7 @@ async def test_run_agent_step_creates_children_when_boss_spawns(
 
 @pytest.mark.asyncio
 async def test_run_agent_step_notifies_parent_when_child_completes(
-    execution_service, mock_event_store, mock_worker_port, context_registry
+    execution_service, mock_event_store, mock_worker_port, limits_registry
 ):
     """Test that parent is notified when child agent completes."""
     from core.domain.events.events import ChildCompleted
@@ -647,9 +647,9 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     parent_id = uuid4()
     child_id = uuid4()
 
-    # Register contexts (parent is root, child inherits)
-    context_registry.create_root(parent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
-    context_registry.propagate_to_child(parent_id, child_id)
+    # Register limits (parent is root, child inherits)
+    limits_registry.create_root(parent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
+    limits_registry.propagate_to_child(parent_id, child_id)
 
     # Child events (WORKER that completes)
     child_event1 = AgentCreated(

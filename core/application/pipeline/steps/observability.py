@@ -6,7 +6,7 @@ They call pure domain methods on AgentSession to emit events.
 
 
 
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 
 
 class EmitPromptSent:
@@ -26,23 +26,23 @@ class EmitPromptSent:
         self._prompt_type = prompt_type
         self._target = target
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Emit PromptSent event via agent's pure domain method."""
-        if ctx.prompt is None:
+        if state.prompt is None:
             return StepResult.fail("No prompt set in context")
 
         target = self._target
         # For worker execution, use the actual tool name
         if self._target == "dynamic":
-            target = ctx.agent.config.tool
+            target = state.agent.config.tool
 
-        ctx.agent.emit_prompt_sent(
-            prompt=ctx.prompt,
+        state.agent.emit_prompt_sent(
+            prompt=state.prompt,
             prompt_type=self._prompt_type,
             target=target,
         )
 
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)
 
 
 class EmitTokensConsumed:
@@ -60,13 +60,13 @@ class EmitTokensConsumed:
         """
         self._operation = operation
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Emit TokensConsumed event from LLM response."""
-        if ctx.llm_response is None:
+        if state.llm_response is None:
             return StepResult.fail("No LLM response in context")
 
-        response = ctx.llm_response
-        ctx.agent.emit_tokens_consumed(
+        response = state.llm_response
+        state.agent.emit_tokens_consumed(
             model=response.model,
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
@@ -75,4 +75,4 @@ class EmitTokensConsumed:
             operation=self._operation,
         )
 
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)

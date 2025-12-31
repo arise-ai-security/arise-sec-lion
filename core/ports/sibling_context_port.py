@@ -1,4 +1,4 @@
-"""Port for building sibling context for workers.
+"""Port for building sibling view for workers.
 
 Follows Hexagonal Architecture:
 - Port defines the contract (abstraction)
@@ -6,34 +6,32 @@ Follows Hexagonal Architecture:
 - Depends on core/domain types only
 """
 
-
-
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from core.domain.values.sibling_context import WorkerSiblingContext
+    from core.domain.values.context import SiblingView
 
 
-class SiblingContextPort(Protocol):
-    """Port for building sibling context for workers.
+class SiblingViewPort(Protocol):
+    """Port for building sibling view for workers.
 
     Follows Interface Segregation Principle:
     - Read-only, no side effects
-    - Single method for building context
+    - Single method for building view
     """
 
-    async def build_context(
+    async def build_view(
         self,
         agent_id: UUID,
         parent_id: UUID | None,
         root_id: UUID,
-    ) -> WorkerSiblingContext:
-        """Build sibling context for a worker.
+    ) -> SiblingView:
+        """Build sibling view for a worker.
 
         Retrieves:
         - Parent task description (minimal context)
-        - Sibling task info (statuses, results)
+        - Sibling statuses (progress, results)
         - Shared decisions from SharedExecutionContext
 
         Args:
@@ -42,6 +40,6 @@ class SiblingContextPort(Protocol):
             root_id: Root agent ID (to load shared decisions)
 
         Returns:
-            WorkerSiblingContext with sibling info and shared decisions
+            SiblingView with sibling statuses and shared decisions
         """
         ...

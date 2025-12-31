@@ -11,8 +11,8 @@ from typing import Any
 from pydantic import BaseModel, computed_field
 
 
-class SiblingTaskInfo(BaseModel):
-    """Sibling task info for worker coordination."""
+class SiblingStatus(BaseModel):
+    """Sibling task status for worker coordination."""
 
     model_config = {"frozen": True}
 
@@ -23,7 +23,7 @@ class SiblingTaskInfo(BaseModel):
     result_summary: str | None = None
 
 
-class DecisionInfo(BaseModel):
+class SharedDecision(BaseModel):
     """Shared decision visible to sibling workers."""
 
     model_config = {"frozen": True}
@@ -34,15 +34,15 @@ class DecisionInfo(BaseModel):
     decided_by: str = ""
 
 
-class WorkerSiblingContext(BaseModel):
-    """Complete sibling context passed to worker prompts."""
+class SiblingView(BaseModel):
+    """Complete sibling view passed to worker prompts."""
 
     model_config = {"frozen": True}
 
     current_agent_id: str
     parent_task: str | None
-    sibling_tasks: tuple[SiblingTaskInfo, ...] = ()
-    shared_decisions: tuple[DecisionInfo, ...] = ()
+    sibling_tasks: tuple[SiblingStatus, ...] = ()
+    shared_decisions: tuple[SharedDecision, ...] = ()
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -57,7 +57,9 @@ class WorkerSiblingContext(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def in_progress_count(self) -> int:
-        return sum(1 for s in self.sibling_tasks if s.status in ("analyzing", "in_progress"))
+        return sum(
+            1 for s in self.sibling_tasks if s.status in ("analyzing", "in_progress")
+        )
 
     def to_template_dict(self) -> dict[str, Any]:
         """Convert to dict for Jinja2 template rendering (includes computed fields)."""

@@ -13,9 +13,8 @@ from uuid import UUID
 from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
-    from core.domain.values.context import ParentContext
+    from core.domain.values.context import HierarchyLimits, SpawnPayload
     from core.domain.values.cve_instance import CVEInstance
-    from core.domain.values.execution_context import ExecutionContext
     from core.application.services.prompt_builder import TemplateChain
     from core.domain.services import RegisteredTask
 
@@ -29,11 +28,11 @@ class PromptContext:
     agent_role: AgentRole
     default_tool: str
     parent_task: str | None = None
-    parent_context: "ParentContext | None" = None
-    execution_context: "ExecutionContext | None" = None
+    spawn_payload: "SpawnPayload | None" = None
+    hierarchy_limits: "HierarchyLimits | None" = None
     cve_instance: "CVEInstance | None" = None
     registered_tasks: "list[RegisteredTask] | None" = None
-    sibling_context: Any = None
+    sibling_view: Any = None
     workspace_context: str | None = None
 
 
@@ -70,16 +69,16 @@ class DefaultPromptStrategy:
         return None
 
 
-def _detect_benchmark_branch(parent_context: "ParentContext | None") -> str | None:
+def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None:
     """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
 
     Checks ancestry chain for top-level subtask keywords.
     Returns None if not in a benchmark run or branch not determinable.
     """
-    if parent_context is None:
+    if spawn_payload is None:
         return None
 
-    for ancestor in parent_context.ancestry:
+    for ancestor in spawn_payload.ancestry:
         task_lower = ancestor.task_summary.lower()
         if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
             return "builder"
@@ -142,7 +141,7 @@ class SecBenchPromptStrategy:
             return None
 
         # Detect branch from ancestry or task description
-        branch = _detect_benchmark_branch(context.parent_context)
+        branch = _detect_benchmark_branch(context.spawn_payload)
         if branch is None:
             branch = _detect_branch_from_task(context.task_description)
 
@@ -150,9 +149,9 @@ class SecBenchPromptStrategy:
             return None
 
         # Only apply to direct BOSS children (depth-1 managers)
-        # parent_context.depth == 0 means parent is BOSS
+        # spawn_payload.depth == 0 means parent is BOSS
         is_direct_boss_child = (
-            context.parent_context is not None and context.parent_context.depth == 0
+            context.spawn_payload is not None and context.spawn_payload.depth == 0
         )
 
         if not is_direct_boss_child:
@@ -189,20 +188,20 @@ class SecBenchPromptStrategy:
         if context.cve_instance is None:
             return None
 
-        branch = _detect_benchmark_branch(context.parent_context)
+        branch = _detect_benchmark_branch(context.spawn_payload)
         if branch is None:
             return None
 
         sibling_ctx = (
-            context.sibling_context.to_template_dict()
-            if context.sibling_context
+            context.sibling_view.to_template_dict()
+            if context.sibling_view
             else {}
         )
         cve_ctx = context.cve_instance.to_template_context()
 
         return (
             self._chain_factory()
-            .render_if(context.sibling_context, "core/context/sibling.j2", **sibling_ctx)
+            .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)
             .with_cve_context(context.cve_instance)
             .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
             .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)

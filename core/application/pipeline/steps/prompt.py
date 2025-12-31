@@ -8,7 +8,7 @@ Each prompt type has its own step for clarity and testability.
 
 from typing import TYPE_CHECKING
 
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
@@ -30,9 +30,9 @@ class BuildComplexityPrompt:
         """
         self._prompt_builder = prompt_builder
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Build complexity evaluation prompt."""
-        agent = ctx.agent
+        agent = state.agent
 
         prompt = self._prompt_builder.build_complexity_evaluation_prompt(
             task_description=agent.task_description,
@@ -40,7 +40,7 @@ class BuildComplexityPrompt:
             parent_task=None,
         )
 
-        return StepResult.ok(ctx.with_prompt(prompt))
+        return StepResult.ok(state.with_prompt(prompt))
 
 
 class BuildDecompositionPrompt:
@@ -50,7 +50,7 @@ class BuildDecompositionPrompt:
     - BOSS: Uses build_boss_delegation_prompt
     - MANAGER: Uses build_manager_decomposition_prompt
 
-    The prompt includes limit-aware context from ExecutionContext.
+    The prompt includes limit-aware context from HierarchyLimits.
     """
 
     def __init__(self, prompt_builder: "PromptBuilder") -> None:
@@ -61,39 +61,39 @@ class BuildDecompositionPrompt:
         """
         self._prompt_builder = prompt_builder
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Build role-specific decomposition prompt."""
-        agent = ctx.agent
+        agent = state.agent
 
         if agent.role == AgentRole.BOSS:
             prompt = self._prompt_builder.build_boss_delegation_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
-                cve_instance=ctx.cve_instance,
-                registered_tasks=ctx.registered_tasks,
-                execution_context=ctx.execution_context,
+                cve_instance=state.cve_instance,
+                registered_tasks=state.registered_tasks,
+                hierarchy_limits=state.hierarchy_limits,
             )
         else:  # MANAGER
             prompt = self._prompt_builder.build_manager_decomposition_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
-                registered_tasks=ctx.registered_tasks,
-                cve_instance=ctx.cve_instance,
-                parent_context=agent.parent_context,
-                execution_context=ctx.execution_context,
+                registered_tasks=state.registered_tasks,
+                cve_instance=state.cve_instance,
+                spawn_payload=agent.spawn_payload,
+                hierarchy_limits=state.hierarchy_limits,
             )
 
-        return StepResult.ok(ctx.with_prompt(prompt))
+        return StepResult.ok(state.with_prompt(prompt))
 
 
 class BuildWorkerPrompt:
     """Build worker execution prompt for WORKER agent.
 
     Uses PromptBuilder to construct an enhanced prompt that includes:
-    - Sibling context for coordination
+    - Sibling view for coordination
     - Workspace context for existing files
     - CVE instance for security tasks
-    - Parent context for hierarchy awareness
+    - Spawn payload for hierarchy awareness
     """
 
     def __init__(self, prompt_builder: "PromptBuilder") -> None:
@@ -104,16 +104,16 @@ class BuildWorkerPrompt:
         """
         self._prompt_builder = prompt_builder
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Build enhanced worker prompt."""
-        agent = ctx.agent
+        agent = state.agent
 
         enhanced_description = self._prompt_builder.build_worker_prompt(
             task_description=agent.task_description,
-            sibling_context=ctx.sibling_context,
-            workspace_context=ctx.workspace_context,
-            cve_instance=ctx.cve_instance,
-            parent_context=agent.parent_context,
+            sibling_view=state.sibling_view,
+            workspace_context=state.workspace_context,
+            cve_instance=state.cve_instance,
+            spawn_payload=agent.spawn_payload,
         )
 
-        return StepResult.ok(ctx.with_prompt(enhanced_description))
+        return StepResult.ok(state.with_prompt(enhanced_description))

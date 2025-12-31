@@ -8,7 +8,7 @@ These steps handle task registry operations for avoiding duplicate work.
 import logging
 from typing import TYPE_CHECKING
 
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.services import TaskKeyGenerator
 
 if TYPE_CHECKING:
@@ -32,14 +32,14 @@ class FetchRegisteredTasks:
         """
         self._task_registry_port = task_registry_port
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Fetch registered tasks for the execution run."""
-        if ctx.root_id is None:
+        if state.root_id is None:
             # No root_id means no execution context, skip
-            return StepResult.ok(ctx)
+            return StepResult.ok(state)
 
-        registered_tasks = await self._task_registry_port.get_all_for_root(ctx.root_id)
-        return StepResult.ok(ctx.with_registered_tasks(registered_tasks))
+        registered_tasks = await self._task_registry_port.get_all_for_root(state.root_id)
+        return StepResult.ok(state.with_registered_tasks(registered_tasks))
 
 
 class DeduplicateSubtasks:
@@ -57,24 +57,24 @@ class DeduplicateSubtasks:
         """
         self._task_registry_port = task_registry_port
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Filter duplicate subtasks and register new ones."""
-        if ctx.root_id is None:
+        if state.root_id is None:
             # No root_id means no execution context, skip deduplication
-            return StepResult.ok(ctx)
+            return StepResult.ok(state)
 
-        if ctx.subtasks is None:
+        if state.subtasks is None:
             return StepResult.fail("No subtasks in context to deduplicate")
 
-        agent = ctx.agent
+        agent = state.agent
         kept = []
 
-        for subtask in ctx.subtasks:
+        for subtask in state.subtasks:
             task_key = TaskKeyGenerator.generate_key(subtask.description)
 
             # Atomic check-and-register via projection table with advisory lock
             registered = await self._task_registry_port.register_if_not_exists(
-                root_id=ctx.root_id,
+                root_id=state.root_id,
                 task_key=task_key,
                 task_description=subtask.description,
                 registered_by=agent.agent_id,
@@ -91,12 +91,12 @@ class DeduplicateSubtasks:
                     subtask.description[:50],
                 )
 
-        if len(kept) < len(ctx.subtasks):
+        if len(kept) < len(state.subtasks):
             logger.info(
                 "Deduplication: kept %d/%d subtasks for agent=%s",
                 len(kept),
-                len(ctx.subtasks),
+                len(state.subtasks),
                 agent.agent_id,
             )
 
-        return StepResult.ok(ctx.with_subtasks(kept))
+        return StepResult.ok(state.with_subtasks(kept))

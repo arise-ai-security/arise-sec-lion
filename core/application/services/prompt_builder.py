@@ -12,9 +12,8 @@ from core.domain.values.enums import AgentRole
 from core.application.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
-    from core.domain.values.context import ParentContext
+    from core.domain.values.context import HierarchyLimits, SpawnPayload
     from core.domain.values.cve_instance import CVEInstance
-    from core.domain.values.execution_context import ExecutionContext
     from core.domain.services import RegisteredTask
 
 
@@ -156,12 +155,12 @@ class PromptBuilder:
 
     def _limits_context(
         self,
-        execution_context: "ExecutionContext | None",
+        hierarchy_limits: "HierarchyLimits | None",
     ) -> dict[str, Any]:
         """Build limits context dict for templates.
 
         Args:
-            execution_context: Current execution context with limits.
+            hierarchy_limits: Current hierarchy limits for depth/children constraints.
 
         Returns:
             Dict with limit variables for templates:
@@ -172,7 +171,7 @@ class PromptBuilder:
             - max_total_agents: Maximum total agents allowed (None = unlimited)
             - current_total_agents: Current count of agents created (None = unknown)
         """
-        if execution_context is None:
+        if hierarchy_limits is None:
             return {
                 "max_subtasks": None,
                 "depth_remaining": None,
@@ -183,23 +182,23 @@ class PromptBuilder:
             }
 
         max_subtasks = None
-        if execution_context.is_children_limited():
-            max_subtasks = execution_context.max_children_per_node
+        if hierarchy_limits.is_children_limited():
+            max_subtasks = hierarchy_limits.max_children_per_node
 
         depth_remaining = None
         at_max_depth = False
-        if execution_context.is_depth_limited():
-            depth_remaining = execution_context.max_depth - execution_context.current_depth
-            at_max_depth = not execution_context.can_spawn_child()
+        if hierarchy_limits.is_depth_limited():
+            depth_remaining = hierarchy_limits.max_depth - hierarchy_limits.current_depth
+            at_max_depth = not hierarchy_limits.can_spawn_child()
 
         # Total agents limit info
         agents_remaining = None
         max_total_agents = None
         current_total_agents = None
-        if execution_context.is_total_agents_limited():
-            agents_remaining = execution_context.agents_remaining()
-            max_total_agents = execution_context.max_total_agents
-            current_total_agents = execution_context.current_total_agents
+        if hierarchy_limits.is_total_agents_limited():
+            agents_remaining = hierarchy_limits.agents_remaining()
+            max_total_agents = hierarchy_limits.max_total_agents
+            current_total_agents = hierarchy_limits.current_total_agents
 
         return {
             "max_subtasks": max_subtasks,
@@ -236,8 +235,8 @@ class PromptBuilder:
         parent_task: str | None = None,
         registered_tasks: "list[RegisteredTask] | None" = None,
         cve_instance: "CVEInstance | None" = None,
-        parent_context: "ParentContext | None" = None,
-        execution_context: "ExecutionContext | None" = None,
+        spawn_payload: "SpawnPayload | None" = None,
+        hierarchy_limits: "HierarchyLimits | None" = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
 
@@ -248,8 +247,8 @@ class PromptBuilder:
             parent_task: Parent task description.
             registered_tasks: List of already-registered tasks (for dedup hint).
             cve_instance: CVE instance for benchmark runs.
-            parent_context: Parent context for hierarchy info.
-            execution_context: Execution context with limits.
+            spawn_payload: Spawn payload for hierarchy info.
+            hierarchy_limits: Hierarchy limits with depth/children constraints.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -258,8 +257,8 @@ class PromptBuilder:
             agent_role=agent_role,
             default_tool=self.default_tool,
             parent_task=parent_task,
-            parent_context=parent_context,
-            execution_context=execution_context,
+            spawn_payload=spawn_payload,
+            hierarchy_limits=hierarchy_limits,
             cve_instance=cve_instance,
             registered_tasks=registered_tasks,
         )
@@ -269,7 +268,7 @@ class PromptBuilder:
 
         # Default generic prompt (no SEC-bench logic here - follows SRP)
         ctx = self._task_context(task_description, agent_id, agent_role, parent_task)
-        limits = self._limits_context(execution_context)
+        limits = self._limits_context(hierarchy_limits)
         tool = self.default_tool
 
         return (
@@ -289,7 +288,7 @@ class PromptBuilder:
         parent_task: str | None = None,
         cve_instance: "CVEInstance | None" = None,
         registered_tasks: "list[RegisteredTask] | None" = None,
-        execution_context: "ExecutionContext | None" = None,
+        hierarchy_limits: "HierarchyLimits | None" = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation.
 
@@ -299,7 +298,7 @@ class PromptBuilder:
             parent_task: Parent task description.
             cve_instance: CVE instance for benchmark runs.
             registered_tasks: List of already-registered tasks (for dedup hint).
-            execution_context: Execution context with limits.
+            hierarchy_limits: Hierarchy limits with depth/children constraints.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -310,7 +309,7 @@ class PromptBuilder:
             parent_task=parent_task,
             cve_instance=cve_instance,
             registered_tasks=registered_tasks,
-            execution_context=execution_context,
+            hierarchy_limits=hierarchy_limits,
         )
         custom_prompt = self._strategy.build_boss_prompt(prompt_ctx)
         if custom_prompt is not None:
@@ -318,7 +317,7 @@ class PromptBuilder:
 
         # Default generic prompt
         ctx = self._task_context(task_description, agent_id, AgentRole.BOSS, parent_task)
-        limits = self._limits_context(execution_context)
+        limits = self._limits_context(hierarchy_limits)
         tool = self.default_tool
 
         return (
@@ -334,19 +333,19 @@ class PromptBuilder:
     def build_worker_prompt(
         self,
         task_description: str,
-        sibling_context: Any = None,
+        sibling_view: Any = None,
         workspace_context: str | None = None,
         cve_instance: "CVEInstance | None" = None,
-        parent_context: "ParentContext | None" = None,
+        spawn_payload: "SpawnPayload | None" = None,
     ) -> str:
         """Build prompt for WORKER agent task execution.
 
         Args:
             task_description: The task to execute.
-            sibling_context: Context from sibling workers (completed tasks).
+            sibling_view: View of sibling workers (completed tasks).
             workspace_context: Files in the workspace.
             cve_instance: CVE instance for benchmark runs.
-            parent_context: Parent context for hierarchy info.
+            spawn_payload: Spawn payload for hierarchy info.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -355,8 +354,8 @@ class PromptBuilder:
             agent_role=AgentRole.WORKER,
             default_tool=self.default_tool,
             cve_instance=cve_instance,
-            parent_context=parent_context,
-            sibling_context=sibling_context,
+            spawn_payload=spawn_payload,
+            sibling_view=sibling_view,
             workspace_context=workspace_context,
         )
         custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
@@ -364,11 +363,11 @@ class PromptBuilder:
             return custom_prompt
 
         # Default generic prompt
-        sibling_ctx = sibling_context.to_template_dict() if sibling_context else {}
+        sibling_ctx = sibling_view.to_template_dict() if sibling_view else {}
 
         return (
             self.chain()
-            .render_if(sibling_context, "core/context/sibling.j2", **sibling_ctx)
+            .render_if(sibling_view, "core/context/sibling.j2", **sibling_ctx)
             .render("core/roles/worker.j2")
             .render("core/worker/execution.j2")
             .text(f"<TASK>\n{task_description}\n</TASK>")

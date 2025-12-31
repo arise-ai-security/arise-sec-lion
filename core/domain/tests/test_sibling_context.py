@@ -2,19 +2,19 @@
 
 import pytest
 
-from core.domain.values.sibling_context import (
-    DecisionInfo,
-    SiblingTaskInfo,
-    WorkerSiblingContext,
+from core.domain.values.context import (
+    SharedDecision,
+    SiblingStatus,
+    SiblingView,
 )
 
 
-class TestSiblingTaskInfo:
-    """Test cases for SiblingTaskInfo value object."""
+class TestSiblingStatus:
+    """Test cases for SiblingStatus value object."""
 
-    def test_create_sibling_task_info(self) -> None:
-        """Test creating SiblingTaskInfo instance."""
-        info = SiblingTaskInfo(
+    def test_create_sibling_status(self) -> None:
+        """Test creating SiblingStatus instance."""
+        status = SiblingStatus(
             agent_id="agent-123",
             sibling_index=0,
             status="completed",
@@ -22,15 +22,15 @@ class TestSiblingTaskInfo:
             result_summary="Fixed the bug in auth.py",
         )
 
-        assert info.agent_id == "agent-123"
-        assert info.sibling_index == 0
-        assert info.status == "completed"
-        assert info.task_summary == "Fix authentication bug"
-        assert info.result_summary == "Fixed the bug in auth.py"
+        assert status.agent_id == "agent-123"
+        assert status.sibling_index == 0
+        assert status.status == "completed"
+        assert status.task_summary == "Fix authentication bug"
+        assert status.result_summary == "Fixed the bug in auth.py"
 
     def test_model_dump_serialization(self) -> None:
         """Test model_dump() serialization."""
-        info = SiblingTaskInfo(
+        status = SiblingStatus(
             agent_id="agent-123",
             sibling_index=1,
             status="in_progress",
@@ -38,7 +38,7 @@ class TestSiblingTaskInfo:
             result_summary=None,
         )
 
-        data = info.model_dump()
+        data = status.model_dump()
 
         assert data["agent_id"] == "agent-123"
         assert data["sibling_index"] == 1
@@ -56,19 +56,19 @@ class TestSiblingTaskInfo:
             "result_summary": None,
         }
 
-        info = SiblingTaskInfo.model_validate(data)
+        status = SiblingStatus.model_validate(data)
 
-        assert info.agent_id == "agent-456"
-        assert info.sibling_index == 2
-        assert info.status == "pending"
-        assert info.task_summary == "Deploy application"
-        assert info.result_summary is None
+        assert status.agent_id == "agent-456"
+        assert status.sibling_index == 2
+        assert status.status == "pending"
+        assert status.task_summary == "Deploy application"
+        assert status.result_summary is None
 
     def test_immutability(self) -> None:
-        """Test that SiblingTaskInfo is immutable (frozen)."""
+        """Test that SiblingStatus is immutable (frozen)."""
         from pydantic import ValidationError
 
-        info = SiblingTaskInfo(
+        status = SiblingStatus(
             agent_id="agent-123",
             sibling_index=0,
             status="pending",
@@ -77,36 +77,36 @@ class TestSiblingTaskInfo:
         )
 
         with pytest.raises(ValidationError, match="frozen"):
-            info.status = "completed"  # type: ignore[misc]
+            status.status = "completed"  # type: ignore[misc]
 
 
-class TestDecisionInfo:
-    """Test cases for DecisionInfo value object."""
+class TestSharedDecision:
+    """Test cases for SharedDecision value object."""
 
-    def test_create_decision_info(self) -> None:
-        """Test creating DecisionInfo instance."""
-        info = DecisionInfo(
+    def test_create_shared_decision(self) -> None:
+        """Test creating SharedDecision instance."""
+        decision = SharedDecision(
             key="api_framework",
             value="FastAPI",
             rationale="Better async support",
             decided_by="agent-123",
         )
 
-        assert info.key == "api_framework"
-        assert info.value == "FastAPI"
-        assert info.rationale == "Better async support"
-        assert info.decided_by == "agent-123"
+        assert decision.key == "api_framework"
+        assert decision.value == "FastAPI"
+        assert decision.rationale == "Better async support"
+        assert decision.decided_by == "agent-123"
 
     def test_model_dump_serialization(self) -> None:
         """Test model_dump() serialization."""
-        info = DecisionInfo(
+        decision = SharedDecision(
             key="orm_framework",
             value="SQLAlchemy",
             rationale="Type hints support",
             decided_by="agent-456",
         )
 
-        data = info.model_dump()
+        data = decision.model_dump()
 
         assert data["key"] == "orm_framework"
         assert data["value"] == "SQLAlchemy"
@@ -122,51 +122,51 @@ class TestDecisionInfo:
             "decided_by": "agent-789",
         }
 
-        info = DecisionInfo.model_validate(data)
+        decision = SharedDecision.model_validate(data)
 
-        assert info.key == "testing_framework"
-        assert info.value == "pytest"
-        assert info.rationale == "Standard in Python"
-        assert info.decided_by == "agent-789"
+        assert decision.key == "testing_framework"
+        assert decision.value == "pytest"
+        assert decision.rationale == "Standard in Python"
+        assert decision.decided_by == "agent-789"
 
 
-class TestWorkerSiblingContext:
-    """Test cases for WorkerSiblingContext value object."""
+class TestSiblingView:
+    """Test cases for SiblingView value object."""
 
-    def test_create_empty_context(self) -> None:
-        """Test creating context with no siblings or decisions."""
-        context = WorkerSiblingContext(
+    def test_create_empty_view(self) -> None:
+        """Test creating view with no siblings or decisions."""
+        view = SiblingView(
             current_agent_id="agent-123",
             parent_task=None,
             sibling_tasks=(),
             shared_decisions=(),
         )
 
-        assert context.current_agent_id == "agent-123"
-        assert context.parent_task is None
-        assert context.sibling_tasks == ()
-        assert context.shared_decisions == ()
-        assert context.total_siblings == 0
-        assert context.completed_count == 0
-        assert context.in_progress_count == 0
+        assert view.current_agent_id == "agent-123"
+        assert view.parent_task is None
+        assert view.sibling_tasks == ()
+        assert view.shared_decisions == ()
+        assert view.total_siblings == 0
+        assert view.completed_count == 0
+        assert view.in_progress_count == 0
 
-    def test_create_context_with_siblings(self) -> None:
-        """Test creating context with sibling tasks."""
-        sibling1 = SiblingTaskInfo(
+    def test_create_view_with_siblings(self) -> None:
+        """Test creating view with sibling tasks."""
+        sibling1 = SiblingStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="completed",
             task_summary="First task",
             result_summary="Done",
         )
-        sibling2 = SiblingTaskInfo(
+        sibling2 = SiblingStatus(
             agent_id="sibling-2",
             sibling_index=1,
             status="in_progress",
             task_summary="Second task",
             result_summary=None,
         )
-        sibling3 = SiblingTaskInfo(
+        sibling3 = SiblingStatus(
             agent_id="sibling-3",
             sibling_index=3,
             status="pending",
@@ -174,27 +174,27 @@ class TestWorkerSiblingContext:
             result_summary=None,
         )
 
-        context = WorkerSiblingContext(
+        view = SiblingView(
             current_agent_id="agent-current",
             parent_task="Build REST API",
             sibling_tasks=(sibling1, sibling2, sibling3),
             shared_decisions=(),
         )
 
-        assert context.total_siblings == 3
-        assert context.completed_count == 1
-        assert context.in_progress_count == 1
+        assert view.total_siblings == 3
+        assert view.completed_count == 1
+        assert view.in_progress_count == 1
 
     def test_in_progress_includes_analyzing(self) -> None:
         """Test that in_progress_count includes 'analyzing' status."""
-        sibling1 = SiblingTaskInfo(
+        sibling1 = SiblingStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="analyzing",
             task_summary="Task 1",
             result_summary=None,
         )
-        sibling2 = SiblingTaskInfo(
+        sibling2 = SiblingStatus(
             agent_id="sibling-2",
             sibling_index=1,
             status="in_progress",
@@ -202,39 +202,39 @@ class TestWorkerSiblingContext:
             result_summary=None,
         )
 
-        context = WorkerSiblingContext(
+        view = SiblingView(
             current_agent_id="agent-current",
             parent_task=None,
             sibling_tasks=(sibling1, sibling2),
             shared_decisions=(),
         )
 
-        assert context.in_progress_count == 2
+        assert view.in_progress_count == 2
 
     def test_to_template_dict(self) -> None:
         """Test to_template_dict() for Jinja2 rendering."""
-        sibling = SiblingTaskInfo(
+        sibling = SiblingStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="completed",
             task_summary="First task",
             result_summary="Done",
         )
-        decision = DecisionInfo(
+        decision = SharedDecision(
             key="api_framework",
             value="FastAPI",
             rationale="Better async",
             decided_by="agent-123",
         )
 
-        context = WorkerSiblingContext(
+        view = SiblingView(
             current_agent_id="agent-current",
             parent_task="Build REST API",
             sibling_tasks=(sibling,),
             shared_decisions=(decision,),
         )
 
-        template_dict = context.to_template_dict()
+        template_dict = view.to_template_dict()
 
         assert template_dict["current_agent_id"] == "agent-current"
         assert template_dict["parent_task"] == "Build REST API"
@@ -246,21 +246,21 @@ class TestWorkerSiblingContext:
 
     def test_roundtrip_serialization(self) -> None:
         """Test model_dump() -> model_validate() roundtrip."""
-        sibling = SiblingTaskInfo(
+        sibling = SiblingStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="completed",
             task_summary="First task",
             result_summary="Done",
         )
-        decision = DecisionInfo(
+        decision = SharedDecision(
             key="api_framework",
             value="FastAPI",
             rationale="Better async",
             decided_by="agent-123",
         )
 
-        original = WorkerSiblingContext(
+        original = SiblingView(
             current_agent_id="agent-current",
             parent_task="Build REST API",
             sibling_tasks=(sibling,),
@@ -268,7 +268,7 @@ class TestWorkerSiblingContext:
         )
 
         data = original.model_dump()
-        restored = WorkerSiblingContext.model_validate(data)
+        restored = SiblingView.model_validate(data)
 
         assert restored.current_agent_id == original.current_agent_id
         assert restored.parent_task == original.parent_task

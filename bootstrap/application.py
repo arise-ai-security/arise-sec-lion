@@ -12,10 +12,10 @@ from core.application.execution_service import (
 )
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.context_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
-from core.application.services.sibling_context_builder import SiblingContextBuilder
+from core.application.services.sibling_context_builder import SiblingViewBuilder
 from core.application.services.workspace_context import WorkspaceContextProvider
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_strategy import SecBenchPromptStrategy
@@ -67,12 +67,12 @@ def get_application(
         max_retries=config.max_retries,
         progress_callback=config.progress_callback,
     )
-    context_registry = ExecutionContextRegistry()
+    limits_registry = HierarchyLimitsRegistry()
     workspace = WorkspaceContextProvider()
     query_service = AgentQueryService(repository)
     child_factory = ChildAgentFactory(
         repository=repository,
-        context_registry=context_registry,
+        limits_registry=limits_registry,
         max_total_agents=config.system_limits.max_total_agents,
         manager_config=config.manager_config,
     )
@@ -83,8 +83,8 @@ def get_application(
         task_registry_port=infrastructure.task_registry,
     )
 
-    # Create sibling context builder (implements SiblingContextPort)
-    sibling_context_builder = SiblingContextBuilder(
+    # Create sibling view builder (implements SiblingViewPort)
+    sibling_view_builder = SiblingViewBuilder(
         repository=repository,
         shared_context_port=infrastructure.shared_context,
     )
@@ -99,12 +99,12 @@ def get_application(
     dependencies = ExecutionServiceDependencies(
         repository=repository,
         orchestrator=orchestrator,
-        context_registry=context_registry,
+        limits_registry=limits_registry,
         child_factory=child_factory,
         query_service=query_service,
         workspace=workspace,
         shared_context_port=infrastructure.shared_context,
-        sibling_context_port=sibling_context_builder,
+        sibling_view_port=sibling_view_builder,
         parent_notifier=parent_notifier,
         task_registry=infrastructure.task_registry,
     )

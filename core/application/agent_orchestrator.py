@@ -17,13 +17,13 @@ implement the orchestration logic.
 import logging
 from typing import TYPE_CHECKING
 
-from core.application.pipeline.context import PipelineContext
+from core.application.pipeline.context import PipelineState
 from core.application.pipelines import PipelineFactory
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
     from core.application.services.prompt_builder import PromptBuilder
-    from core.domain.values.sibling_context import WorkerSiblingContext
+    from core.domain.values.context import SiblingView
     from core.ports.llm_port import LLMPort
     from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort
@@ -82,8 +82,8 @@ class AgentOrchestrator:
         Args:
             agent: The agent to evaluate (must be PENDING with ANALYZING status).
         """
-        ctx = PipelineContext(agent=agent, operation="complexity_evaluation")
-        result = await self._complexity_pipeline.execute(ctx)
+        state = PipelineState(agent=agent, operation="complexity_evaluation")
+        result = await self._complexity_pipeline.execute(state)
 
         if not result.success:
             logger.debug(
@@ -97,14 +97,14 @@ class AgentOrchestrator:
         """Decompose task into subtasks for a BOSS/MANAGER agent.
 
         Performs LLM call, parses subtasks, and spawns children via pure domain methods.
-        Respects execution context limits (max_depth, max_children_per_node).
+        Respects hierarchy limits (max_depth, max_children_per_node).
         Deduplicates subtasks via TaskRegistryPort.
 
         Args:
             agent: The agent to evaluate (must be BOSS/MANAGER with ANALYZING status).
         """
-        ctx = PipelineContext(agent=agent, operation="task_decomposition")
-        result = await self._decomposition_pipeline.execute(ctx)
+        state = PipelineState(agent=agent, operation="task_decomposition")
+        result = await self._decomposition_pipeline.execute(state)
 
         if not result.success:
             logger.debug(
@@ -119,7 +119,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         working_directory: str | None = None,
         workspace_context: str | None = None,
-        sibling_context: "WorkerSiblingContext | None" = None,
+        sibling_view: "SiblingView | None" = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -127,18 +127,18 @@ class AgentOrchestrator:
             agent: The agent to execute (must be WORKER with ANALYZING status).
             working_directory: Optional working directory for the worker.
             workspace_context: Optional context about existing workspace files.
-            sibling_context: Optional sibling context for coordinated execution.
+            sibling_view: Optional sibling view for coordinated execution.
         """
-        ctx = PipelineContext(
+        state = PipelineState(
             agent=agent,
             operation="worker_execution",
         ).with_worker_context(
             working_directory=working_directory,
             workspace_context=workspace_context,
-            sibling_context=sibling_context,
+            sibling_view=sibling_view,
         )
 
-        result = await self._worker_pipeline.execute(ctx)
+        result = await self._worker_pipeline.execute(state)
 
         if not result.success:
             logger.debug(

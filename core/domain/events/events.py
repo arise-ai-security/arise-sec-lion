@@ -92,7 +92,7 @@ class SubtasksDefined(DomainEvent):
 class ChildSpawned(DomainEvent):
     """Parent spawned a child agent with rich context.
 
-    Includes ParentContext for bidirectional context flow.
+    Includes SpawnPayload for bidirectional context flow.
     sibling_index tracks the child's position among siblings (0-indexed)
     for left-to-right execution ordering.
     """
@@ -101,7 +101,7 @@ class ChildSpawned(DomainEvent):
     child_role: str
     subtask: Subtask
     child_config: dict[str, Any]
-    parent_context: dict[str, Any] = Field(default_factory=dict)  # Serialized ParentContext
+    parent_context: dict[str, Any] = Field(default_factory=dict)  # Serialized SpawnPayload
     sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
 
 
@@ -145,12 +145,12 @@ class PromptSent(DomainEvent):
 class ChildCompleted(DomainEvent):
     """Child agent completed, parent notified with structured result.
 
-    Includes ChildResult for rich feedback from child to parent.
+    Includes TaskOutcome for rich feedback from child to parent.
     """
 
     child_id: UUID
     result: str  # Simple result text
-    child_result: dict[str, Any] = Field(default_factory=dict)  # Rich structured result
+    child_result: dict[str, Any] = Field(default_factory=dict)  # Rich TaskOutcome structure
 
 
 class ComplexityEvaluated(DomainEvent):

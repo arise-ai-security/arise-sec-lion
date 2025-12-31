@@ -7,7 +7,7 @@ This step handles the actual LLM call using the injected LLM port.
 
 from typing import TYPE_CHECKING
 
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.services.config_resolver import ConfigResolver, OperationType
 
 if TYPE_CHECKING:
@@ -35,22 +35,22 @@ class QueryLLM:
         self._llm_port = llm_port
         self._operation = operation
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Query LLM and store response in context.
 
         Note: This step does NOT catch LLM exceptions. Errors from the LLM
         service should propagate to the caller (ExecutionService) which
         handles them via _handle_step_failure.
         """
-        if ctx.prompt is None:
+        if state.prompt is None:
             return StepResult.fail("No prompt set in context")
 
-        llm_config = ConfigResolver.resolve(ctx.agent.config, operation=self._operation)
+        llm_config = ConfigResolver.resolve(state.agent.config, operation=self._operation)
 
         # Let exceptions propagate - ExecutionService handles them
         response = await self._llm_port.query_with_usage(
-            ctx.prompt,
+            state.prompt,
             llm_config.model_dump(),
         )
 
-        return StepResult.ok(ctx.with_llm_response(response))
+        return StepResult.ok(state.with_llm_response(response))

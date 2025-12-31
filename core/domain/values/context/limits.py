@@ -1,4 +1,4 @@
-"""Execution context passed down the agent hierarchy.
+"""Hierarchy limits passed down the agent hierarchy.
 
 This immutable value object carries limits and state that propagate from
 parent to child agents, enabling depth tracking and limit enforcement.
@@ -9,8 +9,6 @@ Budget tracking is handled via SharedExecutionContext (keyed by root_id).
 CVE instance is optionally attached for SEC-bench benchmark runs.
 """
 
-
-
 from typing import Self
 from uuid import UUID
 
@@ -19,8 +17,8 @@ from pydantic import BaseModel
 from core.domain.values.cve_instance import CVEInstance
 
 
-class ExecutionContext(BaseModel):
-    """Immutable context passed down agent hierarchy.
+class HierarchyLimits(BaseModel):
+    """Immutable limits passed down agent hierarchy.
 
     Tracks current position in the hierarchy and enforces limits.
     Each child receives a new context with incremented depth.
@@ -45,7 +43,7 @@ class ExecutionContext(BaseModel):
     cve_instance: CVEInstance | None = None  # SEC-bench CVE context
 
     def for_child(self) -> Self:
-        """Create context for child agent (increments depth)."""
+        """Create limits for child agent (increments depth)."""
         return self.model_copy(update={"current_depth": self.current_depth + 1})
 
     def is_depth_limited(self) -> bool:
@@ -70,7 +68,7 @@ class ExecutionContext(BaseModel):
         return max(0, self.max_total_agents - self.current_total_agents)
 
     def with_agent_counts(self, current_total: int, max_total: int) -> Self:
-        """Create new context with updated agent counts.
+        """Create new limits with updated agent counts.
 
         Used to refresh agent count snapshot before each agent step.
         """
@@ -106,7 +104,7 @@ class ExecutionContext(BaseModel):
         return self.cve_instance is not None
 
     def with_cve_instance(self, cve: CVEInstance) -> Self:
-        """Create new context with CVE instance attached."""
+        """Create new limits with CVE instance attached."""
         return self.model_copy(update={"cve_instance": cve})
 
     @classmethod
@@ -119,7 +117,7 @@ class ExecutionContext(BaseModel):
         max_total_agents: int = -1,
         cve_instance: CVEInstance | None = None,
     ) -> Self:
-        """Create context for root (BOSS) agent.
+        """Create limits for root (BOSS) agent.
 
         Args:
             root_id: Root agent ID (references SharedExecutionContext)

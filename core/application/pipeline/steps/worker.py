@@ -7,7 +7,7 @@ These steps handle worker tool execution (Claude Code, OpenHands, etc.).
 
 from typing import TYPE_CHECKING, Any
 
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.exceptions import ToolNotAvailableError
 
 if TYPE_CHECKING:
@@ -30,22 +30,22 @@ class RunWorkerSession:
         """
         self._worker_port = worker_port
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Execute worker session and apply events."""
-        agent = ctx.agent
+        agent = state.agent
 
-        if ctx.prompt is None:
+        if state.prompt is None:
             return StepResult.fail("No prompt set in context")
 
         task_context: dict[str, Any] = {
             "agent_id": agent.agent_id,
-            "task_description": ctx.prompt,
+            "task_description": state.prompt,
             "tool_name": agent.config.tool,
             "config": agent.config,
         }
 
-        if ctx.working_directory:
-            task_context["working_directory"] = ctx.working_directory
+        if state.working_directory:
+            task_context["working_directory"] = state.working_directory
 
         try:
             async for tool_event in self._worker_port.run_session(task_context):
@@ -55,4 +55,4 @@ class RunWorkerSession:
             # to ExecutionService which handles them via _handle_step_failure
             return StepResult.fail(str(e))
 
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)

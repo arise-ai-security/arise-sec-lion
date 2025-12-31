@@ -20,7 +20,7 @@ from core.application.pipeline.steps.deduplication import (
 )
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
-    ExtractExecutionContext,
+    ExtractHierarchyLimits,
     SpawnChildren,
     StartWorkerExecution,
 )
@@ -114,7 +114,7 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidateDecomposingAgent - Assert BOSS/MANAGER + ANALYZING
-        2. ExtractExecutionContext - Document context extraction point
+        2. ExtractHierarchyLimits - Document limits extraction point
         3. FetchRegisteredTasks - Query TaskRegistryPort for guidance
         4. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
         5. EmitPromptSent - Observability
@@ -133,7 +133,7 @@ class PipelineFactory:
             name="task_decomposition",
             steps=[
                 ValidateDecomposingAgent(),
-                ExtractExecutionContext(),
+                ExtractHierarchyLimits(),
                 FetchRegisteredTasks(self._task_registry_port),
                 BuildDecompositionPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="task_decomposition", target="llm"),

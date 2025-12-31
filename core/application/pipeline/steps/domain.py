@@ -4,9 +4,7 @@ These steps call pure domain methods on AgentSession to emit events.
 They bridge the pipeline (application layer) to the domain model.
 """
 
-
-
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.values.enums import AgentRole
 
 
@@ -17,22 +15,22 @@ class ApplyComplexityResult:
     and transitions the agent from PENDING to WORKER or MANAGER.
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Apply complexity result via pure domain method."""
-        if ctx.complexity is None:
-            return StepResult.fail("No complexity result in context")
+        if state.complexity is None:
+            return StepResult.fail("No complexity result in state")
 
         determined_role = (
-            AgentRole.WORKER if ctx.complexity == "simple" else AgentRole.MANAGER
+            AgentRole.WORKER if state.complexity == "simple" else AgentRole.MANAGER
         )
 
-        ctx.agent.apply_complexity_result(
-            complexity=ctx.complexity,
-            reasoning=ctx.reasoning or "",
+        state.agent.apply_complexity_result(
+            complexity=state.complexity,
+            reasoning=state.reasoning or "",
             determined_role=determined_role,
         )
 
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)
 
 
 class SpawnChildren:
@@ -44,24 +42,24 @@ class SpawnChildren:
     - Transitions agent to WAITING status
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Spawn children via pure domain method."""
-        if ctx.subtasks is None:
-            return StepResult.fail("No subtasks in context")
+        if state.subtasks is None:
+            return StepResult.fail("No subtasks in state")
 
-        if ctx.child_role is None:
+        if state.child_role is None:
             return StepResult.fail("No child role determined")
 
-        # Build parent context for children
-        parent_context = ctx.agent.get_context_for_child()
+        # Build spawn payload for children
+        spawn_payload = state.agent.get_spawn_payload_for_child()
 
-        ctx.agent.apply_subtasks_and_spawn_children(
-            subtasks=ctx.subtasks,
-            child_role=ctx.child_role,
-            parent_context=parent_context,
+        state.agent.apply_subtasks_and_spawn_children(
+            subtasks=state.subtasks,
+            child_role=state.child_role,
+            spawn_payload=spawn_payload,
         )
 
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)
 
 
 class StartWorkerExecution:
@@ -71,24 +69,24 @@ class StartWorkerExecution:
     to IN_PROGRESS status.
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Start worker execution via pure domain method."""
-        tool_name = ctx.agent.config.tool
+        tool_name = state.agent.config.tool
 
-        ctx.agent.start_worker_execution(tool_name)
+        state.agent.start_worker_execution(tool_name)
 
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)
 
 
-class ExtractExecutionContext:
-    """Extract CVE instance and other context from execution context.
+class ExtractHierarchyLimits:
+    """Extract CVE instance and other context from hierarchy limits.
 
-    This step is mostly a no-op since PipelineContext delegates to
-    agent.execution_context, but it explicitly documents the extraction point.
+    This step is mostly a no-op since PipelineState delegates to
+    agent.hierarchy_limits, but it explicitly documents the extraction point.
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
-        """Verify execution context is available."""
-        # PipelineContext already delegates to agent.execution_context
+    async def execute(self, state: PipelineState) -> StepResult:
+        """Verify hierarchy limits are available."""
+        # PipelineState already delegates to agent.hierarchy_limits
         # This step serves as documentation and potential extension point
-        return StepResult.ok(ctx)
+        return StepResult.ok(state)

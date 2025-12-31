@@ -8,7 +8,7 @@ These steps parse LLM responses into domain objects.
 import json
 import logging
 
-from core.application.pipeline.context import PipelineContext, StepResult
+from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.services import (
     parse_subtasks_from_llm,
     strip_markdown_code_block,
@@ -28,13 +28,13 @@ class ParseComplexityResult:
     }
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Parse complexity result from LLM response."""
-        if ctx.llm_response is None:
+        if state.llm_response is None:
             return StepResult.fail("No LLM response in context")
 
         try:
-            clean_response = strip_markdown_code_block(ctx.llm_response.content)
+            clean_response = strip_markdown_code_block(state.llm_response.content)
             data = json.loads(clean_response)
             complexity = data.get("complexity", "").lower()
             reasoning = data.get("reasoning", "")
@@ -47,7 +47,7 @@ class ParseComplexityResult:
         except (ValueError, KeyError) as e:
             return StepResult.fail(f"Failed to extract complexity: {e}")
 
-        return StepResult.ok(ctx.with_complexity_result(complexity, reasoning))
+        return StepResult.ok(state.with_complexity_result(complexity, reasoning))
 
 
 class ParseSubtasks:
@@ -59,17 +59,17 @@ class ParseSubtasks:
     - Subtask validation
     """
 
-    async def execute(self, ctx: PipelineContext) -> StepResult:
+    async def execute(self, state: PipelineState) -> StepResult:
         """Parse subtasks from LLM response."""
-        if ctx.llm_response is None:
+        if state.llm_response is None:
             return StepResult.fail("No LLM response in context")
 
         try:
-            result = parse_subtasks_from_llm(ctx.llm_response.content)
+            result = parse_subtasks_from_llm(state.llm_response.content)
         except ValueError as e:
             logger.warning(
                 "Failed to parse subtasks for agent=%s: %s",
-                ctx.agent.agent_id,
+                state.agent.agent_id,
                 e,
             )
             return StepResult.fail(f"Failed to parse subtasks: {e}")
@@ -78,9 +78,9 @@ class ParseSubtasks:
         if isinstance(result, ConstraintFailure):
             logger.warning(
                 "Agent %s reported unsatisfiable constraints: %s",
-                ctx.agent.agent_id,
+                state.agent.agent_id,
                 result.format_message(),
             )
             return StepResult.fail(result.format_message())
 
-        return StepResult.ok(ctx.with_subtasks(result))
+        return StepResult.ok(state.with_subtasks(result))

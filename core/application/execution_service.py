@@ -21,7 +21,7 @@ from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.context_registry import ExecutionContextRegistry
+from core.application.services.context_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
-    from core.ports.sibling_context_port import SiblingContextPort
+    from core.ports.sibling_context_port import SiblingViewPort
     from core.ports.task_registry_port import TaskRegistryPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
@@ -70,12 +70,12 @@ class ExecutionServiceDependencies:
 
     repository: AgentRepository
     orchestrator: AgentOrchestrator
-    context_registry: ExecutionContextRegistry
+    limits_registry: HierarchyLimitsRegistry
     child_factory: ChildAgentFactory
     query_service: AgentQueryService
     workspace: WorkspaceContextProvider
     shared_context_port: "SharedContextPort"
-    sibling_context_port: "SiblingContextPort"
+    sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
     task_registry: "TaskRegistryPort"
 
@@ -87,7 +87,7 @@ class AgentExecutionService:
     - AgentRepository: Load/persist agent state
     - ChildAgentFactory: Create child agents
     - AgentQueryService: Read operations (CQRS)
-    - ExecutionContextRegistry: Manage execution contexts
+    - HierarchyLimitsRegistry: Manage hierarchy limits
     - WorkspaceContextProvider: Workspace file context
     - SharedContextPort: Shared execution context for budget and artifacts
     """
@@ -112,7 +112,7 @@ class AgentExecutionService:
         # Core ports
         self._event_store = event_store
         self._shared_context_port = dependencies.shared_context_port
-        self._sibling_context_port = dependencies.sibling_context_port
+        self._sibling_view_port = dependencies.sibling_view_port
 
         # Configuration
         self._config = config
@@ -121,7 +121,7 @@ class AgentExecutionService:
         # Injected collaborators (unpacked from dependencies)
         self._repository = dependencies.repository
         self._orchestrator = dependencies.orchestrator
-        self._context_registry = dependencies.context_registry
+        self._limits_registry = dependencies.limits_registry
         self._child_factory = dependencies.child_factory
         self._query_service = dependencies.query_service
         self._workspace = dependencies.workspace
@@ -312,11 +312,11 @@ class AgentExecutionService:
     ) -> None:
         """Reset all state for a new execution run."""
         self._workspace.reset()
-        self._context_registry.reset()
+        self._limits_registry.reset()
         self._child_factory.reset(initial_count=1)  # Count the boss agent
 
-        # Create root execution context
-        self._context_registry.create_root(
+        # Create root hierarchy limits
+        self._limits_registry.create_root(
             root_id=root_id,
             max_depth=self._system_limits.max_depth,
             max_children_per_node=self._system_limits.max_children_per_node,
@@ -361,17 +361,17 @@ class AgentExecutionService:
         return boss_agent
 
     async def _load_agent_with_context(self, agent_id: UUID) -> AgentSession:
-        """Load agent and attach execution context with current agent counts."""
+        """Load agent and attach hierarchy limits with current agent counts."""
         agent = await self._repository.load(agent_id)
 
-        context = self._context_registry.get(agent_id)
-        if context is not None:
-            # Update context with current agent counts for limit enforcement
-            context = context.with_agent_counts(
+        limits = self._limits_registry.get(agent_id)
+        if limits is not None:
+            # Update limits with current agent counts for limit enforcement
+            limits = limits.with_agent_counts(
                 current_total=self._child_factory.total_created,
                 max_total=self._child_factory.max_total_agents,
             )
-            agent.set_execution_context(context)
+            agent.set_hierarchy_limits(limits)
 
         return agent
 
@@ -391,8 +391,8 @@ class AgentExecutionService:
 
         elif agent.role == AgentRole.WORKER:
             async with self._worker_semaphore:
-                root_id = self._context_registry.get_root_id(agent.agent_id)
-                sibling_context = await self._sibling_context_port.build_context(
+                root_id = self._limits_registry.get_root_id(agent.agent_id)
+                sibling_view = await self._sibling_view_port.build_view(
                     agent_id=agent.agent_id,
                     parent_id=agent.parent_id,
                     root_id=root_id,
@@ -402,7 +402,7 @@ class AgentExecutionService:
                     agent,
                     working_directory=self._workspace.working_directory,
                     workspace_context=self._workspace.get_context(),
-                    sibling_context=sibling_context,
+                    sibling_view=sibling_view,
                 )
 
         else:
@@ -458,7 +458,7 @@ class AgentExecutionService:
         if parsed is None:
             return
 
-        root_id = self._context_registry.get_root_id(agent.agent_id)
+        root_id = self._limits_registry.get_root_id(agent.agent_id)
         context = await self._shared_context_port.get(root_id)
         if context is None:
             return

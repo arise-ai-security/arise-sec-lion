@@ -8,9 +8,10 @@ from pydantic import TypeAdapter
 
 from core.domain.values.agent_config import AgentConfig
 from core.domain.values.context import (
-    ChildResult,
-    ParentContext,
-    build_parent_context,
+    HierarchyLimits,
+    SpawnPayload,
+    TaskOutcome,
+    build_spawn_payload,
 )
 from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.events.events import (
@@ -31,7 +32,6 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
-from core.domain.values.execution_context import ExecutionContext
 
 
 class AgentSession:
@@ -86,14 +86,14 @@ class AgentSession:
         self,
         child_id: UUID,
         result: str,
-        child_result: ChildResult | None = None,
+        task_outcome: TaskOutcome | None = None,
     ) -> None:
         """For BOSS/MANAGER: record child completion, complete self when all children done.
 
         Args:
             child_id: ID of completed child
             result: Simple result text for the event
-            child_result: Structured ChildResult (optional, provides additional context)
+            task_outcome: Structured TaskOutcome (optional, provides additional context)
         """
         assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
             f"Requires BOSS/MANAGER, got {self.role}"
@@ -103,10 +103,10 @@ class AgentSession:
         assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
 
         # Use structured result if provided, otherwise create simple one
-        if child_result is None:
-            child_result = ChildResult.simple(result)
+        if task_outcome is None:
+            task_outcome = TaskOutcome.simple(result)
 
-        # NOTE: structured_child_results is populated in _apply(ChildCompleted)
+        # NOTE: structured_task_outcomes is populated in _apply(ChildCompleted)
         # to maintain event sourcing invariant: state only changes through events
 
         child_completed_event = ChildCompleted(
@@ -114,7 +114,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             child_id=child_id,
             result=result,
-            child_result=child_result.model_dump(),
+            child_result=task_outcome.model_dump(),
         )
         self._apply(child_completed_event)
         self._changes.append(child_completed_event)
@@ -199,7 +199,7 @@ class AgentSession:
         self.child_results[event.child_id] = event.result
         # Reconstruct structured result from event data
         if event.child_result:
-            self.structured_child_results[event.child_id] = ChildResult.model_validate(
+            self.structured_task_outcomes[event.child_id] = TaskOutcome.model_validate(
                 event.child_result
             )
         self.version += 1
@@ -243,31 +243,31 @@ class AgentSession:
         self.version: int = 0
         self._changes: list[DomainEvent] = []
         self._sequence: int = 0
-        # Execution context for limit enforcement (set by ExecutionService)
-        self.execution_context: ExecutionContext | None = None
-        # Context passing: parent context received and local state
-        self.parent_context: ParentContext | None = None
+        # Hierarchy limits for limit enforcement (set by ExecutionService)
+        self.hierarchy_limits: HierarchyLimits | None = None
+        # Context passing: spawn payload received from parent and local state
+        self.spawn_payload: SpawnPayload | None = None
         self.local_decisions: list[str] = []
         self.local_artifacts: list[str] = []
-        # Structured child results (keyed by child_id)
-        self.structured_child_results: dict[UUID, ChildResult] = {}
+        # Structured task outcomes from children (keyed by child_id)
+        self.structured_task_outcomes: dict[UUID, TaskOutcome] = {}
         # Position among siblings for left-to-right ordering (0 = first/leftmost)
         self.sibling_index: int = 0
 
-    def set_execution_context(self, context: ExecutionContext) -> None:
-        """Set execution context for limit enforcement."""
-        self.execution_context = context
+    def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
+        """Set hierarchy limits for limit enforcement."""
+        self.hierarchy_limits = limits
 
-    def set_parent_context(self, parent_context: ParentContext) -> None:
-        """Set parent context received from spawning parent."""
-        self.parent_context = parent_context
+    def set_spawn_payload(self, payload: SpawnPayload) -> None:
+        """Set spawn payload received from spawning parent."""
+        self.spawn_payload = payload
 
-    def get_context_for_child(self) -> ParentContext:
-        """Build context to pass to child agents.
+    def get_spawn_payload_for_child(self) -> SpawnPayload:
+        """Build spawn payload to pass to child agents.
 
         Constructs full ancestry chain and execution limits.
         """
-        return build_parent_context(self, self.parent_context)
+        return build_spawn_payload(self, self.spawn_payload)
 
     def record_decision(self, decision: str) -> None:
         """Record a local decision made during execution."""
@@ -277,8 +277,8 @@ class AgentSession:
         """Record an artifact produced during execution."""
         self.local_artifacts.append(artifact_key)
 
-    def build_child_result(self) -> ChildResult:
-        """Build structured result to return to parent.
+    def build_task_outcome(self) -> TaskOutcome:
+        """Build structured task outcome to return to parent.
 
         Includes result text, artifacts, decisions, and execution summary.
         """
@@ -291,7 +291,7 @@ class AgentSession:
         if total_cost > 0:
             execution_summary["cost_usd"] = total_cost
 
-        return ChildResult(
+        return TaskOutcome(
             result_text=self.result or "",
             artifacts=tuple(self.local_artifacts),
             decisions=tuple(self.local_decisions),
@@ -435,7 +435,7 @@ class AgentSession:
         self,
         subtasks: list,
         child_role: str,
-        parent_context: ParentContext,
+        spawn_payload: SpawnPayload,
     ) -> list[tuple[UUID, Any]]:
         """Apply subtask decomposition and spawn children (pure domain method).
 
@@ -462,7 +462,7 @@ class AgentSession:
                 child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
-                parent_context=parent_context.model_dump(),
+                parent_context=spawn_payload.model_dump(),
                 sibling_index=sibling_index,
             )
             self._apply(child_event)
