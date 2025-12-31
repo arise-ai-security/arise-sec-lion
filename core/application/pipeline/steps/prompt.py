@@ -70,14 +70,12 @@ class BuildDecompositionPrompt:
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
                 cve_instance=state.cve_instance,
-                registered_tasks=state.registered_tasks,
                 hierarchy_limits=state.hierarchy_limits,
             )
         else:  # MANAGER
             prompt = self._prompt_builder.build_manager_decomposition_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
-                registered_tasks=state.registered_tasks,
                 cve_instance=state.cve_instance,
                 spawn_payload=agent.spawn_payload,
                 hierarchy_limits=state.hierarchy_limits,

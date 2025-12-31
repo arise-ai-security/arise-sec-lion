@@ -37,7 +37,6 @@ if TYPE_CHECKING:
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
     from core.ports.sibling_context_port import SiblingViewPort
-    from core.ports.task_registry_port import TaskRegistryPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
@@ -77,7 +76,6 @@ class ExecutionServiceDependencies:
     shared_context_port: "SharedContextPort"
     sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
-    task_registry: "TaskRegistryPort"
 
 
 class AgentExecutionService:
@@ -126,7 +124,6 @@ class AgentExecutionService:
         self._query_service = dependencies.query_service
         self._workspace = dependencies.workspace
         self._parent_notifier = dependencies.parent_notifier
-        self._task_registry = dependencies.task_registry
 
         # Worker concurrency control
         semaphore_limit = (
@@ -156,7 +153,6 @@ class AgentExecutionService:
         """Initialize infrastructure connections."""
         await self._event_store.connect()
         await self._event_store.initialize_schema()
-        await self._task_registry.ensure_table_exists()
 
     async def cleanup(self) -> None:
         """Cleanup infrastructure connections."""

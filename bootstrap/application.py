@@ -80,7 +80,6 @@ def get_application(
         llm_port=infrastructure.llm_adapter,
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
-        task_registry_port=infrastructure.task_registry,
     )
 
     # Create sibling view builder (implements SiblingViewPort)
@@ -106,7 +105,6 @@ def get_application(
         shared_context_port=infrastructure.shared_context,
         sibling_view_port=sibling_view_builder,
         parent_notifier=parent_notifier,
-        task_registry=infrastructure.task_registry,
     )
 
     execution_service = AgentExecutionService(

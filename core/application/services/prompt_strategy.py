@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from core.domain.values.context import HierarchyLimits, SpawnPayload
     from core.domain.values.cve_instance import CVEInstance
     from core.application.services.prompt_builder import TemplateChain
-    from core.domain.services import RegisteredTask
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +30,6 @@ class PromptContext:
     spawn_payload: "SpawnPayload | None" = None
     hierarchy_limits: "HierarchyLimits | None" = None
     cve_instance: "CVEInstance | None" = None
-    registered_tasks: "list[RegisteredTask] | None" = None
     sibling_view: Any = None
     workspace_context: str | None = None
 

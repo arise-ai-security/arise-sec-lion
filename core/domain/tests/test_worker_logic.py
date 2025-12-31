@@ -93,26 +93,16 @@ class FakeLLM(LLMPort):
         )
 
 
-def _create_fake_task_registry() -> AsyncMock:
-    """Create a fake task registry port for testing."""
-    mock = AsyncMock()
-    mock.get_all_for_root.return_value = []
-    mock.register_if_not_exists.return_value = True
-    return mock
-
-
 def _create_orchestrator(
     worker_port: WorkerToolPort,
     llm_port: LLMPort | None = None,
     prompt_builder: PromptBuilder | None = None,
-    task_registry_port: AsyncMock | None = None,
 ) -> AgentOrchestrator:
     """Create an orchestrator with the given ports."""
     return AgentOrchestrator(
         llm_port=llm_port or FakeLLM(),
         worker_port=worker_port,
         prompt_builder=prompt_builder or PromptBuilder("prompts", "claude_code"),
-        task_registry_port=task_registry_port or _create_fake_task_registry(),
     )
 
 

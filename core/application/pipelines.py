@@ -14,10 +14,6 @@ implement the orchestration logic previously in AgentOrchestrator methods.
 from typing import TYPE_CHECKING
 
 from core.application.pipeline.executor import Pipeline
-from core.application.pipeline.steps.deduplication import (
-    DeduplicateSubtasks,
-    FetchRegisteredTasks,
-)
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
     ExtractHierarchyLimits,
@@ -43,7 +39,6 @@ from core.application.pipeline.steps.worker import RunWorkerSession
 if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
-    from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort
 
 
@@ -55,7 +50,7 @@ class PipelineFactory:
     orchestration operation.
 
     Usage:
-        factory = PipelineFactory(llm_port, worker_port, prompt_builder, task_registry_port)
+        factory = PipelineFactory(llm_port, worker_port, prompt_builder)
         complexity_pipeline = factory.create_complexity_pipeline()
         decomposition_pipeline = factory.create_decomposition_pipeline()
         worker_pipeline = factory.create_worker_pipeline()
@@ -66,7 +61,6 @@ class PipelineFactory:
         llm_port: "LLMPort",
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
-        task_registry_port: "TaskRegistryPort",
     ) -> None:
         """Initialize factory with required ports.
 
@@ -74,12 +68,10 @@ class PipelineFactory:
             llm_port: Port for LLM interactions
             worker_port: Port for worker tool execution
             prompt_builder: Builder for constructing prompts
-            task_registry_port: Port for task deduplication
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
-        self._task_registry_port = task_registry_port
 
     def create_complexity_pipeline(self) -> Pipeline:
         """Create pipeline for PENDING agent complexity evaluation.
@@ -115,16 +107,14 @@ class PipelineFactory:
         Pipeline steps:
         1. ValidateDecomposingAgent - Assert BOSS/MANAGER + ANALYZING
         2. ExtractHierarchyLimits - Document limits extraction point
-        3. FetchRegisteredTasks - Query TaskRegistryPort for guidance
-        4. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
-        5. EmitPromptSent - Observability
-        6. QueryLLM - Call LLM port
-        7. EmitTokensConsumed - Cost tracking
-        8. ParseSubtasks - Parse JSON, handle ConstraintFailure
-        9. DeduplicateSubtasks - Via TaskRegistryPort
-        10. CheckLimitViolations - Hard enforcement (children, total_agents)
-        11. DetermineChildRole - Soft enforcement (force WORKER at max depth)
-        12. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
+        3. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
+        4. EmitPromptSent - Observability
+        5. QueryLLM - Call LLM port
+        6. EmitTokensConsumed - Cost tracking
+        7. ParseSubtasks - Parse JSON, handle ConstraintFailure
+        8. CheckLimitViolations - Hard enforcement (children, total_agents)
+        9. DetermineChildRole - Soft enforcement (force WORKER at max depth)
+        10. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
 
         Returns:
             Configured Pipeline for task decomposition
@@ -134,13 +124,11 @@ class PipelineFactory:
             steps=[
                 ValidateDecomposingAgent(),
                 ExtractHierarchyLimits(),
-                FetchRegisteredTasks(self._task_registry_port),
                 BuildDecompositionPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="task_decomposition", target="llm"),
                 QueryLLM(self._llm_port, operation="task_decomposition"),
                 EmitTokensConsumed(operation="task_decomposition"),
                 ParseSubtasks(),
-                DeduplicateSubtasks(self._task_registry_port),
                 CheckLimitViolations(),
                 DetermineChildRole(),
                 SpawnChildren(),

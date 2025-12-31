@@ -14,7 +14,6 @@ from core.application.services.prompt_strategy import DefaultPromptStrategy, Pro
 if TYPE_CHECKING:
     from core.domain.values.context import HierarchyLimits, SpawnPayload
     from core.domain.values.cve_instance import CVEInstance
-    from core.domain.services import RegisteredTask
 
 
 class TemplateChain:
@@ -233,7 +232,6 @@ class PromptBuilder:
         agent_id: UUID,
         agent_role: AgentRole = AgentRole.MANAGER,
         parent_task: str | None = None,
-        registered_tasks: "list[RegisteredTask] | None" = None,
         cve_instance: "CVEInstance | None" = None,
         spawn_payload: "SpawnPayload | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
@@ -245,7 +243,6 @@ class PromptBuilder:
             agent_id: Current agent's ID.
             agent_role: Agent role (should be MANAGER).
             parent_task: Parent task description.
-            registered_tasks: List of already-registered tasks (for dedup hint).
             cve_instance: CVE instance for benchmark runs.
             spawn_payload: Spawn payload for hierarchy info.
             hierarchy_limits: Hierarchy limits with depth/children constraints.
@@ -260,7 +257,6 @@ class PromptBuilder:
             spawn_payload=spawn_payload,
             hierarchy_limits=hierarchy_limits,
             cve_instance=cve_instance,
-            registered_tasks=registered_tasks,
         )
         custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
         if custom_prompt is not None:
@@ -276,7 +272,7 @@ class PromptBuilder:
             .render("core/roles/manager.j2", default_tool=tool)
             .with_security("manager_overlay.j2", default_tool=tool)
             .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
-            .render("core/context/task.j2", **ctx, registered_tasks=registered_tasks)
+            .render("core/context/task.j2", **ctx)
             .render("core/output/subtasks.j2", default_tool=tool, **limits)
             .build()
         )
@@ -287,7 +283,6 @@ class PromptBuilder:
         agent_id: UUID,
         parent_task: str | None = None,
         cve_instance: "CVEInstance | None" = None,
-        registered_tasks: "list[RegisteredTask] | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation.
@@ -297,7 +292,6 @@ class PromptBuilder:
             agent_id: Current agent's ID.
             parent_task: Parent task description.
             cve_instance: CVE instance for benchmark runs.
-            registered_tasks: List of already-registered tasks (for dedup hint).
             hierarchy_limits: Hierarchy limits with depth/children constraints.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
@@ -308,7 +302,6 @@ class PromptBuilder:
             default_tool=self.default_tool,
             parent_task=parent_task,
             cve_instance=cve_instance,
-            registered_tasks=registered_tasks,
             hierarchy_limits=hierarchy_limits,
         )
         custom_prompt = self._strategy.build_boss_prompt(prompt_ctx)
@@ -325,7 +318,7 @@ class PromptBuilder:
             .render("core/roles/boss.j2", default_tool=tool)
             .with_security("boss_overlay.j2", default_tool=tool)
             .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
-            .render("core/context/task.j2", **ctx, registered_tasks=registered_tasks)
+            .render("core/context/task.j2", **ctx)
             .render("core/output/subtasks.j2", default_tool=tool, **limits)
             .build()
         )

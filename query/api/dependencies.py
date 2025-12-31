@@ -6,11 +6,10 @@ Uses segregated interfaces (ISP) - read-only endpoints depend on EventStoreReadP
 
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Request
 
 from core.application.execution_service import AgentExecutionService
 from core.ports.event_store_port import EventStoreReadPort
-from core.ports.task_registry_port import TaskRegistryPort
 
 
 def get_event_store(request: Request) -> EventStoreReadPort:
@@ -39,29 +38,7 @@ def get_execution_service(request: Request) -> AgentExecutionService:
     return request.app.state.execution_service
 
 
-def get_task_registry(request: Request) -> TaskRegistryPort:
-    """Get the task registry from application state.
-
-    Args:
-        request: FastAPI request object.
-
-    Returns:
-        TaskRegistryPort instance.
-
-    Raises:
-        HTTPException: If task registry is not configured.
-    """
-    task_registry = request.app.state.task_registry
-    if task_registry is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Task registry not configured",
-        )
-    return task_registry
-
-
 # Type aliases for cleaner route signatures
 # Query API uses read-only port (ISP - Interface Segregation Principle)
 type EventStoreDep = Annotated[EventStoreReadPort, Depends(get_event_store)]
 type ExecutionServiceDep = Annotated[AgentExecutionService, Depends(get_execution_service)]
-type TaskRegistryDep = Annotated[TaskRegistryPort, Depends(get_task_registry)]

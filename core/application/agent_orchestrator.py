@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.values.context import SiblingView
     from core.ports.llm_port import LLMPort
-    from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort
 
 logger = logging.getLogger(__name__)
@@ -51,7 +50,6 @@ class AgentOrchestrator:
         llm_port: "LLMPort",
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
-        task_registry_port: "TaskRegistryPort",
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -59,13 +57,11 @@ class AgentOrchestrator:
             llm_port: Port for LLM interactions.
             worker_port: Port for worker tool execution.
             prompt_builder: Builder for constructing prompts.
-            task_registry_port: Port for task deduplication.
         """
         self._pipeline_factory = PipelineFactory(
             llm_port=llm_port,
             worker_port=worker_port,
             prompt_builder=prompt_builder,
-            task_registry_port=task_registry_port,
         )
 
         # Create pipelines (could also be lazy-created)
@@ -98,7 +94,6 @@ class AgentOrchestrator:
 
         Performs LLM call, parses subtasks, and spawns children via pure domain methods.
         Respects hierarchy limits (max_depth, max_children_per_node).
-        Deduplicates subtasks via TaskRegistryPort.
 
         Args:
             agent: The agent to evaluate (must be BOSS/MANAGER with ANALYZING status).

@@ -2,7 +2,6 @@
 
 
 
-import hashlib
 import json
 import re
 from typing import Any
@@ -12,28 +11,6 @@ from pydantic import TypeAdapter, ValidationError
 from core.domain.values.agent_config import AgentConfig
 from core.domain.values.subtask import Subtask
 from core.domain.values.constraint_failure import ConstraintFailure
-
-class TaskKeyGenerator:
-    """Generate normalized task keys for deduplication.
-
-    Uses SHA256 hash of normalized description to create a compact,
-    deterministic key for task deduplication.
-    """
-
-    @staticmethod
-    def generate_key(description: str) -> str:
-        """Generate normalized key from task description.
-
-        Args:
-            description: The task description to hash.
-
-        Returns:
-            16-character hex string (first 64 bits of SHA256).
-        """
-        # Normalize: lowercase, strip, collapse whitespace
-        normalized = description.lower().strip()
-        normalized = re.sub(r"\s+", " ", normalized)
-        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
 # Patterns for extracting JSON from LLM responses

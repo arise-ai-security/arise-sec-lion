@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from core.domain.values.context import HierarchyLimits, SiblingView
     from core.domain.values.llm_response import LLMResponse
     from core.domain.aggregates.agent_session import AgentSession
-    from core.domain.services import RegisteredTask
     from core.domain.values.subtask import Subtask
 
 
@@ -43,7 +42,6 @@ class PipelineState:
     operation: str = ""
 
     # Decomposition-specific
-    registered_tasks: "list[RegisteredTask] | None" = None
     subtasks: "list[Subtask] | None" = None
     child_role: str | None = None
     force_worker: bool = False
@@ -83,10 +81,6 @@ class PipelineState:
     def with_llm_response(self, response: "LLMResponse") -> "PipelineState":
         """Create new state with LLM response set."""
         return replace(self, llm_response=response)
-
-    def with_registered_tasks(self, tasks: "list[RegisteredTask]") -> "PipelineState":
-        """Create new state with registered tasks set."""
-        return replace(self, registered_tasks=tasks)
 
     def with_subtasks(self, subtasks: "list[Subtask]") -> "PipelineState":
         """Create new state with parsed subtasks set."""
