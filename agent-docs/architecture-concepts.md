@@ -17,7 +17,7 @@ Event Sourcing: APPEND events (AgentCreated, TaskAssigned, WorkCompleted)
 **In this codebase:**
 - `AgentSession` (aggregate) has no persistent fields—state is rebuilt from events
 - `AgentSession.load_from_history(events)` replays events to reconstruct state
-- Events are immutable facts stored in `core/domain/events.py`
+- Events are immutable Pydantic models stored in `core/domain/events/events.py`
 - PostgreSQL `events` table is append-only
 
 **Benefits:**
@@ -27,8 +27,8 @@ Event Sourcing: APPEND events (AgentCreated, TaskAssigned, WorkCompleted)
 - Natural fit for distributed systems
 
 **Key files:**
-- `core/domain/events.py` — All domain events
-- `core/domain/model.py:286` — `load_from_history()` replays events
+- `core/domain/events/events.py` — All domain events
+- `core/domain/aggregates/agent_session.py` — `load_from_history()` replays events
 - `infrastructure/adapters/postgres_event_store.py` — Persistence
 
 ---
@@ -212,14 +212,14 @@ class ChildSpawned(DomainEvent): ...      # Child agent was spawned
 ```
 
 ### Value Objects
-Immutable objects defined by their attributes, not identity.
+Immutable objects defined by their attributes, not identity. Now using Pydantic models:
 
 ```python
-# core/domain/context.py
-@dataclass(frozen=True)
-class ParentContext:
+# core/domain/values/context/parent_to_child.py
+class SpawnPayload(BaseModel):
     """Immutable context passed from parent to child."""
-    ancestry: tuple[AncestorInfo, ...]
+    model_config = ConfigDict(frozen=True)
+    ancestry: tuple[AncestorSummary, ...]
     decisions: tuple[str, ...]
     artifacts: tuple[str, ...]
 ```
@@ -236,10 +236,10 @@ Terms used consistently in code and conversation:
 | **Subtask** | Decomposed piece of a larger task |
 
 **Key files:**
-- `core/domain/model.py` — `AgentSession` aggregate
-- `core/domain/events.py` — Domain events
-- `core/domain/context.py` — Value objects
-- `core/domain/enums.py` — `AgentRole`, `AgentStatus`
+- `core/domain/aggregates/agent_session.py` — `AgentSession` aggregate
+- `core/domain/events/events.py` — Domain events
+- `core/domain/values/context/` — Context value objects (SpawnPayload, TaskOutcome, SiblingView)
+- `core/domain/values/enums.py` — `AgentRole`, `AgentStatus`
 
 ---
 
@@ -347,7 +347,7 @@ See [`context-passing-mechanism.md`](context-passing-mechanism.md) for detailed 
 
 | Pattern | Problem It Solves | Where in Code |
 |---------|-------------------|---------------|
-| Event Sourcing | "What happened?" audit trail, time travel | `core/domain/events.py`, `model.py` |
+| Event Sourcing | "What happened?" audit trail, time travel | `core/domain/events/`, `aggregates/` |
 | CQRS | Read vs write optimization | `core/query/projections/` |
 | OCC | Concurrent writes without locks | `event_store.append(expected_version)` |
 | Hexagonal | Swap infrastructure without domain changes | `core/ports/`, `infrastructure/adapters/` |

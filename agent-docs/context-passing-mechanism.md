@@ -145,7 +145,7 @@ summary = context.get_budget_summary()
 
 ## Domain Events
 
-All SharedContext events (defined in `core/domain/events.py`):
+All SharedContext events (defined in `core/domain/events/events.py`):
 
 | Event | Purpose | Key Fields |
 |-------|---------|------------|
@@ -254,14 +254,14 @@ async def _process_worker_context_updates(self, agent: AgentSession) -> None:
 
 ### 3. Sibling Context for Sequential Workers
 
-Workers receive context from completed siblings via `SiblingContextPort`:
+Workers receive context from completed siblings via `SiblingViewPort`:
 
 ```python
 # execution_service.py
 async def _dispatch_agent_action(self, agent: AgentSession) -> None:
     if agent.role == AgentRole.WORKER:
         # Build context from completed siblings
-        sibling_context = await self._sibling_context_port.build_context(
+        sibling_view = await self._sibling_view_port.build_context(
             agent_id=agent.agent_id,
             parent_id=agent.parent_id,
             root_id=root_id,
@@ -269,7 +269,7 @@ async def _dispatch_agent_action(self, agent: AgentSession) -> None:
 
         await self._orchestrator.execute_task(
             agent,
-            sibling_context=sibling_context,  # Passed to worker prompt
+            sibling_view=sibling_view,  # Passed to worker prompt
             ...
         )
 ```
@@ -323,21 +323,21 @@ OCC works well for low-contention scenarios. For high-contention operations (e.g
 | File | Purpose |
 |------|---------|
 | `core/domain/shared_context.py` | Domain model (SharedExecutionContext, aggregates) |
-| `core/domain/events.py` | SharedContext domain events |
+| `core/domain/events/events.py` | SharedContext domain events |
 | `core/ports/shared_context_port.py` | Port interface |
 | `infrastructure/adapters/shared_context_adapter.py` | PostgreSQL adapter |
-| `core/application/execution_service.py:445` | Worker context update processing |
-| `core/application/services/sibling_context_builder.py` | Builds sibling context |
+| `core/application/execution_service.py` | Worker context update processing |
+| `core/application/services/sibling_context_builder.py` | Builds sibling context (SiblingView) |
 
 ---
 
 ## Value Objects
 
-Immutable data objects used by SharedContext:
+Immutable Pydantic models used by SharedContext:
 
 ```python
-@dataclass(frozen=True)
-class Artifact:
+class Artifact(BaseModel):
+    model_config = ConfigDict(frozen=True)
     key: str
     content_type: str
     content: str | None
@@ -345,15 +345,15 @@ class Artifact:
     stored_by: UUID
     metadata: dict[str, Any]
 
-@dataclass(frozen=True)
-class Decision:
+class Decision(BaseModel):
+    model_config = ConfigDict(frozen=True)
     key: str
     value: str
     rationale: str
     decided_by: UUID
 
-@dataclass(frozen=True)
-class ProgressCheckpoint:
+class ProgressCheckpoint(BaseModel):
+    model_config = ConfigDict(frozen=True)
     key: str
     status: str
     progress_pct: float

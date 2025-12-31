@@ -18,7 +18,7 @@ docker compose --profile dev exec app-dev uv run pytest
 docker compose --profile dev exec app-dev uv run pytest -v --tb=short
 
 # Run specific test file
-docker compose --profile dev exec app-dev uv run pytest core/domain/tests/test_model.py
+docker compose --profile dev exec app-dev uv run pytest core/domain/tests/test_agent_session.py
 
 # Run tests matching pattern
 docker compose --profile dev exec app-dev uv run pytest -k "test_agent"
@@ -118,15 +118,14 @@ grep -r "from infrastructure" core/
 
 ### Adding a New Domain Event
 
-1. Define event in `core/domain/events.py`:
+1. Define event in `core/domain/events/events.py`:
    ```python
-   @dataclass(frozen=True)
    class NewEventName(DomainEvent):
        """Description of when this event occurs."""
        field_name: str
    ```
 
-2. Add handler in `core/domain/model.py`:
+2. Add handler in `core/domain/aggregates/agent_session.py`:
    ```python
    @_apply.register
    def _(self, event: NewEventName) -> None:

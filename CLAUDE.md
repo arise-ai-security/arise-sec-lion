@@ -75,9 +75,9 @@ Limits are passed to LLM prompts. LLM can respond with `constraints_unsatisfiabl
 
 ```
 core/application/pipeline/
-├── context.py      # PipelineContext (delegates to ExecutionContext)
+├── context.py      # PipelineState (delegates to HierarchyLimits)
 ├── executor.py     # Pipeline executor (short-circuits on failure)
-└── steps/          # 17 focused steps across 9 modules
+└── steps/          # 14 focused steps across 8 modules
 ```
 
 Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_execution`

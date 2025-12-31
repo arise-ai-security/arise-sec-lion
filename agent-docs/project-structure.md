@@ -27,19 +27,31 @@ arise-sec-lion/
 
 ### Domain (`core/domain/`)
 
-Pure business logic, no I/O.
+Pure business logic, no I/O. Organized into subdirectories:
 
-| File | Purpose |
-|------|---------|
-| `model.py:35` | `AgentSession` aggregate root |
-| `events.py` | All domain events (frozen dataclasses) |
-| `enums.py` | `AgentRole`, `AgentStatus` |
-| `context.py` | `ParentContext`, `ChildResult` value objects |
-| `shared_context.py` | `SharedExecutionContext` for cross-agent state |
-| `services.py` | `SubtaskParser` domain service |
-| `prompt_builder.py` | Builds LLM prompts from templates |
-| `agent_config.py` | `AgentConfig` Pydantic model |
-| `execution_context.py` | Depth/child limits |
+```
+core/domain/
+├── aggregates/          # Aggregate roots
+│   └── agent_session.py # AgentSession aggregate root
+├── events/              # Domain events
+│   └── events.py        # All domain events (Pydantic models)
+├── services/            # Domain services
+│   ├── config_resolver.py      # Resolves AgentConfig heuristically
+│   ├── context_update_parser.py # Parses worker context updates
+│   └── subtask_parser.py       # SubtaskParser domain service
+├── values/              # Value objects (Pydantic models)
+│   ├── agent_config.py         # AgentConfig
+│   ├── context/                # Context types by data flow direction
+│   │   ├── limits.py           # HierarchyLimits (depth/child limits)
+│   │   ├── parent_to_child.py  # SpawnPayload, AncestorSummary
+│   │   ├── child_to_parent.py  # TaskOutcome
+│   │   └── sibling_to_sibling.py # SiblingView, SiblingStatus, SharedDecision
+│   ├── enums.py                # AgentRole, AgentStatus
+│   ├── llm_response.py         # LLM response types
+│   ├── parsed_context.py       # Parsed context updates
+│   └── subtask.py              # Subtask value object
+└── shared_context.py    # SharedExecutionContext for cross-agent state
+```
 
 ### Ports (`core/ports/`)
 
@@ -51,7 +63,7 @@ Abstract interfaces (Protocol classes).
 | `llm_port.py` | `LLMPort` - LLM queries |
 | `worker_port.py` | `WorkerToolPort` - worker execution |
 | `shared_context_port.py` | `SharedContextPort` - cross-agent state |
-| `sibling_context_port.py` | `SiblingContextPort` - sibling worker context |
+| `sibling_context_port.py` | `SiblingViewPort` - sibling worker context |
 | `cost_calculator_port.py` | `CostCalculatorPort` - token pricing |
 
 ### Application (`core/application/`)
@@ -60,15 +72,17 @@ Use cases and orchestration.
 
 | File | Purpose |
 |------|---------|
-| `execution_service.py:56` | `AgentExecutionService` - main orchestrator |
-| `agent_orchestrator.py:32` | `AgentOrchestrator` - delegates to pipelines |
+| `execution_service.py` | `AgentExecutionService` - main orchestrator |
+| `agent_orchestrator.py` | `AgentOrchestrator` - delegates to pipelines |
 | `pipelines.py` | `PipelineFactory` - creates configured pipelines |
 | `services/agent_repository.py` | Load/save agents |
 | `services/query_service.py` | Read operations (CQRS) |
 | `services/child_factory.py` | Create child agents |
-| `services/context_registry.py` | Manage execution contexts |
-| `services/sibling_context_builder.py` | Build sibling worker context |
+| `services/context_registry.py` | `HierarchyLimitsRegistry` - manage hierarchy limits |
+| `services/sibling_context_builder.py` | Build sibling worker context (SiblingView) |
 | `services/parent_notifier.py` | Notify parent on child completion |
+| `services/prompt_builder.py` | Builds LLM prompts from Jinja2 templates |
+| `services/prompt_strategy.py` | Prompt strategy selection |
 
 #### Pipeline Architecture (`core/application/pipeline/`)
 
@@ -76,7 +90,7 @@ Composable step-based execution using Chain of Responsibility pattern.
 
 | File | Purpose |
 |------|---------|
-| `context.py` | `PipelineContext` (ephemeral transport), `StepResult` |
+| `context.py` | `PipelineState` (ephemeral transport), `StepResult` |
 | `protocol.py` | `PipelineStep` protocol |
 | `executor.py` | `Pipeline` executor (short-circuits on failure) |
 | `steps/validation.py` | Agent state validation steps |
@@ -84,7 +98,6 @@ Composable step-based execution using Chain of Responsibility pattern.
 | `steps/llm.py` | `QueryLLM` step |
 | `steps/parsing.py` | LLM response parsing steps |
 | `steps/observability.py` | Event emission steps |
-| `steps/deduplication.py` | Task registry steps |
 | `steps/limits.py` | Limit enforcement steps |
 | `steps/domain.py` | Domain method invocation steps |
 | `steps/worker.py` | Worker execution steps |
@@ -192,14 +205,16 @@ React dashboard.
 
 ## Prompts (`prompts/`)
 
-Jinja2 templates for LLM prompts.
+Jinja2 templates for LLM prompts using template inheritance.
 
 | Directory | Purpose |
 |-----------|---------|
-| `system/` | System prompts |
-| `strategies/` | Decomposition strategies |
-| `worker/` | Worker instructions |
-| `tasks/` | Task-specific prompts |
+| `base/` | Base templates for inheritance (`coordinator.j2`) |
+| `core/roles/` | Role-specific prompts (boss, manager, worker, pending) |
+| `core/strategies/` | Decomposition and complexity strategies |
+| `core/output/` | Output format specifications |
+| `core/context/` | Context injection templates |
+| `secbench/` | SecBench benchmark prompts |
 | `security/` | Security task prompts |
 
 ---

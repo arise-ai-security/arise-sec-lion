@@ -73,11 +73,11 @@ This document traces the complete execution path when running a task through the
                                         │
                                         ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
-│  5. AGENT STEP (execution_service.py:178)                                     │
+│  5. AGENT STEP (execution_service.py)                                         │
 │  ────────────────────────────────────────                                     │
 │  run_agent_step(agent_id):                                                    │
 │    1. Load agent from event store (replay events)                            │
-│    2. Attach execution context (depth limits, child limits)                  │
+│    2. Attach hierarchy limits (depth limits, child limits)                   │
 │    3. Dispatch to AgentOrchestrator pipelines:                               │
 │       • PENDING → complexity_pipeline.execute()                              │
 │       • BOSS/MANAGER → decomposition_pipeline.execute()                      │
@@ -95,22 +95,20 @@ This document traces the complete execution path when running a task through the
 │  decomposition_pipeline steps:        │   │  worker_pipeline steps:           │
 │                                       │   │                                   │
 │  1. ValidateDecomposingAgent          │   │  1. ValidateWorkerAgent           │
-│  2. ExtractExecutionContext           │   │  2. StartWorkerExecution          │
-│  3. FetchRegisteredTasks              │   │  3. BuildWorkerPrompt             │
-│  4. BuildDecompositionPrompt          │   │  4. EmitPromptSent                │
-│  5. EmitPromptSent                    │   │  5. RunWorkerSession              │
-│  6. QueryLLM                          │   │     • ClaudeCodePTYAdapter: spawn │
-│  7. EmitTokensConsumed                │   │       claude CLI in PTY           │
-│  8. ParseSubtasks                     │   │     • OpenHandsAdapter: API call  │
-│  9. DeduplicateSubtasks               │   │                                   │
-│  10. CheckLimitViolations (hard)      │   │  Events Emitted:                  │
-│  11. DetermineChildRole (soft)        │   │    • CodeGenerationStarted        │
-│  12. SpawnChildren                    │   │    • ThoughtCaptured (many)       │
-│                                       │   │    • WorkCompleted/WorkFailed     │
-│  Events Emitted:                      │   │                                   │
-│    • TokensConsumed                   │   │  Agent State: status=COMPLETED    │
+│  2. ExtractHierarchyLimits            │   │  2. StartWorkerExecution          │
+│  3. BuildDecompositionPrompt          │   │  3. BuildWorkerPrompt             │
+│  4. EmitPromptSent                    │   │  4. EmitPromptSent                │
+│  5. QueryLLM                          │   │  5. RunWorkerSession              │
+│  6. EmitTokensConsumed                │   │     • ClaudeCodePTYAdapter: spawn │
+│  7. ParseSubtasks                     │   │       claude CLI in PTY           │
+│  8. CheckLimitViolations (hard)       │   │     • OpenHandsAdapter: API call  │
+│  9. DetermineChildRole (soft)         │   │                                   │
+│  10. SpawnChildren                    │   │  Events Emitted:                  │
+│                                       │   │    • CodeGenerationStarted        │
+│  Events Emitted:                      │   │    • ThoughtCaptured (many)       │
+│    • TokensConsumed                   │   │    • WorkCompleted/WorkFailed     │
 │    • SubtasksDefined                  │   │                                   │
-│    • ChildSpawned (for each subtask)  │   │                                   │
+│    • ChildSpawned (for each subtask)  │   │  Agent State: status=COMPLETED    │
 │    • StatusChanged → WAITING          │   │                                   │
 └───────────────────────────────────────┘   └───────────────────────────────────┘
                     │
@@ -120,8 +118,8 @@ This document traces the complete execution path when running a task through the
 │  ────────────────────────────────────                                         │
 │  For each ChildSpawned event:                                                 │
 │    1. Create AgentSession.create(role=PENDING, parent_id=boss_id)            │
-│    2. Set parent context (ancestry chain, decisions, artifacts)              │
-│    3. Create execution context (depth+1, limits)                             │
+│    2. Set spawn payload (ancestry chain, decisions, artifacts)               │
+│    3. Create hierarchy limits (depth+1, limits)                              │
 │    4. agent.assign_task(subtask.description)                                 │
 │    5. Persist to event store                                                  │
 │                                                                               │
@@ -249,8 +247,8 @@ This document traces the complete execution path when running a task through the
 | Application | `core/application/agent_orchestrator.py` | Delegates to pipelines |
 | Application | `core/application/pipelines.py` | PipelineFactory creates 3 pipelines |
 | Application | `core/application/pipeline/` | Composable step implementations |
-| Domain | `core/domain/model.py` | AgentSession aggregate, event sourcing |
-| Domain | `core/domain/events.py` | All domain events |
+| Domain | `core/domain/aggregates/agent_session.py` | AgentSession aggregate, event sourcing |
+| Domain | `core/domain/events/events.py` | All domain events |
 | Infrastructure | `infrastructure/adapters/claude_pty_adapter.py` | Spawns Claude Code CLI |
 | Infrastructure | `infrastructure/adapters/postgres_event_store.py` | Event persistence |
 

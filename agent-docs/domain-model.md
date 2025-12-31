@@ -6,7 +6,7 @@ This document describes the core domain entities, events, and state machine that
 
 ## AgentSession Aggregate
 
-The `AgentSession` class (`core/domain/model.py:35`) is the aggregate root. All agent state is derived by replaying events.
+The `AgentSession` class (`core/domain/aggregates/agent_session.py`) is the aggregate root. All agent state is derived by replaying events.
 
 ```python
 # Never store state directly - reconstruct from events
@@ -30,7 +30,7 @@ agent = AgentSession.load_from_history(events)
 
 ## Agent Roles
 
-Defined in `core/domain/enums.py`:
+Defined in `core/domain/values/enums.py`:
 
 | Role | Purpose | Next Action |
 |------|---------|-------------|
@@ -43,7 +43,7 @@ Defined in `core/domain/enums.py`:
 
 ## Agent Status (Lifecycle)
 
-Defined in `core/domain/enums.py`:
+Defined in `core/domain/values/enums.py`:
 
 ```
 PENDING ──► ANALYZING ──┬──► IN_PROGRESS ──► COMPLETED
@@ -67,7 +67,7 @@ PENDING ──► ANALYZING ──┬──► IN_PROGRESS ──► COMPLETED
 
 ## Domain Events
 
-All events in `core/domain/events.py` are immutable (frozen dataclasses).
+All events in `core/domain/events/events.py` are immutable Pydantic models.
 
 ### Lifecycle Events
 
@@ -146,21 +146,58 @@ IN_PROGRESS + WorkFailed → FAILED
 
 ## Context Passing
 
-### Parent Context (Hierarchical)
+Context types are organized by data flow direction in `core/domain/values/context/`:
 
-Defined in `core/domain/context.py`:
+### SpawnPayload (Parent → Child)
+
+Defined in `core/domain/values/context/parent_to_child.py`:
 
 ```python
-@dataclass(frozen=True)
-class ParentContext:
+class SpawnPayload(BaseModel):
     """Immutable context passed from parent to child."""
-    ancestry: tuple[AncestorInfo, ...]  # Chain of parent tasks
-    decisions: tuple[str, ...]          # Decisions made by ancestors
-    artifacts: tuple[str, ...]          # Artifacts produced
-    execution_limits: ExecutionLimits   # Depth/child limits
+    ancestry: tuple[AncestorSummary, ...]  # Chain of parent tasks
+    decisions: tuple[str, ...]              # Decisions made by ancestors
+    artifacts: tuple[str, ...]              # Artifacts produced
 ```
 
-Children receive context via `ChildSpawned.parent_context` field.
+Children receive context via `ChildSpawned.spawn_payload` field.
+
+### HierarchyLimits
+
+Defined in `core/domain/values/context/limits.py`:
+
+```python
+class HierarchyLimits(BaseModel):
+    """Depth and child limits for the agent hierarchy."""
+    current_depth: int
+    max_depth: int
+    max_children_per_node: int
+    max_total_agents: int
+```
+
+### TaskOutcome (Child → Parent)
+
+Defined in `core/domain/values/context/child_to_parent.py`:
+
+```python
+class TaskOutcome(BaseModel):
+    """Result returned from child to parent."""
+    child_id: UUID
+    result: str
+    decisions: tuple[str, ...]
+    artifacts: tuple[str, ...]
+```
+
+### SiblingView (Sibling → Sibling)
+
+Defined in `core/domain/values/context/sibling_to_sibling.py`:
+
+```python
+class SiblingView(BaseModel):
+    """Context from completed sibling workers."""
+    siblings: tuple[SiblingStatus, ...]
+    decisions: tuple[SharedDecision, ...]
+```
 
 ### Shared Execution Context (Global)
 
