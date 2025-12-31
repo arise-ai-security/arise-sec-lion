@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from core.ports.event_store_port import EventStorePort
 
 
-ProgressCallback = Callable[[DomainEvent, Any], None]
+type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
 class AgentNotFoundError(Exception):

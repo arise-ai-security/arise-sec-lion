@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
 
-ProgressCallback = Callable[[DomainEvent, Any], None]
+type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
 @dataclass(frozen=True)

@@ -62,6 +62,6 @@ def get_task_registry(request: Request) -> TaskRegistryPort:
 
 # Type aliases for cleaner route signatures
 # Query API uses read-only port (ISP - Interface Segregation Principle)
-EventStoreDep = Annotated[EventStoreReadPort, Depends(get_event_store)]
-ExecutionServiceDep = Annotated[AgentExecutionService, Depends(get_execution_service)]
-TaskRegistryDep = Annotated[TaskRegistryPort, Depends(get_task_registry)]
+type EventStoreDep = Annotated[EventStoreReadPort, Depends(get_event_store)]
+type ExecutionServiceDep = Annotated[AgentExecutionService, Depends(get_execution_service)]
+type TaskRegistryDep = Annotated[TaskRegistryPort, Depends(get_task_registry)]

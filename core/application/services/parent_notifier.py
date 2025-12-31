@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     pass
 
 
-ProgressCallback = Callable[[DomainEvent, Any], None]
+type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
 class ParentNotificationService:

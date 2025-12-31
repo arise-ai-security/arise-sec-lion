@@ -32,7 +32,7 @@ from .base import WorkerAdapterBase
 from .shared import EventSequencer, format_tool_event
 
 
-PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
 
 
 @dataclass

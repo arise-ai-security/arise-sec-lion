@@ -21,7 +21,7 @@ from infrastructure.adapters.worker import (
 )
 
 
-WorkerToolType = Literal["claude_code", "openhands", "google_adk"]
+type WorkerToolType = Literal["claude_code", "openhands", "google_adk"]
 
 
 @dataclass
