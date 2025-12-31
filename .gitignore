@@ -693,3 +693,6 @@ output/
 
 # macOS
 .DS_Store
+
+# Custom
+data/

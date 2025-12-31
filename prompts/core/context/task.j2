@@ -51,6 +51,7 @@ Constraints:
 Execution Limits:
   - Depth Remaining: {{ parent_context.execution_limits.get('depth_remaining', 'unlimited') }}
   - Max Children Per Node: {{ parent_context.execution_limits.get('max_children_per_node', 'unlimited') }}
+  - Agents Remaining: {{ parent_context.execution_limits.get('agents_remaining', 'unlimited') }}
 {% endif %}
 </PARENT_CONTEXT>
 {% endif %}

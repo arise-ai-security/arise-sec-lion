@@ -89,13 +89,45 @@ Each subtask MUST include a justification object explaining your reasoning:
 
 **CRITICAL RULES**:
 1. Response must be PURE JSON array (no markdown, no commentary)
-2. Array must contain 2-3 subtasks (not 1, not 4+)
+{% if max_subtasks %}
+2. Array must contain **at most {{ max_subtasks }} subtasks** (HARD LIMIT - violation will fail the agent)
+{% else %}
+2. Determine the optimal number of subtasks based on task complexity (no arbitrary limit)
+{% endif %}
+{% if agents_remaining is not none and agents_remaining >= 0 %}
+3. Array must contain **at most {{ agents_remaining }} subtasks** (agent capacity limit - violation will fail the agent)
+{% endif %}
+{% if at_max_depth %}
+3. **YOU ARE AT MAX DEPTH**: Each subtask MUST be simple and directly executable by a single worker. Do NOT create tasks that need further decomposition.
+{% elif depth_remaining is not none and depth_remaining <= 1 %}
+3. **NEAR MAX DEPTH ({{ depth_remaining }} level(s) remaining)**: Prefer simpler, worker-executable subtasks that don't require further breakdown.
+{% else %}
 3. Each subtask MUST have "description", "justification", and "config" fields
+{% endif %}
 4. Justification MUST include all 6 fields: parent_task, split_reason, objective, plan, why_it_may_work, expected_results
 5. Config MUST include "strategy" and "tool" fields
 6. All required fields for chosen strategy must be present
 7. Temperature: 0.0-2.0, max_tokens: 1-100000
 8. Model names: "o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "claude-sonnet-4-20250514", etc.
+{% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
+
+## Constraint Violation Handling
+
+If you CANNOT satisfy the constraints (e.g., task is too complex to fit in {% if max_subtasks %}{{ max_subtasks }}{% elif agents_remaining is not none and agents_remaining >= 0 %}{{ agents_remaining }}{% else %}the allowed number of{% endif %} atomic subtasks), respond with:
+
+```json
+{
+  "status": "constraints_unsatisfiable",
+  "reason": "Explain why the task cannot be decomposed within constraints",
+  "minimum_required": {
+    "subtasks": <number of subtasks actually needed>,
+    "depth_levels": <additional depth levels needed, or 0 if current depth is sufficient>
+  }
+}
+```
+
+This is preferable to creating subtasks that will fail.
+{% endif %}
 
 **Example Valid Output (per_operation)**:
 [
@@ -152,16 +184,20 @@ Each subtask MUST include a justification object explaining your reasoning:
 ```json
 [...]
 ```
+{% if max_subtasks %}
 
-❌ Only 1 subtask:
+❌ Too many subtasks (exceeds {{ max_subtasks }}):
 [
-  {"description": "...", "config": {...}}
+  {...}, {...}, {...}, ...  # More than {{ max_subtasks }} items
 ]
+{% endif %}
+{% if at_max_depth %}
 
-❌ Too many subtasks (4+):
+❌ Complex subtasks requiring further decomposition (you are at max depth!):
 [
-  {...}, {...}, {...}, {...}
+  {"description": "Implement entire authentication system", ...}  # Too complex for a single worker!
 ]
+{% endif %}
 
 ❌ Missing required fields:
 [

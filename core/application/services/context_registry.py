@@ -38,6 +38,7 @@ class ExecutionContextRegistry:
         max_depth: int,
         max_children_per_node: int,
         max_retries: int,
+        max_total_agents: int = -1,
         cve_instance: CVEInstance | None = None,
     ) -> ExecutionContext:
         """Create and register root execution context.
@@ -47,6 +48,7 @@ class ExecutionContextRegistry:
             max_depth: Maximum depth limit (-1 for unlimited)
             max_children_per_node: Maximum children per node (-1 for unlimited)
             max_retries: Maximum retry attempts
+            max_total_agents: Maximum total agents in hierarchy (-1 for unlimited)
             cve_instance: Optional SEC-bench CVE instance for benchmark runs
         """
         context = ExecutionContext.create_root(
@@ -54,6 +56,7 @@ class ExecutionContextRegistry:
             max_depth=max_depth,
             max_children_per_node=max_children_per_node,
             max_retries=max_retries,
+            max_total_agents=max_total_agents,
             cve_instance=cve_instance,
         )
         self._contexts[root_id] = context

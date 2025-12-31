@@ -1,5 +1,44 @@
 <DECOMPOSITION_STRATEGY>
+{% if at_max_depth %}
+## ⚠️ CONSTRAINT: Maximum Depth Reached
 
+**You CANNOT create subtasks that need further decomposition.**
+- Each subtask MUST be atomic and executable by a single worker
+- Focus on concrete, actionable tasks (e.g., "Write function X", "Fix bug Y", "Add test for Z")
+- Do NOT create tasks like "Implement entire module" - break them down further NOW
+- If the task is too complex to fit atomic subtasks, report constraints_unsatisfiable
+
+{% elif depth_remaining is not none and depth_remaining == 1 %}
+## ⚠️ CONSTRAINT: One Level of Depth Remaining
+
+**Your subtasks can spawn workers but NOT managers.**
+- Create focused, simple tasks that don't require further breakdown
+- Each subtask should be completable by a single worker
+- Prefer more specific tasks over broad ones
+
+{% elif depth_remaining is not none and depth_remaining <= 2 %}
+## Note: Limited Depth Available ({{ depth_remaining }} levels remaining)
+
+Consider creating simpler, more focused subtasks since further decomposition is limited.
+
+{% endif %}
+{% if max_subtasks %}
+## ⚠️ CONSTRAINT: Maximum {{ max_subtasks }} Subtasks Allowed
+
+- Prioritize the most critical tasks if you need more
+- Combine related work into fewer, broader subtasks if necessary
+- If you cannot fit all necessary work into {{ max_subtasks }} subtasks, report constraints_unsatisfiable
+
+{% endif %}
+{% if agents_remaining is not none and agents_remaining >= 0 %}
+## ⚠️ CONSTRAINT: Limited Agent Capacity ({{ agents_remaining }} remaining)
+
+**Only {{ agents_remaining }} more agents can be created** in this execution run.
+- Current agents: {{ current_total_agents }} / {{ max_total_agents }}
+- Plan decomposition carefully to stay within budget
+- If constraints cannot be satisfied, report constraints_unsatisfiable
+
+{% endif %}
 ## Analysis Phase
 Before decomposition, analyze:
 1. **Task Nature**: Research? Implementation? Refactoring? Testing?
@@ -26,10 +65,14 @@ Before decomposition, analyze:
 - **Atomic**: Represents a coherent unit of work
 
 ### Optimal Decomposition Count
-- **2 subtasks**: Task naturally divides into two distinct parts
-- **3 subtasks**: Task has clear beginning/middle/end or research/implementation/testing
+{% if max_subtasks %}
+- **Maximum {{ max_subtasks }} subtasks** enforced by system constraints
+- Prioritize quality over quantity - combine related work if needed
+{% else %}
+- Determine optimal count based on task complexity (no arbitrary limit)
+{% endif %}
 - **Avoid 1 subtask**: If only 1 subtask, the parent should be a WORKER instead
-- **Avoid 4+**: Over-decomposition adds coordination overhead
+- Balance decomposition granularity with coordination overhead
 
 ### Avoid These Anti-Patterns
 - ❌ Sequential dependencies (Subtask 2 must wait for Subtask 1)

@@ -5,6 +5,7 @@ Handles child agent creation with execution context propagation.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -12,6 +13,8 @@ from uuid import UUID
 from core.domain.context import ParentContext
 from core.domain.events import ChildSpawned
 from core.domain.model import AgentRole, AgentSession
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -61,8 +64,13 @@ class ChildAgentFactory:
         """Get total number of agents created."""
         return self._total_created
 
-    def is_at_limit(self) -> bool:
-        """Check if we've reached the agent creation limit."""
+    @property
+    def max_total_agents(self) -> int:
+        """Get the max total agents limit (-1 means unlimited)."""
+        return self._max_total_agents
+
+    def is_at_agent_limit(self) -> bool:
+        """Check if we've reached the max_total_agents limit."""
         if self._max_total_agents < 0:
             return False
         return self._total_created >= self._max_total_agents
@@ -104,16 +112,13 @@ class ChildAgentFactory:
         self,
         event: ChildSpawned,
         parent_id: UUID,
-    ) -> ChildCreationResult | None:
+    ) -> ChildCreationResult:
         """Create a child agent from a ChildSpawned event.
 
-        Returns None if at limit, otherwise returns the created agent.
+        Caller (create_children_from_events) is responsible for limit checking.
         Propagates execution context and parent context to child.
         Applies manager config defaults for PENDING children.
         """
-        if self.is_at_limit():
-            return None
-
         child_role = AgentRole(event.child_role)
         child_config = event.child_config
 
@@ -150,14 +155,25 @@ class ChildAgentFactory:
         self,
         events: list[ChildSpawned],
         parent_id: UUID,
-    ) -> list[ChildCreationResult]:
+    ) -> tuple[list[ChildCreationResult], int]:
         """Create multiple child agents from ChildSpawned events.
 
-        Returns list of creation results. Some may be None if limit reached.
+        Returns:
+            Tuple of (created_children, skipped_count).
+            skipped_count > 0 indicates LLM violated max_total_agents limit.
         """
-        results = []
+        results: list[ChildCreationResult] = []
+        skipped = 0
         for event in events:
+            if self.is_at_agent_limit():
+                skipped += 1
+                logger.warning(
+                    "Max total agents limit reached: %d/%d, skipping child %s",
+                    self._total_created,
+                    self._max_total_agents,
+                    event.child_id,
+                )
+                continue
             result = await self.create_from_event(event, parent_id)
-            if result:
-                results.append(result)
-        return results
+            results.append(result)
+        return results, skipped

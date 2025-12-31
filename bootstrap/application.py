@@ -18,6 +18,7 @@ from core.application.services.query_service import AgentQueryService
 from core.application.services.sibling_context_builder import SiblingContextBuilder
 from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.prompt_builder import PromptBuilder
+from core.domain.prompt_strategy import SecBenchPromptStrategy
 
 from .infrastructure import Infrastructure
 
@@ -59,6 +60,7 @@ def get_application(
 
     # Create collaborators (composition root wiring)
     prompt_builder = PromptBuilder("prompts", config.default_worker_tool)
+    prompt_builder.set_strategy(SecBenchPromptStrategy(prompt_builder.chain))
 
     repository = AgentRepository(
         event_store=infrastructure.event_store,

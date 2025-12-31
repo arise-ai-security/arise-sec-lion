@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
@@ -19,7 +20,7 @@ from core.domain.subtask import Subtask
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegisteredTask:
     """Value object representing a registered task for deduplication."""
 
@@ -27,6 +28,44 @@ class RegisteredTask:
     task_description: str
     registered_by: UUID
     parent_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintFailure:
+    """Value object for when LLM cannot satisfy execution constraints.
+
+    Returned when LLM responds with constraints_unsatisfiable instead of
+    a valid subtask list. This allows graceful failure rather than
+    spawning doomed workers.
+    """
+
+    reason: str
+    minimum_subtasks: int | None = None
+    minimum_depth: int | None = None
+
+    @classmethod
+    def matches(cls, data: Any) -> bool:
+        """Check if data represents a constraint failure response."""
+        return isinstance(data, dict) and data.get("status") == "constraints_unsatisfiable"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ConstraintFailure:
+        """Create from LLM response dict."""
+        minimum_required = data.get("minimum_required", {})
+        return cls(
+            reason=data.get("reason", "Unknown reason"),
+            minimum_subtasks=minimum_required.get("subtasks"),
+            minimum_depth=minimum_required.get("depth_levels"),
+        )
+
+    def format_message(self) -> str:
+        """Format failure as human-readable message."""
+        msg = f"Constraints unsatisfiable: {self.reason}"
+        if self.minimum_subtasks is not None:
+            msg += f" (needs at least {self.minimum_subtasks} subtasks)"
+        if self.minimum_depth is not None:
+            msg += f" (needs {self.minimum_depth} more depth levels)"
+        return msg
 
 
 # ---------------------------------------------------------------------------
@@ -90,60 +129,77 @@ def strip_markdown_code_block(text: str) -> str:
     return stripped
 
 
-class SubtaskParser:
-    """Parse LLM JSON responses into validated Subtask objects."""
+def parse_subtasks_from_llm(response: str) -> list[Subtask] | ConstraintFailure:
+    """Parse LLM response into domain objects.
 
-    @staticmethod
-    def parse_from_llm_response(response: str) -> list[Subtask]:
-        """Parse JSON array into Subtasks. Validates config against AgentConfig schema."""
-        clean_response = strip_markdown_code_block(response)
+    Returns ConstraintFailure if LLM indicates constraints cannot be satisfied.
+    Returns list of validated Subtask objects otherwise.
+    """
+    data = _parse_json(response)
 
-        try:
-            data = json.loads(clean_response)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"LLM response is not valid JSON: {e}") from e
+    # Objects recognize themselves - Tell, Don't Ask
+    if ConstraintFailure.matches(data):
+        return ConstraintFailure.from_dict(data)
 
-        # Handle case where LLM wraps response in a dict
-        if isinstance(data, dict):
-            # Check if dict contains a "subtasks" or "tasks" key with a list
-            for key in ("subtasks", "tasks", "items", "children"):
-                if key in data and isinstance(data[key], list):
-                    data = data[key]
-                    break
-            else:
-                # Check if it looks like a single subtask (has description or config)
-                if "description" in data or "config" in data:
-                    data = [data]
-                else:
-                    raise ValueError(
-                        f"Expected list of subtasks, got dict with keys: {list(data.keys())}"
-                    )
+    items = _extract_subtask_list(data)
+    return _validate_subtasks(items)
 
-        if not isinstance(data, list):
+
+def _parse_json(response: str) -> Any:
+    """Extract and parse JSON from LLM response."""
+    clean = strip_markdown_code_block(response)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"LLM response is not valid JSON: {e}") from e
+
+
+def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
+    """Normalize various LLM response formats to subtask list."""
+    match data:
+        case list() as items:
+            return items
+        case {"subtasks": list() as items}:
+            return items
+        case {"tasks": list() as items}:
+            return items
+        case {"items": list() as items}:
+            return items
+        case {"children": list() as items}:
+            return items
+        case {"description": _} | {"config": _}:
+            return [data]  # Single subtask wrapped
+        case dict() as d:
+            raise ValueError(
+                f"Expected list of subtasks, got dict with keys: {list(d.keys())}"
+            )
+        case _:
             raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")
 
-        if len(data) == 0:
-            raise ValueError("Empty subtask list")
 
-        config_adapter = TypeAdapter(AgentConfig)
-        subtasks: list[Subtask] = []
+def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
+    """Validate and create Subtask objects from dicts."""
+    if not items:
+        raise ValueError("Empty subtask list")
 
-        for idx, item in enumerate(data):
-            if not isinstance(item, dict):
-                raise ValueError(f"Subtask {idx}: expected dict, got {type(item).__name__}")
+    config_adapter = TypeAdapter(AgentConfig)
+    subtasks: list[Subtask] = []
 
-            if "config" not in item:
-                raise ValueError(f"Subtask {idx}: missing 'config' field")
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"Subtask {idx}: expected dict, got {type(item).__name__}")
 
-            try:
-                config_adapter.validate_python(item["config"])
-            except ValidationError as e:
-                raise ValueError(f"Subtask {idx}: invalid config: {e}") from e
+        if "config" not in item:
+            raise ValueError(f"Subtask {idx}: missing 'config' field")
 
-            try:
-                subtask = Subtask(**item)
-                subtasks.append(subtask)
-            except ValidationError as e:
-                raise ValueError(f"Subtask {idx}: validation failed: {e}") from e
+        try:
+            config_adapter.validate_python(item["config"])
+        except ValidationError as e:
+            raise ValueError(f"Subtask {idx}: invalid config: {e}") from e
 
-        return subtasks
+        try:
+            subtasks.append(Subtask(**item))
+        except ValidationError as e:
+            raise ValueError(f"Subtask {idx}: validation failed: {e}") from e
+
+    return subtasks

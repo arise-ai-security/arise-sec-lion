@@ -324,6 +324,7 @@ class AgentExecutionService:
             max_depth=self._system_limits.max_depth,
             max_children_per_node=self._system_limits.max_children_per_node,
             max_retries=self._config.max_retries,
+            max_total_agents=self._system_limits.max_total_agents,
             cve_instance=cve_instance,
         )
 
@@ -363,11 +364,16 @@ class AgentExecutionService:
         return boss_agent
 
     async def _load_agent_with_context(self, agent_id: UUID) -> AgentSession:
-        """Load agent and attach execution context."""
+        """Load agent and attach execution context with current agent counts."""
         agent = await self._repository.load(agent_id)
 
         context = self._context_registry.get(agent_id)
         if context is not None:
+            # Update context with current agent counts for limit enforcement
+            context = context.with_agent_counts(
+                current_total=self._child_factory.total_created,
+                max_total=self._child_factory.max_total_agents,
+            )
             agent.set_execution_context(context)
 
         return agent
@@ -424,7 +430,7 @@ class AgentExecutionService:
         events: list[DomainEvent],
     ) -> None:
         """Handle post-step operations: child spawning, context updates, and parent notification."""
-        # Spawn children
+        # Spawn children (limits are enforced pre-spawn in AgentOrchestrator)
         child_events = [e for e in events if isinstance(e, ChildSpawned)]
         if child_events:
             await self._child_factory.create_children_from_events(

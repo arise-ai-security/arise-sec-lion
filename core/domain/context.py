@@ -190,6 +190,8 @@ def build_parent_context(
             "depth_remaining": agent.execution_context.depth_remaining(),
             "max_children_per_node": agent.execution_context.max_children_per_node,
             "max_retries": agent.execution_context.max_retries,
+            "agents_remaining": agent.execution_context.agents_remaining(),
+            "max_total_agents": agent.execution_context.max_total_agents,
         }
         # Add root_id if available
         if hasattr(agent.execution_context, "root_id"):

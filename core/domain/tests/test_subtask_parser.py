@@ -1,10 +1,10 @@
-"""Test cases for SubtaskParser domain service (TDD approach)."""
+"""Test cases for subtask parsing domain service (TDD approach)."""
 
 import json
 
 import pytest
 
-from core.domain.services import SubtaskParser
+from core.domain.services import ConstraintFailure, parse_subtasks_from_llm
 from core.domain.subtask import Subtask
 
 
@@ -32,7 +32,7 @@ def test_parse_valid_subtask_list() -> None:
     )
 
     # When: Parse the response
-    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+    subtasks = parse_subtasks_from_llm(llm_response)
 
     # Then: Returns list of Subtask objects
     assert len(subtasks) == 3
@@ -50,7 +50,7 @@ def test_parse_invalid_json_raises_value_error() -> None:
 
     # When/Then: Parsing raises ValueError with JSON message
     with pytest.raises(ValueError, match=r"(?i)json"):
-        SubtaskParser.parse_from_llm_response(llm_response)
+        parse_subtasks_from_llm(llm_response)
 
 
 def test_parse_non_list_json_raises_value_error() -> None:
@@ -61,7 +61,7 @@ def test_parse_non_list_json_raises_value_error() -> None:
 
     # When/Then: Parsing raises ValueError with list/array message
     with pytest.raises(ValueError, match=r"(?i)(list|array)"):
-        SubtaskParser.parse_from_llm_response(llm_response)
+        parse_subtasks_from_llm(llm_response)
 
 
 def test_parse_empty_list_raises_value_error() -> None:
@@ -72,7 +72,7 @@ def test_parse_empty_list_raises_value_error() -> None:
 
     # When/Then: Parsing raises ValueError with empty message
     with pytest.raises(ValueError, match=r"(?i)empty"):
-        SubtaskParser.parse_from_llm_response(llm_response)
+        parse_subtasks_from_llm(llm_response)
 
 
 def test_parse_non_dict_item_raises_value_error() -> None:
@@ -83,7 +83,7 @@ def test_parse_non_dict_item_raises_value_error() -> None:
 
     # When/Then: Parsing raises ValueError with structure/dict message
     with pytest.raises(ValueError, match=r"(?i)(dict|structure|object)"):
-        SubtaskParser.parse_from_llm_response(llm_response)
+        parse_subtasks_from_llm(llm_response)
 
 
 def test_parse_missing_description_field_raises_value_error() -> None:
@@ -100,7 +100,7 @@ def test_parse_missing_description_field_raises_value_error() -> None:
 
     # When/Then: Parsing raises ValueError (from Pydantic validation)
     with pytest.raises(ValueError, match=r"(?i)(validation|description)"):
-        SubtaskParser.parse_from_llm_response(llm_response)
+        parse_subtasks_from_llm(llm_response)
 
 
 def test_parse_empty_description_raises_value_error() -> None:
@@ -116,7 +116,7 @@ def test_parse_empty_description_raises_value_error() -> None:
 
     # When/Then: Parsing raises ValueError (from Pydantic min_length validation)
     with pytest.raises(ValueError, match=r"(?i)(validation|description)"):
-        SubtaskParser.parse_from_llm_response(llm_response)
+        parse_subtasks_from_llm(llm_response)
 
 
 def test_parse_single_valid_subtask() -> None:
@@ -131,7 +131,7 @@ def test_parse_single_valid_subtask() -> None:
     )
 
     # When: Parse the response
-    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+    subtasks = parse_subtasks_from_llm(llm_response)
 
     # Then: Successfully returns one subtask
     assert len(subtasks) == 1
@@ -155,7 +155,7 @@ def test_parse_extra_fields_ignored() -> None:
     )
 
     # When: Parse the response
-    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+    subtasks = parse_subtasks_from_llm(llm_response)
 
     # Then: Successfully creates Subtask (extra fields ignored)
     assert len(subtasks) == 1
@@ -177,7 +177,7 @@ def test_parse_wrapped_subtasks_dict() -> None:
     )
 
     # When: Parse the response
-    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+    subtasks = parse_subtasks_from_llm(llm_response)
 
     # Then: Successfully extracts subtasks from wrapper
     assert len(subtasks) == 2
@@ -199,8 +199,128 @@ def test_parse_wrapped_tasks_dict() -> None:
     )
 
     # When: Parse the response
-    subtasks = SubtaskParser.parse_from_llm_response(llm_response)
+    subtasks = parse_subtasks_from_llm(llm_response)
 
     # Then: Successfully extracts from 'tasks' wrapper
     assert len(subtasks) == 1
     assert subtasks[0].description == "Only task"
+
+
+# ---------------------------------------------------------------------------
+# ConstraintFailure value object tests
+# ---------------------------------------------------------------------------
+
+
+def test_constraint_failure_matches_valid_data() -> None:
+    """Test that ConstraintFailure.matches() recognizes valid constraint failure data."""
+    # Given: Data with constraints_unsatisfiable status
+    data = {
+        "status": "constraints_unsatisfiable",
+        "reason": "Task requires more depth",
+    }
+
+    # When/Then: matches() returns True
+    assert ConstraintFailure.matches(data) is True
+
+
+def test_constraint_failure_matches_rejects_other_dicts() -> None:
+    """Test that ConstraintFailure.matches() rejects non-failure dicts."""
+    # Given: Various non-failure data
+    test_cases = [
+        {"status": "success"},
+        {"subtasks": []},
+        {"description": "A task"},
+        {},
+        "not a dict",
+        None,
+        42,
+    ]
+
+    # When/Then: matches() returns False for all
+    for data in test_cases:
+        assert ConstraintFailure.matches(data) is False
+
+
+def test_constraint_failure_from_dict() -> None:
+    """Test that ConstraintFailure.from_dict() creates correct object."""
+    # Given: Full constraint failure response
+    data = {
+        "status": "constraints_unsatisfiable",
+        "reason": "Cannot split further",
+        "minimum_required": {
+            "subtasks": 3,
+            "depth_levels": 2,
+        },
+    }
+
+    # When: Create from dict
+    failure = ConstraintFailure.from_dict(data)
+
+    # Then: All fields populated correctly
+    assert failure.reason == "Cannot split further"
+    assert failure.minimum_subtasks == 3
+    assert failure.minimum_depth == 2
+
+
+def test_constraint_failure_from_dict_with_defaults() -> None:
+    """Test that ConstraintFailure.from_dict() handles missing fields."""
+    # Given: Minimal constraint failure response
+    data = {"status": "constraints_unsatisfiable"}
+
+    # When: Create from dict
+    failure = ConstraintFailure.from_dict(data)
+
+    # Then: Defaults applied
+    assert failure.reason == "Unknown reason"
+    assert failure.minimum_subtasks is None
+    assert failure.minimum_depth is None
+
+
+def test_constraint_failure_format_message_full() -> None:
+    """Test format_message() with all fields populated."""
+    # Given: ConstraintFailure with all fields
+    failure = ConstraintFailure(
+        reason="Task too atomic",
+        minimum_subtasks=2,
+        minimum_depth=1,
+    )
+
+    # When: Format message
+    msg = failure.format_message()
+
+    # Then: Message includes all details
+    assert "Constraints unsatisfiable: Task too atomic" in msg
+    assert "(needs at least 2 subtasks)" in msg
+    assert "(needs 1 more depth levels)" in msg
+
+
+def test_constraint_failure_format_message_minimal() -> None:
+    """Test format_message() with only reason."""
+    # Given: ConstraintFailure with only reason
+    failure = ConstraintFailure(reason="Cannot decompose")
+
+    # When: Format message
+    msg = failure.format_message()
+
+    # Then: Message has reason only
+    assert msg == "Constraints unsatisfiable: Cannot decompose"
+
+
+def test_parse_constraint_failure_response() -> None:
+    """Test that parse_subtasks_from_llm returns ConstraintFailure for unsatisfiable response."""
+    # Given: LLM constraint failure response
+    llm_response = json.dumps(
+        {
+            "status": "constraints_unsatisfiable",
+            "reason": "Depth limit reached",
+            "minimum_required": {"subtasks": 2},
+        }
+    )
+
+    # When: Parse response
+    result = parse_subtasks_from_llm(llm_response)
+
+    # Then: Returns ConstraintFailure, not a list
+    assert isinstance(result, ConstraintFailure)
+    assert result.reason == "Depth limit reached"
+    assert result.minimum_subtasks == 2

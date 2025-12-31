@@ -9,36 +9,13 @@ from uuid import UUID
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
 from core.domain.enums import AgentRole
+from core.domain.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
     from core.domain.context import ParentContext
     from core.domain.cve_instance import CVEInstance
+    from core.domain.execution_context import ExecutionContext
     from core.domain.services import RegisteredTask
-
-
-def _detect_benchmark_branch(parent_context: ParentContext | None) -> str | None:
-    """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
-
-    Checks ancestry chain for top-level subtask keywords.
-    Returns None if not in a benchmark run or branch not determinable.
-    """
-    if parent_context is None:
-        return None
-
-    # Check each ancestor's task summary (starting from immediate parent)
-    for ancestor in parent_context.ancestry:
-        task_lower = ancestor.task_summary.lower()
-        # Builder keywords
-        if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
-            return "builder"
-        # Exploiter keywords
-        if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
-            return "exploiter"
-        # Fixer keywords
-        if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
-            return "fixer"
-
-    return None
 
 
 class TemplateChain:
@@ -120,15 +97,28 @@ class TemplateChain:
 
 
 class PromptBuilder:
-    """Compose hierarchical prompts with automatic security injection."""
+    """Compose hierarchical prompts with automatic security injection.
+
+    Uses Strategy Pattern to delegate specialized prompt building
+    (e.g., SEC-bench) to injected strategies, following SRP.
+    """
 
     def __init__(
         self,
         template_dir: str | Path,
         default_tool: str,
+        strategy: PromptStrategy | None = None,
     ) -> None:
+        """Initialize prompt builder.
+
+        Args:
+            template_dir: Directory containing Jinja2 templates.
+            default_tool: Default tool name for worker execution.
+            strategy: Optional prompt strategy for specialized prompts.
+        """
         self.template_dir = Path(template_dir)
         self.default_tool = default_tool
+        self._strategy = strategy or DefaultPromptStrategy()
         self.env = Environment(
             loader=FileSystemLoader(str(self.template_dir)),
             autoescape=False,  # noqa: S701 - plain text prompts, not HTML
@@ -139,6 +129,14 @@ class PromptBuilder:
     def chain(self) -> TemplateChain:
         """Create a new template chain builder."""
         return TemplateChain(self.env, "template")
+
+    def set_strategy(self, strategy: PromptStrategy) -> None:
+        """Set the prompt strategy after initialization.
+
+        Useful for breaking circular dependencies when the strategy
+        needs access to this builder's chain() method.
+        """
+        self._strategy = strategy
 
     def _task_context(
         self,
@@ -154,6 +152,62 @@ class PromptBuilder:
             "agent_role": agent_role.value.upper(),
             "parent_task": parent_task,
             "default_tool": self.default_tool,
+        }
+
+    def _limits_context(
+        self,
+        execution_context: ExecutionContext | None,
+    ) -> dict[str, Any]:
+        """Build limits context dict for templates.
+
+        Args:
+            execution_context: Current execution context with limits.
+
+        Returns:
+            Dict with limit variables for templates:
+            - max_subtasks: Max children allowed (None = no limit)
+            - depth_remaining: Levels of hierarchy remaining (None = unlimited)
+            - at_max_depth: True if children must be workers
+            - agents_remaining: How many more agents can be created (None = unlimited)
+            - max_total_agents: Maximum total agents allowed (None = unlimited)
+            - current_total_agents: Current count of agents created (None = unknown)
+        """
+        if execution_context is None:
+            return {
+                "max_subtasks": None,
+                "depth_remaining": None,
+                "at_max_depth": False,
+                "agents_remaining": None,
+                "max_total_agents": None,
+                "current_total_agents": None,
+            }
+
+        max_subtasks = None
+        if execution_context.is_children_limited():
+            max_subtasks = execution_context.max_children_per_node
+
+        depth_remaining = None
+        at_max_depth = False
+        if execution_context.is_depth_limited():
+            depth_remaining = execution_context.max_depth - execution_context.current_depth
+            at_max_depth = not execution_context.can_spawn_child()
+
+        # Total agents limit info
+        agents_remaining = None
+        max_total_agents = None
+        current_total_agents = None
+        if execution_context.is_total_agents_limited():
+            agents_remaining = execution_context.agents_remaining()
+            max_total_agents = execution_context.max_total_agents
+            current_total_agents = execution_context.current_total_agents
+
+        return {
+            "max_subtasks": max_subtasks,
+            "depth_remaining": depth_remaining,
+            "at_max_depth": at_max_depth,
+            "agents_remaining": agents_remaining,
+            "max_total_agents": max_total_agents,
+            "current_total_agents": current_total_agents,
         }
 
     def build_complexity_evaluation_prompt(
@@ -183,6 +237,7 @@ class PromptBuilder:
         registered_tasks: list[RegisteredTask] | None = None,
         cve_instance: CVEInstance | None = None,
         parent_context: ParentContext | None = None,
+        execution_context: ExecutionContext | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
 
@@ -192,51 +247,38 @@ class PromptBuilder:
             agent_role: Agent role (should be MANAGER).
             parent_task: Parent task description.
             registered_tasks: List of already-registered tasks (for dedup hint).
-            cve_instance: SEC-bench CVE instance for benchmark runs.
-            parent_context: Parent context for branch detection.
+            cve_instance: CVE instance for benchmark runs.
+            parent_context: Parent context for hierarchy info.
+            execution_context: Execution context with limits.
         """
+        # Try strategy first (for SEC-bench or other specialized prompts)
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=agent_id,
+            agent_role=agent_role,
+            default_tool=self.default_tool,
+            parent_task=parent_task,
+            parent_context=parent_context,
+            execution_context=execution_context,
+            cve_instance=cve_instance,
+            registered_tasks=registered_tasks,
+        )
+        custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
+        if custom_prompt is not None:
+            return custom_prompt
+
+        # Default generic prompt (no SEC-bench logic here - follows SRP)
         ctx = self._task_context(task_description, agent_id, agent_role, parent_task)
+        limits = self._limits_context(execution_context)
         tool = self.default_tool
-        cve_ctx = cve_instance.to_template_context() if cve_instance else {}
 
-        # Detect SEC-bench branch for specialized manager prompts
-        branch = _detect_benchmark_branch(parent_context) if cve_instance else None
-
-        # Also detect branch from task description if parent_context is None
-        if branch is None and cve_instance:
-            task_lower = task_description.lower()
-            if any(kw in task_lower for kw in ("[builder]", "builder", "environment", "setup")):
-                branch = "builder"
-            elif any(kw in task_lower for kw in ("[exploiter]", "exploiter", "poc", "exploit")):
-                branch = "exploiter"
-            elif any(kw in task_lower for kw in ("[fixer]", "fixer", "patch", "fix")):
-                branch = "fixer"
-
-        # SEC-bench manager templates are ONLY for depth-1 managers (direct BOSS children)
-        # e.g., [Builder], [Exploiter], [Fixer] - NOT for nested managers like [Builder-5]
-        # parent_context.depth == 0 means parent is BOSS (depth 0)
-        is_direct_boss_child = parent_context is not None and parent_context.depth == 0
-
-        # Use SEC-bench specific manager prompts only for top-level phase managers
-        if branch and is_direct_boss_child:
-            return (
-                self.chain()
-                .render("core/roles/manager.j2", default_tool=tool)
-                .with_cve_context(cve_instance)
-                .render_if(branch == "builder", "secbench/manager/builder.j2", **cve_ctx, default_tool=tool)
-                .render_if(branch == "exploiter", "secbench/manager/exploiter.j2", **cve_ctx, default_tool=tool)
-                .render_if(branch == "fixer", "secbench/manager/fixer.j2", **cve_ctx, default_tool=tool)
-                .build()
-            )
-
-        # Standard manager decomposition prompt
         return (
             self.chain()
             .render("core/roles/manager.j2", default_tool=tool)
             .with_security("manager_overlay.j2", default_tool=tool)
-            .render("core/strategies/decomposition.j2", default_tool=tool)
+            .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
             .render("core/context/task.j2", **ctx, registered_tasks=registered_tasks)
-            .render("core/output/subtasks.j2", default_tool=tool)
+            .render("core/output/subtasks.j2", default_tool=tool, **limits)
             .build()
         )
 
@@ -247,6 +289,7 @@ class PromptBuilder:
         parent_task: str | None = None,
         cve_instance: CVEInstance | None = None,
         registered_tasks: list[RegisteredTask] | None = None,
+        execution_context: ExecutionContext | None = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation.
 
@@ -254,78 +297,39 @@ class PromptBuilder:
             task_description: The task to delegate.
             agent_id: Current agent's ID.
             parent_task: Parent task description.
-            cve_instance: SEC-bench CVE instance for benchmark runs.
+            cve_instance: CVE instance for benchmark runs.
             registered_tasks: List of already-registered tasks (for dedup hint).
+            execution_context: Execution context with limits.
         """
+        # Try strategy first (for SEC-bench or other specialized prompts)
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=agent_id,
+            agent_role=AgentRole.BOSS,
+            default_tool=self.default_tool,
+            parent_task=parent_task,
+            cve_instance=cve_instance,
+            registered_tasks=registered_tasks,
+            execution_context=execution_context,
+        )
+        custom_prompt = self._strategy.build_boss_prompt(prompt_ctx)
+        if custom_prompt is not None:
+            return custom_prompt
+
+        # Default generic prompt
         ctx = self._task_context(task_description, agent_id, AgentRole.BOSS, parent_task)
+        limits = self._limits_context(execution_context)
         tool = self.default_tool
-        cve_ctx = cve_instance.to_template_context() if cve_instance else {}
 
-        # SEC-bench mode: use streamlined boss prompt
-        if cve_instance:
-            return (
-                self.chain()
-                .render("core/roles/boss.j2", default_tool=tool)
-                .with_cve_context(cve_instance)
-                .render("secbench/boss.j2", **cve_ctx, default_tool=tool)
-                .build()
-            )
-
-        # General mode: layered composition
         return (
             self.chain()
             .render("core/roles/boss.j2", default_tool=tool)
             .with_security("boss_overlay.j2", default_tool=tool)
-            .render("core/strategies/decomposition.j2", default_tool=tool)
+            .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
             .render("core/context/task.j2", **ctx, registered_tasks=registered_tasks)
-            .render("core/output/subtasks.j2", default_tool=tool)
+            .render("core/output/subtasks.j2", default_tool=tool, **limits)
             .build()
         )
-
-    def build_auto_prompt(
-        self,
-        task_description: str,
-        agent_id: UUID,
-        agent_role: AgentRole,
-        parent_task: str | None = None,
-        cve_instance: CVEInstance | None = None,
-        registered_tasks: list[RegisteredTask] | None = None,
-        parent_context: ParentContext | None = None,
-    ) -> str:
-        """Automatically select appropriate prompt based on agent role.
-
-        Args:
-            task_description: The task to process.
-            agent_id: Current agent's ID.
-            agent_role: Agent role (BOSS, MANAGER, or other).
-            parent_task: Parent task description.
-            cve_instance: SEC-bench CVE instance for benchmark runs.
-            registered_tasks: List of already-registered tasks (for dedup hint).
-            parent_context: Parent context for branch detection.
-        """
-        match agent_role:
-            case AgentRole.BOSS:
-                return self.build_boss_delegation_prompt(
-                    task_description,
-                    agent_id,
-                    parent_task,
-                    cve_instance,
-                    registered_tasks,
-                )
-            case AgentRole.MANAGER:
-                return self.build_manager_decomposition_prompt(
-                    task_description,
-                    agent_id,
-                    agent_role,
-                    parent_task,
-                    registered_tasks,
-                    cve_instance,
-                    parent_context,
-                )
-            case _:
-                return self.build_complexity_evaluation_prompt(
-                    task_description, agent_id, parent_task
-                )
 
     def build_worker_prompt(
         self,
@@ -341,27 +345,27 @@ class PromptBuilder:
             task_description: The task to execute.
             sibling_context: Context from sibling workers (completed tasks).
             workspace_context: Files in the workspace.
-            cve_instance: SEC-bench CVE instance for benchmark runs.
-            parent_context: Parent context for branch detection.
+            cve_instance: CVE instance for benchmark runs.
+            parent_context: Parent context for hierarchy info.
         """
-        # Pre-compute context dicts for chaining
+        # Try strategy first (for SEC-bench or other specialized prompts)
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=UUID("00000000-0000-0000-0000-000000000000"),  # Worker doesn't need ID
+            agent_role=AgentRole.WORKER,
+            default_tool=self.default_tool,
+            cve_instance=cve_instance,
+            parent_context=parent_context,
+            sibling_context=sibling_context,
+            workspace_context=workspace_context,
+        )
+        custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
+        if custom_prompt is not None:
+            return custom_prompt
+
+        # Default generic prompt
         sibling_ctx = sibling_context.to_template_dict() if sibling_context else {}
-        cve_ctx = cve_instance.to_template_context() if cve_instance else {}
-        branch = _detect_benchmark_branch(parent_context) if cve_instance else None
 
-        # SEC-bench mode: use streamlined worker prompts
-        if branch:
-            return (
-                self.chain()
-                .render_if(sibling_context, "core/context/sibling.j2", **sibling_ctx)
-                .with_cve_context(cve_instance)
-                .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
-                .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
-                .render_if(branch == "fixer", "secbench/worker/fixer.j2", **cve_ctx)
-                .build()
-            )
-
-        # General mode: layered composition
         return (
             self.chain()
             .render_if(sibling_context, "core/context/sibling.j2", **sibling_ctx)

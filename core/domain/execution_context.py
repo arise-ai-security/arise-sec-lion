@@ -39,6 +39,8 @@ class ExecutionContext:
     max_children_per_node: int  # -1 = unlimited
     max_retries: int
     root_id: UUID  # Reference to SharedExecutionContext
+    max_total_agents: int = -1  # -1 = unlimited, global limit across hierarchy
+    current_total_agents: int = 0  # Snapshot of total agents created so far
     cve_instance: CVEInstance | None = None  # SEC-bench CVE context
 
     def for_child(self) -> ExecutionContext:
@@ -52,6 +54,32 @@ class ExecutionContext:
     def is_children_limited(self) -> bool:
         """Check if children-per-node limit is enabled."""
         return self.max_children_per_node > 0
+
+    def is_total_agents_limited(self) -> bool:
+        """Check if total agents limit is enabled."""
+        return self.max_total_agents > 0
+
+    def agents_remaining(self) -> int:
+        """Return how many more agents can be created.
+
+        Returns -1 if total agents is unlimited.
+        """
+        if not self.is_total_agents_limited():
+            return -1
+        return max(0, self.max_total_agents - self.current_total_agents)
+
+    def with_agent_counts(
+        self, current_total: int, max_total: int
+    ) -> ExecutionContext:
+        """Create new context with updated agent counts.
+
+        Used to refresh agent count snapshot before each agent step.
+        """
+        return replace(
+            self,
+            current_total_agents=current_total,
+            max_total_agents=max_total,
+        )
 
     def can_spawn_child(self) -> bool:
         """Check if current depth allows spawning children.
@@ -88,6 +116,7 @@ class ExecutionContext:
         max_depth: int,
         max_children_per_node: int,
         max_retries: int,
+        max_total_agents: int = -1,
         cve_instance: CVEInstance | None = None,
     ) -> ExecutionContext:
         """Create context for root (BOSS) agent.
@@ -97,6 +126,7 @@ class ExecutionContext:
             max_depth: Maximum hierarchy depth (-1 = unlimited)
             max_children_per_node: Max children per parent (-1 = unlimited)
             max_retries: Max retry attempts
+            max_total_agents: Max total agents in hierarchy (-1 = unlimited)
             cve_instance: Optional SEC-bench CVE instance for benchmark runs
         """
         return cls(
@@ -105,5 +135,7 @@ class ExecutionContext:
             max_children_per_node=max_children_per_node,
             max_retries=max_retries,
             root_id=root_id,
+            max_total_agents=max_total_agents,
+            current_total_agents=1,  # Root agent counts as 1
             cve_instance=cve_instance,
         )
