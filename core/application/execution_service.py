@@ -547,17 +547,25 @@ class AgentExecutionService:
             return
 
         try:
+            # First, try direct extraction if task_description contains structured JSON
+            direct_data = self._try_direct_json_extraction(task_description)
+
             # Build the extraction prompt
             prompt = self.prompt_builder.build_source_context_extraction_prompt(
                 task_description=task_description,
             )
 
             # Query LLM to extract key information
-            llm_config = {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 1500}
+            # Use higher max_tokens to accommodate large outputs (dockerfile, build scripts, etc.)
+            llm_config = {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 4000}
             response = await self.llm_port.query(prompt, llm_config)
 
             # Parse the JSON response
             source_data = self._parse_source_context_response(response)
+
+            # Merge direct extraction data if LLM extraction is incomplete
+            if direct_data is not None:
+                source_data = self._merge_source_context(source_data, direct_data)
 
             # Only publish if we found meaningful content
             if not self._has_meaningful_source_context(source_data):
@@ -607,6 +615,175 @@ class AgentExecutionService:
             # Don't fail Boss creation if context extraction fails
             print(f"   ⚠️  Source context extraction failed: {e}")
 
+    def _try_direct_json_extraction(self, task_description: str):
+        """Try to extract source context directly from structured JSON in task description.
+
+        If the task description contains a JSON blob with fields like 'data.dockerfile',
+        'data.build_sh', etc., extract them directly without LLM interpretation.
+
+        Args:
+            task_description: The original task description.
+
+        Returns:
+            SourceContextData if structured data found, None otherwise.
+        """
+        import json
+        import re
+
+        from core.domain.context_entry import SourceContextData
+
+        # Try to find and parse JSON in the task description
+        json_match = re.search(r"\{[\s\S]*\}", task_description)
+        if not json_match:
+            return None
+
+        try:
+            data = json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+        # Check if this is a security benchmark format with 'data' field
+        inner = data.get("data", data)
+        if not isinstance(inner, dict):
+            return None
+
+        # Extract instance_id to get CVE ID
+        instance_id = inner.get("instance_id", "")
+        cve_match = re.search(r"(cve-\d{4}-\d+)", instance_id, re.IGNORECASE)
+        cve_id = cve_match.group(1).upper().replace("CVE-", "CVE-") if cve_match else ""
+
+        # Extract file paths from various fields
+        file_paths = []
+        work_dir = inner.get("work_dir", "")
+        if work_dir:
+            file_paths.append(work_dir)
+
+        # Extract URLs
+        urls = []
+        repo = inner.get("repo", "")
+        if repo:
+            urls.append(f"https://github.com/{repo}")
+
+        # Extract commit references
+        commit_refs = []
+        base_commit = inner.get("base_commit", "")
+        if base_commit:
+            commit_refs.append(base_commit)
+
+        # Extract error messages from sanitizer_report
+        error_messages = []
+        sanitizer_report = inner.get("sanitizer_report", "")
+        if sanitizer_report:
+            # Extract key lines from sanitizer report
+            lines = sanitizer_report.split("\n")
+            for line in lines[:20]:  # First 20 lines
+                if "ERROR:" in line or "SUMMARY:" in line or "#" in line:
+                    error_messages.append(line.strip())
+
+        # Infer CWE from bug description and sanitizer report
+        inferred_cwes = []
+        cwe_reasoning = {}
+        bug_desc = inner.get("bug_description", "")
+        combined_text = f"{bug_desc} {sanitizer_report}".lower()
+
+        if "segv" in combined_text and "0x000000000000" in combined_text:
+            inferred_cwes.append("CWE-476")
+            cwe_reasoning["CWE-476"] = "SEGV on address 0x0 indicates NULL pointer dereference"
+        if "heap-buffer-overflow" in combined_text:
+            inferred_cwes.append("CWE-787")
+            cwe_reasoning["CWE-787"] = "Heap buffer overflow detected by AddressSanitizer"
+        if "use-after-free" in combined_text:
+            inferred_cwes.append("CWE-416")
+            cwe_reasoning["CWE-416"] = "Use-after-free detected by AddressSanitizer"
+        if "double-free" in combined_text:
+            inferred_cwes.append("CWE-415")
+            cwe_reasoning["CWE-415"] = "Double-free detected by AddressSanitizer"
+
+        # Extract PoC command from secb_sh if present
+        poc_command = ""
+        secb_sh = inner.get("secb_sh", "")
+        if secb_sh:
+            # Look for the repro function content
+            repro_match = re.search(r"repro\(\)\s*\{([^}]+)\}", secb_sh, re.DOTALL)
+            if repro_match:
+                repro_content = repro_match.group(1)
+                # Find the command line (line not starting with echo or #)
+                for line in repro_content.split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("echo") and not line.startswith("#"):
+                        poc_command = line
+                        break
+
+        print(f"   ℹ️  Direct extraction: CVE={cve_id}, CWEs={inferred_cwes}, dockerfile={'yes' if inner.get('dockerfile') else 'no'}")
+
+        return SourceContextData(
+            bug_summary=inner.get("bug_description", ""),
+            error_messages=error_messages,
+            file_paths=file_paths,
+            commit_references=commit_refs,
+            urls=urls,
+            dockerfile=inner.get("dockerfile", ""),
+            build_script=inner.get("build_sh", ""),
+            work_dir=work_dir,
+            poc_command=poc_command,
+            sanitizer=inner.get("sanitizer", ""),
+            cve_id=cve_id,
+            repo_url=f"https://github.com/{repo}" if repo else "",
+            inferred_cwes=inferred_cwes,
+            cwe_reasoning=cwe_reasoning,
+            key_facts=[
+                f"Project: {inner.get('project_name', '')}",
+                f"Language: {inner.get('lang', '')}",
+            ],
+        )
+
+    def _merge_source_context(self, llm_data, direct_data):
+        """Merge LLM-extracted data with directly extracted data.
+
+        Direct extraction takes precedence for structured fields (dockerfile, build_script, etc.)
+        LLM extraction takes precedence for inferred/analyzed fields (bug_summary, CWE reasoning).
+
+        Args:
+            llm_data: SourceContextData from LLM extraction.
+            direct_data: SourceContextData from direct JSON extraction.
+
+        Returns:
+            Merged SourceContextData.
+        """
+        from core.domain.context_entry import SourceContextData
+
+        # For structured fields, prefer direct extraction (more reliable)
+        # For inferred fields, prefer LLM extraction (more intelligent)
+        return SourceContextData(
+            # LLM is better at summarizing
+            bug_summary=llm_data.bug_summary or direct_data.bug_summary,
+            # Merge error messages
+            error_messages=llm_data.error_messages or direct_data.error_messages,
+            reproduction_steps=llm_data.reproduction_steps or direct_data.reproduction_steps,
+            # Merge and deduplicate paths
+            file_paths=list(set(llm_data.file_paths + direct_data.file_paths)),
+            commit_references=list(set(llm_data.commit_references + direct_data.commit_references)),
+            urls=list(set(llm_data.urls + direct_data.urls)),
+            environment=llm_data.environment or direct_data.environment,
+            dependencies=llm_data.dependencies or direct_data.dependencies,
+            key_facts=list(set(llm_data.key_facts + direct_data.key_facts)),
+            # Direct extraction is more reliable for structured fields
+            dockerfile=direct_data.dockerfile or llm_data.dockerfile,
+            build_script=direct_data.build_script or llm_data.build_script,
+            work_dir=direct_data.work_dir or llm_data.work_dir,
+            poc_command=direct_data.poc_command or llm_data.poc_command,
+            sanitizer=direct_data.sanitizer or llm_data.sanitizer,
+            cve_id=direct_data.cve_id or llm_data.cve_id,
+            repo_url=direct_data.repo_url or llm_data.repo_url,
+            # Merge CWE inferences (direct + LLM)
+            inferred_cwes=list(set(llm_data.inferred_cwes + direct_data.inferred_cwes)),
+            cwe_reasoning={**direct_data.cwe_reasoning, **llm_data.cwe_reasoning},
+            cwe_confidence=llm_data.cwe_confidence or direct_data.cwe_confidence,
+            recommended_sanitizers=llm_data.recommended_sanitizers or direct_data.recommended_sanitizers,
+            fix_patterns={**direct_data.fix_patterns, **llm_data.fix_patterns},
+            original_prompt=llm_data.original_prompt or direct_data.original_prompt,
+        )
+
     def _parse_source_context_response(self, response: str):
         """Parse LLM response to extract SourceContextData."""
         import json
@@ -624,7 +801,9 @@ class AgentExecutionService:
             if json_match:
                 json_str = json_match.group(0)
             else:
-                return SourceContextData()
+                print(f"   ⚠️  No JSON found in LLM response (len={len(response)})")
+                # Fallback: create minimal context with raw response
+                return self._create_fallback_source_context(response)
 
         try:
             data = json.loads(json_str)
@@ -654,8 +833,107 @@ class AgentExecutionService:
                 fix_patterns=data.get("fix_patterns", {}),
                 original_prompt=response[:5000],  # Preserve original for reference
             )
-        except json.JSONDecodeError:
-            return SourceContextData()
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️  JSON parse error in source context: {e}")
+            # Fallback: try to extract basic info from truncated/malformed JSON
+            return self._create_fallback_source_context(response, json_str)
+
+    def _create_fallback_source_context(self, response: str, partial_json: str = ""):
+        """Create fallback SourceContextData by extracting patterns from raw text.
+
+        Called when JSON parsing fails. Uses regex to extract key information
+        from the original task or partial LLM response.
+
+        Args:
+            response: The full LLM response.
+            partial_json: The partial/malformed JSON string if available.
+        """
+        import re
+
+        from core.domain.context_entry import SourceContextData
+
+        # Extract patterns using regex from response or partial JSON
+        text = partial_json or response
+
+        # Extract CVE ID (e.g., CVE-2024-50665)
+        cve_match = re.search(r"(CVE-\d{4}-\d+)", text, re.IGNORECASE)
+        cve_id = cve_match.group(1).upper() if cve_match else ""
+
+        # Extract CWE patterns (e.g., CWE-476, CWE-787)
+        cwe_matches = re.findall(r"(CWE-\d+)", text, re.IGNORECASE)
+        inferred_cwes = list(set(cwe.upper() for cwe in cwe_matches))
+
+        # Extract file paths (e.g., /src/file.c, src/component.ts)
+        file_patterns = re.findall(r'["\']?(/[\w/.-]+\.\w+)["\']?', text)
+        file_paths = list(set(file_patterns[:10]))  # Limit to 10
+
+        # Extract URLs
+        url_matches = re.findall(r'https?://[^\s"\'<>]+', text)
+        urls = list(set(url_matches[:5]))  # Limit to 5
+
+        # Extract commit hashes (7-40 hex chars)
+        commit_matches = re.findall(r'\b([a-f0-9]{7,40})\b', text.lower())
+        commit_refs = list(set(commit_matches[:5]))  # Limit to 5
+
+        # Try to extract dockerfile content
+        dockerfile = ""
+        dockerfile_match = re.search(
+            r'"dockerfile"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', text
+        )
+        if dockerfile_match:
+            dockerfile = dockerfile_match.group(1).replace("\\n", "\n")
+
+        # Try to extract build_script content
+        build_script = ""
+        build_match = re.search(
+            r'"build_script"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', text
+        )
+        if build_match:
+            build_script = build_match.group(1).replace("\\n", "\n")
+
+        # Try to extract work_dir
+        work_dir = ""
+        workdir_match = re.search(r'"work_dir"\s*:\s*"([^"]+)"', text)
+        if workdir_match:
+            work_dir = workdir_match.group(1)
+
+        # Try to extract sanitizer
+        sanitizer = ""
+        sanitizer_match = re.search(r'"sanitizer"\s*:\s*"([^"]+)"', text)
+        if sanitizer_match:
+            sanitizer = sanitizer_match.group(1)
+
+        # Try to extract bug_summary
+        bug_summary = ""
+        summary_match = re.search(r'"bug_summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', text)
+        if summary_match:
+            bug_summary = summary_match.group(1).replace("\\n", " ")[:500]
+
+        # Build key_facts from what we extracted
+        key_facts = []
+        if cve_id:
+            key_facts.append(f"CVE: {cve_id}")
+        if inferred_cwes:
+            key_facts.append(f"CWE patterns: {', '.join(inferred_cwes)}")
+        if not key_facts:
+            key_facts.append("Fallback extraction due to JSON parse error")
+
+        print(f"   ℹ️  Fallback extracted: CVE={cve_id}, CWEs={inferred_cwes}, files={len(file_paths)}")
+
+        return SourceContextData(
+            bug_summary=bug_summary,
+            file_paths=file_paths,
+            commit_references=commit_refs,
+            urls=urls,
+            cve_id=cve_id,
+            inferred_cwes=inferred_cwes,
+            dockerfile=dockerfile,
+            build_script=build_script,
+            work_dir=work_dir,
+            sanitizer=sanitizer,
+            key_facts=key_facts,
+            original_prompt=response[:5000],
+        )
 
     def _has_meaningful_source_context(self, data) -> bool:
         """Check if the extracted source context has meaningful content.
