@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import Settings
@@ -122,6 +123,15 @@ def create_app(
 
     # Serve static files if directory provided (production build)
     if static_dir and static_dir.exists():
+        index_path = static_dir / "index.html"
+
+        # Explicit route for root path to serve SPA
+        @app.get("/", include_in_schema=False)
+        async def serve_spa_root() -> FileResponse:
+            """Serve the SPA index.html at root."""
+            return FileResponse(index_path)
+
+        # Mount static files for assets
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
     return app

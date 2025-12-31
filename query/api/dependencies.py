@@ -4,7 +4,7 @@ This module provides dependency functions for injecting services into routes.
 Uses segregated interfaces (ISP) - read-only endpoints depend on EventStoreReadPort.
 """
 
-from typing import Annotated
+from typing import Annotated, TypeAlias
 
 from fastapi import Depends, Request
 
@@ -40,5 +40,5 @@ def get_execution_service(request: Request) -> AgentExecutionService:
 
 # Type aliases for cleaner route signatures
 # Query API uses read-only port (ISP - Interface Segregation Principle)
-type EventStoreDep = Annotated[EventStoreReadPort, Depends(get_event_store)]
-type ExecutionServiceDep = Annotated[AgentExecutionService, Depends(get_execution_service)]
+EventStoreDep: TypeAlias = Annotated[EventStoreReadPort, Depends(get_event_store)]
+ExecutionServiceDep: TypeAlias = Annotated[AgentExecutionService, Depends(get_execution_service)]
