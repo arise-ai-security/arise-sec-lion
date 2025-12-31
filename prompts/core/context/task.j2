@@ -4,27 +4,7 @@ Agent Role: {{ agent_role }}
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
-{% if justification and justification.has_content() %}
-<SUPERVISOR_EXPECTATIONS>
-Your supervisor has assigned you this decomposition task with the following context:
-
-**Supervisor's Original Task**: {{ justification.parent_task }}
-
-**Objective for This Subtask**: {{ justification.objective }}
-
-**Why This Task Was Delegated to You**: {{ justification.split_reason }}
-
-**Suggested Approach**: {{ justification.plan }}
-
-**Why This Approach Should Work**: {{ justification.why_it_may_work }}
-
-**Expected Deliverables**: {{ justification.expected_results }}
-
-IMPORTANT: Your work and all subtasks you create must align with the supervisor's original task requirements. If the original task specifies a programming language, framework, or technology, you MUST ensure your subtasks use it.
-
-When decomposing your task into subtasks, ensure your subtasks collectively achieve these expected results. Your decomposition should align with the supervisor's plan and objective.
-</SUPERVISOR_EXPECTATIONS>
-{% elif parent_context %}
+{% if parent_context %}
 <PARENT_CONTEXT>
 Parent Task: {{ parent_context.parent_task }}
 Parent Role: {{ parent_context.parent_role }}

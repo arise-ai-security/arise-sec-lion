@@ -1,218 +1,63 @@
 <OUTPUT_FORMAT>
 
-Return ONLY valid JSON matching this exact schema:
-
-[
-  {
-    "description": "string (min 10 chars, max 500 chars)",
-    "justification": {
-      "parent_task": "string - the task you received that you are decomposing",
-      "split_reason": "string - why you are splitting this specific subtask from the parent",
-      "objective": "string - what this subtask aims to achieve",
-      "plan": "string - how this subtask will be executed",
-      "why_it_may_work": "string - reasoning for why this approach should succeed",
-      "expected_results": "string - what outputs/outcomes are expected"
-    },
-    "config": {
-      "strategy": "per_operation" | "heuristic" | "hybrid",
-      "tool": "{{ default_tool }}",
-      ... (strategy-specific fields, see below)
-    }
-  },
-  ... (2-3 subtasks total)
-]
-
-## Justification Guidelines
-
-Each subtask MUST include a justification object explaining your reasoning:
-- **parent_task**: Quote or summarize the task you received that you're decomposing
-- **split_reason**: Explain why this piece needs to be a separate subtask (e.g., different skills, dependency order, parallel execution)
-- **objective**: Clear statement of what success looks like for this subtask
-- **plan**: Step-by-step approach the worker will take
-- **why_it_may_work**: Your reasoning/hypothesis for why this approach is viable
-- **expected_results**: Concrete deliverables or outcomes
-
-## Config Schema by Strategy
-
-### per_operation:
-{
-  "strategy": "per_operation",
-  "complexity_evaluation": {
-    "model": "string",
-    "temperature": number (0.0-2.0),
-    "max_tokens": number (1-100000),
-    "top_p": number (0.0-1.0) | null  # optional
-  },
-  "task_decomposition": {
-    "model": "string",
-    "temperature": number (0.0-2.0),
-    "max_tokens": number (1-100000),
-    "top_p": number (0.0-1.0) | null  # optional
-  },
-  "tool": "{{ default_tool }}"
-}
-
-### heuristic:
-{
-  "strategy": "heuristic",
-  "base": {
-    "model": "string",
-    "temperature": number (0.0-2.0),
-    "max_tokens": number (1-100000),
-    "top_p": number (0.0-1.0) | null  # optional
-  },
-  "tool": "{{ default_tool }}"
-}
-
-### hybrid:
-{
-  "strategy": "hybrid",
-  "base": {
-    "model": "string",
-    "temperature": number (0.0-2.0),
-    "max_tokens": number (1-100000),
-    "top_p": number (0.0-1.0) | null  # optional
-  },
-  "overrides": {
-    "complexity_evaluation": {  # optional
-      "model": "string" | null,  # optional override
-      "temperature": number | null,  # optional override
-      "max_tokens": number | null,  # optional override
-      "top_p": number | null  # optional override
-    },
-    "task_decomposition": {  # optional
-      # same as above
-    }
-  },
-  "tool": "{{ default_tool }}"
-}
-
-**CRITICAL RULES**:
-1. Response must be PURE JSON array (no markdown, no commentary)
-{% if max_subtasks %}
-2. Array must contain **at most {{ max_subtasks }} subtasks** (HARD LIMIT - violation will fail the agent)
-{% else %}
-2. Determine the optimal number of subtasks based on task complexity (no arbitrary limit)
-{% endif %}
-{% if agents_remaining is not none and agents_remaining >= 0 %}
-3. Array must contain **at most {{ agents_remaining }} subtasks** (agent capacity limit - violation will fail the agent)
-{% endif %}
-{% if at_max_depth %}
-3. **YOU ARE AT MAX DEPTH**: Each subtask MUST be simple and directly executable by a single worker. Do NOT create tasks that need further decomposition.
-{% elif depth_remaining is not none and depth_remaining <= 1 %}
-3. **NEAR MAX DEPTH ({{ depth_remaining }} level(s) remaining)**: Prefer simpler, worker-executable subtasks that don't require further breakdown.
-{% else %}
-3. Each subtask MUST have "description", "justification", and "config" fields
-{% endif %}
-4. Justification MUST include all 6 fields: parent_task, split_reason, objective, plan, why_it_may_work, expected_results
-5. Config MUST include "strategy" and "tool" fields
-6. All required fields for chosen strategy must be present
-7. Temperature: 0.0-2.0, max_tokens: 1-100000
-8. Model names: "o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-20241022", "claude-sonnet-4-20250514", etc.
-{% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
-
-## Constraint Violation Handling
-
-If you CANNOT satisfy the constraints (e.g., task is too complex to fit in {% if max_subtasks %}{{ max_subtasks }}{% elif agents_remaining is not none and agents_remaining >= 0 %}{{ agents_remaining }}{% else %}the allowed number of{% endif %} atomic subtasks), respond with:
+Return ONLY valid JSON array:
 
 ```json
-{
-  "status": "constraints_unsatisfiable",
-  "reason": "Explain why the task cannot be decomposed within constraints",
-  "minimum_required": {
-    "subtasks": <number of subtasks actually needed>,
-    "depth_levels": <additional depth levels needed, or 0 if current depth is sufficient>
-  }
-}
-```
-
-This is preferable to creating subtasks that will fail.
-{% endif %}
-
-**Example Valid Output (per_operation)**:
 [
   {
-    "description": "Research existing authentication libraries and select the most suitable one for our use case",
+    "description": "string (10-500 chars)",
     "justification": {
-      "parent_task": "Implement user authentication system for web application",
-      "split_reason": "Research must be completed before implementation to select optimal library",
-      "objective": "Identify and recommend the best authentication library based on security, ease of use, and maintenance",
-      "plan": "1. Review popular auth libraries (Passport, Auth0, Firebase Auth) 2. Compare security features 3. Evaluate documentation quality 4. Make recommendation",
-      "why_it_may_work": "Thorough research prevents costly rewrites later and ensures we choose a well-maintained solution",
-      "expected_results": "A detailed comparison document with clear recommendation and rationale"
-    },
-    "config": {
-      "strategy": "per_operation",
-      "complexity_evaluation": {
-        "model": "gpt-4o-mini",
-        "temperature": 0.3,
-        "max_tokens": 300
-      },
-      "task_decomposition": {
-        "model": "gpt-4o",
-        "temperature": 0.7,
-        "max_tokens": 1500
-      },
-      "tool": "{{ default_tool }}"
-    }
-  },
-  {
-    "description": "Implement user registration with email verification and password hashing",
-    "justification": {
-      "parent_task": "Implement user authentication system for web application",
-      "split_reason": "Registration is a self-contained feature that can be developed and tested independently",
-      "objective": "Create secure user registration flow with email verification",
-      "plan": "1. Create registration endpoint 2. Implement password hashing with bcrypt 3. Add email verification token generation 4. Build verification endpoint",
-      "why_it_may_work": "Using industry-standard bcrypt for hashing and time-limited tokens for verification follows security best practices",
-      "expected_results": "Working registration API with tests, email verification flow, and secure password storage"
+      "objective": "what this subtask achieves",
+      "plan": "how it will be executed"
     },
     "config": {
       "strategy": "heuristic",
-      "base": {
-        "model": "gpt-4o",
-        "temperature": 0.6,
-        "max_tokens": 1000
-      },
+      "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
       "tool": "{{ default_tool }}"
     }
   }
 ]
-
-**Invalid Outputs** (DO NOT DO THIS):
-
-❌ Markdown code blocks:
-```json
-[...]
 ```
-{% if max_subtasks %}
 
-❌ Too many subtasks (exceeds {{ max_subtasks }}):
-[
-  {...}, {...}, {...}, ...  # More than {{ max_subtasks }} items
-]
+## Config Strategies
+
+| Strategy | Schema |
+|----------|--------|
+| **heuristic** | `{"strategy": "heuristic", "base": {model, temperature, max_tokens}, "tool": "..."}` |
+| **per_operation** | `{"strategy": "per_operation", "complexity_evaluation": {...}, "task_decomposition": {...}, "tool": "..."}` |
+| **hybrid** | `{"strategy": "hybrid", "base": {...}, "overrides": {...}, "tool": "..."}` |
+
+## Rules
+
+1. Pure JSON array only (no markdown, no commentary)
+2. 2-3 subtasks optimal
+{% if max_subtasks %}
+3. **HARD LIMIT**: Maximum {{ max_subtasks }} subtasks
+{% endif %}
+{% if agents_remaining is not none and agents_remaining >= 0 %}
+4. **AGENT LIMIT**: Maximum {{ agents_remaining }} subtasks (remaining capacity)
 {% endif %}
 {% if at_max_depth %}
-
-❌ Complex subtasks requiring further decomposition (you are at max depth!):
-[
-  {"description": "Implement entire authentication system", ...}  # Too complex for a single worker!
-]
+5. **MAX DEPTH**: Each subtask MUST be atomic and worker-executable
+{% elif depth_remaining is not none and depth_remaining <= 1 %}
+5. **NEAR MAX DEPTH**: Prefer simpler, worker-executable subtasks
 {% endif %}
+6. Required fields: `description`, `justification`, `config`
+7. Config must include: `strategy`, `tool`, and strategy-specific fields
+8. Temperature: 0.0-2.0 | max_tokens: 1-100000
+9. Models: gpt-4o, gpt-4o-mini, claude-3-5-sonnet-20241022, claude-sonnet-4-20250514, etc.
 
-❌ Missing required fields:
-[
-  {
-    "description": "Do something",
-    "config": {
-      "strategy": "heuristic"
-      # Missing "base" and "tool"!
-    }
-  }
-]
+{% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
+## Constraint Violation
 
-❌ Invalid temperature:
+If constraints cannot be satisfied, respond with:
+```json
 {
-  "temperature": 5.0  # Must be 0.0-2.0
+  "status": "constraints_unsatisfiable",
+  "reason": "explanation",
+  "minimum_required": {"subtasks": N, "depth_levels": N}
 }
+```
+{% endif %}
 
 </OUTPUT_FORMAT>
