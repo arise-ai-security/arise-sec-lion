@@ -561,8 +561,7 @@ class AgentExecutionService:
 
             # Only publish if we found meaningful content
             if not self._has_meaningful_source_context(source_data):
-                import logging
-                logging.getLogger(__name__).info("Source context extraction skipped: no meaningful content found")
+                print("   ⚠️  Source context extraction skipped: no meaningful content found")
                 return
 
             # Generate a title for this source context
@@ -603,8 +602,7 @@ class AgentExecutionService:
 
         except Exception as e:
             # Don't fail Boss creation if context extraction fails
-            import logging
-            logging.getLogger(__name__).warning(f"Source context extraction failed: {e}", exc_info=True)
+            print(f"   ⚠️  Source context extraction failed: {e}")
 
     def _parse_source_context_response(self, response: str):
         """Parse LLM response to extract SourceContextData."""

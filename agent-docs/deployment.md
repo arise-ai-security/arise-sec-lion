@@ -5,7 +5,7 @@
 ```bash
 cd deployment
 cp .env.example .env     # Add your API keys
-docker compose up -d     # Start everything
+docker compose up -d     # Start everything, if only changes are made in code not Dockerfile, pyproject.toml, or docker-compose.yml
 
 # Run a task
 docker compose exec app python main.py run "Your task"
