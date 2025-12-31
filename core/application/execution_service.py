@@ -600,6 +600,9 @@ class AgentExecutionService:
                 fix_patterns=source_data.fix_patterns,
             )
 
+            # Show extraction success
+            print(f"   ✓ Source context extracted: {work_title[:60]}...")
+
         except Exception as e:
             # Don't fail Boss creation if context extraction fails
             print(f"   ⚠️  Source context extraction failed: {e}")
