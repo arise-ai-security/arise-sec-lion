@@ -10,7 +10,7 @@ llm:
 worker:
   tool_type: openhands
   tool_model: openai/o3-mini
-  tool_timeout: 300
+  tool_timeout: 400
 
 orchestration:
   max_retries: 3
