@@ -95,15 +95,15 @@ This document traces the complete execution path when running a task through the
 │  decomposition_pipeline steps:        │   │  worker_pipeline steps:           │
 │                                       │   │                                   │
 │  1. ValidateDecomposingAgent          │   │  1. ValidateWorkerAgent           │
-│  2. ExtractHierarchyLimits            │   │  2. StartWorkerExecution          │
-│  3. BuildDecompositionPrompt          │   │  3. BuildWorkerPrompt             │
-│  4. EmitPromptSent                    │   │  4. EmitPromptSent                │
-│  5. QueryLLM                          │   │  5. RunWorkerSession              │
-│  6. EmitTokensConsumed                │   │     • ClaudeCodePTYAdapter: spawn │
-│  7. ParseSubtasks                     │   │       claude CLI in PTY           │
-│  8. CheckLimitViolations (hard)       │   │     • OpenHandsAdapter: API call  │
-│  9. DetermineChildRole (soft)         │   │                                   │
-│  10. SpawnChildren                    │   │  Events Emitted:                  │
+│  2. BuildDecompositionPrompt          │   │  2. StartWorkerExecution          │
+│  3. EmitPromptSent                    │   │  3. BuildWorkerPrompt             │
+│  4. QueryLLM                          │   │  4. EmitPromptSent                │
+│  5. EmitTokensConsumed                │   │  5. RunWorkerSession              │
+│  6. ParseSubtasks                     │   │     • ClaudeCodePTYAdapter: spawn │
+│  7. CheckLimitViolations (hard)       │   │       claude CLI in PTY           │
+│  8. DetermineChildRole (soft)         │   │     • OpenHandsAdapter: API call  │
+│  9. SpawnChildren                     │   │                                   │
+│                                       │   │  Events Emitted:                  │
 │                                       │   │    • CodeGenerationStarted        │
 │  Events Emitted:                      │   │    • ThoughtCaptured (many)       │
 │    • TokensConsumed                   │   │    • WorkCompleted/WorkFailed     │

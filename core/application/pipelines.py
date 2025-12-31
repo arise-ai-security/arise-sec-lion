@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 from core.application.pipeline.executor import Pipeline
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
-    ExtractHierarchyLimits,
     SpawnChildren,
     StartWorkerExecution,
 )
@@ -37,6 +36,7 @@ from core.application.pipeline.steps.validation import (
 from core.application.pipeline.steps.worker import RunWorkerSession
 
 if TYPE_CHECKING:
+    from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
     from core.ports.worker_port import WorkerToolPort
@@ -50,7 +50,7 @@ class PipelineFactory:
     orchestration operation.
 
     Usage:
-        factory = PipelineFactory(llm_port, worker_port, prompt_builder)
+        factory = PipelineFactory(llm_port, worker_port, prompt_builder, child_factory)
         complexity_pipeline = factory.create_complexity_pipeline()
         decomposition_pipeline = factory.create_decomposition_pipeline()
         worker_pipeline = factory.create_worker_pipeline()
@@ -61,6 +61,7 @@ class PipelineFactory:
         llm_port: "LLMPort",
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
+        child_factory: "ChildAgentFactory",
     ) -> None:
         """Initialize factory with required ports.
 
@@ -68,10 +69,12 @@ class PipelineFactory:
             llm_port: Port for LLM interactions
             worker_port: Port for worker tool execution
             prompt_builder: Builder for constructing prompts
+            child_factory: Factory for child agents (source of truth for agent counts)
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
+        self._child_factory = child_factory
 
     def create_complexity_pipeline(self) -> Pipeline:
         """Create pipeline for PENDING agent complexity evaluation.
@@ -106,15 +109,14 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidateDecomposingAgent - Assert BOSS/MANAGER + ANALYZING
-        2. ExtractHierarchyLimits - Document limits extraction point
-        3. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
-        4. EmitPromptSent - Observability
-        5. QueryLLM - Call LLM port
-        6. EmitTokensConsumed - Cost tracking
-        7. ParseSubtasks - Parse JSON, handle ConstraintFailure
-        8. CheckLimitViolations - Hard enforcement (children, total_agents)
-        9. DetermineChildRole - Soft enforcement (force WORKER at max depth)
-        10. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
+        2. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
+        3. EmitPromptSent - Observability
+        4. QueryLLM - Call LLM port
+        5. EmitTokensConsumed - Cost tracking
+        6. ParseSubtasks - Parse JSON, handle ConstraintFailure
+        7. CheckLimitViolations - Hard enforcement (children, total_agents)
+        8. DetermineChildRole - Soft enforcement (force WORKER at max depth)
+        9. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
 
         Returns:
             Configured Pipeline for task decomposition
@@ -123,13 +125,12 @@ class PipelineFactory:
             name="task_decomposition",
             steps=[
                 ValidateDecomposingAgent,
-                ExtractHierarchyLimits(),
                 BuildDecompositionPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="task_decomposition", target="llm"),
                 QueryLLM(self._llm_port, operation="task_decomposition"),
                 EmitTokensConsumed(operation="task_decomposition"),
                 ParseSubtasks(),
-                CheckLimitViolations(),
+                CheckLimitViolations(self._child_factory),
                 DetermineChildRole(),
                 SpawnChildren(),
             ],

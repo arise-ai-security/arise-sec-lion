@@ -77,16 +77,3 @@ class StartWorkerExecution:
 
         return StepResult.ok(state)
 
-
-class ExtractHierarchyLimits:
-    """Extract CVE instance and other context from hierarchy limits.
-
-    This step is mostly a no-op since PipelineState delegates to
-    agent.hierarchy_limits, but it explicitly documents the extraction point.
-    """
-
-    async def execute(self, state: PipelineState) -> StepResult:
-        """Verify hierarchy limits are available."""
-        # PipelineState already delegates to agent.hierarchy_limits
-        # This step serves as documentation and potential extension point
-        return StepResult.ok(state)

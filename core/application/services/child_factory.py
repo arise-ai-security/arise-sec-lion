@@ -34,10 +34,13 @@ class ChildAgentFactory:
 
     Single Responsibility: Create child agents with proper limits propagation.
 
-    Enforces:
-    - max_total_agents limit
+    Provides:
+    - Agent count tracking (source of truth for max_total_agents enforcement)
     - Hierarchy limits propagation to children
     - Manager config defaults for PENDING children
+
+    Note: Limit enforcement is done by CheckLimitViolations pipeline step,
+    which queries this factory for real-time agent counts.
     """
 
     def __init__(
@@ -113,8 +116,8 @@ class ChildAgentFactory:
     ) -> ChildCreationResult:
         """Create a child agent from a ChildSpawned event.
 
-        Caller (create_children_from_events) is responsible for limit checking.
-        Propagates hierarchy limits and spawn payload to child.
+        Limit checking is done by CheckLimitViolations pipeline step before
+        events are emitted. Propagates hierarchy limits and spawn payload to child.
         Applies manager config defaults for PENDING children.
         """
         child_role = AgentRole(event.child_role)
@@ -153,25 +156,17 @@ class ChildAgentFactory:
         self,
         events: list[ChildSpawned],
         parent_id: UUID,
-    ) -> tuple[list[ChildCreationResult], int]:
+    ) -> list[ChildCreationResult]:
         """Create multiple child agents from ChildSpawned events.
 
+        Limit checking is done by CheckLimitViolations pipeline step before
+        this method is called. This method assumes all events are valid.
+
         Returns:
-            Tuple of (created_children, skipped_count).
-            skipped_count > 0 indicates LLM violated max_total_agents limit.
+            List of created children.
         """
         results: list[ChildCreationResult] = []
-        skipped = 0
         for event in events:
-            if self.is_at_agent_limit():
-                skipped += 1
-                logger.warning(
-                    "Max total agents limit reached: %d/%d, skipping child %s",
-                    self._total_created,
-                    self._max_total_agents,
-                    event.child_id,
-                )
-                continue
             result = await self.create_from_event(event, parent_id)
             results.append(result)
-        return results, skipped
+        return results

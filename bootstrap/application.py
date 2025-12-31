@@ -80,6 +80,7 @@ def get_application(
         llm_port=infrastructure.llm_adapter,
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
+        child_factory=child_factory,
     )
 
     # Create sibling view builder (implements SiblingViewPort)

@@ -119,6 +119,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, limits_
         llm_port=mock_llm_port,
         worker_port=mock_worker_port,
         prompt_builder=prompt_builder,
+        child_factory=child_factory,
     )
 
     # Mock sibling view to return empty view

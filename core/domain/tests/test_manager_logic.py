@@ -104,16 +104,34 @@ class FakeWorkerTool(WorkerToolPort):
         yield  # Make this an async generator
 
 
+class FakeChildAgentFactory:
+    """Fake child factory for testing (tracks agent counts)."""
+
+    def __init__(self, max_total_agents: int = -1) -> None:
+        self._total_created = 1  # Start with 1 (root agent)
+        self._max_total_agents = max_total_agents
+
+    @property
+    def total_created(self) -> int:
+        return self._total_created
+
+    @property
+    def max_total_agents(self) -> int:
+        return self._max_total_agents
+
+
 def _create_orchestrator(
     llm_port: LLMPort,
     worker_port: WorkerToolPort | None = None,
     prompt_builder: PromptBuilder | None = None,
+    child_factory: FakeChildAgentFactory | None = None,
 ) -> AgentOrchestrator:
     """Create an orchestrator with the given ports."""
     return AgentOrchestrator(
         llm_port=llm_port,
         worker_port=worker_port or FakeWorkerTool(),
         prompt_builder=prompt_builder or PromptBuilder("prompts", "claude_code"),
+        child_factory=child_factory or FakeChildAgentFactory(),
     )
 
 
