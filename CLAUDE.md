@@ -57,6 +57,31 @@ PENDING ────────────────────────
                      └─► spawns ──────┘ (recursive)
 ```
 
+## Limit Enforcement
+
+Three configurable limits in `config/config.yaml` → `orchestration.limits`:
+
+| Limit | Enforcement | Behavior |
+|-------|-------------|----------|
+| `max_depth` | **Soft** | At limit, children forced to WORKER role (no further decomposition) |
+| `max_children_per_node` | **Hard** | Agent fails if LLM generates more subtasks than allowed |
+| `max_total_agents` | **Hard** | Agent fails if spawning would exceed global agent budget |
+
+Limits are passed to LLM prompts. LLM can respond with `constraints_unsatisfiable` if task cannot fit.
+
+## Pipeline Architecture
+
+`AgentOrchestrator` uses composable Pipeline/Chain pattern:
+
+```
+core/application/pipeline/
+├── context.py      # PipelineContext (delegates to ExecutionContext)
+├── executor.py     # Pipeline executor (short-circuits on failure)
+└── steps/          # 17 focused steps across 9 modules
+```
+
+Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_execution`
+
 ## Documentation
 
 **Read relevant doc(s) before implementing changes. Ask if unsure.**

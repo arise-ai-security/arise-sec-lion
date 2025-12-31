@@ -78,10 +78,10 @@ This document traces the complete execution path when running a task through the
 │  run_agent_step(agent_id):                                                    │
 │    1. Load agent from event store (replay events)                            │
 │    2. Attach execution context (depth limits, child limits)                  │
-│    3. Dispatch based on role:                                                 │
-│       • PENDING → evaluate_complexity()                                       │
-│       • BOSS/MANAGER → evaluate_task()                                        │
-│       • WORKER → execute_task()                                               │
+│    3. Dispatch to AgentOrchestrator pipelines:                               │
+│       • PENDING → complexity_pipeline.execute()                              │
+│       • BOSS/MANAGER → decomposition_pipeline.execute()                      │
+│       • WORKER → worker_pipeline.execute()                                   │
 │    4. Persist new events with OCC (optimistic concurrency)                   │
 │    5. Handle post-step: spawn children, notify parent                        │
 └───────────────────────────────────────┬───────────────────────────────────────┘
@@ -92,22 +92,26 @@ This document traces the complete execution path when running a task through the
 ┌───────────────────────────────────────┐   ┌───────────────────────────────────┐
 │  6A. BOSS/MANAGER: TASK DECOMPOSITION │   │  6B. WORKER: TASK EXECUTION       │
 │  ─────────────────────────────────────│   │  ──────────────────────────────── │
-│  agent_orchestrator.evaluate_task():  │   │  agent_orchestrator.execute_task()│
+│  decomposition_pipeline steps:        │   │  worker_pipeline steps:           │
 │                                       │   │                                   │
-│  1. Build prompt from Jinja2 template │   │  1. Emit CodeGenerationStarted    │
-│  2. Call LLM (LiteLLM → OpenAI/etc)   │   │  2. Run worker tool:              │
-│  3. Emit TokensConsumed (cost track)  │   │     • ClaudeCodePTYAdapter: spawn │
-│  4. Parse subtasks from LLM response  │   │       claude CLI in PTY           │
-│  5. Enforce limits (max_children,     │   │     • OpenHandsAdapter: API call  │
-│     max_depth)                        │   │  3. Stream ThoughtCaptured events │
-│  6. agent.apply_subtasks_and_spawn_   │   │  4. Emit WorkCompleted/WorkFailed │
-│     children()                        │   │                                   │
-│                                       │   │  Events Emitted:                  │
-│  Events Emitted:                      │   │    • CodeGenerationStarted        │
-│    • TokensConsumed                   │   │    • ThoughtCaptured (many)       │
-│    • SubtasksDefined                  │   │    • WorkCompleted/WorkFailed     │
+│  1. ValidateDecomposingAgent          │   │  1. ValidateWorkerAgent           │
+│  2. ExtractExecutionContext           │   │  2. StartWorkerExecution          │
+│  3. FetchRegisteredTasks              │   │  3. BuildWorkerPrompt             │
+│  4. BuildDecompositionPrompt          │   │  4. EmitPromptSent                │
+│  5. EmitPromptSent                    │   │  5. RunWorkerSession              │
+│  6. QueryLLM                          │   │     • ClaudeCodePTYAdapter: spawn │
+│  7. EmitTokensConsumed                │   │       claude CLI in PTY           │
+│  8. ParseSubtasks                     │   │     • OpenHandsAdapter: API call  │
+│  9. DeduplicateSubtasks               │   │                                   │
+│  10. CheckLimitViolations (hard)      │   │  Events Emitted:                  │
+│  11. DetermineChildRole (soft)        │   │    • CodeGenerationStarted        │
+│  12. SpawnChildren                    │   │    • ThoughtCaptured (many)       │
+│                                       │   │    • WorkCompleted/WorkFailed     │
+│  Events Emitted:                      │   │                                   │
+│    • TokensConsumed                   │   │  Agent State: status=COMPLETED    │
+│    • SubtasksDefined                  │   │                                   │
 │    • ChildSpawned (for each subtask)  │   │                                   │
-│    • StatusChanged → WAITING          │   │  Agent State: status=COMPLETED    │
+│    • StatusChanged → WAITING          │   │                                   │
 └───────────────────────────────────────┘   └───────────────────────────────────┘
                     │
                     ▼
@@ -126,13 +130,16 @@ This document traces the complete execution path when running a task through the
                                         │
                                         ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
-│  8. PENDING AGENT: COMPLEXITY EVALUATION (agent_orchestrator.py:56)           │
+│  8. PENDING AGENT: COMPLEXITY EVALUATION (agent_orchestrator.py:76)           │
 │  ──────────────────────────────────────────────────────────────────           │
-│  evaluate_complexity(agent):                                                   │
-│    1. Build complexity prompt (Jinja2 template)                               │
-│    2. Call LLM: "Is this task simple or complex?"                            │
-│    3. Parse response: {"complexity": "simple/complex", "reasoning": "..."}   │
-│    4. agent.apply_complexity_result()                                         │
+│  complexity_pipeline steps:                                                    │
+│    1. ValidatePendingAgent                                                    │
+│    2. BuildComplexityPrompt (Jinja2 template)                                 │
+│    3. EmitPromptSent                                                          │
+│    4. QueryLLM: "Is this task simple or complex?"                            │
+│    5. EmitTokensConsumed                                                      │
+│    6. ParseComplexityResult: {"complexity": "simple/complex"}                │
+│    7. ApplyComplexityResult → agent.apply_complexity_result()                │
 │                                                                               │
 │  Events Emitted:                                                              │
 │    • TokensConsumed                                                           │
@@ -239,7 +246,9 @@ This document traces the complete execution path when running a task through the
 | Bootstrap | `bootstrap/__init__.py` | Wires all dependencies |
 | Presentation | `presentation/cli.py` | Click commands, user interaction |
 | Application | `core/application/execution_service.py` | Orchestrates agent lifecycle |
-| Application | `core/application/agent_orchestrator.py` | LLM calls, worker execution |
+| Application | `core/application/agent_orchestrator.py` | Delegates to pipelines |
+| Application | `core/application/pipelines.py` | PipelineFactory creates 3 pipelines |
+| Application | `core/application/pipeline/` | Composable step implementations |
 | Domain | `core/domain/model.py` | AgentSession aggregate, event sourcing |
 | Domain | `core/domain/events.py` | All domain events |
 | Infrastructure | `infrastructure/adapters/claude_pty_adapter.py` | Spawns Claude Code CLI |

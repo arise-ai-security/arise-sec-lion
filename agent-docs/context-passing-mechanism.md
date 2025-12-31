@@ -207,7 +207,6 @@ async def create_boss_agent(self, task_description: str) -> UUID:
     # Create shared context for this run
     shared_context = await self._shared_context_port.get_or_create(
         root_id=root_id,
-        initial_budget_usd=0.0,  # 0 = unlimited
         config={},
     )
     await self._shared_context_port.save(shared_context, expected_version=0)

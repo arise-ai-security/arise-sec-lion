@@ -61,13 +61,33 @@ Use cases and orchestration.
 | File | Purpose |
 |------|---------|
 | `execution_service.py:56` | `AgentExecutionService` - main orchestrator |
-| `agent_orchestrator.py:32` | `AgentOrchestrator` - LLM/worker calls |
+| `agent_orchestrator.py:32` | `AgentOrchestrator` - delegates to pipelines |
+| `pipelines.py` | `PipelineFactory` - creates configured pipelines |
 | `services/agent_repository.py` | Load/save agents |
 | `services/query_service.py` | Read operations (CQRS) |
 | `services/child_factory.py` | Create child agents |
 | `services/context_registry.py` | Manage execution contexts |
 | `services/sibling_context_builder.py` | Build sibling worker context |
 | `services/parent_notifier.py` | Notify parent on child completion |
+
+#### Pipeline Architecture (`core/application/pipeline/`)
+
+Composable step-based execution using Chain of Responsibility pattern.
+
+| File | Purpose |
+|------|---------|
+| `context.py` | `PipelineContext` (ephemeral transport), `StepResult` |
+| `protocol.py` | `PipelineStep` protocol |
+| `executor.py` | `Pipeline` executor (short-circuits on failure) |
+| `steps/validation.py` | Agent state validation steps |
+| `steps/prompt.py` | Prompt building steps |
+| `steps/llm.py` | `QueryLLM` step |
+| `steps/parsing.py` | LLM response parsing steps |
+| `steps/observability.py` | Event emission steps |
+| `steps/deduplication.py` | Task registry steps |
+| `steps/limits.py` | Limit enforcement steps |
+| `steps/domain.py` | Domain method invocation steps |
+| `steps/worker.py` | Worker execution steps |
 
 ### Query (`core/query/`)
 
