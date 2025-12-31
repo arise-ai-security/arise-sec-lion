@@ -561,6 +561,8 @@ class AgentExecutionService:
 
             # Only publish if we found meaningful content
             if not self._has_meaningful_source_context(source_data):
+                import logging
+                logging.getLogger(__name__).info("Source context extraction skipped: no meaningful content found")
                 return
 
             # Generate a title for this source context
