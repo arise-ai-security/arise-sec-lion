@@ -4,67 +4,56 @@ These steps validate agent state at the start of each pipeline,
 ensuring the agent is in the correct role and status before proceeding.
 """
 
-
-
 from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.values.enums import AgentRole, AgentStatus
 
 
-class ValidatePendingAgent:
-    """Validate agent is PENDING with ANALYZING status.
+class AgentRoleValidator:
+    """Parameterized validator for agent role and status.
 
-    Used at the start of the complexity evaluation pipeline.
+    Eliminates duplication across pipeline validators by accepting
+    required roles and optional additional checks as parameters.
     """
 
+    def __init__(
+        self,
+        required_roles: set[AgentRole],
+        required_status: AgentStatus = AgentStatus.ANALYZING,
+        require_task: bool = False,
+    ) -> None:
+        self._required_roles = required_roles
+        self._required_status = required_status
+        self._require_task = require_task
+
     async def execute(self, state: PipelineState) -> StepResult:
-        """Validate agent state for complexity evaluation."""
+        """Validate agent state against configured requirements."""
         agent = state.agent
 
-        if agent.role != AgentRole.PENDING:
-            return StepResult.fail(f"Requires PENDING role, got {agent.role}")
+        if agent.role not in self._required_roles:
+            roles_str = "/".join(r.name for r in self._required_roles)
+            return StepResult.fail(f"Requires {roles_str} role, got {agent.role}")
 
-        if agent.status != AgentStatus.ANALYZING:
-            return StepResult.fail(f"Requires ANALYZING status, got {agent.status}")
+        if agent.status != self._required_status:
+            return StepResult.fail(
+                f"Requires {self._required_status} status, got {agent.status}"
+            )
 
-        if not agent.task_description:
+        if self._require_task and not agent.task_description:
             return StepResult.fail("Requires assigned task")
 
         return StepResult.ok(state)
 
 
-class ValidateDecomposingAgent:
-    """Validate agent is BOSS or MANAGER with ANALYZING status.
+# Pre-configured validators
+ValidatePendingAgent = AgentRoleValidator(
+    required_roles={AgentRole.PENDING},
+    require_task=True,
+)
 
-    Used at the start of the task decomposition pipeline.
-    """
+ValidateDecomposingAgent = AgentRoleValidator(
+    required_roles={AgentRole.BOSS, AgentRole.MANAGER},
+)
 
-    async def execute(self, state: PipelineState) -> StepResult:
-        """Validate agent state for task decomposition."""
-        agent = state.agent
-
-        if agent.role not in (AgentRole.BOSS, AgentRole.MANAGER):
-            return StepResult.fail(f"Requires BOSS/MANAGER role, got {agent.role}")
-
-        if agent.status != AgentStatus.ANALYZING:
-            return StepResult.fail(f"Requires ANALYZING status, got {agent.status}")
-
-        return StepResult.ok(state)
-
-
-class ValidateWorkerAgent:
-    """Validate agent is WORKER with ANALYZING status.
-
-    Used at the start of the worker execution pipeline.
-    """
-
-    async def execute(self, state: PipelineState) -> StepResult:
-        """Validate agent state for worker execution."""
-        agent = state.agent
-
-        if agent.role != AgentRole.WORKER:
-            return StepResult.fail(f"Requires WORKER role, got {agent.role}")
-
-        if agent.status != AgentStatus.ANALYZING:
-            return StepResult.fail(f"Requires ANALYZING status, got {agent.status}")
-
-        return StepResult.ok(state)
+ValidateWorkerAgent = AgentRoleValidator(
+    required_roles={AgentRole.WORKER},
+)

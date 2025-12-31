@@ -88,24 +88,21 @@ def build_spawn_payload(
     if agent.hierarchy_limits is not None:
         depth = agent.hierarchy_limits.current_depth
 
-    # Build execution limits
+    # Build execution limits from hierarchy limits
     execution_limits: dict[str, Any] = {}
     if agent.hierarchy_limits is not None:
+        limits = agent.hierarchy_limits
         execution_limits = {
-            "depth_remaining": agent.hierarchy_limits.depth_remaining(),
-            "max_children_per_node": agent.hierarchy_limits.max_children_per_node,
-            "max_retries": agent.hierarchy_limits.max_retries,
-            "agents_remaining": agent.hierarchy_limits.agents_remaining(),
-            "max_total_agents": agent.hierarchy_limits.max_total_agents,
+            "root_id": str(limits.root_id),
+            "depth_remaining": limits.depth_remaining(),
+            "max_children_per_node": limits.max_children_per_node,
+            "max_retries": limits.max_retries,
+            "agents_remaining": limits.agents_remaining(),
+            "max_total_agents": limits.max_total_agents,
         }
-        # Add root_id if available
-        if hasattr(agent.hierarchy_limits, "root_id"):
-            execution_limits["root_id"] = str(agent.hierarchy_limits.root_id)
 
-    # Get local decisions from agent
-    local_decisions: tuple[str, ...] = ()
-    if hasattr(agent, "local_decisions"):
-        local_decisions = tuple(agent.local_decisions)
+    # Get local decisions from agent (always initialized as empty list)
+    local_decisions = tuple(agent.local_decisions)
 
     return SpawnPayload(
         parent_task=agent.task_description or "",

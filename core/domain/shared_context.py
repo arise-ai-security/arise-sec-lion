@@ -98,7 +98,7 @@ class ConfigOverride:
 
 
 # =============================================================================
-# Aggregate Protocol
+# Aggregate Protocol & Base Class
 # =============================================================================
 
 
@@ -120,15 +120,16 @@ class EventSourcedAggregate(Protocol):
         ...
 
 
-# =============================================================================
-# ArtifactStore Aggregate
-# =============================================================================
+class EventSourcedAggregateBase:
+    """Base class providing event-sourcing boilerplate for aggregates.
 
+    Eliminates duplication of version tracking, change collection, sequence
+    management, and event application across all event-sourced aggregates.
 
-class ArtifactStore:
-    """Event-sourced aggregate for artifact storage.
-
-    Stores shared outputs between agents with content type and metadata.
+    Subclasses must:
+    1. Call super().__init__(aggregate_id) in their __init__
+    2. Override _initialize_state() to set up domain-specific state
+    3. Register event handlers using @_apply.register decorator
     """
 
     def __init__(self, aggregate_id: UUID) -> None:
@@ -136,26 +137,89 @@ class ArtifactStore:
         self._version = 0
         self._changes: list[DomainEvent] = []
         self._sequence = 0
-        self._artifacts: dict[str, Artifact] = {}
+        self._initialize_state()
+
+    def _initialize_state(self) -> None:
+        """Override to initialize domain-specific state.
+
+        Called at end of __init__. Subclasses should set up their
+        domain-specific collections and fields here.
+        """
+        pass
+
+    @property
+    def aggregate_id(self) -> UUID:
+        """Aggregate identifier."""
+        return self._aggregate_id
 
     @property
     def version(self) -> int:
+        """Current version for optimistic concurrency control."""
         return self._version
 
     @property
     def events(self) -> list[DomainEvent]:
+        """Uncommitted events pending persistence."""
         return self._changes
 
     def mark_changes_as_committed(self) -> None:
+        """Clear uncommitted changes after successful persistence."""
         self._changes.clear()
 
     def _next_sequence(self) -> int:
+        """Get next sequence number for event ordering."""
         self._sequence += 1
         return self._sequence
 
     def set_sequence(self, seq: int) -> None:
         """Set sequence number (used during replay)."""
         self._sequence = max(self._sequence, seq)
+
+    def _increment_version(self) -> None:
+        """Increment version after applying an event."""
+        self._version += 1
+
+    def _emit(self, event: DomainEvent) -> DomainEvent:
+        """Apply event and record as uncommitted change.
+
+        Args:
+            event: The domain event to emit
+
+        Returns:
+            The same event (for chaining or returning to caller)
+        """
+        self._apply(event)
+        self._changes.append(event)
+        return event
+
+    @singledispatchmethod
+    def _apply(self, event: Any) -> None:
+        """Apply event to update aggregate state.
+
+        Subclasses register handlers via @_apply.register decorator.
+        """
+        raise TypeError(f"No handler for {type(event).__name__}")
+
+    def apply_event(self, event: DomainEvent) -> None:
+        """Apply event during replay (public for facade use)."""
+        self._apply(event)
+
+
+# =============================================================================
+# ArtifactStore Aggregate
+# =============================================================================
+
+
+class ArtifactStore(EventSourcedAggregateBase):
+    """Event-sourced aggregate for artifact storage.
+
+    Stores shared outputs between agents with content type and metadata.
+    """
+
+    _artifacts: dict[str, Artifact]
+
+    def _initialize_state(self) -> None:
+        self._artifacts = {}
 
     def store_artifact(
         self,
@@ -170,19 +234,18 @@ class ArtifactStore:
 
         Returns the event for the facade to collect.
         """
-        event = ArtifactStored(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            key=key,
-            content_type=content_type,
-            content=content,
-            content_hash=content_hash,
-            stored_by=stored_by,
-            metadata=dict(metadata),
+        return self._emit(
+            ArtifactStored(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                key=key,
+                content_type=content_type,
+                content=content,
+                content_hash=content_hash,
+                stored_by=stored_by,
+                metadata=dict(metadata),
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
-        return event
 
     def get_artifact(self, key: str) -> Artifact | None:
         """Get artifact by key."""
@@ -206,11 +269,7 @@ class ArtifactStore:
             stored_by=event.stored_by,
             metadata=event.metadata,
         )
-        self._version += 1
-
-    def apply_event(self, event: DomainEvent) -> None:
-        """Apply event during replay (public for facade use)."""
-        self._apply(event)
+        self._increment_version()
 
 
 # =============================================================================
@@ -218,37 +277,16 @@ class ArtifactStore:
 # =============================================================================
 
 
-class DecisionLog:
+class DecisionLog(EventSourcedAggregateBase):
     """Event-sourced aggregate for decision tracking.
 
     Records architectural and design decisions with rationale.
     """
 
-    def __init__(self, aggregate_id: UUID) -> None:
-        self._aggregate_id = aggregate_id
-        self._version = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence = 0
-        self._decisions: dict[str, Decision] = {}
+    _decisions: dict[str, Decision]
 
-    @property
-    def version(self) -> int:
-        return self._version
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        return self._changes
-
-    def mark_changes_as_committed(self) -> None:
-        self._changes.clear()
-
-    def _next_sequence(self) -> int:
-        self._sequence += 1
-        return self._sequence
-
-    def set_sequence(self, seq: int) -> None:
-        """Set sequence number (used during replay)."""
-        self._sequence = max(self._sequence, seq)
+    def _initialize_state(self) -> None:
+        self._decisions = {}
 
     def record_decision(
         self,
@@ -261,17 +299,16 @@ class DecisionLog:
 
         Returns the event for the facade to collect.
         """
-        event = DecisionRecorded(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            decision_key=decision_key,
-            decision_value=decision_value,
-            rationale=rationale,
-            decided_by=decided_by,
+        return self._emit(
+            DecisionRecorded(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                decision_key=decision_key,
+                decision_value=decision_value,
+                rationale=rationale,
+                decided_by=decided_by,
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
-        return event
 
     def get_decision(self, key: str) -> Decision | None:
         """Get decision by key."""
@@ -293,11 +330,7 @@ class DecisionLog:
             rationale=event.rationale,
             decided_by=event.decided_by,
         )
-        self._version += 1
-
-    def apply_event(self, event: DomainEvent) -> None:
-        """Apply event during replay (public for facade use)."""
-        self._apply(event)
+        self._increment_version()
 
 
 # =============================================================================
@@ -305,37 +338,16 @@ class DecisionLog:
 # =============================================================================
 
 
-class ProgressTracker:
+class ProgressTracker(EventSourcedAggregateBase):
     """Event-sourced aggregate for progress tracking.
 
     Tracks progress checkpoints across the agent hierarchy.
     """
 
-    def __init__(self, aggregate_id: UUID) -> None:
-        self._aggregate_id = aggregate_id
-        self._version = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence = 0
-        self._progress: dict[str, ProgressCheckpoint] = {}
+    _progress: dict[str, ProgressCheckpoint]
 
-    @property
-    def version(self) -> int:
-        return self._version
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        return self._changes
-
-    def mark_changes_as_committed(self) -> None:
-        self._changes.clear()
-
-    def _next_sequence(self) -> int:
-        self._sequence += 1
-        return self._sequence
-
-    def set_sequence(self, seq: int) -> None:
-        """Set sequence number (used during replay)."""
-        self._sequence = max(self._sequence, seq)
+    def _initialize_state(self) -> None:
+        self._progress = {}
 
     def update_progress(
         self,
@@ -349,18 +361,17 @@ class ProgressTracker:
 
         Returns the event for the facade to collect.
         """
-        event = ProgressUpdated(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            checkpoint_key=checkpoint_key,
-            status=status,
-            progress_pct=progress_pct,
-            message=message,
-            reported_by=reported_by,
+        return self._emit(
+            ProgressUpdated(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                checkpoint_key=checkpoint_key,
+                status=status,
+                progress_pct=progress_pct,
+                message=message,
+                reported_by=reported_by,
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
-        return event
 
     def get_progress(self, checkpoint_key: str) -> ProgressCheckpoint | None:
         """Get progress checkpoint by key."""
@@ -379,11 +390,7 @@ class ProgressTracker:
             message=event.message,
             reported_by=event.reported_by,
         )
-        self._version += 1
-
-    def apply_event(self, event: DomainEvent) -> None:
-        """Apply event during replay (public for facade use)."""
-        self._apply(event)
+        self._increment_version()
 
 
 # =============================================================================
@@ -391,28 +398,20 @@ class ProgressTracker:
 # =============================================================================
 
 
-class BudgetAccount:
+class BudgetAccount(EventSourcedAggregateBase):
     """Event-sourced aggregate for budget tracking.
 
     Tracks cost consumption and enforces budget limits.
     """
 
-    def __init__(self, aggregate_id: UUID) -> None:
-        self._aggregate_id = aggregate_id
-        self._version = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence = 0
-        self._initial_budget_usd: float = 0.0
-        self._consumed_budget_usd: float = 0.0
-        self._budget_exceeded: bool = False
+    _initial_budget_usd: float
+    _consumed_budget_usd: float
+    _budget_exceeded: bool
 
-    @property
-    def version(self) -> int:
-        return self._version
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        return self._changes
+    def _initialize_state(self) -> None:
+        self._initial_budget_usd = 0.0
+        self._consumed_budget_usd = 0.0
+        self._budget_exceeded = False
 
     @property
     def initial_budget_usd(self) -> float:
@@ -425,17 +424,6 @@ class BudgetAccount:
     @property
     def budget_exceeded(self) -> bool:
         return self._budget_exceeded
-
-    def mark_changes_as_committed(self) -> None:
-        self._changes.clear()
-
-    def _next_sequence(self) -> int:
-        self._sequence += 1
-        return self._sequence
-
-    def set_sequence(self, seq: int) -> None:
-        """Set sequence number (used during replay)."""
-        self._sequence = max(self._sequence, seq)
 
     def initialize(self, initial_budget_usd: float) -> None:
         """Initialize budget limit (called during SharedContextCreated)."""
@@ -455,32 +443,34 @@ class BudgetAccount:
         """
         events: list[DomainEvent] = []
 
-        event = BudgetConsumed(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            consumed_by=agent_id,
-            amount_usd=amount,
-            operation=operation,
-            model=model,
-            tokens=tokens or {},
+        events.append(
+            self._emit(
+                BudgetConsumed(
+                    aggregate_id=self._aggregate_id,
+                    sequence_number=self._next_sequence(),
+                    consumed_by=agent_id,
+                    amount_usd=amount,
+                    operation=operation,
+                    model=model,
+                    tokens=tokens or {},
+                )
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
-        events.append(event)
 
         # Check for budget exceeded
         if self._initial_budget_usd > 0 and not self._budget_exceeded:
             if self._consumed_budget_usd >= self._initial_budget_usd:
-                exceeded_event = BudgetExceeded(
-                    aggregate_id=self._aggregate_id,
-                    sequence_number=self._next_sequence(),
-                    limit_usd=self._initial_budget_usd,
-                    consumed_usd=self._consumed_budget_usd,
-                    triggered_by=agent_id,
+                events.append(
+                    self._emit(
+                        BudgetExceeded(
+                            aggregate_id=self._aggregate_id,
+                            sequence_number=self._next_sequence(),
+                            limit_usd=self._initial_budget_usd,
+                            consumed_usd=self._consumed_budget_usd,
+                            triggered_by=agent_id,
+                        )
+                    )
                 )
-                self._apply(exceeded_event)
-                self._changes.append(exceeded_event)
-                events.append(exceeded_event)
 
         return events
 
@@ -513,16 +503,12 @@ class BudgetAccount:
     @_apply.register
     def _(self, event: BudgetConsumed) -> None:
         self._consumed_budget_usd += event.amount_usd
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: BudgetExceeded) -> None:
         self._budget_exceeded = True
-        self._version += 1
-
-    def apply_event(self, event: DomainEvent) -> None:
-        """Apply event during replay (public for facade use)."""
-        self._apply(event)
+        self._increment_version()
 
 
 # =============================================================================
@@ -530,37 +516,16 @@ class BudgetAccount:
 # =============================================================================
 
 
-class ConfigOverrideStore:
+class ConfigOverrideStore(EventSourcedAggregateBase):
     """Internal store for configuration overrides.
 
     Not a full aggregate - managed by SharedExecutionContext.
     """
 
-    def __init__(self, aggregate_id: UUID) -> None:
-        self._aggregate_id = aggregate_id
-        self._version = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence = 0
-        self._config_overrides: dict[str, ConfigOverride] = {}
+    _config_overrides: dict[str, ConfigOverride]
 
-    @property
-    def version(self) -> int:
-        return self._version
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        return self._changes
-
-    def mark_changes_as_committed(self) -> None:
-        self._changes.clear()
-
-    def _next_sequence(self) -> int:
-        self._sequence += 1
-        return self._sequence
-
-    def set_sequence(self, seq: int) -> None:
-        """Set sequence number (used during replay)."""
-        self._sequence = max(self._sequence, seq)
+    def _initialize_state(self) -> None:
+        self._config_overrides = {}
 
     def set_config_override(
         self,
@@ -570,17 +535,16 @@ class ConfigOverrideStore:
         scope: str = "global",
     ) -> DomainEvent:
         """Set a configuration override."""
-        event = ConfigOverrideSet(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            config_key=config_key,
-            config_value=config_value,
-            set_by=set_by,
-            scope=scope,
+        return self._emit(
+            ConfigOverrideSet(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                config_key=config_key,
+                config_value=config_value,
+                set_by=set_by,
+                scope=scope,
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
-        return event
 
     def get_config_override(self, key: str) -> ConfigOverride | None:
         """Get config override by key."""
@@ -598,11 +562,7 @@ class ConfigOverrideStore:
             set_by=event.set_by,
             scope=event.scope,
         )
-        self._version += 1
-
-    def apply_event(self, event: DomainEvent) -> None:
-        """Apply event during replay (public for facade use)."""
-        self._apply(event)
+        self._increment_version()
 
 
 # =============================================================================
@@ -610,7 +570,7 @@ class ConfigOverrideStore:
 # =============================================================================
 
 
-class SharedExecutionContext:
+class SharedExecutionContext(EventSourcedAggregateBase):
     """Facade composing event-sourced aggregates for shared state.
 
     One instance per execution hierarchy (keyed by root_id).
@@ -624,15 +584,23 @@ class SharedExecutionContext:
     All state changes are event-sourced for consistency and auditability.
     """
 
+    _root_id: UUID
+    _config: dict[str, Any]
+    _artifact_store: ArtifactStore
+    _decision_log: DecisionLog
+    _progress_tracker: ProgressTracker
+    _budget_account: BudgetAccount
+    _config_store: ConfigOverrideStore
+
     def __init__(self, root_id: UUID) -> None:
         """Internal. Use create() or load_from_history() instead."""
         self._root_id = root_id
-        self._aggregate_id = shared_context_aggregate_id(root_id)
-        self._version = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence = 0
-        self._config: dict[str, Any] = {}
+        # Derive aggregate_id before calling super().__init__
+        aggregate_id = shared_context_aggregate_id(root_id)
+        super().__init__(aggregate_id)
 
+    def _initialize_state(self) -> None:
+        self._config = {}
         # Composed aggregates
         self._artifact_store = ArtifactStore(self._aggregate_id)
         self._decision_log = DecisionLog(self._aggregate_id)
@@ -645,20 +613,7 @@ class SharedExecutionContext:
         """Root agent ID that this context belongs to."""
         return self._root_id
 
-    @property
-    def aggregate_id(self) -> UUID:
-        """Derived aggregate ID for event store (distinct from root_id)."""
-        return self._aggregate_id
-
-    @property
-    def version(self) -> int:
-        """Current version (for OCC)."""
-        return self._version
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        """Uncommitted events pending persistence."""
-        return self._changes
+    # Note: aggregate_id, version, events inherited from EventSourcedAggregateBase
 
     @property
     def initial_budget_usd(self) -> float:
@@ -697,15 +652,15 @@ class SharedExecutionContext:
             New SharedExecutionContext with creation event
         """
         instance = cls(root_id)
-        event = SharedContextCreated(
-            aggregate_id=instance.aggregate_id,
-            sequence_number=instance._next_sequence(),
-            root_id=root_id,
-            initial_budget_usd=initial_budget_usd,
-            config=config or {},
+        instance._emit(
+            SharedContextCreated(
+                aggregate_id=instance.aggregate_id,
+                sequence_number=instance._next_sequence(),
+                root_id=root_id,
+                initial_budget_usd=initial_budget_usd,
+                config=config or {},
+            )
         )
-        instance._apply(event)
-        instance._changes.append(event)
         return instance
 
     @classmethod
@@ -730,12 +685,12 @@ class SharedExecutionContext:
         instance = cls(first_event.root_id)
         for event in events:
             instance._apply(event)
-            instance._sequence = max(instance._sequence, event.sequence_number)
+            instance.set_sequence(event.sequence_number)
         return instance
 
     def mark_changes_as_committed(self) -> None:
         """Clear uncommitted changes after successful persistence."""
-        self._changes.clear()
+        super().mark_changes_as_committed()
         # Also clear sub-aggregate changes (they share events with facade)
         self._artifact_store.mark_changes_as_committed()
         self._decision_log.mark_changes_as_committed()
@@ -757,19 +712,18 @@ class SharedExecutionContext:
         **metadata: Any,
     ) -> None:
         """Store an artifact in shared context (delegated to ArtifactStore)."""
-        # Use facade's sequence number for consistent ordering
-        event = ArtifactStored(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            key=key,
-            content_type=content_type,
-            content=content,
-            content_hash=content_hash,
-            stored_by=stored_by,
-            metadata=dict(metadata),
+        self._emit(
+            ArtifactStored(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                key=key,
+                content_type=content_type,
+                content=content,
+                content_hash=content_hash,
+                stored_by=stored_by,
+                metadata=dict(metadata),
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
 
     def get_artifact(self, key: str) -> Artifact | None:
         """Get artifact by key (delegated to ArtifactStore)."""
@@ -791,16 +745,16 @@ class SharedExecutionContext:
         decided_by: UUID,
     ) -> None:
         """Record a key decision (delegated to DecisionLog)."""
-        event = DecisionRecorded(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            decision_key=decision_key,
-            decision_value=decision_value,
-            rationale=rationale,
-            decided_by=decided_by,
+        self._emit(
+            DecisionRecorded(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                decision_key=decision_key,
+                decision_value=decision_value,
+                rationale=rationale,
+                decided_by=decided_by,
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
 
     def get_decision(self, key: str) -> Decision | None:
         """Get decision by key (delegated to DecisionLog)."""
@@ -823,17 +777,17 @@ class SharedExecutionContext:
         message: str = "",
     ) -> None:
         """Update a progress checkpoint (delegated to ProgressTracker)."""
-        event = ProgressUpdated(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            checkpoint_key=checkpoint_key,
-            status=status,
-            progress_pct=progress_pct,
-            message=message,
-            reported_by=reported_by,
+        self._emit(
+            ProgressUpdated(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                checkpoint_key=checkpoint_key,
+                status=status,
+                progress_pct=progress_pct,
+                message=message,
+                reported_by=reported_by,
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
 
     def get_progress(self, checkpoint_key: str) -> ProgressCheckpoint | None:
         """Get progress checkpoint by key (delegated to ProgressTracker)."""
@@ -851,16 +805,16 @@ class SharedExecutionContext:
         scope: str = "global",
     ) -> None:
         """Set a configuration override (delegated to ConfigOverrideStore)."""
-        event = ConfigOverrideSet(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            config_key=config_key,
-            config_value=config_value,
-            set_by=set_by,
-            scope=scope,
+        self._emit(
+            ConfigOverrideSet(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                config_key=config_key,
+                config_value=config_value,
+                set_by=set_by,
+                scope=scope,
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
 
     def get_config_override(self, key: str) -> ConfigOverride | None:
         """Get config override by key (delegated to ConfigOverrideStore)."""
@@ -879,31 +833,31 @@ class SharedExecutionContext:
         tokens: dict[str, int] | None = None,
     ) -> None:
         """Record budget consumption (delegated to BudgetAccount)."""
-        event = BudgetConsumed(
-            aggregate_id=self._aggregate_id,
-            sequence_number=self._next_sequence(),
-            consumed_by=agent_id,
-            amount_usd=amount,
-            operation=operation,
-            model=model,
-            tokens=tokens or {},
+        self._emit(
+            BudgetConsumed(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                consumed_by=agent_id,
+                amount_usd=amount,
+                operation=operation,
+                model=model,
+                tokens=tokens or {},
+            )
         )
-        self._apply(event)
-        self._changes.append(event)
 
         # Check for budget exceeded
         if self._budget_account.initial_budget_usd > 0:
             if not self._budget_account.budget_exceeded:
                 if self._budget_account.consumed_budget_usd >= self._budget_account.initial_budget_usd:
-                    exceeded_event = BudgetExceeded(
-                        aggregate_id=self._aggregate_id,
-                        sequence_number=self._next_sequence(),
-                        limit_usd=self._budget_account.initial_budget_usd,
-                        consumed_usd=self._budget_account.consumed_budget_usd,
-                        triggered_by=agent_id,
+                    self._emit(
+                        BudgetExceeded(
+                            aggregate_id=self._aggregate_id,
+                            sequence_number=self._next_sequence(),
+                            limit_usd=self._budget_account.initial_budget_usd,
+                            consumed_usd=self._budget_account.consumed_budget_usd,
+                            triggered_by=agent_id,
+                        )
                     )
-                    self._apply(exceeded_event)
-                    self._changes.append(exceeded_event)
 
     def get_remaining_budget(self) -> float:
         """Get remaining budget in USD (delegated to BudgetAccount)."""
@@ -919,12 +873,8 @@ class SharedExecutionContext:
 
     # -------------------------------------------------------------------------
     # Event Handlers
+    # Note: _next_sequence() inherited from EventSourcedAggregateBase
     # -------------------------------------------------------------------------
-
-    def _next_sequence(self) -> int:
-        """Get next sequence number."""
-        self._sequence += 1
-        return self._sequence
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
@@ -935,34 +885,34 @@ class SharedExecutionContext:
     def _(self, event: SharedContextCreated) -> None:
         self._budget_account.initialize(event.initial_budget_usd)
         self._config = event.config
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: ArtifactStored) -> None:
         self._artifact_store.apply_event(event)
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: DecisionRecorded) -> None:
         self._decision_log.apply_event(event)
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: ProgressUpdated) -> None:
         self._progress_tracker.apply_event(event)
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: ConfigOverrideSet) -> None:
         self._config_store.apply_event(event)
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: BudgetConsumed) -> None:
         self._budget_account.apply_event(event)
-        self._version += 1
+        self._increment_version()
 
     @_apply.register
     def _(self, event: BudgetExceeded) -> None:
         self._budget_account.apply_event(event)
-        self._version += 1
+        self._increment_version()

@@ -167,7 +167,12 @@ class AgentRepository:
                 try:
                     callback(event, agent)
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Progress callback failed for event %s on agent %s",
+                        type(event).__name__,
+                        agent.agent_id,
+                        exc_info=True,
+                    )
 
         agent.mark_changes_as_committed()
         return uncommitted

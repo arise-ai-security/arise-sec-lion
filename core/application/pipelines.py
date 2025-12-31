@@ -91,7 +91,7 @@ class PipelineFactory:
         return Pipeline(
             name="complexity_evaluation",
             steps=[
-                ValidatePendingAgent(),
+                ValidatePendingAgent,
                 BuildComplexityPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="complexity_evaluation", target="llm"),
                 QueryLLM(self._llm_port, operation="complexity_evaluation"),
@@ -122,7 +122,7 @@ class PipelineFactory:
         return Pipeline(
             name="task_decomposition",
             steps=[
-                ValidateDecomposingAgent(),
+                ValidateDecomposingAgent,
                 ExtractHierarchyLimits(),
                 BuildDecompositionPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="task_decomposition", target="llm"),
@@ -151,7 +151,7 @@ class PipelineFactory:
         return Pipeline(
             name="worker_execution",
             steps=[
-                ValidateWorkerAgent(),
+                ValidateWorkerAgent,
                 StartWorkerExecution(),
                 BuildWorkerPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="worker_execution", target="dynamic"),

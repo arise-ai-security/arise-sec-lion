@@ -31,7 +31,7 @@ class Pipeline:
         pipeline = Pipeline(
             name="complexity_evaluation",
             steps=[
-                ValidatePendingAgent(),
+                ValidatePendingAgent,
                 BuildComplexityPrompt(prompt_builder),
                 EmitPromptSent("complexity_evaluation"),
                 QueryLLM(llm_port, "complexity_evaluation"),

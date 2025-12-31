@@ -10,12 +10,15 @@ This is the main orchestration service that coordinates:
 
 
 import asyncio
+import logging
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
@@ -249,7 +252,11 @@ class AgentExecutionService:
                 task = tasks.pop(aid)
                 # Log any exceptions
                 if task.exception():
-                    print(f"Error executing agent {aid}: {task.exception()!r}")
+                    logger.error(
+                        "Agent %s failed with exception",
+                        aid,
+                        exc_info=task.exception(),
+                    )
 
             # Get active agents not already being processed
             active_agents = await self._query_service.get_active_agent_ids(
@@ -286,8 +293,8 @@ class AgentExecutionService:
             # Use LLM semaphore to limit concurrent API calls
             async with self._llm_semaphore:
                 await self.run_agent_step(agent_id)
-        except Exception as e:
-            print(f"Error executing agent {agent_id}: {e!r}")
+        except Exception:
+            logger.exception("Agent %s step failed unexpectedly", agent_id)
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
         """Get agent execution result."""
