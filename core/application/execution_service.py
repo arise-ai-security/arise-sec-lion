@@ -1601,15 +1601,37 @@ class AgentExecutionService:
                 agents_status = await self._query_service.get_agents_status(root_id=root_agent_id)
                 self._notify_status(agents_status)
 
-            # Execute all returned agents
-            # The QueryService has already filtered to only return:
-            # - All non-terminal non-workers (can execute concurrently)
-            # - At most ONE worker (the leftmost eligible)
+            # Separate workers from non-workers for different execution strategies
+            non_worker_ids = []
+            worker_id = None
+
             for agent_id in active_agents:
+                events = await self.event_store.get_events(agent_id)
+                if events:
+                    agent = AgentSession.load_from_history(events)
+                    if agent.role == AgentRole.WORKER:
+                        worker_id = agent_id  # At most one worker due to QueryService filtering
+                    else:
+                        non_worker_ids.append(agent_id)
+
+            # Execute non-workers CONCURRENTLY (managers decompose in parallel)
+            # They only perform reasoning/decomposition, don't modify workspace
+            if non_worker_ids:
+                async def safe_run_step(aid: UUID) -> None:
+                    try:
+                        await self.run_agent_step(aid)
+                    except Exception as e:
+                        print(f"Error executing non-worker {aid}: {e!r}")
+
+                await asyncio.gather(*[safe_run_step(aid) for aid in non_worker_ids])
+
+            # Execute the single worker SEQUENTIALLY (one at a time, left-to-right)
+            # Workers modify workspace, so they must execute in order
+            if worker_id is not None:
                 try:
-                    await self.run_agent_step(agent_id)
+                    await self.run_agent_step(worker_id)
                 except Exception as e:
-                    print(f"Error executing agent {agent_id}: {e!r}")
+                    print(f"Error executing worker {worker_id}: {e!r}")
 
             await asyncio.sleep(self.poll_interval)
 
