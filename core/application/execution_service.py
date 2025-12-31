@@ -599,9 +599,10 @@ class AgentExecutionService:
                 fix_patterns=source_data.fix_patterns,
             )
 
-        except Exception:
+        except Exception as e:
             # Don't fail Boss creation if context extraction fails
-            pass
+            import logging
+            logging.getLogger(__name__).warning(f"Source context extraction failed: {e}", exc_info=True)
 
     def _parse_source_context_response(self, response: str):
         """Parse LLM response to extract SourceContextData."""
