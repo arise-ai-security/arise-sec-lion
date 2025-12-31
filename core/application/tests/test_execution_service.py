@@ -1254,10 +1254,11 @@ async def test_run_system_loop_executes_lowest_sequence_worker_first(
 
     # Patch run_agent_step to track execution without actually running
     with patch.object(execution_service, 'run_agent_step', side_effect=track_run_agent_step):
-        with patch.object(execution_service, '_get_active_agent_ids') as mock_get_active:
+        with patch.object(execution_service._query_service, 'get_active_agent_ids') as mock_get_active:
             # Simulate: both workers active, return them in "wrong" order
+            # The QueryService should filter to only return the leftmost eligible worker
             mock_get_active.side_effect = [
-                [worker2_id, worker1_id],  # Wrong order to test sorting
+                [worker1_id],  # Only worker1 (leftmost) should be returned
                 [],  # Empty = exit loop
             ]
 

@@ -28,6 +28,7 @@ from core.domain.events import (
 from core.domain.exceptions import ConcurrencyError
 from core.domain.model import AgentRole, AgentSession, AgentStatus
 from core.domain.prompt_builder import PromptBuilder
+from core.application.services.query_service import QueryService
 from core.ports.context_dashboard_port import ContextDashboardPort
 from core.ports.event_store_port import EventStorePort
 from core.ports.llm_port import LLMPort
@@ -136,6 +137,9 @@ class AgentExecutionService:
         self.initial_boss_budget: float = 0.0
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
+
+        # Query service for left-to-right worker execution ordering
+        self._query_service = QueryService(event_store)
 
         # Set subordinate models for multi-model strategy
         self.subordinate_models = subordinate_models or DEFAULT_SUBORDINATE_MODELS
@@ -1562,57 +1566,50 @@ class AgentExecutionService:
         Only processes agents within the hierarchy rooted at root_agent_id.
         This ensures that running a new task doesn't process agents from previous runs.
 
-        Workers are executed in left-to-right tree order (by tree_sequence_id) to ensure
-        deterministic workspace modifications. Non-workers (PENDING, BOSS, MANAGER) can
-        execute concurrently as they only perform reasoning/decomposition.
+        Workers are executed in left-to-right tree order to ensure deterministic workspace
+        modifications. The QueryService guarantees left-to-right execution through:
+
+        1. Hierarchical Path Computation - Each agent gets a tuple path from root (e.g.,
+           (0, 0, 1) means root's first child's second child). Paths sort lexicographically
+           in left-to-right order.
+
+        2. Left Sibling Blocking Check - Before a worker can execute, we verify no
+           incomplete work exists to its left by walking up the ancestor chain and
+           checking if any left siblings (and their subtrees) are incomplete.
+
+        3. Sequential Worker Filtering - With sequential_workers=True, only the leftmost
+           eligible worker is returned. Non-workers (PENDING, BOSS, MANAGER) can execute
+           concurrently as they only perform reasoning/decomposition.
+
+        Result: Only one worker executes at a time (the leftmost eligible), while managers
+        decompose in parallel. This balances sequential correctness for work execution
+        with parallel speed for task decomposition.
         """
         while True:
-            # Only get active agents within this hierarchy
-            active_agents = await self._get_active_agent_ids(root_id=root_agent_id)
+            # Get active agents with sequential worker filtering
+            # This uses QueryService which properly checks left sibling completion
+            active_agents = await self._query_service.get_active_agent_ids(
+                root_id=root_agent_id,
+                sequential_workers=True,  # Workers execute one at a time in left-to-right tree order
+            )
+
             if not active_agents:
                 break
 
             # Notify status callback with current agents status (filtered to hierarchy)
             if self.status_callback:
-                agents_status = await self._get_agents_status(root_id=root_agent_id)
+                agents_status = await self._query_service.get_agents_status(root_id=root_agent_id)
                 self._notify_status(agents_status)
 
-            # Load all active agents to check their roles and sequence IDs
-            active_agent_data = []
+            # Execute all returned agents
+            # The QueryService has already filtered to only return:
+            # - All non-terminal non-workers (can execute concurrently)
+            # - At most ONE worker (the leftmost eligible)
             for agent_id in active_agents:
-                events = await self.event_store.get_events(agent_id)
-                if events:
-                    agent = AgentSession.load_from_history(events)
-                    active_agent_data.append({
-                        "id": agent_id,
-                        "role": agent.role,
-                        "sequence_id": agent.tree_sequence_id,
-                    })
-
-            # Separate workers from non-workers
-            workers = [a for a in active_agent_data if a["role"] == AgentRole.WORKER]
-            non_workers = [a for a in active_agent_data if a["role"] != AgentRole.WORKER]
-
-            # Execute non-workers concurrently (they don't modify workspace)
-            for agent_data in non_workers:
                 try:
-                    await self.run_agent_step(agent_data["id"])
+                    await self.run_agent_step(agent_id)
                 except Exception as e:
-                    print(f"Error executing agent {agent_data['id']}: {e!r}")
-
-            # Execute workers in sequence ID order (left-to-right in tree)
-            # Only execute a worker if all workers with lower sequence IDs are done
-            if workers:
-                # Sort workers by sequence_id (lower = left in tree)
-                workers.sort(key=lambda a: a["sequence_id"])
-
-                # Execute the first worker in sequence order
-                # Other workers must wait until workers with lower sequence IDs complete
-                first_worker = workers[0]
-                try:
-                    await self.run_agent_step(first_worker["id"])
-                except Exception as e:
-                    print(f"Error executing worker {first_worker['id']}: {e!r}")
+                    print(f"Error executing agent {agent_id}: {e!r}")
 
             await asyncio.sleep(self.poll_interval)
 
