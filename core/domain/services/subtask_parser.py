@@ -5,73 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
 
-from core.domain.agent_config import AgentConfig
-from core.domain.subtask import Subtask
-
-
-# ---------------------------------------------------------------------------
-# Value Objects
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class RegisteredTask:
-    """Value object representing a registered task for deduplication."""
-
-    task_key: str
-    task_description: str
-    registered_by: UUID
-    parent_id: UUID | None
-
-
-@dataclass(frozen=True, slots=True)
-class ConstraintFailure:
-    """Value object for when LLM cannot satisfy execution constraints.
-
-    Returned when LLM responds with constraints_unsatisfiable instead of
-    a valid subtask list. This allows graceful failure rather than
-    spawning doomed workers.
-    """
-
-    reason: str
-    minimum_subtasks: int | None = None
-    minimum_depth: int | None = None
-
-    @classmethod
-    def matches(cls, data: Any) -> bool:
-        """Check if data represents a constraint failure response."""
-        return isinstance(data, dict) and data.get("status") == "constraints_unsatisfiable"
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ConstraintFailure:
-        """Create from LLM response dict."""
-        minimum_required = data.get("minimum_required", {})
-        return cls(
-            reason=data.get("reason", "Unknown reason"),
-            minimum_subtasks=minimum_required.get("subtasks"),
-            minimum_depth=minimum_required.get("depth_levels"),
-        )
-
-    def format_message(self) -> str:
-        """Format failure as human-readable message."""
-        msg = f"Constraints unsatisfiable: {self.reason}"
-        if self.minimum_subtasks is not None:
-            msg += f" (needs at least {self.minimum_subtasks} subtasks)"
-        if self.minimum_depth is not None:
-            msg += f" (needs {self.minimum_depth} more depth levels)"
-        return msg
-
-
-# ---------------------------------------------------------------------------
-# Domain Services
-# ---------------------------------------------------------------------------
-
+from core.domain.values.agent_config import AgentConfig
+from core.domain.values.subtask import Subtask
+from core.domain.values.constraint_failure import ConstraintFailure
 
 class TaskKeyGenerator:
     """Generate normalized task keys for deduplication.

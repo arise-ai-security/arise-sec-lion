@@ -2,7 +2,7 @@
 
 from typing import Any, Protocol
 
-from core.domain.llm_response import LLMResponse
+from core.domain.values.llm_response import LLMResponse
 
 
 class LLMPort(Protocol):

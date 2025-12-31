@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from core.application.pipeline.context import PipelineContext, StepResult
-from core.domain.config_resolver import ConfigResolver, OperationType
+from core.domain.services.config_resolver import ConfigResolver, OperationType
 
 if TYPE_CHECKING:
     from core.ports.llm_port import LLMPort

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from core.domain.sibling_context import WorkerSiblingContext
+    from core.domain.values.sibling_context import WorkerSiblingContext
 
 
 class SiblingContextPort(Protocol):

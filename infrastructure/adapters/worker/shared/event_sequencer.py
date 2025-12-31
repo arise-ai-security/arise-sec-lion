@@ -5,7 +5,7 @@ Tracks sequence numbers and creates domain events with proper sequencing.
 
 from uuid import UUID
 
-from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed, WorkerCostRecorded
+from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed, WorkerCostRecorded
 
 
 class EventSequencer:

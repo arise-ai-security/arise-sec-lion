@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 
 from .base import WorkerAdapterBase
 from .shared import EventSequencer, format_tool_event, get_model_pricing

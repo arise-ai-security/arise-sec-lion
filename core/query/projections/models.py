@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 
 
 @dataclass(frozen=True)

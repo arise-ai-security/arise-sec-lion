@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from core.query.ports.sink_port import SinkPort
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
     ChildSpawned,
@@ -22,7 +22,7 @@ from core.domain.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
-from core.domain.subtask import Subtask
+from core.domain.values.subtask import Subtask
 
 
 # Fixed UUIDs for predictable tests

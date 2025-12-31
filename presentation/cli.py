@@ -23,7 +23,7 @@ from presentation.rendering import OutputRenderer
 
 if TYPE_CHECKING:
     from core.application.execution_service import AgentExecutionService
-    from core.domain.cve_instance import CVEInstance
+    from core.domain.values.cve_instance import CVEInstance
 
 
 @dataclass
@@ -171,7 +171,7 @@ class CLI:
         # Load CVE instance if provided
         cve_instance: CVEInstance | None = None
         if cve_file is not None:
-            from core.domain.cve_instance import CVEInstance
+            from core.domain.values.cve_instance import CVEInstance
 
             cve_instance = CVEInstance.from_json_file(cve_file)
             print(f"SEC-bench CVE: {cve_instance.instance_id}")

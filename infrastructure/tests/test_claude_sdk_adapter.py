@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
 from infrastructure.adapters.worker.claude_sdk_adapter import (
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,

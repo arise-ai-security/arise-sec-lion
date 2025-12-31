@@ -10,13 +10,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 from uuid import UUID
 
-from core.domain.enums import AgentRole
+from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
-    from core.domain.context import ParentContext
-    from core.domain.cve_instance import CVEInstance
-    from core.domain.execution_context import ExecutionContext
-    from core.domain.prompt_builder import TemplateChain
+    from core.domain.values.context import ParentContext
+    from core.domain.values.cve_instance import CVEInstance
+    from core.domain.values.execution_context import ExecutionContext
+    from core.domain.services.prompt_builder import TemplateChain
     from core.domain.services import RegisteredTask
 
 

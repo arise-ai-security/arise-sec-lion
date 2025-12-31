@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 
 from core.application.agent_orchestrator import AgentOrchestrator
-from core.domain.events import (
+from core.domain.events.events import (
     ChildSpawned,
     DomainEvent,
     StatusChanged,
@@ -21,10 +21,10 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.llm_response import LLMResponse, LLMUsage
-from core.domain.model import AgentRole, AgentSession, AgentStatus
-from core.domain.prompt_builder import PromptBuilder
-from core.domain.subtask import Subtask
+from core.domain.values.llm_response import LLMResponse, LLMUsage
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
+from core.domain.services.prompt_builder import PromptBuilder
+from core.domain.values.subtask import Subtask
 from core.ports.llm_port import LLMPort
 from core.ports.worker_port import WorkerToolPort
 
@@ -410,7 +410,7 @@ async def test_child_evaluates_simple_complexity() -> None:
     assert agent.role == AgentRole.WORKER, "Agent should become WORKER for SIMPLE tasks"
 
     # And: ComplexityEvaluated event is recorded
-    from core.domain.events import ComplexityEvaluated
+    from core.domain.events.events import ComplexityEvaluated
 
     complexity_events = [e for e in agent.events if isinstance(e, ComplexityEvaluated)]
     assert len(complexity_events) == 1, "Should have 1 ComplexityEvaluated event"
@@ -455,7 +455,7 @@ async def test_child_evaluates_complex_complexity() -> None:
     assert agent.role == AgentRole.MANAGER, "Agent should become MANAGER for COMPLEX tasks"
 
     # And: ComplexityEvaluated event is recorded
-    from core.domain.events import ComplexityEvaluated
+    from core.domain.events.events import ComplexityEvaluated
 
     complexity_events = [e for e in agent.events if isinstance(e, ComplexityEvaluated)]
     assert len(complexity_events) == 1, "Should have 1 ComplexityEvaluated event"

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
-from core.domain.model import AgentRole
+from core.domain.aggregates.agent_session import AgentRole
 from core.query.projections.hierarchy_builder import AgentNode, HierarchyBuilder
 from core.query.projections.hierarchy_collector import HierarchyCollector
 from core.query.projections.impl import AgentListProjection, AgentSummaryService, SummaryProjection

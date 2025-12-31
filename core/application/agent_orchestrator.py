@@ -21,9 +21,9 @@ from core.application.pipeline.context import PipelineContext
 from core.application.pipelines import PipelineFactory
 
 if TYPE_CHECKING:
-    from core.domain.model import AgentSession
-    from core.domain.prompt_builder import PromptBuilder
-    from core.domain.sibling_context import WorkerSiblingContext
+    from core.domain.aggregates.agent_session import AgentSession
+    from core.domain.services.prompt_builder import PromptBuilder
+    from core.domain.values.sibling_context import WorkerSiblingContext
     from core.ports.llm_port import LLMPort
     from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort

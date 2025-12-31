@@ -3,7 +3,7 @@
 from typing import Any, Self
 from uuid import UUID
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 from core.ports.event_store_port import EventStoreReadPort
 from core.query.ports.sink_port import SinkPort
 from core.query.projections.base import EventFilter, Formatter

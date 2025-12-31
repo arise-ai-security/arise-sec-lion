@@ -8,10 +8,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from core.domain.execution_context import ExecutionContext
+from core.domain.values.execution_context import ExecutionContext
 
 if TYPE_CHECKING:
-    from core.domain.cve_instance import CVEInstance
+    from core.domain.values.cve_instance import CVEInstance
 
 
 class ExecutionContextRegistry:

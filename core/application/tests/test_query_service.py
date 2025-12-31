@@ -12,7 +12,7 @@ class TestAgentSummaryReadModel:
 
     def test_sibling_index_extracted_from_agent_created(self) -> None:
         """Test that sibling_index is correctly extracted from AgentCreated event."""
-        from core.domain.events import AgentCreated
+        from core.domain.events.events import AgentCreated
 
         # Given: An AgentCreated event with sibling_index=2
         agent_id = uuid4()
@@ -34,7 +34,7 @@ class TestAgentSummaryReadModel:
 
     def test_sibling_index_defaults_to_zero(self) -> None:
         """Test that sibling_index defaults to 0 for root agents."""
-        from core.domain.events import AgentCreated
+        from core.domain.events.events import AgentCreated
 
         # Given: An AgentCreated event without explicit sibling_index
         agent_id = uuid4()
@@ -181,7 +181,7 @@ class TestSequentialWorkerOrdering:
         """Create a mock repository that returns predefined events."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from core.domain.events import AgentCreated, TaskAssigned
+        from core.domain.events.events import AgentCreated, TaskAssigned
 
         def create_events_for_agent(
             agent_id: UUID,
@@ -233,7 +233,7 @@ class TestSequentialWorkerOrdering:
         }
 
         # Mark boss as completed
-        from core.domain.events import WorkCompleted
+        from core.domain.events.events import WorkCompleted
 
         repository.get_all_events_grouped.return_value[root_id].append(
             WorkCompleted(aggregate_id=root_id, sequence_number=3, result="done")
@@ -267,7 +267,7 @@ class TestSequentialWorkerOrdering:
         }
 
         # Mark manager as completed so workers can proceed
-        from core.domain.events import WorkCompleted
+        from core.domain.events.events import WorkCompleted
 
         repository.get_all_events_grouped.return_value[m1_id].append(
             WorkCompleted(aggregate_id=m1_id, sequence_number=3, result="done")
@@ -312,7 +312,7 @@ class TestSequentialWorkerOrdering:
         }
 
         # Mark right manager as completed
-        from core.domain.events import WorkCompleted
+        from core.domain.events.events import WorkCompleted
 
         repository.get_all_events_grouped.return_value[m_right_id].append(
             WorkCompleted(aggregate_id=m_right_id, sequence_number=3, result="done")
@@ -351,7 +351,7 @@ class TestSequentialWorkerOrdering:
         }
 
         # Mark both managers as completed
-        from core.domain.events import WorkCompleted
+        from core.domain.events.events import WorkCompleted
 
         repository.get_all_events_grouped.return_value[m_left_id].append(
             WorkCompleted(aggregate_id=m_left_id, sequence_number=3, result="done")
@@ -399,7 +399,7 @@ class TestSequentialWorkerOrdering:
         }
 
         # Mark left manager as completed (but child is NOT completed)
-        from core.domain.events import WorkCompleted
+        from core.domain.events.events import WorkCompleted
 
         repository.get_all_events_grouped.return_value[m_left_id].append(
             WorkCompleted(aggregate_id=m_left_id, sequence_number=3, result="done")
@@ -432,7 +432,7 @@ class TestSequentialWorkerOrdering:
             w2_id: create_events(w2_id, "worker", root_id, 1),
         }
 
-        from core.domain.events import WorkCompleted
+        from core.domain.events.events import WorkCompleted
 
         repository.get_all_events_grouped.return_value[root_id].append(
             WorkCompleted(aggregate_id=root_id, sequence_number=3, result="done")

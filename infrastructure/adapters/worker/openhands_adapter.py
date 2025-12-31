@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 
 from .base import WorkerAdapterBase
 from .shared import EventSequencer, get_model_pricing

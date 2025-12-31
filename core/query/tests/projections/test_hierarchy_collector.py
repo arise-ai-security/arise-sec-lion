@@ -4,13 +4,13 @@ from datetime import timedelta
 
 import pytest
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ChildSpawned,
     TaskAssigned,
     WorkCompleted,
 )
-from core.domain.subtask import Subtask
+from core.domain.values.subtask import Subtask
 from core.query.projections.hierarchy_collector import HierarchyCollector
 
 from .conftest import (

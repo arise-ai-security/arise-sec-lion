@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from core.domain.events import DomainEvent, WorkFailed
+from core.domain.events.events import DomainEvent, WorkFailed
 from core.query.projections.registry import register_filter
 
 

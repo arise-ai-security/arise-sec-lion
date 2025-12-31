@@ -9,12 +9,11 @@ import json
 import logging
 
 from core.application.pipeline.context import PipelineContext, StepResult
-from core.domain.enums import AgentRole
 from core.domain.services import (
-    ConstraintFailure,
     parse_subtasks_from_llm,
     strip_markdown_code_block,
 )
+from core.domain.values.constraint_failure import ConstraintFailure
 
 logger = logging.getLogger(__name__)
 

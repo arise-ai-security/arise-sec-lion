@@ -6,7 +6,7 @@ Builds AgentSummary read models from events with efficient child loading.
 import asyncio
 from uuid import UUID
 
-from core.domain.events import (
+from core.domain.events.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -16,7 +16,7 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.model import AgentSession
+from core.domain.aggregates.agent_session import AgentSession
 from core.ports.event_store_port import EventStoreReadPort
 from core.query.projections.models import AgentSummary, SubtaskSummary
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.application.pipeline.context import PipelineContext, StepResult
-from core.domain.enums import AgentRole
+from core.domain.values.enums import AgentRole
 
 
 class CheckLimitViolations:

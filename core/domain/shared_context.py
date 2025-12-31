@@ -17,7 +17,7 @@ from functools import singledispatchmethod
 from typing import Any, Protocol
 from uuid import UUID, uuid5
 
-from core.domain.events import (
+from core.domain.events.events import (
     ArtifactStored,
     BudgetConsumed,
     BudgetExceeded,

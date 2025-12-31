@@ -4,7 +4,7 @@ These tests verify the orchestration logic using mocked ports.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -22,11 +22,11 @@ from core.application.services.context_registry import ExecutionContextRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
-from core.domain.events import AgentCreated, TaskAssigned
+from core.domain.events.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
-from core.domain.llm_response import LLMResponse, LLMUsage
-from core.domain.model import AgentRole, AgentStatus
-from core.domain.prompt_builder import PromptBuilder
+from core.domain.values.llm_response import LLMResponse, LLMUsage
+from core.domain.aggregates.agent_session import AgentRole, AgentStatus
+from core.domain.services.prompt_builder import PromptBuilder
 
 
 def _test_config() -> dict[str, Any]:
@@ -127,7 +127,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, context
     )
 
     # Mock sibling context to return empty context
-    from core.domain.sibling_context import WorkerSiblingContext
+    from core.domain.values.sibling_context import WorkerSiblingContext
 
     sibling_context_mock = AsyncMock()
     sibling_context_mock.build_context.return_value = WorkerSiblingContext(
@@ -273,7 +273,7 @@ async def test_run_agent_step_manager_role_calls_evaluate_task(
     )
 
     # ComplexityEvaluated with COMPLEX -> role becomes MANAGER
-    from core.domain.events import ComplexityEvaluated
+    from core.domain.events.events import ComplexityEvaluated
 
     event3 = ComplexityEvaluated(
         aggregate_id=agent_id,
@@ -326,7 +326,7 @@ async def test_run_agent_step_worker_role_calls_execute_task(
     )
 
     # ComplexityEvaluated with SIMPLE -> role becomes WORKER
-    from core.domain.events import ComplexityEvaluated
+    from core.domain.events.events import ComplexityEvaluated
 
     event3 = ComplexityEvaluated(
         aggregate_id=agent_id,
@@ -339,7 +339,7 @@ async def test_run_agent_step_worker_role_calls_execute_task(
 
     # Mock worker tool to return events as async generator
     # Create the async generator function
-    from core.domain.events import CodeGenerationStarted, WorkCompleted
+    from core.domain.events.events import CodeGenerationStarted, WorkCompleted
 
     async def mock_worker_events():
         yield CodeGenerationStarted(
@@ -539,7 +539,7 @@ async def test_run_agent_step_skips_non_analyzing_agents(
         task_description="Task",
     )
 
-    from core.domain.events import WorkCompleted
+    from core.domain.events.events import WorkCompleted
 
     event3 = WorkCompleted(
         aggregate_id=agent_id,
@@ -641,7 +641,7 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     execution_service, mock_event_store, mock_worker_port, context_registry
 ):
     """Test that parent is notified when child agent completes."""
-    from core.domain.events import ChildCompleted
+    from core.domain.events.events import ChildCompleted
 
     # Given: A WORKER child that's about to complete
     parent_id = uuid4()
@@ -666,7 +666,7 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
         task_description="Write tests",
     )
 
-    from core.domain.events import ComplexityEvaluated
+    from core.domain.events.events import ComplexityEvaluated
 
     child_event3 = ComplexityEvaluated(
         aggregate_id=child_id,
@@ -690,8 +690,8 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
         task_description="Main task",
     )
 
-    from core.domain.events import ChildSpawned, StatusChanged
-    from core.domain.subtask import Subtask
+    from core.domain.events.events import ChildSpawned, StatusChanged
+    from core.domain.values.subtask import Subtask
 
     child_config = _test_config()
     parent_event3 = ChildSpawned(
@@ -722,7 +722,7 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     mock_event_store.get_events.side_effect = get_events_side_effect
 
     # Mock worker tool to complete the task
-    from core.domain.events import CodeGenerationStarted, WorkCompleted
+    from core.domain.events.events import CodeGenerationStarted, WorkCompleted
 
     async def mock_worker_events():
         yield CodeGenerationStarted(
@@ -796,7 +796,7 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
     ]
 
     # Completed agent
-    from core.domain.events import WorkCompleted
+    from core.domain.events.events import WorkCompleted
 
     completed_events = [
         AgentCreated(
@@ -819,7 +819,7 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
     ]
 
     # Failed agent
-    from core.domain.events import WorkFailed
+    from core.domain.events.events import WorkFailed
 
     failed_events = [
         AgentCreated(

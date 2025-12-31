@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     DomainEvent,
     TokensConsumed,

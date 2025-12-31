@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 
 
 class WorkerToolPort(Protocol):

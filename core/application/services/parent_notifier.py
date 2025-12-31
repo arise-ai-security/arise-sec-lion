@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from core.domain.events import DomainEvent
-from core.domain.model import AgentSession, AgentStatus
+from core.domain.events.events import DomainEvent
+from core.domain.aggregates.agent_session import AgentSession, AgentStatus
 
 from .agent_repository import AgentNotFoundError, AgentRepository
 

@@ -7,7 +7,7 @@ ensuring the agent is in the correct role and status before proceeding.
 from __future__ import annotations
 
 from core.application.pipeline.context import PipelineContext, StepResult
-from core.domain.enums import AgentRole, AgentStatus
+from core.domain.values.enums import AgentRole, AgentStatus
 
 
 class ValidatePendingAgent:

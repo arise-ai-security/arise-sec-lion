@@ -4,12 +4,12 @@ Uses mocking to avoid requiring actual Google ADK installation and API calls.
 Tests verify correct event mapping, cost calculation, and error handling.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 
-from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed, WorkerCostRecorded
+from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
 from infrastructure.adapters.worker.google_adk_adapter import (
     ADKAdapterConfig,
     GoogleADKAdapter,

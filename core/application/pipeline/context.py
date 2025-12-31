@@ -10,17 +10,17 @@ between pipeline steps:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from core.domain.cve_instance import CVEInstance
-    from core.domain.execution_context import ExecutionContext
-    from core.domain.llm_response import LLMResponse
-    from core.domain.model import AgentSession
+    from core.domain.values.cve_instance import CVEInstance
+    from core.domain.values.execution_context import ExecutionContext
+    from core.domain.values.llm_response import LLMResponse
+    from core.domain.aggregates.agent_session import AgentSession
     from core.domain.services import RegisteredTask
-    from core.domain.sibling_context import WorkerSiblingContext
-    from core.domain.subtask import Subtask
+    from core.domain.values.sibling_context import WorkerSiblingContext
+    from core.domain.values.subtask import Subtask
 
 
 @dataclass(frozen=True, slots=True)

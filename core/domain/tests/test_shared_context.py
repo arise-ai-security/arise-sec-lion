@@ -6,7 +6,7 @@ artifacts, decisions, and progress.
 
 from uuid import uuid4
 
-from core.domain.events import (
+from core.domain.events.events import (
     ArtifactStored,
     BudgetConsumed,
     BudgetExceeded,

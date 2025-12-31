@@ -9,10 +9,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from core.application.pipeline.context import PipelineContext, StepResult
-from core.domain.enums import AgentRole
+from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
-    from core.domain.prompt_builder import PromptBuilder
+    from core.domain.services.prompt_builder import PromptBuilder
 
 
 class BuildComplexityPrompt:

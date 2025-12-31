@@ -10,7 +10,7 @@ from typing import Any
 import litellm
 
 from core.domain.exceptions import LLMError
-from core.domain.llm_response import LLMResponse, LLMUsage
+from core.domain.values.llm_response import LLMResponse, LLMUsage
 from core.ports.cost_calculator_port import CostCalculatorPort
 from core.ports.llm_port import LLMPort
 

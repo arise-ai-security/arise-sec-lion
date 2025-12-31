@@ -1,22 +1,8 @@
-"""Parser for <context-update> XML sections from worker output."""
-
-from __future__ import annotations
-
-import re
-import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, asdict
 from typing import Any, Self
+from xml.etree import ElementTree as ET
 
-# Regex pattern for extracting context-update block
-_CONTEXT_UPDATE_PATTERN = re.compile(
-    r"<context-update>(.*?)</context-update>",
-    re.DOTALL | re.IGNORECASE,
-)
-
-
-def _text(elem: ET.Element | None) -> str:
-    """Extract stripped text from element, or empty string if None."""
-    return (elem.text or "").strip() if elem is not None else ""
+from core.domain.services.context_update_parser import _text
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,22 +79,3 @@ class ParsedContextUpdate:
     def __bool__(self) -> bool:
         """True if any decisions or outputs were parsed."""
         return bool(self.decisions or self.outputs)
-
-
-def parse_context_update(result: str) -> ParsedContextUpdate | None:
-    """Parse <context-update> XML section from worker result.
-
-    Returns ParsedContextUpdate if valid content found, None otherwise.
-    """
-    if not (match := _CONTEXT_UPDATE_PATTERN.search(result)):
-        return None
-
-    try:
-        root = ET.fromstring(f"<root>{match.group(1)}</root>")
-    except ET.ParseError:
-        return None
-
-    decisions = tuple(filter(None, (ParsedDecision.from_element(e) for e in root.findall("decision"))))
-    outputs = tuple(filter(None, (ParsedOutput.from_element(e) for e in root.findall("output"))))
-
-    return ParsedContextUpdate(decisions, outputs) or None

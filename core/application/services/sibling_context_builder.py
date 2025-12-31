@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from core.application.services.query_service import AgentSummaryReadModel
-from core.domain.sibling_context import (
+from core.domain.values.sibling_context import (
     DecisionInfo,
     SiblingTaskInfo,
     WorkerSiblingContext,

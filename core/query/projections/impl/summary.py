@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from uuid import UUID
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     DomainEvent,
     StatusChanged,

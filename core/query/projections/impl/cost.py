@@ -3,7 +3,7 @@
 from collections import defaultdict
 from collections.abc import Iterable
 
-from core.domain.events import (
+from core.domain.events.events import (
     DomainEvent,
     TokensConsumed,
     WorkerCostRecorded,

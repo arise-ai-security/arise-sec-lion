@@ -10,9 +10,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.events import AgentCreated, DomainEvent
+from core.domain.events.events import AgentCreated, DomainEvent
 from core.domain.exceptions import ConcurrencyError
-from core.domain.model import AgentSession
+from core.domain.aggregates.agent_session import AgentSession
 
 logger = logging.getLogger(__name__)
 

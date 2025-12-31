@@ -15,7 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 
 logger = logging.getLogger(__name__)
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
     ChildSpawned,
@@ -40,7 +40,6 @@ from query.api.schemas import (
     AgentPromptsSchema,
     CategorizedEventsSchema,
     EventSchema,
-    ExecutionSummarySchema,
 )
 
 

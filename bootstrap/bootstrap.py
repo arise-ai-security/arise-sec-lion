@@ -122,8 +122,8 @@ async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
 
 
 async def _list_runs(args: argparse.Namespace) -> None:
-    from core.domain.events import AgentCreated
-    from core.domain.model import AgentRole
+    from core.domain.events.events import AgentCreated
+    from core.domain.aggregates.agent_session import AgentRole
     from presentation.rendering import OutputRenderer
 
     settings = Settings.from_yaml(args.config) if args.config else Settings.load()

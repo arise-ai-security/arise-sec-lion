@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -20,8 +20,6 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.model import AgentSession
-
 
 if TYPE_CHECKING:
     from core.application.services.agent_repository import AgentRepository

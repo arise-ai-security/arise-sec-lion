@@ -8,13 +8,13 @@ from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
-from core.domain.enums import AgentRole
-from core.domain.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
+from core.domain.values.enums import AgentRole
+from core.domain.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
-    from core.domain.context import ParentContext
-    from core.domain.cve_instance import CVEInstance
-    from core.domain.execution_context import ExecutionContext
+    from core.domain.values.context import ParentContext
+    from core.domain.values.cve_instance import CVEInstance
+    from core.domain.values.execution_context import ExecutionContext
     from core.domain.services import RegisteredTask
 
 

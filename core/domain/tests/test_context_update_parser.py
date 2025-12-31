@@ -1,13 +1,9 @@
 """Test cases for context_update_parser (XML parsing from worker output)."""
 
-import pytest
-
-from core.domain.context_update_parser import (
-    ParsedContextUpdate,
-    ParsedDecision,
-    ParsedOutput,
+from core.domain.services.context_update_parser import (
     parse_context_update,
 )
+from core.domain.values.parsed_context import ParsedDecision, ParsedOutput, ParsedContextUpdate
 
 
 class TestParseContextUpdate:

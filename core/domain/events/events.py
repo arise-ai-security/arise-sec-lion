@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-from core.domain.subtask import Subtask
+from core.domain.values.subtask import Subtask
 
 
 def _utc_now() -> datetime:

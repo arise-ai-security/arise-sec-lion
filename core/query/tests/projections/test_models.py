@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import WorkFailed
+from core.domain.events.events import WorkFailed
 from core.query.projections.models import ProjectionSummary
 
 

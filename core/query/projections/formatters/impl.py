@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 from core.query.projections.models import ProjectionSummary
 from core.query.projections.registry import register_formatter
 

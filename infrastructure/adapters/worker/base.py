@@ -10,7 +10,7 @@ from time import time
 from typing import Any
 from uuid import UUID
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 from core.ports.worker_port import WorkerToolPort
 
 from .shared import EventSequencer, validate_task_context

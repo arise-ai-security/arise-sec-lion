@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.context import ParentContext
-from core.domain.events import ChildSpawned
-from core.domain.model import AgentRole, AgentSession
+from core.domain.values.context import ParentContext
+from core.domain.events.events import ChildSpawned
+from core.domain.aggregates.agent_session import AgentRole, AgentSession
 
 logger = logging.getLogger(__name__)
 

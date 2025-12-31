@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from core.domain.subtask import Subtask
+from core.domain.values.subtask import Subtask
 
 
 # Helper function to create standard test config

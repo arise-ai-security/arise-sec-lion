@@ -10,11 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
-
 
 if TYPE_CHECKING:
-    from core.domain.model import AgentSession
+    from core.domain.aggregates.agent_session import AgentSession
 
 
 @dataclass(frozen=True, slots=True)

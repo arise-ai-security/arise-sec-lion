@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ChildSpawned,
     DomainEvent,
@@ -13,7 +13,7 @@ from core.domain.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.subtask import Subtask
+from core.domain.values.subtask import Subtask
 from core.query.projections.filters import ErrorOnlyFilter, IncludeAllFilter
 from core.query.projections.formatters import JSONFormatter, JSONLinesFormatter
 from core.query.projections.models import ProjectionSummary

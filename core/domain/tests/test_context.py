@@ -5,14 +5,14 @@ Tests the serialization/deserialization and factory methods.
 
 from uuid import uuid4
 
-from core.domain.context import (
+from core.domain.values.context import (
     AncestorInfo,
     ChildResult,
     ParentContext,
     build_parent_context,
 )
-from core.domain.execution_context import ExecutionContext
-from core.domain.model import AgentRole, AgentSession
+from core.domain.values.execution_context import ExecutionContext
+from core.domain.aggregates.agent_session import AgentRole, AgentSession
 
 
 class TestAncestorInfo:

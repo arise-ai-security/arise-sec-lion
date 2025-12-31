@@ -23,7 +23,7 @@ from bootstrap import (
     get_infrastructure,
 )
 from config import BossConfig, ManagerConfig, OrchestrationConfig
-from core.domain.events import (
+from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
     ThoughtCaptured,

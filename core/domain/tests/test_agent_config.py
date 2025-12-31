@@ -7,7 +7,7 @@ parent agents to control child configurations dynamically.
 import pytest
 from pydantic import ValidationError
 
-from core.domain.agent_config import (
+from core.domain.values.agent_config import (
     HeuristicConfig,
     HybridConfig,
     LLMConfig,

@@ -5,7 +5,7 @@ Tests EventSequencer and format_tool_event utilities.
 
 from uuid import uuid4
 
-from core.domain.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
 from infrastructure.adapters.worker.shared import (
     TOOL_FORMATTERS,
     EventSequencer,

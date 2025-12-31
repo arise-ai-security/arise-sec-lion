@@ -6,7 +6,7 @@ without reconstructing the full AgentSession aggregate.
 
 from uuid import UUID
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ChildSpawned,
     CodeGenerationStarted,

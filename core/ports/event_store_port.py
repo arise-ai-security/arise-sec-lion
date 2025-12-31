@@ -12,7 +12,7 @@ Read-only clients can depend only on EventStoreReadPort.
 from typing import Protocol
 from uuid import UUID
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 
 
 class EventStoreConnectPort(Protocol):

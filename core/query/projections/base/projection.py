@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import Any
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 
 
 class Projection(ABC):

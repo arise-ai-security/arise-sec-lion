@@ -7,7 +7,7 @@ They bridge the pipeline (application layer) to the domain model.
 from __future__ import annotations
 
 from core.application.pipeline.context import PipelineContext, StepResult
-from core.domain.enums import AgentRole
+from core.domain.values.enums import AgentRole
 
 
 class ApplyComplexityResult:

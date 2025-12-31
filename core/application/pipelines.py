@@ -41,7 +41,7 @@ from core.application.pipeline.steps.validation import (
 from core.application.pipeline.steps.worker import RunWorkerSession
 
 if TYPE_CHECKING:
-    from core.domain.prompt_builder import PromptBuilder
+    from core.domain.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
     from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort

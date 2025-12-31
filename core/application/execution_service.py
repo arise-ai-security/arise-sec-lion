@@ -25,15 +25,15 @@ from core.application.services.context_registry import ExecutionContextRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.workspace_context import WorkspaceContextProvider
-from core.domain.context_update_parser import parse_context_update
-from core.domain.events import ChildSpawned, DomainEvent
+from core.domain.services.context_update_parser import parse_context_update
+from core.domain.events.events import ChildSpawned, DomainEvent
 from core.domain.exceptions import ConcurrencyError
-from core.domain.model import AgentRole, AgentSession, AgentStatus
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig, OrchestrationConfig
-    from core.domain.cve_instance import CVEInstance
+    from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
     from core.ports.sibling_context_port import SiblingContextPort
@@ -195,11 +195,8 @@ class AgentExecutionService:
 
     async def _create_shared_context(self, root_id: UUID) -> None:
         """Create shared context for execution run."""
-        # TODO: Get initial budget from config when budget system is fully integrated
-        initial_budget_usd = 0.0
         shared_context = await self._shared_context_port.get_or_create(
             root_id=root_id,
-            initial_budget_usd=initial_budget_usd,
             config={},
         )
         # Persist the initial shared context

@@ -4,8 +4,9 @@ import json
 
 import pytest
 
-from core.domain.services import ConstraintFailure, parse_subtasks_from_llm
-from core.domain.subtask import Subtask
+from core.domain.services import parse_subtasks_from_llm
+from core.domain.values.constraint_failure import ConstraintFailure
+from core.domain.values.subtask import Subtask
 
 
 # Helper to create standard test config

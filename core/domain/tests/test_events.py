@@ -9,17 +9,16 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ArtifactStored,
     BudgetConsumed,
     ChildCompleted,
     ChildSpawned,
-    DomainEvent,
     SharedContextCreated,
     TaskAssigned,
 )
-from core.domain.subtask import Subtask
+from core.domain.values.subtask import Subtask
 
 
 class TestEventImmutability:

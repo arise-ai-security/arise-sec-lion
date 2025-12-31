@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     StatusChanged,
     TaskAssigned,

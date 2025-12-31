@@ -29,9 +29,9 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import AgentCreated, TaskAssigned, WorkCompleted
+from core.domain.events.events import AgentCreated, TaskAssigned, WorkCompleted
 from core.domain.exceptions import ConcurrencyError, EventStoreError
-from core.domain.model import AgentRole
+from core.domain.aggregates.agent_session import AgentRole
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
 

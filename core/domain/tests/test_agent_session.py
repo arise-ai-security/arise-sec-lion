@@ -6,8 +6,8 @@ Test-Driven Development principles.
 
 from uuid import uuid4
 
-from core.domain.events import AgentCreated, TaskAssigned
-from core.domain.model import AgentRole, AgentSession, AgentStatus
+from core.domain.events.events import AgentCreated, TaskAssigned
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 
 
 def test_boss_initialization_flow() -> None:
@@ -100,7 +100,7 @@ def test_fail_with_reason() -> None:
     assert boss.error_message == "LLM authentication failed after 3 retries"
 
     # And: WorkFailed event is recorded
-    from core.domain.events import WorkFailed
+    from core.domain.events.events import WorkFailed
 
     failed_events = [e for e in boss.events if isinstance(e, WorkFailed)]
     assert len(failed_events) == 1

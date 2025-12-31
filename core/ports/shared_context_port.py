@@ -107,7 +107,6 @@ class SharedContextPort(Protocol):
     async def get_or_create(
         self,
         root_id: UUID,
-        initial_budget_usd: float = 0.0,
         config: dict | None = None,
     ) -> SharedExecutionContext:
         """Get existing context or create new one.

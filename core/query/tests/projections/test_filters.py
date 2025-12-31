@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     TaskAssigned,
     WorkFailed,

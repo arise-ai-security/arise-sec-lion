@@ -6,8 +6,8 @@ operation-specific LLM configurations from high-level agent configs.
 
 import pytest
 
-from core.domain.agent_config import HeuristicConfig, HybridConfig, LLMConfig, PerOperationConfig
-from core.domain.config_resolver import ConfigResolver
+from core.domain.values.agent_config import HeuristicConfig, HybridConfig, LLMConfig, PerOperationConfig
+from core.domain.services.config_resolver import ConfigResolver
 
 
 class TestConfigResolverPerOperation:

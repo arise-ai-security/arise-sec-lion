@@ -2,7 +2,7 @@
 
 from typing import Protocol, runtime_checkable
 
-from core.domain.events import DomainEvent
+from core.domain.events.events import DomainEvent
 from core.query.projections.models import ProjectionSummary
 
 

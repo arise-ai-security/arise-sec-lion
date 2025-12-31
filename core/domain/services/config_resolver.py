@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from core.domain.agent_config import (
+from core.domain.values.agent_config import (
     AgentConfig,
     HeuristicConfig,
     HybridConfig,

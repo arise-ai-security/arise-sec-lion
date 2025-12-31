@@ -6,7 +6,7 @@ from uuid import UUID
 import asyncpg
 import orjson
 
-from core.domain.events import (
+from core.domain.events.events import (
     AgentCreated,
     ArtifactStored,
     BudgetConsumed,

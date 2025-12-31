@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from core.domain.cve_instance import CVEInstance
+    from core.domain.values.cve_instance import CVEInstance
 
 
 @dataclass(frozen=True, slots=True)

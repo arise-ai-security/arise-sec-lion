@@ -26,7 +26,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import SyncHookJSONOutput
 
-from core.domain.events import DomainEvent, ThoughtCaptured
+from core.domain.events.events import DomainEvent, ThoughtCaptured
 
 from .base import WorkerAdapterBase
 from .shared import EventSequencer, format_tool_event

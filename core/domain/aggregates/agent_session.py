@@ -6,14 +6,14 @@ from uuid import UUID, uuid4
 
 from pydantic import TypeAdapter
 
-from core.domain.agent_config import AgentConfig
-from core.domain.context import (
+from core.domain.values.agent_config import AgentConfig
+from core.domain.values.context import (
     ChildResult,
     ParentContext,
     build_parent_context,
 )
-from core.domain.enums import AgentRole, AgentStatus
-from core.domain.events import (
+from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
     ChildSpawned,
@@ -31,7 +31,7 @@ from core.domain.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
-from core.domain.execution_context import ExecutionContext
+from core.domain.values.execution_context import ExecutionContext
 
 
 class AgentSession:
@@ -441,7 +441,7 @@ class AgentSession:
 
         Returns list of (child_id, subtask) tuples for the orchestrator to create.
         """
-        from core.domain.subtask import Subtask
+        from core.domain.values.subtask import Subtask
 
         subtasks_event = SubtasksDefined(
             aggregate_id=self.agent_id,

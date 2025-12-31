@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events import AgentCreated, WorkFailed
+from core.domain.events.events import AgentCreated, WorkFailed
 from core.query.projections.formatters import (
     CompactTextFormatter,
     JSONFormatter,
