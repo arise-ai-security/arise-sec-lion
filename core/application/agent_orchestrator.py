@@ -1,43 +1,49 @@
 """Agent Orchestrator - coordinates LLM and worker interactions.
 
-This service handles the orchestration logic that was previously in AgentSession,
+This service handles the orchestration logic using composable pipelines,
 keeping the domain model pure (no async I/O operations).
 
-The orchestrator:
-1. Performs LLM calls for complexity evaluation and task decomposition
-2. Executes worker tasks
-3. Calls pure domain methods on AgentSession to emit events
+The orchestrator delegates to specialized pipelines for:
+1. Complexity evaluation (PENDING -> WORKER/MANAGER)
+2. Task decomposition (BOSS/MANAGER -> children)
+3. Worker execution (WORKER -> complete)
+
+Each pipeline is a sequence of focused, testable steps that together
+implement the orchestration logic.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from core.domain.config_resolver import ConfigResolver
-from core.domain.exceptions import ToolNotAvailableError
-from core.domain.model import AgentRole, AgentSession, AgentStatus
-from core.domain.prompt_builder import PromptBuilder
-from core.domain.services import SubtaskParser, TaskKeyGenerator, strip_markdown_code_block
-from core.domain.subtask import Subtask
-
-logger = logging.getLogger(__name__)
-
+from core.application.pipeline.context import PipelineContext
+from core.application.pipelines import PipelineFactory
 
 if TYPE_CHECKING:
-    from core.domain.services import RegisteredTask
+    from core.domain.model import AgentSession
+    from core.domain.prompt_builder import PromptBuilder
     from core.domain.sibling_context import WorkerSiblingContext
     from core.ports.llm_port import LLMPort
     from core.ports.task_registry_port import TaskRegistryPort
     from core.ports.worker_port import WorkerToolPort
 
+logger = logging.getLogger(__name__)
+
 
 class AgentOrchestrator:
-    """Orchestrates agent interactions with LLM and worker tools.
+    """Orchestrates agent interactions using composable pipelines.
 
-    This separates infrastructure concerns (LLM calls, worker execution)
-    from the domain model, following DDD principles.
+    This is a thin coordinator that delegates to specialized pipelines for:
+    - Complexity evaluation (PENDING -> WORKER/MANAGER)
+    - Task decomposition (BOSS/MANAGER -> children)
+    - Worker execution (WORKER -> complete)
+
+    Each pipeline is a sequence of focused, testable steps.
+    This separation follows SOLID principles:
+    - SRP: Each step has one responsibility
+    - OCP: New steps can be added without modifying existing ones
+    - DIP: Steps depend on abstractions (ports), not implementations
     """
 
     def __init__(
@@ -55,10 +61,17 @@ class AgentOrchestrator:
             prompt_builder: Builder for constructing prompts.
             task_registry_port: Port for task deduplication.
         """
-        self._llm_port = llm_port
-        self._worker_port = worker_port
-        self._prompt_builder = prompt_builder
-        self._task_registry_port = task_registry_port
+        self._pipeline_factory = PipelineFactory(
+            llm_port=llm_port,
+            worker_port=worker_port,
+            prompt_builder=prompt_builder,
+            task_registry_port=task_registry_port,
+        )
+
+        # Create pipelines (could also be lazy-created)
+        self._complexity_pipeline = self._pipeline_factory.create_complexity_pipeline()
+        self._decomposition_pipeline = self._pipeline_factory.create_decomposition_pipeline()
+        self._worker_pipeline = self._pipeline_factory.create_worker_pipeline()
 
     async def evaluate_complexity(self, agent: AgentSession) -> None:
         """Evaluate task complexity for a PENDING agent.
@@ -69,56 +82,16 @@ class AgentOrchestrator:
         Args:
             agent: The agent to evaluate (must be PENDING with ANALYZING status).
         """
-        assert agent.role == AgentRole.PENDING, f"Requires PENDING role, got {agent.role}"
-        assert agent.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {agent.status}"
-        assert agent.task_description, "Requires assigned task"
+        ctx = PipelineContext(agent=agent, operation="complexity_evaluation")
+        result = await self._complexity_pipeline.execute(ctx)
 
-        # Build complexity evaluation prompt (auto-injects security templates if needed)
-        prompt = self._prompt_builder.build_complexity_evaluation_prompt(
-            task_description=agent.task_description,
-            agent_id=agent.agent_id,
-            parent_task=None,
-        )
-
-        # Emit prompt for observability
-        agent.emit_prompt_sent(prompt, prompt_type="complexity_evaluation", target="llm")
-
-        # Perform LLM call
-        llm_config = ConfigResolver.resolve(agent.config, operation="complexity_evaluation")
-        llm_response = await self._llm_port.query_with_usage(prompt, llm_config.model_dump())
-
-        # Emit cost tracking event via pure domain method
-        agent.emit_tokens_consumed(
-            model=llm_response.model,
-            prompt_tokens=llm_response.usage.prompt_tokens,
-            completion_tokens=llm_response.usage.completion_tokens,
-            total_tokens=llm_response.usage.total_tokens,
-            cost_usd=llm_response.cost_usd,
-            operation="complexity_evaluation",
-        )
-
-        # Parse response
-        try:
-            clean_response = strip_markdown_code_block(llm_response.content)
-            data = json.loads(clean_response)
-            complexity = data.get("complexity", "").lower()
-            reasoning = data.get("reasoning", "")
-
-            if complexity not in ("simple", "complex"):
-                raise ValueError(f"Invalid complexity value: {complexity}")
-
-            determined_role = AgentRole.WORKER if complexity == "simple" else AgentRole.MANAGER
-
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            agent.fail_with_reason(f"Failed to evaluate complexity: {e}")
-            return
-
-        # Apply result via pure domain method
-        agent.apply_complexity_result(
-            complexity=complexity,
-            reasoning=reasoning,
-            determined_role=determined_role,
-        )
+        if not result.success:
+            logger.debug(
+                "Complexity evaluation failed for agent=%s: %s",
+                agent.agent_id,
+                result.failure_reason,
+            )
+            agent.fail_with_reason(result.failure_reason or "Unknown failure")
 
     async def evaluate_task(self, agent: AgentSession) -> None:
         """Decompose task into subtasks for a BOSS/MANAGER agent.
@@ -130,147 +103,16 @@ class AgentOrchestrator:
         Args:
             agent: The agent to evaluate (must be BOSS/MANAGER with ANALYZING status).
         """
-        assert agent.role in (AgentRole.BOSS, AgentRole.MANAGER), (
-            f"Requires BOSS/MANAGER, got {agent.role}"
-        )
-        assert agent.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {agent.status}"
+        ctx = PipelineContext(agent=agent, operation="task_decomposition")
+        result = await self._decomposition_pipeline.execute(ctx)
 
-        # Get CVE instance from execution context if available
-        cve_instance = None
-        root_id = None
-        if agent.execution_context is not None:
-            cve_instance = agent.execution_context.cve_instance
-            root_id = agent.execution_context.root_id
-
-        # Get registered tasks for prompt context (soft guidance)
-        registered_tasks: list[RegisteredTask] | None = None
-        if root_id is not None:
-            registered_tasks = await self._task_registry_port.get_all_for_root(root_id)
-
-        # Build prompt using auto-detection for security tasks
-        prompt = self._prompt_builder.build_auto_prompt(
-            task_description=agent.task_description,
-            agent_id=agent.agent_id,
-            agent_role=agent.role,
-            parent_task=None,
-            cve_instance=cve_instance,
-            registered_tasks=registered_tasks,
-            parent_context=agent.parent_context,
-        )
-
-        # Emit prompt for observability
-        agent.emit_prompt_sent(prompt, prompt_type="task_decomposition", target="llm")
-
-        # Perform LLM call
-        llm_config = ConfigResolver.resolve(agent.config, operation="task_decomposition")
-        llm_response = await self._llm_port.query_with_usage(prompt, llm_config.model_dump())
-
-        # Emit cost tracking event
-        agent.emit_tokens_consumed(
-            model=llm_response.model,
-            prompt_tokens=llm_response.usage.prompt_tokens,
-            completion_tokens=llm_response.usage.completion_tokens,
-            total_tokens=llm_response.usage.total_tokens,
-            cost_usd=llm_response.cost_usd,
-            operation="task_decomposition",
-        )
-
-        # Parse subtasks
-        try:
-            subtasks = SubtaskParser.parse_from_llm_response(llm_response.content)
-        except ValueError as e:
-            agent.fail_with_reason(f"Failed to parse subtasks: {e}")
-            return
-
-        # Deduplicate subtasks via TaskRegistryPort (hard enforcement)
-        if root_id is not None:
-            subtasks = await self._deduplicate_and_register(subtasks, agent, root_id)
-
-        # Enforce max_children_per_node limit
-        if agent.execution_context is not None and agent.execution_context.is_children_limited():
-            max_children = agent.execution_context.max_children_per_node
-            if len(subtasks) > max_children:
-                agent.emit_limit_enforced(
-                    limit_type="children",
-                    limit_value=max_children,
-                    attempted_value=len(subtasks),
-                    action_taken="truncated_subtasks",
-                )
-                subtasks = subtasks[:max_children]
-
-        # Determine child role based on depth limit
-        force_worker = False
-        if agent.execution_context is not None and not agent.execution_context.can_spawn_child():
-            force_worker = True
-            agent.emit_limit_enforced(
-                limit_type="depth",
-                limit_value=agent.execution_context.max_depth,
-                attempted_value=agent.execution_context.current_depth + 1,
-                action_taken="forced_worker_role",
-            )
-
-        child_role = AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
-
-        # Build parent context and spawn children via pure domain method
-        parent_context = agent.get_context_for_child()
-        agent.apply_subtasks_and_spawn_children(
-            subtasks=subtasks,
-            child_role=child_role,
-            parent_context=parent_context,
-        )
-
-    async def _deduplicate_and_register(
-        self,
-        subtasks: list[Subtask],
-        agent: AgentSession,
-        root_id: Any,
-    ) -> list[Subtask]:
-        """Filter duplicate subtasks via CQRS projection table.
-
-        Uses TaskRegistryPort to atomically register new tasks.
-        Duplicates are skipped (already being worked on).
-
-        Args:
-            subtasks: Parsed subtasks from LLM response.
-            agent: Current agent (for parent_id tracking).
-            root_id: Root agent ID (execution run identifier).
-
-        Returns:
-            List of non-duplicate subtasks that were successfully registered.
-        """
-        kept: list[Subtask] = []
-
-        for subtask in subtasks:
-            task_key = TaskKeyGenerator.generate_key(subtask.description)
-
-            # Atomic check-and-register via projection table with advisory lock
-            registered = await self._task_registry_port.register_if_not_exists(
-                root_id=root_id,
-                task_key=task_key,
-                task_description=subtask.description,
-                registered_by=agent.agent_id,
-                parent_id=agent.parent_id,
-            )
-
-            if registered:
-                kept.append(subtask)
-            else:
-                logger.info(
-                    "Skipping duplicate task: agent=%s key=%s desc=%s",
-                    agent.agent_id,
-                    task_key,
-                    subtask.description[:50],
-                )
-
-        if len(kept) < len(subtasks):
-            logger.info(
-                "Deduplication: kept %d/%d subtasks for agent=%s",
-                len(kept),
-                len(subtasks),
+        if not result.success:
+            logger.debug(
+                "Task decomposition failed for agent=%s: %s",
                 agent.agent_id,
+                result.failure_reason,
             )
-
-        return kept
+            agent.fail_with_reason(result.failure_reason or "Unknown failure")
 
     async def execute_task(
         self,
@@ -287,44 +129,21 @@ class AgentOrchestrator:
             workspace_context: Optional context about existing workspace files.
             sibling_context: Optional sibling context for coordinated execution.
         """
-        assert agent.role == AgentRole.WORKER, f"Requires WORKER, got {agent.role}"
-        assert agent.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {agent.status}"
-
-        tool_name = agent.config.tool
-
-        # Emit start event via pure domain method
-        agent.start_worker_execution(tool_name)
-
-        # Get CVE instance from execution context if available
-        cve_instance = None
-        if agent.execution_context is not None:
-            cve_instance = agent.execution_context.cve_instance
-
-        # Build worker prompt (security templates always injected if they exist)
-        enhanced_description = self._prompt_builder.build_worker_prompt(
-            task_description=agent.task_description,
-            sibling_context=sibling_context,
+        ctx = PipelineContext(
+            agent=agent,
+            operation="worker_execution",
+        ).with_worker_context(
+            working_directory=working_directory,
             workspace_context=workspace_context,
-            cve_instance=cve_instance,
-            parent_context=agent.parent_context,
+            sibling_context=sibling_context,
         )
 
-        # Emit prompt for observability
-        agent.emit_prompt_sent(enhanced_description, prompt_type="worker_execution", target=tool_name)
+        result = await self._worker_pipeline.execute(ctx)
 
-        task_context: dict[str, Any] = {
-            "agent_id": agent.agent_id,
-            "task_description": enhanced_description,
-            "tool_name": tool_name,
-            "config": agent.config,
-        }
-
-        if working_directory:
-            task_context["working_directory"] = working_directory
-
-        # Execute via worker port, applying events through pure domain method
-        try:
-            async for tool_event in self._worker_port.run_session(task_context):
-                agent.apply_worker_event(tool_event)
-        except ToolNotAvailableError as e:
-            agent.fail_with_reason(str(e))
+        if not result.success:
+            logger.debug(
+                "Worker execution failed for agent=%s: %s",
+                agent.agent_id,
+                result.failure_reason,
+            )
+            agent.fail_with_reason(result.failure_reason or "Unknown failure")
