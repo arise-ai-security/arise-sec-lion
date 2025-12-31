@@ -1214,6 +1214,26 @@ class AgentExecutionService:
             visited.add(agent.parent_id)
             current_id = agent.parent_id
 
+    async def _flush_and_notify_events(
+        self, agent: AgentSession, current_version: int
+    ) -> int:
+        """Flush uncommitted events to event store and notify progress.
+
+        Args:
+            agent: The agent with uncommitted events to flush.
+            current_version: The expected version before the first event.
+
+        Returns:
+            The updated version after all events are committed.
+        """
+        uncommitted_events = list(agent.events)
+        for event in uncommitted_events:
+            await self.event_store.append(event, expected_version=current_version)
+            current_version += 1
+            self._notify_progress(event, agent)
+        agent.mark_changes_as_committed()
+        return current_version
+
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one workflow step: load → dispatch → persist with OCC retry."""
         retry_count = 0
@@ -1227,7 +1247,9 @@ class AgentExecutionService:
                 agent = AgentSession.load_from_history(events)
                 current_version = agent.version
 
-                await self._dispatch_agent_action(agent)
+                # Dispatch may flush events mid-execution (e.g., ContextInherited for workers)
+                # so we need to track the updated version
+                current_version = await self._dispatch_agent_action(agent, current_version)
 
                 uncommitted_events = list(agent.events)
                 for event in uncommitted_events:
@@ -1267,15 +1289,25 @@ class AgentExecutionService:
                     ) from e
                 raise
 
-    async def _dispatch_agent_action(self, agent: AgentSession) -> None:
-        """Dispatch based on role: PENDING→complexity, BOSS/MANAGER→decompose, WORKER→execute."""
+    async def _dispatch_agent_action(
+        self, agent: AgentSession, current_version: int
+    ) -> int:
+        """Dispatch based on role: PENDING→complexity, BOSS/MANAGER→decompose, WORKER→execute.
+
+        Args:
+            agent: The agent to dispatch.
+            current_version: The current committed version, used for mid-execution event flushing.
+
+        Returns:
+            The updated version after any mid-execution event flushing.
+        """
         # Recovery: if WAITING parent has all children done, process missing notifications
         if agent.status == AgentStatus.WAITING and agent.child_ids:
             await self._recover_stuck_parent(agent)
-            return
+            return current_version
 
         if agent.status != AgentStatus.ANALYZING:
-            return
+            return current_version
 
         if agent.role == AgentRole.PENDING:
             # Shortcut to worker if: budget below threshold OR random chance
@@ -1301,6 +1333,10 @@ class AgentExecutionService:
             # Record inherited context event (even if none inherited, to show in UI)
             agent.record_context_inherited(inherited_ids, total_available)
 
+            # Flush ContextInherited event to UI BEFORE starting execution
+            # This allows the Dashboard to show what context will be used
+            current_version = await self._flush_and_notify_events(agent, current_version)
+
             await agent.execute_task(
                 self.worker_tool_port,
                 working_directory=self.working_directory,
@@ -1310,6 +1346,8 @@ class AgentExecutionService:
 
         else:
             raise ValueError(f"Unknown agent role: {agent.role}")
+
+        return current_version
 
     async def _handle_child_spawning(self, parent: AgentSession, events: list) -> None:
         """Create child AgentSessions from ChildSpawned events."""
