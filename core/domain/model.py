@@ -685,12 +685,12 @@ class AgentSession:
 
         return WorkerReport(
             original_task=self.task_description or "",
-            approach=approach[:500],  # Truncate to reasonable length
-            reasoning=reasoning[:500],
-            deliverables=deliverables[:500],
-            challenges=challenges[:500],
-            observations=observations[:500],
-            fulfillment_evidence=fulfillment_evidence[:500],
+            approach=approach[:1500],  # Truncate to reasonable length
+            reasoning=reasoning[:1500],
+            deliverables=deliverables[:1500],
+            challenges=challenges[:1500],
+            observations=observations[:2000],  # Key observations need more space
+            fulfillment_evidence=fulfillment_evidence[:2000],  # Evidence needs more space
         )
 
     def handle_child_update(

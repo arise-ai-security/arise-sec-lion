@@ -496,6 +496,18 @@ class AgentExecutionService:
                     lines.append(entry.worker_report.challenges)
                     lines.append("")
 
+                # Include key observations (discoveries made during execution)
+                if entry.worker_report and entry.worker_report.observations:
+                    lines.append("**🔍 KEY OBSERVATIONS (What was discovered):**")
+                    lines.append(entry.worker_report.observations)
+                    lines.append("")
+
+                # Include fulfillment evidence (proof the work met expectations)
+                if entry.worker_report and entry.worker_report.fulfillment_evidence:
+                    lines.append("**✓ FULFILLMENT EVIDENCE (How expectations were met):**")
+                    lines.append(entry.worker_report.fulfillment_evidence)
+                    lines.append("")
+
                 # Include tags for context
                 if entry.tags:
                     lines.append(f"**Tags:** {', '.join(entry.tags)}")
