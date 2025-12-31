@@ -480,3 +480,107 @@ async def test_is_subtree_incomplete_with_pending_child(query_service, mock_even
     # Worker is not complete, so boss subtree is incomplete
     assert await query_service._is_subtree_complete(boss_id) is False
     assert await query_service._is_subtree_complete(worker1_id) is False
+
+
+@pytest.mark.asyncio
+async def test_workers_blocked_while_decomposition_in_progress(query_service, mock_event_store):
+    """Test that workers don't execute while PENDING/MANAGER agents are still analyzing.
+
+    This ensures that ALL decomposition completes before ANY worker starts.
+    Tree structure:
+        BOSS (waiting)
+        ├── Worker1 (ready to execute)
+        └── Pending2 (still analyzing - should block Worker1)
+    """
+    boss_id = uuid4()
+    worker1_id = uuid4()
+    pending2_id = uuid4()
+
+    def get_events(agent_id):
+        if agent_id == boss_id:
+            # BOSS has spawned children and is waiting
+            events = _create_boss_events(boss_id, [worker1_id, pending2_id])
+            # Add StatusChanged to WAITING
+            from core.domain.events import StatusChanged
+            events.append(StatusChanged(
+                aggregate_id=boss_id,
+                sequence_number=10,
+                old_status="analyzing",
+                new_status="waiting",
+                reason="Decomposed task",
+            ))
+            return events
+        elif agent_id == worker1_id:
+            # Worker1 is ready to execute (has been evaluated)
+            return _create_worker_events(worker1_id, boss_id, sibling_index=0, completed=False)
+        elif agent_id == pending2_id:
+            # Pending2 is still in ANALYZING status (not yet evaluated)
+            return [
+                AgentCreated(
+                    aggregate_id=pending2_id,
+                    sequence_number=1,
+                    role=AgentRole.PENDING.value,
+                    parent_id=boss_id,
+                    config=_test_config(),
+                    tree_sequence_id=1,
+                ),
+                TaskAssigned(
+                    aggregate_id=pending2_id,
+                    sequence_number=2,
+                    task_description="Pending task 2",
+                ),
+                # No ComplexityEvaluated - still in ANALYZING status
+            ]
+        return []
+
+    mock_event_store.get_events.side_effect = get_events
+
+    active_ids = await query_service.get_active_agent_ids(boss_id, sequential_workers=True)
+
+    # Worker1 should NOT be returned because Pending2 is still analyzing
+    assert worker1_id not in active_ids
+    # Pending2 should be returned (it's a non-worker that needs to be processed)
+    assert pending2_id in active_ids
+
+
+@pytest.mark.asyncio
+async def test_workers_unblocked_after_decomposition_complete(query_service, mock_event_store):
+    """Test that workers execute after all decomposition is complete.
+
+    Tree structure:
+        BOSS (waiting)
+        ├── Worker1 (ready)
+        └── Worker2 (ready) - was Pending, now evaluated as Worker
+
+    Both are workers now, so decomposition is complete. Worker1 (leftmost) should execute.
+    """
+    boss_id = uuid4()
+    worker1_id = uuid4()
+    worker2_id = uuid4()
+
+    def get_events(agent_id):
+        if agent_id == boss_id:
+            events = _create_boss_events(boss_id, [worker1_id, worker2_id])
+            from core.domain.events import StatusChanged
+            events.append(StatusChanged(
+                aggregate_id=boss_id,
+                sequence_number=10,
+                old_status="analyzing",
+                new_status="waiting",
+                reason="Decomposed task",
+            ))
+            return events
+        elif agent_id == worker1_id:
+            return _create_worker_events(worker1_id, boss_id, sibling_index=0, completed=False)
+        elif agent_id == worker2_id:
+            return _create_worker_events(worker2_id, boss_id, sibling_index=1, completed=False)
+        return []
+
+    mock_event_store.get_events.side_effect = get_events
+
+    active_ids = await query_service.get_active_agent_ids(boss_id, sequential_workers=True)
+
+    # Decomposition complete, Worker1 (leftmost) should be returned
+    assert worker1_id in active_ids
+    # Worker2 should NOT be returned (must wait for Worker1)
+    assert worker2_id not in active_ids

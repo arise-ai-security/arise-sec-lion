@@ -318,6 +318,19 @@ class QueryService:
         # Non-workers can always execute (they don't modify workspace)
         result = list(non_workers)
 
+        # Check if any non-worker is still in ANALYZING status (decomposition in progress)
+        # Workers should NOT execute until ALL decomposition is complete
+        decomposition_in_progress = False
+        for agent_id in non_workers:
+            agent = self._agent_cache.get(agent_id)
+            if agent and agent.status.value == "analyzing":
+                decomposition_in_progress = True
+                break
+
+        # If decomposition is still happening, don't return any workers yet
+        if decomposition_in_progress:
+            return result
+
         # Sort workers by hierarchical path (lexicographic = left-to-right)
         workers.sort(key=lambda x: x[1])
 
