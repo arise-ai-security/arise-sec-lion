@@ -40,34 +40,13 @@ template_vars = composer.build()
 | `ChildOutcomes` | `child_outcomes` | Parent sees children's results |
 | `SharedDecisions` | `shared_decisions` | Global execution decisions |
 | `SharedArtifacts` | `shared_artifacts` | Shared outputs |
-| `GlobalConfig` | `global_config` | JSON configuration |
-| `CustomContext` | `custom_{label}` | Arbitrary user data |
+| `CustomContext` | `custom_{label}` | Arbitrary user data (including JSON config) |
 
 ---
 
 ## Common Scenarios
 
-### 1. Global Configuration
-
-Pass configuration to all agents:
-
-```python
-from core.domain.values.context import GlobalConfig
-
-composer.add(GlobalConfig(data={
-    "target": {"host": "192.168.1.100", "ports": [80, 443]},
-    "timeout_seconds": 300,
-}))
-```
-
-Template:
-```jinja2
-{% if global_config %}
-Target: {{ global_config.target.host }}
-{% endif %}
-```
-
-### 2. Parent → Child Context
+### 1. Parent → Child Context
 
 Child receives parent's summary:
 
@@ -82,7 +61,7 @@ composer.add(ParentSummary(
 ))
 ```
 
-### 3. Sibling Coordination
+### 2. Sibling Coordination
 
 Workers see each other's status:
 
@@ -106,7 +85,7 @@ composer.add(SiblingResults(siblings=(
 )))
 ```
 
-### 4. Child → Parent Results
+### 3. Child → Parent Results
 
 Parent aggregates children's outcomes:
 
@@ -124,7 +103,7 @@ composer.add(ChildOutcomes(outcomes=(
 )))
 ```
 
-### 5. Custom Context
+### 4. Custom Context
 
 Add domain-specific data:
 
@@ -181,7 +160,7 @@ from core.application.services.context_factories import (
     parent_summary_from_agent,
     sibling_results_from_agents,
     shared_decisions_from_context,
-    child_outcomes_from_events,
+    child_outcomes_from_agent,
 )
 
 # Build from agent
@@ -215,11 +194,6 @@ Completed siblings: {{ sibling_results.completed_count }}/{{ sibling_results.tot
 {% endfor %}
 {% endif %}
 
-{# Global config #}
-{% if global_config %}
-Target: {{ global_config.target.host }}
-{% endif %}
-
 {# Custom data #}
 {% if custom_vulnerability_info %}
 CVE: {{ custom_vulnerability_info.cve_id }}
@@ -235,3 +209,91 @@ CVE: {{ custom_vulnerability_info.cve_id }}
 3. **Pipeline steps**: Add context via pipeline steps for consistent integration
 4. **Template guards**: Always check `{% if context_var %}` before accessing
 5. **Label conventions**: Use snake_case labels for `CustomContext` and `AncestorData`
+
+---
+
+## Example Branches
+
+> **Note:** These branches contain **reference implementations** showing how to extend the context-passing system. The code in these branches is NOT merged into `develop` - they serve as templates for implementing similar features.
+
+The following `example/**` branches demonstrate different context-passing patterns. Each branch has an `EXAMPLE_*.md` file in the root with detailed explanations.
+
+| Branch | Description | Use Case |
+|--------|-------------|----------|
+| `example/global-date` | Global date context for all nodes | System-wide `current_date` in every prompt |
+| `example/json-global-context` | JSON data in global context | Structured config/target data for all agents |
+| `example/bidirectional-data` | Parent↔Child↔Sibling data | Multi-directional context (guidance, feedback, coordination) |
+| `example/worker-summary-broadcast` | Worker summaries to parent AND boss | Broadcast results to multiple ancestors |
+| `example/worker-summary-depth` | Worker summaries to depth-1 ancestor | Target specific hierarchy depth (coordinator pattern) |
+
+### Quick Reference (Example Code)
+
+> These snippets show what's implemented in each example branch. To use them, checkout the branch or cherry-pick the relevant commits.
+
+**Global Date** (`example/global-date`):
+```python
+# Injects current_date into all prompts
+global_config = GlobalConfigProvider()
+global_config.set_current_date()  # → <GLOBAL_CONTEXT><current_date>2025-12-31</current_date></GLOBAL_CONTEXT>
+```
+
+**JSON Global Context** (`example/json-global-context`):
+```python
+# Add structured JSON data to all agents
+composer.add(JsonGlobalData(
+    label="target_system",
+    data={"host": "192.168.1.100", "ports": [80, 443]},
+))
+# → <JSON_DATA label="target_system"><host>192.168.1.100</host>...</JSON_DATA>
+```
+
+**Bidirectional Data** (`example/bidirectional-data`):
+```python
+# Parent → Child: Strategic guidance
+composer.add(ParentGuidance(strategy="defensive", priority_targets=("auth",)))
+
+# Child → Parent: Structured feedback
+composer.add(ChildFeedbackCollection(feedbacks=(ChildFeedback(success_level="partial"),)))
+
+# Sibling ↔ Sibling: Coordination
+composer.add(SiblingCoordinationCollection(coordinations=(SiblingCoordination(claimed_targets=("port_80",)),)))
+```
+
+**Worker Summary Broadcast** (`example/worker-summary-broadcast`):
+```python
+# Worker broadcasts to both parent AND boss
+broadcast_summary_to_parent_and_boss(
+    worker_id=agent.agent_id,
+    worker_task=agent.task_description,
+    summary_text=agent.result,
+    context=shared_context,
+)
+# Parent retrieves: worker_summaries_for_parent(shared_ctx)
+# Boss retrieves: worker_summaries_for_boss(shared_ctx)
+```
+
+**Worker Summary to Depth** (`example/worker-summary-depth`):
+```python
+# Worker broadcasts to depth-1 ancestor (coordinator pattern)
+broadcast_summary_to_depth1(
+    worker_id=agent.agent_id,
+    worker_task=agent.task_description,
+    summary_text=agent.result,
+    source_depth=current_depth,
+    context=shared_context,
+)
+# Depth-1 ancestor retrieves: depth1_summaries(shared_ctx)
+```
+
+### Viewing Example Branches
+
+```bash
+# List all example branches
+git branch -a | grep example
+
+# View example documentation
+git show origin/example/global-date:EXAMPLE_GLOBAL_DATE.md
+
+# Checkout to explore implementation
+git checkout example/global-date
+```
