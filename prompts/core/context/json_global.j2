@@ -1,0 +1,47 @@
+{# JSON Global Context Template #}
+{# Renders JSON-formatted global data available to all agents #}
+
+{% if json_global_collection %}
+<JSON_GLOBAL_DATA count="{{ json_global_collection.total_count }}">
+{% for item in json_global_collection.items %}
+<JSON_DATA label="{{ item.label }}"{% if item.schema_hint %} hint="{{ item.schema_hint }}"{% endif %}>
+{% for key, value in item.data.items() %}
+{% if value is mapping %}
+<{{ key }}>
+{% for inner_key, inner_value in value.items() %}
+  <{{ inner_key }}>{{ inner_value | tojson }}</{{ inner_key }}>
+{% endfor %}
+</{{ key }}>
+{% elif value is iterable and value is not string %}
+<{{ key }}>{{ value | tojson }}</{{ key }}>
+{% elif value is none %}
+<{{ key }}>null</{{ key }}>
+{% else %}
+<{{ key }}>{{ value }}</{{ key }}>
+{% endif %}
+{% endfor %}
+</JSON_DATA>
+{% endfor %}
+</JSON_GLOBAL_DATA>
+{% endif %}
+
+{# Individual JSON global data items (when added directly, not via collection) #}
+{% for key, value in _context.items() if key.startswith('json_global_') and key != 'json_global_collection' %}
+<JSON_DATA label="{{ value.label }}"{% if value.schema_hint %} hint="{{ value.schema_hint }}"{% endif %}>
+{% for data_key, data_value in value.data.items() %}
+{% if data_value is mapping %}
+<{{ data_key }}>
+{% for inner_key, inner_value in data_value.items() %}
+  <{{ inner_key }}>{{ inner_value | tojson }}</{{ inner_key }}>
+{% endfor %}
+</{{ data_key }}>
+{% elif data_value is iterable and data_value is not string %}
+<{{ data_key }}>{{ data_value | tojson }}</{{ data_key }}>
+{% elif data_value is none %}
+<{{ data_key }}>null</{{ data_key }}>
+{% else %}
+<{{ data_key }}>{{ data_value }}</{{ data_key }}>
+{% endif %}
+{% endfor %}
+</JSON_DATA>
+{% endfor %}

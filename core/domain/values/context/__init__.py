@@ -36,6 +36,8 @@ from core.domain.values.context.data_types import (
     ChildOutcomes,
     CustomContext,
     DecisionEntry,
+    JsonGlobalData,
+    JsonGlobalDataCollection,
     ParentSummary,
     SharedArtifacts,
     SharedDecisions,
@@ -71,6 +73,9 @@ __all__ = [
     "ChildOutcomeEntry",
     "ChildOutcomes",
     "CustomContext",
+    # JSON Global Context
+    "JsonGlobalData",
+    "JsonGlobalDataCollection",
     # Parent → Child (legacy, still used for structural data)
     "AncestorSummary",
     "SpawnPayload",

@@ -128,6 +128,13 @@ class TemplateChain:
         if has_dynamic:
             self.render_optional("core/context/dynamic.j2", _context=ctx_dict)
 
+        # Render JSON global context
+        has_json_global = context.has("json_global_collection") or context.has_any(
+            *(k for k in context.keys() if k.startswith("json_global_"))
+        )
+        if has_json_global:
+            self.render_optional("core/context/json_global.j2", _context=ctx_dict, **ctx_dict)
+
         return self
 
     def build(self, separator: str = "\n\n") -> str:

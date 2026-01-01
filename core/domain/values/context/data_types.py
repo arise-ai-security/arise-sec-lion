@@ -373,5 +373,97 @@ class CustomContext(BaseModel):
         return self.data
 
 
+# =============================================================================
+# JSON Global Context (System-Wide JSON Data)
+# =============================================================================
 
 
+class JsonGlobalData(BaseModel):
+    """JSON-formatted global data available to all agents.
+
+    Use for structured configuration, target information, or any JSON
+    data that every node in the hierarchy should have access to.
+
+    The data is rendered as structured XML in prompts, with support
+    for nested objects, arrays, and primitive types.
+
+    HOW TO ADD:
+    1. Create JsonGlobalData with your JSON structure
+    2. Add to ContextComposer in a pipeline step
+    3. Template renders automatically via json_global.j2
+
+    Example:
+        # Define structured JSON data
+        json_data = JsonGlobalData(
+            label="target_system",
+            data={
+                "host": "192.168.1.100",
+                "ports": [80, 443, 8080],
+                "services": {
+                    "web": {"port": 80, "technology": "nginx"},
+                    "api": {"port": 8080, "version": "v2"},
+                },
+                "credentials": None,  # Unknown
+            },
+            schema_hint="Target system configuration for penetration testing",
+        )
+        context.add(json_data)
+
+        # In template (rendered automatically):
+        # <JSON_DATA label="target_system" hint="Target system...">
+        # <host>192.168.1.100</host>
+        # <ports>[80, 443, 8080]</ports>
+        # <services>
+        #   <web>{"port": 80, "technology": "nginx"}</web>
+        #   <api>{"port": 8080, "version": "v2"}</api>
+        # </services>
+        # </JSON_DATA>
+    """
+
+    model_config = {"frozen": True}
+
+    label: str  # Identifier for this data (e.g., "target_system", "scan_config")
+    data: dict[str, Any]  # The JSON data
+    schema_hint: str = ""  # Optional description of the data structure
+
+    @property
+    def template_key(self) -> str:
+        return f"json_global_{self.label}"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "schema_hint": self.schema_hint,
+            "data": self.data,
+        }
+
+
+class JsonGlobalDataCollection(BaseModel):
+    """Collection of multiple JSON global data blocks.
+
+    Use when you need to pass multiple distinct JSON data structures
+    to all agents.
+
+    Example:
+        context.add(JsonGlobalDataCollection(
+            items=(
+                JsonGlobalData(label="target", data={...}),
+                JsonGlobalData(label="config", data={...}),
+            ),
+        ))
+    """
+
+    model_config = {"frozen": True}
+
+    items: tuple[JsonGlobalData, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "json_global_collection"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "items": [item.to_template_dict() for item in self.items],
+            "total_count": len(self.items),
+            "labels": [item.label for item in self.items],
+        }
