@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from core.query.ports.sink_port import SinkPort
+from core.query.projections.registry import register_sink
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
@@ -441,6 +442,7 @@ def cost_events_hierarchy() -> list[DomainEvent]:
     ]
 
 
+@register_sink("string")
 class FakeStringSink(SinkPort):
     """Simple string sink for testing (no infrastructure dependency)."""
 

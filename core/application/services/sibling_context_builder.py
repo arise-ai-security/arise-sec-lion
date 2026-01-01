@@ -40,7 +40,7 @@ class SiblingViewBuilder:
         return SiblingView(
             current_agent_id=str(agent_id),
             parent_task=parent_task,
-            sibling_statuses=tuple(sibling_statuses),
+            sibling_tasks=tuple(sibling_statuses),
             shared_decisions=tuple(shared_decisions),
         )
 
