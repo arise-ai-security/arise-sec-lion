@@ -61,7 +61,30 @@ class OpenHandsAdapter(WorkerAdapterBase):
         """
         super().__init__(timeout_seconds=timeout_seconds)
         self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
-        self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or self._detect_api_key()
+
+    def _detect_api_key(self) -> str | None:
+        """Detect appropriate API key based on model name.
+
+        Returns:
+            API key from environment, prioritizing provider-specific keys.
+        """
+        # Check for explicit LLM_API_KEY first
+        if api_key := os.getenv("LLM_API_KEY"):
+            return api_key
+
+        model_lower = self.model.lower()
+
+        # Anthropic/Claude models
+        if "claude" in model_lower or "anthropic" in model_lower:
+            return os.getenv("ANTHROPIC_API_KEY")
+
+        # Google models
+        if "gemini" in model_lower or "google" in model_lower:
+            return os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+        # Default to OpenAI
+        return os.getenv("OPENAI_API_KEY")
 
     def _get_tool_name(self) -> str:
         """Return tool identifier for cost tracking."""

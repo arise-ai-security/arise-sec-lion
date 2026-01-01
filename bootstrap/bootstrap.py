@@ -56,6 +56,17 @@ def _create_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to SEC-bench CVE instance JSON file for benchmark runs",
     )
+    p.add_argument(
+        "--worker-model",
+        type=str,
+        help="Override worker LLM model (e.g., gpt-4o, claude-sonnet-4-20250514)",
+    )
+    p.add_argument(
+        "--worker-tool",
+        type=str,
+        choices=["claude_code", "openhands", "google_adk"],
+        help="Override worker execution tool (claude_code, openhands, google_adk)",
+    )
 
     for name, help_text, extra_args in [
         ("events", "View events for a task run", [("--errors-only", {"action": "store_true"})]),
@@ -90,9 +101,39 @@ async def _run_task(args: argparse.Namespace) -> None:
     from presentation.formatters import ProgressDisplayFormatter
 
     settings = Settings.from_yaml(args.config) if args.config else Settings.load()
+
+    # Apply CLI overrides for worker configuration
+    settings = _apply_worker_overrides(settings, args)
+
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
     cve_file = getattr(args, "cve_file", None)
     await _create_cli(settings, callback).run_task(args.task, cve_file=cve_file)
+
+
+def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
+    """Apply CLI overrides for worker model and tool.
+
+    Args:
+        settings: Base settings from config file.
+        args: Parsed CLI arguments.
+
+    Returns:
+        Settings with CLI overrides applied (creates new instance if changes needed).
+    """
+    worker_model = getattr(args, "worker_model", None)
+    worker_tool = getattr(args, "worker_tool", None)
+
+    if not worker_model and not worker_tool:
+        return settings  # No overrides
+
+    # Build updated worker config
+    new_worker = settings.worker.model_copy(update={
+        **({"model": worker_model} if worker_model else {}),
+        **({"tool": worker_tool} if worker_tool else {}),
+    })
+
+    # Return new settings with updated worker config
+    return settings.model_copy(update={"worker": new_worker})
 
 
 async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
