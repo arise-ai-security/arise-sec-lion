@@ -29,3 +29,7 @@ WHERE event_type = 'AgentCreated' AND payload->>'role' = 'boss';
 CREATE INDEX IF NOT EXISTS idx_events_parent_id
 ON events ((payload->>'parent_id'))
 WHERE event_type = 'AgentCreated' AND payload->>'parent_id' IS NOT NULL;
+
+-- Composite index for agent summary queries (task descriptions and status lookups)
+CREATE INDEX IF NOT EXISTS idx_events_aggregate_type_time
+ON events (aggregate_id, event_type, occurred_at DESC);

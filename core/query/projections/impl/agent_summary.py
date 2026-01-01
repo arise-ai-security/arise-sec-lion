@@ -3,7 +3,6 @@
 Builds AgentSummary read models from events with efficient child loading.
 """
 
-import asyncio
 from uuid import UUID
 
 from core.domain.events.events import (
@@ -56,10 +55,11 @@ class AgentSummaryService:
         # Extract data from events
         summary_data = self._extract_event_data(events)
 
-        # Build subtasks with child statuses (parallel batch load)
+        # Build subtasks with child statuses (single batch query)
         subtasks = await self._build_subtasks(
             summary_data["subtask_descriptions"],
             summary_data["child_ids"],
+            agent_id,  # Pass parent_id for batch query
         )
 
         # Extract config details
@@ -121,14 +121,16 @@ class AgentSummaryService:
         self,
         descriptions: list[str],
         child_ids: list[UUID],
+        parent_id: UUID,
     ) -> tuple[SubtaskSummary, ...]:
         """Build subtask summaries with child statuses.
 
-        Uses parallel batch loading to avoid N+1 queries.
+        Uses single batch query to avoid N+1 queries.
 
         Args:
             descriptions: List of subtask descriptions.
             child_ids: List of child agent UUIDs (in subtask order).
+            parent_id: Parent agent UUID for batch query.
 
         Returns:
             Tuple of SubtaskSummary with child info populated.
@@ -136,8 +138,8 @@ class AgentSummaryService:
         if not descriptions:
             return ()
 
-        # Parallel fetch of child statuses
-        child_statuses = await self._fetch_child_statuses(child_ids)
+        # Single batch query for all child statuses
+        child_statuses = await self._fetch_child_statuses(child_ids, parent_id)
 
         # Build subtasks with matched child info
         subtasks = []
@@ -156,12 +158,16 @@ class AgentSummaryService:
         return tuple(subtasks)
 
     async def _fetch_child_statuses(
-        self, child_ids: list[UUID]
+        self, child_ids: list[UUID], parent_id: UUID
     ) -> dict[UUID, str]:
-        """Fetch statuses for multiple children in parallel.
+        """Fetch statuses for multiple children using single batch query.
+
+        Uses get_children_events_grouped() for single round-trip instead of
+        N individual queries for N children.
 
         Args:
             child_ids: List of child agent UUIDs.
+            parent_id: Parent agent UUID for batch query.
 
         Returns:
             Dict mapping child_id to status string.
@@ -169,11 +175,15 @@ class AgentSummaryService:
         if not child_ids:
             return {}
 
-        # Parallel fetch all children
-        async def get_status(child_id: UUID) -> tuple[UUID, str | None]:
-            events = await self._event_store.get_events(child_id)
+        # Single batch query fetches all children's events at once
+        children_events = await self._event_store.get_children_events_grouped(parent_id)
+
+        result: dict[UUID, str] = {}
+        for child_id in child_ids:
+            events = children_events.get(child_id, [])
             if not events:
-                return child_id, None
+                continue
+
             # Extract status from events without full aggregate reconstruction
             status = "analyzing"
             for event in events:
@@ -185,10 +195,9 @@ class AgentSummaryService:
                     status = "completed"
                 elif isinstance(event, WorkFailed):
                     status = "failed"
-            return child_id, status
+            result[child_id] = status
 
-        results = await asyncio.gather(*[get_status(cid) for cid in child_ids])
-        return {cid: status for cid, status in results if status is not None}
+        return result
 
     def _extract_config(self, agent: AgentSession) -> tuple[str | None, dict]:
         """Extract configuration details from agent.

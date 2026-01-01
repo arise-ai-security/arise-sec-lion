@@ -85,6 +85,13 @@ class PaginatedAgentListSchema(BaseModel):
     pagination: PaginationMetaSchema = Field(..., description="Pagination metadata")
 
 
+class PaginatedEventsSchema(BaseModel):
+    """Schema for paginated events list response."""
+
+    items: list["EventSchema"] = Field(..., description="List of events")
+    pagination: PaginationMetaSchema = Field(..., description="Pagination metadata")
+
+
 class PromptSchema(BaseModel):
     """Schema for a prompt template."""
 

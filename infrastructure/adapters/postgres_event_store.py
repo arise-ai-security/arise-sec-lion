@@ -552,35 +552,52 @@ class PostgresEventStore(EventStorePort):
 
         try:
             async with self.pool.acquire() as conn:
+                # Use CTEs with batch lookups instead of correlated subqueries
+                # This reduces ~201 queries (1 + 100 + 100) to a single query
                 query = """
+                    WITH boss_agents AS (
+                        SELECT
+                            aggregate_id as agent_id,
+                            payload->>'role' as role,
+                            occurred_at as created_at
+                        FROM events
+                        WHERE event_type = 'AgentCreated'
+                          AND payload->>'role' = 'boss'
+                        ORDER BY occurred_at DESC
+                        LIMIT $1 OFFSET $2
+                    ),
+                    task_descriptions AS (
+                        SELECT DISTINCT ON (e.aggregate_id)
+                            e.aggregate_id,
+                            e.payload->>'task_description' as task_description
+                        FROM events e
+                        INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
+                        WHERE e.event_type = 'TaskAssigned'
+                        ORDER BY e.aggregate_id
+                    ),
+                    latest_status AS (
+                        SELECT DISTINCT ON (e.aggregate_id)
+                            e.aggregate_id,
+                            CASE e.event_type
+                                WHEN 'WorkCompleted' THEN 'completed'
+                                WHEN 'WorkFailed' THEN 'failed'
+                                ELSE e.payload->>'new_status'
+                            END as status
+                        FROM events e
+                        INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
+                        WHERE e.event_type IN ('StatusChanged', 'WorkCompleted', 'WorkFailed')
+                        ORDER BY e.aggregate_id, e.occurred_at DESC
+                    )
                     SELECT
-                        e.aggregate_id as agent_id,
-                        e.payload->>'role' as role,
-                        e.occurred_at as created_at,
-                        (SELECT payload->>'task_description'
-                         FROM events e2
-                         WHERE e2.aggregate_id = e.aggregate_id
-                           AND e2.event_type = 'TaskAssigned'
-                         LIMIT 1) as task_description,
-                        COALESCE(
-                            (SELECT
-                                CASE event_type
-                                    WHEN 'WorkCompleted' THEN 'completed'
-                                    WHEN 'WorkFailed' THEN 'failed'
-                                    ELSE payload->>'new_status'
-                                END
-                             FROM events e3
-                             WHERE e3.aggregate_id = e.aggregate_id
-                               AND e3.event_type IN ('StatusChanged', 'WorkCompleted', 'WorkFailed')
-                             ORDER BY e3.occurred_at DESC
-                             LIMIT 1),
-                            'analyzing'
-                        ) as status
-                    FROM events e
-                    WHERE e.event_type = 'AgentCreated'
-                      AND e.payload->>'role' = 'boss'
-                    ORDER BY e.occurred_at DESC
-                    LIMIT $1 OFFSET $2
+                        b.agent_id,
+                        b.role,
+                        b.created_at,
+                        t.task_description,
+                        COALESCE(s.status, 'analyzing') as status
+                    FROM boss_agents b
+                    LEFT JOIN task_descriptions t ON t.aggregate_id = b.agent_id
+                    LEFT JOIN latest_status s ON s.aggregate_id = b.agent_id
+                    ORDER BY b.created_at DESC
                 """
                 rows = await conn.fetch(query, limit, offset)
 
