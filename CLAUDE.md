@@ -102,7 +102,6 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
 | [`context-passing-mechanism.md`](agent-docs/context-passing-mechanism.md) | SharedContext, artifacts, decisions, budget |
 | [`context-passing-guide.md`](agent-docs/context-passing-guide.md) | ContextComposer API, practical scenarios, **example branches** |
-| [`user-manual.md`](agent-docs/user-manual.md) | Docker commands reference |
 
 ## Example Branches
 

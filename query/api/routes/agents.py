@@ -45,15 +45,34 @@ def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
     )
 
 
-def _agent_node_to_schema(node: AgentNode) -> AgentNodeSchema:
-    """Convert AgentNode to API schema recursively."""
+def _agent_node_to_schema(
+    node: AgentNode,
+    max_depth: int | None = None,
+    current_depth: int = 0,
+) -> AgentNodeSchema:
+    """Convert AgentNode to API schema with optional depth limiting.
+
+    Args:
+        node: The agent node to convert.
+        max_depth: Maximum depth to serialize (None = unlimited).
+        current_depth: Current depth in recursion (internal use).
+
+    Returns:
+        AgentNodeSchema with children limited by max_depth.
+    """
+    # Check if we should include children
+    include_children = max_depth is None or current_depth < max_depth
+
     return AgentNodeSchema(
         id=str(node.id),
         role=node.role,
         status=node.status,
         task_description=node.task_description,
         parent_id=str(node.parent_id) if node.parent_id else None,
-        children=[_agent_node_to_schema(child) for child in node.children],
+        children=[
+            _agent_node_to_schema(child, max_depth, current_depth + 1)
+            for child in node.children
+        ] if include_children else [],
     )
 
 
@@ -169,14 +188,22 @@ async def get_agent(agent_id: UUID, event_store: EventStoreDep) -> AgentListItem
 
 
 @router.get("/{agent_id}/hierarchy", response_model=AgentHierarchySchema)
-async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> AgentHierarchySchema:
-    """Get the complete hierarchy tree for an agent.
+async def get_agent_hierarchy(
+    agent_id: UUID,
+    event_store: EventStoreDep,
+    max_depth: Annotated[
+        int | None,
+        Query(ge=0, description="Maximum depth to include in response (None = unlimited)"),
+    ] = None,
+) -> AgentHierarchySchema:
+    """Get the hierarchy tree for an agent with optional depth limiting.
 
     Args:
         agent_id: Root agent UUID (typically BOSS).
+        max_depth: Maximum depth to serialize (0 = root only, None = full tree).
 
     Returns:
-        Complete hierarchy tree with all descendants.
+        Hierarchy tree with descendants limited by max_depth.
 
     Uses optimized recursive CTE query to fetch only hierarchy events.
     """
@@ -199,7 +226,7 @@ async def get_agent_hierarchy(agent_id: UUID, event_store: EventStoreDep) -> Age
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     return AgentHierarchySchema(
-        root=_agent_node_to_schema(hierarchy.root),
+        root=_agent_node_to_schema(hierarchy.root, max_depth=max_depth),
         total_agents=hierarchy.total_agents,
         depth=hierarchy.depth,
     )

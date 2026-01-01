@@ -7,9 +7,10 @@ SSE endpoints use incremental fetching to reduce database load.
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
 
@@ -33,6 +34,7 @@ from core.domain.events.events import (
 from core.ports.event_store_port import EventStoreReadPort
 from core.query.projections.hierarchy_collector import HierarchyCollector
 from core.query.projections.impl import SummaryProjection
+from core.query.projections.impl.summary import IncrementalSummaryProjection
 from query.api.dependencies import EventStoreDep
 from query.api.routes.agents import _projection_summary_to_schema
 from query.api.schemas import (
@@ -40,6 +42,8 @@ from query.api.schemas import (
     AgentPromptsSchema,
     CategorizedEventsSchema,
     EventSchema,
+    PaginatedEventsSchema,
+    PaginationMetaSchema,
 )
 
 
@@ -91,11 +95,7 @@ def categorize_event(event: DomainEvent) -> str:
 class IncrementalHierarchyTracker:
     """Tracks hierarchy state for incremental event fetching.
 
-    Instead of fetching all events on every poll, this tracks:
-    - Known agents in the hierarchy
-    - Last seen sequence number per agent
-    - Pending child IDs to explore (from ChildSpawned events)
-
+    Uses optimized batch fetching on first load, then incremental updates.
     This reduces database load from O(total_events) to O(new_events) per poll.
     """
 
@@ -106,53 +106,54 @@ class IncrementalHierarchyTracker:
         self._last_sequence: dict[UUID, int] = {}
         # Agents we know about
         self._known_agents: set[UUID] = set()
-        # Child IDs discovered but not yet fetched
-        self._pending_children: set[UUID] = set()
         # All events accumulated (for summary projection)
         self._all_events: list[DomainEvent] = []
+        # Whether initial load has been done
+        self._initialized = False
 
     async def fetch_new_events(self) -> list[DomainEvent]:
         """Fetch only new events since last poll.
 
-        Returns events in chronological order.
+        First call uses optimized single-query approach for entire hierarchy.
+        Subsequent calls fetch incrementally from known agents.
         """
         new_events: list[DomainEvent] = []
 
-        # Initialize with root on first call
-        if not self._known_agents:
-            self._known_agents.add(self._root_id)
+        # First call: use optimized single-query approach
+        if not self._initialized:
+            self._initialized = True
+            grouped = await self._event_store.get_hierarchy_events_grouped(self._root_id)
 
-        # Process pending children (newly discovered agents)
-        agents_to_check = list(self._known_agents) + list(self._pending_children)
-        self._known_agents.update(self._pending_children)
-        self._pending_children.clear()
+            for agent_id, events in grouped.items():
+                self._known_agents.add(agent_id)
+                if events:
+                    self._last_sequence[agent_id] = events[-1].sequence_number
+                    new_events.extend(events)
 
-        # Fetch new events from all known agents
-        for agent_id in agents_to_check:
+            self._all_events.extend(new_events)
+            return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
+
+        # Subsequent calls: incremental fetch from known agents
+        for agent_id in list(self._known_agents):
             last_seq = self._last_sequence.get(agent_id)
 
-            # Fetch only events after last seen sequence
             events = await self._event_store.get_events(
                 agent_id,
                 after_sequence=last_seq,
             )
 
             if events:
-                # Update last sequence for this agent
                 self._last_sequence[agent_id] = events[-1].sequence_number
                 new_events.extend(events)
 
-                # Check for new children to explore
+                # Discover new children
                 for event in events:
                     if isinstance(event, ChildSpawned):
                         child_id = event.child_id
                         if child_id not in self._known_agents:
-                            self._pending_children.add(child_id)
+                            self._known_agents.add(child_id)
 
-        # Accumulate for summary projection
         self._all_events.extend(new_events)
-
-        # Sort new events by timestamp
         return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
 
     def get_all_events(self) -> list[DomainEvent]:
@@ -161,7 +162,7 @@ class IncrementalHierarchyTracker:
 
     def has_pending_children(self) -> bool:
         """Check if there are pending children to fetch."""
-        return len(self._pending_children) > 0
+        return False  # New children are added to known_agents directly
 
 
 @router.get("/{agent_id}", response_model=CategorizedEventsSchema)
@@ -196,19 +197,61 @@ async def get_agent_events(agent_id: UUID, event_store: EventStoreDep) -> Catego
     return result
 
 
-@router.get("/{agent_id}/all", response_model=list[EventSchema])
-async def get_all_agent_events(agent_id: UUID, event_store: EventStoreDep) -> list[EventSchema]:
-    """Get all events for an agent in chronological order."""
+# Pagination constants
+DEFAULT_EVENT_LIMIT = 100
+MAX_EVENT_LIMIT = 1000
+
+
+@router.get("/{agent_id}/all", response_model=PaginatedEventsSchema)
+async def get_all_agent_events(
+    agent_id: UUID,
+    event_store: EventStoreDep,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=MAX_EVENT_LIMIT, description="Maximum number of events to return"),
+    ] = DEFAULT_EVENT_LIMIT,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of events to skip"),
+    ] = 0,
+) -> PaginatedEventsSchema:
+    """Get all events for an agent in chronological order with pagination."""
     events = await event_store.get_events(agent_id)
     if not events:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    return [event_to_schema(e) for e in events]
+    total = len(events)
+    # Apply pagination
+    paginated_events = events[offset : offset + limit + 1]
+    has_more = len(paginated_events) > limit
+    if has_more:
+        paginated_events = paginated_events[:limit]
+
+    return PaginatedEventsSchema(
+        items=[event_to_schema(e) for e in paginated_events],
+        pagination=PaginationMetaSchema(
+            limit=limit,
+            offset=offset,
+            total=total,
+            has_more=has_more,
+        ),
+    )
 
 
-@router.get("/hierarchy/{root_id}/all", response_model=list[EventSchema])
-async def get_hierarchy_events(root_id: UUID, event_store: EventStoreDep) -> list[EventSchema]:
-    """Get all events for entire hierarchy (root + all descendants).
+@router.get("/hierarchy/{root_id}/all", response_model=PaginatedEventsSchema)
+async def get_hierarchy_events(
+    root_id: UUID,
+    event_store: EventStoreDep,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=MAX_EVENT_LIMIT, description="Maximum number of events to return"),
+    ] = DEFAULT_EVENT_LIMIT,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of events to skip"),
+    ] = 0,
+) -> PaginatedEventsSchema:
+    """Get all events for entire hierarchy (root + all descendants) with pagination.
 
     Events are returned in chronological order.
     """
@@ -218,7 +261,22 @@ async def get_hierarchy_events(root_id: UUID, event_store: EventStoreDep) -> lis
     if not all_events:
         raise HTTPException(status_code=404, detail=f"Agent {root_id} not found")
 
-    return [event_to_schema(e) for e in all_events]
+    total = len(all_events)
+    # Apply pagination
+    paginated_events = all_events[offset : offset + limit + 1]
+    has_more = len(paginated_events) > limit
+    if has_more:
+        paginated_events = paginated_events[:limit]
+
+    return PaginatedEventsSchema(
+        items=[event_to_schema(e) for e in paginated_events],
+        pagination=PaginationMetaSchema(
+            limit=limit,
+            offset=offset,
+            total=total,
+            has_more=has_more,
+        ),
+    )
 
 
 @router.get("/sse/{root_id}")
@@ -296,8 +354,8 @@ async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceR
     async def summary_generator() -> AsyncGenerator[dict[str, str], None]:
         """Generate SSE events with summary updates."""
         tracker = IncrementalHierarchyTracker(event_store, root_id)
-        projection = SummaryProjection()
-        last_event_count = 0
+        # Use incremental projection: O(new_events) instead of O(all_events)
+        projection = IncrementalSummaryProjection()
 
         while True:
             try:
@@ -306,16 +364,13 @@ async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceR
 
                 # Keep fetching if new children were discovered
                 while tracker.has_pending_children():
-                    await tracker.fetch_new_events()
+                    child_events = await tracker.fetch_new_events()
+                    new_events.extend(child_events)
 
-                # Get all accumulated events
-                all_events = tracker.get_all_events()
-                current_count = len(all_events)
-
-                # Only emit update if events changed
-                if current_count != last_event_count:
-                    last_event_count = current_count
-                    summary = projection.project(all_events)
+                # Only emit update if there are new events
+                if new_events:
+                    # Incremental update: only process new events
+                    summary = projection.update(new_events)
                     schema = _projection_summary_to_schema(summary)
                     yield {
                         "event": "summary",

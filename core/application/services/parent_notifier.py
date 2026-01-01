@@ -58,7 +58,7 @@ class ParentNotificationService:
         self._progress_callback = callback
 
     async def notify_if_complete(self, child: AgentSession) -> None:
-        """Notify parent when child completes.
+        """Notify parent when child completes, recursively up the hierarchy.
 
         This method:
         1. Checks if child is completed/failed and has a parent
@@ -66,6 +66,7 @@ class ParentNotificationService:
         3. Builds structured child result
         4. Updates parent with child completion (with budget recollection)
         5. Persists parent events
+        6. Recursively notifies grandparent if parent also completed
 
         Args:
             child: The child agent that may have completed.
@@ -103,3 +104,8 @@ class ParentNotificationService:
             parent_version,
             self._progress_callback,
         )
+
+        # Recursively notify grandparent if parent also completed
+        # This handles the case where all children completing causes parent to complete
+        if parent.status == AgentStatus.COMPLETED:
+            await self.notify_if_complete(parent)
