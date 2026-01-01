@@ -1,0 +1,139 @@
+{# CWE-specific fix patterns and guidance (Design Choice 7) #}
+{# Provides detailed fix patterns for common CWEs #}
+
+{% if source_context and source_context.inferred_cwes %}
+<CWE_GUIDANCE>
+{% for cwe in source_context.inferred_cwes %}
+<cwe id="{{ cwe }}">
+{% if cwe == "CWE-787" %}
+  {# Out-of-bounds Write #}
+  <name>Out-of-bounds Write</name>
+  <description>Writing data outside allocated buffer boundaries</description>
+  <fix_strategies>
+    <strategy>Add bounds checking before all write operations</strategy>
+    <strategy>Use safe string/memory functions (strncpy, memcpy_s)</strategy>
+    <strategy>Validate indices against buffer sizes</strategy>
+    <strategy>Consider using containers with bounds checking</strategy>
+  </fix_strategies>
+  <common_patterns>
+    <pattern>Check: if (index < buffer_size) before write</pattern>
+    <pattern>Use: snprintf instead of sprintf</pattern>
+    <pattern>Use: strncat instead of strcat</pattern>
+  </common_patterns>
+
+{% elif cwe == "CWE-125" %}
+  {# Out-of-bounds Read #}
+  <name>Out-of-bounds Read</name>
+  <description>Reading data outside allocated buffer boundaries</description>
+  <fix_strategies>
+    <strategy>Validate all read indices against buffer bounds</strategy>
+    <strategy>Check string lengths before operations</strategy>
+    <strategy>Use size-bounded read functions</strategy>
+  </fix_strategies>
+  <common_patterns>
+    <pattern>Check: if (offset < data_length) before read</pattern>
+    <pattern>Validate: string != NULL && strlen(string) >= required</pattern>
+  </common_patterns>
+
+{% elif cwe == "CWE-416" %}
+  {# Use After Free #}
+  <name>Use After Free</name>
+  <description>Using memory after it has been freed</description>
+  <fix_strategies>
+    <strategy>Set pointers to NULL after free</strategy>
+    <strategy>Use smart pointers in C++</strategy>
+    <strategy>Implement reference counting</strategy>
+    <strategy>Add lifetime tracking for allocated objects</strategy>
+  </fix_strategies>
+  <common_patterns>
+    <pattern>After free(ptr): ptr = NULL;</pattern>
+    <pattern>Check: if (ptr != NULL) before use</pattern>
+  </common_patterns>
+
+{% elif cwe == "CWE-476" %}
+  {# NULL Pointer Dereference #}
+  <name>NULL Pointer Dereference</name>
+  <description>Dereferencing a pointer that is NULL</description>
+  <fix_strategies>
+    <strategy>Check pointers for NULL before dereference</strategy>
+    <strategy>Add assertions for debug builds</strategy>
+    <strategy>Return early on NULL input</strategy>
+  </fix_strategies>
+  <common_patterns>
+    <pattern>Check: if (ptr == NULL) return error;</pattern>
+    <pattern>Assert: assert(ptr != NULL);</pattern>
+  </common_patterns>
+
+{% elif cwe == "CWE-190" %}
+  {# Integer Overflow #}
+  <name>Integer Overflow</name>
+  <description>Arithmetic operation produces result too large for type</description>
+  <fix_strategies>
+    <strategy>Check for overflow before arithmetic operations</strategy>
+    <strategy>Use larger integer types when needed</strategy>
+    <strategy>Use safe math libraries</strategy>
+  </fix_strategies>
+  <common_patterns>
+    <pattern>Check: if (a > MAX_VALUE - b) before a + b</pattern>
+    <pattern>Use: __builtin_add_overflow in GCC</pattern>
+  </common_patterns>
+
+{% elif cwe == "CWE-119" %}
+  {# Buffer Overflow #}
+  <name>Improper Restriction of Operations within Memory Buffer</name>
+  <description>Operations outside memory buffer boundaries</description>
+  <fix_strategies>
+    <strategy>Always validate buffer sizes before operations</strategy>
+    <strategy>Use size-limited functions</strategy>
+    <strategy>Implement proper bounds checking</strategy>
+  </fix_strategies>
+  <common_patterns>
+    <pattern>Calculate: required_size before allocation</pattern>
+    <pattern>Validate: input_size <= buffer_capacity</pattern>
+  </common_patterns>
+
+{% elif cwe == "CWE-122" %}
+  {# Heap-based Buffer Overflow #}
+  <name>Heap-based Buffer Overflow</name>
+  <description>Writing beyond heap-allocated buffer</description>
+  <fix_strategies>
+    <strategy>Track allocation sizes with buffers</strategy>
+    <strategy>Validate sizes before heap operations</strategy>
+    <strategy>Use ASAN during testing</strategy>
+  </fix_strategies>
+
+{% elif cwe == "CWE-121" %}
+  {# Stack-based Buffer Overflow #}
+  <name>Stack-based Buffer Overflow</name>
+  <description>Writing beyond stack-allocated buffer</description>
+  <fix_strategies>
+    <strategy>Use stack canaries</strategy>
+    <strategy>Limit input sizes to buffer sizes</strategy>
+    <strategy>Prefer heap allocation for variable-size data</strategy>
+  </fix_strategies>
+
+{% else %}
+  <name>{{ cwe }}</name>
+  <description>Security vulnerability requiring careful review</description>
+  <fix_strategies>
+    <strategy>Review code for common security patterns</strategy>
+    <strategy>Add input validation</strategy>
+    <strategy>Use sanitizers during testing</strategy>
+  </fix_strategies>
+{% endif %}
+
+{% if source_context.cwe_reasoning and cwe in source_context.cwe_reasoning %}
+  <context_reasoning>{{ source_context.cwe_reasoning[cwe] }}</context_reasoning>
+{% endif %}
+</cwe>
+{% endfor %}
+
+{% if source_context.recommended_sanitizers %}
+<testing_recommendations>
+{% for sanitizer in source_context.recommended_sanitizers %}
+  <use_sanitizer>{{ sanitizer }}</use_sanitizer>
+{% endfor %}
+</testing_recommendations>
+{% endif %}
+</CWE_GUIDANCE>
+{% endif %}

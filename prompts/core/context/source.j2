@@ -1,5 +1,6 @@
 {# Source context template for extracted key information (Design Choice 6) #}
 {# Provides workers with key information extracted from user prompt by BOSS #}
+{# Design Choice 7: Includes CWE inference and fix patterns #}
 
 {% if source_context and source_context.extraction_summary %}
 <SOURCE_CONTEXT>
@@ -30,6 +31,32 @@
   <entity key="{{ key }}">{{ value }}</entity>
 {% endfor %}
 </extracted_entities>
+{% endif %}
+
+{# Design Choice 7: CWE Context Passing #}
+{% if source_context.inferred_cwes %}
+<SECURITY_CONTEXT>
+<inferred_cwes>
+{% for cwe in source_context.inferred_cwes %}
+  <cwe id="{{ cwe }}">
+{% if source_context.cwe_reasoning and cwe in source_context.cwe_reasoning %}
+    <reasoning>{{ source_context.cwe_reasoning[cwe] }}</reasoning>
+{% endif %}
+{% if source_context.fix_patterns and cwe in source_context.fix_patterns %}
+    <fix_pattern>{{ source_context.fix_patterns[cwe] }}</fix_pattern>
+{% endif %}
+  </cwe>
+{% endfor %}
+</inferred_cwes>
+
+{% if source_context.recommended_sanitizers %}
+<recommended_sanitizers>
+{% for sanitizer in source_context.recommended_sanitizers %}
+  <sanitizer>{{ sanitizer }}</sanitizer>
+{% endfor %}
+</recommended_sanitizers>
+{% endif %}
+</SECURITY_CONTEXT>
 {% endif %}
 </SOURCE_CONTEXT>
 {% endif %}

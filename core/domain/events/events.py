@@ -408,6 +408,8 @@ class SourceContextExtracted(DomainEvent):
 
     BOSS extracts structured context from the user's task description
     to share with all workers in the hierarchy.
+
+    Design Choice 7 additions: CWE inference and fix patterns.
     """
 
     extraction_summary: str  # Brief summary of extracted context
@@ -417,3 +419,9 @@ class SourceContextExtracted(DomainEvent):
     has_file_references: bool = False  # References specific files/paths
     has_code_snippets: bool = False  # Contains code examples
     extracted_entities: dict[str, Any] = Field(default_factory=dict)  # Structured entities
+
+    # Design Choice 7: CWE Context Passing
+    inferred_cwes: tuple[str, ...] = ()  # e.g., ("CWE-787", "CWE-125")
+    cwe_reasoning: dict[str, str] = Field(default_factory=dict)  # Per-CWE reasoning
+    recommended_sanitizers: tuple[str, ...] = ()  # e.g., ("AddressSanitizer", "UBSan")
+    fix_patterns: dict[str, str] = Field(default_factory=dict)  # Per-CWE fix patterns
