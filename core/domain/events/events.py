@@ -179,6 +179,21 @@ class ComplexityBudgetAllocated(DomainEvent):
     source: str  # "initial" | "parent"
 
 
+class ComplexityBudgetRecollected(DomainEvent):
+    """Complexity budget recollected from child after completion (Design Choice 3).
+
+    Parent agents recollect unused budget from children with reward/penalty ratios:
+    - Success: original_allocation * success_reward_ratio (e.g., 1.2x)
+    - Failure: original_allocation * failure_penalty_ratio (e.g., 0.0x)
+    """
+
+    child_id: UUID
+    original_allocation: float  # Budget originally allocated to child
+    remaining: float  # Child's remaining budget (unused)
+    ratio_applied: float  # Reward or penalty ratio applied
+    amount_recollected: float  # Final amount added back to parent
+
+
 # =============================================================================
 # Cost Tracking Events
 # =============================================================================

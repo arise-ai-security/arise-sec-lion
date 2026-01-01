@@ -13,7 +13,10 @@ from core.application.execution_service import (
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import HierarchyLimitsRegistry
-from core.application.services.parent_notifier import ParentNotificationService
+from core.application.services.parent_notifier import (
+    BudgetRecollectionConfig,
+    ParentNotificationService,
+)
 from core.application.services.query_service import AgentQueryService
 from core.application.services.sibling_context_builder import SiblingViewBuilder
 from core.application.services.workspace_context import WorkspaceContextProvider
@@ -102,10 +105,20 @@ def get_application(
         shared_context_port=infrastructure.shared_context,
     )
 
-    # Create parent notification service
+    # Create parent notification service with budget recollection config (Design Choice 3)
+    budget_recollection_config = BudgetRecollectionConfig(enabled=False)
+    if config.orchestration_config is not None:
+        budget_cfg = config.orchestration_config.complexity_budget
+        budget_recollection_config = BudgetRecollectionConfig(
+            enabled=budget_cfg.enabled,
+            success_reward_ratio=budget_cfg.success_reward_ratio,
+            failure_penalty_ratio=budget_cfg.failure_penalty_ratio,
+        )
+
     parent_notifier = ParentNotificationService(
         repository=repository,
         progress_callback=config.progress_callback,
+        budget_recollection_config=budget_recollection_config,
     )
 
     # Group collaborators into dependencies object (Parameter Object pattern)

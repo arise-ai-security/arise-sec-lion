@@ -19,6 +19,7 @@ class TaskOutcome(BaseModel):
     - Decisions: Key decisions made during execution
     - Context updates: Updates to propagate to shared context
     - Execution summary: Cost, duration, tokens used
+    - Complexity budget remaining: Unused budget for recollection (Design Choice 3)
     """
 
     model_config = {"frozen": True}
@@ -29,6 +30,7 @@ class TaskOutcome(BaseModel):
     decisions: tuple[str, ...] = ()
     context_updates: dict[str, Any] = {}
     execution_summary: dict[str, Any] = {}
+    complexity_budget_remaining: float = 0.0  # For budget recollection (Design Choice 3)
 
     @classmethod
     def simple(cls, result_text: str, task_summary: str = "") -> Self:

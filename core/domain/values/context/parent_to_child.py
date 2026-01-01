@@ -47,6 +47,7 @@ class SpawnPayload(BaseModel):
     - Parent's decisions to maintain consistency
     - Constraints inherited from the hierarchy
     - Execution limits (budget, depth remaining, etc.)
+    - Complexity budget allocation (Design Choice 3)
     """
 
     model_config = {"frozen": True}
@@ -58,6 +59,7 @@ class SpawnPayload(BaseModel):
     decisions: tuple[str, ...]
     constraints: dict[str, Any]
     execution_limits: dict[str, Any]
+    complexity_budget: float = 0.0  # Budget allocated to this child (Design Choice 3)
 
 
 def build_spawn_payload(

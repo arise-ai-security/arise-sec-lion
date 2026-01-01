@@ -4,9 +4,8 @@ Handles notifying parent agents when children complete their execution.
 Extracted from ExecutionService to follow Single Responsibility Principle.
 """
 
-
-
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from core.domain.events.events import DomainEvent
@@ -22,6 +21,15 @@ if TYPE_CHECKING:
 type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
+@dataclass
+class BudgetRecollectionConfig:
+    """Configuration for budget recollection (Design Choice 3)."""
+
+    enabled: bool = False
+    success_reward_ratio: float = 1.0
+    failure_penalty_ratio: float = 0.0
+
+
 class ParentNotificationService:
     """Handles notifying parent agents when children complete.
 
@@ -32,15 +40,18 @@ class ParentNotificationService:
         self,
         repository: AgentRepository,
         progress_callback: ProgressCallback | None = None,
+        budget_recollection_config: BudgetRecollectionConfig | None = None,
     ) -> None:
         """Initialize the parent notification service.
 
         Args:
             repository: Agent repository for loading and persisting agents.
             progress_callback: Optional callback for progress notifications.
+            budget_recollection_config: Config for budget recollection (Design Choice 3).
         """
         self._repository = repository
         self._progress_callback = progress_callback
+        self._budget_config = budget_recollection_config or BudgetRecollectionConfig()
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
         """Set the progress callback for event notifications."""
@@ -50,16 +61,19 @@ class ParentNotificationService:
         """Notify parent when child completes.
 
         This method:
-        1. Checks if child is completed and has a parent
+        1. Checks if child is completed/failed and has a parent
         2. Loads the parent agent
         3. Builds structured child result
-        4. Updates parent with child completion
+        4. Updates parent with child completion (with budget recollection)
         5. Persists parent events
 
         Args:
             child: The child agent that may have completed.
         """
-        if child.status != AgentStatus.COMPLETED or child.parent_id is None:
+        # Handle both successful completion and failure
+        if child.status not in (AgentStatus.COMPLETED, AgentStatus.FAILED):
+            return
+        if child.parent_id is None:
             return
 
         try:
@@ -72,10 +86,16 @@ class ParentNotificationService:
         # Build structured task outcome
         task_outcome = child.build_task_outcome()
 
+        # Determine success for budget recollection (Design Choice 3)
+        child_succeeded = child.status == AgentStatus.COMPLETED
+
         parent.handle_child_update(
             child_id=child.agent_id,
-            result=child.result or "",
+            result=child.result or child.error_message or "",
             task_outcome=task_outcome,
+            success=child_succeeded,
+            budget_success_reward_ratio=self._budget_config.success_reward_ratio,
+            budget_failure_penalty_ratio=self._budget_config.failure_penalty_ratio,
         )
 
         await self._repository.persist_events(

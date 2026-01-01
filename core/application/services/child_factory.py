@@ -146,6 +146,13 @@ class ChildAgentFactory:
             spawn_payload = SpawnPayload.model_validate(event.parent_context)
             child.set_spawn_payload(spawn_payload)
 
+            # Allocate complexity budget to child (Design Choice 3)
+            if spawn_payload.complexity_budget > 0:
+                child.allocate_complexity_budget(
+                    amount=spawn_payload.complexity_budget,
+                    source="parent",
+                )
+
         # Persist the new agent
         await self._repository.save_new_agent(child)
         self._total_created += 1

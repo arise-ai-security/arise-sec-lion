@@ -20,6 +20,7 @@ from core.domain.events.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityBudgetAllocated,
+    ComplexityBudgetRecollected,
     ComplexityEvaluated,
     DomainEvent,
     LimitEnforced,
@@ -88,6 +89,9 @@ class AgentSession:
         child_id: UUID,
         result: str,
         task_outcome: TaskOutcome | None = None,
+        success: bool = True,
+        budget_success_reward_ratio: float = 1.0,
+        budget_failure_penalty_ratio: float = 0.0,
     ) -> None:
         """For BOSS/MANAGER: record child completion, complete self when all children done.
 
@@ -95,6 +99,9 @@ class AgentSession:
             child_id: ID of completed child
             result: Simple result text for the event
             task_outcome: Structured TaskOutcome (optional, provides additional context)
+            success: Whether child completed successfully (for budget recollection)
+            budget_success_reward_ratio: Multiplier for successful completion (Design Choice 3)
+            budget_failure_penalty_ratio: Multiplier for failed completion (Design Choice 3)
         """
         assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
             f"Requires BOSS/MANAGER, got {self.role}"
@@ -106,6 +113,16 @@ class AgentSession:
         # Use structured result if provided, otherwise create simple one
         if task_outcome is None:
             task_outcome = TaskOutcome.simple(result)
+
+        # Recollect budget from child if applicable (Design Choice 3)
+        if child_id in self.child_budget_allocations and task_outcome.complexity_budget_remaining > 0:
+            self.recollect_child_budget(
+                child_id=child_id,
+                child_remaining_budget=task_outcome.complexity_budget_remaining,
+                success=success,
+                success_reward_ratio=budget_success_reward_ratio,
+                failure_penalty_ratio=budget_failure_penalty_ratio,
+            )
 
         # NOTE: structured_task_outcomes is populated in _apply(ChildCompleted)
         # to maintain event sourcing invariant: state only changes through events
@@ -238,6 +255,12 @@ class AgentSession:
             self.initial_complexity_budget = event.amount
         self.version += 1
 
+    @_apply.register
+    def _(self, event: ComplexityBudgetRecollected) -> None:
+        # Budget recollection from child (Design Choice 3: Budgeted Plus Tree)
+        self.complexity_budget += event.amount_recollected
+        self.version += 1
+
     def _initialize_defaults(self, agent_id: UUID) -> None:
         self.agent_id: UUID = agent_id
         self.role: AgentRole = AgentRole.BOSS
@@ -262,9 +285,11 @@ class AgentSession:
         self.structured_task_outcomes: dict[UUID, TaskOutcome] = {}
         # Position among siblings for left-to-right ordering (0 = first/leftmost)
         self.sibling_index: int = 0
-        # Complexity budget for tree growth control (Design Choice 2)
+        # Complexity budget for tree growth control (Design Choices 2-3)
         self.complexity_budget: float = 0.0
         self.initial_complexity_budget: float = 0.0
+        # Track budget allocated to each child for recollection (Design Choice 3)
+        self.child_budget_allocations: dict[UUID, float] = {}
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
@@ -320,10 +345,90 @@ class AgentSession:
         threshold = initial_boss_budget * threshold_ratio
         return self.complexity_budget < threshold
 
+    def calculate_child_budgets(
+        self,
+        subtasks: list,
+    ) -> list[float]:
+        """Calculate proportional budget allocation for children (Design Choice 3).
+
+        Budget is distributed proportionally based on subtask.budget_weight.
+        child_budget = parent_budget * (weight / total_weights)
+
+        Args:
+            subtasks: List of Subtask objects with budget_weight field
+
+        Returns:
+            List of budget amounts for each child (same order as subtasks)
+        """
+        if self.complexity_budget <= 0 or not subtasks:
+            return [0.0] * len(subtasks)
+
+        # Calculate total weight
+        total_weight = sum(s.budget_weight for s in subtasks)
+        if total_weight <= 0:
+            # Equal distribution if all weights are 0
+            return [self.complexity_budget / len(subtasks)] * len(subtasks)
+
+        # Proportional allocation
+        return [
+            self.complexity_budget * (s.budget_weight / total_weight)
+            for s in subtasks
+        ]
+
+    def record_child_budget_allocation(self, child_id: UUID, amount: float) -> None:
+        """Record budget allocated to a child for later recollection (Design Choice 3).
+
+        Args:
+            child_id: ID of the child agent
+            amount: Budget amount allocated
+        """
+        self.child_budget_allocations[child_id] = amount
+
+    def recollect_child_budget(
+        self,
+        child_id: UUID,
+        child_remaining_budget: float,
+        success: bool,
+        success_reward_ratio: float,
+        failure_penalty_ratio: float,
+    ) -> None:
+        """Recollect budget from completed child (Design Choice 3).
+
+        Parent reclaims budget with reward/penalty ratio based on success:
+        - Success: original_allocation * success_reward_ratio
+        - Failure: original_allocation * failure_penalty_ratio
+
+        Args:
+            child_id: ID of the completed child
+            child_remaining_budget: Child's remaining unused budget
+            success: Whether child completed successfully
+            success_reward_ratio: Multiplier for successful completion (e.g., 1.2)
+            failure_penalty_ratio: Multiplier for failed completion (e.g., 0.0)
+        """
+        original_allocation = self.child_budget_allocations.get(child_id, 0.0)
+        if original_allocation <= 0:
+            return  # No budget was allocated
+
+        ratio = success_reward_ratio if success else failure_penalty_ratio
+        amount_recollected = child_remaining_budget * ratio
+
+        recollect_event = ComplexityBudgetRecollected(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            child_id=child_id,
+            original_allocation=original_allocation,
+            remaining=child_remaining_budget,
+            ratio_applied=ratio,
+            amount_recollected=amount_recollected,
+        )
+        self._apply(recollect_event)
+        self._changes.append(recollect_event)
+
     def build_task_outcome(self) -> TaskOutcome:
         """Build structured task outcome to return to parent.
 
-        Includes task summary, result text, artifacts, decisions, and execution summary.
+        Includes task summary, result text, artifacts, decisions, execution summary,
+        and remaining complexity budget for recollection (Design Choice 3).
         """
         # Build execution summary from cost events if available
         execution_summary: dict[str, Any] = {}
@@ -341,6 +446,7 @@ class AgentSession:
             decisions=tuple(self.local_decisions),
             context_updates={},
             execution_summary=execution_summary,
+            complexity_budget_remaining=self.complexity_budget,  # Design Choice 3
         )
 
     @classmethod
@@ -480,8 +586,15 @@ class AgentSession:
         subtasks: list,
         child_role: str,
         spawn_payload: SpawnPayload,
+        child_budgets: list[float] | None = None,
     ) -> list[tuple[UUID, Any]]:
         """Apply subtask decomposition and spawn children (pure domain method).
+
+        Args:
+            subtasks: List of Subtask objects for decomposition
+            child_role: Role for child agents
+            spawn_payload: Base spawn payload (will be customized per-child with budget)
+            child_budgets: Optional list of budget amounts for each child (Design Choice 3)
 
         Returns list of (child_id, subtask) tuples for the orchestrator to create.
         """
@@ -499,6 +612,25 @@ class AgentSession:
 
         for sibling_index, subtask in enumerate(subtasks):
             child_id = uuid4()
+
+            # Create per-child spawn payload with specific budget (Design Choice 3)
+            child_budget = 0.0
+            if child_budgets is not None and sibling_index < len(child_budgets):
+                child_budget = child_budgets[sibling_index]
+                # Record allocation for later recollection
+                self.record_child_budget_allocation(child_id, child_budget)
+
+            child_payload = SpawnPayload(
+                parent_task=spawn_payload.parent_task,
+                parent_role=spawn_payload.parent_role,
+                depth=spawn_payload.depth,
+                ancestry=spawn_payload.ancestry,
+                decisions=spawn_payload.decisions,
+                constraints=spawn_payload.constraints,
+                execution_limits=spawn_payload.execution_limits,
+                complexity_budget=child_budget,
+            )
+
             child_event = ChildSpawned(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
@@ -506,7 +638,7 @@ class AgentSession:
                 child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
-                parent_context=spawn_payload.model_dump(),
+                parent_context=child_payload.model_dump(),
                 sibling_index=sibling_index,
             )
             self._apply(child_event)

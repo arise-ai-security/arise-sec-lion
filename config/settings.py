@@ -125,15 +125,24 @@ class OrchestrationConfig(BaseModel):
             return self.max_concurrent_llm_calls > 0
 
     class ComplexityBudgetConfig(BaseModel):
-        """Complexity budget settings (Design Choice 2: Budgeted Tree).
+        """Complexity budget settings (Design Choices 2-3: Budgeted Tree).
 
         Controls tree growth via budget allocation, NOT financial cost.
         When agent's budget drops below threshold, it becomes WORKER.
+
+        Design Choice 3 additions:
+        - shortcut_probability: Russian Roulette chance to skip complexity evaluation
+        - success_reward_ratio: Multiply remaining budget on success
+        - failure_penalty_ratio: Multiply remaining budget on failure
         """
 
         enabled: bool = False  # Disabled by default, use structural limits
         initial_amount: float = Field(default=1000.0, gt=0.0)
         threshold_ratio: float = Field(default=0.02, ge=0.0, le=1.0)  # 2% threshold
+        # Design Choice 3: Russian Roulette and budget recollection
+        shortcut_probability: float = Field(default=0.3, ge=0.0, le=1.0)  # 30%
+        success_reward_ratio: float = Field(default=1.2, ge=0.0)  # 1.2x on success
+        failure_penalty_ratio: float = Field(default=0.0, ge=0.0)  # 0x on failure
 
         def is_enabled(self) -> bool:
             """Check if complexity budget is enabled."""

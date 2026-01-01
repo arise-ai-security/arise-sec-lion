@@ -37,13 +37,17 @@ orchestration:
     max_concurrent_llm_calls: 10  # Concurrent LLM API calls (-1 = unlimited)
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
 
-  # Complexity budget (Design Choice 2: Budgeted Tree)
+  # Complexity budget (Design Choices 2-3: Budgeted Tree)
   # Controls tree growth via budget allocation, NOT financial cost.
   # When agent's budget drops below threshold, it becomes WORKER.
   complexity_budget:
     enabled: false             # Disabled by default, use structural limits
     initial_amount: 1000.0     # Starting budget for BOSS agent
     threshold_ratio: 0.02      # 2% - force WORKER when budget < initial * 0.02
+    # Design Choice 3: Russian Roulette and budget recollection
+    shortcut_probability: 0.3  # 30% random chance to become WORKER (skip complexity eval)
+    success_reward_ratio: 1.2  # Recollect 1.2x remaining budget on child success
+    failure_penalty_ratio: 0.0 # Recollect 0x remaining budget on child failure
 
 output:
   verbose: true

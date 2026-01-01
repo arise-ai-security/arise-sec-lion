@@ -48,6 +48,9 @@ class SpawnChildren:
     - Emits SubtasksDefined event
     - Emits ChildSpawned event for each subtask
     - Transitions agent to WAITING status
+
+    Design Choice 3: Calculates proportional budget allocation for children
+    based on subtask.budget_weight when complexity budget is enabled.
     """
 
     async def execute(self, state: PipelineState) -> StepResult:
@@ -61,10 +64,14 @@ class SpawnChildren:
         # Build spawn payload for children
         spawn_payload = state.agent.get_spawn_payload_for_child()
 
+        # Calculate proportional budget allocation for children (Design Choice 3)
+        child_budgets = state.agent.calculate_child_budgets(state.subtasks)
+
         state.agent.apply_subtasks_and_spawn_children(
             subtasks=state.subtasks,
             child_role=state.child_role,
             spawn_payload=spawn_payload,
+            child_budgets=child_budgets if any(b > 0 for b in child_budgets) else None,
         )
 
         return StepResult.ok(state)

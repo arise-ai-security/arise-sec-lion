@@ -14,7 +14,7 @@ implement the orchestration logic previously in AgentOrchestrator methods.
 from typing import TYPE_CHECKING
 
 from core.application.pipeline.executor import Pipeline
-from core.application.pipeline.steps.budget import CheckBudgetThreshold
+from core.application.pipeline.steps.budget import CheckBudgetThreshold, ProbabilisticWorkerShortcut
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
     SpawnChildren,
@@ -86,22 +86,27 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidatePendingAgent - Assert PENDING + ANALYZING
-        2. CheckBudgetThreshold - Short-circuit if budget too low (Design Choice 2)
-        3. BuildComplexityPrompt - Via PromptBuilder
-        4. EmitPromptSent - Observability
-        5. QueryLLM - Call LLM port
-        6. EmitTokensConsumed - Cost tracking
-        7. ParseComplexityResult - Parse JSON (simple/complex)
-        8. ApplyComplexityResult - Call agent.apply_complexity_result()
+        2. ProbabilisticWorkerShortcut - Russian Roulette chance to force WORKER (Design Choice 3)
+        3. CheckBudgetThreshold - Short-circuit if budget too low (Design Choice 2)
+        4. BuildComplexityPrompt - Via PromptBuilder
+        5. EmitPromptSent - Observability
+        6. QueryLLM - Call LLM port
+        7. EmitTokensConsumed - Cost tracking
+        8. ParseComplexityResult - Parse JSON (simple/complex)
+        9. ApplyComplexityResult - Call agent.apply_complexity_result()
 
         Returns:
             Configured Pipeline for complexity evaluation
         """
         steps: list = [ValidatePendingAgent]
 
-        # Add budget threshold check if config is available (Design Choice 2)
+        # Add budget-based steps if config is available
         if self._orchestration_config is not None:
-            steps.append(CheckBudgetThreshold(self._orchestration_config.complexity_budget))
+            budget_config = self._orchestration_config.complexity_budget
+            # Design Choice 3: Russian Roulette shortcut (runs first)
+            steps.append(ProbabilisticWorkerShortcut(budget_config))
+            # Design Choice 2: Budget threshold check
+            steps.append(CheckBudgetThreshold(budget_config))
 
         steps.extend([
             BuildComplexityPrompt(self._prompt_builder),
