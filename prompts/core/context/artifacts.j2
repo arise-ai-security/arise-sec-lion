@@ -1,0 +1,18 @@
+{# Shared artifacts template for SharedArtifacts #}
+{# Renders artifacts from SharedExecutionContext #}
+
+{% if shared_artifacts and shared_artifacts.artifacts %}
+<SHARED_ARTIFACTS>
+Artifacts produced by other agents in this execution:
+
+{% for artifact in shared_artifacts.artifacts %}
+<artifact key="{{ artifact.key }}" type="{{ artifact.content_type }}">
+{% if artifact.content %}
+{{ artifact.content }}
+{% else %}
+[Content reference: {{ artifact.key }}]
+{% endif %}
+</artifact>
+{% endfor %}
+</SHARED_ARTIFACTS>
+{% endif %}

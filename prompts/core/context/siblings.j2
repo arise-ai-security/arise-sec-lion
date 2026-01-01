@@ -1,0 +1,19 @@
+{# Sibling results template for SiblingResults #}
+{# Renders sibling worker status and results for coordination #}
+
+{% if sibling_results and sibling_results.siblings %}
+<SIBLING_CONTEXT>
+You are one of {{ sibling_results.total_count + 1 }} sibling worker(s).
+{{ sibling_results.completed_count }} completed, {{ sibling_results.in_progress_count }} in progress.
+Workers execute left-to-right. Earlier workers' results are available to you.
+
+{% for sibling in sibling_results.siblings %}
+<sibling index="{{ sibling.index + 1 }}" status="{{ sibling.status }}">
+<task>{{ sibling.task_summary }}</task>
+{% if sibling.status == 'completed' and sibling.result_summary %}
+<result>{{ sibling.result_summary }}</result>
+{% endif %}
+</sibling>
+{% endfor %}
+</SIBLING_CONTEXT>
+{% endif %}

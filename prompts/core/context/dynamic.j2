@@ -1,0 +1,29 @@
+{# Dynamic context template for ancestor_* and custom_* data #}
+{# Iterates over all template variables and renders those with special prefixes #}
+
+{# Render ancestor contexts (from AncestorData with label) #}
+{% for key, value in _context.items() if key.startswith('ancestor_') %}
+<ANCESTOR_CONTEXT label="{{ key[9:] }}">
+<role>{{ value.role }}</role>
+<task>{{ value.task }}</task>
+{% if value.result %}
+<result>{{ value.result }}</result>
+{% endif %}
+{% if value.decisions %}
+<decisions>
+{% for d in value.decisions %}
+- {{ d }}
+{% endfor %}
+</decisions>
+{% endif %}
+</ANCESTOR_CONTEXT>
+{% endfor %}
+
+{# Render custom contexts (from CustomContext with label) #}
+{% for key, value in _context.items() if key.startswith('custom_') %}
+<CUSTOM_CONTEXT label="{{ key[7:] }}">
+{% for k, v in value.items() %}
+<{{ k }}>{{ v }}</{{ k }}>
+{% endfor %}
+</CUSTOM_CONTEXT>
+{% endfor %}
