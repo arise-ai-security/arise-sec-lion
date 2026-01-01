@@ -96,4 +96,5 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | [`architecture-concepts.md`](agent-docs/architecture-concepts.md) | CQRS, OCC, Event Sourcing, Hexagonal, DDD |
 | [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
 | [`context-passing-mechanism.md`](agent-docs/context-passing-mechanism.md) | SharedContext, artifacts, decisions, budget |
+| [`context-passing-guide.md`](agent-docs/context-passing-guide.md) | ContextComposer API, practical scenarios |
 | [`user-manual.md`](agent-docs/user-manual.md) | Docker commands reference |

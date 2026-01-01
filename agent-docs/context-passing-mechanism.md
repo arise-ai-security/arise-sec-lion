@@ -2,6 +2,8 @@
 
 This document describes how agents share state and context across the execution hierarchy using the SharedExecutionContext system.
 
+> **See also:** [Context Passing Guide](context-passing-guide.md) for practical scenarios and implementation patterns.
+
 ---
 
 ## Overview
@@ -372,3 +374,307 @@ class ProgressCheckpoint(BaseModel):
 | Update progress | `context.update_progress(...)` | `ProgressUpdated` |
 | Consume budget | `context.consume_budget(...)` | `BudgetConsumed` |
 | Set config | `context.set_config_override(...)` | `ConfigOverrideSet` |
+
+---
+
+## Composable Context API (ContextComposer)
+
+The **ContextComposer** provides a fluent, programmatic API for composing prompt context. Unlike SharedExecutionContext which stores persistent state, ContextComposer builds ephemeral template context for prompt generation.
+
+```
+                ┌─────────────────────────────────────────────────────────┐
+                │                  ContextComposer                        │
+                │             (fluent builder API)                        │
+                ├─────────────────────────────────────────────────────────┤
+                │  .add(ParentSummary)     → parent_summary               │
+                │  .add(SiblingResults)    → sibling_results              │
+                │  .add(SharedDecisions)   → shared_decisions             │
+                │  .add(ChildOutcomes)     → child_outcomes               │
+                │  .add(AncestorData)      → ancestor_{label}             │
+                │  .add(CustomContext)     → custom_{label}               │
+                └─────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+                              .build() → template vars dict
+                                          │
+                                          ▼
+                              Jinja2 templates render context
+```
+
+### ContextData Protocol
+
+All context types implement the `ContextData` protocol (`core/domain/values/context/base.py`):
+
+```python
+class ContextData(Protocol):
+    @property
+    def template_key(self) -> str:
+        """Key used in Jinja2 template (e.g., 'parent_summary')."""
+        ...
+
+    def to_template_dict(self) -> dict[str, Any]:
+        """Convert to dict for template rendering."""
+        ...
+```
+
+### ContextComposer Usage
+
+```python
+from core.application.services.context_composer import ContextComposer
+from core.domain.values.context import (
+    ParentSummary, SiblingResults, SharedDecisions, ChildOutcomes
+)
+
+# Build context with fluent API
+context = (
+    ContextComposer()
+    .add(ParentSummary(task="Fix auth bug", result="Found SQL injection"))
+    .add(SiblingResults(siblings=(...)))
+    .add_if(has_decisions, SharedDecisions(decisions=(...)))  # Conditional
+    .add_optional(maybe_artifacts)  # None-safe
+)
+
+# Get template variables
+template_vars = context.build()
+# {"parent_summary": {...}, "sibling_results": {...}, ...}
+```
+
+### Context Data Types
+
+#### Hierarchical Context (Parent/Ancestor)
+
+| Type | Template Key | Purpose |
+|------|--------------|---------|
+| `ParentSummary` | `parent_summary` | Immediate parent's task, result, decisions |
+| `AncestorData` | `ancestor_{label}` | Specific ancestor with custom label |
+| `AncestryChain` | `ancestry_chain` | Full lineage from root to current |
+
+```python
+# Parent summary
+ParentSummary(
+    task="Analyze auth module",
+    result="Found SQL injection vulnerability",
+    decisions=("use_parameterized_queries",),
+    role="manager",
+)
+
+# Labeled ancestor (template key: ancestor_fixer)
+AncestorData(
+    label="fixer",
+    agent_id=fixer_id,
+    role="manager",
+    task="Apply security patch",
+    result="Patch ready for review",
+)
+```
+
+#### Horizontal Context (Siblings)
+
+| Type | Template Key | Purpose |
+|------|--------------|---------|
+| `SiblingResults` | `sibling_results` | All siblings' status and results |
+| `SiblingEntry` | (nested) | Single sibling data |
+
+```python
+SiblingResults(siblings=(
+    SiblingEntry(
+        agent_id="worker-123",
+        index=0,
+        status="completed",
+        task_summary="Set up test environment",
+        result_summary="Docker container on port 8080",
+    ),
+    SiblingEntry(
+        agent_id="worker-456",
+        index=1,
+        status="in_progress",
+        task_summary="Run exploit PoC",
+    ),
+))
+```
+
+#### Shared Context (From SharedExecutionContext)
+
+| Type | Template Key | Purpose |
+|------|--------------|---------|
+| `SharedDecisions` | `shared_decisions` | Decisions from global context |
+| `SharedArtifacts` | `shared_artifacts` | Artifacts from global context |
+
+```python
+SharedDecisions(decisions=(
+    DecisionEntry(
+        key="target_framework",
+        value="django",
+        rationale="Target uses Django 3.2",
+    ),
+))
+```
+
+#### Child Outcomes (Parent Viewing Children)
+
+| Type | Template Key | Purpose |
+|------|--------------|---------|
+| `ChildOutcomes` | `child_outcomes` | Structured results from child agents |
+| `ChildOutcomeEntry` | (nested) | Single child's task outcome |
+
+```python
+ChildOutcomes(outcomes=(
+    ChildOutcomeEntry(
+        child_id="worker-123",
+        task_summary="Develop exploit PoC",
+        result_text="Created poc.py with buffer overflow...",
+        artifacts=("poc.py", "debug_log.txt"),
+        decisions=("use_ret2libc",),
+    ),
+))
+```
+
+#### Custom Context
+
+| Type | Template Key | Purpose |
+|------|--------------|---------|
+| `CustomContext` | `custom_{label}` | Arbitrary user-defined data |
+
+```python
+CustomContext(
+    label="vulnerability_info",
+    data={
+        "cve_id": "CVE-2023-1234",
+        "affected_function": "parse_input()",
+    },
+)
+# Template access: {{ custom_vulnerability_info.cve_id }}
+```
+
+---
+
+## Factory Functions
+
+Factory functions (`core/application/services/context_factories.py`) convert domain objects to context types:
+
+```python
+from core.application.services.context_factories import (
+    parent_summary_from_agent,
+    sibling_results_from_agents,
+    shared_decisions_from_context,
+    child_outcomes_from_agent,
+)
+
+# From AgentSession
+parent = await repository.load(agent.parent_id)
+context.add(parent_summary_from_agent(parent))
+
+# From list of siblings
+siblings = await get_siblings(agent)
+context.add(sibling_results_from_agents(siblings, exclude_id=agent.agent_id))
+
+# From SharedExecutionContext
+shared_ctx = await shared_context_port.get(root_id)
+context.add(shared_decisions_from_context(shared_ctx))
+
+# From parent's child outcomes
+context.add(child_outcomes_from_agent(parent_agent))
+```
+
+### Available Factories
+
+| Factory | Input | Output |
+|---------|-------|--------|
+| `parent_summary_from_agent` | `AgentSession` | `ParentSummary` |
+| `ancestor_data_from_agent` | `AgentSession` + label | `AncestorData` |
+| `ancestry_chain_from_agents` | `list[AgentSession]` | `AncestryChain` |
+| `sibling_results_from_agents` | `list[AgentSession]` | `SiblingResults` |
+| `sibling_entry_from_agent` | `AgentSession` | `SiblingEntry` |
+| `shared_decisions_from_context` | `SharedExecutionContext` | `SharedDecisions` |
+| `shared_artifacts_from_context` | `SharedExecutionContext` | `SharedArtifacts` |
+| `child_outcomes_from_agent` | `AgentSession` | `ChildOutcomes` |
+
+---
+
+## Context Templates
+
+Jinja2 templates in `prompts/core/context/` render composed context:
+
+| Template | Renders | Context Type |
+|----------|---------|--------------|
+| `parent.j2` | Parent task/result/decisions | `ParentSummary` |
+| `ancestry.j2` | Full ancestry chain | `AncestryChain` |
+| `siblings.j2` | Sibling workers' status | `SiblingResults` |
+| `decisions.j2` | Shared decisions | `SharedDecisions` |
+| `artifacts.j2` | Shared artifacts | `SharedArtifacts` |
+| `children.j2` | Child outcomes for parent | `ChildOutcomes` |
+| `dynamic.j2` | Labeled ancestors + custom | `ancestor_*`, `custom_*` |
+
+### Template Example (children.j2)
+
+```jinja
+{% if child_outcomes and child_outcomes.outcomes %}
+<CHILD_OUTCOMES total="{{ child_outcomes.total_count }}" completed="{{ child_outcomes.completed_count }}">
+{% for outcome in child_outcomes.outcomes %}
+<child id="{{ outcome.child_id }}" status="{{ outcome.status }}">
+<task>{{ outcome.task_summary }}</task>
+<result>{{ outcome.result_text }}</result>
+</child>
+{% endfor %}
+</CHILD_OUTCOMES>
+{% endif %}
+```
+
+---
+
+## Context Flow Summary
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       Context Sources                           │
+├─────────────────────────────────────────────────────────────────┤
+│  AgentSession        SharedExecutionContext       Custom Data   │
+│  (parent, siblings)  (decisions, artifacts)       (user-defined)│
+└─────────────────────┬─────────────────────────────┬─────────────┘
+                      │                             │
+                      ▼                             ▼
+              Factory Functions              Direct Construction
+              (context_factories.py)         (data_types.py)
+                      │                             │
+                      └──────────────┬──────────────┘
+                                     ▼
+                          ┌───────────────────────┐
+                          │    ContextComposer    │
+                          │  .add() / .add_if()   │
+                          │  .add_optional()      │
+                          │  .build()             │
+                          └───────────┬───────────┘
+                                      ▼
+                          ┌───────────────────────┐
+                          │   Template Variables  │
+                          │ {"parent_summary":... │
+                          │  "sibling_results":...│
+                          └───────────┬───────────┘
+                                      ▼
+                          ┌───────────────────────┐
+                          │   Jinja2 Templates    │
+                          │   (prompts/core/      │
+                          │    context/*.j2)      │
+                          └───────────┬───────────┘
+                                      ▼
+                          ┌───────────────────────┐
+                          │    Rendered Prompt    │
+                          │    (for LLM call)     │
+                          └───────────────────────┘
+```
+
+---
+
+## Key Files (Updated)
+
+| File | Purpose |
+|------|---------|
+| `core/domain/shared_context.py` | Domain model (SharedExecutionContext, aggregates) |
+| `core/domain/events/events.py` | SharedContext domain events |
+| `core/domain/values/context/base.py` | ContextData protocol |
+| `core/domain/values/context/data_types.py` | Concrete context types |
+| `core/application/services/context_composer.py` | ContextComposer fluent builder |
+| `core/application/services/context_factories.py` | Factory functions |
+| `prompts/core/context/*.j2` | Context rendering templates |
+| `core/ports/shared_context_port.py` | Port interface |
+| `infrastructure/adapters/shared_context_adapter.py` | PostgreSQL adapter |
