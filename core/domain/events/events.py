@@ -396,3 +396,24 @@ class BenchmarkCompleted(DomainEvent):
     fixer_success: bool | None = None
     total_duration_seconds: float = 0.0
     total_cost_usd: float = 0.0
+
+
+# =============================================================================
+# Source Context Extraction Events (Design Choice 6)
+# =============================================================================
+
+
+class SourceContextExtracted(DomainEvent):
+    """Key information extracted from user prompt by BOSS (Design Choice 6).
+
+    BOSS extracts structured context from the user's task description
+    to share with all workers in the hierarchy.
+    """
+
+    extraction_summary: str  # Brief summary of extracted context
+    key_references: tuple[str, ...] = ()  # Files, commits, URLs mentioned
+    has_bug_report: bool = False  # Contains bug report information
+    has_error_details: bool = False  # Contains error messages/stack traces
+    has_file_references: bool = False  # References specific files/paths
+    has_code_snippets: bool = False  # Contains code examples
+    extracted_entities: dict[str, Any] = Field(default_factory=dict)  # Structured entities

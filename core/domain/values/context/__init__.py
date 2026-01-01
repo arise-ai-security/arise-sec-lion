@@ -53,6 +53,7 @@ from core.domain.values.context.sibling_to_sibling import (
     SiblingStatus,
     SiblingView,
 )
+from core.domain.values.context.source_context import SourceContext
 
 __all__ = [
     # Base Protocol
@@ -83,4 +84,6 @@ __all__ = [
     "SiblingView",
     # Limits
     "HierarchyLimits",
+    # Source Context (Design Choice 6)
+    "SourceContext",
 ]

@@ -1,0 +1,35 @@
+{# Source context template for extracted key information (Design Choice 6) #}
+{# Provides workers with key information extracted from user prompt by BOSS #}
+
+{% if source_context and source_context.extraction_summary %}
+<SOURCE_CONTEXT>
+<summary>{{ source_context.extraction_summary }}</summary>
+
+{% if source_context.key_references %}
+<references>
+{% for ref in source_context.key_references %}
+  <ref>{{ ref }}</ref>
+{% endfor %}
+</references>
+{% endif %}
+
+<detected_content>
+{% if source_context.has_bug_report %}  <bug_report>true</bug_report>
+{% endif %}
+{% if source_context.has_error_details %}  <error_details>true</error_details>
+{% endif %}
+{% if source_context.has_file_references %}  <file_references>true</file_references>
+{% endif %}
+{% if source_context.has_code_snippets %}  <code_snippets>true</code_snippets>
+{% endif %}
+</detected_content>
+
+{% if source_context.extracted_entities %}
+<extracted_entities>
+{% for key, value in source_context.extracted_entities.items() %}
+  <entity key="{{ key }}">{{ value }}</entity>
+{% endfor %}
+</extracted_entities>
+{% endif %}
+</SOURCE_CONTEXT>
+{% endif %}
