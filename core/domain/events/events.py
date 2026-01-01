@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from core.domain.values.subtask import Subtask
+from core.domain.values.worker_report import WorkerReport
 
 
 def _utc_now() -> datetime:
@@ -106,9 +107,13 @@ class ChildSpawned(DomainEvent):
 
 
 class WorkCompleted(DomainEvent):
-    """Agent completed work successfully."""
+    """Agent completed work successfully.
+
+    worker_report: Optional structured report for cross-sibling learning (Design Choice 5).
+    """
 
     result: str
+    worker_report: WorkerReport | None = None  # Design Choice 5: Cross-sibling learning
 
 
 class WorkFailed(DomainEvent):

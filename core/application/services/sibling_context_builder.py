@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from core.application.services.query_service import AgentSummaryReadModel
+from core.domain.events.events import WorkCompleted
 from core.domain.values.context import (
     SharedDecision,
     SiblingStatus,
@@ -71,10 +72,18 @@ class SiblingViewBuilder:
                 continue
 
             result_summary = None
+            worker_report = None
+
             if summary.status == "completed":
                 agent = await self._repository.load_if_exists(agg_id)
                 if agent and agent.result:
                     result_summary = agent.result[:500]
+
+                # Extract worker report from WorkCompleted event (Design Choice 5)
+                for event in events:
+                    if isinstance(event, WorkCompleted) and event.worker_report:
+                        worker_report = event.worker_report
+                        break
 
             siblings.append(
                 SiblingStatus(
@@ -83,6 +92,7 @@ class SiblingViewBuilder:
                     status=summary.status,
                     task_summary=summary.task_summary[:200],
                     result_summary=result_summary,
+                    worker_report=worker_report,
                 )
             )
 

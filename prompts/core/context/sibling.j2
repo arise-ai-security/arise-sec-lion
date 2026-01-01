@@ -19,6 +19,14 @@ Workers execute left-to-right. Earlier workers' results are available to you.
 {% if sibling.status == 'completed' and sibling.result_summary %}
   <result>{{ sibling.result_summary }}</result>
 {% endif %}
+{% if sibling.status == 'completed' and sibling.worker_report %}
+  <worker-report>
+    <approach>{{ sibling.worker_report.approach }}</approach>
+    <observations>{{ sibling.worker_report.observations }}</observations>
+    <deliverables>{{ sibling.worker_report.deliverables }}</deliverables>
+    <fulfillment>{{ sibling.worker_report.fulfillment_evidence }}</fulfillment>
+  </worker-report>
+{% endif %}
 </task>
 {% endif %}
 {% endfor %}

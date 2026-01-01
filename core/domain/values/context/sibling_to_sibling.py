@@ -4,15 +4,22 @@ Immutable value objects enabling workers to see:
 - Parent task context
 - Sibling task statuses and results
 - Shared decisions from SharedExecutionContext
+- Worker reports for cross-sibling learning (Design Choice 5)
 """
 
 from typing import Any
 
 from pydantic import BaseModel, computed_field
 
+from core.domain.values.worker_report import WorkerReport
+
 
 class SiblingStatus(BaseModel):
-    """Sibling task status for worker coordination."""
+    """Sibling task status for worker coordination.
+
+    worker_report: Optional structured report for cross-sibling learning (Design Choice 5).
+                   Populated when sibling has completed with a WorkerReport.
+    """
 
     model_config = {"frozen": True}
 
@@ -21,6 +28,7 @@ class SiblingStatus(BaseModel):
     status: str  # pending, analyzing, in_progress, completed, failed
     task_summary: str
     result_summary: str | None = None
+    worker_report: WorkerReport | None = None  # Design Choice 5
 
 
 class SharedDecision(BaseModel):
