@@ -67,6 +67,11 @@ def _create_parser() -> argparse.ArgumentParser:
         choices=["claude_code", "openhands", "google_adk"],
         help="Override worker execution tool (claude_code, openhands, google_adk)",
     )
+    p.add_argument(
+        "--budget-threshold",
+        type=float,
+        help="Budget threshold ratio (0.0-1.0). Enables complexity budget if set.",
+    )
 
     for name, help_text, extra_args in [
         ("events", "View events for a task run", [("--errors-only", {"action": "store_true"})]),
@@ -111,7 +116,7 @@ async def _run_task(args: argparse.Namespace) -> None:
 
 
 def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
-    """Apply CLI overrides for worker model and tool.
+    """Apply CLI overrides for worker model, tool, and budget settings.
 
     Args:
         settings: Base settings from config file.
@@ -122,18 +127,33 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
     """
     worker_model = getattr(args, "worker_model", None)
     worker_tool = getattr(args, "worker_tool", None)
+    budget_threshold = getattr(args, "budget_threshold", None)
 
-    if not worker_model and not worker_tool:
+    if not worker_model and not worker_tool and budget_threshold is None:
         return settings  # No overrides
 
-    # Build updated worker config
-    new_worker = settings.worker.model_copy(update={
-        **({"model": worker_model} if worker_model else {}),
-        **({"tool": worker_tool} if worker_tool else {}),
-    })
+    updates: dict = {}
 
-    # Return new settings with updated worker config
-    return settings.model_copy(update={"worker": new_worker})
+    # Worker overrides
+    if worker_model or worker_tool:
+        new_worker = settings.worker.model_copy(update={
+            **({"model": worker_model} if worker_model else {}),
+            **({"tool": worker_tool} if worker_tool else {}),
+        })
+        updates["worker"] = new_worker
+
+    # Budget threshold override (also enables complexity budget)
+    if budget_threshold is not None:
+        new_budget = settings.orchestration.complexity_budget.model_copy(update={
+            "enabled": True,
+            "threshold_ratio": budget_threshold,
+        })
+        new_orchestration = settings.orchestration.model_copy(update={
+            "complexity_budget": new_budget,
+        })
+        updates["orchestration"] = new_orchestration
+
+    return settings.model_copy(update=updates)
 
 
 async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
