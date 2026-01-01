@@ -60,6 +60,9 @@ class ServiceConfig:
     default_worker_tool: str
     boss_config: "BossConfig"
     manager_config: "ManagerConfig"
+    # Complexity budget config (Design Choice 2: Budgeted Tree)
+    complexity_budget_enabled: bool = False
+    complexity_budget_initial_amount: float = 1000.0
 
 
 @dataclass(frozen=True)
@@ -361,6 +364,14 @@ class AgentExecutionService:
             parent_id=None,
         )
         boss_agent.assign_task(task_description)
+
+        # Allocate initial complexity budget if enabled (Design Choice 2: Budgeted Tree)
+        if self._config.complexity_budget_enabled:
+            boss_agent.allocate_complexity_budget(
+                amount=self._config.complexity_budget_initial_amount,
+                source="initial",
+            )
+
         return boss_agent
 
     async def _load_agent_with_context(self, agent_id: UUID) -> AgentSession:

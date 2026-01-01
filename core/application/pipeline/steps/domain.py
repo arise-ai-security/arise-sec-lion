@@ -13,12 +13,20 @@ class ApplyComplexityResult:
 
     Calls agent.apply_complexity_result() which emits ComplexityEvaluated event
     and transitions the agent from PENDING to WORKER or MANAGER.
+
+    Note: If the agent's role has already been updated (e.g., by CheckBudgetThreshold
+    step in Design Choice 2), this step skips application to avoid duplicate events.
     """
 
     async def execute(self, state: PipelineState) -> StepResult:
         """Apply complexity result via pure domain method."""
         if state.complexity is None:
             return StepResult.fail("No complexity result in state")
+
+        # Skip if already applied (e.g., by CheckBudgetThreshold)
+        # PENDING agents haven't had complexity evaluated yet
+        if state.agent.role != AgentRole.PENDING:
+            return StepResult.ok(state)
 
         determined_role = (
             AgentRole.WORKER if state.complexity == "simple" else AgentRole.MANAGER

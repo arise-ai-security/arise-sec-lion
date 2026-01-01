@@ -15,8 +15,8 @@ manager:
   max_tokens: 4000  # Needs enough tokens for subtask JSON arrays
 
 worker:
-  model: claude-sonnet-4-20250514
-  tool: claude_code
+  model: gpt-4o
+  tool: openhands
   timeout: 120
 
 orchestration:
@@ -36,6 +36,14 @@ orchestration:
     llm_rate_limit_rpm: -1     # -1 = unlimited
     max_concurrent_llm_calls: 10  # Concurrent LLM API calls (-1 = unlimited)
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
+
+  # Complexity budget (Design Choice 2: Budgeted Tree)
+  # Controls tree growth via budget allocation, NOT financial cost.
+  # When agent's budget drops below threshold, it becomes WORKER.
+  complexity_budget:
+    enabled: false             # Disabled by default, use structural limits
+    initial_amount: 1000.0     # Starting budget for BOSS agent
+    threshold_ratio: 0.02      # 2% - force WORKER when budget < initial * 0.02
 
 output:
   verbose: true

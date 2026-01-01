@@ -14,6 +14,7 @@ implement the orchestration logic previously in AgentOrchestrator methods.
 from typing import TYPE_CHECKING
 
 from core.application.pipeline.executor import Pipeline
+from core.application.pipeline.steps.budget import CheckBudgetThreshold
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
     SpawnChildren,
@@ -36,6 +37,7 @@ from core.application.pipeline.steps.validation import (
 from core.application.pipeline.steps.worker import RunWorkerSession
 
 if TYPE_CHECKING:
+    from config.settings import OrchestrationConfig
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
@@ -62,6 +64,7 @@ class PipelineFactory:
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
+        orchestration_config: "OrchestrationConfig | None" = None,
     ) -> None:
         """Initialize factory with required ports.
 
@@ -70,39 +73,46 @@ class PipelineFactory:
             worker_port: Port for worker tool execution
             prompt_builder: Builder for constructing prompts
             child_factory: Factory for child agents (source of truth for agent counts)
+            orchestration_config: Configuration for orchestration (includes complexity_budget)
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
+        self._orchestration_config = orchestration_config
 
     def create_complexity_pipeline(self) -> Pipeline:
         """Create pipeline for PENDING agent complexity evaluation.
 
         Pipeline steps:
         1. ValidatePendingAgent - Assert PENDING + ANALYZING
-        2. BuildComplexityPrompt - Via PromptBuilder
-        3. EmitPromptSent - Observability
-        4. QueryLLM - Call LLM port
-        5. EmitTokensConsumed - Cost tracking
-        6. ParseComplexityResult - Parse JSON (simple/complex)
-        7. ApplyComplexityResult - Call agent.apply_complexity_result()
+        2. CheckBudgetThreshold - Short-circuit if budget too low (Design Choice 2)
+        3. BuildComplexityPrompt - Via PromptBuilder
+        4. EmitPromptSent - Observability
+        5. QueryLLM - Call LLM port
+        6. EmitTokensConsumed - Cost tracking
+        7. ParseComplexityResult - Parse JSON (simple/complex)
+        8. ApplyComplexityResult - Call agent.apply_complexity_result()
 
         Returns:
             Configured Pipeline for complexity evaluation
         """
-        return Pipeline(
-            name="complexity_evaluation",
-            steps=[
-                ValidatePendingAgent,
-                BuildComplexityPrompt(self._prompt_builder),
-                EmitPromptSent(prompt_type="complexity_evaluation", target="llm"),
-                QueryLLM(self._llm_port, operation="complexity_evaluation"),
-                EmitTokensConsumed(operation="complexity_evaluation"),
-                ParseComplexityResult(),
-                ApplyComplexityResult(),
-            ],
-        )
+        steps: list = [ValidatePendingAgent]
+
+        # Add budget threshold check if config is available (Design Choice 2)
+        if self._orchestration_config is not None:
+            steps.append(CheckBudgetThreshold(self._orchestration_config.complexity_budget))
+
+        steps.extend([
+            BuildComplexityPrompt(self._prompt_builder),
+            EmitPromptSent(prompt_type="complexity_evaluation", target="llm"),
+            QueryLLM(self._llm_port, operation="complexity_evaluation"),
+            EmitTokensConsumed(operation="complexity_evaluation"),
+            ParseComplexityResult(),
+            ApplyComplexityResult(),
+        ])
+
+        return Pipeline(name="complexity_evaluation", steps=steps)
 
     def create_decomposition_pipeline(self) -> Pipeline:
         """Create pipeline for BOSS/MANAGER task decomposition.

@@ -124,6 +124,21 @@ class OrchestrationConfig(BaseModel):
             """Check if concurrent LLM calls limit is enabled."""
             return self.max_concurrent_llm_calls > 0
 
+    class ComplexityBudgetConfig(BaseModel):
+        """Complexity budget settings (Design Choice 2: Budgeted Tree).
+
+        Controls tree growth via budget allocation, NOT financial cost.
+        When agent's budget drops below threshold, it becomes WORKER.
+        """
+
+        enabled: bool = False  # Disabled by default, use structural limits
+        initial_amount: float = Field(default=1000.0, gt=0.0)
+        threshold_ratio: float = Field(default=0.02, ge=0.0, le=1.0)  # 2% threshold
+
+        def is_enabled(self) -> bool:
+            """Check if complexity budget is enabled."""
+            return self.enabled
+
     max_retries: int = Field(ge=0, le=10)
     retry_delay: float = Field(ge=0.0)
     poll_interval: float = Field(ge=0.01)  # Minimum 10ms
@@ -132,6 +147,7 @@ class OrchestrationConfig(BaseModel):
     default_task_complexity_threshold: int = Field(ge=1, le=10)
 
     limits: LimitsConfig
+    complexity_budget: ComplexityBudgetConfig = ComplexityBudgetConfig()
 
 
 class OutputConfig(BaseModel):

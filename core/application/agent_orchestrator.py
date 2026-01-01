@@ -21,6 +21,7 @@ from core.application.pipeline.context import PipelineState
 from core.application.pipelines import PipelineFactory
 
 if TYPE_CHECKING:
+    from config.settings import OrchestrationConfig
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.aggregates.agent_session import AgentSession
@@ -52,6 +53,7 @@ class AgentOrchestrator:
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
+        orchestration_config: "OrchestrationConfig | None" = None,
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -60,12 +62,14 @@ class AgentOrchestrator:
             worker_port: Port for worker tool execution.
             prompt_builder: Builder for constructing prompts.
             child_factory: Factory for child agents (source of truth for agent counts).
+            orchestration_config: Configuration for orchestration (includes complexity_budget).
         """
         self._pipeline_factory = PipelineFactory(
             llm_port=llm_port,
             worker_port=worker_port,
             prompt_builder=prompt_builder,
             child_factory=child_factory,
+            orchestration_config=orchestration_config,
         )
 
         # Create pipelines (could also be lazy-created)

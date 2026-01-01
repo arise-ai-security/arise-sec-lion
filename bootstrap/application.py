@@ -35,6 +35,8 @@ class ApplicationConfig:
     output_directory: str
     default_worker_tool: str
     progress_callback: ProgressCallback | None = None
+    # Full orchestration config for complexity budget and other features
+    orchestration_config: OrchestrationConfig | None = None
 
 
 @dataclass
@@ -49,6 +51,14 @@ def get_application(
     config: ApplicationConfig,
 ) -> Application:
     """Create all application services with proper dependency injection."""
+    # Extract complexity budget config if available
+    complexity_budget_enabled = False
+    complexity_budget_initial_amount = 1000.0
+    if config.orchestration_config is not None:
+        budget_cfg = config.orchestration_config.complexity_budget
+        complexity_budget_enabled = budget_cfg.enabled
+        complexity_budget_initial_amount = budget_cfg.initial_amount
+
     service_config = ServiceConfig(
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
@@ -56,6 +66,8 @@ def get_application(
         default_worker_tool=config.default_worker_tool,
         boss_config=config.boss_config,
         manager_config=config.manager_config,
+        complexity_budget_enabled=complexity_budget_enabled,
+        complexity_budget_initial_amount=complexity_budget_initial_amount,
     )
 
     # Create collaborators (composition root wiring)
@@ -81,6 +93,7 @@ def get_application(
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
         child_factory=child_factory,
+        orchestration_config=config.orchestration_config,
     )
 
     # Create sibling view builder (implements SiblingViewPort)

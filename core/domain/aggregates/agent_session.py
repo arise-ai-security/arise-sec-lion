@@ -19,6 +19,7 @@ from core.domain.events.events import (
     ChildCompleted,
     ChildSpawned,
     CodeGenerationStarted,
+    ComplexityBudgetAllocated,
     ComplexityEvaluated,
     DomainEvent,
     LimitEnforced,
@@ -229,6 +230,14 @@ class AgentSession:
         # Prompt events are for observability, just increment version for OCC
         self.version += 1
 
+    @_apply.register
+    def _(self, event: ComplexityBudgetAllocated) -> None:
+        # Complexity budget allocation (Design Choice 2: Budgeted Tree)
+        self.complexity_budget = event.amount
+        if event.source == "initial":
+            self.initial_complexity_budget = event.amount
+        self.version += 1
+
     def _initialize_defaults(self, agent_id: UUID) -> None:
         self.agent_id: UUID = agent_id
         self.role: AgentRole = AgentRole.BOSS
@@ -253,6 +262,9 @@ class AgentSession:
         self.structured_task_outcomes: dict[UUID, TaskOutcome] = {}
         # Position among siblings for left-to-right ordering (0 = first/leftmost)
         self.sibling_index: int = 0
+        # Complexity budget for tree growth control (Design Choice 2)
+        self.complexity_budget: float = 0.0
+        self.initial_complexity_budget: float = 0.0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
@@ -276,6 +288,37 @@ class AgentSession:
     def record_artifact(self, artifact_key: str) -> None:
         """Record an artifact produced during execution."""
         self.local_artifacts.append(artifact_key)
+
+    def allocate_complexity_budget(self, amount: float, source: str = "initial") -> None:
+        """Allocate complexity budget to this agent (Design Choice 2: Budgeted Tree).
+
+        Args:
+            amount: Budget amount to allocate
+            source: "initial" for BOSS, "parent" for children
+        """
+        budget_event = ComplexityBudgetAllocated(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            amount=amount,
+            source=source,
+        )
+        self._apply(budget_event)
+        self._changes.append(budget_event)
+
+    def is_below_budget_threshold(self, initial_boss_budget: float, threshold_ratio: float) -> bool:
+        """Check if complexity budget is below threshold (Design Choice 2).
+
+        Args:
+            initial_boss_budget: The initial budget given to BOSS agent
+            threshold_ratio: Ratio of initial budget below which agent becomes WORKER
+
+        Returns:
+            True if budget is below threshold, False otherwise
+        """
+        if self.complexity_budget <= 0:
+            return False  # No budget allocated, use structural limits
+        threshold = initial_boss_budget * threshold_ratio
+        return self.complexity_budget < threshold
 
     def build_task_outcome(self) -> TaskOutcome:
         """Build structured task outcome to return to parent.

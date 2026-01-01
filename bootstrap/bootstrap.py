@@ -204,6 +204,7 @@ def _create_cli(settings: Settings, progress_callback=None):
         output_directory=settings.output.directory,
         default_worker_tool=settings.worker.tool,
         progress_callback=progress_callback,
+        orchestration_config=settings.orchestration,
     ))
 
     return CLI(

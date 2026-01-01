@@ -162,6 +162,24 @@ class ComplexityEvaluated(DomainEvent):
 
 
 # =============================================================================
+# Complexity Budget Events (Design Choice 2: Budgeted Tree)
+# =============================================================================
+
+
+class ComplexityBudgetAllocated(DomainEvent):
+    """Complexity budget allocated to agent for tree growth control.
+
+    This is NOT financial cost - it's a hyperparameter controlling tree expansion.
+    When budget drops below threshold, agents become WORKER instead of spawning children.
+
+    source: "initial" for BOSS, "parent" for children receiving from parent
+    """
+
+    amount: float
+    source: str  # "initial" | "parent"
+
+
+# =============================================================================
 # Cost Tracking Events
 # =============================================================================
 
