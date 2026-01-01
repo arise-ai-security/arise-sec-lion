@@ -280,7 +280,7 @@ class AgentSession:
     def build_task_outcome(self) -> TaskOutcome:
         """Build structured task outcome to return to parent.
 
-        Includes result text, artifacts, decisions, and execution summary.
+        Includes task summary, result text, artifacts, decisions, and execution summary.
         """
         # Build execution summary from cost events if available
         execution_summary: dict[str, Any] = {}
@@ -292,6 +292,7 @@ class AgentSession:
             execution_summary["cost_usd"] = total_cost
 
         return TaskOutcome(
+            task_summary=self.task_description or "",
             result_text=self.result or "",
             artifacts=tuple(self.local_artifacts),
             decisions=tuple(self.local_decisions),

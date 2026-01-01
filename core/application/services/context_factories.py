@@ -28,6 +28,8 @@ from core.domain.values.context.data_types import (
     AncestorEntry,
     AncestryChain,
     ArtifactEntry,
+    ChildOutcomeEntry,
+    ChildOutcomes,
     DecisionEntry,
     ParentSummary,
     SharedArtifacts,
@@ -379,3 +381,52 @@ def artifact_entry_from_shared(
         content=content,
         stored_by=str(artifact.stored_by),
     )
+
+
+# =============================================================================
+# Child Outcomes Factories
+# =============================================================================
+
+
+def child_outcomes_from_agent(
+    agent: "AgentSession",
+    result_limit: int = DEFAULT_RESULT_SUMMARY_LIMIT,
+    task_limit: int = DEFAULT_TASK_SUMMARY_LIMIT,
+) -> ChildOutcomes:
+    """Build ChildOutcomes from parent agent's structured_task_outcomes.
+
+    Creates a renderable context object containing all children's TaskOutcome
+    data, suitable for inclusion in parent's prompt during re-evaluation
+    or aggregation phases.
+
+    Args:
+        agent: The parent agent with completed children.
+        result_limit: Maximum characters for result text.
+        task_limit: Maximum characters for task summary.
+
+    Returns:
+        ChildOutcomes value object.
+
+    Example:
+        # In a Pipeline step for Manager/Boss aggregation
+        if agent.structured_task_outcomes:
+            context.add(child_outcomes_from_agent(agent))
+    """
+    entries = []
+
+    for child_id, outcome in agent.structured_task_outcomes.items():
+        task_summary = outcome.task_summary[:task_limit] if outcome.task_summary else ""
+        result_text = outcome.result_text[:result_limit] if outcome.result_text else ""
+
+        entries.append(
+            ChildOutcomeEntry(
+                child_id=str(child_id),
+                task_summary=task_summary,
+                result_text=result_text,
+                artifacts=outcome.artifacts,
+                decisions=outcome.decisions,
+                status="completed",
+            )
+        )
+
+    return ChildOutcomes(outcomes=tuple(entries))

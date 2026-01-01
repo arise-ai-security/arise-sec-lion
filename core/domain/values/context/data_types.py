@@ -277,6 +277,63 @@ class SharedArtifacts(BaseModel):
 
 
 # =============================================================================
+# Child Outcomes (Parent viewing children's results)
+# =============================================================================
+
+
+class ChildOutcomeEntry(BaseModel):
+    """Single child's task outcome.
+
+    Represents a completed child's structured result for parent consumption.
+    """
+
+    model_config = {"frozen": True}
+
+    child_id: str
+    task_summary: str
+    result_text: str
+    artifacts: tuple[str, ...] = ()
+    decisions: tuple[str, ...] = ()
+    status: str = "completed"  # completed, failed
+
+
+class ChildOutcomes(BaseModel):
+    """Structured outcomes from child agents.
+
+    Use when a parent (Manager/Boss) needs to see what children produced.
+    This renders TaskOutcome data to prompts for parent re-evaluation
+    or aggregation decisions.
+
+    Example:
+        context.add(ChildOutcomes(outcomes=(
+            ChildOutcomeEntry(
+                child_id="worker-123",
+                task_summary="Develop exploit PoC",
+                result_text="Created poc.py with buffer overflow...",
+                artifacts=("poc.py", "debug_log.txt"),
+                decisions=("use_ret2libc",),
+            ),
+        )))
+    """
+
+    model_config = {"frozen": True}
+
+    outcomes: tuple[ChildOutcomeEntry, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "child_outcomes"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "outcomes": [o.model_dump() for o in self.outcomes],
+            "total_count": len(self.outcomes),
+            "completed_count": sum(1 for o in self.outcomes if o.status == "completed"),
+            "failed_count": sum(1 for o in self.outcomes if o.status == "failed"),
+        }
+
+
+# =============================================================================
 # Custom Context (User-Defined)
 # =============================================================================
 

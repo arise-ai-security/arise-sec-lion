@@ -13,6 +13,7 @@ class TaskOutcome(BaseModel):
     """Structured result from child to parent.
 
     Provides rich feedback beyond just the result text:
+    - Task summary: What task was assigned to the child
     - Result text: The actual output/result
     - Artifacts: Keys of artifacts stored in shared context
     - Decisions: Key decisions made during execution
@@ -22,6 +23,7 @@ class TaskOutcome(BaseModel):
 
     model_config = {"frozen": True}
 
+    task_summary: str = ""
     result_text: str
     artifacts: tuple[str, ...] = ()
     decisions: tuple[str, ...] = ()
@@ -29,6 +31,6 @@ class TaskOutcome(BaseModel):
     execution_summary: dict[str, Any] = {}
 
     @classmethod
-    def simple(cls, result_text: str) -> Self:
+    def simple(cls, result_text: str, task_summary: str = "") -> Self:
         """Create a simple result with just text."""
-        return cls(result_text=result_text)
+        return cls(result_text=result_text, task_summary=task_summary)

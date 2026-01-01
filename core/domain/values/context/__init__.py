@@ -32,6 +32,8 @@ from core.domain.values.context.data_types import (
     AncestorEntry,
     AncestryChain,
     ArtifactEntry,
+    ChildOutcomeEntry,
+    ChildOutcomes,
     CustomContext,
     DecisionEntry,
     ParentSummary,
@@ -66,6 +68,8 @@ __all__ = [
     "SharedDecisions",
     "ArtifactEntry",
     "SharedArtifacts",
+    "ChildOutcomeEntry",
+    "ChildOutcomes",
     "CustomContext",
     # Parent → Child (legacy, still used for structural data)
     "AncestorSummary",

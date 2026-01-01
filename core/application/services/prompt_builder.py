@@ -99,6 +99,7 @@ class TemplateChain:
         - sibling_results -> core/context/siblings.j2
         - shared_decisions -> core/context/decisions.j2
         - shared_artifacts -> core/context/artifacts.j2
+        - child_outcomes -> core/context/children.j2
         - ancestor_* and custom_* -> core/context/dynamic.j2
 
         Args:
@@ -118,6 +119,7 @@ class TemplateChain:
         self.render_if(context.has("sibling_results"), "core/context/siblings.j2", **ctx_dict)
         self.render_if(context.has("shared_decisions"), "core/context/decisions.j2", **ctx_dict)
         self.render_if(context.has("shared_artifacts"), "core/context/artifacts.j2", **ctx_dict)
+        self.render_if(context.has("child_outcomes"), "core/context/children.j2", **ctx_dict)
 
         # Render dynamic contexts (ancestor_* and custom_*)
         has_dynamic = context.has_any(
