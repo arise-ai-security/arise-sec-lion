@@ -15,6 +15,33 @@ Combine related work if needed. Report `constraints_unsatisfiable` if impossible
 {% if agents_remaining is not none and agents_remaining >= 0 %}
 ## CONSTRAINT: {{ agents_remaining }} Agents Remaining ({{ current_total_agents }}/{{ max_total_agents }})
 {% endif %}
+{% if budget_enabled and complexity_budget is not none %}
+
+## COMPLEXITY BUDGET: {{ "%.1f"|format(complexity_budget) }} units available
+
+Your budget will be distributed among subtasks based on `budget_weight`.
+{% if budget_threshold is not none %}
+**Threshold**: Children with budget < {{ "%.1f"|format(budget_threshold) }} become WORKERs (no further decomposition).
+{% endif %}
+
+### Budget Allocation Formula
+```
+child_budget = {{ "%.1f"|format(complexity_budget) }} × (subtask_weight / sum_of_all_weights)
+```
+
+### Weight Guidelines
+| Task Type | Weight | Why |
+|-----------|--------|-----|
+| Simple/quick tasks | 0.5-1.0 | Less resources needed |
+| Standard tasks | 1.0-1.5 | Baseline allocation |
+| Complex tasks | 2.0-3.0 | More resources for depth |
+| Critical path tasks | 2.5-4.0 | Extra resources for important work |
+
+**Example**: With budget {{ "%.0f"|format(complexity_budget) }} and 3 subtasks (weights 1.0, 3.0, 1.5):
+- Subtask 1 gets: {{ "%.0f"|format(complexity_budget) }} × (1.0/5.5) = {{ "%.0f"|format(complexity_budget * 1.0 / 5.5) }}
+- Subtask 2 gets: {{ "%.0f"|format(complexity_budget) }} × (3.0/5.5) = {{ "%.0f"|format(complexity_budget * 3.0 / 5.5) }}
+- Subtask 3 gets: {{ "%.0f"|format(complexity_budget) }} × (1.5/5.5) = {{ "%.0f"|format(complexity_budget * 1.5 / 5.5) }}
+{% endif %}
 
 ## Decomposition Principles
 

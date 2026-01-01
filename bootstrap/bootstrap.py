@@ -68,9 +68,19 @@ def _create_parser() -> argparse.ArgumentParser:
         help="Override worker execution tool (claude_code, openhands, google_adk)",
     )
     p.add_argument(
-        "--budget-threshold",
+        "--budget-threshold-ratio",
         type=float,
-        help="Budget threshold ratio (0.0-1.0). Enables complexity budget if set.",
+        metavar="RATIO",
+        help="Complexity budget threshold ratio (0.0-1.0). Children with budget below "
+             "initial_amount * ratio become WORKERs. Enables complexity budget if set. "
+             "Example: 0.02 means ~50 workers (1/0.02).",
+    )
+    p.add_argument(
+        "--budget-initial-amount",
+        type=float,
+        metavar="AMOUNT",
+        help="Initial complexity budget for BOSS agent (default: 1000.0). "
+             "Enables complexity budget if set.",
     )
 
     for name, help_text, extra_args in [
@@ -127,9 +137,12 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
     """
     worker_model = getattr(args, "worker_model", None)
     worker_tool = getattr(args, "worker_tool", None)
-    budget_threshold = getattr(args, "budget_threshold", None)
+    budget_threshold_ratio = getattr(args, "budget_threshold_ratio", None)
+    budget_initial_amount = getattr(args, "budget_initial_amount", None)
 
-    if not worker_model and not worker_tool and budget_threshold is None:
+    has_budget_override = budget_threshold_ratio is not None or budget_initial_amount is not None
+
+    if not worker_model and not worker_tool and not has_budget_override:
         return settings  # No overrides
 
     updates: dict = {}
@@ -142,12 +155,16 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
         })
         updates["worker"] = new_worker
 
-    # Budget threshold override (also enables complexity budget)
-    if budget_threshold is not None:
-        new_budget = settings.orchestration.complexity_budget.model_copy(update={
-            "enabled": True,
-            "threshold_ratio": budget_threshold,
-        })
+    # Budget overrides (Design Choices 2-3: Budgeted Tree)
+    # Setting either threshold_ratio or initial_amount enables complexity budget
+    if has_budget_override:
+        budget_updates: dict = {"enabled": True}
+        if budget_threshold_ratio is not None:
+            budget_updates["threshold_ratio"] = budget_threshold_ratio
+        if budget_initial_amount is not None:
+            budget_updates["initial_amount"] = budget_initial_amount
+
+        new_budget = settings.orchestration.complexity_budget.model_copy(update=budget_updates)
         new_orchestration = settings.orchestration.model_copy(update={
             "complexity_budget": new_budget,
         })

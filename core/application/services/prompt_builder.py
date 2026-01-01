@@ -196,11 +196,17 @@ class PromptBuilder:
     def _limits_context(
         self,
         hierarchy_limits: "HierarchyLimits | None",
+        complexity_budget: float | None = None,
+        initial_complexity_budget: float | None = None,
+        budget_threshold_ratio: float | None = None,
     ) -> dict[str, Any]:
         """Build limits context dict for templates.
 
         Args:
             hierarchy_limits: Current hierarchy limits for depth/children constraints.
+            complexity_budget: Agent's current complexity budget (Design Choice 2-3).
+            initial_complexity_budget: Initial budget allocated to this agent.
+            budget_threshold_ratio: Ratio below which agent becomes WORKER.
 
         Returns:
             Dict with limit variables for templates:
@@ -210,16 +216,35 @@ class PromptBuilder:
             - agents_remaining: How many more agents can be created (None = unlimited)
             - max_total_agents: Maximum total agents allowed (None = unlimited)
             - current_total_agents: Current count of agents created (None = unknown)
+            - complexity_budget: Current complexity budget (None = disabled)
+            - initial_complexity_budget: Initial budget allocation (None = disabled)
+            - budget_threshold: Minimum budget before forced WORKER (None = disabled)
         """
+        base_context: dict[str, Any] = {
+            "max_subtasks": None,
+            "depth_remaining": None,
+            "at_max_depth": False,
+            "agents_remaining": None,
+            "max_total_agents": None,
+            "current_total_agents": None,
+            # Budget context (Design Choices 2-3)
+            "complexity_budget": complexity_budget,
+            "initial_complexity_budget": initial_complexity_budget,
+            "budget_threshold": None,
+            "budget_enabled": complexity_budget is not None and complexity_budget > 0,
+        }
+
+        # Calculate budget threshold if budget is enabled
+        if (
+            complexity_budget is not None
+            and initial_complexity_budget is not None
+            and budget_threshold_ratio is not None
+            and initial_complexity_budget > 0
+        ):
+            base_context["budget_threshold"] = initial_complexity_budget * budget_threshold_ratio
+
         if hierarchy_limits is None:
-            return {
-                "max_subtasks": None,
-                "depth_remaining": None,
-                "at_max_depth": False,
-                "agents_remaining": None,
-                "max_total_agents": None,
-                "current_total_agents": None,
-            }
+            return base_context
 
         max_subtasks = None
         if hierarchy_limits.is_children_limited():
@@ -240,14 +265,16 @@ class PromptBuilder:
             max_total_agents = hierarchy_limits.max_total_agents
             current_total_agents = hierarchy_limits.current_total_agents
 
-        return {
+        base_context.update({
             "max_subtasks": max_subtasks,
             "depth_remaining": depth_remaining,
             "at_max_depth": at_max_depth,
             "agents_remaining": agents_remaining,
             "max_total_agents": max_total_agents,
             "current_total_agents": current_total_agents,
-        }
+        })
+
+        return base_context
 
     def build_complexity_evaluation_prompt(
         self,
@@ -276,6 +303,9 @@ class PromptBuilder:
         cve_instance: "CVEInstance | None" = None,
         spawn_payload: "SpawnPayload | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
+        complexity_budget: float | None = None,
+        initial_complexity_budget: float | None = None,
+        budget_threshold_ratio: float | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
 
@@ -287,6 +317,9 @@ class PromptBuilder:
             cve_instance: CVE instance for benchmark runs.
             spawn_payload: Spawn payload for hierarchy info.
             hierarchy_limits: Hierarchy limits with depth/children constraints.
+            complexity_budget: Agent's current complexity budget (Design Choice 2-3).
+            initial_complexity_budget: Initial budget allocated to this agent.
+            budget_threshold_ratio: Ratio below which children become WORKER.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -305,7 +338,12 @@ class PromptBuilder:
 
         # Default generic prompt (no SEC-bench logic here - follows SRP)
         ctx = self._task_context(task_description, agent_id, agent_role, parent_task)
-        limits = self._limits_context(hierarchy_limits)
+        limits = self._limits_context(
+            hierarchy_limits,
+            complexity_budget=complexity_budget,
+            initial_complexity_budget=initial_complexity_budget,
+            budget_threshold_ratio=budget_threshold_ratio,
+        )
         tool = self.default_tool
 
         return (
@@ -325,6 +363,9 @@ class PromptBuilder:
         parent_task: str | None = None,
         cve_instance: "CVEInstance | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
+        complexity_budget: float | None = None,
+        initial_complexity_budget: float | None = None,
+        budget_threshold_ratio: float | None = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation.
 
@@ -334,6 +375,9 @@ class PromptBuilder:
             parent_task: Parent task description.
             cve_instance: CVE instance for benchmark runs.
             hierarchy_limits: Hierarchy limits with depth/children constraints.
+            complexity_budget: Agent's current complexity budget (Design Choice 2-3).
+            initial_complexity_budget: Initial budget allocated to this agent.
+            budget_threshold_ratio: Ratio below which children become WORKER.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -351,7 +395,12 @@ class PromptBuilder:
 
         # Default generic prompt
         ctx = self._task_context(task_description, agent_id, AgentRole.BOSS, parent_task)
-        limits = self._limits_context(hierarchy_limits)
+        limits = self._limits_context(
+            hierarchy_limits,
+            complexity_budget=complexity_budget,
+            initial_complexity_budget=initial_complexity_budget,
+            budget_threshold_ratio=budget_threshold_ratio,
+        )
         tool = self.default_tool
 
         return (

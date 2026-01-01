@@ -25,11 +25,16 @@ Return ONLY valid JSON array:
 ```
 
 ## Budget Weight Guidelines
-
+{% if budget_enabled and complexity_budget is not none %}
+**IMPORTANT**: You have {{ "%.1f"|format(complexity_budget) }} budget units to distribute.
+{% endif %}
 - `budget_weight`: Relative weight for resource allocation (1.0 = standard)
 - Higher weights (2.0-3.0) for complex subtasks needing more resources
 - Lower weights (0.5) for simple subtasks
 - Weights are normalized: child_budget = parent_budget * (weight / total_weights)
+{% if budget_enabled and budget_threshold is not none %}
+- Children with budget < {{ "%.1f"|format(budget_threshold) }} will become WORKERs automatically
+{% endif %}
 
 ## Justification Fields
 

@@ -12,6 +12,7 @@ from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
+    from config.settings import OrchestrationConfig
     from core.application.services.prompt_builder import PromptBuilder
 
 
@@ -50,20 +51,38 @@ class BuildDecompositionPrompt:
     - BOSS: Uses build_boss_delegation_prompt
     - MANAGER: Uses build_manager_decomposition_prompt
 
-    The prompt includes limit-aware context from HierarchyLimits.
+    The prompt includes limit-aware context from HierarchyLimits and
+    complexity budget context (Design Choices 2-3).
     """
 
-    def __init__(self, prompt_builder: "PromptBuilder") -> None:
-        """Initialize with prompt builder.
+    def __init__(
+        self,
+        prompt_builder: "PromptBuilder",
+        orchestration_config: "OrchestrationConfig | None" = None,
+    ) -> None:
+        """Initialize with prompt builder and optional config.
 
         Args:
             prompt_builder: Builder for constructing domain-aware prompts
+            orchestration_config: Configuration for orchestration (includes complexity_budget)
         """
         self._prompt_builder = prompt_builder
+        self._config = orchestration_config
 
     async def execute(self, state: PipelineState) -> StepResult:
-        """Build role-specific decomposition prompt."""
+        """Build role-specific decomposition prompt with budget context."""
         agent = state.agent
+
+        # Extract budget context (Design Choices 2-3)
+        complexity_budget: float | None = None
+        initial_complexity_budget: float | None = None
+        budget_threshold_ratio: float | None = None
+
+        if self._config is not None and self._config.complexity_budget.is_enabled():
+            budget_config = self._config.complexity_budget
+            complexity_budget = agent.complexity_budget if agent.complexity_budget > 0 else None
+            initial_complexity_budget = budget_config.initial_amount
+            budget_threshold_ratio = budget_config.threshold_ratio
 
         if agent.role == AgentRole.BOSS:
             prompt = self._prompt_builder.build_boss_delegation_prompt(
@@ -71,6 +90,9 @@ class BuildDecompositionPrompt:
                 agent_id=agent.agent_id,
                 cve_instance=state.cve_instance,
                 hierarchy_limits=state.hierarchy_limits,
+                complexity_budget=complexity_budget,
+                initial_complexity_budget=initial_complexity_budget,
+                budget_threshold_ratio=budget_threshold_ratio,
             )
         else:  # MANAGER
             prompt = self._prompt_builder.build_manager_decomposition_prompt(
@@ -79,6 +101,9 @@ class BuildDecompositionPrompt:
                 cve_instance=state.cve_instance,
                 spawn_payload=agent.spawn_payload,
                 hierarchy_limits=state.hierarchy_limits,
+                complexity_budget=complexity_budget,
+                initial_complexity_budget=initial_complexity_budget,
+                budget_threshold_ratio=budget_threshold_ratio,
             )
 
         return StepResult.ok(state.with_prompt(prompt))

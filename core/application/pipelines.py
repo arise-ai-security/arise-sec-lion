@@ -124,7 +124,7 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidateDecomposingAgent - Assert BOSS/MANAGER + ANALYZING
-        2. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
+        2. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER) with budget context
         3. EmitPromptSent - Observability
         4. QueryLLM - Call LLM port
         5. EmitTokensConsumed - Cost tracking
@@ -140,7 +140,7 @@ class PipelineFactory:
             name="task_decomposition",
             steps=[
                 ValidateDecomposingAgent,
-                BuildDecompositionPrompt(self._prompt_builder),
+                BuildDecompositionPrompt(self._prompt_builder, self._orchestration_config),
                 EmitPromptSent(prompt_type="task_decomposition", target="llm"),
                 QueryLLM(self._llm_port, operation="task_decomposition"),
                 EmitTokensConsumed(operation="task_decomposition"),

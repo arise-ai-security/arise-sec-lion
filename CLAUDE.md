@@ -39,6 +39,11 @@ docker compose --profile dev exec app-dev python main.py run "Your task" \
   --worker-model gpt-4o \
   --worker-tool claude_code
 
+# Run with complexity budget (Design Choices 2-3)
+docker compose --profile dev exec app-dev python main.py run "Your task" \
+  --budget-threshold-ratio 0.02 \
+  --budget-initial-amount 1000
+
 # Run tests
 docker compose --profile dev exec app-dev uv run pytest
 
@@ -102,6 +107,8 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
 | [`context-passing-mechanism.md`](agent-docs/context-passing-mechanism.md) | SharedContext, artifacts, decisions, budget |
 | [`context-passing-guide.md`](agent-docs/context-passing-guide.md) | ContextComposer API, practical scenarios, **example branches** |
+| [`budgeted_tree.md`](agent-docs/budgeted_tree.md) | Design Choice 2: Complexity budget threshold |
+| [`budgeted_tree_plus.md`](agent-docs/budgeted_tree_plus.md) | Design Choice 3: Proportional budget allocation |
 
 ## Example Branches
 
