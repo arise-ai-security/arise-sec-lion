@@ -373,5 +373,80 @@ class CustomContext(BaseModel):
         return self.data
 
 
+# =============================================================================
+# Depth-Targeted Summary (Worker → Specific Ancestor by Depth)
+# =============================================================================
+
+
+class DepthTargetedSummaryEntry(BaseModel):
+    """Single depth-targeted worker summary entry.
+
+    Represents a summary message from a worker to an ancestor at a specific depth.
+    """
+
+    model_config = {"frozen": True}
+
+    worker_id: str
+    worker_task: str
+    summary_text: str
+    source_depth: int  # Depth of the worker
+    timestamp: str = ""
+
+
+class DepthTargetedSummary(BaseModel):
+    """Worker summaries targeted at a specific ancestor depth.
+
+    Use when workers need to send their summary to an ancestor at a
+    specific hierarchy depth. Common use case: workers report to the
+    first child of BOSS (depth=1), which acts as a coordinator.
+
+    Depth mapping:
+    - depth=0: BOSS (root)
+    - depth=1: First child of BOSS (e.g., main coordinator/manager)
+    - depth=N: Ancestor at that specific depth
+
+    Example:
+        # Worker broadcasts summary to depth=1 ancestor
+        context.add(DepthTargetedSummary(
+            target_depth=1,
+            summaries=(
+                DepthTargetedSummaryEntry(
+                    worker_id="worker-123",
+                    worker_task="Scan auth module",
+                    summary_text="Found 3 vulnerabilities...",
+                    source_depth=3,  # Worker is at depth 3
+                ),
+            ),
+        ))
+
+        # In template:
+        # {% if depth_targeted_summaries %}
+        # <DEPTH_SUMMARIES target_depth="{{ depth_targeted_summaries.target_depth }}">
+        # {% for summary in depth_targeted_summaries.summaries %}
+        # <summary from="{{ summary.worker_id }}" source_depth="{{ summary.source_depth }}">
+        #   {{ summary.summary_text }}
+        # </summary>
+        # {% endfor %}
+        # </DEPTH_SUMMARIES>
+        # {% endif %}
+    """
+
+    model_config = {"frozen": True}
+
+    target_depth: int = 1  # Default to first child of boss
+    summaries: tuple[DepthTargetedSummaryEntry, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "depth_targeted_summaries"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "target_depth": self.target_depth,
+            "summaries": [s.model_dump() for s in self.summaries],
+            "total_count": len(self.summaries),
+        }
+
+
 
 

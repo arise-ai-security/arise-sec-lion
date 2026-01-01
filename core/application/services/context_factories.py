@@ -31,12 +31,14 @@ from core.domain.values.context.data_types import (
     ChildOutcomeEntry,
     ChildOutcomes,
     DecisionEntry,
+    DepthTargetedSummary,
     ParentSummary,
     SharedArtifacts,
     SharedDecisions,
     SiblingEntry,
     SiblingResults,
 )
+from core.application.services.depth_broadcast_service import DepthBroadcastService
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
@@ -430,3 +432,57 @@ def child_outcomes_from_agent(
         )
 
     return ChildOutcomes(outcomes=tuple(entries))
+
+
+# =============================================================================
+# Depth-Targeted Summary Factories
+# =============================================================================
+
+
+def depth_targeted_summaries(
+    target_depth: int,
+    context: "SharedExecutionContext",
+) -> DepthTargetedSummary:
+    """Get worker summaries targeted at a specific ancestor depth.
+
+    Retrieves all worker summaries that were broadcast targeting
+    the specified depth in the hierarchy.
+
+    Args:
+        target_depth: The depth to retrieve summaries for (0=boss, 1=first child, etc.).
+        context: The shared execution context.
+
+    Returns:
+        DepthTargetedSummary containing summaries for the specified depth.
+
+    Example:
+        # In Pipeline step when building depth-1 ancestor prompt
+        context.add(depth_targeted_summaries(target_depth=1, context=shared_ctx))
+    """
+    service = DepthBroadcastService()
+    return service.get_summaries_for_depth(
+        target_depth=target_depth,
+        context=context,
+    )
+
+
+def depth1_summaries(
+    context: "SharedExecutionContext",
+) -> DepthTargetedSummary:
+    """Get worker summaries targeted at depth=1 (first child of boss).
+
+    Convenience function for the most common depth-targeted use case:
+    workers reporting to the first child of BOSS, which typically
+    acts as a coordinator or aggregator.
+
+    Args:
+        context: The shared execution context.
+
+    Returns:
+        DepthTargetedSummary containing summaries for depth=1.
+
+    Example:
+        # In Pipeline step building the coordinator's prompt
+        context.add(depth1_summaries(shared_ctx))
+    """
+    return depth_targeted_summaries(target_depth=1, context=context)

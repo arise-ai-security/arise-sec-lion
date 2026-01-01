@@ -1,0 +1,13 @@
+{# Depth-targeted worker summaries template #}
+{# Renders worker summaries targeted at a specific hierarchy depth #}
+
+{% if depth_targeted_summaries and depth_targeted_summaries.summaries %}
+<DEPTH_TARGETED_SUMMARIES target_depth="{{ depth_targeted_summaries.target_depth }}" count="{{ depth_targeted_summaries.total_count }}">
+{% for summary in depth_targeted_summaries.summaries %}
+<summary worker="{{ summary.worker_id }}" from_depth="{{ summary.source_depth }}"{% if summary.timestamp %} at="{{ summary.timestamp }}"{% endif %}>
+<task>{{ summary.worker_task }}</task>
+<content>{{ summary.summary_text }}</content>
+</summary>
+{% endfor %}
+</DEPTH_TARGETED_SUMMARIES>
+{% endif %}

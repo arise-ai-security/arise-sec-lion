@@ -36,6 +36,8 @@ from core.domain.values.context.data_types import (
     ChildOutcomes,
     CustomContext,
     DecisionEntry,
+    DepthTargetedSummary,
+    DepthTargetedSummaryEntry,
     ParentSummary,
     SharedArtifacts,
     SharedDecisions,
@@ -71,6 +73,8 @@ __all__ = [
     "ChildOutcomeEntry",
     "ChildOutcomes",
     "CustomContext",
+    "DepthTargetedSummary",
+    "DepthTargetedSummaryEntry",
     # Parent → Child (legacy, still used for structural data)
     "AncestorSummary",
     "SpawnPayload",
