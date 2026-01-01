@@ -1,0 +1,47 @@
+{# Bidirectional context templates #}
+{# Renders Parent→Child, Child→Parent, and Sibling↔Sibling context #}
+
+{# Parent → Child: Strategic guidance from parent #}
+{% if parent_guidance %}
+<PARENT_GUIDANCE>
+{% if parent_guidance.strategy %}<strategy>{{ parent_guidance.strategy }}</strategy>{% endif %}
+{% if parent_guidance.priority_targets %}<priority_targets>{{ parent_guidance.priority_targets | join(", ") }}</priority_targets>{% endif %}
+{% if parent_guidance.constraints %}
+<constraints>
+{% for key, value in parent_guidance.constraints.items() %}
+  <{{ key }}>{{ value }}</{{ key }}>
+{% endfor %}
+</constraints>
+{% endif %}
+{% if parent_guidance.notes %}<notes>{{ parent_guidance.notes }}</notes>{% endif %}
+</PARENT_GUIDANCE>
+{% endif %}
+
+{# Child → Parent: Aggregated feedback from children #}
+{% if child_feedbacks and child_feedbacks.feedbacks %}
+<CHILD_FEEDBACKS total="{{ child_feedbacks.total_count }}" success="{{ child_feedbacks.success_count }}" partial="{{ child_feedbacks.partial_count }}" failed="{{ child_feedbacks.failed_count }}">
+{% for fb in child_feedbacks.feedbacks %}
+<feedback child="{{ fb.child_id }}" success_level="{{ fb.success_level }}" confidence="{{ fb.confidence_score }}">
+{% if fb.blockers %}<blockers>{{ fb.blockers | join(", ") }}</blockers>{% endif %}
+{% if fb.recommendations %}<recommendations>{{ fb.recommendations | join(", ") }}</recommendations>{% endif %}
+</feedback>
+{% endfor %}
+</CHILD_FEEDBACKS>
+{% endif %}
+
+{# Sibling ↔ Sibling: Coordination data #}
+{% if sibling_coordinations and sibling_coordinations.coordinations %}
+<SIBLING_COORDINATION total_siblings="{{ sibling_coordinations.total_siblings }}">
+<already_claimed>{{ sibling_coordinations.all_claimed_targets | join(", ") }}</already_claimed>
+{% if sibling_coordinations.all_discovered_info %}
+<shared_discoveries>
+{% for key, value in sibling_coordinations.all_discovered_info.items() %}
+  <{{ key }}>{{ value }}</{{ key }}>
+{% endfor %}
+</shared_discoveries>
+{% endif %}
+{% if sibling_coordinations.all_warnings %}
+<warnings>{{ sibling_coordinations.all_warnings | join(", ") }}</warnings>
+{% endif %}
+</SIBLING_COORDINATION>
+{% endif %}

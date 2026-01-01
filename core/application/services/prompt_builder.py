@@ -121,6 +121,13 @@ class TemplateChain:
         self.render_if(context.has("shared_artifacts"), "core/context/artifacts.j2", **ctx_dict)
         self.render_if(context.has("child_outcomes"), "core/context/children.j2", **ctx_dict)
 
+        # Render bidirectional context (Parent↔Child, Sibling↔Sibling)
+        has_bidirectional = context.has_any(
+            "parent_guidance", "child_feedbacks", "sibling_coordinations"
+        )
+        if has_bidirectional:
+            self.render_optional("core/context/bidirectional.j2", **ctx_dict)
+
         # Render dynamic contexts (ancestor_* and custom_*)
         has_dynamic = context.has_any(
             *(k for k in context.keys() if k.startswith(("ancestor_", "custom_")))

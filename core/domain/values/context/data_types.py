@@ -373,5 +373,247 @@ class CustomContext(BaseModel):
         return self.data
 
 
+# =============================================================================
+# Bidirectional Context Types (Parent↔Child, Sibling↔Sibling)
+# =============================================================================
+
+
+class ParentGuidance(BaseModel):
+    """Strategic guidance from parent to child (Parent → Child).
+
+    Use when parents need to pass strategic direction, constraints,
+    or context that influences how children approach their tasks.
+    This supplements the task description with structured guidance.
+
+    HOW TO ADD: Include in SpawnPayload when creating children, then
+    extract and add to ContextComposer in child's prompt building step.
+
+    Example:
+        # Parent adds guidance to spawn payload
+        guidance = ParentGuidance(
+            strategy="defensive",
+            priority_targets=("authentication", "session_management"),
+            constraints={"max_time_per_target": 300},
+            notes="Focus on OWASP Top 10 vulnerabilities",
+        )
+
+        # Child extracts and adds to context
+        context.add(guidance)
+
+        # In child's template:
+        # {% if parent_guidance %}
+        # Strategy: {{ parent_guidance.strategy }}
+        # Priority targets: {{ parent_guidance.priority_targets | join(", ") }}
+        # Notes: {{ parent_guidance.notes }}
+        # {% endif %}
+    """
+
+    model_config = {"frozen": True}
+
+    strategy: str = ""
+    priority_targets: tuple[str, ...] = ()
+    constraints: dict[str, Any] = {}
+    notes: str = ""
+
+    @property
+    def template_key(self) -> str:
+        return "parent_guidance"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "strategy": self.strategy,
+            "priority_targets": list(self.priority_targets),
+            "constraints": self.constraints,
+            "notes": self.notes,
+        }
+
+
+class ChildFeedback(BaseModel):
+    """Feedback from child to parent (Child → Parent).
+
+    Use when children need to report back structured feedback beyond
+    just the result text. Store in SharedExecutionContext as artifact.
+
+    HOW TO ADD: Child stores as artifact on completion, parent retrieves
+    via factory function when building aggregation prompt.
+
+    Example:
+        # Child stores feedback
+        feedback = ChildFeedback(
+            child_id=str(agent.agent_id),
+            success_level="partial",
+            blockers=("firewall_detected", "rate_limited"),
+            recommendations=("try_alternative_port", "use_proxy"),
+            confidence_score=0.7,
+        )
+        # Store as artifact in SharedExecutionContext
+
+        # Parent retrieves
+        context.add(child_feedbacks_from_context(shared_ctx))
+
+        # In parent's template:
+        # {% if child_feedbacks %}
+        # {% for fb in child_feedbacks.feedbacks %}
+        # Child {{ fb.child_id }}: {{ fb.success_level }}
+        # Blockers: {{ fb.blockers | join(", ") }}
+        # {% endfor %}
+        # {% endif %}
+    """
+
+    model_config = {"frozen": True}
+
+    child_id: str = ""
+    success_level: str = "unknown"  # "full", "partial", "failed", "unknown"
+    blockers: tuple[str, ...] = ()
+    recommendations: tuple[str, ...] = ()
+    confidence_score: float = 0.0
+    metadata: dict[str, Any] = {}
+
+    @property
+    def template_key(self) -> str:
+        return "child_feedback"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "child_id": self.child_id,
+            "success_level": self.success_level,
+            "blockers": list(self.blockers),
+            "recommendations": list(self.recommendations),
+            "confidence_score": self.confidence_score,
+            "metadata": self.metadata,
+        }
+
+
+class ChildFeedbackCollection(BaseModel):
+    """Collection of feedback from multiple children (Child → Parent).
+
+    Aggregates ChildFeedback from all completed children for the parent
+    to review during aggregation or re-evaluation.
+
+    Example:
+        context.add(ChildFeedbackCollection(
+            feedbacks=(
+                ChildFeedback(child_id="child-1", success_level="full", ...),
+                ChildFeedback(child_id="child-2", success_level="partial", ...),
+            ),
+        ))
+    """
+
+    model_config = {"frozen": True}
+
+    feedbacks: tuple[ChildFeedback, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "child_feedbacks"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "feedbacks": [f.to_template_dict() for f in self.feedbacks],
+            "total_count": len(self.feedbacks),
+            "success_count": sum(1 for f in self.feedbacks if f.success_level == "full"),
+            "partial_count": sum(1 for f in self.feedbacks if f.success_level == "partial"),
+            "failed_count": sum(1 for f in self.feedbacks if f.success_level == "failed"),
+        }
+
+
+class SiblingCoordination(BaseModel):
+    """Coordination data shared between siblings (Sibling ↔ Sibling).
+
+    Use when siblings need to coordinate their work to avoid conflicts,
+    share discovered information, or claim resources.
+
+    HOW TO ADD: Store in SharedExecutionContext as sibling works,
+    other siblings retrieve via factory function.
+
+    Example:
+        # Sibling claims targets and shares discoveries
+        coord = SiblingCoordination(
+            sibling_id=str(agent.agent_id),
+            claimed_targets=("port_80", "port_443"),
+            discovered_info={"admin_panel": "/admin", "api_version": "v2"},
+            warnings=("rate_limit_approaching",),
+            available_for_help=True,
+        )
+        # Store as artifact in SharedExecutionContext
+
+        # Other sibling retrieves
+        context.add(sibling_coordinations_from_context(shared_ctx))
+
+        # In sibling's template:
+        # {% if sibling_coordinations %}
+        # Already claimed by siblings: {{ sibling_coordinations.all_claimed_targets | join(", ") }}
+        # Shared discoveries:
+        # {% for key, value in sibling_coordinations.all_discovered_info.items() %}
+        #   {{ key }}: {{ value }}
+        # {% endfor %}
+        # {% endif %}
+    """
+
+    model_config = {"frozen": True}
+
+    sibling_id: str = ""
+    claimed_targets: tuple[str, ...] = ()
+    discovered_info: dict[str, Any] = {}
+    warnings: tuple[str, ...] = ()
+    available_for_help: bool = False
+
+    @property
+    def template_key(self) -> str:
+        return "sibling_coordination"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "sibling_id": self.sibling_id,
+            "claimed_targets": list(self.claimed_targets),
+            "discovered_info": self.discovered_info,
+            "warnings": list(self.warnings),
+            "available_for_help": self.available_for_help,
+        }
+
+
+class SiblingCoordinationCollection(BaseModel):
+    """Collection of coordination data from all siblings.
+
+    Aggregates SiblingCoordination from all siblings for coordinated
+    task execution.
+
+    Example:
+        context.add(SiblingCoordinationCollection(
+            coordinations=(
+                SiblingCoordination(sibling_id="sibling-1", claimed_targets=("port_80",)),
+                SiblingCoordination(sibling_id="sibling-2", claimed_targets=("port_443",)),
+            ),
+        ))
+    """
+
+    model_config = {"frozen": True}
+
+    coordinations: tuple[SiblingCoordination, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "sibling_coordinations"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        # Merge all claimed targets and discovered info
+        all_claimed: list[str] = []
+        all_discovered: dict[str, Any] = {}
+        all_warnings: list[str] = []
+
+        for coord in self.coordinations:
+            all_claimed.extend(coord.claimed_targets)
+            all_discovered.update(coord.discovered_info)
+            all_warnings.extend(coord.warnings)
+
+        return {
+            "coordinations": [c.to_template_dict() for c in self.coordinations],
+            "total_siblings": len(self.coordinations),
+            "all_claimed_targets": list(set(all_claimed)),
+            "all_discovered_info": all_discovered,
+            "all_warnings": list(set(all_warnings)),
+        }
+
+
 
 
