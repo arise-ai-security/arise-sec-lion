@@ -27,6 +27,10 @@ from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
+from core.application.services.summary_broadcast_service import (
+    SummaryBroadcastService,
+    broadcast_summary_to_parent_and_boss,
+)
 from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.events.events import ChildSpawned, DomainEvent
@@ -453,12 +457,12 @@ class AgentExecutionService:
         await self._parent_notifier.notify_if_complete(agent)
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
-        """Extract and store context updates from worker result."""
-        if agent.result is None:
-            return
+        """Extract and store context updates from worker result.
 
-        parsed = parse_context_update(agent.result)
-        if parsed is None:
+        Also broadcasts the worker's summary to both parent and boss
+        via the SummaryBroadcastService.
+        """
+        if agent.result is None:
             return
 
         root_id = self._limits_registry.get_root_id(agent.agent_id)
@@ -468,23 +472,36 @@ class AgentExecutionService:
 
         current_version = context.version
 
-        # Store decisions via existing DecisionRecorded event
-        for decision in parsed.decisions:
-            context.record_decision(
-                decision_key=decision.key,
-                decision_value=decision.value,
-                rationale=decision.rationale,
-                decided_by=agent.agent_id,
-            )
+        # Broadcast worker summary to parent AND boss
+        # This enables both immediate parent and root boss to see the summary
+        broadcast_summary_to_parent_and_boss(
+            worker_id=agent.agent_id,
+            worker_task=agent.task_description,
+            summary_text=agent.result,
+            context=context,
+            parent_id=agent.parent_id,
+        )
 
-        # Store outputs via existing ArtifactStored event
-        for output in parsed.outputs:
-            context.store_artifact(
-                key=output.key,
-                content_type="text/plain",
-                stored_by=agent.agent_id,
-                content=output.description,
-            )
+        # Parse structured context updates if any
+        parsed = parse_context_update(agent.result)
+        if parsed is not None:
+            # Store decisions via existing DecisionRecorded event
+            for decision in parsed.decisions:
+                context.record_decision(
+                    decision_key=decision.key,
+                    decision_value=decision.value,
+                    rationale=decision.rationale,
+                    decided_by=agent.agent_id,
+                )
+
+            # Store outputs via existing ArtifactStored event
+            for output in parsed.outputs:
+                context.store_artifact(
+                    key=output.key,
+                    content_type="text/plain",
+                    stored_by=agent.agent_id,
+                    content=output.description,
+                )
 
         # Persist if any updates (Event Sourcing)
         if context.events:

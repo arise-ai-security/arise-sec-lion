@@ -373,5 +373,76 @@ class CustomContext(BaseModel):
         return self.data
 
 
+# =============================================================================
+# Worker Summary Broadcast (Child → Multiple Recipients)
+# =============================================================================
+
+
+class WorkerSummaryEntry(BaseModel):
+    """Single worker summary broadcast entry.
+
+    Represents a summary message from a worker to a specific recipient.
+    """
+
+    model_config = {"frozen": True}
+
+    worker_id: str
+    worker_task: str
+    summary_text: str
+    timestamp: str = ""
+
+
+class WorkerSummaryBroadcast(BaseModel):
+    """Worker summaries broadcast to specific recipients.
+
+    Use when workers need to send their work summary to multiple
+    ancestors (e.g., both immediate parent AND root boss node).
+
+    The recipient_type determines who receives the broadcast:
+    - "parent": Only immediate parent receives
+    - "boss": Only root boss receives
+    - "both": Both parent AND boss receive (default)
+    - "depth_N": Ancestor at specific depth (e.g., "depth_1")
+
+    Example:
+        # Worker broadcasts summary to both parent and boss
+        context.add(WorkerSummaryBroadcast(
+            recipient_type="both",
+            summaries=(
+                WorkerSummaryEntry(
+                    worker_id="worker-123",
+                    worker_task="Scan authentication module",
+                    summary_text="Found 3 vulnerabilities: SQL injection...",
+                ),
+            ),
+        ))
+
+        # In template:
+        # {% if worker_summaries %}
+        # <WORKER_SUMMARIES>
+        # {% for summary in worker_summaries.summaries %}
+        # <summary from="{{ summary.worker_id }}">{{ summary.summary_text }}</summary>
+        # {% endfor %}
+        # </WORKER_SUMMARIES>
+        # {% endif %}
+    """
+
+    model_config = {"frozen": True}
+
+    recipient_type: str = "both"  # "parent", "boss", "both", "depth_N"
+    summaries: tuple[WorkerSummaryEntry, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "worker_summaries"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "recipient_type": self.recipient_type,
+            "summaries": [s.model_dump() for s in self.summaries],
+            "total_count": len(self.summaries),
+        }
+
+
 
 

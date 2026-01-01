@@ -36,7 +36,9 @@ from core.domain.values.context.data_types import (
     SharedDecisions,
     SiblingEntry,
     SiblingResults,
+    WorkerSummaryBroadcast,
 )
+from core.application.services.summary_broadcast_service import SummaryBroadcastService
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
@@ -430,3 +432,58 @@ def child_outcomes_from_agent(
         )
 
     return ChildOutcomes(outcomes=tuple(entries))
+
+
+# =============================================================================
+# Worker Summary Broadcast Factories
+# =============================================================================
+
+
+def worker_summaries_for_parent(
+    context: "SharedExecutionContext",
+) -> WorkerSummaryBroadcast:
+    """Get worker summaries broadcast to parent recipients.
+
+    Retrieves all worker summaries that were broadcast with "parent"
+    or "both" as the recipient type.
+
+    Args:
+        context: The shared execution context.
+
+    Returns:
+        WorkerSummaryBroadcast containing summaries for parent.
+
+    Example:
+        # In Pipeline step when building parent/manager prompt
+        context.add(worker_summaries_for_parent(shared_context))
+    """
+    service = SummaryBroadcastService()
+    return service.get_summaries_for_recipient(
+        recipient_type="parent",
+        context=context,
+    )
+
+
+def worker_summaries_for_boss(
+    context: "SharedExecutionContext",
+) -> WorkerSummaryBroadcast:
+    """Get worker summaries broadcast to boss recipients.
+
+    Retrieves all worker summaries that were broadcast with "boss"
+    or "both" as the recipient type.
+
+    Args:
+        context: The shared execution context.
+
+    Returns:
+        WorkerSummaryBroadcast containing summaries for boss.
+
+    Example:
+        # In Pipeline step when building boss prompt
+        context.add(worker_summaries_for_boss(shared_context))
+    """
+    service = SummaryBroadcastService()
+    return service.get_summaries_for_recipient(
+        recipient_type="boss",
+        context=context,
+    )

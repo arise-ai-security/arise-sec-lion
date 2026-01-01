@@ -1,0 +1,13 @@
+{# Worker summary broadcasts template #}
+{# Renders worker summaries broadcast to this agent #}
+
+{% if worker_summaries and worker_summaries.summaries %}
+<WORKER_SUMMARIES recipient="{{ worker_summaries.recipient_type }}" count="{{ worker_summaries.total_count }}">
+{% for summary in worker_summaries.summaries %}
+<summary worker="{{ summary.worker_id }}"{% if summary.timestamp %} at="{{ summary.timestamp }}"{% endif %}>
+<task>{{ summary.worker_task }}</task>
+<content>{{ summary.summary_text }}</content>
+</summary>
+{% endfor %}
+</WORKER_SUMMARIES>
+{% endif %}
