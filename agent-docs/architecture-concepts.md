@@ -343,6 +343,78 @@ See [`context-passing-mechanism.md`](context-passing-mechanism.md) for detailed 
 
 ---
 
+## Docker-out-of-Docker (DooD)
+
+**What it is:** A pattern where containers access the host's Docker daemon instead of running their own Docker daemon inside the container. This is achieved by mounting the host's Docker socket.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Host Machine                          │
+│  ┌─────────────────┐                                         │
+│  │  Docker Daemon  │◀──────────────────────────┐            │
+│  └────────┬────────┘                           │            │
+│           │                                     │            │
+│           ▼                                     │            │
+│  /var/run/docker.sock                          │            │
+│           │                                     │            │
+│  ┌────────┴────────────────────────────────────┴─────────┐  │
+│  │              Arise Container (app-dev)                 │  │
+│  │                                                        │  │
+│  │   /var/run/docker.sock  ◀── mounted from host         │  │
+│  │           │                                            │  │
+│  │           ▼                                            │  │
+│  │   ┌──────────────────┐                                 │  │
+│  │   │  Worker Agent    │──▶ docker build/run             │  │
+│  │   │  (SEC-bench)     │    (uses host's Docker)         │  │
+│  │   └──────────────────┘                                 │  │
+│  └────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why not Docker-in-Docker (DinD)?**
+- DinD runs a full Docker daemon inside the container (requires `--privileged`)
+- DinD has storage driver conflicts, slower builds, and cache isolation issues
+- DooD reuses host's Docker daemon, build cache, and images
+
+**How we use it:**
+
+SEC-bench workers need to build and run Docker containers for vulnerability reproduction:
+1. Build target project with specific commit/sanitizer
+2. Run exploit PoC in isolated container
+3. Apply and verify patches
+
+```yaml
+# deployment/docker-compose.yml
+services:
+  app-dev:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Mount host's Docker socket
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock    # Tell Docker client where to connect
+```
+
+**In this codebase:**
+- Worker agents use Claude Code or custom tools to run `docker build` and `docker run`
+- These commands execute on the **host's Docker daemon**, not inside the container
+- Built images and containers appear on the host (visible via `docker ps` on host)
+- Shared output volume (`secbench_output`) stores artifacts
+
+**Security considerations:**
+- Container has **root-equivalent access** to host's Docker daemon
+- Only use in trusted development/CI environments
+- Production deployments should use isolated VMs or remote Docker hosts
+
+**Benefits:**
+- Faster builds (shared layer cache with host)
+- Lower resource usage (no nested daemon)
+- Simpler networking (containers on same Docker network)
+- Access to host's pre-pulled images
+
+**Key configuration:**
+- `deployment/docker-compose.yml` — Socket mount and `DOCKER_HOST` env var
+
+---
+
 ## Quick Reference
 
 | Pattern | Problem It Solves | Where in Code |
@@ -353,3 +425,4 @@ See [`context-passing-mechanism.md`](context-passing-mechanism.md) for detailed 
 | Hexagonal | Swap infrastructure without domain changes | `core/ports/`, `infrastructure/adapters/` |
 | DDD | Business logic clarity, ubiquitous language | `core/domain/` |
 | Shared Context | Cross-agent state sharing | `core/domain/shared_context.py` |
+| DooD | Container Docker access without DinD overhead | `docker-compose.yml` socket mount |
