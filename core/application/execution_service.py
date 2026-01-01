@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig, OrchestrationConfig
     from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
+    from core.ports.secbench_container_port import SecBenchContainerPort
     from core.ports.shared_context_port import SharedContextPort
     from core.ports.sibling_context_port import SiblingViewPort
 
@@ -79,6 +80,7 @@ class ExecutionServiceDependencies:
     shared_context_port: "SharedContextPort"
     sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
+    secbench_container_port: "SecBenchContainerPort | None" = None  # Optional for SEC-bench runs
 
 
 class AgentExecutionService:
@@ -127,6 +129,10 @@ class AgentExecutionService:
         self._query_service = dependencies.query_service
         self._workspace = dependencies.workspace
         self._parent_notifier = dependencies.parent_notifier
+        self._secbench_container_port = dependencies.secbench_container_port
+
+        # Track active SEC-bench container for cleanup
+        self._active_container_id: str | None = None
 
         # Worker concurrency control
         semaphore_limit = (
@@ -169,6 +175,8 @@ class AgentExecutionService:
         """Create root BOSS agent with task.
 
         Initializes execution context and shared context for the agent hierarchy.
+        If cve_instance is provided and container port is available, starts
+        a SEC-bench container for in-container worker execution.
 
         Args:
             task_description: The task to execute.
@@ -178,10 +186,25 @@ class AgentExecutionService:
             The root agent UUID.
         """
         root_id = uuid4()
-        self._reset_for_new_run(root_id, cve_instance=cve_instance)
 
-        # Setup working directory
+        # Setup working directory first (needed for container mount)
         self._setup_working_directory(root_id)
+
+        # Start SEC-bench container if CVE instance provided and port available
+        container_id: str | None = None
+        if cve_instance is not None and self._secbench_container_port is not None:
+            testcase_path = Path(self._config.output_directory) / str(root_id)
+            container_id = await self._secbench_container_port.start_container(
+                cve=cve_instance,
+                testcase_path=testcase_path,
+            )
+            self._active_container_id = container_id
+            logger.info(
+                f"SEC-bench container started: {container_id}",
+                extra={"root_id": str(root_id), "instance_id": cve_instance.instance_id},
+            )
+
+        self._reset_for_new_run(root_id, cve_instance=cve_instance, container_id=container_id)
 
         # Create shared context for this execution run
         await self._create_shared_context(root_id)
@@ -191,6 +214,11 @@ class AgentExecutionService:
         await self._repository.save_new_agent(boss_agent)
 
         return root_id
+
+    @property
+    def active_container_id(self) -> str | None:
+        """Get the active SEC-bench container ID, if any."""
+        return self._active_container_id
 
     async def _create_shared_context(self, root_id: UUID) -> None:
         """Create shared context for execution run."""
@@ -312,6 +340,7 @@ class AgentExecutionService:
         self,
         root_id: UUID,
         cve_instance: "CVEInstance | None" = None,
+        container_id: str | None = None,
     ) -> None:
         """Reset all state for a new execution run."""
         self._workspace.reset()
@@ -326,6 +355,7 @@ class AgentExecutionService:
             max_retries=self._config.max_retries,
             max_total_agents=self._system_limits.max_total_agents,
             cve_instance=cve_instance,
+            container_id=container_id,
         )
 
     def _setup_working_directory(self, root_id: UUID) -> None:

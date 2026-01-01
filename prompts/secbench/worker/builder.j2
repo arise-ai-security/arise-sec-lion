@@ -1,3 +1,28 @@
+{% if container_id %}
+## CRITICAL: In-Container Execution
+
+All commands MUST run inside the SEC-bench Docker container.
+**Prefix ALL bash commands with:** `docker exec {{ container_id }}`
+
+Examples:
+```bash
+docker exec {{ container_id }} ls -la /testcase
+docker exec {{ container_id }} cat /src/build.sh
+docker exec {{ container_id }} /src/build.sh
+docker exec {{ container_id }} bash -c "cd {{ work_dir }} && git status"
+```
+
+For multi-line commands or commands with special characters, use:
+```bash
+docker exec {{ container_id }} bash -c "your_command_here"
+```
+
+The container already has:
+- `/testcase/` directory mounted (shared with host)
+- `/src/{{ project_name }}/` source code at commit `{{ base_commit }}`
+- `secb` helper installed at `/usr/local/bin/secb`
+{% endif %}
+
 ## Repository Information
 <REPOSITORY_INFO>
 {{ work_dir }}
@@ -9,6 +34,42 @@ However, you should update `/src/build.sh` which is in the outside of the reposi
 <ISSUE_DESCRIPTION>
 {{ bug_description }}
 </ISSUE_DESCRIPTION>
+
+{% if container_id %}
+## Environment (Pre-configured)
+The SEC-bench environment is already set up inside the container:
+- `/testcase/` directory exists
+- `secb` helper is available at `/usr/local/bin/secb`
+- Source code is at {{ work_dir }}
+
+Verify with: `docker exec {{ container_id }} which secb && docker exec {{ container_id }} ls -la /testcase`
+{% else %}
+## Environment Setup (MUST DO FIRST)
+Before starting the build process, set up the SEC-bench environment:
+
+```bash
+# 1. Create testcase directory
+mkdir -p /testcase
+
+# 2. Install secb helper script
+cat > /usr/local/bin/secb << 'SECB_EOF'
+{{ secb_sh }}
+SECB_EOF
+chmod +x /usr/local/bin/secb
+
+# 3. Verify setup
+ls -la /testcase
+which secb
+```
+
+**NOTE:** If you cannot write to `/usr/local/bin/` due to permissions, create secb in the testcase directory instead:
+```bash
+cat > /testcase/secb.sh << 'SECB_EOF'
+{{ secb_sh }}
+SECB_EOF
+chmod +x /testcase/secb.sh
+```
+{% endif %}
 
 ## Step-by-step instructions
 1. Read the vulnerability description to determine the most suitable base commit:

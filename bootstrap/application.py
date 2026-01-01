@@ -106,6 +106,7 @@ def get_application(
         shared_context_port=infrastructure.shared_context,
         sibling_view_port=sibling_view_builder,
         parent_notifier=parent_notifier,
+        secbench_container_port=infrastructure.secbench_container,
     )
 
     execution_service = AgentExecutionService(

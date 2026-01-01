@@ -106,12 +106,18 @@ class BuildWorkerPrompt:
         """Build enhanced worker prompt."""
         agent = state.agent
 
+        # Extract container_id from hierarchy_limits (worker doesn't need full limits)
+        container_id = None
+        if state.hierarchy_limits and state.hierarchy_limits.has_container():
+            container_id = state.hierarchy_limits.container_id
+
         enhanced_description = self._prompt_builder.build_worker_prompt(
             task_description=agent.task_description,
             sibling_view=state.sibling_view,
             workspace_context=state.workspace_context,
             cve_instance=state.cve_instance,
             spawn_payload=agent.spawn_payload,
+            container_id=container_id,
         )
 
         return StepResult.ok(state.with_prompt(enhanced_description))

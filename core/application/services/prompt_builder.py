@@ -371,6 +371,7 @@ class PromptBuilder:
         workspace_context: str | None = None,
         cve_instance: "CVEInstance | None" = None,
         spawn_payload: "SpawnPayload | None" = None,
+        container_id: str | None = None,
     ) -> str:
         """Build prompt for WORKER agent task execution.
 
@@ -380,6 +381,7 @@ class PromptBuilder:
             workspace_context: Files in the workspace.
             cve_instance: CVE instance for benchmark runs.
             spawn_payload: Spawn payload for hierarchy info.
+            container_id: SEC-bench container ID for in-container execution.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -391,6 +393,7 @@ class PromptBuilder:
             spawn_payload=spawn_payload,
             sibling_view=sibling_view,
             workspace_context=workspace_context,
+            container_id=container_id,
         )
         custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
         if custom_prompt is not None:

@@ -41,6 +41,7 @@ class HierarchyLimits(BaseModel):
     max_total_agents: int = -1  # -1 = unlimited, global limit across hierarchy
     current_total_agents: int = 0  # Snapshot of total agents created so far
     cve_instance: CVEInstance | None = None  # SEC-bench CVE context
+    container_id: str | None = None  # SEC-bench Docker container ID for in-container execution
 
     def for_child(self) -> Self:
         """Create limits for child agent (increments depth)."""
@@ -103,9 +104,17 @@ class HierarchyLimits(BaseModel):
         """Check if this is a CVE-based security benchmark task."""
         return self.cve_instance is not None
 
+    def has_container(self) -> bool:
+        """Check if SEC-bench container is available for in-container execution."""
+        return self.container_id is not None
+
     def with_cve_instance(self, cve: CVEInstance) -> Self:
         """Create new limits with CVE instance attached."""
         return self.model_copy(update={"cve_instance": cve})
+
+    def with_container_id(self, container_id: str) -> Self:
+        """Create new limits with container ID attached."""
+        return self.model_copy(update={"container_id": container_id})
 
     @classmethod
     def create_root(
@@ -116,6 +125,7 @@ class HierarchyLimits(BaseModel):
         max_retries: int,
         max_total_agents: int = -1,
         cve_instance: CVEInstance | None = None,
+        container_id: str | None = None,
     ) -> Self:
         """Create limits for root (BOSS) agent.
 
@@ -126,6 +136,7 @@ class HierarchyLimits(BaseModel):
             max_retries: Max retry attempts
             max_total_agents: Max total agents in hierarchy (-1 = unlimited)
             cve_instance: Optional SEC-bench CVE instance for benchmark runs
+            container_id: Optional SEC-bench Docker container ID for in-container execution
         """
         return cls(
             current_depth=0,
@@ -136,4 +147,5 @@ class HierarchyLimits(BaseModel):
             max_total_agents=max_total_agents,
             current_total_agents=1,  # Root agent counts as 1
             cve_instance=cve_instance,
+            container_id=container_id,
         )

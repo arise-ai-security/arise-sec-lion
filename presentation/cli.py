@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from core.domain.values.cve_instance import CVEInstance
 from presentation.persistence import RunPersistence
 from presentation.rendering import OutputRenderer
 
 
 if TYPE_CHECKING:
     from core.application.execution_service import AgentExecutionService
-    from core.domain.values.cve_instance import CVEInstance
 
 
 @dataclass
@@ -100,6 +100,10 @@ class CLI:
                 self._renderer.print_success(f"Task Assigned: {task_description}")
                 if cve_instance is not None:
                     self._renderer.print_success(f"SEC-bench CVE: {cve_instance.instance_id}")
+                # Show container info from ExecutionService if available
+                container_id = self.execution_service.active_container_id
+                if container_id:
+                    self._renderer.print_success(f"SEC-bench Container: {container_id}")
                 print()
             return root_id
         except Exception as e:
@@ -156,10 +160,10 @@ class CLI:
 
         This is the main entry point for task execution. It:
         1. Initializes infrastructure
-        2. Creates a BOSS agent
+        2. Creates a BOSS agent (starts SEC-bench container if CVE provided)
         3. Runs the orchestration loop
         4. Displays results
-        5. Cleans up resources
+        5. Cleans up resources (keeps container running for verification)
 
         Args:
             task_description: The task to execute.
@@ -171,8 +175,6 @@ class CLI:
         # Load CVE instance if provided
         cve_instance: CVEInstance | None = None
         if cve_file is not None:
-            from core.domain.values.cve_instance import CVEInstance
-
             cve_instance = CVEInstance.from_json_file(cve_file)
             print(f"SEC-bench CVE: {cve_instance.instance_id}")
         print()
@@ -183,11 +185,34 @@ class CLI:
 
         try:
             await self._initialize_infrastructure()
+
+            # Container lifecycle is handled by ExecutionService.create_boss_agent()
             root_id = await self._bootstrap_boss_agent(task_description, cve_instance)
             await self._run_orchestration_loop(root_id)
             await self._display_final_result(root_id)
             status = "completed"
+
+            # Print verification instructions if container was started
+            container_id = self.execution_service.active_container_id
+            if container_id:
+                print()
+                self._renderer.print_info("=" * 60)
+                self._renderer.print_info("SEC-bench Container Verification")
+                self._renderer.print_info("=" * 60)
+                self._renderer.print_info(f"Container ID: {container_id}")
+                self._renderer.print_info("The container is still running for manual verification.")
+                self._renderer.print_info("")
+                self._renderer.print_info("Verification commands:")
+                self._renderer.print_info(f"  docker exec {container_id} secb build")
+                self._renderer.print_info(f"  docker exec {container_id} secb repro")
+                self._renderer.print_info(f"  docker exec {container_id} secb patch")
+                self._renderer.print_info("")
+                self._renderer.print_info("When done, stop the container:")
+                self._renderer.print_info(f"  docker stop {container_id} && docker rm {container_id}")
+                self._renderer.print_info("=" * 60)
+
         finally:
             if root_id:
                 self._persistence.save_last_run(root_id, task_description, status)
             await self._cleanup()
+            # NOTE: Container is intentionally NOT stopped - user runs verification manually

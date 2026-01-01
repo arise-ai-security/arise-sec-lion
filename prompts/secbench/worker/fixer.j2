@@ -1,3 +1,30 @@
+{% if container_id %}
+## CRITICAL: In-Container Execution
+
+All commands MUST run inside the SEC-bench Docker container.
+**Prefix ALL bash commands with:** `docker exec {{ container_id }}`
+
+Examples:
+```bash
+docker exec {{ container_id }} ls -la /testcase
+docker exec {{ container_id }} git -C {{ work_dir }} show <commit_hash>
+docker exec {{ container_id }} /src/build.sh
+docker exec {{ container_id }} /testcase/repro.sh
+docker exec {{ container_id }} bash -c "cd {{ work_dir }} && git apply /testcase/model_patch.diff"
+```
+
+For multi-line commands or commands with special characters, use:
+```bash
+docker exec {{ container_id }} bash -c "your_command_here"
+```
+
+The container already has:
+- `/testcase/` directory mounted (shared with host)
+- `/src/{{ project_name }}/` source code
+- `secb` helper installed at `/usr/local/bin/secb`
+- Build artifacts and PoC from previous phases
+{% endif %}
+
 ## Repository Information
 <UPLOADED_FILES>
 {{ work_dir }}
@@ -49,6 +76,27 @@ DISREGARD COMMITS MENTIONED IN THE ABOVE ISSUE_DESCRIPTION AS AFFECTED BY THE VU
    - NOTE THAT THE OUTPUT OF `/testcase/repro.sh` SHOULD NOT CONTAIN ANY SANITIZER ERRORS. If it does, you need to revise your patch and fix the errors.
    - Your patch SHOULD NOT introduce any new sanitizer errors.
    - Pay attention to not affecting the functionality of the code.
+8. Generate SecVerifier-compatible output files:
+   ```bash
+   # Create output.jsonl (OpenHands format)
+   python3 -c "
+import json
+patch = open('/testcase/model_patch.diff').read() if __import__('os').path.exists('/testcase/model_patch.diff') else ''
+output = {'instance_id': '{{ instance_id }}', 'test_result': {'git_patch': patch}}
+print(json.dumps(output))
+" > /testcase/output.jsonl
+
+   # Create preds.json (SWEA format)
+   python3 -c "
+import json
+patch = open('/testcase/model_patch.diff').read() if __import__('os').path.exists('/testcase/model_patch.diff') else ''
+preds = {'{{ instance_id }}': {'model_patch': patch}}
+print(json.dumps(preds, indent=2))
+" > /testcase/preds.json
+
+   # Verify outputs
+   cat /testcase/output.jsonl
+   ```
 
 ## Notes
 - RUN NECESSARY COMMANDS ONLY.

@@ -38,6 +38,7 @@ class HierarchyLimitsRegistry:
         max_retries: int,
         max_total_agents: int = -1,
         cve_instance: "CVEInstance | None" = None,
+        container_id: str | None = None,
     ) -> HierarchyLimits:
         """Create and register root hierarchy limits.
 
@@ -48,6 +49,7 @@ class HierarchyLimitsRegistry:
             max_retries: Maximum retry attempts
             max_total_agents: Maximum total agents in hierarchy (-1 for unlimited)
             cve_instance: Optional SEC-bench CVE instance for benchmark runs
+            container_id: Optional SEC-bench Docker container ID for in-container execution
         """
         limits = HierarchyLimits.create_root(
             root_id=root_id,
@@ -56,6 +58,7 @@ class HierarchyLimitsRegistry:
             max_retries=max_retries,
             max_total_agents=max_total_agents,
             cve_instance=cve_instance,
+            container_id=container_id,
         )
         self._limits[root_id] = limits
         return limits
