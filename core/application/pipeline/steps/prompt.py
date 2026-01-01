@@ -47,10 +47,11 @@ class BuildDecompositionPrompt:
     """Build task decomposition prompt for BOSS or MANAGER agent.
 
     Uses PromptBuilder to construct a role-specific prompt:
-    - BOSS: Uses build_boss_delegation_prompt
-    - MANAGER: Uses build_manager_decomposition_prompt
+    - BOSS: Uses build_boss_delegation_prompt (or build_boss_prompt_with_context)
+    - MANAGER: Uses build_manager_decomposition_prompt (or build_manager_prompt_with_context)
 
-    The prompt includes limit-aware context from HierarchyLimits.
+    The prompt includes limit-aware context from HierarchyLimits and
+    global config from ContextComposer when available.
     """
 
     def __init__(self, prompt_builder: "PromptBuilder") -> None:
@@ -62,24 +63,45 @@ class BuildDecompositionPrompt:
         self._prompt_builder = prompt_builder
 
     async def execute(self, state: PipelineState) -> StepResult:
-        """Build role-specific decomposition prompt."""
+        """Build role-specific decomposition prompt.
+
+        Uses build_*_prompt_with_context() if a ContextComposer is
+        available, otherwise falls back to standard build methods.
+        """
         agent = state.agent
 
-        if agent.role == AgentRole.BOSS:
-            prompt = self._prompt_builder.build_boss_delegation_prompt(
-                task_description=agent.task_description,
-                agent_id=agent.agent_id,
-                cve_instance=state.cve_instance,
-                hierarchy_limits=state.hierarchy_limits,
-            )
-        else:  # MANAGER
-            prompt = self._prompt_builder.build_manager_decomposition_prompt(
-                task_description=agent.task_description,
-                agent_id=agent.agent_id,
-                cve_instance=state.cve_instance,
-                spawn_payload=agent.spawn_payload,
-                hierarchy_limits=state.hierarchy_limits,
-            )
+        # Use context-aware prompt building if composer available
+        if state.context_composer:
+            if agent.role == AgentRole.BOSS:
+                prompt = self._prompt_builder.build_boss_prompt_with_context(
+                    task_description=agent.task_description,
+                    context=state.context_composer,
+                    hierarchy_limits=state.hierarchy_limits,
+                    cve_instance=state.cve_instance,
+                )
+            else:  # MANAGER
+                prompt = self._prompt_builder.build_manager_prompt_with_context(
+                    task_description=agent.task_description,
+                    context=state.context_composer,
+                    hierarchy_limits=state.hierarchy_limits,
+                    cve_instance=state.cve_instance,
+                )
+        else:
+            if agent.role == AgentRole.BOSS:
+                prompt = self._prompt_builder.build_boss_delegation_prompt(
+                    task_description=agent.task_description,
+                    agent_id=agent.agent_id,
+                    cve_instance=state.cve_instance,
+                    hierarchy_limits=state.hierarchy_limits,
+                )
+            else:  # MANAGER
+                prompt = self._prompt_builder.build_manager_decomposition_prompt(
+                    task_description=agent.task_description,
+                    agent_id=agent.agent_id,
+                    cve_instance=state.cve_instance,
+                    spawn_payload=agent.spawn_payload,
+                    hierarchy_limits=state.hierarchy_limits,
+                )
 
         return StepResult.ok(state.with_prompt(prompt))
 
@@ -88,6 +110,7 @@ class BuildWorkerPrompt:
     """Build worker execution prompt for WORKER agent.
 
     Uses PromptBuilder to construct an enhanced prompt that includes:
+    - Global config for system-wide context (via ContextComposer)
     - Sibling view for coordination
     - Workspace context for existing files
     - CVE instance for security tasks
@@ -103,15 +126,28 @@ class BuildWorkerPrompt:
         self._prompt_builder = prompt_builder
 
     async def execute(self, state: PipelineState) -> StepResult:
-        """Build enhanced worker prompt."""
+        """Build enhanced worker prompt.
+
+        Uses build_worker_prompt_with_context() if a ContextComposer is
+        available, otherwise falls back to build_worker_prompt().
+        """
         agent = state.agent
 
-        enhanced_description = self._prompt_builder.build_worker_prompt(
-            task_description=agent.task_description,
-            sibling_view=state.sibling_view,
-            workspace_context=state.workspace_context,
-            cve_instance=state.cve_instance,
-            spawn_payload=agent.spawn_payload,
-        )
+        # Use context-aware prompt building if composer available
+        if state.context_composer:
+            enhanced_description = self._prompt_builder.build_worker_prompt_with_context(
+                task_description=agent.task_description,
+                context=state.context_composer,
+                workspace_context=state.workspace_context,
+                cve_instance=state.cve_instance,
+            )
+        else:
+            enhanced_description = self._prompt_builder.build_worker_prompt(
+                task_description=agent.task_description,
+                sibling_view=state.sibling_view,
+                workspace_context=state.workspace_context,
+                cve_instance=state.cve_instance,
+                spawn_payload=agent.spawn_payload,
+            )
 
         return StepResult.ok(state.with_prompt(enhanced_description))

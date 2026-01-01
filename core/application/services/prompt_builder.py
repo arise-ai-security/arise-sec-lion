@@ -94,6 +94,7 @@ class TemplateChain:
         """Render context templates based on composed context.
 
         Renders templates for each context type present in the composer:
+        - global_config -> core/context/global.j2
         - parent_summary -> core/context/parent.j2
         - ancestry_chain -> core/context/ancestry.j2
         - sibling_results -> core/context/siblings.j2
@@ -112,6 +113,9 @@ class TemplateChain:
             return self
 
         ctx_dict = context.build()
+
+        # Render global config first (system-wide context)
+        self.render_if(context.has("global_config"), "core/context/global.j2", **ctx_dict)
 
         # Render standard context templates
         self.render_if(context.has("parent_summary"), "core/context/parent.j2", **ctx_dict)

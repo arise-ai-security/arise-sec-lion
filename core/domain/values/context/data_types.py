@@ -373,5 +373,45 @@ class CustomContext(BaseModel):
         return self.data
 
 
+# =============================================================================
+# Global Context (System-Wide Data)
+# =============================================================================
+
+
+class GlobalConfig(BaseModel):
+    """Global configuration context available to all agents.
+
+    Use for system-wide settings that every agent in the hierarchy
+    should have access to. Examples include:
+    - Current date/time for context awareness
+    - Target system configuration
+    - Global execution parameters
+
+    Example:
+        context.add(GlobalConfig(data={
+            "current_date": "2025-12-31",
+            "target": {"host": "192.168.1.100", "ports": [80, 443]},
+            "timeout_seconds": 300,
+        }))
+
+        # In template:
+        # {% if global_config %}
+        # Date: {{ global_config.current_date }}
+        # Target: {{ global_config.target.host }}
+        # {% endif %}
+    """
+
+    model_config = {"frozen": True}
+
+    data: dict[str, Any]
+
+    @property
+    def template_key(self) -> str:
+        return "global_config"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return self.data
+
+
 
 

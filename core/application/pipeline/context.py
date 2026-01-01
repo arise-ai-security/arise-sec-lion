@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
+    from core.application.services.context_composer import ContextComposer
     from core.domain.values.cve_instance import CVEInstance
     from core.domain.values.context import HierarchyLimits, SiblingView
     from core.domain.values.llm_response import LLMResponse
@@ -54,6 +55,9 @@ class PipelineState:
     # Parsing results
     complexity: str | None = None
     reasoning: str | None = None
+
+    # Context composition
+    context_composer: "ContextComposer | None" = None
 
     # DELEGATION: Access limits via existing domain HierarchyLimits
     @property
@@ -109,6 +113,12 @@ class PipelineState:
             workspace_context=workspace_context,
             sibling_view=sibling_view,
         )
+
+    def with_context_composer(
+        self, context_composer: "ContextComposer"
+    ) -> "PipelineState":
+        """Create new state with context composer set."""
+        return replace(self, context_composer=context_composer)
 
 
 @dataclass(frozen=True, slots=True)

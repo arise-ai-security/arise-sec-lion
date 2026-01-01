@@ -13,6 +13,7 @@ from core.application.execution_service import (
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import HierarchyLimitsRegistry
+from core.application.services.global_config_provider import GlobalConfigProvider
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.sibling_context_builder import SiblingViewBuilder
@@ -76,11 +77,17 @@ def get_application(
         max_total_agents=config.system_limits.max_total_agents,
         manager_config=config.manager_config,
     )
+
+    # Create global config provider with current date context
+    global_config = GlobalConfigProvider()
+    global_config.set_current_date()  # Uses today's date
+
     orchestrator = AgentOrchestrator(
         llm_port=infrastructure.llm_adapter,
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
         child_factory=child_factory,
+        global_config_provider=global_config,
     )
 
     # Create sibling view builder (implements SiblingViewPort)

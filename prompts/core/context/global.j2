@@ -1,0 +1,18 @@
+{# Global configuration context template #}
+{# Renders system-wide settings available to all agents #}
+
+{% if global_config %}
+<GLOBAL_CONTEXT>
+{% for key, value in global_config.items() %}
+{% if value is mapping %}
+<{{ key }}>
+{% for k, v in value.items() %}
+  <{{ k }}>{{ v }}</{{ k }}>
+{% endfor %}
+</{{ key }}>
+{% else %}
+<{{ key }}>{{ value }}</{{ key }}>
+{% endif %}
+{% endfor %}
+</GLOBAL_CONTEXT>
+{% endif %}

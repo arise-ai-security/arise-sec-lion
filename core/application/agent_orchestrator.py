@@ -22,6 +22,7 @@ from core.application.pipelines import PipelineFactory
 
 if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
+    from core.application.services.global_config_provider import GlobalConfigProvider
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.context import SiblingView
@@ -52,6 +53,7 @@ class AgentOrchestrator:
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
+        global_config_provider: "GlobalConfigProvider | None" = None,
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -60,12 +62,14 @@ class AgentOrchestrator:
             worker_port: Port for worker tool execution.
             prompt_builder: Builder for constructing prompts.
             child_factory: Factory for child agents (source of truth for agent counts).
+            global_config_provider: Optional provider for global configuration context.
         """
         self._pipeline_factory = PipelineFactory(
             llm_port=llm_port,
             worker_port=worker_port,
             prompt_builder=prompt_builder,
             child_factory=child_factory,
+            global_config_provider=global_config_provider,
         )
 
         # Create pipelines (could also be lazy-created)
