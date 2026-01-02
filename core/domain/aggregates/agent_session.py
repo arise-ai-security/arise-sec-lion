@@ -211,6 +211,10 @@ class AgentSession:
         # Restore spawn_payload from event if present
         if event.spawn_payload is not None:
             self.spawn_payload = SpawnPayload.model_validate(event.spawn_payload)
+
+            if self.spawn_payload.complexity_budget > 0:
+                self.complexity_budget = self.spawn_payload.complexity_budget
+                self.initial_complexity_budget = self.spawn_payload.complexity_budget
         self.version += 1
 
     @_apply.register
