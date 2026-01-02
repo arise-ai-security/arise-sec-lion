@@ -40,5 +40,11 @@ def get_execution_service(request: Request) -> AgentExecutionService:
 
 # Type aliases for cleaner route signatures
 # Query API uses read-only port (ISP - Interface Segregation Principle)
+<<<<<<< HEAD
 EventStoreDep: TypeAlias = Annotated[EventStoreReadPort, Depends(get_event_store)]
 ExecutionServiceDep: TypeAlias = Annotated[AgentExecutionService, Depends(get_execution_service)]
+=======
+# Note: Use simple assignment, not `type` statement - FastAPI doesn't handle TypeAliasType with Annotated
+EventStoreDep = Annotated[EventStoreReadPort, Depends(get_event_store)]
+ExecutionServiceDep = Annotated[AgentExecutionService, Depends(get_execution_service)]
+>>>>>>> 34072f3 (query/api changes)
