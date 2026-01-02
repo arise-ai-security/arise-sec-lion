@@ -15,9 +15,10 @@ Arise's tree-structured agents (Builder, Exploiter, Fixer) generate outputs that
 
 ```bash
 cd deployment
-docker compose --profile dev exec app-dev python main.py run \
-  "Reproduce and fix the vulnerability" \
-  --cve-file data/sec-bench/instances/faad2.cve-2018-20195.json
+docker compose --profile local exec -u root app chmod 666 /var/run/docker.sock
+docker compose --profile local exec app python main.py run \
+    "Run SEC-bench evaluation: setup environment, create exploit PoC, and develop patch" \
+    --cve-file /app/data/sec-bench/instances/njs.cve-2022-32414.json
 ```
 
 After execution, you'll see verification instructions with the container ID.
