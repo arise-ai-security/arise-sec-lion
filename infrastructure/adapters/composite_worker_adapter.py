@@ -28,6 +28,11 @@ class CompositeWorkerAdapter(WorkerToolPort):
         tool_name = task_context.get("tool_name", self.default_tool)
         tool_key = self._normalize_tool_name(tool_name)
 
+        # all tasks to openhands, block claude_code routing
+        if tool_key == "claude_code":
+            logger.warning(f"Blocking claude_code routing due to API limitations, forcing openhands instead")
+            tool_key = "openhands"
+
         if tool_key not in self.adapters:
             available = list(self.adapters.keys())
             logger.error(f"Tool '{tool_name}' unavailable. Options: {available}")
