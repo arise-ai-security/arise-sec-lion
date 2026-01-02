@@ -57,18 +57,30 @@ class SecBenchContainerManager:
         # Ensure testcase directory exists
         testcase_abs.mkdir(parents=True, exist_ok=True)
 
+        # For DooD (Docker-out-of-Docker):
+        # /app/output inside Arise container = deployment_secbench_output volume
+        # Mount the same volume in SEC-bench container at /arise_output
+        # Then symlink /testcase to the specific UUID subdirectory
+        subdir = testcase_abs.name  # Just the UUID directory name
+
         cmd = [
             "docker",
             "run",
             "-d",
             "--name",
             container_name,
+            # SEC-bench images are amd64, use platform flag for Apple Silicon
+            "--platform",
+            "linux/amd64",
+            # Mount the shared volume (same one docker-compose uses)
             "-v",
-            f"{testcase_abs}:/testcase",
+            "deployment_secbench_output:/arise_output",
+            # Use bash to create symlink and sleep
             "--entrypoint",
-            "sleep",
+            "/bin/bash",
             cve.docker_image,
-            "infinity",
+            "-c",
+            f"ln -sf /arise_output/{subdir} /testcase && sleep infinity",
         ]
 
         logger.info(
