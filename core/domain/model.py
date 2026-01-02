@@ -282,7 +282,10 @@ class AgentSession:
         response = await llm_port.query(prompt, llm_config.model_dump())
 
         try:
-            subtasks = SubtaskParser.parse_from_llm_response(response)
+            # Pass parent's tool as default so children inherit it
+            subtasks = SubtaskParser.parse_from_llm_response(
+                response, default_tool=self.config.tool
+            )
         except ValueError as e:
             failed_event = WorkFailed(
                 aggregate_id=self.session_id,

@@ -134,6 +134,7 @@ class AgentExecutionService:
         self.system_limits = system_limits
         self.worker_shortcut_probability = worker_shortcut_probability
         self.budget_threshold_ratio = budget_threshold_ratio
+        self.default_worker_tool = default_worker_tool
         self.initial_boss_budget: float = 0.0
         self._workspace_context_cache: str | None = None
         self._workspace_context_scanned: bool = False
@@ -1770,7 +1771,7 @@ class AgentExecutionService:
                 "temperature": 0.7,
                 "max_tokens": 4000,  # Increased for detailed subtask decomposition with budget justifications
             },
-            "tool": "claude_code",
+            "tool": self.default_worker_tool,
         }
 
         boss_agent = AgentSession.create(

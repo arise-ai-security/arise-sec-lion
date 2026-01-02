@@ -27,8 +27,17 @@ class SubtaskParser:
     """Parse LLM JSON responses into validated Subtask objects."""
 
     @staticmethod
-    def parse_from_llm_response(response: str) -> list[Subtask]:
-        """Parse JSON array into Subtasks. Validates config against AgentConfig schema."""
+    def parse_from_llm_response(
+        response: str,
+        default_tool: str | None = None,
+    ) -> list[Subtask]:
+        """Parse JSON array into Subtasks. Validates config against AgentConfig schema.
+
+        Args:
+            response: LLM response containing JSON array of subtasks.
+            default_tool: Default worker tool to use if not specified in config.
+                         If None, falls back to AgentConfig's hardcoded default.
+        """
         clean_response = strip_markdown_code_block(response)
 
         try:
@@ -52,8 +61,13 @@ class SubtaskParser:
             if "config" not in item:
                 raise ValueError(f"Subtask {idx}: missing 'config' field")
 
+            # Inject default_tool if not specified in config
+            config = item["config"]
+            if default_tool and "tool" not in config:
+                config["tool"] = default_tool
+
             try:
-                config_adapter.validate_python(item["config"])
+                config_adapter.validate_python(config)
             except ValidationError as e:
                 raise ValueError(f"Subtask {idx}: invalid config: {e}") from e
 
