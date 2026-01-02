@@ -415,8 +415,9 @@ async def test_run_agent_step_retries_on_concurrency_error(
     # When: Run agent step
     await execution_service.run_agent_step(agent_id)
 
-    # Then: Should have retried (called get_events twice)
-    assert mock_event_store.get_events.call_count == 2, "Should retry on ConcurrencyError"
+    # Then: Should have retried (called get_events twice for agent, once for parent notification)
+    # Call 1: Initial load, Call 2: Retry after ConcurrencyError, Call 3: Parent notification
+    assert mock_event_store.get_events.call_count == 3, "Should retry on ConcurrencyError"
 
 
 @pytest.mark.asyncio

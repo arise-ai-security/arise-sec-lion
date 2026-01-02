@@ -66,6 +66,13 @@ class ParentNotificationService:
         except AgentNotFoundError:
             raise ValueError(f"Parent agent {child.parent_id} not found")
 
+        # Skip if parent is not in WAITING status (already completed or failed)
+        # This handles race conditions where:
+        # 1. Another child already triggered parent completion
+        # 2. A sibling failed and propagated failure to parent
+        if parent.status != AgentStatus.WAITING:
+            return
+
         parent_version = parent.version
 
         # Build structured task outcome
