@@ -28,7 +28,7 @@ The container already has:
 {{ work_dir }}
 </REPOSITORY_INFO>
 I've uploaded a code repository at {{ work_dir }} with the base commit `{{ base_commit }}` for {{ instance_id }}.
-However, you should update `/src/build.sh` which is in the outside of the repository.
+{% if container_id %}You will create an isolated copy and update its build script (see "Worker Isolation" section below).{% else %}However, you should update `/src/build.sh` which is in the outside of the repository.{% endif %}
 
 ## Vulnerability Details
 <ISSUE_DESCRIPTION>
@@ -43,6 +43,29 @@ The SEC-bench environment is already set up inside the container:
 - Source code is at {{ work_dir }}
 
 Verify with: `docker exec {{ container_id }} which secb && docker exec {{ container_id }} ls -la /testcase`
+
+## IMPORTANT: Worker Isolation (MUST DO FIRST)
+**Multiple workers may run concurrently.** To avoid build conflicts, create your own isolated workspace:
+
+```bash
+# Create isolated workspace for this worker
+docker exec {{ container_id }} bash -c "
+  mkdir -p /tmp/src-{{ worker_id }}
+  cp -r {{ work_dir }} /tmp/src-{{ worker_id }}/
+  cp /src/build.sh /tmp/src-{{ worker_id }}/build.sh
+"
+```
+
+**After running this, use these paths for ALL subsequent commands:**
+- Source directory: `/tmp/src-{{ worker_id }}/{{ project_name }}`
+- Build script: `/tmp/src-{{ worker_id }}/build.sh`
+
+Example:
+```bash
+docker exec {{ container_id }} /tmp/src-{{ worker_id }}/build.sh
+docker exec {{ container_id }} bash -c "cd /tmp/src-{{ worker_id }}/{{ project_name }} && git status"
+```
+
 {% else %}
 ## Environment Setup (MUST DO FIRST)
 Before starting the build process, set up the SEC-bench environment:
@@ -72,7 +95,14 @@ chmod +x /testcase/secb.sh
 {% endif %}
 
 ## Step-by-step instructions
-1. Read the vulnerability description to determine the most suitable base commit:
+{% if container_id %}
+**REMINDER:** Use your isolated workspace paths (see "Worker Isolation" section above):
+- Source: `/tmp/src-{{ worker_id }}/{{ project_name }}`
+- Build script: `/tmp/src-{{ worker_id }}/build.sh`
+{% endif %}
+
+1. {% if container_id %}**First, create your isolated workspace** (see "Worker Isolation" section).{% endif %}
+   Read the vulnerability description to determine the most suitable base commit:
    - Currently, the base commit of the repository is `{{ base_commit }}`
    - If you identify a more suitable base commit based on the description:
      a. Save the commit hash to `/testcase/base_commit_hash`
@@ -80,8 +110,8 @@ chmod +x /testcase/secb.sh
    - Otherwise, use the provided `{{ base_commit }}` as the base commit:
      a. Save it to `/testcase/base_commit_hash`
    - Note that `/testcase/base_commit_hash` FILE SHOULD BE CREATED before moving to the next step.
-2. Run `cd {{ work_dir }} && /src/build.sh` command to build the project and check if the build is successful.
-3. Improve the build script (`/src/build.sh`) by following the requirements below. Make concise but complete improvements.
+2. Run `cd {% if container_id %}/tmp/src-{{ worker_id }}/{{ project_name }}{% else %}{{ work_dir }}{% endif %} && {% if container_id %}/tmp/src-{{ worker_id }}/build.sh{% else %}/src/build.sh{% endif %}` command to build the project and check if the build is successful.
+3. Improve the build script (`{% if container_id %}/tmp/src-{{ worker_id }}/build.sh{% else %}/src/build.sh{% endif %}`) by following the requirements below. Make concise but complete improvements.
     a. Make it standalone - remove any undefined variables or environment variables that aren't set in the script.
     b. Remove any fuzzer-related build commands - this script should only contain commands for building the project
     c. For `make` commands, add the `-j$(nproc)` option to utilize multiple processors. DO NOT INCLUDE options like `make all` or `make install`.
@@ -98,7 +128,7 @@ chmod +x /testcase/secb.sh
        - Add execution permissions if needed
     i. Cleaning project commands such as `make clean` should be located before `configure` and `make` commands.
     j. Exceptionally, if `$SRC` or `$WORK` is used in the script, it is predefined with `/src` or `/work` directory and can be used without definition.
-4. Build the project using `cd {{ work_dir }} && /src/build.sh` command. Note that the build command should be executed in the repository path.
+4. Build the project using `cd {% if container_id %}/tmp/src-{{ worker_id }}/{{ project_name }}{% else %}{{ work_dir }}{% endif %} && {% if container_id %}/tmp/src-{{ worker_id }}/build.sh{% else %}/src/build.sh{% endif %}` command. Note that the build command should be executed in the repository path.
 5. If there are build errors, carefully analyze the BUILD ERRORS ONLY and identify quick solutions
     a. Ignore `warning` messages
     b. Sometimes, you can easily fix build errors by adding suppression flags to the compiler flags without changing source code.
@@ -108,14 +138,14 @@ chmod +x /testcase/secb.sh
 7. If there are no build errors, you can finish the task. If not, please continue to fix the build errors.
 8. Save any changes made to code files in the repository by running the following command:
    ```bash
-   cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff
+   cd {% if container_id %}/tmp/src-{{ worker_id }}/{{ project_name }}{% else %}{{ work_dir }}{% endif %} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff
    ```
    This will create a diff file containing all your changes to the source code.
 9. Before finishing, please check that the following files are correctly generated or updated (if applicable):
    - `/testcase/base_commit_hash`
    - `/testcase/repo_changes.diff`
    - `/testcase/packages.txt`
-   - `/src/build.sh`
+   - `{% if container_id %}/tmp/src-{{ worker_id }}/build.sh{% else %}/src/build.sh{% endif %}`
 
 ## Troubleshooting
 1. You need to focus on `error` messages, NOT `warning` messages.
@@ -132,5 +162,5 @@ chmod +x /testcase/secb.sh
 - If you find the bug errors are hard to fix, you should use Browsing tool to find a solution on web.
 - When you change source code files, you should be careful to avoid using undefined variables or functions in the codebase.
 - Always use concrete commands like 'ls', 'cat', 'find', or 'grep' to explore the codebase before making changes.
-- MUST USE `/src/build.sh` to build the project in the repository path to prevent long but unneeded output logs which may cause your analysis to fail.
-- IF YOU HAVE TO RUN custom commands other than `/src/build.sh` to build the project, please make sure to add `1> /dev/null` to the end of the command to prevent long output logs.
+- MUST USE {% if container_id %}`/tmp/src-{{ worker_id }}/build.sh`{% else %}`/src/build.sh`{% endif %} to build the project in the repository path to prevent long but unneeded output logs which may cause your analysis to fail.
+- IF YOU HAVE TO RUN custom commands other than the build script to build the project, please make sure to add `1> /dev/null` to the end of the command to prevent long output logs.
