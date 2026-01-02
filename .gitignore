@@ -696,3 +696,7 @@ output/
 
 # Custom
 data/
+
+# SEC-bench run artifacts
+src/
+testcase/
