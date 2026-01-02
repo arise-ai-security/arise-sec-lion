@@ -21,7 +21,10 @@ from core.application.pipeline.steps.domain import (
     SpawnChildren,
     StartWorkerExecution,
 )
-from core.application.pipeline.steps.knowledge import InjectCoworkerKnowledge
+from core.application.pipeline.steps.knowledge import (
+    GenerateWorkerReport,
+    InjectCoworkerKnowledge,
+)
 from core.application.pipeline.steps.limits import CheckLimitViolations, DetermineChildRole
 from core.application.pipeline.steps.llm import QueryLLM
 from core.application.pipeline.steps.observability import EmitPromptSent, EmitTokensConsumed
@@ -170,6 +173,7 @@ class PipelineFactory:
         5. BuildWorkerPrompt - Via PromptBuilder
         6. EmitPromptSent - Observability (target=dynamic -> tool name)
         7. RunWorkerSession - Execute via worker_port, apply events
+        8. GenerateWorkerReport - Generate structured report for parent (Design Choice 5)
 
         Returns:
             Configured Pipeline for worker execution
@@ -188,6 +192,7 @@ class PipelineFactory:
             BuildWorkerPrompt(self._prompt_builder),
             EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
             RunWorkerSession(self._worker_port),
+            GenerateWorkerReport(),  # Design Choice 5: Generate report for parent
         ])
 
         return Pipeline(name="worker_execution", steps=steps)

@@ -275,17 +275,22 @@ to avoid redundant work and build on their findings.
 ### Event Flow
 
 ```
-1. Worker Completes
-   └─► WorkCompleted event with WorkerReport
+1. Worker Executes
+   └─► RunWorkerSession completes with result
 
-2. Parent Thinker Receives
-   └─► Thinker reviews report in ChildOutcomes context
+2. GenerateWorkerReport Step
+   └─► Creates WorkerReport, attaches to agent.pending_worker_report
 
-3. Thinker Publishes (optional)
+3. WorkCompleted Event
+   └─► Result and report propagated to parent via ParentNotificationService
+
+4. ThinkerReviewAndPublish Step (in ParentNotificationService)
+   └─► Quality gate: _is_valuable() filters noise
    └─► KnowledgePublished event to SharedExecutionContext
 
-4. Later Workers Inherit
-   └─► SiblingKnowledge injected via ContextComposer
+5. Later Workers Inherit
+   └─► InjectCoworkerKnowledge fetches from SharedExecutionContext
+   └─► CoworkerKnowledge injected via ContextComposer
 ```
 
 ### Domain Events
@@ -298,7 +303,25 @@ to avoid redundant work and build on their findings.
 
 ### Pipeline Integration
 
-**Worker Pipeline** - Injects coworker knowledge into worker prompts:
+The implementation uses a two-pipeline approach with clear separation of concerns:
+
+**1. Worker Pipeline** - Generates structured report and injects coworker knowledge:
+
+```python
+# core/application/pipelines.py - create_worker_pipeline()
+steps = [
+    ValidateWorkerAgent,
+    StartWorkerExecution(),
+    InjectSupervisorExpectations(),     # Design Choice 4
+    InjectCoworkerKnowledge(shared_context_port),  # Design Choice 5: Read
+    BuildWorkerPrompt(prompt_builder),
+    EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
+    RunWorkerSession(worker_port),
+    GenerateWorkerReport(),             # Design Choice 5: Generate report for parent
+]
+```
+
+**2. InjectCoworkerKnowledge Step** - Injects earlier workers' discoveries:
 
 ```python
 # core/application/pipeline/steps/knowledge.py
@@ -309,15 +332,12 @@ class InjectCoworkerKnowledge:
     after reviewing worker reports. See ParentNotificationService.
     """
 
-    def __init__(self, shared_context_port: SharedContextPort) -> None:
-        self._shared_context_port = shared_context_port
-
     async def execute(self, state: PipelineState) -> StepResult:
         # Fetch published knowledge from SharedExecutionContext
         shared_context = await self._shared_context_port.get(state.root_id)
         all_knowledge = shared_context.get_all_knowledge()
 
-        # Convert to CoworkerKnowledgeEntry objects
+        # Convert to CoworkerKnowledgeEntry objects for template rendering
         entries = tuple(
             CoworkerKnowledgeEntry(
                 key=k.key, objective=k.objective, relevance=k.relevance,
@@ -330,54 +350,128 @@ class InjectCoworkerKnowledge:
 
         composer = state.context_composer or ContextComposer()
         composer.add(CoworkerKnowledge(entries=entries))
-
         return StepResult.ok(state.with_context_composer(composer))
+```
+
+**3. GenerateWorkerReport Step** - Creates structured report after execution:
+
+```python
+# core/application/pipeline/steps/knowledge.py
+class GenerateWorkerReport:
+    """Generate a structured WorkerReport after worker execution (Design Choice 5).
+
+    This step extracts key information from the worker's execution and creates
+    a structured WorkerReport that will be included in the WorkCompleted event.
+    The report is then sent to the parent thinker for review and potential
+    publishing to the shared context.
+    """
+
+    async def execute(self, state: PipelineState) -> StepResult:
+        agent = state.agent
+        if agent.result is None:
+            return StepResult.ok(state)
+
+        # Generate structured report from execution results
+        report = WorkerReport.from_execution(
+            original_task=agent.task_description or "",
+            approach=_extract_approach(agent.result),
+            observations=_extract_observations(agent.result),
+            deliverables=_extract_deliverables(agent.result),
+            fulfillment_evidence=_build_fulfillment_evidence(
+                agent.result, supervisor_objective
+            ),
+        )
+
+        # Attach report to agent for inclusion in WorkCompleted event
+        agent.pending_worker_report = report
+        return StepResult.ok(state)
 ```
 
 ### Parent Thinker Publishing Logic
 
-**Knowledge publishing happens in `ParentNotificationService`** when a worker child completes. The parent thinker is the one who "approves" and publishes:
+**Knowledge publishing happens in `ParentNotificationService`** when a worker child completes. The parent thinker uses the `ThinkerReviewAndPublish` step to review and approve knowledge:
 
 ```python
 # core/application/services/parent_notifier.py
 class ParentNotificationService:
     """Handles parent notifications and knowledge publishing (Design Choice 5).
 
-    When a worker child completes successfully, the parent thinker
-    publishes curated knowledge to SharedExecutionContext.
+    Uses ThinkerReviewAndPublish step for the review/publish logic.
     """
+
+    def __init__(self, ..., shared_context_port):
+        # Design Choice 5: Create thinker review step if shared context is available
+        self._thinker_review: ThinkerReviewAndPublish | None = None
+        if shared_context_port is not None:
+            self._thinker_review = ThinkerReviewAndPublish(shared_context_port)
 
     async def notify_if_complete(self, child: AgentSession) -> None:
         # ... handle child completion ...
 
         # Design Choice 5: Parent thinker publishes worker knowledge
-        # Only publish if child was a successful worker (not manager/boss)
         if (
             self._publish_worker_knowledge
             and child_succeeded
             and child.role == AgentRole.WORKER
-            and self._shared_context_port is not None
+            and self._thinker_review is not None
         ):
-            await self._publish_child_knowledge(child, parent)
+            root_id = child.hierarchy_limits.root_id if child.hierarchy_limits else None
+            if root_id is not None:
+                await self._thinker_review.execute(
+                    child_agent_id=str(child.agent_id),
+                    child_task=child.task_description or "",
+                    child_result=child.result or "",
+                    child_report=child.pending_worker_report,  # From GenerateWorkerReport
+                    parent_agent_id=str(parent.agent_id),
+                    root_id=str(root_id),
+                )
+```
 
-    async def _publish_child_knowledge(
+**4. ThinkerReviewAndPublish Step** - Quality-gates and publishes knowledge:
+
+```python
+# core/application/pipeline/steps/knowledge.py
+class ThinkerReviewAndPublish:
+    """Thinker reviews worker report and publishes to shared context (Design Choice 5).
+
+    This enforces the design principle: workers do NOT publish directly.
+    Only parent thinkers can approve and publish knowledge.
+    """
+
+    async def execute(
         self,
-        child: AgentSession,
-        parent: AgentSession,
-    ) -> None:
-        """Parent thinker reviews and publishes worker knowledge."""
-        shared_context = await self._shared_context_port.get(root_id)
+        child_agent_id: str,
+        child_task: str,
+        child_result: str,
+        child_report: WorkerReport | None,
+        parent_agent_id: str,
+        root_id: str,
+    ) -> bool:
+        shared_context = await self._shared_context_port.get(UUID(root_id))
+
+        # Quality gate: Check if report is valuable enough to publish
+        if not self._is_valuable(child_result, child_report):
+            return False
 
         # Parent thinker publishes (approves) the knowledge
         shared_context.publish_knowledge(
-            key=child.task_description,
-            objective=child.task_description,
-            relevance=f"Completed task: {child.task_description}...",
-            key_findings=[child.result],
-            deliverables=[],
-            source_worker_id=child.agent_id,
-            published_by=parent.agent_id,  # Parent thinker is the publisher
+            key=child_task[:100],
+            objective=child_task,
+            relevance=f"Completed: {child_task[:80]}...",
+            key_findings=key_findings,
+            deliverables=deliverables,
+            source_worker_id=UUID(child_agent_id),
+            published_by=UUID(parent_agent_id),
         )
+        return True
+
+    def _is_valuable(self, result: str, report: WorkerReport | None) -> bool:
+        """Quality gate: Only publish meaningful knowledge, not noise."""
+        if not result or len(result) < 50:
+            return False
+        # Check for indicators of valuable content
+        valuable_indicators = ["file:", "line:", "found", "discovered", "created", ...]
+        return any(indicator in result.lower() for indicator in valuable_indicators)
 ```
 
 ## Benefits

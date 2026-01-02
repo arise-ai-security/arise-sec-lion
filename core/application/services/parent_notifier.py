@@ -6,6 +6,8 @@ Extracted from ExecutionService to follow Single Responsibility Principle.
 Design Choice 5: Also handles knowledge publishing when worker children complete.
 The parent thinker reviews the worker's report and publishes curated knowledge
 to the SharedExecutionContext for other workers to learn from.
+
+Uses ThinkerReviewAndPublish step for the review/publish logic.
 """
 
 from collections.abc import Callable
@@ -15,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from core.domain.events.events import DomainEvent
 from core.domain.aggregates.agent_session import AgentSession, AgentStatus
 from core.domain.values.enums import AgentRole
+from core.application.pipeline.steps.knowledge import ThinkerReviewAndPublish
 
 from .agent_repository import AgentNotFoundError, AgentRepository
 
@@ -41,7 +44,8 @@ class ParentNotificationService:
     Single Responsibility: Manage parent-child completion notifications.
 
     Design Choice 5: When a worker child completes successfully, the parent
-    thinker publishes curated knowledge to SharedExecutionContext.
+    thinker reviews and publishes curated knowledge to SharedExecutionContext
+    using the ThinkerReviewAndPublish pipeline step.
     """
 
     def __init__(
@@ -64,8 +68,12 @@ class ParentNotificationService:
         self._repository = repository
         self._progress_callback = progress_callback
         self._budget_config = budget_recollection_config or BudgetRecollectionConfig()
-        self._shared_context_port = shared_context_port
         self._publish_worker_knowledge = publish_worker_knowledge
+
+        # Design Choice 5: Create thinker review step if shared context is available
+        self._thinker_review: ThinkerReviewAndPublish | None = None
+        if shared_context_port is not None:
+            self._thinker_review = ThinkerReviewAndPublish(shared_context_port)
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
         """Set the progress callback for event notifications."""
@@ -126,69 +134,21 @@ class ParentNotificationService:
             self._publish_worker_knowledge
             and child_succeeded
             and child.role == AgentRole.WORKER
-            and self._shared_context_port is not None
+            and self._thinker_review is not None
         ):
-            await self._publish_child_knowledge(child, parent)
+            root_id = child.hierarchy_limits.root_id if child.hierarchy_limits else None
+            if root_id is not None:
+                await self._thinker_review.execute(
+                    child_agent_id=str(child.agent_id),
+                    child_task=child.task_description or "",
+                    child_result=child.result or "",
+                    child_report=child.pending_worker_report,
+                    parent_agent_id=str(parent.agent_id),
+                    root_id=str(root_id),
+                )
 
         # Recursively notify grandparent if parent also completed
         # This handles the case where all children completing causes parent to complete
         if parent.status == AgentStatus.COMPLETED:
             await self.notify_if_complete(parent)
 
-    async def _publish_child_knowledge(
-        self,
-        child: AgentSession,
-        parent: AgentSession,
-    ) -> None:
-        """Publish worker knowledge to shared context (Design Choice 5).
-
-        The parent thinker reviews and approves the child worker's knowledge
-        before publishing to the global SharedExecutionContext.
-
-        Args:
-            child: The completed worker child.
-            parent: The parent thinker who approves the knowledge.
-        """
-        if self._shared_context_port is None:
-            return
-
-        # Get root_id from child's hierarchy limits
-        root_id = child.hierarchy_limits.root_id if child.hierarchy_limits else None
-        if root_id is None:
-            return
-
-        # Fetch shared context
-        shared_context = await self._shared_context_port.get(root_id)
-        if shared_context is None:
-            return
-
-        # Extract knowledge from child's task outcome / result
-        task_key = child.task_description[:100] if child.task_description else ""
-        if not task_key:
-            return
-
-        # Build key findings from result
-        result_summary = child.result[:500] if child.result else ""
-        key_findings = [result_summary] if result_summary else []
-
-        # Determine relevance based on task
-        relevance = f"Completed task: {task_key[:80]}..."
-
-        # Parent thinker publishes (approves) the knowledge
-        current_version = shared_context.version
-        shared_context.publish_knowledge(
-            key=task_key,
-            objective=child.task_description or "",
-            relevance=relevance,
-            key_findings=key_findings,
-            deliverables=[],  # Could extract from structured result
-            source_worker_id=child.agent_id,
-            published_by=parent.agent_id,  # Parent thinker is the publisher
-        )
-
-        # Persist if there are changes
-        if shared_context.events:
-            await self._shared_context_port.save(
-                shared_context, expected_version=current_version
-            )
-            shared_context.mark_changes_as_committed()

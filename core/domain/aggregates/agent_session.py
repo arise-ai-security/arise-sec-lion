@@ -14,6 +14,7 @@ from core.domain.values.context import (
     build_spawn_payload,
 )
 from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.values.worker_report import WorkerReport
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
@@ -290,6 +291,8 @@ class AgentSession:
         self.initial_complexity_budget: float = 0.0
         # Track budget allocated to each child for recollection (Design Choice 3)
         self.child_budget_allocations: dict[UUID, float] = {}
+        # Worker report for submission to parent (Design Choice 5)
+        self.pending_worker_report: WorkerReport | None = None
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
