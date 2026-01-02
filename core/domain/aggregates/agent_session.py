@@ -18,6 +18,7 @@ from core.domain.values.worker_report import WorkerReport
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
+    ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityBudgetAllocated,
@@ -52,6 +53,7 @@ class AgentSession:
         config: dict[str, Any],
         parent_id: UUID | None = None,
         sibling_index: int = 0,
+        spawn_payload: dict[str, Any] | None = None,
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -61,6 +63,7 @@ class AgentSession:
             parent_id=parent_id,
             config=config,
             sibling_index=sibling_index,
+            spawn_payload=spawn_payload,
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -156,6 +159,42 @@ class AgentSession:
             lines.append(f"- {child_result}")
         return "\n".join(lines)
 
+    def handle_child_failure(self, child_id: UUID, reason: str) -> None:
+        """For BOSS/MANAGER: record child failure and propagate failure up.
+
+        When any child fails, the parent also fails. This ensures failures
+        bubble up to the BOSS so the execution doesn't hang in WAITING state.
+
+        Args:
+            child_id: ID of failed child
+            reason: Error message from child
+        """
+        assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
+            f"Requires BOSS/MANAGER, got {self.role}"
+        )
+        assert len(self.child_ids) > 0, "Requires agent with children"
+        assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
+        assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
+
+        # Record child failure
+        child_failed_event = ChildFailed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            child_id=child_id,
+            reason=reason,
+        )
+        self._apply(child_failed_event)
+        self._changes.append(child_failed_event)
+
+        # Parent also fails when any child fails
+        work_failed_event = WorkFailed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            reason=f"Child agent {child_id} failed: {reason}",
+        )
+        self._apply(work_failed_event)
+        self._changes.append(work_failed_event)
+
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply event to update state. Raises TypeError for unregistered event types."""
@@ -169,6 +208,9 @@ class AgentSession:
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
+        # Restore spawn_payload from event if present
+        if event.spawn_payload is not None:
+            self.spawn_payload = SpawnPayload.model_validate(event.spawn_payload)
         self.version += 1
 
     @_apply.register
@@ -221,6 +263,11 @@ class AgentSession:
             self.structured_task_outcomes[event.child_id] = TaskOutcome.model_validate(
                 event.child_result
             )
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ChildFailed) -> None:
+        # Track failed children (could extend to store failure reasons if needed)
         self.version += 1
 
     @_apply.register
@@ -297,10 +344,6 @@ class AgentSession:
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
         self.hierarchy_limits = limits
-
-    def set_spawn_payload(self, payload: SpawnPayload) -> None:
-        """Set spawn payload received from spawning parent."""
-        self.spawn_payload = payload
 
     def get_spawn_payload_for_child(self) -> SpawnPayload:
         """Build spawn payload to pass to child agents.

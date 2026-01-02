@@ -503,7 +503,11 @@ class AgentExecutionService:
             context.mark_changes_as_committed()
 
     async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
-        """Handle execution failure by persisting error state."""
+        """Handle execution failure by persisting error state and notifying parent.
+
+        Failure propagates up the hierarchy so BOSS reaches FAILED status
+        instead of staying stuck in WAITING.
+        """
         try:
             agent = await self._repository.load_if_exists(agent_id)
             if agent is None:
@@ -513,6 +517,9 @@ class AgentExecutionService:
             await self._repository.persist_events(
                 agent, agent.version, self._progress_callback
             )
+
+            # Notify parent of failure - bubbles up to BOSS
+            await self._parent_notifier.notify_if_failed(agent)
         except Exception as persist_error:
             raise RuntimeError(
                 f"Failed to persist error state for agent {agent_id}: {persist_error!r}"

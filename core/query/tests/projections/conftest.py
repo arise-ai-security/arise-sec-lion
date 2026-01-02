@@ -299,6 +299,35 @@ class FakeEventStore:
     async def get_all_aggregate_ids(self) -> list[UUID]:
         return list(self._events.keys())
 
+    async def get_hierarchy_events_grouped(
+        self, root_id: UUID
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get all events for hierarchy rooted at root_id, grouped by agent.
+
+        Uses ChildSpawned events to discover children recursively.
+        """
+        result: dict[UUID, list[DomainEvent]] = {}
+        to_visit = [root_id]
+        visited: set[UUID] = set()
+
+        while to_visit:
+            agent_id = to_visit.pop(0)
+            if agent_id in visited:
+                continue
+            visited.add(agent_id)
+
+            events = self._events.get(agent_id, [])
+            if events:
+                result[agent_id] = events
+
+            # Find children from ChildSpawned events
+            for event in events:
+                if isinstance(event, ChildSpawned):
+                    if event.child_id not in visited:
+                        to_visit.append(event.child_id)
+
+        return result
+
 
 @pytest.fixture
 def fake_event_store() -> FakeEventStore:

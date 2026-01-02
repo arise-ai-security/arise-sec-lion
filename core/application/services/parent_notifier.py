@@ -1,6 +1,6 @@
 """Parent notification service for agent hierarchy.
 
-Handles notifying parent agents when children complete their execution.
+Handles notifying parent agents when children complete or fail.
 Extracted from ExecutionService to follow Single Responsibility Principle.
 
 Design Choice 5: Also handles knowledge publishing when worker children complete.
@@ -39,9 +39,9 @@ class BudgetRecollectionConfig:
 
 
 class ParentNotificationService:
-    """Handles notifying parent agents when children complete.
+    """Handles notifying parent agents when children complete or fail.
 
-    Single Responsibility: Manage parent-child completion notifications.
+    Single Responsibility: Manage parent-child completion notifications./failure notifications
 
     Design Choice 5: When a worker child completes successfully, the parent
     thinker reviews and publishes curated knowledge to SharedExecutionContext
@@ -152,3 +152,44 @@ class ParentNotificationService:
         if parent.status == AgentStatus.COMPLETED:
             await self.notify_if_complete(parent)
 
+    async def notify_if_failed(self, child: AgentSession) -> None:
+        """Notify parent when child fails, recursively up the hierarchy.
+
+        This method:
+        1. Checks if child is failed and has a parent
+        2. Loads the parent agent
+        3. Updates parent with child failure (parent also fails)
+        4. Persists parent events
+        5. Recursively notifies grandparent (failure bubbles up to BOSS)
+
+        Args:
+            child: The child agent that has failed.
+        """
+        if child.status != AgentStatus.FAILED or child.parent_id is None:
+            return
+
+        try:
+            parent = await self._repository.load(child.parent_id)
+        except AgentNotFoundError:
+            raise ValueError(f"Parent agent {child.parent_id} not found")
+
+        # Skip if parent is not in WAITING status (already completed or failed)
+        if parent.status != AgentStatus.WAITING:
+            return
+
+        parent_version = parent.version
+
+        parent.handle_child_failure(
+            child_id=child.agent_id,
+            reason=child.error_message or "Unknown error",
+        )
+
+        await self._repository.persist_events(
+            parent,
+            parent_version,
+            self._progress_callback,
+        )
+
+        # Recursively notify grandparent - failure bubbles up
+        if parent.status == AgentStatus.FAILED:
+            await self.notify_if_failed(parent)

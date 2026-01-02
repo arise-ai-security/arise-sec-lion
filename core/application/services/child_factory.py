@@ -129,29 +129,20 @@ class ChildAgentFactory:
         # without date suffix). Applied to all roles, not just PENDING.
         child_config = self._apply_manager_config(child_config)
 
+        # Pass spawn_payload to create() so it's persisted in AgentCreated event
+        # This ensures spawn_payload is restored when agent is loaded from history
         child = AgentSession.create(
             agent_id=event.child_id,
             role=child_role,
             config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
+            spawn_payload=event.parent_context,  # Persisted in AgentCreated event
         )
         child.assign_task(event.subtask.description)
 
         # Propagate hierarchy limits
         self._limits_registry.propagate_to_child(parent_id, event.child_id)
-
-        # Set spawn payload if available in event
-        if event.parent_context:
-            spawn_payload = SpawnPayload.model_validate(event.parent_context)
-            child.set_spawn_payload(spawn_payload)
-
-            # Allocate complexity budget to child (Design Choice 3)
-            if spawn_payload.complexity_budget > 0:
-                child.allocate_complexity_budget(
-                    amount=spawn_payload.complexity_budget,
-                    source="parent",
-                )
 
         # Persist the new agent
         await self._repository.save_new_agent(child)
