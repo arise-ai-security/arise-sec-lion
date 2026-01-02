@@ -60,12 +60,14 @@ class AgentCreated(DomainEvent):
 
     sibling_index tracks position among siblings for left-to-right ordering.
     Root agents (BOSS) have sibling_index=0.
+    spawn_payload contains parent context for branch detection in SEC-bench.
     """
 
     role: str
     parent_id: UUID | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
+    spawn_payload: dict[str, Any] | None = None  # Parent context for child agents
 
 
 class TaskAssigned(DomainEvent):

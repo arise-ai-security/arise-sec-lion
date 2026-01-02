@@ -49,6 +49,7 @@ class AgentSession:
         config: dict[str, Any],
         parent_id: UUID | None = None,
         sibling_index: int = 0,
+        spawn_payload: dict[str, Any] | None = None,
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -58,6 +59,7 @@ class AgentSession:
             parent_id=parent_id,
             config=config,
             sibling_index=sibling_index,
+            spawn_payload=spawn_payload,
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -150,6 +152,9 @@ class AgentSession:
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
+        # Restore spawn_payload from event if present
+        if event.spawn_payload is not None:
+            self.spawn_payload = SpawnPayload.model_validate(event.spawn_payload)
         self.version += 1
 
     @_apply.register
@@ -257,10 +262,6 @@ class AgentSession:
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
         self.hierarchy_limits = limits
-
-    def set_spawn_payload(self, payload: SpawnPayload) -> None:
-        """Set spawn payload received from spawning parent."""
-        self.spawn_payload = payload
 
     def get_spawn_payload_for_child(self) -> SpawnPayload:
         """Build spawn payload to pass to child agents.
