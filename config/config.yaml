@@ -49,6 +49,12 @@ orchestration:
     success_reward_ratio: 1.2  # Recollect 1.2x remaining budget on child success
     failure_penalty_ratio: 0.0 # Recollect 0x remaining budget on child failure
 
+  # Coworker knowledge sharing (Design Choice 5)
+  # Enables workers to learn from earlier coworkers' discoveries via SharedExecutionContext.
+  coworker_knowledge:
+    enabled: true              # Enabled by default for online learning
+    max_entries_per_worker: 10 # Maximum number of knowledge entries to inject per worker
+
 output:
   verbose: true
   show_progress: true

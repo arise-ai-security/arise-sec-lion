@@ -126,6 +126,12 @@ class TemplateChain:
             "core/context/supervisor_expectations.j2",
             **ctx_dict,
         )
+        # Design Choice 5: Coworker Knowledge
+        self.render_if(
+            context.has("coworker_knowledge"),
+            "core/context/coworker_knowledge.j2",
+            **ctx_dict,
+        )
 
         # Render dynamic contexts (ancestor_* and custom_*)
         has_dynamic = context.has_any(

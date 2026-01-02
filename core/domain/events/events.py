@@ -293,6 +293,25 @@ class DecisionRecorded(DomainEvent):
     decided_by: UUID  # Agent that made the decision
 
 
+class KnowledgePublished(DomainEvent):
+    """Worker knowledge published to shared context (Design Choice 5).
+
+    Thinkers publish curated knowledge from completed workers to the global
+    shared context, enabling later workers to learn from earlier discoveries.
+
+    The key is typically the worker's task objective, making it easy to
+    identify relevant knowledge for subsequent workers.
+    """
+
+    key: str  # Unique identifier (usually task objective)
+    objective: str  # What the worker was asked to do
+    relevance: str  # Why this is relevant to other workers
+    key_findings: list[str] = Field(default_factory=list)  # Important discoveries
+    deliverables: list[str] = Field(default_factory=list)  # Artifacts produced
+    source_worker_id: UUID  # Worker who discovered this
+    published_by: UUID  # Thinker who approved and published
+
+
 class ProgressUpdated(DomainEvent):
     """Progress checkpoint updated in shared context.
 

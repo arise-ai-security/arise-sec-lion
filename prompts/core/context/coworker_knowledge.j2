@@ -1,0 +1,31 @@
+{# Coworker knowledge template for CoworkerKnowledge (Design Choice 5) #}
+{# Renders published knowledge from earlier workers for cross-worker learning #}
+
+{% if coworker_knowledge and coworker_knowledge.entries %}
+<COWORKER_KNOWLEDGE count="{{ coworker_knowledge.count }}">
+Earlier workers have published the following discoveries. Use this knowledge
+to avoid redundant work and build on their findings.
+
+{% for entry in coworker_knowledge.entries %}
+<knowledge key="{{ entry.key[:50] }}...">
+<objective>{{ entry.objective }}</objective>
+<relevance>{{ entry.relevance }}</relevance>
+{% if entry.key_findings %}
+<findings>
+{% for finding in entry.key_findings %}
+  - {{ finding }}
+{% endfor %}
+</findings>
+{% endif %}
+{% if entry.deliverables %}
+<deliverables>
+{% for deliverable in entry.deliverables %}
+  - {{ deliverable }}
+{% endfor %}
+</deliverables>
+{% endif %}
+<source worker="{{ entry.source_worker_id }}" published_by="{{ entry.published_by }}"/>
+</knowledge>
+{% endfor %}
+</COWORKER_KNOWLEDGE>
+{% endif %}

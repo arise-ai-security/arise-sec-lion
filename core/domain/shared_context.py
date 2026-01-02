@@ -24,6 +24,7 @@ from core.domain.events.events import (
     ConfigOverrideSet,
     DecisionRecorded,
     DomainEvent,
+    KnowledgePublished,
     ProgressUpdated,
     SharedContextCreated,
 )
@@ -95,6 +96,19 @@ class ConfigOverride:
     value: str
     set_by: UUID
     scope: str
+
+
+@dataclass(frozen=True)
+class PublishedKnowledge:
+    """Published worker knowledge for cross-worker learning (Design Choice 5)."""
+
+    key: str
+    objective: str
+    relevance: str
+    key_findings: tuple[str, ...]
+    deliverables: tuple[str, ...]
+    source_worker_id: UUID
+    published_by: UUID
 
 
 # =============================================================================
@@ -566,6 +580,82 @@ class ConfigOverrideStore(EventSourcedAggregateBase):
 
 
 # =============================================================================
+# KnowledgeStore Aggregate (Design Choice 5)
+# =============================================================================
+
+
+class KnowledgeStore(EventSourcedAggregateBase):
+    """Event-sourced aggregate for worker knowledge sharing (Design Choice 5).
+
+    Stores published knowledge from completed workers for cross-worker learning.
+    Thinkers publish curated worker reports to enable later workers to learn
+    from earlier discoveries.
+    """
+
+    _knowledge: dict[str, PublishedKnowledge]
+
+    def _initialize_state(self) -> None:
+        self._knowledge = {}
+
+    def publish_knowledge(
+        self,
+        key: str,
+        objective: str,
+        relevance: str,
+        key_findings: list[str],
+        deliverables: list[str],
+        source_worker_id: UUID,
+        published_by: UUID,
+    ) -> DomainEvent:
+        """Publish worker knowledge to shared context.
+
+        Returns the event for the facade to collect.
+        """
+        return self._emit(
+            KnowledgePublished(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                key=key,
+                objective=objective,
+                relevance=relevance,
+                key_findings=key_findings,
+                deliverables=deliverables,
+                source_worker_id=source_worker_id,
+                published_by=published_by,
+            )
+        )
+
+    def get_knowledge(self, key: str) -> PublishedKnowledge | None:
+        """Get knowledge by key."""
+        return self._knowledge.get(key)
+
+    def list_knowledge(self) -> list[str]:
+        """List all knowledge keys."""
+        return list(self._knowledge.keys())
+
+    def get_all_knowledge(self) -> list[PublishedKnowledge]:
+        """Get all published knowledge entries."""
+        return list(self._knowledge.values())
+
+    @singledispatchmethod
+    def _apply(self, event: Any) -> None:
+        raise TypeError(f"No handler for {type(event).__name__}")
+
+    @_apply.register
+    def _(self, event: KnowledgePublished) -> None:
+        self._knowledge[event.key] = PublishedKnowledge(
+            key=event.key,
+            objective=event.objective,
+            relevance=event.relevance,
+            key_findings=tuple(event.key_findings),
+            deliverables=tuple(event.deliverables),
+            source_worker_id=event.source_worker_id,
+            published_by=event.published_by,
+        )
+        self._increment_version()
+
+
+# =============================================================================
 # SharedExecutionContext Facade
 # =============================================================================
 
@@ -580,6 +670,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
     - ProgressTracker: Checkpoint tracking
     - BudgetAccount: Cost tracking with enforcement
     - ConfigOverrideStore: Runtime configuration
+    - KnowledgeStore: Published worker knowledge (Design Choice 5)
 
     All state changes are event-sourced for consistency and auditability.
     """
@@ -591,6 +682,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
     _progress_tracker: ProgressTracker
     _budget_account: BudgetAccount
     _config_store: ConfigOverrideStore
+    _knowledge_store: KnowledgeStore
 
     def __init__(self, root_id: UUID) -> None:
         """Internal. Use create() or load_from_history() instead."""
@@ -607,6 +699,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         self._progress_tracker = ProgressTracker(self._aggregate_id)
         self._budget_account = BudgetAccount(self._aggregate_id)
         self._config_store = ConfigOverrideStore(self._aggregate_id)
+        self._knowledge_store = KnowledgeStore(self._aggregate_id)  # Design Choice 5
 
     @property
     def root_id(self) -> UUID:
@@ -697,6 +790,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         self._progress_tracker.mark_changes_as_committed()
         self._budget_account.mark_changes_as_committed()
         self._config_store.mark_changes_as_committed()
+        self._knowledge_store.mark_changes_as_committed()  # Design Choice 5
 
     # -------------------------------------------------------------------------
     # Delegated Commands - Artifacts
@@ -821,6 +915,51 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         return self._config_store.get_config_override(key)
 
     # -------------------------------------------------------------------------
+    # Delegated Commands - Knowledge (Design Choice 5)
+    # -------------------------------------------------------------------------
+
+    def publish_knowledge(
+        self,
+        key: str,
+        objective: str,
+        relevance: str,
+        key_findings: list[str],
+        deliverables: list[str],
+        source_worker_id: UUID,
+        published_by: UUID,
+    ) -> None:
+        """Publish worker knowledge to shared context (Design Choice 5).
+
+        Thinkers use this to publish curated knowledge from completed workers
+        to enable cross-worker learning.
+        """
+        self._emit(
+            KnowledgePublished(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                key=key,
+                objective=objective,
+                relevance=relevance,
+                key_findings=key_findings,
+                deliverables=deliverables,
+                source_worker_id=source_worker_id,
+                published_by=published_by,
+            )
+        )
+
+    def get_knowledge(self, key: str) -> PublishedKnowledge | None:
+        """Get knowledge by key (delegated to KnowledgeStore)."""
+        return self._knowledge_store.get_knowledge(key)
+
+    def list_knowledge(self) -> list[str]:
+        """List all knowledge keys (delegated to KnowledgeStore)."""
+        return self._knowledge_store.list_knowledge()
+
+    def get_all_knowledge(self) -> list[PublishedKnowledge]:
+        """Get all published knowledge entries (delegated to KnowledgeStore)."""
+        return self._knowledge_store.get_all_knowledge()
+
+    # -------------------------------------------------------------------------
     # Delegated Commands - Budget
     # -------------------------------------------------------------------------
 
@@ -895,6 +1034,11 @@ class SharedExecutionContext(EventSourcedAggregateBase):
     @_apply.register
     def _(self, event: DecisionRecorded) -> None:
         self._decision_log.apply_event(event)
+        self._increment_version()
+
+    @_apply.register
+    def _(self, event: KnowledgePublished) -> None:
+        self._knowledge_store.apply_event(event)
         self._increment_version()
 
     @_apply.register

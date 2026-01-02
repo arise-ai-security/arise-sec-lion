@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.context import SiblingView
     from core.ports.llm_port import LLMPort
+    from core.ports.shared_context_port import SharedContextPort
     from core.ports.worker_port import WorkerToolPort
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class AgentOrchestrator:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         orchestration_config: "OrchestrationConfig | None" = None,
+        shared_context_port: "SharedContextPort | None" = None,
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -63,6 +65,7 @@ class AgentOrchestrator:
             prompt_builder: Builder for constructing prompts.
             child_factory: Factory for child agents (source of truth for agent counts).
             orchestration_config: Configuration for orchestration (includes complexity_budget).
+            shared_context_port: Port for shared context access (Design Choice 5).
         """
         self._pipeline_factory = PipelineFactory(
             llm_port=llm_port,
@@ -70,6 +73,7 @@ class AgentOrchestrator:
             prompt_builder=prompt_builder,
             child_factory=child_factory,
             orchestration_config=orchestration_config,
+            shared_context_port=shared_context_port,
         )
 
         # Create pipelines (could also be lazy-created)

@@ -21,6 +21,7 @@ from core.application.pipeline.steps.domain import (
     SpawnChildren,
     StartWorkerExecution,
 )
+from core.application.pipeline.steps.knowledge import InjectCoworkerKnowledge
 from core.application.pipeline.steps.limits import CheckLimitViolations, DetermineChildRole
 from core.application.pipeline.steps.llm import QueryLLM
 from core.application.pipeline.steps.observability import EmitPromptSent, EmitTokensConsumed
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
+    from core.ports.shared_context_port import SharedContextPort
     from core.ports.worker_port import WorkerToolPort
 
 
@@ -66,6 +68,7 @@ class PipelineFactory:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         orchestration_config: "OrchestrationConfig | None" = None,
+        shared_context_port: "SharedContextPort | None" = None,
     ) -> None:
         """Initialize factory with required ports.
 
@@ -75,12 +78,14 @@ class PipelineFactory:
             prompt_builder: Builder for constructing prompts
             child_factory: Factory for child agents (source of truth for agent counts)
             orchestration_config: Configuration for orchestration (includes complexity_budget)
+            shared_context_port: Port for shared context access (Design Choice 5)
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
         self._orchestration_config = orchestration_config
+        self._shared_context_port = shared_context_port
 
     def create_complexity_pipeline(self) -> Pipeline:
         """Create pipeline for PENDING agent complexity evaluation.
@@ -161,21 +166,28 @@ class PipelineFactory:
         1. ValidateWorkerAgent - Assert WORKER + ANALYZING
         2. StartWorkerExecution - Emit CodeGenerationStarted
         3. InjectSupervisorExpectations - Inject parent justification context (Design Choice 4)
-        4. BuildWorkerPrompt - Via PromptBuilder
-        5. EmitPromptSent - Observability (target=dynamic -> tool name)
-        6. RunWorkerSession - Execute via worker_port, apply events
+        4. InjectCoworkerKnowledge - Inject published knowledge from earlier workers (Design Choice 5)
+        5. BuildWorkerPrompt - Via PromptBuilder
+        6. EmitPromptSent - Observability (target=dynamic -> tool name)
+        7. RunWorkerSession - Execute via worker_port, apply events
 
         Returns:
             Configured Pipeline for worker execution
         """
-        return Pipeline(
-            name="worker_execution",
-            steps=[
-                ValidateWorkerAgent,
-                StartWorkerExecution(),
-                InjectSupervisorExpectations(),  # Design Choice 4
-                BuildWorkerPrompt(self._prompt_builder),
-                EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
-                RunWorkerSession(self._worker_port),
-            ],
-        )
+        steps: list = [
+            ValidateWorkerAgent,
+            StartWorkerExecution(),
+            InjectSupervisorExpectations(),  # Design Choice 4
+        ]
+
+        # Design Choice 5: Inject coworker knowledge if shared context port is available
+        if self._shared_context_port is not None:
+            steps.append(InjectCoworkerKnowledge(self._shared_context_port))
+
+        steps.extend([
+            BuildWorkerPrompt(self._prompt_builder),
+            EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
+            RunWorkerSession(self._worker_port),
+        ])
+
+        return Pipeline(name="worker_execution", steps=steps)

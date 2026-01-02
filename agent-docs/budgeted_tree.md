@@ -154,5 +154,6 @@ complexity_budget:
 
 - [Design Choice 3: Proportional Budget Allocation](./budgeted_tree_plus.md) - Weight-based budget distribution
 - [Design Choice 4: Thinker Justification](./thinker_justification.md) - Context passing from supervisors
+- [Design Choice 5: Worker Report Context](./worker_report_context.md) - Bottom-up context passing
 - [Execution Flow](./execution-flow.md) - How agents process tasks
 - [Domain Model](./domain-model.md) - Agent lifecycle and events

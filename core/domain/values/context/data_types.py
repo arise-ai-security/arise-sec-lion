@@ -440,5 +440,70 @@ class SupervisorExpectations(BaseModel):
         }
 
 
+# =============================================================================
+# Coworker Knowledge (Design Choice 5: Worker Report Context Passing)
+# =============================================================================
+
+
+class CoworkerKnowledgeEntry(BaseModel):
+    """Single entry of knowledge published by an earlier coworker.
+
+    Represents curated knowledge from a completed worker that can help
+    subsequent workers avoid redundant work. Published to global shared
+    context, accessible by any worker in the execution hierarchy.
+    """
+
+    model_config = {"frozen": True}
+
+    key: str  # Unique identifier (usually the task objective)
+    objective: str  # What the coworker was asked to do
+    relevance: str  # Why this is relevant to current worker
+    key_findings: tuple[str, ...] = ()  # Important discoveries
+    deliverables: tuple[str, ...] = ()  # Artifacts produced
+    source_worker_id: str = ""  # Worker who discovered this
+    published_by: str = ""  # Thinker who approved and published
+
+
+class CoworkerKnowledge(BaseModel):
+    """Published knowledge from earlier coworkers (Design Choice 5).
+
+    Use to share runtime discoveries across all workers in the execution,
+    enabling online learning and preventing redundant work. This is stored
+    in the global SharedExecutionContext, making it accessible to any
+    worker regardless of their position in the agent tree.
+
+    Example:
+        context.add(CoworkerKnowledge(entries=(
+            CoworkerKnowledgeEntry(
+                key="Map vulnerable code path",
+                objective="Map out the MP4 box structure leading to vulnerability",
+                relevance="Provides exact file location and trigger conditions",
+                key_findings=(
+                    "Vulnerable line: drm_sample.c:1562",
+                    "Required boxes: moov → trak → mdia → minf → stbl",
+                    "Trigger: IV_size == 0 with missing aux_info_offset",
+                ),
+                deliverables=("path_map.md",),
+                source_worker_id="worker-e286dfa6",
+                published_by="manager-123",
+            ),
+        )))
+    """
+
+    model_config = {"frozen": True}
+
+    entries: tuple[CoworkerKnowledgeEntry, ...] = ()
+
+    @property
+    def template_key(self) -> str:
+        return "coworker_knowledge"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "entries": [e.model_dump() for e in self.entries],
+            "count": len(self.entries),
+        }
+
+
 
 

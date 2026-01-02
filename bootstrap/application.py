@@ -97,6 +97,7 @@ def get_application(
         prompt_builder=prompt_builder,
         child_factory=child_factory,
         orchestration_config=config.orchestration_config,
+        shared_context_port=infrastructure.shared_context,  # Design Choice 5
     )
 
     # Create sibling view builder (implements SiblingViewPort)
@@ -115,10 +116,17 @@ def get_application(
             failure_penalty_ratio=budget_cfg.failure_penalty_ratio,
         )
 
+    # Extract coworker knowledge config (Design Choice 5)
+    publish_worker_knowledge = True
+    if config.orchestration_config is not None:
+        publish_worker_knowledge = config.orchestration_config.coworker_knowledge.enabled
+
     parent_notifier = ParentNotificationService(
         repository=repository,
         progress_callback=config.progress_callback,
         budget_recollection_config=budget_recollection_config,
+        shared_context_port=infrastructure.shared_context,  # Design Choice 5
+        publish_worker_knowledge=publish_worker_knowledge,
     )
 
     # Group collaborators into dependencies object (Parameter Object pattern)

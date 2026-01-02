@@ -34,6 +34,8 @@ from core.domain.values.context.data_types import (
     ArtifactEntry,
     ChildOutcomeEntry,
     ChildOutcomes,
+    CoworkerKnowledge,
+    CoworkerKnowledgeEntry,
     CustomContext,
     DecisionEntry,
     ParentSummary,
@@ -74,6 +76,9 @@ __all__ = [
     "ChildOutcomes",
     "CustomContext",
     "SupervisorExpectations",
+    # Coworker Knowledge (Design Choice 5)
+    "CoworkerKnowledge",
+    "CoworkerKnowledgeEntry",
     # Parent → Child (legacy, still used for structural data)
     "AncestorSummary",
     "SpawnPayload",

@@ -148,6 +148,20 @@ class OrchestrationConfig(BaseModel):
             """Check if complexity budget is enabled."""
             return self.enabled
 
+    class CoworkerKnowledgeConfig(BaseModel):
+        """Coworker knowledge sharing settings (Design Choice 5).
+
+        Controls whether workers receive knowledge from earlier coworkers
+        via the SharedExecutionContext.
+        """
+
+        enabled: bool = True  # Enabled by default
+        max_entries_per_worker: int = Field(default=10, ge=0)  # Max knowledge entries to inject
+
+        def is_enabled(self) -> bool:
+            """Check if coworker knowledge sharing is enabled."""
+            return self.enabled
+
     max_retries: int = Field(ge=0, le=10)
     retry_delay: float = Field(ge=0.0)
     poll_interval: float = Field(ge=0.01)  # Minimum 10ms
@@ -157,6 +171,7 @@ class OrchestrationConfig(BaseModel):
 
     limits: LimitsConfig
     complexity_budget: ComplexityBudgetConfig = ComplexityBudgetConfig()
+    coworker_knowledge: CoworkerKnowledgeConfig = CoworkerKnowledgeConfig()
 
 
 class OutputConfig(BaseModel):

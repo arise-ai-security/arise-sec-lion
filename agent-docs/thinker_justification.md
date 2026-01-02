@@ -267,5 +267,6 @@ DC4: "You have 182 units because:
 
 - [Design Choice 2: Complexity Budgeted Tree](./budgeted_tree.md) - Base budget threshold
 - [Design Choice 3: Proportional Budget Allocation](./budgeted_tree_plus.md) - Weight-based allocation
+- [Design Choice 5: Worker Report Context](./worker_report_context.md) - Bottom-up context passing
 - [Context Passing Mechanism](./context-passing-mechanism.md) - Underlying context system
 - [Context Passing Guide](./context-passing-guide.md) - Practical usage patterns
