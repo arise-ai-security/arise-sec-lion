@@ -17,7 +17,7 @@ manager:
 worker:
   model: gpt-4o
   tool: openhands
-  timeout: 120
+  timeout: 400
 
 orchestration:
   max_retries: 3

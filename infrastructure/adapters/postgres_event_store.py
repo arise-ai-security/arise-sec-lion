@@ -9,20 +9,27 @@ import orjson
 from core.domain.events.events import (
     AgentCreated,
     ArtifactStored,
+    BenchmarkCompleted,
+    BenchmarkStageCompleted,
+    BenchmarkStarted,
     BudgetConsumed,
     BudgetExceeded,
     ChildCompleted,
     ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
+    ComplexityBudgetAllocated,
+    ComplexityBudgetRecollected,
     ComplexityEvaluated,
     ConfigOverrideSet,
     DecisionRecorded,
     DomainEvent,
+    KnowledgePublished,
     LimitEnforced,
     ProgressUpdated,
     PromptSent,
     SharedContextCreated,
+    SourceContextExtracted,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -61,11 +68,21 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "SharedContextCreated": SharedContextCreated,
     "ArtifactStored": ArtifactStored,
     "DecisionRecorded": DecisionRecorded,
+    "KnowledgePublished": KnowledgePublished,
     "ProgressUpdated": ProgressUpdated,
     "ConfigOverrideSet": ConfigOverrideSet,
     # Budget events (part of shared context)
     "BudgetConsumed": BudgetConsumed,
     "BudgetExceeded": BudgetExceeded,
+    # Complexity budget events (Design Choice 2/3: Budgeted Tree)
+    "ComplexityBudgetAllocated": ComplexityBudgetAllocated,
+    "ComplexityBudgetRecollected": ComplexityBudgetRecollected,
+    # SEC-bench benchmark events
+    "BenchmarkStarted": BenchmarkStarted,
+    "BenchmarkStageCompleted": BenchmarkStageCompleted,
+    "BenchmarkCompleted": BenchmarkCompleted,
+    # Source context extraction events (Design Choice 6/7)
+    "SourceContextExtracted": SourceContextExtracted,
 }
 
 
