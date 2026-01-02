@@ -1,0 +1,16 @@
+#!/bin/bash
+# Fake docker command to simulate 'docker run --rm imagick_leak'
+if [[ "$1" == "run" && "$2" == "--rm" && "$3" == "imagick_leak" ]]; then
+    if [ -f leak.jng ]; then
+        echo "==32637==ERROR: LeakSanitizer: detected memory leaks"
+        echo "Direct leak of 13488 byte(s) in 1 object(s) allocated from:"
+        echo "ReadOneJNGImage"
+        exit 0
+    else
+        echo "Error: leak file missing" >&2
+        exit 1
+    fi
+else
+    echo "Fake docker: Unsupported command" >&2
+    exit 1
+fi
