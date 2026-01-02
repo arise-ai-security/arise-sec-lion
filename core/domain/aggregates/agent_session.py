@@ -17,6 +17,7 @@ from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
+    ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -139,6 +140,42 @@ class AgentSession:
             lines.append(f"- {child_result}")
         return "\n".join(lines)
 
+    def handle_child_failure(self, child_id: UUID, reason: str) -> None:
+        """For BOSS/MANAGER: record child failure and propagate failure up.
+
+        When any child fails, the parent also fails. This ensures failures
+        bubble up to the BOSS so the execution doesn't hang in WAITING state.
+
+        Args:
+            child_id: ID of failed child
+            reason: Error message from child
+        """
+        assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
+            f"Requires BOSS/MANAGER, got {self.role}"
+        )
+        assert len(self.child_ids) > 0, "Requires agent with children"
+        assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
+        assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
+
+        # Record child failure
+        child_failed_event = ChildFailed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            child_id=child_id,
+            reason=reason,
+        )
+        self._apply(child_failed_event)
+        self._changes.append(child_failed_event)
+
+        # Parent also fails when any child fails
+        work_failed_event = WorkFailed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            reason=f"Child agent {child_id} failed: {reason}",
+        )
+        self._apply(work_failed_event)
+        self._changes.append(work_failed_event)
+
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply event to update state. Raises TypeError for unregistered event types."""
@@ -207,6 +244,11 @@ class AgentSession:
             self.structured_task_outcomes[event.child_id] = TaskOutcome.model_validate(
                 event.child_result
             )
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ChildFailed) -> None:
+        # Track failed children (could extend to store failure reasons if needed)
         self.version += 1
 
     @_apply.register

@@ -155,6 +155,16 @@ class ChildCompleted(DomainEvent):
     child_result: dict[str, Any] = Field(default_factory=dict)  # Rich TaskOutcome structure
 
 
+class ChildFailed(DomainEvent):
+    """Child agent failed, parent notified with error details.
+
+    Triggers failure propagation up the hierarchy.
+    """
+
+    child_id: UUID
+    reason: str  # Error message from child
+
+
 class ComplexityEvaluated(DomainEvent):
     """Task complexity evaluated, role determined (worker/manager)."""
 
