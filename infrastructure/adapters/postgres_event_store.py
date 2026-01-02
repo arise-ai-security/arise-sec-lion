@@ -12,6 +12,7 @@ from core.domain.events.events import (
     BudgetConsumed,
     BudgetExceeded,
     ChildCompleted,
+    ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -47,6 +48,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "CodeGenerationStarted": CodeGenerationStarted,
     "ThoughtCaptured": ThoughtCaptured,
     "ChildCompleted": ChildCompleted,
+    "ChildFailed": ChildFailed,
     "ComplexityEvaluated": ComplexityEvaluated,
     # Observability events
     "PromptSent": PromptSent,

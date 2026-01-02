@@ -13,11 +13,16 @@ Hexagonal Architecture + Event Sourcing | BOSS → MANAGER → WORKER hierarchy
    ```
    Verify: `grep -r "from infrastructure" core/` returns nothing
 
-2. **Forbidden Operations** - Claude shall NEVER:
+2. **ALWAYS use `--profile local`** for Docker commands unless explicitly told otherwise.
+   - `local` profile uses local PostgreSQL database
+   - Other profiles (`dev`, `prod`) connect to external databases
+   - This prevents accidental operations on shared/production data
+
+3. **Forbidden Operations** - Claude shall NEVER:
    - Run `git commit` (user commits manually)
    - Run `ruff check/format` (user lints manually)
 
-3. **Off-Limits:** Do not read `user-docs/` directory
+4. **Off-Limits:** Do not read `user-docs/` directory
 
 ## Development
 
@@ -26,26 +31,26 @@ All commands run inside Docker containers via profiles:
 ```bash
 cd deployment
 
-# Profiles: local (local DB), dev (external DB), prod, test
+# Profiles: local (local DB - DEFAULT), dev (external DB), prod, test
 
 # Start services
-docker compose --profile dev up -d --build
+docker compose --profile local up -d --build
 
 # Run a task
-docker compose --profile dev exec app-dev python main.py run "Your task"
+docker compose --profile local exec app python main.py run "Your task"
 
 # Run with worker configuration overrides
-docker compose --profile dev exec app-dev python main.py run "Your task" \
+docker compose --profile local exec app python main.py run "Your task" \
   --worker-model gpt-4o \
   --worker-tool claude_code
 
 # Run tests
-docker compose --profile dev exec app-dev uv run pytest
+docker compose --profile local exec app uv run pytest
 
 # View results
-docker compose --profile dev exec app-dev python main.py list
-docker compose --profile dev exec app-dev python main.py events
-docker compose --profile dev exec app-dev python main.py summary
+docker compose --profile local exec app python main.py list
+docker compose --profile local exec app python main.py events
+docker compose --profile local exec app python main.py summary
 ```
 
 ## Agent Flow

@@ -1,6 +1,6 @@
 # Execution Flow
 
-This document traces the complete execution path when running a task through the Arise Sec Lion system. When you execute a command like `docker compose --profile dev exec app-dev python main.py run "Create a fizzbuzz function"`, the system bootstraps all dependencies (PostgreSQL event store, LiteLLM adapter, worker tools), creates a root BOSS agent, and enters an orchestration loop that recursively decomposes complex tasks into subtasks. Each subtask spawns a PENDING agent that undergoes complexity evaluation via LLM to determine if it should become a WORKER (simple, execute directly) or MANAGER (complex, decompose further). Workers execute tasks using tools like Claude Code PTY, streaming their thought process as events. When workers complete, results propagate up the hierarchy through parent notifications until the root BOSS agent aggregates all results and the system exits.
+This document traces the complete execution path when running a task through the Arise Sec Lion system. When you execute a command like `docker compose --profile local exec app python main.py run "Create a fizzbuzz function"`, the system bootstraps all dependencies (PostgreSQL event store, LiteLLM adapter, worker tools), creates a root BOSS agent, and enters an orchestration loop that recursively decomposes complex tasks into subtasks. Each subtask spawns a PENDING agent that undergoes complexity evaluation via LLM to determine if it should become a WORKER (simple, execute directly) or MANAGER (complex, decompose further). Workers execute tasks using tools like Claude Code PTY, streaming their thought process as events. When workers complete, results propagate up the hierarchy through parent notifications until the root BOSS agent aggregates all results and the system exits.
 
 ---
 
@@ -9,7 +9,7 @@ This document traces the complete execution path when running a task through the
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           USER COMMAND                                       │
-│  docker compose exec app-dev python main.py run "Create fizzbuzz function"  │
+│  docker compose --profile local exec app python main.py run "Create..."     │
 └───────────────────────────────────────┬─────────────────────────────────────┘
                                         │
                                         ▼

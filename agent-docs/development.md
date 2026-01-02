@@ -6,22 +6,22 @@ This document covers testing, coding standards, and development workflow.
 
 ## Running Tests
 
-All commands run inside Docker containers:
+All commands run inside Docker containers. **Always use `--profile local` unless explicitly told otherwise.**
 
 ```bash
 cd deployment
 
 # Run all tests
-docker compose --profile dev exec app-dev uv run pytest
+docker compose --profile local exec app uv run pytest
 
 # Verbose with short traceback
-docker compose --profile dev exec app-dev uv run pytest -v --tb=short
+docker compose --profile local exec app uv run pytest -v --tb=short
 
 # Run specific test file
-docker compose --profile dev exec app-dev uv run pytest core/domain/tests/test_agent_session.py
+docker compose --profile local exec app uv run pytest core/domain/tests/test_agent_session.py
 
 # Run tests matching pattern
-docker compose --profile dev exec app-dev uv run pytest -k "test_agent"
+docker compose --profile local exec app uv run pytest -k "test_agent"
 ```
 
 ---

@@ -227,14 +227,7 @@ class TestBuildSpawnPayload:
             "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
             "tool": "claude_code",
         }
-        child = AgentSession.create(
-            agent_id=child_id,
-            role=AgentRole.MANAGER,
-            config=config,
-        )
-        child.assign_task("Child task")
-
-        # Simulate spawn payload from spawning
+        # Simulate spawn payload from spawning parent
         parent_payload = SpawnPayload(
             parent_task="Root task",
             parent_role="boss",
@@ -246,7 +239,14 @@ class TestBuildSpawnPayload:
             constraints={},
             execution_limits={"depth_remaining": 4},
         )
-        child.set_spawn_payload(parent_payload)
+        # Pass spawn_payload directly to create() (persisted in AgentCreated event)
+        child = AgentSession.create(
+            agent_id=child_id,
+            role=AgentRole.MANAGER,
+            config=config,
+            spawn_payload=parent_payload.model_dump(),
+        )
+        child.assign_task("Child task")
 
         # Set hierarchy limits (incremented depth)
         limits = HierarchyLimits(
