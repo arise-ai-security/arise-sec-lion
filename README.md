@@ -97,8 +97,8 @@ cd deployment
 # Start ephemeral test database
 docker compose --profile test up -d
 
-# Run tests
-docker compose --profile dev exec app-dev uv run pytest
+# Run tests (use local profile)
+docker compose --profile local exec app uv run pytest
 ```
 
 ---
@@ -264,9 +264,9 @@ docker compose --profile local exec app python main.py summary --format text
 ### Run Tests
 
 ```bash
-docker compose --profile dev exec app-dev uv run pytest
-docker compose --profile dev exec app-dev uv run pytest -v --tb=short
-docker compose --profile dev exec app-dev uv run pytest core/domain/tests/
+docker compose --profile local exec app uv run pytest
+docker compose --profile local exec app uv run pytest -v --tb=short
+docker compose --profile local exec app uv run pytest core/domain/tests/
 ```
 
 ---
