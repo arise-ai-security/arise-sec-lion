@@ -48,6 +48,7 @@ class SpawnPayload(BaseModel):
     - Constraints inherited from the hierarchy
     - Execution limits (budget, depth remaining, etc.)
     - Complexity budget allocation (Design Choice 3)
+    - Subtask justification for supervisor expectations (Design Choice 4)
     """
 
     model_config = {"frozen": True}
@@ -60,6 +61,13 @@ class SpawnPayload(BaseModel):
     constraints: dict[str, Any]
     execution_limits: dict[str, Any]
     complexity_budget: float = 0.0  # Budget allocated to this child (Design Choice 3)
+
+    # Design Choice 4: Thinker Justification Context
+    # Stores justification from parent for supervisor expectations
+    subtask_justification: dict[str, str] | None = None
+    budget_weight: float | None = None  # This child's budget weight
+    total_weights: float | None = None  # Sum of all sibling weights
+    num_siblings: int | None = None  # Total number of siblings
 
 
 def build_spawn_payload(

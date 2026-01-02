@@ -41,6 +41,7 @@ from core.domain.values.context.data_types import (
     SharedDecisions,
     SiblingEntry,
     SiblingResults,
+    SupervisorExpectations,
 )
 from core.domain.values.context.limits import HierarchyLimits
 from core.domain.values.context.parent_to_child import (
@@ -72,6 +73,7 @@ __all__ = [
     "ChildOutcomeEntry",
     "ChildOutcomes",
     "CustomContext",
+    "SupervisorExpectations",
     # Parent → Child (legacy, still used for structural data)
     "AncestorSummary",
     "SpawnPayload",

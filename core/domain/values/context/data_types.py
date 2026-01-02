@@ -373,5 +373,72 @@ class CustomContext(BaseModel):
         return self.data
 
 
+# =============================================================================
+# Supervisor Expectations (Design Choice 4: Thinker Justification)
+# =============================================================================
+
+
+class SupervisorExpectations(BaseModel):
+    """Context passed from supervisor (thinker) to child agent (Design Choice 4).
+
+    Provides rich justification context about why this task was assigned
+    and what the supervisor expects. This helps child agents understand:
+    - The bigger picture (supervisor's original task)
+    - Their specific objective
+    - Why they were chosen for this work
+    - Suggested approach and expected deliverables
+    - Resource allocation reasoning
+
+    Example:
+        context.add(SupervisorExpectations(
+            supervisor_task="Build gpac environment using Dockerfile",
+            objective="Establish Docker build environment with correct version",
+            split_reason="Separates environment setup from build execution",
+            suggested_approach="Use provided Dockerfile to clone gpac at commit...",
+            why_it_works="Direct use of Dockerfile ensures consistent config",
+            expected_deliverables="Docker image ready for building gpac with ASAN",
+            budget_allocation="40% of budget (weight 1.6 of 4.0)",
+            complexity_assessment="MODERATE: Integrating build context",
+            significance="HIGH: Proper build env is critical for validation",
+            resource_justification="40% recognizes importance of Docker setup",
+        ))
+    """
+
+    model_config = {"frozen": True}
+
+    # Core justification from supervisor
+    supervisor_task: str  # The supervisor's original task
+    objective: str  # What this specific subtask should achieve
+    split_reason: str = ""  # Why this was delegated to a sub-agent
+    suggested_approach: str = ""  # Recommended execution plan
+    why_it_works: str = ""  # Why the approach should succeed
+    expected_deliverables: str = ""  # Concrete outputs expected
+
+    # Budget allocation context (Design Choice 4)
+    budget_allocation: str = ""  # e.g., "40% of budget (weight 1.6 of 4.0)"
+    complexity_assessment: str = ""  # e.g., "MODERATE: Multi-file tracing"
+    significance: str = ""  # e.g., "CRITICAL PATH: Blocks downstream"
+    resource_justification: str = ""  # Why this budget level was chosen
+
+    @property
+    def template_key(self) -> str:
+        return "supervisor_expectations"
+
+    def to_template_dict(self) -> dict[str, Any]:
+        return {
+            "supervisor_task": self.supervisor_task,
+            "objective": self.objective,
+            "split_reason": self.split_reason,
+            "suggested_approach": self.suggested_approach,
+            "why_it_works": self.why_it_works,
+            "expected_deliverables": self.expected_deliverables,
+            "budget_allocation": self.budget_allocation,
+            "complexity_assessment": self.complexity_assessment,
+            "significance": self.significance,
+            "resource_justification": self.resource_justification,
+            "has_budget_context": bool(self.budget_allocation),
+        }
+
+
 
 

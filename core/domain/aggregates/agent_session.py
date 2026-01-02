@@ -620,6 +620,14 @@ class AgentSession:
                 # Record allocation for later recollection
                 self.record_child_budget_allocation(child_id, child_budget)
 
+            # Calculate total weights for budget context (Design Choice 4)
+            total_weights = sum(s.budget_weight for s in subtasks)
+
+            # Extract justification as dict for serialization (Design Choice 4)
+            justification_dict = None
+            if subtask.justification:
+                justification_dict = subtask.justification.model_dump()
+
             child_payload = SpawnPayload(
                 parent_task=spawn_payload.parent_task,
                 parent_role=spawn_payload.parent_role,
@@ -629,6 +637,11 @@ class AgentSession:
                 constraints=spawn_payload.constraints,
                 execution_limits=spawn_payload.execution_limits,
                 complexity_budget=child_budget,
+                # Design Choice 4: Thinker Justification Context
+                subtask_justification=justification_dict,
+                budget_weight=subtask.budget_weight,
+                total_weights=total_weights,
+                num_siblings=len(subtasks),
             )
 
             child_event = ChildSpawned(

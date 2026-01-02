@@ -21,6 +21,9 @@ class BuildComplexityPrompt:
 
     Uses PromptBuilder to construct a prompt that asks the LLM
     to evaluate whether a task is simple (WORKER) or complex (MANAGER).
+
+    If InjectSupervisorExpectations was run before this step,
+    supervisor context will be prepended to the prompt.
     """
 
     def __init__(self, prompt_builder: "PromptBuilder") -> None:
@@ -32,16 +35,36 @@ class BuildComplexityPrompt:
         self._prompt_builder = prompt_builder
 
     async def execute(self, state: PipelineState) -> StepResult:
-        """Build complexity evaluation prompt."""
+        """Build complexity evaluation prompt with optional supervisor context."""
         agent = state.agent
 
-        prompt = self._prompt_builder.build_complexity_evaluation_prompt(
+        # Build base complexity evaluation prompt
+        base_prompt = self._prompt_builder.build_complexity_evaluation_prompt(
             task_description=agent.task_description,
             agent_id=agent.agent_id,
             parent_task=None,
         )
 
+        # Prepend supervisor expectations context if available (Design Choice 4)
+        prompt = self._prepend_context(base_prompt, state)
+
         return StepResult.ok(state.with_prompt(prompt))
+
+    def _prepend_context(self, prompt: str, state: PipelineState) -> str:
+        """Prepend supervisor expectations context to prompt if available."""
+        if state.context_composer is None:
+            return prompt
+
+        if not state.context_composer.has("supervisor_expectations"):
+            return prompt
+
+        # Render supervisor expectations template
+        supervisor_prompt = self._prompt_builder.chain().render(
+            "core/context/supervisor_expectations.j2",
+            **state.context_composer.build(),
+        ).build()
+
+        return supervisor_prompt + "\n\n" + prompt if supervisor_prompt else prompt
 
 
 class BuildDecompositionPrompt:
@@ -113,6 +136,7 @@ class BuildWorkerPrompt:
     """Build worker execution prompt for WORKER agent.
 
     Uses PromptBuilder to construct an enhanced prompt that includes:
+    - Supervisor expectations context (Design Choice 4)
     - Sibling view for coordination
     - Workspace context for existing files
     - CVE instance for security tasks
@@ -128,10 +152,11 @@ class BuildWorkerPrompt:
         self._prompt_builder = prompt_builder
 
     async def execute(self, state: PipelineState) -> StepResult:
-        """Build enhanced worker prompt."""
+        """Build enhanced worker prompt with supervisor context."""
         agent = state.agent
 
-        enhanced_description = self._prompt_builder.build_worker_prompt(
+        # Build base worker prompt
+        base_prompt = self._prompt_builder.build_worker_prompt(
             task_description=agent.task_description,
             sibling_view=state.sibling_view,
             workspace_context=state.workspace_context,
@@ -139,4 +164,23 @@ class BuildWorkerPrompt:
             spawn_payload=agent.spawn_payload,
         )
 
-        return StepResult.ok(state.with_prompt(enhanced_description))
+        # Prepend supervisor expectations context if available (Design Choice 4)
+        prompt = self._prepend_context(base_prompt, state)
+
+        return StepResult.ok(state.with_prompt(prompt))
+
+    def _prepend_context(self, prompt: str, state: PipelineState) -> str:
+        """Prepend supervisor expectations context to prompt if available."""
+        if state.context_composer is None:
+            return prompt
+
+        if not state.context_composer.has("supervisor_expectations"):
+            return prompt
+
+        # Render supervisor expectations template
+        supervisor_prompt = self._prompt_builder.chain().render(
+            "core/context/supervisor_expectations.j2",
+            **state.context_composer.build(),
+        ).build()
+
+        return supervisor_prompt + "\n\n" + prompt if supervisor_prompt else prompt

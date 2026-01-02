@@ -109,6 +109,7 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | [`context-passing-guide.md`](agent-docs/context-passing-guide.md) | ContextComposer API, practical scenarios, **example branches** |
 | [`budgeted_tree.md`](agent-docs/budgeted_tree.md) | Design Choice 2: Complexity budget threshold |
 | [`budgeted_tree_plus.md`](agent-docs/budgeted_tree_plus.md) | Design Choice 3: Proportional budget allocation |
+| [`thinker_justification.md`](agent-docs/thinker_justification.md) | Design Choice 4: Thinker justification context passing |
 
 ## Example Branches
 

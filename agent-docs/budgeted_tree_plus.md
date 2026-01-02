@@ -213,5 +213,6 @@ BOSS (budget: 1000)
 ## See Also
 
 - [Design Choice 2: Complexity Budgeted Tree](./budgeted_tree.md) - Base budget threshold
+- [Design Choice 4: Thinker Justification](./thinker_justification.md) - Context passing from supervisors
 - [Context Passing Mechanism](./context-passing-mechanism.md) - How budget flows through tree
 - [Execution Flow](./execution-flow.md) - Pipeline that allocates budgets

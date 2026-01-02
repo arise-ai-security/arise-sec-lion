@@ -36,7 +36,9 @@ from core.domain.values.context.data_types import (
     SharedDecisions,
     SiblingEntry,
     SiblingResults,
+    SupervisorExpectations,
 )
+from core.domain.values.subtask import SubtaskJustification
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
@@ -430,3 +432,124 @@ def child_outcomes_from_agent(
         )
 
     return ChildOutcomes(outcomes=tuple(entries))
+
+
+# =============================================================================
+# Supervisor Expectations Factories (Design Choice 4)
+# =============================================================================
+
+
+def supervisor_expectations_from_justification(
+    parent_task: str,
+    justification: SubtaskJustification,
+    child_budget: float | None = None,
+    parent_budget: float | None = None,
+    budget_weight: float | None = None,
+    total_weights: float | None = None,
+    num_siblings: int | None = None,
+) -> SupervisorExpectations:
+    """Build SupervisorExpectations from parent task and subtask justification.
+
+    Creates context for a child agent that explains why they were assigned
+    this task and what their supervisor expects. Includes budget allocation
+    context when available.
+
+    Args:
+        parent_task: The supervisor's (parent's) original task description.
+        justification: The SubtaskJustification from task decomposition.
+        child_budget: The budget allocated to this child (optional).
+        parent_budget: The parent's total budget (optional).
+        budget_weight: This child's budget weight (optional).
+        total_weights: Sum of all sibling weights (optional).
+        num_siblings: Total number of sibling tasks (optional).
+
+    Returns:
+        SupervisorExpectations value object.
+
+    Example:
+        # During child agent creation
+        context.add(supervisor_expectations_from_justification(
+            parent_task=parent_agent.task_description,
+            justification=subtask.justification,
+            child_budget=182.0,
+            parent_budget=1000.0,
+            budget_weight=1.0,
+            total_weights=5.5,
+            num_siblings=3,
+        ))
+    """
+    # Build budget allocation string if budget info is available
+    budget_allocation = justification.budget_allocation
+    if not budget_allocation and child_budget is not None and parent_budget is not None:
+        pct = (child_budget / parent_budget * 100) if parent_budget > 0 else 0
+        if budget_weight is not None and total_weights is not None:
+            budget_allocation = (
+                f"{pct:.0f}% of budget "
+                f"(weight {budget_weight:.1f} of {total_weights:.1f}"
+                + (f" across {num_siblings} subtasks)" if num_siblings else ")")
+            )
+        else:
+            budget_allocation = f"{pct:.0f}% of budget ({child_budget:.0f} of {parent_budget:.0f})"
+
+    return SupervisorExpectations(
+        supervisor_task=parent_task or "",
+        objective=justification.objective,
+        split_reason=justification.split_reason,
+        suggested_approach=justification.plan,
+        why_it_works=justification.why_it_works,
+        expected_deliverables=justification.expected_results,
+        budget_allocation=budget_allocation,
+        complexity_assessment=justification.complexity_assessment,
+        significance=justification.significance_weight,
+        resource_justification=justification.resource_justification,
+    )
+
+
+def supervisor_expectations_from_agent(
+    parent_agent: "AgentSession",
+    justification: SubtaskJustification,
+    child_budget: float | None = None,
+    budget_weight: float | None = None,
+    total_weights: float | None = None,
+    num_siblings: int | None = None,
+    task_limit: int = DEFAULT_TASK_SUMMARY_LIMIT,
+) -> SupervisorExpectations:
+    """Build SupervisorExpectations from parent agent and justification.
+
+    Convenience wrapper that extracts parent task and budget from AgentSession.
+
+    Args:
+        parent_agent: The parent (supervisor) agent.
+        justification: The SubtaskJustification from task decomposition.
+        child_budget: The budget allocated to this child (optional).
+        budget_weight: This child's budget weight (optional).
+        total_weights: Sum of all sibling weights (optional).
+        num_siblings: Total number of sibling tasks (optional).
+        task_limit: Maximum characters for parent task summary.
+
+    Returns:
+        SupervisorExpectations value object.
+
+    Example:
+        # In ChildAgentFactory
+        context.add(supervisor_expectations_from_agent(
+            parent_agent=parent,
+            justification=subtask.justification,
+            child_budget=child.complexity_budget,
+            budget_weight=subtask.budget_weight,
+            total_weights=sum(s.budget_weight for s in subtasks),
+            num_siblings=len(subtasks),
+        ))
+    """
+    parent_task = (parent_agent.task_description or "")[:task_limit]
+    parent_budget = parent_agent.complexity_budget if parent_agent.complexity_budget > 0 else None
+
+    return supervisor_expectations_from_justification(
+        parent_task=parent_task,
+        justification=justification,
+        child_budget=child_budget,
+        parent_budget=parent_budget,
+        budget_weight=budget_weight,
+        total_weights=total_weights,
+        num_siblings=num_siblings,
+    )

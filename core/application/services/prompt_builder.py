@@ -120,6 +120,12 @@ class TemplateChain:
         self.render_if(context.has("shared_decisions"), "core/context/decisions.j2", **ctx_dict)
         self.render_if(context.has("shared_artifacts"), "core/context/artifacts.j2", **ctx_dict)
         self.render_if(context.has("child_outcomes"), "core/context/children.j2", **ctx_dict)
+        # Design Choice 4: Supervisor Expectations
+        self.render_if(
+            context.has("supervisor_expectations"),
+            "core/context/supervisor_expectations.j2",
+            **ctx_dict,
+        )
 
         # Render dynamic contexts (ancestor_* and custom_*)
         has_dynamic = context.has_any(
@@ -275,6 +281,49 @@ class PromptBuilder:
         })
 
         return base_context
+
+    def _build_supervisor_expectations_context(
+        self,
+        spawn_payload: "SpawnPayload | None",
+    ) -> dict[str, Any] | None:
+        """Build supervisor expectations context from spawn payload.
+
+        Extracts justification data from spawn_payload and builds
+        SupervisorExpectations context for template rendering.
+
+        Args:
+            spawn_payload: Spawn payload containing justification (Design Choice 4).
+
+        Returns:
+            Dict with supervisor_expectations for templates, or None if no justification.
+        """
+        if spawn_payload is None:
+            return None
+
+        justification = spawn_payload.subtask_justification
+        if not justification:
+            return None
+
+        # Build supervisor expectations context
+        from core.domain.values.subtask import SubtaskJustification
+        from core.application.services.context_factories import (
+            supervisor_expectations_from_justification,
+        )
+
+        # Reconstruct SubtaskJustification from dict
+        just_obj = SubtaskJustification(**justification)
+
+        supervisor_exp = supervisor_expectations_from_justification(
+            parent_task=spawn_payload.parent_task,
+            justification=just_obj,
+            child_budget=spawn_payload.complexity_budget if spawn_payload.complexity_budget > 0 else None,
+            parent_budget=None,  # Not available in spawn_payload
+            budget_weight=spawn_payload.budget_weight,
+            total_weights=spawn_payload.total_weights,
+            num_siblings=spawn_payload.num_siblings,
+        )
+
+        return {"supervisor_expectations": supervisor_exp.to_template_dict()}
 
     def build_complexity_evaluation_prompt(
         self,

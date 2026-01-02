@@ -10,6 +10,9 @@ Return ONLY valid JSON array:
     "justification": {
       "objective": "what this subtask achieves",
       "plan": "how it will be executed",
+      "split_reason": "why this was delegated to a sub-agent",
+      "why_it_works": "why the suggested approach should succeed",
+      "expected_results": "concrete deliverables expected from this subtask",
       "budget_allocation": "e.g., 'Allocated 200 units (20% of budget)'",
       "complexity_assessment": "e.g., 'Moderate - requires 2-3 operations'",
       "significance_weight": "e.g., 'Critical path - blocks downstream'",
@@ -36,16 +39,21 @@ Return ONLY valid JSON array:
 - Children with budget < {{ "%.1f"|format(budget_threshold) }} will become WORKERs automatically
 {% endif %}
 
-## Justification Fields
+## Justification Fields (Design Choice 4)
+
+These fields provide rich context to child agents about supervisor expectations:
 
 | Field | Purpose | Example |
 |-------|---------|---------|
-| `objective` | What the subtask achieves | "Parse and validate CVE metadata" |
-| `plan` | Execution strategy | "Extract fields, validate format, normalize" |
-| `budget_allocation` | Resource allocation reasoning | "30% - moderate parsing complexity" |
-| `complexity_assessment` | Difficulty level | "Low - deterministic extraction" |
-| `significance_weight` | Task importance | "High - blocks all downstream tasks" |
-| `resource_justification` | Why resources are needed | "Needs validation + error handling" |
+| `objective` | What the subtask achieves | "Map execution flow to NULL-deref" |
+| `plan` | Execution strategy | "1) Load source ±200 lines 2) Trace call stack..." |
+| `split_reason` | Why this was delegated | "Separates path analysis from spec design" |
+| `why_it_works` | Why approach should succeed | "gpac's parser is open-source and well-documented" |
+| `expected_results` | Concrete deliverables | "File 'path_map.md' with stack trace and MP4 boxes" |
+| `budget_allocation` | Resource allocation | "40% of budget (weight 1.6 of 4.0)" |
+| `complexity_assessment` | Difficulty level | "MODERATE: Multi-file code tracing" |
+| `significance_weight` | Task importance | "CRITICAL PATH: Blocks downstream tasks" |
+| `resource_justification` | Why resources needed | "Static analysis demands line-by-line reasoning" |
 
 ## Config Strategies
 

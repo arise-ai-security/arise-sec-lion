@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from core.application.pipeline.executor import Pipeline
 from core.application.pipeline.steps.budget import CheckBudgetThreshold, ProbabilisticWorkerShortcut
+from core.application.pipeline.steps.context import InjectSupervisorExpectations
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
     SpawnChildren,
@@ -88,12 +89,13 @@ class PipelineFactory:
         1. ValidatePendingAgent - Assert PENDING + ANALYZING
         2. ProbabilisticWorkerShortcut - Russian Roulette chance to force WORKER (Design Choice 3)
         3. CheckBudgetThreshold - Short-circuit if budget too low (Design Choice 2)
-        4. BuildComplexityPrompt - Via PromptBuilder
-        5. EmitPromptSent - Observability
-        6. QueryLLM - Call LLM port
-        7. EmitTokensConsumed - Cost tracking
-        8. ParseComplexityResult - Parse JSON (simple/complex)
-        9. ApplyComplexityResult - Call agent.apply_complexity_result()
+        4. InjectSupervisorExpectations - Inject parent justification context (Design Choice 4)
+        5. BuildComplexityPrompt - Via PromptBuilder
+        6. EmitPromptSent - Observability
+        7. QueryLLM - Call LLM port
+        8. EmitTokensConsumed - Cost tracking
+        9. ParseComplexityResult - Parse JSON (simple/complex)
+        10. ApplyComplexityResult - Call agent.apply_complexity_result()
 
         Returns:
             Configured Pipeline for complexity evaluation
@@ -109,6 +111,7 @@ class PipelineFactory:
             steps.append(CheckBudgetThreshold(budget_config))
 
         steps.extend([
+            InjectSupervisorExpectations(),  # Design Choice 4
             BuildComplexityPrompt(self._prompt_builder),
             EmitPromptSent(prompt_type="complexity_evaluation", target="llm"),
             QueryLLM(self._llm_port, operation="complexity_evaluation"),
@@ -157,9 +160,10 @@ class PipelineFactory:
         Pipeline steps:
         1. ValidateWorkerAgent - Assert WORKER + ANALYZING
         2. StartWorkerExecution - Emit CodeGenerationStarted
-        3. BuildWorkerPrompt - Via PromptBuilder
-        4. EmitPromptSent - Observability (target=dynamic -> tool name)
-        5. RunWorkerSession - Execute via worker_port, apply events
+        3. InjectSupervisorExpectations - Inject parent justification context (Design Choice 4)
+        4. BuildWorkerPrompt - Via PromptBuilder
+        5. EmitPromptSent - Observability (target=dynamic -> tool name)
+        6. RunWorkerSession - Execute via worker_port, apply events
 
         Returns:
             Configured Pipeline for worker execution
@@ -169,6 +173,7 @@ class PipelineFactory:
             steps=[
                 ValidateWorkerAgent,
                 StartWorkerExecution(),
+                InjectSupervisorExpectations(),  # Design Choice 4
                 BuildWorkerPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
                 RunWorkerSession(self._worker_port),

@@ -1,0 +1,54 @@
+{# Supervisor expectations template for Design Choice 4 #}
+{# Renders rich justification context from parent thinker to child agent #}
+
+{% if supervisor_expectations %}
+<SUPERVISOR_EXPECTATIONS>
+Your supervisor assigned this task with the following context and expectations:
+
+**Supervisor's Original Task**: {{ supervisor_expectations.supervisor_task }}
+
+**Objective for This Subtask**: {{ supervisor_expectations.objective }}
+{% if supervisor_expectations.split_reason %}
+
+**Why This Was Assigned to You**: {{ supervisor_expectations.split_reason }}
+{% endif %}
+{% if supervisor_expectations.suggested_approach %}
+
+**Suggested Approach**: {{ supervisor_expectations.suggested_approach }}
+{% endif %}
+{% if supervisor_expectations.why_it_works %}
+
+**Why This Should Work**: {{ supervisor_expectations.why_it_works }}
+{% endif %}
+{% if supervisor_expectations.expected_deliverables %}
+
+**Expected Deliverables**: {{ supervisor_expectations.expected_deliverables }}
+{% endif %}
+{% if supervisor_expectations.has_budget_context %}
+
+## Budget Allocation Context
+Your supervisor has allocated resources for this task with the following reasoning:
+{% if supervisor_expectations.budget_allocation %}
+
+**Budget Allocation**: {{ supervisor_expectations.budget_allocation }}
+{% endif %}
+{% if supervisor_expectations.complexity_assessment %}
+
+**Complexity Assessment**: {{ supervisor_expectations.complexity_assessment }}
+{% endif %}
+{% if supervisor_expectations.significance %}
+
+**Significance/Priority**: {{ supervisor_expectations.significance }}
+{% endif %}
+{% if supervisor_expectations.resource_justification %}
+
+**Resource Justification**: {{ supervisor_expectations.resource_justification }}
+{% endif %}
+
+Use this context to calibrate your effort:
+- Higher budget % indicates more thorough work expected
+- The complexity assessment tells you expected difficulty
+- Significance helps prioritize quality vs. speed
+{% endif %}
+</SUPERVISOR_EXPECTATIONS>
+{% endif %}
