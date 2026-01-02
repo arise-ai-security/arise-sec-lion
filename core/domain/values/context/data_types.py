@@ -374,24 +374,24 @@ class CustomContext(BaseModel):
 
 
 # =============================================================================
-# Supervisor Expectations (Design Choice 4: Thinker Justification)
+# Thinker Justification (Design Choice 4)
 # =============================================================================
 
 
-class SupervisorExpectations(BaseModel):
-    """Context passed from supervisor (thinker) to child agent (Design Choice 4).
+class ThinkerJustification(BaseModel):
+    """Thinker Justification: Context passed from thinker to worker (Design Choice 4).
 
-    Provides rich justification context about why this task was assigned
-    and what the supervisor expects. This helps child agents understand:
-    - The bigger picture (supervisor's original task)
-    - Their specific objective
-    - Why they were chosen for this work
-    - Suggested approach and expected deliverables
-    - Resource allocation reasoning
+    The reasoning provided by the thinker agent to explain why a specific
+    subtask is assigned to a worker agent. This helps child agents understand:
+    - The bigger picture (thinker's original task)
+    - Their specific objective and why it's relevant
+    - How to finish the subtask (suggested approach)
+    - The percentage of complexity/token budget assigned
+    - What deliverables are expected
 
     Example:
-        context.add(SupervisorExpectations(
-            supervisor_task="Build gpac environment using Dockerfile",
+        context.add(ThinkerJustification(
+            thinker_task="Build gpac environment using Dockerfile",
             objective="Establish Docker build environment with correct version",
             split_reason="Separates environment setup from build execution",
             suggested_approach="Use provided Dockerfile to clone gpac at commit...",
@@ -406,8 +406,8 @@ class SupervisorExpectations(BaseModel):
 
     model_config = {"frozen": True}
 
-    # Core justification from supervisor
-    supervisor_task: str  # The supervisor's original task
+    # Core justification from thinker
+    thinker_task: str  # The thinker's original task
     objective: str  # What this specific subtask should achieve
     split_reason: str = ""  # Why this was delegated to a sub-agent
     suggested_approach: str = ""  # Recommended execution plan
@@ -422,11 +422,11 @@ class SupervisorExpectations(BaseModel):
 
     @property
     def template_key(self) -> str:
-        return "supervisor_expectations"
+        return "thinker_justification"
 
     def to_template_dict(self) -> dict[str, Any]:
         return {
-            "supervisor_task": self.supervisor_task,
+            "thinker_task": self.thinker_task,
             "objective": self.objective,
             "split_reason": self.split_reason,
             "suggested_approach": self.suggested_approach,
@@ -438,6 +438,10 @@ class SupervisorExpectations(BaseModel):
             "resource_justification": self.resource_justification,
             "has_budget_context": bool(self.budget_allocation),
         }
+
+
+# Backward compatibility alias
+SupervisorExpectations = ThinkerJustification
 
 
 # =============================================================================

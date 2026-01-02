@@ -118,12 +118,12 @@ class GenerateWorkerReport:
         if agent.result is None:
             return StepResult.ok(state)
 
-        # Extract supervisor expectations for alignment check
-        supervisor_objective = ""
+        # Extract thinker justification for alignment check
+        thinker_objective = ""
         if state.context_composer:
             ctx = state.context_composer.build()
-            if "supervisor_expectations" in ctx:
-                supervisor_objective = ctx.get("supervisor_expectations", {}).get(
+            if "thinker_justification" in ctx:
+                thinker_objective = ctx.get("thinker_justification", {}).get(
                     "objective", ""
                 )
 
@@ -132,9 +132,10 @@ class GenerateWorkerReport:
             original_task=agent.task_description or "",
             approach=_extract_approach(agent.result),
             observations=_extract_observations(agent.result),
+            challenges_encountered=_extract_challenges(agent.result),
             deliverables=_extract_deliverables(agent.result),
             fulfillment_evidence=_build_fulfillment_evidence(
-                agent.result, supervisor_objective
+                agent.result, thinker_objective
             ),
         )
 
@@ -169,6 +170,31 @@ def _extract_observations(result: str) -> str:
         observations.append("Made discoveries during execution")
 
     return "; ".join(observations) if observations else ""
+
+
+def _extract_challenges(result: str) -> str:
+    """Extract challenges encountered from worker result."""
+    # Look for common patterns indicating challenges or difficulties
+    challenges = []
+    result_lower = result.lower()
+
+    # Check for error patterns
+    if "error" in result_lower or "failed" in result_lower:
+        challenges.append("Encountered errors during execution")
+
+    # Check for difficulty indicators
+    if "difficult" in result_lower or "challenging" in result_lower:
+        challenges.append("Faced difficulties")
+
+    # Check for workaround patterns
+    if "workaround" in result_lower or "instead" in result_lower:
+        challenges.append("Required workarounds")
+
+    # Check for retry/attempt patterns
+    if "retry" in result_lower or "attempt" in result_lower:
+        challenges.append("Multiple attempts needed")
+
+    return "; ".join(challenges) if challenges else ""
 
 
 def _extract_deliverables(result: str) -> str:

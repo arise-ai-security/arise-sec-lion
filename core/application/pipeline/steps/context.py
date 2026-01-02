@@ -7,23 +7,23 @@ from typing import TYPE_CHECKING
 
 from core.application.pipeline.context import PipelineState, StepResult
 from core.application.services.context_composer import ContextComposer
-from core.domain.values.context import SupervisorExpectations
+from core.domain.values.context import ThinkerJustification
 from core.domain.values.subtask import SubtaskJustification
 
 if TYPE_CHECKING:
     from core.domain.values.context import SpawnPayload
 
 
-class InjectSupervisorExpectations:
-    """Inject supervisor expectations context into the pipeline state.
+class InjectThinkerJustification:
+    """Inject thinker justification context into the pipeline state.
 
     Design Choice 4: Thinker Justification Context Passing
 
     This step extracts justification from the agent's spawn_payload and
-    creates SupervisorExpectations context that can be rendered in prompts.
+    creates ThinkerJustification context that can be rendered in prompts.
 
     When present, this context provides child agents with:
-    - Supervisor's original task
+    - Thinker's original task
     - Objective for this subtask
     - Why this was assigned (split_reason)
     - Suggested approach and why it should work
@@ -35,10 +35,10 @@ class InjectSupervisorExpectations:
     """
 
     async def execute(self, state: PipelineState) -> StepResult:
-        """Inject supervisor expectations into pipeline state context composer.
+        """Inject thinker justification into pipeline state context composer.
 
         If the agent has a spawn_payload with justification, creates
-        SupervisorExpectations and adds it to the context composer.
+        ThinkerJustification and adds it to the context composer.
         """
         agent = state.agent
         spawn_payload = agent.spawn_payload
@@ -53,31 +53,31 @@ class InjectSupervisorExpectations:
         # Reconstruct SubtaskJustification from dict
         justification = SubtaskJustification(**justification_dict)
 
-        # Build supervisor expectations
-        supervisor_expectations = self._build_supervisor_expectations(
+        # Build thinker justification
+        thinker_justification = self._build_thinker_justification(
             spawn_payload=spawn_payload,
             justification=justification,
         )
 
-        # Get or create context composer and add supervisor expectations
+        # Get or create context composer and add thinker justification
         composer = state.context_composer or ContextComposer()
-        composer.add(supervisor_expectations)
+        composer.add(thinker_justification)
 
         return StepResult.ok(state.with_context_composer(composer))
 
-    def _build_supervisor_expectations(
+    def _build_thinker_justification(
         self,
         spawn_payload: "SpawnPayload",
         justification: SubtaskJustification,
-    ) -> SupervisorExpectations:
-        """Build SupervisorExpectations from spawn_payload and justification.
+    ) -> ThinkerJustification:
+        """Build ThinkerJustification from spawn_payload and justification.
 
         Args:
             spawn_payload: The spawn payload from parent agent.
             justification: The subtask justification.
 
         Returns:
-            SupervisorExpectations context object.
+            ThinkerJustification context object.
         """
         # Build budget allocation string if budget info is available
         budget_allocation = justification.budget_allocation
@@ -97,8 +97,8 @@ class InjectSupervisorExpectations:
             else:
                 budget_allocation = f"Budget: {child_budget:.0f} units"
 
-        return SupervisorExpectations(
-            supervisor_task=spawn_payload.parent_task,
+        return ThinkerJustification(
+            thinker_task=spawn_payload.parent_task,
             objective=justification.objective,
             split_reason=justification.split_reason,
             suggested_approach=justification.plan,
@@ -109,3 +109,7 @@ class InjectSupervisorExpectations:
             significance=justification.significance_weight,
             resource_justification=justification.resource_justification,
         )
+
+
+# Backward compatibility alias
+InjectSupervisorExpectations = InjectThinkerJustification

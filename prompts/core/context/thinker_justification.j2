@@ -1,0 +1,55 @@
+{# Thinker Justification template for Design Choice 4 #}
+{# Renders rich justification context from parent thinker to child worker #}
+{# The reasoning provided by the thinker agent explaining why this subtask is assigned #}
+
+{% if thinker_justification %}
+<THINKER_JUSTIFICATION>
+Your thinker (parent agent) assigned this task with the following context and expectations:
+
+**Thinker's Original Task**: {{ thinker_justification.thinker_task }}
+
+**Objective for This Subtask**: {{ thinker_justification.objective }}
+{% if thinker_justification.split_reason %}
+
+**Why This Was Assigned to You**: {{ thinker_justification.split_reason }}
+{% endif %}
+{% if thinker_justification.suggested_approach %}
+
+**How to Finish This Subtask**: {{ thinker_justification.suggested_approach }}
+{% endif %}
+{% if thinker_justification.why_it_works %}
+
+**Why This Approach Should Work**: {{ thinker_justification.why_it_works }}
+{% endif %}
+{% if thinker_justification.expected_deliverables %}
+
+**Expected Deliverables**: {{ thinker_justification.expected_deliverables }}
+{% endif %}
+{% if thinker_justification.has_budget_context %}
+
+## Budget Allocation Context
+Your thinker has allocated resources for this task with the following reasoning:
+{% if thinker_justification.budget_allocation %}
+
+**Budget Allocation**: {{ thinker_justification.budget_allocation }}
+{% endif %}
+{% if thinker_justification.complexity_assessment %}
+
+**Complexity Assessment**: {{ thinker_justification.complexity_assessment }}
+{% endif %}
+{% if thinker_justification.significance %}
+
+**Significance/Priority**: {{ thinker_justification.significance }}
+{% endif %}
+{% if thinker_justification.resource_justification %}
+
+**Resource Justification**: {{ thinker_justification.resource_justification }}
+{% endif %}
+
+Use this context to calibrate your effort:
+- Higher budget % indicates more thorough work expected
+- The complexity assessment tells you expected difficulty
+- Significance helps prioritize quality vs. speed
+{% endif %}
+</THINKER_JUSTIFICATION>
+{% endif %}

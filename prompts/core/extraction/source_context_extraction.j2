@@ -1,0 +1,101 @@
+{# Source context extraction prompt (Design Choice 6 & 7) #}
+{# Extracts structured key information from user task description #}
+
+<EXTRACT_SOURCE_CONTEXT>
+You are analyzing a task description to extract structured key information.
+This information will be used to guide all agents working on this task.
+
+<task_description>
+{{ task_description }}
+</task_description>
+
+## Extraction Instructions
+
+Extract the following information (if present). Use EXACT values from the input - do not paraphrase or summarize commands, file paths, commits, or error messages.
+
+### Design Choice 6: Key Information Extraction
+
+1. **Bug/Issue Summary**: One-sentence description of the problem
+2. **Error Messages**: Actual error output, stack traces, sanitizer logs (preserve exact formatting)
+3. **Reproduction Steps**: Numbered steps to reproduce the issue
+4. **Referenced Files**: File paths explicitly mentioned by the user
+5. **Commit/Version References**: Git commits, tags, branch names
+6. **Related URLs**: GitHub issues, CVE links, documentation URLs
+7. **Environment**: OS, compiler, library versions
+8. **Dependencies**: Required packages (e.g., "build-essential", "libz-dev")
+9. **Key Facts**: Important constraints and facts explicitly stated
+
+### Design Choice 7: CWE Pattern Inference
+
+For security-related tasks, infer applicable CWE patterns from the context:
+
+**Common CWE Indicators**:
+- CWE-476 (NULL Pointer Dereference): SEGV, "null", "nullptr", address 0x0
+- CWE-787 (Out-of-bounds Write): Buffer overflow, heap-buffer-overflow
+- CWE-125 (Out-of-bounds Read): Read past end, array index
+- CWE-416 (Use After Free): UAF, heap-use-after-free
+- CWE-89 (SQL Injection): SQL error, query, database
+- CWE-79 (XSS): Script injection, innerHTML, user input in HTML
+- CWE-190 (Integer Overflow): Wrap around, large allocation
+
+For each inferred CWE, provide:
+- **Reasoning**: What indicators led to this inference
+- **Fix Pattern**: High-level remediation approach
+- **Recommended Sanitizers**: Verification tools
+
+## Response Format
+
+Respond with a JSON object containing ALL fields below. Use empty strings, empty lists, or false for missing information:
+
+```json
+{
+  "extraction_summary": "Brief summary of extracted context (1-2 sentences)",
+  "key_references": ["file1.c", "commit abc123", "https://github.com/..."],
+  "has_bug_report": true,
+  "has_error_details": true,
+  "has_file_references": true,
+  "has_code_snippets": false,
+  "extracted_entities": {
+    "bug_summary": "Null pointer dereference in function X at file.c:123",
+    "error_messages": [
+      "==12345==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000",
+      "#0 0x7f... in function_name file.c:123"
+    ],
+    "reproduction_steps": [
+      "git clone https://...",
+      "cd project && git checkout abc123",
+      "./configure --enable-sanitizer",
+      "make -j4",
+      "./binary input.poc"
+    ],
+    "referenced_files": ["src/file.c", "testcase/poc.bin"],
+    "commit_references": ["abc123", "v2.4.0"],
+    "related_urls": ["https://github.com/project/issues/123"],
+    "environment": "ubuntu:20.04, gcc 9.4.0",
+    "dependencies": ["build-essential", "libz-dev"],
+    "build_command": "make -j4",
+    "configure_command": "./configure --enable-sanitizer",
+    "poc_command": "./binary input.poc",
+    "key_facts": [
+      "The bug affects version 2.4",
+      "Only triggered when input contains specific pattern"
+    ]
+  },
+  "inferred_cwes": ["CWE-476"],
+  "cwe_reasoning": {
+    "CWE-476": "AddressSanitizer reports SEGV on address 0x0 (NULL). Error message indicates null pointer dereference."
+  },
+  "recommended_sanitizers": ["-fsanitize=address", "-fsanitize=undefined"],
+  "fix_patterns": {
+    "CWE-476": "Add NULL check before dereferencing pointer. Validate pointer after function return or assignment."
+  }
+}
+```
+
+## Important Notes
+
+- Preserve EXACT values for commands, file paths, commits, and error messages
+- If information is not present, use empty string "" or empty list []
+- For CWE inference, only include CWEs with clear indicators in the text
+- Do not make up information - only extract what is explicitly stated or clearly implied
+</EXTRACT_SOURCE_CONTEXT>

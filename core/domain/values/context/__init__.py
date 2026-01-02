@@ -43,7 +43,8 @@ from core.domain.values.context.data_types import (
     SharedDecisions,
     SiblingEntry,
     SiblingResults,
-    SupervisorExpectations,
+    SupervisorExpectations,  # Backward compatibility alias
+    ThinkerJustification,
 )
 from core.domain.values.context.limits import HierarchyLimits
 from core.domain.values.context.parent_to_child import (
@@ -75,7 +76,8 @@ __all__ = [
     "ChildOutcomeEntry",
     "ChildOutcomes",
     "CustomContext",
-    "SupervisorExpectations",
+    "ThinkerJustification",
+    "SupervisorExpectations",  # Backward compatibility alias
     # Coworker Knowledge (Design Choice 5)
     "CoworkerKnowledge",
     "CoworkerKnowledgeEntry",

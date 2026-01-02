@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from core.application.pipeline.executor import Pipeline
 from core.application.pipeline.steps.budget import CheckBudgetThreshold, ProbabilisticWorkerShortcut
-from core.application.pipeline.steps.context import InjectSupervisorExpectations
+from core.application.pipeline.steps.context import InjectThinkerJustification
 from core.application.pipeline.steps.domain import (
     ApplyComplexityResult,
     SpawnChildren,
@@ -24,6 +24,11 @@ from core.application.pipeline.steps.domain import (
 from core.application.pipeline.steps.knowledge import (
     GenerateWorkerReport,
     InjectCoworkerKnowledge,
+)
+from core.application.pipeline.steps.source_context import (
+    ExtractSourceContext,
+    InjectSourceContext,
+    PublishSourceContext,
 )
 from core.application.pipeline.steps.limits import CheckLimitViolations, DetermineChildRole
 from core.application.pipeline.steps.llm import QueryLLM
@@ -97,13 +102,14 @@ class PipelineFactory:
         1. ValidatePendingAgent - Assert PENDING + ANALYZING
         2. ProbabilisticWorkerShortcut - Russian Roulette chance to force WORKER (Design Choice 3)
         3. CheckBudgetThreshold - Short-circuit if budget too low (Design Choice 2)
-        4. InjectSupervisorExpectations - Inject parent justification context (Design Choice 4)
-        5. BuildComplexityPrompt - Via PromptBuilder
-        6. EmitPromptSent - Observability
-        7. QueryLLM - Call LLM port
-        8. EmitTokensConsumed - Cost tracking
-        9. ParseComplexityResult - Parse JSON (simple/complex)
-        10. ApplyComplexityResult - Call agent.apply_complexity_result()
+        4. InjectThinkerJustification - Inject parent justification context (Design Choice 4)
+        5. InjectSourceContext - Inject source context from BOSS (Design Choice 6 & 7)
+        6. BuildComplexityPrompt - Via PromptBuilder
+        7. EmitPromptSent - Observability
+        8. QueryLLM - Call LLM port
+        9. EmitTokensConsumed - Cost tracking
+        10. ParseComplexityResult - Parse JSON (simple/complex)
+        11. ApplyComplexityResult - Call agent.apply_complexity_result()
 
         Returns:
             Configured Pipeline for complexity evaluation
@@ -118,8 +124,13 @@ class PipelineFactory:
             # Design Choice 2: Budget threshold check
             steps.append(CheckBudgetThreshold(budget_config))
 
+        steps.append(InjectThinkerJustification())  # Design Choice 4
+
+        # DC6 & DC7: Inject source context from BOSS
+        if self._shared_context_port is not None:
+            steps.append(InjectSourceContext(self._shared_context_port))
+
         steps.extend([
-            InjectSupervisorExpectations(),  # Design Choice 4
             BuildComplexityPrompt(self._prompt_builder),
             EmitPromptSent(prompt_type="complexity_evaluation", target="llm"),
             QueryLLM(self._llm_port, operation="complexity_evaluation"),
@@ -135,32 +146,41 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidateDecomposingAgent - Assert BOSS/MANAGER + ANALYZING
-        2. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER) with budget context
-        3. EmitPromptSent - Observability
-        4. QueryLLM - Call LLM port
-        5. EmitTokensConsumed - Cost tracking
-        6. ParseSubtasks - Parse JSON, handle ConstraintFailure
-        7. CheckLimitViolations - Hard enforcement (children, total_agents)
-        8. DetermineChildRole - Soft enforcement (force WORKER at max depth)
-        9. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
+        2. ExtractSourceContext - DC6 & DC7: Extract key info from BOSS task (BOSS only)
+        3. PublishSourceContext - DC6 & DC7: Publish to SharedExecutionContext (BOSS only)
+        4. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER) with budget context
+        5. EmitPromptSent - Observability
+        6. QueryLLM - Call LLM port
+        7. EmitTokensConsumed - Cost tracking
+        8. ParseSubtasks - Parse JSON, handle ConstraintFailure
+        9. CheckLimitViolations - Hard enforcement (children, total_agents)
+        10. DetermineChildRole - Soft enforcement (force WORKER at max depth)
+        11. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
 
         Returns:
             Configured Pipeline for task decomposition
         """
-        return Pipeline(
-            name="task_decomposition",
-            steps=[
-                ValidateDecomposingAgent,
-                BuildDecompositionPrompt(self._prompt_builder, self._orchestration_config),
-                EmitPromptSent(prompt_type="task_decomposition", target="llm"),
-                QueryLLM(self._llm_port, operation="task_decomposition"),
-                EmitTokensConsumed(operation="task_decomposition"),
-                ParseSubtasks(),
-                CheckLimitViolations(self._child_factory),
-                DetermineChildRole(),
-                SpawnChildren(),
-            ],
-        )
+        steps: list = [ValidateDecomposingAgent]
+
+        # DC6 & DC7: Extract and publish source context (BOSS only, skipped for MANAGER)
+        if self._shared_context_port is not None:
+            steps.extend([
+                ExtractSourceContext(self._llm_port, self._prompt_builder),
+                PublishSourceContext(self._shared_context_port),
+            ])
+
+        steps.extend([
+            BuildDecompositionPrompt(self._prompt_builder, self._orchestration_config),
+            EmitPromptSent(prompt_type="task_decomposition", target="llm"),
+            QueryLLM(self._llm_port, operation="task_decomposition"),
+            EmitTokensConsumed(operation="task_decomposition"),
+            ParseSubtasks(),
+            CheckLimitViolations(self._child_factory),
+            DetermineChildRole(),
+            SpawnChildren(),
+        ])
+
+        return Pipeline(name="task_decomposition", steps=steps)
 
     def create_worker_pipeline(self) -> Pipeline:
         """Create pipeline for WORKER task execution.
@@ -168,12 +188,13 @@ class PipelineFactory:
         Pipeline steps:
         1. ValidateWorkerAgent - Assert WORKER + ANALYZING
         2. StartWorkerExecution - Emit CodeGenerationStarted
-        3. InjectSupervisorExpectations - Inject parent justification context (Design Choice 4)
+        3. InjectThinkerJustification - Inject parent justification context (Design Choice 4)
         4. InjectCoworkerKnowledge - Inject published knowledge from earlier workers (Design Choice 5)
-        5. BuildWorkerPrompt - Via PromptBuilder
-        6. EmitPromptSent - Observability (target=dynamic -> tool name)
-        7. RunWorkerSession - Execute via worker_port, apply events
-        8. GenerateWorkerReport - Generate structured report for parent (Design Choice 5)
+        5. InjectSourceContext - Inject source context from BOSS (Design Choice 6 & 7)
+        6. BuildWorkerPrompt - Via PromptBuilder
+        7. EmitPromptSent - Observability (target=dynamic -> tool name)
+        8. RunWorkerSession - Execute via worker_port, apply events
+        9. GenerateWorkerReport - Generate structured report for parent (Design Choice 5)
 
         Returns:
             Configured Pipeline for worker execution
@@ -181,12 +202,14 @@ class PipelineFactory:
         steps: list = [
             ValidateWorkerAgent,
             StartWorkerExecution(),
-            InjectSupervisorExpectations(),  # Design Choice 4
+            InjectThinkerJustification(),  # Design Choice 4
         ]
 
         # Design Choice 5: Inject coworker knowledge if shared context port is available
+        # Design Choice 6 & 7: Inject source context from BOSS
         if self._shared_context_port is not None:
-            steps.append(InjectCoworkerKnowledge(self._shared_context_port))
+            steps.append(InjectCoworkerKnowledge(self._shared_context_port))  # DC5
+            steps.append(InjectSourceContext(self._shared_context_port))  # DC6 & DC7
 
         steps.extend([
             BuildWorkerPrompt(self._prompt_builder),

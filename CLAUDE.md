@@ -111,6 +111,8 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | [`budgeted_tree_plus.md`](agent-docs/budgeted_tree_plus.md) | Design Choice 3: Proportional budget allocation |
 | [`thinker_justification.md`](agent-docs/thinker_justification.md) | Design Choice 4: Thinker justification context passing |
 | [`worker_report_context.md`](agent-docs/worker_report_context.md) | Design Choice 5: Worker report context passing |
+| [`boss_key_context.md`](agent-docs/boss_key_context.md) | Design Choice 6: Boss key context extraction and broadcast |
+| [`inferred_cwe_context.md`](agent-docs/inferred_cwe_context.md) | Design Choice 7: Inferred CWE pattern context passing |
 
 ## Example Branches
 

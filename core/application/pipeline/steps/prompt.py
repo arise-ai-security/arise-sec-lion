@@ -22,8 +22,8 @@ class BuildComplexityPrompt:
     Uses PromptBuilder to construct a prompt that asks the LLM
     to evaluate whether a task is simple (WORKER) or complex (MANAGER).
 
-    If InjectSupervisorExpectations was run before this step,
-    supervisor context will be prepended to the prompt.
+    If InjectThinkerJustification was run before this step,
+    thinker justification context will be prepended to the prompt.
     """
 
     def __init__(self, prompt_builder: "PromptBuilder") -> None:
@@ -51,20 +51,34 @@ class BuildComplexityPrompt:
         return StepResult.ok(state.with_prompt(prompt))
 
     def _prepend_context(self, prompt: str, state: PipelineState) -> str:
-        """Prepend supervisor expectations context to prompt if available."""
+        """Prepend context (supervisor expectations, source context) to prompt."""
         if state.context_composer is None:
             return prompt
 
-        if not state.context_composer.has("supervisor_expectations"):
-            return prompt
+        context_parts: list[str] = []
+        ctx = state.context_composer.build()
 
-        # Render supervisor expectations template
-        supervisor_prompt = self._prompt_builder.chain().render(
-            "core/context/supervisor_expectations.j2",
-            **state.context_composer.build(),
-        ).build()
+        # Design Choice 4: Thinker Justification
+        if state.context_composer.has("thinker_justification"):
+            thinker_prompt = self._prompt_builder.chain().render(
+                "core/context/thinker_justification.j2",
+                **ctx,
+            ).build()
+            if thinker_prompt:
+                context_parts.append(thinker_prompt)
 
-        return supervisor_prompt + "\n\n" + prompt if supervisor_prompt else prompt
+        # Design Choice 6 & 7: Source context
+        if state.context_composer.has("source_context"):
+            source_prompt = self._prompt_builder.chain().render(
+                "core/context/source.j2",
+                **ctx,
+            ).build()
+            if source_prompt:
+                context_parts.append(source_prompt)
+
+        if context_parts:
+            return "\n\n".join(context_parts) + "\n\n" + prompt
+        return prompt
 
 
 class BuildDecompositionPrompt:
@@ -170,17 +184,40 @@ class BuildWorkerPrompt:
         return StepResult.ok(state.with_prompt(prompt))
 
     def _prepend_context(self, prompt: str, state: PipelineState) -> str:
-        """Prepend supervisor expectations context to prompt if available."""
+        """Prepend context (supervisor expectations, source context, coworker knowledge) to prompt."""
         if state.context_composer is None:
             return prompt
 
-        if not state.context_composer.has("supervisor_expectations"):
-            return prompt
+        context_parts: list[str] = []
+        ctx = state.context_composer.build()
 
-        # Render supervisor expectations template
-        supervisor_prompt = self._prompt_builder.chain().render(
-            "core/context/supervisor_expectations.j2",
-            **state.context_composer.build(),
-        ).build()
+        # Design Choice 4: Thinker Justification
+        if state.context_composer.has("thinker_justification"):
+            thinker_prompt = self._prompt_builder.chain().render(
+                "core/context/thinker_justification.j2",
+                **ctx,
+            ).build()
+            if thinker_prompt:
+                context_parts.append(thinker_prompt)
 
-        return supervisor_prompt + "\n\n" + prompt if supervisor_prompt else prompt
+        # Design Choice 6 & 7: Source context
+        if state.context_composer.has("source_context"):
+            source_prompt = self._prompt_builder.chain().render(
+                "core/context/source.j2",
+                **ctx,
+            ).build()
+            if source_prompt:
+                context_parts.append(source_prompt)
+
+        # Design Choice 5: Coworker knowledge
+        if state.context_composer.has("coworker_knowledge"):
+            coworker_prompt = self._prompt_builder.chain().render(
+                "core/context/coworker_knowledge.j2",
+                **ctx,
+            ).build()
+            if coworker_prompt:
+                context_parts.append(coworker_prompt)
+
+        if context_parts:
+            return "\n\n".join(context_parts) + "\n\n" + prompt
+        return prompt

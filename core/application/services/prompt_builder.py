@@ -120,16 +120,22 @@ class TemplateChain:
         self.render_if(context.has("shared_decisions"), "core/context/decisions.j2", **ctx_dict)
         self.render_if(context.has("shared_artifacts"), "core/context/artifacts.j2", **ctx_dict)
         self.render_if(context.has("child_outcomes"), "core/context/children.j2", **ctx_dict)
-        # Design Choice 4: Supervisor Expectations
+        # Design Choice 4: Thinker Justification
         self.render_if(
-            context.has("supervisor_expectations"),
-            "core/context/supervisor_expectations.j2",
+            context.has("thinker_justification"),
+            "core/context/thinker_justification.j2",
             **ctx_dict,
         )
         # Design Choice 5: Coworker Knowledge
         self.render_if(
             context.has("coworker_knowledge"),
             "core/context/coworker_knowledge.j2",
+            **ctx_dict,
+        )
+        # Design Choice 6 & 7: Source Context
+        self.render_if(
+            context.has("source_context"),
+            "core/context/source.j2",
             **ctx_dict,
         )
 
@@ -288,20 +294,20 @@ class PromptBuilder:
 
         return base_context
 
-    def _build_supervisor_expectations_context(
+    def _build_thinker_justification_context(
         self,
         spawn_payload: "SpawnPayload | None",
     ) -> dict[str, Any] | None:
-        """Build supervisor expectations context from spawn payload.
+        """Build thinker justification context from spawn payload.
 
         Extracts justification data from spawn_payload and builds
-        SupervisorExpectations context for template rendering.
+        ThinkerJustification context for template rendering.
 
         Args:
             spawn_payload: Spawn payload containing justification (Design Choice 4).
 
         Returns:
-            Dict with supervisor_expectations for templates, or None if no justification.
+            Dict with thinker_justification for templates, or None if no justification.
         """
         if spawn_payload is None:
             return None
@@ -310,17 +316,17 @@ class PromptBuilder:
         if not justification:
             return None
 
-        # Build supervisor expectations context
+        # Build thinker justification context
         from core.domain.values.subtask import SubtaskJustification
         from core.application.services.context_factories import (
-            supervisor_expectations_from_justification,
+            thinker_justification_from_subtask,
         )
 
         # Reconstruct SubtaskJustification from dict
         just_obj = SubtaskJustification(**justification)
 
-        supervisor_exp = supervisor_expectations_from_justification(
-            parent_task=spawn_payload.parent_task,
+        thinker_just = thinker_justification_from_subtask(
+            thinker_task=spawn_payload.parent_task,
             justification=just_obj,
             child_budget=spawn_payload.complexity_budget if spawn_payload.complexity_budget > 0 else None,
             parent_budget=None,  # Not available in spawn_payload
@@ -329,7 +335,7 @@ class PromptBuilder:
             num_siblings=spawn_payload.num_siblings,
         )
 
-        return {"supervisor_expectations": supervisor_exp.to_template_dict()}
+        return {"thinker_justification": thinker_just.to_template_dict()}
 
     def build_complexity_evaluation_prompt(
         self,
@@ -642,5 +648,33 @@ class PromptBuilder:
             .text(f"<TASK_TO_DELEGATE>\n{task_description}\n</TASK_TO_DELEGATE>")
             .render("core/output/subtasks.j2", default_tool=tool, **limits)
             .with_cve_context(cve_instance)
+            .build()
+        )
+
+    # -------------------------------------------------------------------------
+    # Source Context Extraction (Design Choice 6 & 7)
+    # -------------------------------------------------------------------------
+
+    def build_source_context_extraction_prompt(
+        self,
+        task_description: str,
+    ) -> str:
+        """Build prompt for extracting source context from task description.
+
+        Uses LLM to parse unstructured user input and extract structured
+        key information (DC6) and inferred CWE patterns (DC7).
+
+        Args:
+            task_description: The original task description from user input.
+
+        Returns:
+            Complete prompt string for source context extraction.
+        """
+        return (
+            self.chain()
+            .render(
+                "core/extraction/source_context_extraction.j2",
+                task_description=task_description,
+            )
             .build()
         )

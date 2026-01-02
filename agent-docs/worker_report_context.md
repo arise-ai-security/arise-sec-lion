@@ -83,17 +83,13 @@ class WorkerReport(BaseModel):
     original_task: str = ""           # The task assigned to this worker
 
     # Execution details
-    approach: str = ""                # How the task was executed
-    reasoning: str = ""               # Why this approach was chosen
-    observations: str = ""            # What was discovered during execution
-    challenges: str = ""              # Difficulties encountered
+    approach: str = ""                 # How the task was executed
+    observations: str = ""             # What was discovered during execution
+    challenges_encountered: str = ""   # Difficulties encountered during execution
 
     # Outcomes
-    deliverables: str = ""            # What was produced (files, artifacts)
-    fulfillment_evidence: str = ""    # How supervisor expectations were met
-
-    # Alignment with supervisor expectations (Design Choice 4 integration)
-    justification_alignment: str = "" # How work aligned with SubtaskJustification
+    deliverables: str = ""             # What was produced (files, artifacts)
+    fulfillment_evidence: str = ""     # How thinker expectations were met
 ```
 
 ### Example Worker Report XML
@@ -312,7 +308,7 @@ The implementation uses a two-pipeline approach with clear separation of concern
 steps = [
     ValidateWorkerAgent,
     StartWorkerExecution(),
-    InjectSupervisorExpectations(),     # Design Choice 4
+    InjectThinkerJustification(),       # Design Choice 4
     InjectCoworkerKnowledge(shared_context_port),  # Design Choice 5: Read
     BuildWorkerPrompt(prompt_builder),
     EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
@@ -376,9 +372,10 @@ class GenerateWorkerReport:
             original_task=agent.task_description or "",
             approach=_extract_approach(agent.result),
             observations=_extract_observations(agent.result),
+            challenges_encountered=_extract_challenges(agent.result),
             deliverables=_extract_deliverables(agent.result),
             fulfillment_evidence=_build_fulfillment_evidence(
-                agent.result, supervisor_objective
+                agent.result, thinker_objective
             ),
         )
 
@@ -600,17 +597,17 @@ class OrchestrationConfig(BaseModel):
 
 ```jinja2
 {# prompts/core/context/worker_report_request.j2 #}
-{% if supervisor_expectations %}
+{% if thinker_justification %}
 <REPORT_FORMAT>
 When you complete this task, provide a structured report including:
-1. How your work aligns with supervisor expectations
+1. How your work aligns with thinker expectations
 2. Approach taken and reasoning
 3. Key observations and discoveries
 4. Deliverables produced
 5. Challenges encountered
 6. Evidence that you fulfilled the objective
 
-This report will be reviewed by your supervisor and may be shared with
+This report will be reviewed by your thinker and may be shared with
 sibling workers to prevent redundant effort.
 </REPORT_FORMAT>
 {% endif %}

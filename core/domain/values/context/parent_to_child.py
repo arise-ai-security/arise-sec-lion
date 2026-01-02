@@ -1,8 +1,31 @@
 """Context value objects for parent-to-child communication.
 
-These immutable value objects enable rich context passing from parent to child:
+This module implements the "Local Context Share" mechanism for parent-to-child
+context passing. Unlike the Global Context Share (SharedExecutionContext),
+local context share passes data directly at spawn time.
+
+## Local Context Share (SpawnPayload)
+
+SpawnPayload is the primary local context share channel:
+- Passed directly from parent to child at spawn time
+- Stored in the child's agent.spawn_payload field
+- Data flows one-way: Parent → Child only
+- Contains thinker justification, budget allocation, and subtask context
+
+## Value Objects
+
 - SpawnPayload: Context passed from parent to child at spawn time
 - AncestorSummary: Lightweight ancestor summary for ancestry chain
+
+## Context Share Patterns
+
+1. **Thinker Justification (Design Choice 4)**:
+   Parent stores SubtaskJustification in spawn_payload.subtask_justification
+   Child reads via InjectThinkerJustification pipeline step
+
+2. **Budget Allocation (Design Choice 3)**:
+   Parent allocates budget via spawn_payload.complexity_budget
+   Child reads budget for effort calibration
 """
 
 from typing import TYPE_CHECKING, Any, Self

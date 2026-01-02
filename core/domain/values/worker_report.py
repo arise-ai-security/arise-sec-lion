@@ -9,6 +9,7 @@ class WorkerReport(BaseModel):
     Enables cross-sibling learning by providing rich context about:
     - What task was assigned and how it was approached
     - What was discovered during execution
+    - Challenges encountered during execution
     - What was produced (deliverables)
     - Evidence of task fulfillment
 
@@ -24,6 +25,7 @@ class WorkerReport(BaseModel):
     # Execution details
     approach: str = ""  # How the task was executed
     observations: str = ""  # What was discovered during execution
+    challenges_encountered: str = ""  # Difficulties faced during execution
 
     # Outcomes
     deliverables: str = ""  # What was produced
@@ -35,6 +37,7 @@ class WorkerReport(BaseModel):
         original_task: str,
         approach: str = "",
         observations: str = "",
+        challenges_encountered: str = "",
         deliverables: str = "",
         fulfillment_evidence: str = "",
     ) -> "WorkerReport":
@@ -43,6 +46,7 @@ class WorkerReport(BaseModel):
             original_task=original_task,
             approach=approach,
             observations=observations,
+            challenges_encountered=challenges_encountered,
             deliverables=deliverables,
             fulfillment_evidence=fulfillment_evidence,
         )

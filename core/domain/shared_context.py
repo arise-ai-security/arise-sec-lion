@@ -1,11 +1,36 @@
 """Shared Execution Context - event-sourced aggregates for shared state.
 
+This module implements the "Global Context Share" mechanism for the agent
+hierarchy. Context Share refers to the channels by which context data
+flows between agents.
+
+## Context Share Mechanisms
+
+There are two primary context share channels:
+
+1. **Global Context Share (SharedExecutionContext)**:
+   - Accessible by ALL agents in an execution hierarchy
+   - Stored in a centralized, event-sourced aggregate
+   - Used for: decisions, artifacts, source context, coworker knowledge
+   - Flow: Any agent → SharedExecutionContext → Any agent
+
+2. **Local Context Share (SpawnPayload)**:
+   - Passed directly from parent to child at spawn time
+   - Stored in the child's spawn_payload field
+   - Used for: thinker justification, budget allocation, subtask context
+   - Flow: Parent → spawn_payload → Child only
+
+## Aggregates in SharedExecutionContext
+
 One SharedExecutionContext instance per execution hierarchy (keyed by root_id).
 Composed of focused aggregates following Single Responsibility Principle:
+
 - ArtifactStore: Shared outputs between agents
 - DecisionLog: Architectural/design choices
 - ProgressTracker: Checkpoint tracking
 - BudgetAccount: Cost tracking with enforcement
+- KnowledgeStore: Published coworker knowledge (Design Choice 5)
+- SourceContextStore: Extracted boss context (Design Choice 6 & 7)
 
 All changes are event-sourced for OCC and auditability.
 """
@@ -27,6 +52,7 @@ from core.domain.events.events import (
     KnowledgePublished,
     ProgressUpdated,
     SharedContextCreated,
+    SourceContextExtracted,
 )
 
 # Fixed namespace UUID for deriving SharedExecutionContext aggregate IDs.
@@ -109,6 +135,27 @@ class PublishedKnowledge:
     deliverables: tuple[str, ...]
     source_worker_id: UUID
     published_by: UUID
+
+
+@dataclass(frozen=True)
+class StoredSourceContext:
+    """Stored source context extracted from boss prompt (Design Choice 6 & 7).
+
+    Contains structured key information from user input plus inferred CWE patterns.
+    """
+
+    extraction_summary: str
+    key_references: tuple[str, ...]
+    has_bug_report: bool
+    has_error_details: bool
+    has_file_references: bool
+    has_code_snippets: bool
+    extracted_entities: dict[str, Any]
+    inferred_cwes: tuple[str, ...]
+    cwe_reasoning: dict[str, str]
+    recommended_sanitizers: tuple[str, ...]
+    fix_patterns: dict[str, str]
+    extracted_by: UUID
 
 
 # =============================================================================
@@ -656,6 +703,94 @@ class KnowledgeStore(EventSourcedAggregateBase):
 
 
 # =============================================================================
+# SourceContextStore Aggregate (Design Choice 6 & 7)
+# =============================================================================
+
+
+class SourceContextStore(EventSourcedAggregateBase):
+    """Event-sourced aggregate for boss source context storage (Design Choice 6 & 7).
+
+    Stores extracted key information from the boss task description including:
+    - Bug summary, error messages, reproduction steps (DC6)
+    - Inferred CWE patterns and fix strategies (DC7)
+
+    This context is extracted once by BOSS and broadcast to all descendants.
+    """
+
+    _source_context: StoredSourceContext | None
+
+    def _initialize_state(self) -> None:
+        self._source_context = None
+
+    def publish_source_context(
+        self,
+        extraction_summary: str,
+        key_references: list[str],
+        has_bug_report: bool,
+        has_error_details: bool,
+        has_file_references: bool,
+        has_code_snippets: bool,
+        extracted_entities: dict[str, Any],
+        inferred_cwes: list[str],
+        cwe_reasoning: dict[str, str],
+        recommended_sanitizers: list[str],
+        fix_patterns: dict[str, str],
+        extracted_by: UUID,
+    ) -> DomainEvent:
+        """Publish source context to shared storage.
+
+        Returns the event for the facade to collect.
+        """
+        return self._emit(
+            SourceContextExtracted(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                extraction_summary=extraction_summary,
+                key_references=tuple(key_references),
+                has_bug_report=has_bug_report,
+                has_error_details=has_error_details,
+                has_file_references=has_file_references,
+                has_code_snippets=has_code_snippets,
+                extracted_entities=extracted_entities,
+                inferred_cwes=tuple(inferred_cwes),
+                cwe_reasoning=cwe_reasoning,
+                recommended_sanitizers=tuple(recommended_sanitizers),
+                fix_patterns=fix_patterns,
+            )
+        )
+
+    def get_source_context(self) -> StoredSourceContext | None:
+        """Get stored source context."""
+        return self._source_context
+
+    def has_source_context(self) -> bool:
+        """Check if source context has been extracted."""
+        return self._source_context is not None
+
+    @singledispatchmethod
+    def _apply(self, event: Any) -> None:
+        raise TypeError(f"No handler for {type(event).__name__}")
+
+    @_apply.register
+    def _(self, event: SourceContextExtracted) -> None:
+        self._source_context = StoredSourceContext(
+            extraction_summary=event.extraction_summary,
+            key_references=event.key_references,
+            has_bug_report=event.has_bug_report,
+            has_error_details=event.has_error_details,
+            has_file_references=event.has_file_references,
+            has_code_snippets=event.has_code_snippets,
+            extracted_entities=event.extracted_entities,
+            inferred_cwes=event.inferred_cwes,
+            cwe_reasoning=event.cwe_reasoning,
+            recommended_sanitizers=event.recommended_sanitizers,
+            fix_patterns=event.fix_patterns,
+            extracted_by=event.aggregate_id,  # BOSS agent ID
+        )
+        self._increment_version()
+
+
+# =============================================================================
 # SharedExecutionContext Facade
 # =============================================================================
 
@@ -683,6 +818,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
     _budget_account: BudgetAccount
     _config_store: ConfigOverrideStore
     _knowledge_store: KnowledgeStore
+    _source_context_store: SourceContextStore  # Design Choice 6 & 7
 
     def __init__(self, root_id: UUID) -> None:
         """Internal. Use create() or load_from_history() instead."""
@@ -700,6 +836,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         self._budget_account = BudgetAccount(self._aggregate_id)
         self._config_store = ConfigOverrideStore(self._aggregate_id)
         self._knowledge_store = KnowledgeStore(self._aggregate_id)  # Design Choice 5
+        self._source_context_store = SourceContextStore(self._aggregate_id)  # DC 6 & 7
 
     @property
     def root_id(self) -> UUID:
@@ -791,6 +928,7 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         self._budget_account.mark_changes_as_committed()
         self._config_store.mark_changes_as_committed()
         self._knowledge_store.mark_changes_as_committed()  # Design Choice 5
+        self._source_context_store.mark_changes_as_committed()  # DC 6 & 7
 
     # -------------------------------------------------------------------------
     # Delegated Commands - Artifacts
@@ -960,6 +1098,56 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         return self._knowledge_store.get_all_knowledge()
 
     # -------------------------------------------------------------------------
+    # Delegated Commands - Source Context (Design Choice 6 & 7)
+    # -------------------------------------------------------------------------
+
+    def publish_source_context(
+        self,
+        extraction_summary: str,
+        key_references: list[str],
+        has_bug_report: bool,
+        has_error_details: bool,
+        has_file_references: bool,
+        has_code_snippets: bool,
+        extracted_entities: dict[str, Any],
+        inferred_cwes: list[str],
+        cwe_reasoning: dict[str, str],
+        recommended_sanitizers: list[str],
+        fix_patterns: dict[str, str],
+        extracted_by: UUID,
+    ) -> None:
+        """Publish source context extracted from boss task (DC6 & DC7).
+
+        BOSS extracts structured context from user input and publishes it
+        to enable all descendants to access the same source information.
+        """
+        self._emit(
+            SourceContextExtracted(
+                aggregate_id=self._aggregate_id,
+                sequence_number=self._next_sequence(),
+                extraction_summary=extraction_summary,
+                key_references=tuple(key_references),
+                has_bug_report=has_bug_report,
+                has_error_details=has_error_details,
+                has_file_references=has_file_references,
+                has_code_snippets=has_code_snippets,
+                extracted_entities=extracted_entities,
+                inferred_cwes=tuple(inferred_cwes),
+                cwe_reasoning=cwe_reasoning,
+                recommended_sanitizers=tuple(recommended_sanitizers),
+                fix_patterns=fix_patterns,
+            )
+        )
+
+    def get_source_context(self) -> StoredSourceContext | None:
+        """Get stored source context (delegated to SourceContextStore)."""
+        return self._source_context_store.get_source_context()
+
+    def has_source_context(self) -> bool:
+        """Check if source context has been extracted."""
+        return self._source_context_store.has_source_context()
+
+    # -------------------------------------------------------------------------
     # Delegated Commands - Budget
     # -------------------------------------------------------------------------
 
@@ -1059,4 +1247,9 @@ class SharedExecutionContext(EventSourcedAggregateBase):
     @_apply.register
     def _(self, event: BudgetExceeded) -> None:
         self._budget_account.apply_event(event)
+        self._increment_version()
+
+    @_apply.register
+    def _(self, event: SourceContextExtracted) -> None:
+        self._source_context_store.apply_event(event)
         self._increment_version()
