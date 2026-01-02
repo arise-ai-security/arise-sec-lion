@@ -442,8 +442,9 @@ class AgentExecutionService:
         if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
             await self._process_worker_context_updates(agent)
 
-        # Notify parent
+        # Notify parent of completion or failure
         await self._notify_parent_if_complete(agent)
+        await self._notify_parent_if_failed(agent)
 
     async def _notify_parent_if_complete(self, agent: AgentSession) -> None:
         """Notify parent when child completes.
@@ -451,6 +452,14 @@ class AgentExecutionService:
         Delegates to ParentNotificationService for the full workflow.
         """
         await self._parent_notifier.notify_if_complete(agent)
+
+    async def _notify_parent_if_failed(self, agent: AgentSession) -> None:
+        """Notify parent when child fails.
+
+        Delegates to ParentNotificationService for failure propagation.
+        This ensures failures bubble up the hierarchy so BOSS doesn't get stuck.
+        """
+        await self._parent_notifier.notify_if_failed(agent)
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
         """Extract and store context updates from worker result."""
