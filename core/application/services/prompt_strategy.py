@@ -198,8 +198,6 @@ class SecBenchPromptStrategy:
         )
         cve_ctx = context.cve_instance.to_template_context()
         cve_ctx["container_id"] = context.container_id
-        # Add short worker ID for per-worker isolation (e.g., unique build directories)
-        cve_ctx["worker_id"] = str(context.agent_id)[:8]
 
         return (
             self._chain_factory()
