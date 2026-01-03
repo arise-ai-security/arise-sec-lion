@@ -6,6 +6,89 @@
 <SOURCE_CONTEXT>
 <summary>{{ source_context.extraction_summary }}</summary>
 
+{# Bug/Issue Information #}
+{% if source_context.bug_summary %}
+<bug_summary>{{ source_context.bug_summary }}</bug_summary>
+{% endif %}
+{% if source_context.error_messages %}
+<error_messages>
+{% for msg in source_context.error_messages %}
+  <error>{{ msg }}</error>
+{% endfor %}
+</error_messages>
+{% endif %}
+{% if source_context.reproduction_steps %}
+<reproduction_steps>{{ source_context.reproduction_steps }}</reproduction_steps>
+{% endif %}
+
+{# Code References #}
+{% if source_context.file_paths %}
+<file_paths>
+{% for path in source_context.file_paths %}
+  <path>{{ path }}</path>
+{% endfor %}
+</file_paths>
+{% endif %}
+{% if source_context.commit_references %}
+<commit_references>
+{% for ref in source_context.commit_references %}
+  <commit>{{ ref }}</commit>
+{% endfor %}
+</commit_references>
+{% endif %}
+{% if source_context.urls %}
+<urls>
+{% for url in source_context.urls %}
+  <url>{{ url }}</url>
+{% endfor %}
+</urls>
+{% endif %}
+
+{# Environment Information #}
+{% if source_context.environment %}
+<environment>{{ source_context.environment }}</environment>
+{% endif %}
+{% if source_context.dependencies %}
+<dependencies>
+{% for dep in source_context.dependencies %}
+  <dependency>{{ dep }}</dependency>
+{% endfor %}
+</dependencies>
+{% endif %}
+{% if source_context.key_facts %}
+<key_facts>
+{% for fact in source_context.key_facts %}
+  <fact>{{ fact }}</fact>
+{% endfor %}
+</key_facts>
+{% endif %}
+
+{# Build/Execution Context (security-specific) #}
+{% if source_context.dockerfile %}
+<dockerfile>{{ source_context.dockerfile }}</dockerfile>
+{% endif %}
+{% if source_context.build_script %}
+<build_script>{{ source_context.build_script }}</build_script>
+{% endif %}
+{% if source_context.work_dir %}
+<work_dir>{{ source_context.work_dir }}</work_dir>
+{% endif %}
+{% if source_context.poc_command %}
+<poc_command>{{ source_context.poc_command }}</poc_command>
+{% endif %}
+{% if source_context.sanitizer %}
+<sanitizer>{{ source_context.sanitizer }}</sanitizer>
+{% endif %}
+
+{# Security Identifiers #}
+{% if source_context.cve_id %}
+<cve_id>{{ source_context.cve_id }}</cve_id>
+{% endif %}
+{% if source_context.repo_url %}
+<repo_url>{{ source_context.repo_url }}</repo_url>
+{% endif %}
+
+{# Legacy reference fields #}
 {% if source_context.key_references %}
 <references>
 {% for ref in source_context.key_references %}
@@ -14,6 +97,7 @@
 </references>
 {% endif %}
 
+{# Legacy detected_content flags (for backward compat) #}
 <detected_content>
 {% if source_context.has_bug_report %}  <bug_report>true</bug_report>
 {% endif %}
@@ -25,6 +109,7 @@
 {% endif %}
 </detected_content>
 
+{# Legacy extracted_entities (for backward compat) #}
 {% if source_context.extracted_entities %}
 <extracted_entities>
 {% for key, value in source_context.extracted_entities.items() %}
@@ -39,6 +124,9 @@
 <inferred_cwes>
 {% for cwe in source_context.inferred_cwes %}
   <cwe id="{{ cwe }}">
+{% if source_context.cwe_confidence and cwe in source_context.cwe_confidence %}
+    <confidence>{{ source_context.cwe_confidence[cwe] }}</confidence>
+{% endif %}
 {% if source_context.cwe_reasoning and cwe in source_context.cwe_reasoning %}
     <reasoning>{{ source_context.cwe_reasoning[cwe] }}</reasoning>
 {% endif %}

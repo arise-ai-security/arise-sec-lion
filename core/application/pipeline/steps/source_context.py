@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.application.pipeline.context import PipelineState, StepResult
 from core.application.services.context_composer import ContextComposer
+from core.application.services.context_factories import source_context_from_stored
 from core.domain.values.context import SourceContext
 from core.domain.values.enums import AgentRole
 
@@ -287,20 +288,8 @@ class InjectSourceContext:
         if stored_context is None:
             return StepResult.ok(state)
 
-        # Convert to SourceContext for template rendering
-        source_context = SourceContext.from_extraction_event(
-            extraction_summary=stored_context.extraction_summary,
-            key_references=stored_context.key_references,
-            has_bug_report=stored_context.has_bug_report,
-            has_error_details=stored_context.has_error_details,
-            has_file_references=stored_context.has_file_references,
-            has_code_snippets=stored_context.has_code_snippets,
-            extracted_entities=stored_context.extracted_entities,
-            inferred_cwes=stored_context.inferred_cwes,
-            cwe_reasoning=stored_context.cwe_reasoning,
-            recommended_sanitizers=stored_context.recommended_sanitizers,
-            fix_patterns=stored_context.fix_patterns,
-        )
+        # Convert to SourceContext for template rendering using factory
+        source_context = source_context_from_stored(stored_context)
 
         # Add to context composer
         composer = state.context_composer or ContextComposer()

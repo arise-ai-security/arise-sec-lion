@@ -136,6 +136,14 @@ class PublishedKnowledge:
     source_worker_id: UUID
     published_by: UUID
 
+    # Worker report fields for cross-worker learning
+    approach: str = ""
+    reasoning: str = ""
+    work_analysis: str = ""
+    challenges: str = ""
+    observations: str = ""
+    fulfillment_evidence: str = ""
+
 
 @dataclass(frozen=True)
 class StoredSourceContext:
@@ -151,11 +159,32 @@ class StoredSourceContext:
     has_file_references: bool
     has_code_snippets: bool
     extracted_entities: dict[str, Any]
-    inferred_cwes: tuple[str, ...]
-    cwe_reasoning: dict[str, str]
-    recommended_sanitizers: tuple[str, ...]
-    fix_patterns: dict[str, str]
-    extracted_by: UUID
+
+    # New top-level fields for rich Boss-extracted info (content parity)
+    bug_summary: str = ""
+    error_messages: tuple[str, ...] = ()
+    reproduction_steps: str = ""
+    file_paths: tuple[str, ...] = ()
+    commit_references: tuple[str, ...] = ()
+    urls: tuple[str, ...] = ()
+    environment: str = ""
+    dependencies: tuple[str, ...] = ()
+    key_facts: tuple[str, ...] = ()
+    dockerfile: str = ""
+    build_script: str = ""
+    work_dir: str = ""
+    poc_command: str = ""
+    sanitizer: str = ""
+    cve_id: str = ""
+    repo_url: str = ""
+
+    # CWE fields
+    inferred_cwes: tuple[str, ...] = ()
+    cwe_reasoning: dict[str, str] = field(default_factory=dict)
+    cwe_confidence: dict[str, str] = field(default_factory=dict)
+    recommended_sanitizers: tuple[str, ...] = ()
+    fix_patterns: dict[str, str] = field(default_factory=dict)
+    extracted_by: UUID = field(default_factory=lambda: UUID(int=0))
 
 
 # =============================================================================
@@ -653,6 +682,13 @@ class KnowledgeStore(EventSourcedAggregateBase):
         deliverables: tuple[str, ...],
         source_worker_id: UUID,
         published_by: UUID,
+        # Worker report fields
+        approach: str = "",
+        reasoning: str = "",
+        work_analysis: str = "",
+        challenges: str = "",
+        observations: str = "",
+        fulfillment_evidence: str = "",
     ) -> DomainEvent:
         """Publish worker knowledge to shared context.
 
@@ -669,6 +705,12 @@ class KnowledgeStore(EventSourcedAggregateBase):
                 deliverables=deliverables,
                 source_worker_id=source_worker_id,
                 published_by=published_by,
+                approach=approach,
+                reasoning=reasoning,
+                work_analysis=work_analysis,
+                challenges=challenges,
+                observations=observations,
+                fulfillment_evidence=fulfillment_evidence,
             )
         )
 
@@ -698,6 +740,13 @@ class KnowledgeStore(EventSourcedAggregateBase):
             deliverables=tuple(event.deliverables),
             source_worker_id=event.source_worker_id,
             published_by=event.published_by,
+            # Worker report fields
+            approach=event.approach,
+            reasoning=event.reasoning,
+            work_analysis=event.work_analysis,
+            challenges=event.challenges,
+            observations=event.observations,
+            fulfillment_evidence=event.fulfillment_evidence,
         )
         self._increment_version()
 
@@ -781,8 +830,27 @@ class SourceContextStore(EventSourcedAggregateBase):
             has_file_references=event.has_file_references,
             has_code_snippets=event.has_code_snippets,
             extracted_entities=event.extracted_entities,
+            # New top-level fields
+            bug_summary=event.bug_summary,
+            error_messages=event.error_messages,
+            reproduction_steps=event.reproduction_steps,
+            file_paths=event.file_paths,
+            commit_references=event.commit_references,
+            urls=event.urls,
+            environment=event.environment,
+            dependencies=event.dependencies,
+            key_facts=event.key_facts,
+            dockerfile=event.dockerfile,
+            build_script=event.build_script,
+            work_dir=event.work_dir,
+            poc_command=event.poc_command,
+            sanitizer=event.sanitizer,
+            cve_id=event.cve_id,
+            repo_url=event.repo_url,
+            # CWE fields
             inferred_cwes=event.inferred_cwes,
             cwe_reasoning=event.cwe_reasoning,
+            cwe_confidence=event.cwe_confidence,
             recommended_sanitizers=event.recommended_sanitizers,
             fix_patterns=event.fix_patterns,
             extracted_by=event.aggregate_id,  # BOSS agent ID
@@ -1065,6 +1133,13 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         deliverables: tuple[str, ...],
         source_worker_id: UUID,
         published_by: UUID,
+        # Worker report fields
+        approach: str = "",
+        reasoning: str = "",
+        work_analysis: str = "",
+        challenges: str = "",
+        observations: str = "",
+        fulfillment_evidence: str = "",
     ) -> None:
         """Publish worker knowledge to shared context (Design Choice 5).
 
@@ -1082,6 +1157,12 @@ class SharedExecutionContext(EventSourcedAggregateBase):
                 deliverables=deliverables,
                 source_worker_id=source_worker_id,
                 published_by=published_by,
+                approach=approach,
+                reasoning=reasoning,
+                work_analysis=work_analysis,
+                challenges=challenges,
+                observations=observations,
+                fulfillment_evidence=fulfillment_evidence,
             )
         )
 

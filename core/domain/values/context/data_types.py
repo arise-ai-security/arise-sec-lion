@@ -467,6 +467,13 @@ class CoworkerKnowledgeEntry(BaseModel):
     source_worker_id: str = ""  # Worker who discovered this
     published_by: str = ""  # Thinker who approved and published
 
+    approach: str = ""  # How the task was executed
+    reasoning: str = ""  # Worker's reasoning for chosen approach
+    work_analysis: str = ""  # Analysis of work performed
+    challenges: str = ""  # Difficulties faced during execution
+    observations: str = ""  # What was discovered during execution
+    fulfillment_evidence: str = ""  # How expectations were met
+
 
 class CoworkerKnowledge(BaseModel):
     """Published knowledge from earlier coworkers (Design Choice 5).

@@ -23,19 +23,50 @@ class SourceContext(BaseModel):
     # Extraction summary
     extraction_summary: str = ""
 
-    # Reference types detected
+    # Reference types detected (legacy boolean flags)
     key_references: tuple[str, ...] = ()
     has_bug_report: bool = False
     has_error_details: bool = False
     has_file_references: bool = False
     has_code_snippets: bool = False
 
-    # Structured entities extracted
+    # Structured entities extracted (legacy nested dict)
     extracted_entities: dict[str, Any] = Field(default_factory=dict)
+
+    # =========================================================================
+    # New top-level fields for rich Boss-extracted info (content parity)
+    # =========================================================================
+
+    # Bug/issue information
+    bug_summary: str = ""  # Issue description
+    error_messages: tuple[str, ...] = ()  # Actual error output
+    reproduction_steps: str = ""  # Steps to reproduce
+
+    # Code references
+    file_paths: tuple[str, ...] = ()  # Referenced files
+    commit_references: tuple[str, ...] = ()  # Git refs
+    urls: tuple[str, ...] = ()  # Related URLs
+
+    # Environment information
+    environment: str = ""  # OS, compiler info
+    dependencies: tuple[str, ...] = ()  # Required packages
+    key_facts: tuple[str, ...] = ()  # Important constraints
+
+    # Build/execution context (security-specific)
+    dockerfile: str = ""  # Build environment
+    build_script: str = ""  # Build commands
+    work_dir: str = ""  # Working directory
+    poc_command: str = ""  # PoC execution command
+    sanitizer: str = ""  # Sanitizer used (ASan, UBSan, etc.)
+
+    # Security identifiers
+    cve_id: str = ""  # CVE identifier
+    repo_url: str = ""  # Repository URL
 
     # Design Choice 7: CWE Context Passing
     inferred_cwes: tuple[str, ...] = ()  # e.g., ("CWE-787", "CWE-125")
     cwe_reasoning: dict[str, str] = Field(default_factory=dict)  # Per-CWE reasoning
+    cwe_confidence: dict[str, str] = Field(default_factory=dict)  # Per-CWE confidence
     recommended_sanitizers: tuple[str, ...] = ()  # e.g., ("AddressSanitizer", "UBSan")
     fix_patterns: dict[str, str] = Field(default_factory=dict)  # Per-CWE fix patterns
 
@@ -63,8 +94,27 @@ class SourceContext(BaseModel):
         has_file_references: bool = False,
         has_code_snippets: bool = False,
         extracted_entities: dict[str, Any] | None = None,
+        # New top-level fields
+        bug_summary: str = "",
+        error_messages: tuple[str, ...] = (),
+        reproduction_steps: str = "",
+        file_paths: tuple[str, ...] = (),
+        commit_references: tuple[str, ...] = (),
+        urls: tuple[str, ...] = (),
+        environment: str = "",
+        dependencies: tuple[str, ...] = (),
+        key_facts: tuple[str, ...] = (),
+        dockerfile: str = "",
+        build_script: str = "",
+        work_dir: str = "",
+        poc_command: str = "",
+        sanitizer: str = "",
+        cve_id: str = "",
+        repo_url: str = "",
+        # CWE fields
         inferred_cwes: tuple[str, ...] = (),
         cwe_reasoning: dict[str, str] | None = None,
+        cwe_confidence: dict[str, str] | None = None,
         recommended_sanitizers: tuple[str, ...] = (),
         fix_patterns: dict[str, str] | None = None,
     ) -> "SourceContext":
@@ -77,8 +127,27 @@ class SourceContext(BaseModel):
             has_file_references=has_file_references,
             has_code_snippets=has_code_snippets,
             extracted_entities=extracted_entities or {},
+            # New top-level fields
+            bug_summary=bug_summary,
+            error_messages=error_messages,
+            reproduction_steps=reproduction_steps,
+            file_paths=file_paths,
+            commit_references=commit_references,
+            urls=urls,
+            environment=environment,
+            dependencies=dependencies,
+            key_facts=key_facts,
+            dockerfile=dockerfile,
+            build_script=build_script,
+            work_dir=work_dir,
+            poc_command=poc_command,
+            sanitizer=sanitizer,
+            cve_id=cve_id,
+            repo_url=repo_url,
+            # CWE fields
             inferred_cwes=inferred_cwes,
             cwe_reasoning=cwe_reasoning or {},
+            cwe_confidence=cwe_confidence or {},
             recommended_sanitizers=recommended_sanitizers,
             fix_patterns=fix_patterns or {},
         )

@@ -43,7 +43,12 @@ from core.domain.values.subtask import SubtaskJustification
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
-    from core.domain.shared_context import PublishedKnowledge, SharedExecutionContext
+    from core.domain.shared_context import (
+        PublishedKnowledge,
+        SharedExecutionContext,
+        StoredSourceContext,
+    )
+    from core.domain.values.context.source_context import SourceContext
 
 
 # =============================================================================
@@ -561,6 +566,62 @@ def thinker_justification_from_agent(
 # =============================================================================
 
 
+def source_context_from_stored(
+    stored: "StoredSourceContext",
+) -> "SourceContext":
+    """Build SourceContext from StoredSourceContext.
+
+    Factory function that converts domain storage type (StoredSourceContext)
+    to template-renderable context type (SourceContext).
+
+    Args:
+        stored: The stored source context from SharedExecutionContext.
+
+    Returns:
+        SourceContext value object for template rendering.
+
+    Example:
+        # In InjectSourceContext pipeline step
+        stored = shared_context.get_source_context()
+        if stored:
+            context.add(source_context_from_stored(stored))
+    """
+    from core.domain.values.context.source_context import SourceContext
+
+    return SourceContext.from_extraction_event(
+        extraction_summary=stored.extraction_summary,
+        key_references=stored.key_references,
+        has_bug_report=stored.has_bug_report,
+        has_error_details=stored.has_error_details,
+        has_file_references=stored.has_file_references,
+        has_code_snippets=stored.has_code_snippets,
+        extracted_entities=stored.extracted_entities,
+        # New top-level fields
+        bug_summary=stored.bug_summary,
+        error_messages=stored.error_messages,
+        reproduction_steps=stored.reproduction_steps,
+        file_paths=stored.file_paths,
+        commit_references=stored.commit_references,
+        urls=stored.urls,
+        environment=stored.environment,
+        dependencies=stored.dependencies,
+        key_facts=stored.key_facts,
+        dockerfile=stored.dockerfile,
+        build_script=stored.build_script,
+        work_dir=stored.work_dir,
+        poc_command=stored.poc_command,
+        sanitizer=stored.sanitizer,
+        cve_id=stored.cve_id,
+        repo_url=stored.repo_url,
+        # CWE fields
+        inferred_cwes=stored.inferred_cwes,
+        cwe_reasoning=stored.cwe_reasoning,
+        cwe_confidence=stored.cwe_confidence,
+        recommended_sanitizers=stored.recommended_sanitizers,
+        fix_patterns=stored.fix_patterns,
+    )
+
+
 def coworker_knowledge_entry_from_published(
     knowledge: "PublishedKnowledge",
 ) -> CoworkerKnowledgeEntry:
@@ -595,4 +656,11 @@ def coworker_knowledge_entry_from_published(
         deliverables=knowledge.deliverables,
         source_worker_id=str(knowledge.source_worker_id),
         published_by=str(knowledge.published_by),
+        # Worker report fields for cross-worker learning
+        approach=knowledge.approach,
+        reasoning=knowledge.reasoning,
+        work_analysis=knowledge.work_analysis,
+        challenges=knowledge.challenges,
+        observations=knowledge.observations,
+        fulfillment_evidence=knowledge.fulfillment_evidence,
     )

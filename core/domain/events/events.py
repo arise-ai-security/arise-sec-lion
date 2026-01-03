@@ -323,6 +323,13 @@ class KnowledgePublished(DomainEvent):
     source_worker_id: UUID  # Worker who discovered this
     published_by: UUID  # Thinker who approved and published
 
+    approach: str = ""  # How the task was executed
+    reasoning: str = ""  # Worker's reasoning for chosen approach
+    work_analysis: str = ""  # Analysis of work performed
+    challenges: str = ""  # Difficulties faced during execution
+    observations: str = ""  # What was discovered during execution
+    fulfillment_evidence: str = ""  # How expectations were met
+
 
 class ProgressUpdated(DomainEvent):
     """Progress checkpoint updated in shared context.
@@ -451,8 +458,27 @@ class SourceContextExtracted(DomainEvent):
     has_code_snippets: bool = False  # Contains code examples
     extracted_entities: dict[str, Any] = Field(default_factory=dict)  # Structured entities
 
+    # New top-level fields for rich Boss-extracted info (content parity)
+    bug_summary: str = ""  # Issue description
+    error_messages: tuple[str, ...] = ()  # Actual error output
+    reproduction_steps: str = ""  # Steps to reproduce
+    file_paths: tuple[str, ...] = ()  # Referenced files
+    commit_references: tuple[str, ...] = ()  # Git refs
+    urls: tuple[str, ...] = ()  # Related URLs
+    environment: str = ""  # OS, compiler info
+    dependencies: tuple[str, ...] = ()  # Required packages
+    key_facts: tuple[str, ...] = ()  # Important constraints
+    dockerfile: str = ""  # Build environment
+    build_script: str = ""  # Build commands
+    work_dir: str = ""  # Working directory
+    poc_command: str = ""  # PoC execution command
+    sanitizer: str = ""  # Sanitizer used (ASan, UBSan, etc.)
+    cve_id: str = ""  # CVE identifier
+    repo_url: str = ""  # Repository URL
+
     # Design Choice 7: CWE Context Passing
     inferred_cwes: tuple[str, ...] = ()  # e.g., ("CWE-787", "CWE-125")
     cwe_reasoning: dict[str, str] = Field(default_factory=dict)  # Per-CWE reasoning
+    cwe_confidence: dict[str, str] = Field(default_factory=dict)  # Per-CWE confidence
     recommended_sanitizers: tuple[str, ...] = ()  # e.g., ("AddressSanitizer", "UBSan")
     fix_patterns: dict[str, str] = Field(default_factory=dict)  # Per-CWE fix patterns

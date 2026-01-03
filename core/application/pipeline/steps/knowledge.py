@@ -298,6 +298,13 @@ class ThinkerReviewAndPublish:
             deliverables=(child_report.deliverables,) if child_report and child_report.deliverables else (),
             source_worker_id=UUID(child_agent_id),
             published_by=UUID(parent_agent_id),
+            # Worker report fields for cross-worker learning
+            approach=child_report.approach if child_report else "",
+            reasoning=child_report.reasoning if child_report else "",
+            work_analysis=child_report.work_analysis if child_report else "",
+            challenges=child_report.challenges_encountered if child_report else "",
+            observations=child_report.observations if child_report else "",
+            fulfillment_evidence=child_report.fulfillment_evidence if child_report else "",
         )
 
         # Persist if there are changes

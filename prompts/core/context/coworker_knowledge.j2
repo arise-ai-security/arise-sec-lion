@@ -10,6 +10,12 @@ to avoid redundant work and build on their findings.
 <knowledge key="{{ entry.key[:50] }}...">
 <objective>{{ entry.objective }}</objective>
 <relevance>{{ entry.relevance }}</relevance>
+{% if entry.approach %}
+<approach>{{ entry.approach }}</approach>
+{% endif %}
+{% if entry.reasoning %}
+<reasoning>{{ entry.reasoning }}</reasoning>
+{% endif %}
 {% if entry.key_findings %}
 <findings>
 {% for finding in entry.key_findings %}
@@ -17,12 +23,24 @@ to avoid redundant work and build on their findings.
 {% endfor %}
 </findings>
 {% endif %}
+{% if entry.observations %}
+<observations>{{ entry.observations }}</observations>
+{% endif %}
+{% if entry.challenges %}
+<challenges>{{ entry.challenges }}</challenges>
+{% endif %}
 {% if entry.deliverables %}
 <deliverables>
 {% for deliverable in entry.deliverables %}
   - {{ deliverable }}
 {% endfor %}
 </deliverables>
+{% endif %}
+{% if entry.work_analysis %}
+<work_analysis>{{ entry.work_analysis }}</work_analysis>
+{% endif %}
+{% if entry.fulfillment_evidence %}
+<fulfillment_evidence>{{ entry.fulfillment_evidence }}</fulfillment_evidence>
 {% endif %}
 <source worker="{{ entry.source_worker_id }}" published_by="{{ entry.published_by }}"/>
 </knowledge>
