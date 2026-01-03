@@ -26,7 +26,7 @@ services:
       ARISE_INFRA_POSTGRES_HOST: db
     ports:
       - "8000:8000"
-    command: uvicorn query.api.bootstrap:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn query.api.bootstrap:create_app --factory --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
@@ -35,6 +35,7 @@ services:
 
   app:
     profiles: [local]
+    init: true  # Use tini to reap zombie processes
     build:
       context: ..
       dockerfile: deployment/Dockerfile
@@ -90,7 +91,7 @@ services:
     env_file: .env.dev
     ports:
       - "8000:8000"
-    command: uvicorn query.api.bootstrap:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn query.api.bootstrap:create_app --factory --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
@@ -99,6 +100,7 @@ services:
 
   app-dev:
     profiles: [dev]
+    init: true  # Use tini to reap zombie processes
     build:
       context: ..
       dockerfile: deployment/Dockerfile
