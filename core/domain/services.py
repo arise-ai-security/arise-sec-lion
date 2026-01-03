@@ -10,17 +10,37 @@ from core.domain.subtask import Subtask
 
 
 MARKDOWN_CODE_BLOCK_PATTERN = re.compile(
-    r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
+    r"```(?:json)?\s*\n?(.*?)\n?\s*```",
     re.DOTALL | re.IGNORECASE,
+)
+
+JSON_ARRAY_PATTERN = re.compile(
+    r"\[\s*\{.*?\}\s*\]",
+    re.DOTALL,
 )
 
 
 def strip_markdown_code_block(text: str) -> str:
-    """Extract content from markdown code block wrapper (```json...```)."""
-    match = MARKDOWN_CODE_BLOCK_PATTERN.match(text.strip())
+    """Extract JSON content from LLM response, handling various formats.
+
+    Handles:
+    - Entire response wrapped in ```json...```
+    - Code block with text before/after
+    - Raw JSON array without code block
+    """
+    text = text.strip()
+
+    # Try to find JSON code block anywhere in response
+    match = MARKDOWN_CODE_BLOCK_PATTERN.search(text)
     if match:
         return match.group(1).strip()
-    return text.strip()
+
+    # Try to find raw JSON array pattern
+    match = JSON_ARRAY_PATTERN.search(text)
+    if match:
+        return match.group(0)
+
+    return text
 
 
 class SubtaskParser:
