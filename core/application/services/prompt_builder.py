@@ -294,49 +294,6 @@ class PromptBuilder:
 
         return base_context
 
-    def _build_thinker_justification_context(
-        self,
-        spawn_payload: "SpawnPayload | None",
-    ) -> dict[str, Any] | None:
-        """Build thinker justification context from spawn payload.
-
-        Extracts justification data from spawn_payload and builds
-        ThinkerJustification context for template rendering.
-
-        Args:
-            spawn_payload: Spawn payload containing justification (Design Choice 4).
-
-        Returns:
-            Dict with thinker_justification for templates, or None if no justification.
-        """
-        if spawn_payload is None:
-            return None
-
-        justification = spawn_payload.subtask_justification
-        if not justification:
-            return None
-
-        # Build thinker justification context
-        from core.domain.values.subtask import SubtaskJustification
-        from core.application.services.context_factories import (
-            thinker_justification_from_subtask,
-        )
-
-        # Reconstruct SubtaskJustification from dict
-        just_obj = SubtaskJustification(**justification)
-
-        thinker_just = thinker_justification_from_subtask(
-            thinker_task=spawn_payload.parent_task,
-            justification=just_obj,
-            child_budget=spawn_payload.complexity_budget if spawn_payload.complexity_budget > 0 else None,
-            parent_budget=None,  # Not available in spawn_payload
-            budget_weight=spawn_payload.budget_weight,
-            total_weights=spawn_payload.total_weights,
-            num_siblings=spawn_payload.num_siblings,
-        )
-
-        return {"thinker_justification": thinker_just.to_template_dict()}
-
     def build_complexity_evaluation_prompt(
         self,
         task_description: str,

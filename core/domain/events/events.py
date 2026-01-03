@@ -318,8 +318,8 @@ class KnowledgePublished(DomainEvent):
     key: str  # Unique identifier (usually task objective)
     objective: str  # What the worker was asked to do
     relevance: str  # Why this is relevant to other workers
-    key_findings: list[str] = Field(default_factory=list)  # Important discoveries
-    deliverables: list[str] = Field(default_factory=list)  # Artifacts produced
+    key_findings: tuple[str, ...] = ()  # Important discoveries
+    deliverables: tuple[str, ...] = ()  # Artifacts produced
     source_worker_id: UUID  # Worker who discovered this
     published_by: UUID  # Thinker who approved and published
 

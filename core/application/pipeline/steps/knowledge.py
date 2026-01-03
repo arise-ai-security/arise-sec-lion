@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 
 from core.application.pipeline.context import PipelineState, StepResult
 from core.application.services.context_composer import ContextComposer
-from core.domain.values.context import (
-    CoworkerKnowledge,
-    CoworkerKnowledgeEntry,
+from core.application.services.context_factories import (
+    coworker_knowledge_entry_from_published,
 )
+from core.domain.values.context import CoworkerKnowledge
 from core.domain.values.worker_report import WorkerReport
 
 if TYPE_CHECKING:
@@ -70,16 +70,7 @@ class InjectCoworkerKnowledge:
             return StepResult.ok(state)
 
         entries = tuple(
-            CoworkerKnowledgeEntry(
-                key=k.key,
-                objective=k.objective,
-                relevance=k.relevance,
-                key_findings=k.key_findings,
-                deliverables=k.deliverables,
-                source_worker_id=str(k.source_worker_id),
-                published_by=str(k.published_by),
-            )
-            for k in all_knowledge
+            coworker_knowledge_entry_from_published(k) for k in all_knowledge
         )
 
         composer = state.context_composer or ContextComposer()
@@ -303,8 +294,8 @@ class ThinkerReviewAndPublish:
             key=task_key,
             objective=child_task,
             relevance=relevance,
-            key_findings=key_findings,
-            deliverables=[child_report.deliverables] if child_report and child_report.deliverables else [],
+            key_findings=tuple(key_findings),
+            deliverables=(child_report.deliverables,) if child_report and child_report.deliverables else (),
             source_worker_id=UUID(child_agent_id),
             published_by=UUID(parent_agent_id),
         )

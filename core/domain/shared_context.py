@@ -649,8 +649,8 @@ class KnowledgeStore(EventSourcedAggregateBase):
         key: str,
         objective: str,
         relevance: str,
-        key_findings: list[str],
-        deliverables: list[str],
+        key_findings: tuple[str, ...],
+        deliverables: tuple[str, ...],
         source_worker_id: UUID,
         published_by: UUID,
     ) -> DomainEvent:
@@ -1061,8 +1061,8 @@ class SharedExecutionContext(EventSourcedAggregateBase):
         key: str,
         objective: str,
         relevance: str,
-        key_findings: list[str],
-        deliverables: list[str],
+        key_findings: tuple[str, ...],
+        deliverables: tuple[str, ...],
         source_worker_id: UUID,
         published_by: UUID,
     ) -> None:

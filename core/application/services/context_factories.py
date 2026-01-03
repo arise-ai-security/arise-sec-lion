@@ -30,6 +30,7 @@ from core.domain.values.context.data_types import (
     ArtifactEntry,
     ChildOutcomeEntry,
     ChildOutcomes,
+    CoworkerKnowledgeEntry,
     DecisionEntry,
     ParentSummary,
     SharedArtifacts,
@@ -42,7 +43,7 @@ from core.domain.values.subtask import SubtaskJustification
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
-    from core.domain.shared_context import SharedExecutionContext
+    from core.domain.shared_context import PublishedKnowledge, SharedExecutionContext
 
 
 # =============================================================================
@@ -552,4 +553,46 @@ def thinker_justification_from_agent(
         budget_weight=budget_weight,
         total_weights=total_weights,
         num_siblings=num_siblings,
+    )
+
+
+# =============================================================================
+# Coworker Knowledge Factories (Design Choice 5)
+# =============================================================================
+
+
+def coworker_knowledge_entry_from_published(
+    knowledge: "PublishedKnowledge",
+) -> CoworkerKnowledgeEntry:
+    """Build CoworkerKnowledgeEntry from PublishedKnowledge.
+
+    Factory function that converts domain storage type (PublishedKnowledge)
+    to template-renderable context type (CoworkerKnowledgeEntry).
+
+    This centralizes the conversion logic (DRY) and allows the pipeline
+    step to depend on an abstraction rather than inline construction (DIP).
+
+    Args:
+        knowledge: The published knowledge from SharedExecutionContext.
+
+    Returns:
+        CoworkerKnowledgeEntry value object for template rendering.
+
+    Example:
+        # In InjectCoworkerKnowledge pipeline step
+        all_knowledge = shared_context.get_all_knowledge()
+        entries = tuple(
+            coworker_knowledge_entry_from_published(k)
+            for k in all_knowledge
+        )
+        context.add(CoworkerKnowledge(entries=entries))
+    """
+    return CoworkerKnowledgeEntry(
+        key=knowledge.key,
+        objective=knowledge.objective,
+        relevance=knowledge.relevance,
+        key_findings=knowledge.key_findings,
+        deliverables=knowledge.deliverables,
+        source_worker_id=str(knowledge.source_worker_id),
+        published_by=str(knowledge.published_by),
     )
