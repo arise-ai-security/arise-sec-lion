@@ -148,6 +148,7 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, limits_
         shared_context_port=AsyncMock(),
         sibling_view_port=sibling_view_mock,
         parent_notifier=parent_notifier,
+        prompt_builder=prompt_builder,
     )
 
     return AgentExecutionService(

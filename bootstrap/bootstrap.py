@@ -115,14 +115,27 @@ async def _event_store(settings: Settings):
 async def _run_task(args: argparse.Namespace) -> None:
     from presentation.formatters import ProgressDisplayFormatter
 
+    from core.application.services.cve_inference import CVEInstanceInferenceService
+    from core.domain.values.cve_instance import CVEInstance
+
     settings = Settings.from_yaml(args.config) if args.config else Settings.load()
 
     # Apply CLI overrides for worker configuration
     settings = _apply_worker_overrides(settings, args)
 
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
-    cve_file = getattr(args, "cve_file", None)
-    await _create_cli(settings, callback).run_task(args.task, cve_file=cve_file)
+
+    # Load or infer CVE instance
+    if (cve_file := getattr(args, "cve_file", None)) is not None:
+        cve_instance = CVEInstance.from_json_file(cve_file)
+    else:
+        # Attempt inference from task description (fail_fast=True: error if missing required fields)
+        inference_service = CVEInstanceInferenceService()
+        cve_instance = inference_service.infer_instance(args.task, fail_fast=True)
+        if settings.output.verbose:
+            print(f"[Inferred] SEC-bench CVE: {cve_instance.instance_id}")
+
+    await _create_cli(settings, callback).run_task(args.task, cve_instance=cve_instance)
 
 
 def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
