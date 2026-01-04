@@ -70,19 +70,20 @@ class DefaultPromptStrategy:
 def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None:
     """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
 
-    Uses parent_task instead for branch detection.
+    Checks ancestry chain for top-level subtask keywords.
+    Returns None if not in a benchmark run or branch not determinable.
     """
     if spawn_payload is None:
         return None
 
-    # No ancestries
-    task_lower = spawn_payload.parent_task.lower()
-    if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
-        return "builder"
-    if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
-        return "exploiter"
-    if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
-        return "fixer"
+    for ancestor in spawn_payload.ancestry:
+        task_lower = ancestor.task_summary.lower()
+        if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
+            return "builder"
+        if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
+            return "exploiter"
+        if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
+            return "fixer"
 
     return None
 
