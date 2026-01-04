@@ -204,6 +204,10 @@ class SecBenchPromptStrategy:
             # .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)  # Disabled
             .with_user_prompt(context.task_description)
             .with_cve_display(context.cve_instance)
+<<<<<<< HEAD
+=======
+            .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)
+>>>>>>> develop
             .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
             .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
             .render_if(branch == "fixer", "secbench/worker/fixer.j2", **cve_ctx)
