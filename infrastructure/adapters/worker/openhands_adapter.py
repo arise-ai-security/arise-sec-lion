@@ -124,8 +124,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
 
             # Yield thought events from conversation history
-            if hasattr(conversation, "events"):
-                for event in conversation.events:  # type: ignore[attr-defined]
+            # Events are stored in conversation.state.events, not conversation.events
+            state = getattr(conversation, "state", None)
+            if state and hasattr(state, "events"):
+                for event in state.events:
                     content = self._extract_event_content(event)
                     if content and content.strip():
                         output_type = self._classify_event(event)
@@ -164,26 +166,34 @@ class OpenHandsAdapter(WorkerAdapterBase):
     def _extract_cost_data(self, conversation: Any) -> tuple[float, int | None]:
         """Extract cost from conversation_stats API.
 
-        OpenHands SDK provides:
-        - conversation.conversation_stats["accumulated_cost"]
-        - conversation.conversation_stats["prompt_tokens"]
-        - conversation.conversation_stats["completion_tokens"]
+        OpenHands SDK provides ConversationStats object with attributes:
+        - accumulated_cost: Total cost in USD
+        - prompt_tokens: Input token count
+        - completion_tokens: Output token count
 
         Falls back to token-based calculation if accumulated_cost not available.
         """
-        stats = getattr(conversation, "conversation_stats", None) or {}
+        stats = getattr(conversation, "conversation_stats", None)
+        if stats is None:
+            return 0.0, None
+
+        # Helper to get attribute from stats (handles both object and dict)
+        def get_stat(name: str, default: Any = None) -> Any:
+            if isinstance(stats, dict):
+                return stats.get(name, default)
+            return getattr(stats, name, default)
 
         # Primary: use accumulated_cost from SDK (most accurate)
-        accumulated_cost = stats.get("accumulated_cost")
+        accumulated_cost = get_stat("accumulated_cost")
         if accumulated_cost is not None:
-            prompt_tokens = stats.get("prompt_tokens", 0)
-            completion_tokens = stats.get("completion_tokens", 0)
+            prompt_tokens = get_stat("prompt_tokens", 0) or 0
+            completion_tokens = get_stat("completion_tokens", 0) or 0
             total_tokens = prompt_tokens + completion_tokens if (prompt_tokens or completion_tokens) else None
             return float(accumulated_cost), total_tokens
 
         # Fallback: calculate from tokens using our pricing registry
-        prompt_tokens = stats.get("prompt_tokens", 0)
-        completion_tokens = stats.get("completion_tokens", 0)
+        prompt_tokens = get_stat("prompt_tokens", 0) or 0
+        completion_tokens = get_stat("completion_tokens", 0) or 0
 
         if prompt_tokens or completion_tokens:
             pricing = get_model_pricing(self.model)
@@ -195,10 +205,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     def _extract_result(self, conversation: Any, working_dir: str) -> str:
         """Extract result from conversation events."""
-        if hasattr(conversation, "events") and conversation.events:
+        state = getattr(conversation, "state", None)
+        if state and hasattr(state, "events") and state.events:
             output_events = [
                 self._extract_event_content(e)
-                for e in conversation.events
+                for e in state.events
                 if self._classify_event(e) == "output"
             ]
             output_events = [e for e in output_events if e]
