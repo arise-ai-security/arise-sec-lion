@@ -1,25 +1,33 @@
-# VULNERABILITY REPRODUCTION TASK: {{ instance_id }}
+# VULNERABILITY REPRODUCTION TASK
 
 ## OVERVIEW
-Your task is to reproduce, exploit, and fix vulnerability {{ instance_id }} by following a structured three-phase process.
+
+Refer to the **Task Context** above for:
+- User task description
+- If provided, CVE instance details (instance id, repository, commit, sanitizer type)
+- Success criteria for each phase
+
+Your task is to reproduce, exploit, and fix the vulnerability described above by following a structured three-phase process.
+
+## THREE-PHASE PROCESS
 
 Each phase requires specific deliverables that must be completed before proceeding:
 
-## PHASE 1: Build
-- Primary Responsibility: Build the code repository already cloned in {{ work_dir }}
+### PHASE 1: Build
+- Primary Responsibility: Build the code repository (see working directory in Task Context)
 - Key Deliverables:
   - `/testcase/base_commit_hash` (required)
   - `/src/build.sh` (improved)
   - `/testcase/repo_changes.diff` (if changes made)
   - `/testcase/packages.txt` (if packages installed)
 
-## PHASE 2: Exploit
+### PHASE 2: Exploit
 - Primary Responsibility: Create proof-of-concept with triggerable exploit command
 - Key Deliverables:
   - PoC artifacts under `/testcase` (required)
   - Working exploit script `/testcase/repro.sh` (required)
 
-## PHASE 3: Fix
+### PHASE 3: Fix
 - Primary Responsibility: Analyze and generate a unified patch file
 - Key Deliverables:
   - `/testcase/model_patch.diff` (required)
@@ -28,31 +36,11 @@ Each phase requires specific deliverables that must be completed before proceedi
 CHECK IF REQUIRED DELIVERABLES ARE CORRECTLY SAVED BEFORE MOVING TO THE NEXT PHASE.**
 
 ## REPOSITORY INFORMATION
-<uploaded_files>
-{{ work_dir }}
-</uploaded_files>
 
-**NOTE:** The code repository is already cloned in the {{ work_dir }} directory. You don't need to clone it again.
-YOUR WORKSPACE DIRECTORY IS {{ work_dir }}. All of your work SHOULD be done in this directory. DO NOT CHANGE THE DIRECTORY.
+**NOTE:** The code repository is already cloned in the working directory (see Task Context). You don't need to clone it again.
+YOUR WORKSPACE DIRECTORY IS the working directory specified in Task Context. All of your work SHOULD be done there. DO NOT CHANGE THE DIRECTORY.
 
-- Repository location: {{ work_dir }}
-- Base commit: `{{ base_commit }}`
 - Build script to update: `/src/build.sh` (located outside code repository)
-
-## VULNERABILITY DETAILS
-
-<issue_description>
-{{ bug_description }}
-</issue_description>
-
-## Candidate fix commits:
-
-<candidate_fix_commits>
-{{ candidate_fixes }}
-</candidate_fix_commits>
-
-**NOTE:** These commits may include unnecessary/unrelated changes.
-**NOTE:** RUN ONLY NECESSARY COMMANDS. Be careful with commands that can output too much information such as `git log`. Avoid running commands that produce excessive output to keep the interaction efficient.
 
 ## DECOMPOSITION GUIDELINES
 
@@ -63,7 +51,7 @@ You MUST decompose this task into exactly 3 subtasks (one per phase):
 ```json
 [
   {
-    "description": "[Builder] Set up environment for {{ instance_id }}: build repository at {{ work_dir }}, create /testcase/base_commit_hash, improve /src/build.sh",
+    "description": "[Builder] Set up environment: build repository, create /testcase/base_commit_hash, improve /src/build.sh",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 4000},
@@ -71,7 +59,7 @@ You MUST decompose this task into exactly 3 subtasks (one per phase):
     }
   },
   {
-    "description": "[Exploiter] Generate PoC for {{ instance_id }}: trigger sanitizer error matching bug report, create /testcase/repro.sh",
+    "description": "[Exploiter] Generate PoC: trigger sanitizer error matching bug report, create /testcase/repro.sh",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000},
@@ -79,7 +67,7 @@ You MUST decompose this task into exactly 3 subtasks (one per phase):
     }
   },
   {
-    "description": "[Fixer] Generate patch for {{ instance_id }}: analyze candidate fixes, create /testcase/model_patch.diff, validate fix removes sanitizer errors",
+    "description": "[Fixer] Generate patch: analyze candidate fixes, create /testcase/model_patch.diff, validate fix removes sanitizer errors",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000},
@@ -109,7 +97,6 @@ Your decomposition output MUST:
 1. Contain exactly 3 subtasks (one per phase)
 2. Include phase prefix in each description
 3. Specify appropriate model/temperature for each phase
-4. Include {{ instance_id }} in each subtask for traceability
 
 Your response must be a **pure JSON array** containing exactly 3 subtasks.
 
@@ -136,7 +123,6 @@ Your response must be a **pure JSON array** containing exactly 3 subtasks.
 
 1. **Exactly 3 subtasks**: Builder, Exploiter, Fixer (in that order)
 2. **Phase prefix required**: Each description must start with `[Builder]`, `[Exploiter]`, or `[Fixer]`
-3. **Instance ID included**: Each description should reference the CVE instance ID
-4. **No extra text**: Output ONLY the JSON array, no explanations
+3. **No extra text**: Output ONLY the JSON array, no explanations
 
 **IMPORTANT: You can only complete this task after successfully finishing all three phases.**

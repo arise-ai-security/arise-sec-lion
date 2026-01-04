@@ -1,31 +1,27 @@
 # Fixer Manager - Decomposition Prompt
 
-You are a **Fixer Manager** for SEC-bench benchmark `{{ instance_id }}`.
+You are a **Fixer Manager** for this vulnerability reproduction task.
 
 Your task is to decompose the patch generation phase into smaller worker subtasks.
 
-## Repository Information
-- **Repository**: {{ repo }}
-- **Working Directory**: {{ work_dir }}
-- **Base Commit**: See `/testcase/base_commit_hash`
+## Task Reference
 
-## Vulnerability Details
-<issue_description>
-{{ bug_description }}
-</issue_description>
+Refer to the **Task Context** above for:
+- Repository location and working directory
+- Vulnerability details and bug description
+- Candidate fix commits (if available)
 
-## Candidate Fix Commits
-<candidate_fix_commits>
-{{ candidate_fixes }}
-</candidate_fix_commits>
+Base commit is stored at `/testcase/base_commit_hash`.
 
-**NOTE:** These commits may include unnecessary/unrelated changes. Be selective.
+**NOTE:** Candidate fix commits (if listed in Task Context) may include unnecessary/unrelated changes. Be selective.
 
 ## Phase Deliverables
+
 The Fixer phase must produce:
 - `/testcase/model_patch.diff` (required)
 
 ## Success Criteria
+
 - Patch applies cleanly to base commit
 - Patched code compiles without errors
 - `/testcase/repro.sh` does NOT trigger sanitizer error after patching
@@ -41,7 +37,7 @@ Break down the fix phase into these worker subtasks:
 - Locate vulnerable code sections
 
 ### Subtask 2: Review Candidate Fix Commits
-- For each candidate commit, run `git show <commit_hash>`
+- For each candidate commit (see Task Context), run `git show <commit_hash>`
 - If `fatal: bad object`, try `curl <commit_url>.diff`
 - Identify most relevant changes
 - Skip commits that match base_commit_hash (vulnerable version)
@@ -67,7 +63,7 @@ Output a JSON array of subtasks:
 ```json
 [
   {
-    "description": "[Fixer-1] Analyze root cause for {{ instance_id }}: identify vulnerable files and understand why vulnerability exists",
+    "description": "[Fixer-1] Analyze root cause: identify vulnerable files and understand why vulnerability exists",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o", "temperature": 0.4, "max_tokens": 4000},
@@ -75,7 +71,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Fixer-2] Review candidate fixes for {{ instance_id }}: examine commits with git show, identify most relevant changes",
+    "description": "[Fixer-2] Review candidate fixes: examine commits with git show, identify most relevant changes",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o", "temperature": 0.4, "max_tokens": 6000},
@@ -83,7 +79,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Fixer-3] Create patch for {{ instance_id }}: generate /testcase/model_patch.diff with minimal fix, remove unnecessary changes",
+    "description": "[Fixer-3] Create patch: generate /testcase/model_patch.diff with minimal fix, remove unnecessary changes",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000},
@@ -91,7 +87,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Fixer-4] Validate patch for {{ instance_id }}: reset to base commit, apply patch, rebuild, verify /testcase/repro.sh no longer triggers error",
+    "description": "[Fixer-4] Validate patch: reset to base commit, apply patch, rebuild, verify /testcase/repro.sh no longer triggers error",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 6000},
@@ -102,6 +98,7 @@ Output a JSON array of subtasks:
 ```
 
 ## Notes
+
 - DO NOT execute code yourself - delegate to worker subtasks
 - ALWAYS reset to base commit before applying patch
 - DO NOT change `/testcase/base_commit_hash`

@@ -124,7 +124,8 @@ class SecBenchPromptStrategy:
         return (
             self._chain_factory()
             .render("core/roles/boss.j2", default_tool=context.default_tool)
-            .with_cve_context(context.cve_instance)
+            .with_user_prompt(context.task_description)
+            .with_cve_display(context.cve_instance)
             .render("secbench/boss.j2", **cve_ctx, default_tool=context.default_tool)
             .build()
         )
@@ -159,7 +160,8 @@ class SecBenchPromptStrategy:
         return (
             self._chain_factory()
             .render("core/roles/manager.j2", default_tool=context.default_tool)
-            .with_cve_context(context.cve_instance)
+            .with_user_prompt(context.task_description)
+            .with_cve_display(context.cve_instance)
             .render_if(
                 branch == "builder",
                 "secbench/manager/builder.j2",
@@ -199,8 +201,10 @@ class SecBenchPromptStrategy:
 
         return (
             self._chain_factory()
+            # .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)  # Disabled
+            .with_user_prompt(context.task_description)
+            .with_cve_display(context.cve_instance)
             .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)
-            .with_cve_context(context.cve_instance)
             .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
             .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
             .render_if(branch == "fixer", "secbench/worker/fixer.j2", **cve_ctx)

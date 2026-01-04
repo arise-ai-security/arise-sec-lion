@@ -1,25 +1,22 @@
-## Repository Information
-<REPOSITORY_INFO>
-{{ work_dir }}
-</REPOSITORY_INFO>
-I've uploaded a code repository at {{ work_dir }} with the base commit `{{ base_commit }}` for {{ instance_id }}.
-However, you should update `/src/build.sh` which is in the outside of the repository.
+## Task Reference
 
-## Vulnerability Details
-<ISSUE_DESCRIPTION>
-{{ bug_description }}
-</ISSUE_DESCRIPTION>
+Refer to the **Task Context** above for:
+- Repository location and working directory
+- Base commit hash
+- Vulnerability details and bug description
 
 ## Step-by-step instructions
-1. Read the vulnerability description to determine the most suitable base commit:
-   - Currently, the base commit of the repository is `{{ base_commit }}`
+
+1. Read the vulnerability description (in Task Context) to determine the most suitable base commit:
    - If you identify a more suitable base commit based on the description:
      a. Save the commit hash to `/testcase/base_commit_hash`
      b. Switch to this commit using `git reset --hard <commit_hash>`
-   - Otherwise, use the provided `{{ base_commit }}` as the base commit:
+   - Otherwise, use the provided base commit (from Task Context):
      a. Save it to `/testcase/base_commit_hash`
    - Note that `/testcase/base_commit_hash` FILE SHOULD BE CREATED before moving to the next step.
-2. Run `cd {{ work_dir }} && /src/build.sh` command to build the project and check if the build is successful.
+
+2. Run `cd <work_dir> && /src/build.sh` command to build the project and check if the build is successful.
+
 3. Improve the build script (`/src/build.sh`) by following the requirements below. Make concise but complete improvements.
     a. Make it standalone - remove any undefined variables or environment variables that aren't set in the script.
     b. Remove any fuzzer-related build commands - this script should only contain commands for building the project
@@ -37,19 +34,25 @@ However, you should update `/src/build.sh` which is in the outside of the reposi
        - Add execution permissions if needed
     i. Cleaning project commands such as `make clean` should be located before `configure` and `make` commands.
     j. Exceptionally, if `$SRC` or `$WORK` is used in the script, it is predefined with `/src` or `/work` directory and can be used without definition.
-4. Build the project using `cd {{ work_dir }} && /src/build.sh` command. Note that the build command should be executed in the repository path.
+
+4. Build the project using `cd <work_dir> && /src/build.sh` command. Note that the build command should be executed in the repository path.
+
 5. If there are build errors, carefully analyze the BUILD ERRORS ONLY and identify quick solutions
     a. Ignore `warning` messages
     b. Sometimes, you can easily fix build errors by adding suppression flags to the compiler flags without changing source code.
        - When adding suppression flags, please add them before configure command such as `./configure` or `cmake` in the build script.
     c. If you need to change source code in the repository, please be very careful to avoid using undefined variables or functions in the codebase. MAKE MINIMAL CHANGES.
+
 6. If you successfully installed any packages via `apt` command, write the name of each package in the `/testcase/packages.txt` file. Each line should contain only one package name. Only create this file if you actually installed packages.
+
 7. If there are no build errors, you can finish the task. If not, please continue to fix the build errors.
+
 8. Save any changes made to code files in the repository by running the following command:
    ```bash
-   cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff
+   cd <work_dir> && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff
    ```
    This will create a diff file containing all your changes to the source code.
+
 9. Before finishing, please check that the following files are correctly generated or updated (if applicable):
    - `/testcase/base_commit_hash`
    - `/testcase/repo_changes.diff`
@@ -57,6 +60,7 @@ However, you should update `/src/build.sh` which is in the outside of the reposi
    - `/src/build.sh`
 
 ## Troubleshooting
+
 1. You need to focus on `error` messages, NOT `warning` messages.
 2. If you encounter general errors like `error: ISO C++17 does not allow`, then add `-std=c++14` to the compiler flags by `export CFLAGS="$CFLAGS -std=c++14"` and `export CXXFLAGS="$CXXFLAGS -std=c++14"` in the build script. You should define these flags before configure command such as `./configure` or `cmake` in the build script.
 3. If you encounter compiler errors about missing type specifiers (such as "defaults to 'int'" or "implicit int" errors), add the appropriate type declaration (like `int`, `void`, etc.) before the variable or function declaration.
@@ -64,6 +68,7 @@ However, you should update `/src/build.sh` which is in the outside of the reposi
 5. If you encounter `error: functions that differ only in their return type cannot be overloaded` errors, add `-D_GNU_SOURCE` option to the compiler flags by `export CFLAGS="$CFLAGS -D_GNU_SOURCE"` and `export CXXFLAGS="$CXXFLAGS -D_GNU_SOURCE"` in the build script. You should define these flags before configure command such as `./configure` or `cmake` in the build script.
 
 ## Notes
+
 - IMPORTANT: DO NOT DISABLE SANITIZER options in the build script. Sanitizers are essential for reproducing the bug with proper error reports. The sanitizer compile flags are already properly configured in the separate build script at `/usr/local/bin/compile`.
 - RUN NECESSARY COMMANDS ONLY.
 - Always be careful running commands expected to return large outputs (e.g., `grep` or `git log`) by setting options or safe guards to limit the output size.
