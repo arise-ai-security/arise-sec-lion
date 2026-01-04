@@ -77,6 +77,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     # Complexity budget events (Design Choice 2/3: Budgeted Tree)
     "ComplexityBudgetAllocated": ComplexityBudgetAllocated,
     "ComplexityBudgetRecollected": ComplexityBudgetRecollected,
+    # Legacy aliases for renamed events
+    "BudgetAllocated": ComplexityBudgetAllocated,
     # SEC-bench benchmark events
     "BenchmarkStarted": BenchmarkStarted,
     "BenchmarkStageCompleted": BenchmarkStageCompleted,
