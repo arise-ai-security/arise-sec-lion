@@ -87,10 +87,12 @@ class ExtractSourceContext:
 
         # Call LLM for extraction
         try:
-            response = await self._llm_port.generate(
+            response = await self._llm_port.query_with_usage(
                 prompt=prompt,
-                max_tokens=2000,
-                temperature=0.0,  # Deterministic extraction
+                config_dict={
+                    "max_tokens": 2000,
+                    "temperature": 0.0,
+                },
             )
 
             # Parse JSON response
