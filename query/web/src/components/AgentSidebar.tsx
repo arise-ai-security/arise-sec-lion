@@ -9,6 +9,7 @@ interface AgentSidebarProps {
   selectedId: string | null;
   onSelect: (agentId: string) => void;
   loading: boolean;
+  error: string | null;
 }
 
 const statusColors: Record<string, string> = {
@@ -18,10 +19,12 @@ const statusColors: Record<string, string> = {
   waiting: 'bg-blue-400',
   completed: 'bg-green-400',
   failed: 'bg-red-400',
-  blocked: 'bg-red-400',
+  blocked: 'bg-orange-400',
+  terminated: 'bg-gray-400',
+  verifying: 'bg-purple-400',
 };
 
-export function AgentSidebar({ agents, selectedId, onSelect, loading }: AgentSidebarProps) {
+export function AgentSidebar({ agents, selectedId, onSelect, loading, error }: AgentSidebarProps) {
   if (loading) {
     return (
       <div className="p-4 text-gray-500">
@@ -30,10 +33,28 @@ export function AgentSidebar({ agents, selectedId, onSelect, loading }: AgentSid
     );
   }
 
+  if (error) {
+    return (
+      <div className="p-4">
+        <div className="text-red-500 text-sm mb-2">Failed to connect to API</div>
+        <div className="text-xs text-gray-400 break-words">{error}</div>
+        <div className="mt-3 text-xs text-gray-500">
+          Make sure the API server is running on port 8000.
+        </div>
+      </div>
+    );
+  }
+
   if (agents.length === 0) {
     return (
       <div className="p-4 text-gray-500">
-        No agents found. Start a task to see agents here.
+        <div className="mb-2">No agents found.</div>
+        <div className="text-xs">
+          Start a task to see agents here:
+          <pre className="mt-2 p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs overflow-x-auto">
+docker compose exec app python main.py run "your task"
+          </pre>
+        </div>
       </div>
     );
   }

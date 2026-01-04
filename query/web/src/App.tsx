@@ -10,12 +10,11 @@ import { ConfigPanel } from './components/ConfigPanel';
 import { CostPanel } from './components/CostPanel';
 import { EventPanel } from './components/EventPanel';
 import { PromptsPanel } from './components/PromptsPanel';
-import { RegisteredTasksPanel } from './components/RegisteredTasksPanel';
 import { SummaryPanel } from './components/SummaryPanel';
 import { useSSE } from './hooks/useSSE';
 import { useSummarySSE } from './hooks/useSummarySSE';
 import * as api from './api/client';
-import type { AgentListItem, AgentHierarchy, AgentPrompt, AgentSummary, CategorizedEvents, DomainEvent, RegisteredTask } from './types/api';
+import type { AgentListItem, AgentHierarchy, AgentPrompt, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
 
 function App() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
@@ -26,15 +25,30 @@ function App() {
   const [realtimeEvents, setRealtimeEvents] = useState<DomainEvent[]>([]);
   const [summary, setSummary] = useState<AgentSummary | null>(null);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
-  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events' | 'costs' | 'tasks' | 'prompts'>('summary');
+  const [rightPanelView, setRightPanelView] = useState<'summary' | 'events' | 'costs' | 'prompts'>('summary');
+
+  // Dark mode state - initialize from localStorage or system preference
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved) return saved === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  // Apply dark mode class to document
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
 
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(false);
-  const [registeredTasks, setRegisteredTasks] = useState<RegisteredTask[]>([]);
-  const [registeredTasksTotal, setRegisteredTasksTotal] = useState(0);
-  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
   const [nodePrompts, setNodePrompts] = useState<AgentPrompt[]>([]);
   const [nodePromptsTotal, setNodePromptsTotal] = useState(0);
   const [loadingPrompts, setLoadingPrompts] = useState(false);
@@ -43,14 +57,17 @@ function App() {
   const selectedAgentIdRef = useRef(selectedAgentId);
   selectedAgentIdRef.current = selectedAgentId;
 
-  // Debounce ref for hierarchy refresh
+  // Throttle refs for hierarchy refresh (ensures refresh at least every 1s under load)
   const refreshDebounceRef = useRef<number | null>(null);
+  const lastRefreshTimeRef = useRef<number>(0);
+  const REFRESH_THROTTLE_MS = 1000; // At least refresh every 1 second
 
   // Fetch list of BOSS agents - stable callback (no dependencies that change)
   const loadAgents = useCallback(async () => {
     try {
       const data = await api.listBossAgents();
       setAgents(data);
+      setAgentsError(null);
 
       // Auto-select first agent only if none selected (use ref to avoid loop)
       if (!selectedAgentIdRef.current && data.length > 0) {
@@ -59,6 +76,8 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to load agents:', error);
+      const message = error instanceof Error ? error.message : 'Failed to connect to API';
+      setAgentsError(message);
     } finally {
       setLoadingAgents(false);
     }
@@ -165,33 +184,6 @@ function App() {
     };
   }, [selectedNodeId]);
 
-  // Fetch registered tasks when agent is selected
-  const loadRegisteredTasks = useCallback(async () => {
-    if (!selectedAgentId) {
-      setRegisteredTasks([]);
-      setRegisteredTasksTotal(0);
-      return;
-    }
-
-    setLoadingTasks(true);
-    try {
-      const data = await api.getRegisteredTasks(selectedAgentId);
-      setRegisteredTasks(data.tasks);
-      setRegisteredTasksTotal(data.total);
-    } catch (error) {
-      console.error('Failed to load registered tasks:', error);
-      setRegisteredTasks([]);
-      setRegisteredTasksTotal(0);
-    } finally {
-      setLoadingTasks(false);
-    }
-  }, [selectedAgentId]);
-
-  // Load registered tasks when agent changes
-  useEffect(() => {
-    loadRegisteredTasks();
-  }, [loadRegisteredTasks]);
-
   // Fetch prompts for selected node
   const loadNodePrompts = useCallback(async () => {
     if (!selectedNodeId) {
@@ -219,35 +211,91 @@ function App() {
     loadNodePrompts();
   }, [loadNodePrompts]);
 
-  // Debounced hierarchy refresh - stable callback using ref
+  // Throttled hierarchy refresh - ensures refresh at least every REFRESH_THROTTLE_MS
+  // even when continuous events are coming in
   const refreshHierarchy = useCallback(() => {
-    // Cancel any pending refresh
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTimeRef.current;
+
+    // Cancel any pending debounced refresh
     if (refreshDebounceRef.current) {
       clearTimeout(refreshDebounceRef.current);
     }
 
-    // Debounce: wait 500ms before actually refreshing
-    refreshDebounceRef.current = window.setTimeout(async () => {
+    const doRefresh = async () => {
       const agentId = selectedAgentIdRef.current;
       if (!agentId) return;
 
+      lastRefreshTimeRef.current = Date.now();
       try {
         const data = await api.getAgentHierarchy(agentId);
         setHierarchy(data);
       } catch (error) {
         console.error('Failed to refresh hierarchy:', error);
       }
-    }, 500);
+    };
+
+    // If enough time has passed, refresh immediately (throttle leading edge)
+    if (timeSinceLastRefresh >= REFRESH_THROTTLE_MS) {
+      doRefresh();
+    } else {
+      // Otherwise, schedule a refresh for when the throttle period ends
+      const delay = REFRESH_THROTTLE_MS - timeSinceLastRefresh;
+      refreshDebounceRef.current = window.setTimeout(doRefresh, delay);
+    }
   }, []);
 
-  // Cleanup debounce on unmount
+  // Throttle refs for summary/events refresh
+  const summaryRefreshRef = useRef<number | null>(null);
+  const lastSummaryRefreshRef = useRef<number>(0);
+  const SUMMARY_THROTTLE_MS = 500; // Refresh summary at most every 500ms
+
+  // Cleanup throttle timers on unmount
   useEffect(() => {
     return () => {
       if (refreshDebounceRef.current) {
         clearTimeout(refreshDebounceRef.current);
       }
+      if (summaryRefreshRef.current) {
+        clearTimeout(summaryRefreshRef.current);
+      }
     };
   }, []);
+
+  // Throttled refresh for summary and events when events arrive for selected node
+  const refreshSelectedNodeData = useCallback((agentId: string) => {
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastSummaryRefreshRef.current;
+
+    if (summaryRefreshRef.current) {
+      clearTimeout(summaryRefreshRef.current);
+    }
+
+    const doRefresh = async () => {
+      lastSummaryRefreshRef.current = Date.now();
+      try {
+        const [summaryData, eventsData] = await Promise.all([
+          api.getAgentSummary(agentId),
+          api.getAgentEvents(agentId),
+        ]);
+        setSummary(summaryData);
+        setEvents(eventsData);
+      } catch (error) {
+        console.error('Failed to refresh selected node data:', error);
+      }
+    };
+
+    if (timeSinceLastRefresh >= SUMMARY_THROTTLE_MS) {
+      doRefresh();
+    } else {
+      const delay = SUMMARY_THROTTLE_MS - timeSinceLastRefresh;
+      summaryRefreshRef.current = window.setTimeout(doRefresh, delay);
+    }
+  }, []);
+
+  // Ref for selectedNodeId to avoid re-creating handleSSEEvent
+  const selectedNodeIdRef = useRef(selectedNodeId);
+  selectedNodeIdRef.current = selectedNodeId;
 
   // Handle real-time events via SSE
   const handleSSEEvent = useCallback((event: DomainEvent) => {
@@ -257,16 +305,18 @@ function App() {
       return updated.slice(-100);
     });
 
-    // Refresh hierarchy when structure-changing events occur (debounced)
+    // Refresh hierarchy when structure-changing events occur (throttled)
     const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed'];
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
-      // Also refresh registered tasks when new agents are created
-      if (event.event_type === 'ChildSpawned') {
-        loadRegisteredTasks();
-      }
     }
-  }, [refreshHierarchy, loadRegisteredTasks]);
+
+    // Refresh summary and events when events arrive for the currently selected node (throttled)
+    const currentNodeId = selectedNodeIdRef.current;
+    if (currentNodeId && event.aggregate_id === currentNodeId) {
+      refreshSelectedNodeData(currentNodeId);
+    }
+  }, [refreshHierarchy, refreshSelectedNodeData]);
 
   // SSE connection for real-time updates
   const { isConnected } = useSSE({
@@ -299,6 +349,7 @@ function App() {
           selectedId={selectedAgentId}
           onSelect={handleAgentSelect}
           loading={loadingAgents}
+          error={agentsError}
         />
       </div>
 
@@ -317,6 +368,22 @@ function App() {
             )}
           </div>
           <div className="flex items-center gap-4">
+            {/* Dark/Light mode toggle */}
+            <button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDarkMode ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+              )}
+            </button>
             <button
               onClick={() => setShowConfigPanel(true)}
               className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition-colors"
@@ -346,7 +413,7 @@ function App() {
               <div className="animate-pulse text-gray-500">Loading hierarchy...</div>
             </div>
           ) : (
-            <AgentTree hierarchy={hierarchy} onNodeClick={handleNodeClick} />
+            <AgentTree hierarchy={hierarchy} onNodeClick={handleNodeClick} hasAgents={agents.length > 0} />
           )}
         </div>
       </div>
@@ -397,21 +464,6 @@ function App() {
               )}
             </button>
             <button
-              onClick={() => setRightPanelView('tasks')}
-              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-                rightPanelView === 'tasks'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
-            >
-              Tasks
-              {registeredTasksTotal > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-purple-600 rounded-full">
-                  {registeredTasksTotal}
-                </span>
-              )}
-            </button>
-            <button
               onClick={() => setRightPanelView('prompts')}
               className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                 rightPanelView === 'prompts'
@@ -440,13 +492,6 @@ function App() {
               summary={executionSummary}
               loading={!executionSummary && !!selectedAgentId}
               isConnected={isSummaryConnected}
-            />
-          ) : rightPanelView === 'tasks' ? (
-            <RegisteredTasksPanel
-              tasks={registeredTasks}
-              total={registeredTasksTotal}
-              loading={loadingTasks}
-              onRefresh={loadRegisteredTasks}
             />
           ) : (
             <PromptsPanel

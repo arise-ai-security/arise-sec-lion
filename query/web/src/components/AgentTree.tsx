@@ -21,6 +21,7 @@ import type { AgentNode as AgentNodeType } from '../types/api';
 interface AgentTreeProps {
   hierarchy: { root: AgentNodeType } | null;
   onNodeClick?: (agentId: string) => void;
+  hasAgents?: boolean;
 }
 
 type AgentFlowNode = Node<AgentNodeData>;
@@ -93,7 +94,7 @@ function buildNodesAndEdges(root: AgentNodeType): { nodes: AgentFlowNode[]; edge
   return { nodes, edges };
 }
 
-export function AgentTree({ hierarchy, onNodeClick }: AgentTreeProps) {
+export function AgentTree({ hierarchy, onNodeClick, hasAgents = true }: AgentTreeProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<AgentFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -131,9 +132,14 @@ export function AgentTree({ hierarchy, onNodeClick }: AgentTreeProps) {
   );
 
   if (!hierarchy) {
+    // Different messages based on whether we have any agents at all
+    const message = hasAgents
+      ? 'Select an agent to view hierarchy'
+      : 'No agent runs yet. Start a task to see the hierarchy.';
+
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
-        Select an agent to view hierarchy
+        {message}
       </div>
     );
   }
