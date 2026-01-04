@@ -464,11 +464,12 @@ class PromptBuilder:
             return custom_prompt
 
         # Default generic prompt
-        sibling_ctx = sibling_view.to_template_dict() if sibling_view else {}
+        # NOTE: sibling_view injection disabled to match experiment branch behavior
+        # sibling_ctx = sibling_view.to_template_dict() if sibling_view else {}
 
         return (
             self.chain()
-            .render_if(sibling_view, "core/context/sibling.j2", **sibling_ctx)
+            # .render_if(sibling_view, "core/context/sibling.j2", **sibling_ctx)  # Disabled
             .render("core/roles/worker.j2")
             .render("core/worker/execution.j2")
             .text(f"<TASK>\n{task_description}\n</TASK>")

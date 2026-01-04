@@ -70,20 +70,19 @@ class DefaultPromptStrategy:
 def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None:
     """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
 
-    Checks ancestry chain for top-level subtask keywords.
-    Returns None if not in a benchmark run or branch not determinable.
+    Uses parent_task instead for branch detection.
     """
     if spawn_payload is None:
         return None
 
-    for ancestor in spawn_payload.ancestry:
-        task_lower = ancestor.task_summary.lower()
-        if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
-            return "builder"
-        if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
-            return "exploiter"
-        if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
-            return "fixer"
+    # No ancestries
+    task_lower = spawn_payload.parent_task.lower()
+    if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
+        return "builder"
+    if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
+        return "exploiter"
+    if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
+        return "fixer"
 
     return None
 
@@ -190,16 +189,17 @@ class SecBenchPromptStrategy:
         if branch is None:
             return None
 
-        sibling_ctx = (
-            context.sibling_view.to_template_dict()
-            if context.sibling_view
-            else {}
-        )
+        # NOTE: sibling_view injection disabled to match experiment branch behavior
+        # sibling_ctx = (
+        #     context.sibling_view.to_template_dict()
+        #     if context.sibling_view
+        #     else {}
+        # )
         cve_ctx = context.cve_instance.to_template_context()
 
         return (
             self._chain_factory()
-            .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)
+            # .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)  # Disabled
             .with_cve_context(context.cve_instance)
             .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
             .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
