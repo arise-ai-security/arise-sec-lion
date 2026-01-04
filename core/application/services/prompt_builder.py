@@ -478,6 +478,7 @@ class PromptBuilder:
             .render_if(workspace_context, "core/context/workspace.j2", files=workspace_context)
             .build()
         )
+<<<<<<< HEAD
 
     # -------------------------------------------------------------------------
     # Source Context Extraction (Design Choice 6 & 7)
@@ -506,3 +507,5 @@ class PromptBuilder:
             )
             .build()
         )
+=======
+>>>>>>> f0c1c98 ( Make --cve-file optional with inference from task description)
