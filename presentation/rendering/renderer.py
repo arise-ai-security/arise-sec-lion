@@ -26,7 +26,7 @@ class OutputRenderer:
         """Print final result header."""
         click.echo()
         click.echo("╔═══════════════════════════════════════════════════════════════════╗")
-        click.echo("║  FINAL RESULT                                                    ║")
+        click.echo("║  FINAL RESULT                                                     ║")
         click.echo("╚═══════════════════════════════════════════════════════════════════╝")
         click.echo()
 
