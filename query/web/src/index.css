@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Tell Tailwind to scan these directories for classes */
+@source "../src/**/*.{ts,tsx}";
+@source "../index.html";
+
+/* Use class-based dark mode instead of media query */
+@variant dark (&:where(.dark, .dark *));
+
 /* React Flow styles */
 .react-flow__node {
   @apply rounded-lg shadow-lg;

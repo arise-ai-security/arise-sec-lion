@@ -31,10 +31,14 @@ const statusIcons: Record<AgentStatus, string> = {
   completed: '✅',
   failed: '❌',
   blocked: '🚫',
+  terminated: '⛔',
+  verifying: '🔬',
 };
 
 export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
-  const colorClass = roleColors[data.role] || 'bg-gray-500 border-gray-600';
+  // API returns lowercase roles, normalize to uppercase for lookup
+  const normalizedRole = data.role.toUpperCase() as AgentRole;
+  const colorClass = roleColors[normalizedRole] || 'bg-gray-500 border-gray-600';
   const statusIcon = statusIcons[data.status] || '❓';
 
   return (
@@ -52,7 +56,7 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
       />
 
       <div className="flex items-center justify-between mb-2">
-        <span className="font-bold text-sm">{data.role}</span>
+        <span className="font-bold text-sm">{normalizedRole}</span>
         <span className="text-lg" title={data.status}>
           {statusIcon}
         </span>

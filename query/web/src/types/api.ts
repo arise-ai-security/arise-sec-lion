@@ -5,7 +5,7 @@
 
 // Agent types
 export type AgentRole = 'BOSS' | 'MANAGER' | 'WORKER' | 'PENDING';
-export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked';
+export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked' | 'terminated' | 'verifying';
 
 export interface AgentListItem {
   id: string;
