@@ -45,7 +45,7 @@ orchestration:
     initial_amount: 1000.0     # Starting budget for BOSS agent
     threshold_ratio: 0.02      # 2% - force WORKER when budget < initial * 0.02
     # Design Choice 3: Russian Roulette and budget recollection
-    shortcut_probability: 0.3  # 30% random chance to become WORKER (skip complexity eval)
+    shortcut_probability: 0    # random chance to become WORKER (skip complexity eval)
     success_reward_ratio: 1.2  # Recollect 1.2x remaining budget on child success
     failure_penalty_ratio: 0.0 # Recollect 0x remaining budget on child failure
 
