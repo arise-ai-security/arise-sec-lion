@@ -12,9 +12,21 @@ from core.domain.values.enums import AgentRole
 from core.application.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
-    from core.application.services.context_composer import ContextComposer
     from core.domain.values.context import HierarchyLimits, SpawnPayload
     from core.domain.values.cve_instance import CVEInstance
+
+_CVE_DISPLAY_FIELDS = (
+    "instance_id",
+    "cve_id",
+    "repo",
+    "project_name",
+    "lang",
+    "sanitizer",
+    "base_commit",
+    "work_dir",
+    "bug_description",
+    "candidate_fixes",
+)
 
 
 class TemplateChain:
@@ -67,17 +79,42 @@ class TemplateChain:
         """Inject SEC-bench template if it exists. Looks in secbench/ directory."""
         return self.render_optional(f"secbench/{template_name}", **kwargs)
 
-    def with_cve_context(self, cve_instance: "CVEInstance | None") -> Self:
-        """Inject SEC-bench CVE context if available.
+    def with_user_prompt(self, user_prompt: str) -> Self:
+        """Inject user prompt context (generic, reusable).
 
-        Renders secbench/context.j2 with CVE instance data.
+        Renders core/context/user_prompt.j2 with the user's original input.
+        Independent of SEC-bench - can be used in any context.
+
+        Args:
+            user_prompt: Original user task description from CLI.
         """
-        if cve_instance is not None:
-            return self.render_optional(
-                "secbench/context.j2",
-                **cve_instance.to_template_context(),
-            )
+        if user_prompt:
+            return self.render_optional("core/context/user_prompt.j2", user_prompt=user_prompt)
         return self
+
+    def with_cve_display(
+        self,
+        cve_instance: "CVEInstance | None",
+        display_fields: tuple[str, ...] | None = None,
+    ) -> Self:
+        """Inject SEC-bench CVE display context.
+
+        Renders secbench/cve-context.j2 with CVE instance data.
+        Independent of user_prompt - use with_user_prompt() separately.
+
+        Args:
+            cve_instance: CVE instance data (optional).
+            display_fields: Fields to include in cve dict for iteration.
+                          Defaults to standard display fields.
+        """
+        if cve_instance is None:
+            return self
+
+        fields = display_fields or _CVE_DISPLAY_FIELDS
+        cve_ctx = cve_instance.to_template_context()
+        cve_display = {k: v for k, v in cve_ctx.items() if k in fields and v}
+
+        return self.with_secbench("cve-context.j2", cve=cve_display, **cve_ctx)
 
     def text(self, content: str) -> Self:
         """Add raw text to chain."""
@@ -88,46 +125,6 @@ class TemplateChain:
         """Add raw text only if condition is truthy."""
         if condition:
             self._parts.append(content)
-        return self
-
-    def with_context(self, context: "ContextComposer") -> Self:
-        """Render context templates based on composed context.
-
-        Renders templates for each context type present in the composer:
-        - parent_summary -> core/context/parent.j2
-        - ancestry_chain -> core/context/ancestry.j2
-        - sibling_results -> core/context/siblings.j2
-        - shared_decisions -> core/context/decisions.j2
-        - shared_artifacts -> core/context/artifacts.j2
-        - child_outcomes -> core/context/children.j2
-        - ancestor_* and custom_* -> core/context/dynamic.j2
-
-        Args:
-            context: ContextComposer with added context data.
-
-        Returns:
-            Self for method chaining.
-        """
-        if not context:
-            return self
-
-        ctx_dict = context.build()
-
-        # Render standard context templates
-        self.render_if(context.has("parent_summary"), "core/context/parent.j2", **ctx_dict)
-        self.render_if(context.has("ancestry_chain"), "core/context/ancestry.j2", **ctx_dict)
-        self.render_if(context.has("sibling_results"), "core/context/siblings.j2", **ctx_dict)
-        self.render_if(context.has("shared_decisions"), "core/context/decisions.j2", **ctx_dict)
-        self.render_if(context.has("shared_artifacts"), "core/context/artifacts.j2", **ctx_dict)
-        self.render_if(context.has("child_outcomes"), "core/context/children.j2", **ctx_dict)
-
-        # Render dynamic contexts (ancestor_* and custom_*)
-        has_dynamic = context.has_any(
-            *(k for k in context.keys() if k.startswith(("ancestor_", "custom_")))
-        )
-        if has_dynamic:
-            self.render_optional("core/context/dynamic.j2", _context=ctx_dict)
-
         return self
 
     def build(self, separator: str = "\n\n") -> str:
@@ -164,6 +161,23 @@ class PromptBuilder:
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        # Run-level context (set once at start, used by all agents)
+        self._user_prompt: str = ""
+        self._cve_instance: "CVEInstance | None" = None
+
+    def set_run_context(
+        self,
+        user_prompt: str,
+        cve_instance: "CVEInstance | None" = None,
+    ) -> None:
+        """Set global context for this run (called once at start).
+
+        Args:
+            user_prompt: Original user task description from CLI.
+            cve_instance: CVE instance for benchmark runs.
+        """
+        self._user_prompt = user_prompt
+        self._cve_instance = cve_instance
 
     def chain(self) -> TemplateChain:
         """Create a new template chain builder."""
@@ -311,6 +325,8 @@ class PromptBuilder:
         return (
             self.chain()
             .render("core/roles/manager.j2", default_tool=tool)
+            .with_user_prompt(self._user_prompt)
+            .with_cve_display(self._cve_instance)
             .with_security("manager_overlay.j2", default_tool=tool)
             .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
             .render("core/context/task.j2", **ctx)
@@ -357,6 +373,8 @@ class PromptBuilder:
         return (
             self.chain()
             .render("core/roles/boss.j2", default_tool=tool)
+            .with_user_prompt(self._user_prompt)
+            .with_cve_display(self._cve_instance)
             .with_security("boss_overlay.j2", default_tool=tool)
             .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
             .render("core/context/task.j2", **ctx)
@@ -403,140 +421,10 @@ class PromptBuilder:
             self.chain()
             .render_if(sibling_view, "core/context/sibling.j2", **sibling_ctx)
             .render("core/roles/worker.j2")
+            .with_user_prompt(self._user_prompt)
+            .with_cve_display(self._cve_instance)
             .render("core/worker/execution.j2")
             .text(f"<TASK>\n{task_description}\n</TASK>")
             .render_if(workspace_context, "core/context/workspace.j2", files=workspace_context)
-            .build()
-        )
-
-    # -------------------------------------------------------------------------
-    # Context-Aware Prompt Methods (using ContextComposer)
-    # -------------------------------------------------------------------------
-
-    def build_worker_prompt_with_context(
-        self,
-        task_description: str,
-        context: "ContextComposer",
-        workspace_context: str | None = None,
-        cve_instance: "CVEInstance | None" = None,
-    ) -> str:
-        """Build worker prompt with composed context.
-
-        This method uses the new ContextComposer API for flexible,
-        programmatic context selection.
-
-        Args:
-            task_description: The task to execute.
-            context: Composed context from ContextComposer.
-            workspace_context: Optional workspace file listing.
-            cve_instance: Optional CVE instance for benchmarks.
-
-        Returns:
-            Complete prompt string.
-
-        Example:
-            context = (
-                ContextComposer()
-                .add(parent_summary_from_agent(parent))
-                .add(sibling_results_from_agents(siblings))
-                .add(ancestor_data_from_agent(fixer, label="fixer"))
-            )
-            prompt = builder.build_worker_prompt_with_context(
-                task_description=agent.task_description,
-                context=context,
-            )
-        """
-        return (
-            self.chain()
-            .with_context(context)
-            .render("core/roles/worker.j2")
-            .render("core/worker/execution.j2")
-            .text(f"<TASK>\n{task_description}\n</TASK>")
-            .render_if(workspace_context, "core/context/workspace.j2", files=workspace_context)
-            .with_cve_context(cve_instance)
-            .build()
-        )
-
-    def build_manager_prompt_with_context(
-        self,
-        task_description: str,
-        context: "ContextComposer",
-        hierarchy_limits: "HierarchyLimits | None" = None,
-        cve_instance: "CVEInstance | None" = None,
-    ) -> str:
-        """Build manager prompt with composed context.
-
-        This method uses the new ContextComposer API for flexible,
-        programmatic context selection.
-
-        Args:
-            task_description: The task to decompose.
-            context: Composed context from ContextComposer.
-            hierarchy_limits: Hierarchy limits for depth/children constraints.
-            cve_instance: Optional CVE instance for benchmarks.
-
-        Returns:
-            Complete prompt string.
-
-        Example:
-            context = (
-                ContextComposer()
-                .add(parent_summary_from_agent(parent))
-                .add(ancestry_chain_from_agents(ancestors))
-            )
-            prompt = builder.build_manager_prompt_with_context(
-                task_description=agent.task_description,
-                context=context,
-                hierarchy_limits=agent.hierarchy_limits,
-            )
-        """
-        limits = self._limits_context(hierarchy_limits)
-        tool = self.default_tool
-
-        return (
-            self.chain()
-            .with_context(context)
-            .render("core/roles/manager.j2", default_tool=tool)
-            .with_security("manager_overlay.j2", default_tool=tool)
-            .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
-            .text(f"<TASK_TO_DECOMPOSE>\n{task_description}\n</TASK_TO_DECOMPOSE>")
-            .render("core/output/subtasks.j2", default_tool=tool, **limits)
-            .with_cve_context(cve_instance)
-            .build()
-        )
-
-    def build_boss_prompt_with_context(
-        self,
-        task_description: str,
-        context: "ContextComposer",
-        hierarchy_limits: "HierarchyLimits | None" = None,
-        cve_instance: "CVEInstance | None" = None,
-    ) -> str:
-        """Build boss prompt with composed context.
-
-        This method uses the new ContextComposer API for flexible,
-        programmatic context selection.
-
-        Args:
-            task_description: The task to delegate.
-            context: Composed context from ContextComposer.
-            hierarchy_limits: Hierarchy limits for depth/children constraints.
-            cve_instance: Optional CVE instance for benchmarks.
-
-        Returns:
-            Complete prompt string.
-        """
-        limits = self._limits_context(hierarchy_limits)
-        tool = self.default_tool
-
-        return (
-            self.chain()
-            .with_context(context)
-            .render("core/roles/boss.j2", default_tool=tool)
-            .with_security("boss_overlay.j2", default_tool=tool)
-            .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
-            .text(f"<TASK_TO_DELEGATE>\n{task_description}\n</TASK_TO_DELEGATE>")
-            .render("core/output/subtasks.j2", default_tool=tool, **limits)
-            .with_cve_context(cve_instance)
             .build()
         )

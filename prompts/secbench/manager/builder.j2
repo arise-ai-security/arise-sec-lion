@@ -1,22 +1,19 @@
 # Builder Manager - Decomposition Prompt
 
-You are a **Builder Manager** for SEC-bench benchmark `{{ instance_id }}`.
+You are a **Builder Manager** for this vulnerability reproduction task.
 
 Your task is to decompose the build setup phase into smaller worker subtasks.
 
-## Repository Information
-- **Repository**: {{ repo }}
-- **Working Directory**: {{ work_dir }}
-- **Base Commit**: `{{ base_commit }}`
-- **Language**: {{ lang }}
-- **Sanitizer**: {{ sanitizer }}
+## Task Reference
 
-## Vulnerability Details
-<issue_description>
-{{ bug_description }}
-</issue_description>
+Refer to the **Task Context** above for:
+- Repository location and working directory
+- Base commit hash
+- Language and sanitizer type
+- Vulnerability details
 
 ## Phase Deliverables
+
 The Builder phase must produce:
 - `/testcase/base_commit_hash` (required)
 - `/src/build.sh` (improved, standalone)
@@ -28,13 +25,13 @@ The Builder phase must produce:
 Break down the build phase into these worker subtasks:
 
 ### Subtask 1: Identify and Record Base Commit
-- Read vulnerability description to determine the most suitable base commit
-- Default is `{{ base_commit }}`
+- Read vulnerability description (in Task Context) to determine the most suitable base commit
+- Default is the base commit from Task Context
 - Save commit hash to `/testcase/base_commit_hash`
 - If different commit needed, run `git reset --hard <commit_hash>`
 
 ### Subtask 2: Initial Build and Error Analysis
-- Run `cd {{ work_dir }} && /src/build.sh` to build the project
+- Run `cd <work_dir> && /src/build.sh` to build the project
 - Capture and analyze any build errors (ignore warnings)
 - Focus on `error` messages only
 
@@ -55,7 +52,7 @@ Break down the build phase into these worker subtasks:
 - DO NOT disable sanitizer options
 
 ### Subtask 5: Record Changes and Verify Deliverables
-- Save source changes: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
+- Save source changes: `cd <work_dir> && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
 - Record installed packages in `/testcase/packages.txt` (one per line)
 - Verify all deliverables exist
 
@@ -66,7 +63,7 @@ Output a JSON array of subtasks:
 ```json
 [
   {
-    "description": "[Builder-1] Identify base commit for {{ instance_id }}: analyze vulnerability description, save to /testcase/base_commit_hash",
+    "description": "[Builder-1] Identify base commit: analyze vulnerability description, save to /testcase/base_commit_hash",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 2000},
@@ -74,7 +71,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Builder-2] Run initial build for {{ instance_id }}: execute /src/build.sh at {{ work_dir }}, capture errors",
+    "description": "[Builder-2] Run initial build: execute /src/build.sh, capture errors",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 4000},
@@ -82,7 +79,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Builder-3] Improve build script for {{ instance_id }}: make /src/build.sh standalone, add parallel build flags, fix script issues",
+    "description": "[Builder-3] Improve build script: make /src/build.sh standalone, add parallel build flags, fix script issues",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 4000},
@@ -90,7 +87,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Builder-4] Fix build errors for {{ instance_id }}: add compiler flags or minimal source fixes, rebuild until successful",
+    "description": "[Builder-4] Fix build errors: add compiler flags or minimal source fixes, rebuild until successful",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o", "temperature": 0.4, "max_tokens": 6000},
@@ -98,7 +95,7 @@ Output a JSON array of subtasks:
     }
   },
   {
-    "description": "[Builder-5] Record changes for {{ instance_id }}: save repo_changes.diff, packages.txt, verify all deliverables exist",
+    "description": "[Builder-5] Record changes: save repo_changes.diff, packages.txt, verify all deliverables exist",
     "config": {
       "strategy": "heuristic",
       "base": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 2000},
@@ -109,6 +106,7 @@ Output a JSON array of subtasks:
 ```
 
 ## Notes
+
 - DO NOT execute code yourself - delegate to worker subtasks
 - Each subtask should be simple enough for a single worker to execute
 - Subtasks should be executed in order (sequential dependencies)

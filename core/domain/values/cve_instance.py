@@ -91,6 +91,16 @@ class CVEInstance(BaseModel):
         """Check if a build script is available."""
         return bool(self.build_sh and self.build_sh.strip())
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_cve_data(self) -> bool:
+        """Check if this has curated CVE data from file (vs inferred from user prompt).
+
+        When inferred, bug_description is empty (user_prompt contains the task).
+        When loaded from file, bug_description contains curated vulnerability details.
+        """
+        return bool(self.bug_description.strip())
+
     @classmethod
     def from_json_file(cls, path: Path | str) -> Self:
         """Load from JSON file.

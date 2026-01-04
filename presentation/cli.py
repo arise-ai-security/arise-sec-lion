@@ -151,6 +151,7 @@ class CLI:
         self,
         task_description: str,
         cve_file: Path | None = None,
+        cve_instance: "CVEInstance | None" = None,
     ) -> None:
         """Execute a task from start to finish.
 
@@ -164,16 +165,18 @@ class CLI:
         Args:
             task_description: The task to execute.
             cve_file: Optional path to SEC-bench CVE instance JSON file.
+            cve_instance: Optional pre-loaded CVEInstance (takes precedence over cve_file).
         """
         self._renderer.print_banner()
         print(f"Task: {task_description}")
 
-        # Load CVE instance if provided
-        cve_instance: CVEInstance | None = None
-        if cve_file is not None:
+        # Load CVE instance: pre-loaded takes precedence over cve_file
+        if cve_instance is None and cve_file is not None:
             from core.domain.values.cve_instance import CVEInstance
 
             cve_instance = CVEInstance.from_json_file(cve_file)
+
+        if cve_instance is not None:
             print(f"SEC-bench CVE: {cve_instance.instance_id}")
         print()
 

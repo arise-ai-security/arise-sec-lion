@@ -36,6 +36,7 @@ from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentS
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig, OrchestrationConfig
+    from core.application.services.prompt_builder import PromptBuilder
     from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
     from core.ports.shared_context_port import SharedContextPort
@@ -79,6 +80,7 @@ class ExecutionServiceDependencies:
     shared_context_port: "SharedContextPort"
     sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
+    prompt_builder: "PromptBuilder"
 
 
 class AgentExecutionService:
@@ -127,6 +129,7 @@ class AgentExecutionService:
         self._query_service = dependencies.query_service
         self._workspace = dependencies.workspace
         self._parent_notifier = dependencies.parent_notifier
+        self._prompt_builder = dependencies.prompt_builder
 
         # Worker concurrency control
         semaphore_limit = (
@@ -179,6 +182,12 @@ class AgentExecutionService:
         """
         root_id = uuid4()
         self._reset_for_new_run(root_id, cve_instance=cve_instance)
+
+        # Set run-level context for prompt building (used by all agents)
+        self._prompt_builder.set_run_context(
+            user_prompt=task_description,
+            cve_instance=cve_instance,
+        )
 
         # Setup working directory
         self._setup_working_directory(root_id)
