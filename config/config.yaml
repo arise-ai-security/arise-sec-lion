@@ -22,7 +22,7 @@ worker:
 orchestration:
   max_retries: 3
   retry_delay: 0.1
-  poll_interval: 0.05  # Reduced from 0.5s for faster scaling
+  poll_interval: 0.5  # seconds between orchestration loop iterations
   llm_timeout: 30.0
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
