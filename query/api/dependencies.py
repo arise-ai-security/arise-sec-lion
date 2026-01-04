@@ -4,7 +4,7 @@ This module provides dependency functions for injecting services into routes.
 Uses segregated interfaces (ISP) - read-only endpoints depend on EventStoreReadPort.
 """
 
-from typing import Annotated, TypeAlias
+from typing import Annotated
 
 from fastapi import Depends, Request
 
