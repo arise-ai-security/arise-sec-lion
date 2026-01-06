@@ -1145,27 +1145,30 @@ function AgentModal({ agent, onClose }) {
         {agent.role === 'worker' && (
           <Section title="📥 Inherited Knowledge from Dashboard">
             <div style={{ backgroundColor: '#ecfeff', borderRadius: '8px', padding: '12px', borderLeft: '4px solid #06b6d4' }}>
+              {/* EXPERIMENT: Context injection disabled banner */}
+              <div style={{ backgroundColor: '#fee2e2', border: '3px solid #dc2626', borderRadius: '8px', padding: '16px', marginBottom: '16px', textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', marginBottom: '8px' }}>🚫 EXPERIMENT MODE 🚫</div>
+                <div style={{ fontSize: '16px', fontWeight: '700', color: '#991b1b', marginBottom: '4px' }}>
+                  CONTEXT INJECTION DISABLED
+                </div>
+                <div style={{ fontSize: '13px', color: '#b91c1c' }}>
+                  The context below was queried but NOT injected into the worker's prompt.
+                  <br />This worker executed WITHOUT access to this inherited knowledge.
+                </div>
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                 <span style={{ fontSize: '18px' }}>🧠</span>
-                <span style={{ fontSize: '14px', fontWeight: '500', color: '#374151' }}>Cross-Session Learning Active</span>
+                <span style={{ fontSize: '14px', fontWeight: '500', color: '#374151', textDecoration: 'line-through' }}>Cross-Session Learning Active</span>
+                <span style={{ fontSize: '12px', color: '#dc2626', fontWeight: '600' }}>(DISABLED)</span>
               </div>
-              <p style={{ fontSize: '12px', color: '#4b5563', marginBottom: '12px' }}>
-                This worker inherited knowledge from {agent.inheritedContext?.total_available || 0} available context entries in the global dashboard.
-                Source context (from original prompt) is always included. Relevant worker context was automatically identified.
+              <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px', fontStyle: 'italic' }}>
+                Context was queried from {agent.inheritedContext?.total_available || 0} available entries in the dashboard, but was NOT passed to the worker.
               </p>
-              {/* Reminder Banner */}
-              <div style={{ backgroundColor: '#fef3c7', padding: '10px', borderRadius: '6px', marginBottom: '12px', border: '1px solid #fcd34d' }}>
-                <p style={{ fontSize: '12px', fontWeight: '500', color: '#92400e', marginBottom: '4px' }}>⚠️ Learning Reminders:</p>
-                <ul style={{ fontSize: '11px', color: '#b45309', margin: 0, paddingLeft: '16px' }}>
-                  <li>Do NOT repeat work that has already been completed</li>
-                  <li>Avoid repeating the same mistakes encountered before</li>
-                  <li>Build upon successful approaches from previous work</li>
-                </ul>
-              </div>
+              {/* Learning Reminders removed - context disabled for experiment */}
               {agent.inheritedContext?.entries && agent.inheritedContext.entries.length > 0 ? (
                 <div>
-                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#0891b2', marginBottom: '10px' }}>
-                    Inherited {agent.inheritedContext.entries.length} Relevant Context(s):
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '10px' }}>
+                    Queried {agent.inheritedContext.entries.length} Context(s) <span style={{ color: '#dc2626' }}>(NOT USED)</span>:
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {agent.inheritedContext.entries.map((entry, index) => (

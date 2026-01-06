@@ -1054,33 +1054,35 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
       {summary.inherited_context && summary.role.toLowerCase() === 'worker' && (
         <Section title="📥 Inherited Knowledge from Dashboard">
           <div className="bg-cyan-50 dark:bg-cyan-900/20 p-3 rounded border-l-2 border-cyan-400">
+            {/* EXPERIMENT: Context injection disabled banner */}
+            <div className="bg-red-100 dark:bg-red-900/40 border-3 border-red-600 rounded-lg p-4 mb-4 text-center">
+              <div className="text-2xl mb-2">🚫 EXPERIMENT MODE 🚫</div>
+              <div className="text-base font-bold text-red-700 dark:text-red-300 mb-1">
+                CONTEXT INJECTION DISABLED
+              </div>
+              <div className="text-xs text-red-600 dark:text-red-400">
+                The context below was queried but NOT injected into the worker's prompt.
+                <br />This worker executed WITHOUT access to this inherited knowledge.
+              </div>
+            </div>
+
             <div className="flex items-center gap-2 mb-2">
               <span className="text-cyan-500 text-lg">🧠</span>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-500 line-through">
                 Cross-Session Learning Active
               </p>
+              <span className="text-xs font-semibold text-red-600 dark:text-red-400">(DISABLED)</span>
             </div>
-            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
-              This worker inherited knowledge from {summary.inherited_context.total_available} available context entries in the global dashboard.
-              Source context (from original prompt) is always included. Relevant worker context was automatically identified.
+            <p className="text-xs text-gray-500 dark:text-gray-500 mb-3 italic">
+              Context was queried from {summary.inherited_context.total_available} available entries in the dashboard, but was NOT passed to the worker.
             </p>
 
-            {/* Reminder Banner */}
-            <div className="bg-amber-50 dark:bg-amber-900/20 p-2 rounded mb-3 border border-amber-200 dark:border-amber-700">
-              <p className="text-xs text-amber-700 dark:text-amber-300 font-medium">
-                ⚠️ Learning Reminders:
-              </p>
-              <ul className="text-xs text-amber-600 dark:text-amber-400 mt-1 space-y-0.5 pl-3">
-                <li>• Do NOT repeat work that has already been completed</li>
-                <li>• Avoid repeating the same mistakes encountered before</li>
-                <li>• Build upon successful approaches from previous work</li>
-              </ul>
-            </div>
+            {/* Learning Reminders removed - context disabled for experiment */}
 
             {summary.inherited_context.entries.length > 0 ? (
               <div className="space-y-3">
-                <p className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
-                  Inherited {summary.inherited_context.entries.length} Relevant Context(s):
+                <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  Queried {summary.inherited_context.entries.length} Context(s) <span className="text-red-600 dark:text-red-400">(NOT USED)</span>:
                 </p>
                 {summary.inherited_context.entries.map((entry) => (
                   <div
