@@ -357,3 +357,66 @@ class AgentPromptsSchema(BaseModel):
     agent_id: str = Field(..., description="Agent UUID")
     prompts: list[AgentPromptSchema] = Field(default_factory=list)
     total: int = Field(..., description="Total number of prompts")
+
+
+# =============================================================================
+# Prompt Trace Schemas (for hierarchy visualization)
+# =============================================================================
+
+
+class PromptSectionSchema(BaseModel):
+    """Schema for a single parsed prompt section."""
+
+    tag: str = Field(..., description="XML tag name (e.g., 'ROLE', 'parent-context')")
+    content: str = Field(..., description="Section content")
+    provenance: str = Field(
+        ..., description="Source: template|parent|sibling|children|shared|system"
+    )
+
+
+class ParsedPromptSchema(BaseModel):
+    """Schema for a prompt with parsed sections grouped by provenance."""
+
+    raw: str = Field(..., description="Original raw prompt text")
+    raw_length: int = Field(..., description="Length of raw prompt in characters")
+    occurred_at: datetime = Field(..., description="When prompt was sent")
+    prompt_type: str = Field(
+        ...,
+        description="Type: complexity_evaluation|task_decomposition|worker_execution",
+    )
+    target: str = Field(
+        ..., description="Target: llm|claude_code|openhands|google_adk"
+    )
+    sections: list[PromptSectionSchema] = Field(
+        default_factory=list, description="All parsed sections in order"
+    )
+    sections_by_provenance: dict[str, list[PromptSectionSchema]] = Field(
+        default_factory=dict, description="Sections grouped by provenance type"
+    )
+
+
+class TraceAgentNodeSchema(BaseModel):
+    """Schema for an agent node in the trace hierarchy tree."""
+
+    agent_id: str = Field(..., description="Agent UUID")
+    role: str = Field(..., description="Agent role (boss|manager|worker|pending)")
+    depth: int = Field(..., description="Depth in hierarchy (root=0)")
+    task: str = Field(..., description="Task description")
+    sibling_index: int = Field(..., description="Position among siblings (0-indexed)")
+    prompt_count: int = Field(..., description="Number of prompts sent by this agent")
+    prompts: list[ParsedPromptSchema] = Field(
+        default_factory=list, description="Parsed prompts with provenance"
+    )
+    children: list["TraceAgentNodeSchema"] = Field(
+        default_factory=list, description="Child agent nodes"
+    )
+
+
+class HierarchyTraceSchema(BaseModel):
+    """Schema for complete hierarchy trace response."""
+
+    root: TraceAgentNodeSchema = Field(
+        ..., description="Root agent node with full tree"
+    )
+    total_agents: int = Field(..., description="Total agents in hierarchy")
+    max_depth: int = Field(..., description="Maximum depth reached")

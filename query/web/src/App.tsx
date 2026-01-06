@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentTree } from './components/AgentTree';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -11,12 +12,13 @@ import { CostPanel } from './components/CostPanel';
 import { EventPanel } from './components/EventPanel';
 import { PromptsPanel } from './components/PromptsPanel';
 import { SummaryPanel } from './components/SummaryPanel';
+import { PromptTracePage } from './pages/PromptTracePage';
 import { useSSE } from './hooks/useSSE';
 import { useSummarySSE } from './hooks/useSummarySSE';
 import * as api from './api/client';
 import type { AgentListItem, AgentHierarchy, AgentPrompt, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
 
-function App() {
+function Dashboard() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [hierarchy, setHierarchy] = useState<AgentHierarchy | null>(null);
@@ -384,6 +386,18 @@ function App() {
                 </svg>
               )}
             </button>
+            {/* Prompt Trace link */}
+            {selectedAgentId && (
+              <Link
+                to={`/prompt-trace/${selectedAgentId}`}
+                className="px-3 py-1.5 text-xs bg-purple-100 dark:bg-purple-900 hover:bg-purple-200 dark:hover:bg-purple-800 text-purple-700 dark:text-purple-300 rounded-lg flex items-center gap-1.5 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Prompt Trace
+              </Link>
+            )}
             <button
               onClick={() => setShowConfigPanel(true)}
               className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition-colors"
@@ -507,6 +521,17 @@ function App() {
       {/* Config Modal */}
       <ConfigPanel isOpen={showConfigPanel} onClose={() => setShowConfigPanel(false)} />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/prompt-trace/:rootId" element={<PromptTracePage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
