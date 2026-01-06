@@ -358,18 +358,36 @@ function Dashboard() {
       {/* Main content area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="h-14 flex items-center justify-between px-6 bg-white dark:bg-gray-800 border-b dark:border-gray-700">
-          <div className="flex items-center">
-            <h1 className="text-xl font-bold text-gray-800 dark:text-white">
-              Arise Agent Dashboard
-            </h1>
-            {hierarchy && (
-              <span className="ml-4 text-sm text-gray-500">
-                {hierarchy.total_agents} agents | depth {hierarchy.depth}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-4">
+        <header className="px-6 py-3 bg-white dark:bg-gray-800 border-b dark:border-gray-700">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Left side - Run info */}
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              {hierarchy && (
+                <span className="text-gray-500">
+                  {hierarchy.total_agents} agents | depth {hierarchy.depth}
+                </span>
+              )}
+              {selectedAgentId && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500">Run:</span>
+                    <code className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded text-xs font-mono">
+                      {selectedAgentId}
+                    </code>
+                  </div>
+                  {agents.find(a => a.id === selectedAgentId)?.instance_id && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-500">Instance:</span>
+                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded text-xs">
+                        {agents.find(a => a.id === selectedAgentId)?.instance_id}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {/* Right side - Actions */}
+            <div className="flex items-center gap-4">
             {/* Dark/Light mode toggle */}
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
@@ -416,6 +434,7 @@ function Dashboard() {
               <span className="text-xs text-gray-500">
                 {isConnected ? 'Live' : 'Offline'}
               </span>
+            </div>
             </div>
           </div>
         </header>

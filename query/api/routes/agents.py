@@ -152,6 +152,7 @@ async def list_boss_agents(
             status=s["status"],
             task_description=s["task_description"] or "",
             created_at=s["created_at"],
+            instance_id=s.get("instance_id"),
         )
         for s in summaries
     ]

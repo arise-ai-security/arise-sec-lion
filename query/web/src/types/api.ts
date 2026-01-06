@@ -13,6 +13,7 @@ export interface AgentListItem {
   status: AgentStatus;
   task_description: string;
   created_at: string | null;
+  instance_id: string | null;
 }
 
 export interface PaginationMeta {
