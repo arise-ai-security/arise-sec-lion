@@ -332,7 +332,7 @@ class AgentSession:
         tool_port: WorkerToolPort,
         working_directory: str | None = None,
         workspace_context: str | None = None,
-        cross_session_context: str | None = None,
+        _cross_session_context: str | None = None,  # disabled for experiment
     ) -> None:
         """For WORKER: execute task using worker tool (Claude Code, OpenHands).
 
