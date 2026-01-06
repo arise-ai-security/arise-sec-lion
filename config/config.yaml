@@ -5,12 +5,12 @@ database:
   name: arise_events
 
 llm:
-  model_boss: gpt-4o-mini
+  model_boss: o3-mini
 
 worker:
   tool_type: openhands
-  tool_model: openai/o3-mini
-  tool_timeout: 400
+  tool_model: o3-mini
+  tool_timeout: 600
 
 orchestration:
   max_retries: 3
@@ -19,7 +19,7 @@ orchestration:
   llm_timeout: 30.0
   worker_timeout: 300.0
   default_task_complexity_threshold: 5
-  worker_shortcut_probability: 0.3  # 30% chance pending agents become workers directly
+  worker_shortcut_probability: 0   # chance pending agents become workers directly
   budget_threshold_ratio: 0.02     # below 2% of initial budget becomes worker directly
 
   budget:
