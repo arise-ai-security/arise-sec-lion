@@ -399,9 +399,9 @@ class AgentSession:
 
         enhanced_description = f"{worker_system_prompt}{supervisor_context}<TASK>\n{self.task_description}\n</TASK>"
 
-        # Add cross-session context if available (from context dashboard)
-        if cross_session_context:
-            enhanced_description += f"\n\n{cross_session_context}"
+        # NOTE: Cross-session context injection disabled for experiment
+        # if cross_session_context:
+        #     enhanced_description += f"\n\n{cross_session_context}"
 
         if workspace_context:
             enhanced_description += (
