@@ -589,16 +589,27 @@ class PostgresEventStore(EventStorePort):
                         INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
                         WHERE e.event_type IN ('StatusChanged', 'WorkCompleted', 'WorkFailed')
                         ORDER BY e.aggregate_id, e.occurred_at DESC
+                    ),
+                    benchmark_info AS (
+                        SELECT DISTINCT ON (e.aggregate_id)
+                            e.aggregate_id,
+                            e.payload->>'instance_id' as instance_id
+                        FROM events e
+                        INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
+                        WHERE e.event_type = 'BenchmarkStarted'
+                        ORDER BY e.aggregate_id
                     )
                     SELECT
                         b.agent_id,
                         b.role,
                         b.created_at,
                         t.task_description,
-                        COALESCE(s.status, 'analyzing') as status
+                        COALESCE(s.status, 'analyzing') as status,
+                        bi.instance_id
                     FROM boss_agents b
                     LEFT JOIN task_descriptions t ON t.aggregate_id = b.agent_id
                     LEFT JOIN latest_status s ON s.aggregate_id = b.agent_id
+                    LEFT JOIN benchmark_info bi ON bi.aggregate_id = b.agent_id
                     ORDER BY b.created_at DESC
                 """
                 rows = await conn.fetch(query, limit, offset)
@@ -610,6 +621,7 @@ class PostgresEventStore(EventStorePort):
                     "status": row["status"],
                     "task_description": row["task_description"],
                     "created_at": row["created_at"],
+                    "instance_id": row["instance_id"],
                 }
                 for row in rows
             ]

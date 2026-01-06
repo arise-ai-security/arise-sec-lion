@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentTree } from './components/AgentTree';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -11,12 +12,13 @@ import { CostPanel } from './components/CostPanel';
 import { EventPanel } from './components/EventPanel';
 import { PromptsPanel } from './components/PromptsPanel';
 import { SummaryPanel } from './components/SummaryPanel';
+import { PromptTracePage } from './pages/PromptTracePage';
 import { useSSE } from './hooks/useSSE';
 import { useSummarySSE } from './hooks/useSummarySSE';
 import * as api from './api/client';
 import type { AgentListItem, AgentHierarchy, AgentPrompt, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
 
-function App() {
+function Dashboard() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [hierarchy, setHierarchy] = useState<AgentHierarchy | null>(null);
@@ -356,18 +358,36 @@ function App() {
       {/* Main content area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="h-14 flex items-center justify-between px-6 bg-white dark:bg-gray-800 border-b dark:border-gray-700">
-          <div className="flex items-center">
-            <h1 className="text-xl font-bold text-gray-800 dark:text-white">
-              Arise Agent Dashboard
-            </h1>
-            {hierarchy && (
-              <span className="ml-4 text-sm text-gray-500">
-                {hierarchy.total_agents} agents | depth {hierarchy.depth}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-4">
+        <header className="px-6 py-3 bg-white dark:bg-gray-800 border-b dark:border-gray-700">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Left side - Run info */}
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              {hierarchy && (
+                <span className="text-gray-500">
+                  {hierarchy.total_agents} agents | depth {hierarchy.depth}
+                </span>
+              )}
+              {selectedAgentId && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500">Run:</span>
+                    <code className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded text-xs font-mono">
+                      {selectedAgentId}
+                    </code>
+                  </div>
+                  {agents.find(a => a.id === selectedAgentId)?.instance_id && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-500">Instance:</span>
+                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded text-xs">
+                        {agents.find(a => a.id === selectedAgentId)?.instance_id}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {/* Right side - Actions */}
+            <div className="flex items-center gap-4">
             {/* Dark/Light mode toggle */}
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
@@ -384,6 +404,18 @@ function App() {
                 </svg>
               )}
             </button>
+            {/* Prompt Trace link */}
+            {selectedAgentId && (
+              <Link
+                to={`/prompt-trace/${selectedAgentId}`}
+                className="px-3 py-1.5 text-xs bg-purple-100 dark:bg-purple-900 hover:bg-purple-200 dark:hover:bg-purple-800 text-purple-700 dark:text-purple-300 rounded-lg flex items-center gap-1.5 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Prompt Trace
+              </Link>
+            )}
             <button
               onClick={() => setShowConfigPanel(true)}
               className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition-colors"
@@ -402,6 +434,7 @@ function App() {
               <span className="text-xs text-gray-500">
                 {isConnected ? 'Live' : 'Offline'}
               </span>
+            </div>
             </div>
           </div>
         </header>
@@ -507,6 +540,17 @@ function App() {
       {/* Config Modal */}
       <ConfigPanel isOpen={showConfigPanel} onClose={() => setShowConfigPanel(false)} />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/prompt-trace/:rootId" element={<PromptTracePage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

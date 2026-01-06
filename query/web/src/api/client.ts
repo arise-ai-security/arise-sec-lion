@@ -18,6 +18,8 @@ import type {
   ExecutionSummary,
   PaginatedAgentList,
   RegisteredTaskList,
+  HierarchyTrace,
+  TraceAgentNode,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -175,4 +177,23 @@ export async function getRegisteredTasks(rootId: string): Promise<RegisteredTask
  */
 export async function getAgentPrompts(agentId: string): Promise<AgentPrompts> {
   return fetchJson<AgentPrompts>(`/events/${agentId}/prompts`);
+}
+
+// Prompt Trace endpoints
+
+/**
+ * Get the complete prompt trace for an agent hierarchy.
+ * Returns the full tree structure with all prompts parsed into
+ * provenance-tagged sections. Use this for the Prompt Trace Viewer UI.
+ */
+export async function getHierarchyTrace(rootId: string): Promise<HierarchyTrace> {
+  return fetchJson<HierarchyTrace>(`/prompt-trace/trace/${rootId}`);
+}
+
+/**
+ * Get the trace for a single agent within a hierarchy.
+ * Useful for the single-agent detail view without loading the full tree.
+ */
+export async function getAgentTrace(rootId: string, agentId: string): Promise<TraceAgentNode> {
+  return fetchJson<TraceAgentNode>(`/prompt-trace/trace/${rootId}/agent/${agentId}`);
 }

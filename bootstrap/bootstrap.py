@@ -32,6 +32,7 @@ def main(args: list[str] | None = None) -> None:
         "events": lambda a: _query_projection(a, "events"),
         "summary": lambda a: _query_projection(a, "summary"),
         "list": _list_runs,
+        "prompts": _trace_prompts,
     }
 
     try:
@@ -82,6 +83,15 @@ def _create_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("list", help="List past BOSS agent runs")
     p.add_argument("--limit", type=int, default=10, help="Number of runs to show")
     p.add_argument("--format", choices=["json", "text"], default="text")
+
+    # Prompt trace command
+    p = sub.add_parser("prompts", help="Trace prompts through agent hierarchy")
+    p.add_argument("--agent-id", type=UUID, help="Agent UUID (default: last run)")
+    p.add_argument("--depth", type=int, help="Max depth to show")
+    p.add_argument("--role", choices=["boss", "manager", "worker"], help="Filter by role")
+    p.add_argument("--format", choices=["tree", "json", "siblings"], default="tree", help="Output format")
+    p.add_argument("--section", type=str, help="Only show specific section (e.g., parent-context)")
+    p.add_argument("-o", "--output", type=Path, help="Output file path")
 
     return parser
 
@@ -198,6 +208,45 @@ async def _list_runs(args: argparse.Namespace) -> None:
         runs = sorted(runs, key=lambda x: x["started_at"], reverse=True)[:args.limit]
 
         print(json.dumps(runs, indent=2)) if args.format == "json" else OutputRenderer.print_runs_table(runs)
+
+
+async def _trace_prompts(args: argparse.Namespace) -> None:
+    """Trace prompts through agent hierarchy."""
+    from core.application.services.prompt_parser import PromptParser
+    from core.application.services.prompt_trace_service import PromptTraceService
+    from core.domain.values.prompt_trace import RenderOptions
+    from presentation.formatters.prompt_trace_formatter import get_renderer
+    from presentation.persistence import RunPersistence
+
+    settings = Settings.from_yaml(args.config) if args.config else Settings.load()
+    agent_id = args.agent_id or RunPersistence(Path(settings.output.directory)).get_last_run_id()
+
+    if not agent_id:
+        print("Error: No agent-id specified and no last run found.")
+        return
+
+    async with _event_store(settings) as store:
+        # Build service and trace
+        parser = PromptParser()
+        service = PromptTraceService(store, parser)
+        trace = await service.trace(agent_id)
+
+        # Build render options
+        options = RenderOptions(
+            max_depth=args.depth,
+            filter_role=args.role,
+            section_filter=args.section,
+        )
+
+        # Render output
+        renderer = get_renderer(args.format)
+        output = renderer.render(trace, options)
+
+        if args.output:
+            args.output.write_text(output)
+            print(f"Written to {args.output}")
+        else:
+            print(output)
 
 
 def _create_cli(settings: Settings, progress_callback=None):

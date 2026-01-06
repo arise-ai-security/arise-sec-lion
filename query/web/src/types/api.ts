@@ -13,6 +13,7 @@ export interface AgentListItem {
   status: AgentStatus;
   task_description: string;
   created_at: string | null;
+  instance_id: string | null;
 }
 
 export interface PaginationMeta {
@@ -298,4 +299,69 @@ export interface AgentPrompts {
   prompts: AgentPrompt[];
   /** Total number of prompts. */
   total: number;
+}
+
+// =============================================================================
+// Prompt Trace Types (for hierarchy visualization)
+// =============================================================================
+
+/** Source provenance of a prompt section. */
+export type SectionProvenance = 'template' | 'parent' | 'sibling' | 'children' | 'shared' | 'system';
+
+/** A single parsed section from a prompt. */
+export interface PromptSection {
+  /** XML tag name (e.g., 'ROLE', 'parent-context'). */
+  tag: string;
+  /** Section content. */
+  content: string;
+  /** Source provenance type. */
+  provenance: SectionProvenance;
+}
+
+/** A parsed prompt with sections grouped by provenance. */
+export interface ParsedPrompt {
+  /** Original raw prompt text. */
+  raw: string;
+  /** Length of raw prompt in characters. */
+  raw_length: number;
+  /** When prompt was sent. */
+  occurred_at: string;
+  /** Type: complexity_evaluation, task_decomposition, worker_execution. */
+  prompt_type: string;
+  /** Target: llm, claude_code, openhands, google_adk. */
+  target: string;
+  /** All parsed sections in order. */
+  sections: PromptSection[];
+  /** Sections grouped by provenance type. */
+  sections_by_provenance: Record<SectionProvenance, PromptSection[]>;
+}
+
+/** An agent node in the trace hierarchy tree. */
+export interface TraceAgentNode {
+  /** Agent UUID. */
+  agent_id: string;
+  /** Agent role (boss, manager, worker, pending). */
+  role: string;
+  /** Depth in hierarchy (root=0). */
+  depth: number;
+  /** Task description. */
+  task: string;
+  /** Position among siblings (0-indexed). */
+  sibling_index: number;
+  /** Number of prompts sent by this agent. */
+  prompt_count: number;
+  /** Parsed prompts with provenance. */
+  prompts: ParsedPrompt[];
+  /** Child agent nodes. */
+  children: TraceAgentNode[];
+}
+
+/** Complete hierarchy trace response. */
+export interface HierarchyTrace {
+  /** Root agent node with full tree. */
+  root: TraceAgentNode;
+  /** Total agents in hierarchy. */
+  total_agents: number;
+  /** Maximum depth reached. */
+  max_depth: number;
 }

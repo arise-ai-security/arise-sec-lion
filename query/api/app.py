@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Settings
 from core.ports.event_store_port import EventStorePort
-from query.api.routes import agents, config, events, prompts
+from query.api.routes import agents, config, events, prompt_trace, prompts
 
 
 # Factory function injected by bootstrap layer (avoids query→infrastructure dependency)
@@ -114,6 +114,7 @@ def create_app(
     app.include_router(events.router, prefix="/api/events", tags=["events"])
     app.include_router(prompts.router, prefix="/api/prompts", tags=["prompts"])
     app.include_router(config.router, prefix="/api/config", tags=["config"])
+    app.include_router(prompt_trace.router, prefix="/api/prompt-trace", tags=["prompt-trace"])
 
     # Health check endpoint
     @app.get("/api/health", tags=["health"])
