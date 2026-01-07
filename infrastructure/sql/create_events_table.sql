@@ -39,14 +39,8 @@ ON events (aggregate_id, event_type, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_event_type
 ON events (event_type);
 
--- Composite index for incremental event fetching (SSE streams)
--- Optimizes: get_events with after_sequence pagination
-CREATE INDEX IF NOT EXISTS idx_events_aggregate_sequence_after
-ON events (aggregate_id, sequence_number ASC)
-INCLUDE (event_type, payload);
-
--- Covering index for ChildSpawned hierarchy traversal
--- Avoids heap access in recursive CTE by including child_id in index
+-- Partial index for ChildSpawned hierarchy traversal
+-- Optimizes recursive CTE by filtering on event_type
 CREATE INDEX IF NOT EXISTS idx_events_child_spawned
-ON events (aggregate_id, (payload->>'child_id'))
+ON events (aggregate_id)
 WHERE event_type = 'ChildSpawned';
