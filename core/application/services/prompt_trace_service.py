@@ -194,3 +194,51 @@ class PromptTraceService:
         if not node.children:
             return node.depth
         return max(self._max_depth(child) for child in node.children)
+
+    async def trace_single_agent(self, agent_id: UUID) -> AgentNode | None:
+        """Build trace for a single agent without fetching entire hierarchy.
+
+        Optimized: Fetches only the target agent's events (1 query instead of
+        fetching entire hierarchy and searching).
+
+        Args:
+            agent_id: UUID of the agent to trace.
+
+        Returns:
+            AgentNode for the single agent, or None if not found.
+        """
+        events = await self._store.get_events(agent_id)
+        if not events:
+            return None
+
+        # Extract data from events
+        role = "unknown"
+        task = ""
+        sibling_index = 0
+        prompts: list[ParsedPrompt] = []
+
+        for event in events:
+            if isinstance(event, AgentCreated):
+                role = event.role
+                sibling_index = event.sibling_index
+            elif isinstance(event, TaskAssigned):
+                task = event.task_description
+            elif isinstance(event, PromptSent):
+                sections = self._parser.parse(event.prompt)
+                prompts.append(ParsedPrompt(
+                    raw=event.prompt,
+                    occurred_at=event.occurred_at,
+                    prompt_type=event.prompt_type,
+                    target=event.target,
+                    sections=sections,
+                ))
+
+        return AgentNode(
+            agent_id=agent_id,
+            role=role,
+            depth=0,  # Unknown without hierarchy context
+            task=task,
+            sibling_index=sibling_index,
+            prompts=tuple(prompts),
+            children=(),  # No children in single-agent view
+        )

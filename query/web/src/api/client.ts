@@ -191,9 +191,9 @@ export async function getHierarchyTrace(rootId: string): Promise<HierarchyTrace>
 }
 
 /**
- * Get the trace for a single agent within a hierarchy.
- * Useful for the single-agent detail view without loading the full tree.
+ * Get the prompt trace for a single agent.
+ * Fetches only the target agent's events - useful for detail views.
  */
-export async function getAgentTrace(rootId: string, agentId: string): Promise<TraceAgentNode> {
-  return fetchJson<TraceAgentNode>(`/prompt-trace/trace/${rootId}/agent/${agentId}`);
+export async function getAgentTrace(agentId: string): Promise<TraceAgentNode> {
+  return fetchJson<TraceAgentNode>(`/prompt-trace/agent/${agentId}`);
 }

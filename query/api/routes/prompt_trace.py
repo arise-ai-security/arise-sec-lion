@@ -112,41 +112,32 @@ async def get_hierarchy_trace(
     )
 
 
-@router.get(
-    "/trace/{root_id}/agent/{agent_id}", response_model=TraceAgentNodeSchema
-)
+@router.get("/agent/{agent_id}", response_model=TraceAgentNodeSchema)
 async def get_agent_trace(
-    root_id: UUID,
     agent_id: UUID,
     event_store: EventStoreDep,
 ) -> TraceAgentNodeSchema:
-    """Get the trace for a single agent within a hierarchy.
+    """Get the prompt trace for a single agent.
 
-    Useful for the single-agent detail view without loading the full tree
-    structure into the response.
+    Fetches only the target agent's events (1 query) - useful for
+    detail views without loading the full hierarchy.
 
     Args:
-        root_id: UUID of the root agent (BOSS).
-        agent_id: UUID of the specific agent to fetch.
+        agent_id: UUID of the agent to fetch.
         event_store: Injected event store dependency.
 
     Returns:
         Trace data for the specified agent.
 
     Raises:
-        HTTPException: 404 if root or agent not found.
+        HTTPException: 404 if agent not found.
     """
     service = PromptTraceService(event_store, PromptParser())
-    trace = await service.trace(root_id)
+    agent_node = await service.trace_single_agent(agent_id)
 
-    if trace.total_agents == 0:
-        raise HTTPException(status_code=404, detail=f"Root agent {root_id} not found")
-
-    # Search for agent in tree
-    agent_node = _find_agent_in_tree(trace.root, agent_id)
     if not agent_node:
         raise HTTPException(
-            status_code=404, detail=f"Agent {agent_id} not found in hierarchy"
+            status_code=404, detail=f"Agent {agent_id} not found"
         )
 
     return _agent_node_to_schema(agent_node)

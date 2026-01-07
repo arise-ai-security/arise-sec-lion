@@ -356,17 +356,17 @@ async def get_execution_summary(
 
     Returns:
         ExecutionSummarySchema with comprehensive execution metrics.
-    """
-    # Verify agent exists
-    root_events = await event_store.get_events(agent_id)
-    if not root_events:
-        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Collect all events in the hierarchy
+    Optimized: Single recursive CTE query fetches entire hierarchy.
+    """
+    # Single query fetches all events in hierarchy (no separate existence check)
     collector = HierarchyCollector(event_store)
     all_events = await collector.collect(agent_id)
 
-    # Project into summary
+    if not all_events:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    # Project into summary (single-pass optimized)
     projection = SummaryProjection()
     summary = projection.project(all_events)
 
