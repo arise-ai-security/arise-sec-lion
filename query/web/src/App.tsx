@@ -581,7 +581,11 @@ function Dashboard() {
         {/* Tab content */}
         <div className="h-[calc(100vh-3.5rem)] overflow-hidden">
           {rightPanelView === 'summary' ? (
-            <SummaryPanel summary={summary} loading={loadingSummary} />
+            <SummaryPanel
+              summary={summary}
+              loading={loadingSummary}
+              workerOutput={mergedEvents?.thinking || []}
+            />
           ) : rightPanelView === 'events' ? (
             <EventPanel events={mergedEvents} loading={loadingEvents} />
           ) : rightPanelView === 'costs' ? (

@@ -1,13 +1,17 @@
 /**
  * Panel for displaying agent summary information when a node is selected.
  * Shows task, complexity reasoning, config, and subtasks/tool info.
+ * For workers, shows CLI-like output stream.
  */
 
-import type { AgentSummary } from '../types/api';
+import { useRef, useEffect, useState } from 'react';
+import type { AgentSummary, DomainEvent, ThoughtCapturedData } from '../types/api';
 
 interface SummaryPanelProps {
   summary: AgentSummary | null;
   loading: boolean;
+  /** ThoughtCaptured events for worker output display */
+  workerOutput?: DomainEvent[];
 }
 
 const statusColors: Record<string, string> = {
@@ -38,7 +42,69 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
+/** Extract content from ThoughtCaptured event */
+function getThoughtContent(event: DomainEvent): string | null {
+  if (event.event_type !== 'ThoughtCaptured') return null;
+  const data = event.data as Partial<ThoughtCapturedData>;
+  return data.content || null;
+}
+
+/** CLI-like output display for worker agents */
+function WorkerOutputSection({ events }: { events: DomainEvent[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  // Auto-scroll to bottom when new content arrives
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [events, autoScroll]);
+
+  // Extract text content from ThoughtCaptured events
+  const outputLines = events
+    .map(getThoughtContent)
+    .filter((content): content is string => content !== null);
+
+  if (outputLines.length === 0) {
+    return (
+      <Section title="Worker Output">
+        <div className="bg-gray-900 text-gray-400 p-3 rounded font-mono text-xs h-48 flex items-center justify-center">
+          Waiting for output...
+        </div>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Worker Output">
+      <div className="relative">
+        {/* Auto-scroll toggle */}
+        <button
+          onClick={() => setAutoScroll(!autoScroll)}
+          className={`absolute top-2 right-2 z-10 px-2 py-0.5 text-xs rounded transition-colors ${
+            autoScroll
+              ? 'bg-green-600 text-white'
+              : 'bg-gray-600 text-gray-300'
+          }`}
+          title={autoScroll ? 'Auto-scroll enabled' : 'Auto-scroll disabled'}
+        >
+          {autoScroll ? '⬇ Live' : '⏸ Paused'}
+        </button>
+
+        {/* CLI-style output */}
+        <div
+          ref={scrollRef}
+          className="bg-gray-900 text-green-400 p-3 rounded font-mono text-xs h-64 overflow-y-auto whitespace-pre-wrap"
+        >
+          {outputLines.join('\n')}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPanelProps) {
   if (loading) {
     return (
       <div className="p-4 text-gray-500">
@@ -57,6 +123,7 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
 
   const roleIcon = roleIcons[summary.role.toLowerCase()] || '❓';
   const statusClass = statusColors[summary.status.toLowerCase()] || statusColors.pending;
+  const isWorker = summary.role.toLowerCase() === 'worker';
 
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
@@ -119,6 +186,9 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
           </div>
         </Section>
       )}
+
+      {/* Worker Output (CLI-like display for WORKER agents) */}
+      {isWorker && <WorkerOutputSection events={workerOutput} />}
 
       {/* Subtasks (for MANAGER agents) */}
       {summary.subtasks.length > 0 && (
