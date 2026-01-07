@@ -85,6 +85,7 @@ class WorkerConfig(BaseModel):
     model: str
     tool: Literal["claude_code", "openhands", "google_adk"]
     timeout: int = Field(default=300, gt=0)
+    max_tool_calls: int = Field(default=-1)  # -1 = unlimited, positive = hard limit
 
 
 class OrchestrationConfig(BaseModel):

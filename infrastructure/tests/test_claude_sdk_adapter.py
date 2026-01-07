@@ -149,6 +149,7 @@ class TestSDKAdapterConfig:
         assert "Edit" in config.allowed_tools
         assert "Bash" in config.allowed_tools
         assert config.permission_mode == "bypassPermissions"
+        assert config.max_tool_calls == -1  # Unlimited by default
 
     def test_custom_values(self) -> None:
         """Config accepts custom values."""
@@ -157,12 +158,14 @@ class TestSDKAdapterConfig:
             timeout_seconds=600,
             allowed_tools=["Read", "Bash"],
             permission_mode="default",
+            max_tool_calls=50,
         )
 
         assert config.model == "claude-sonnet-4"
         assert config.timeout_seconds == 600
         assert config.allowed_tools == ["Read", "Bash"]
         assert config.permission_mode == "default"
+        assert config.max_tool_calls == 50
 
 
 class TestClaudeAgentSDKAdapter:

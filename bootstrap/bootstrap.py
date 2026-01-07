@@ -239,6 +239,7 @@ def _create_cli(settings: Settings, progress_callback=None):
         default_worker_tool=settings.worker.tool,
         worker_tool_model=settings.worker.model,
         worker_tool_timeout=settings.worker.timeout,
+        worker_max_tool_calls=settings.worker.max_tool_calls,
     ))
 
     app = get_application(infra, ApplicationConfig(

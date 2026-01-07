@@ -18,6 +18,7 @@ worker:
   model: claude-sonnet-4-20250514
   tool: claude_code
   timeout: 120
+  max_tool_calls: 100  # -1 = unlimited, positive = hard limit (fail worker if exceeded)
 
 orchestration:
   max_retries: 3

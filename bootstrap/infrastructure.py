@@ -30,6 +30,7 @@ class InfrastructureConfig:
     default_worker_tool: WorkerToolType
     worker_tool_model: str
     worker_tool_timeout: int
+    worker_max_tool_calls: int = -1  # -1 = unlimited, positive = hard limit
 
 
 @dataclass
@@ -52,6 +53,7 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             SDKAdapterConfig(
                 timeout_seconds=config.worker_tool_timeout,
                 model=config.worker_tool_model,
+                max_tool_calls=config.worker_max_tool_calls,
             )
         )
     elif config.default_worker_tool == "openhands":

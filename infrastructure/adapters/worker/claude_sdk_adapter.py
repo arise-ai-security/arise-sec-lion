@@ -45,6 +45,7 @@ class SDKAdapterConfig:
         default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
     )
     permission_mode: PermissionMode = "bypassPermissions"
+    max_tool_calls: int = -1  # -1 = unlimited, positive = hard limit
 
 
 class ClaudeAgentSDKAdapter(WorkerAdapterBase):
@@ -83,9 +84,14 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
 
         Yields events as they are produced, not after completion.
         Uses PostToolUse hooks to capture tool invocations.
+
+        Enforces max_tool_calls limit if configured. When exceeded, worker fails
+        with clear error that propagates up to BOSS, halting the system.
         """
         self._start_timing()
         tool_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        tool_call_count = 0
+        max_calls = self.config.max_tool_calls
 
         try:
             options = self._build_options(working_dir, tool_queue)
@@ -94,9 +100,20 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 await client.query(task_description)
 
                 async for message in client.receive_response():
-                    # Yield pending tool events from hooks
+                    # Yield pending tool events from hooks and count them
                     async for event in self._drain_queue(tool_queue, sequencer):
                         yield event
+                        if event.output_type == "tool_use":
+                            tool_call_count += 1
+
+                            # Check iteration limit
+                            if max_calls > 0 and tool_call_count >= max_calls:
+                                yield sequencer.failed(
+                                    f"Worker exceeded maximum tool calls limit ({max_calls}). "
+                                    f"Task appears stuck in iteration loop. "
+                                    f"Consider simplifying the task or fixing upstream issues."
+                                )
+                                return
 
                     # Process message content blocks
                     async for event in self._process_message(message, sequencer):
