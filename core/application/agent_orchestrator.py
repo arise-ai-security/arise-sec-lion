@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.context import SiblingView
     from core.ports.llm_port import LLMPort
+    from core.ports.realtime_callback_port import RealtimeCallbackPort
     from core.ports.worker_port import WorkerToolPort
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class AgentOrchestrator:
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
+        realtime_callback: "RealtimeCallbackPort | None" = None,
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -60,12 +62,14 @@ class AgentOrchestrator:
             worker_port: Port for worker tool execution.
             prompt_builder: Builder for constructing prompts.
             child_factory: Factory for child agents (source of truth for agent counts).
+            realtime_callback: Optional callback for real-time event streaming.
         """
         self._pipeline_factory = PipelineFactory(
             llm_port=llm_port,
             worker_port=worker_port,
             prompt_builder=prompt_builder,
             child_factory=child_factory,
+            realtime_callback=realtime_callback,
         )
 
         # Create pipelines (could also be lazy-created)

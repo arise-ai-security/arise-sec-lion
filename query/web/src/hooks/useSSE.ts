@@ -1,6 +1,10 @@
 /**
  * Custom hook for Server-Sent Events subscription.
  * Provides real-time event updates from the backend.
+ *
+ * Handles two event types:
+ * - 'message': Polled events from database (500ms interval)
+ * - 'thought': Real-time ThoughtCaptured events (no delay)
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -49,6 +53,7 @@ export function useSSE({ rootId, onEvent, onError }: UseSSEOptions): UseSSERetur
         }
       };
 
+      // Handle polled events (from database)
       eventSource.onmessage = (event) => {
         if (!isMounted) return;
         try {
@@ -58,6 +63,17 @@ export function useSSE({ rootId, onEvent, onError }: UseSSEOptions): UseSSERetur
           console.error('Failed to parse SSE event:', e);
         }
       };
+
+      // Handle real-time ThoughtCaptured events (no delay)
+      eventSource.addEventListener('thought', (event) => {
+        if (!isMounted) return;
+        try {
+          const data = JSON.parse((event as MessageEvent).data) as DomainEvent;
+          onEventRef.current(data);
+        } catch (e) {
+          console.error('Failed to parse SSE thought event:', e);
+        }
+      });
 
       eventSource.onerror = (error) => {
         if (!isMounted) return;

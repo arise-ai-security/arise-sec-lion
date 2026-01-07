@@ -21,7 +21,12 @@ from core.application.pipeline.steps.domain import (
 )
 from core.application.pipeline.steps.limits import CheckLimitViolations, DetermineChildRole
 from core.application.pipeline.steps.llm import QueryLLM
-from core.application.pipeline.steps.observability import EmitPromptSent, EmitTokensConsumed
+from core.application.pipeline.steps.observability import (
+    EmitOperationFinished,
+    EmitOperationStarted,
+    EmitPromptSent,
+    EmitTokensConsumed,
+)
 from core.application.pipeline.steps.parsing import ParseComplexityResult, ParseSubtasks
 from core.application.pipeline.steps.prompt import (
     BuildComplexityPrompt,
@@ -39,6 +44,7 @@ if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
+    from core.ports.realtime_callback_port import RealtimeCallbackPort
     from core.ports.worker_port import WorkerToolPort
 
 
@@ -62,6 +68,7 @@ class PipelineFactory:
         worker_port: "WorkerToolPort",
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
+        realtime_callback: "RealtimeCallbackPort | None" = None,
     ) -> None:
         """Initialize factory with required ports.
 
@@ -70,23 +77,27 @@ class PipelineFactory:
             worker_port: Port for worker tool execution
             prompt_builder: Builder for constructing prompts
             child_factory: Factory for child agents (source of truth for agent counts)
+            realtime_callback: Optional callback for real-time event streaming
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
+        self._realtime_callback = realtime_callback
 
     def create_complexity_pipeline(self) -> Pipeline:
         """Create pipeline for PENDING agent complexity evaluation.
 
         Pipeline steps:
         1. ValidatePendingAgent - Assert PENDING + ANALYZING
-        2. BuildComplexityPrompt - Via PromptBuilder
-        3. EmitPromptSent - Observability
-        4. QueryLLM - Call LLM port
-        5. EmitTokensConsumed - Cost tracking
-        6. ParseComplexityResult - Parse JSON (simple/complex)
-        7. ApplyComplexityResult - Call agent.apply_complexity_result()
+        2. EmitOperationStarted - Timing observability
+        3. BuildComplexityPrompt - Via PromptBuilder
+        4. EmitPromptSent - Observability
+        5. QueryLLM - Call LLM port
+        6. EmitTokensConsumed - Cost tracking
+        7. ParseComplexityResult - Parse JSON (simple/complex)
+        8. ApplyComplexityResult - Call agent.apply_complexity_result()
+        9. EmitOperationFinished - Timing observability
 
         Returns:
             Configured Pipeline for complexity evaluation
@@ -95,12 +106,14 @@ class PipelineFactory:
             name="complexity_evaluation",
             steps=[
                 ValidatePendingAgent,
+                EmitOperationStarted(operation_type="complexity_evaluation"),
                 BuildComplexityPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="complexity_evaluation", target="llm"),
                 QueryLLM(self._llm_port, operation="complexity_evaluation"),
                 EmitTokensConsumed(operation="complexity_evaluation"),
                 ParseComplexityResult(),
                 ApplyComplexityResult(),
+                EmitOperationFinished(operation_type="complexity_evaluation"),
             ],
         )
 
@@ -109,14 +122,16 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidateDecomposingAgent - Assert BOSS/MANAGER + ANALYZING
-        2. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
-        3. EmitPromptSent - Observability
-        4. QueryLLM - Call LLM port
-        5. EmitTokensConsumed - Cost tracking
-        6. ParseSubtasks - Parse JSON, handle ConstraintFailure
-        7. CheckLimitViolations - Hard enforcement (children, total_agents)
-        8. DetermineChildRole - Soft enforcement (force WORKER at max depth)
-        9. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
+        2. EmitOperationStarted - Timing observability
+        3. BuildDecompositionPrompt - Role-specific (BOSS vs MANAGER)
+        4. EmitPromptSent - Observability
+        5. QueryLLM - Call LLM port
+        6. EmitTokensConsumed - Cost tracking
+        7. ParseSubtasks - Parse JSON, handle ConstraintFailure
+        8. CheckLimitViolations - Hard enforcement (children, total_agents)
+        9. DetermineChildRole - Soft enforcement (force WORKER at max depth)
+        10. SpawnChildren - Call agent.apply_subtasks_and_spawn_children()
+        11. EmitOperationFinished - Timing observability
 
         Returns:
             Configured Pipeline for task decomposition
@@ -125,6 +140,7 @@ class PipelineFactory:
             name="task_decomposition",
             steps=[
                 ValidateDecomposingAgent,
+                EmitOperationStarted(operation_type="task_decomposition"),
                 BuildDecompositionPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="task_decomposition", target="llm"),
                 QueryLLM(self._llm_port, operation="task_decomposition"),
@@ -133,6 +149,7 @@ class PipelineFactory:
                 CheckLimitViolations(self._child_factory),
                 DetermineChildRole(),
                 SpawnChildren(),
+                EmitOperationFinished(operation_type="task_decomposition"),
             ],
         )
 
@@ -141,10 +158,12 @@ class PipelineFactory:
 
         Pipeline steps:
         1. ValidateWorkerAgent - Assert WORKER + ANALYZING
-        2. StartWorkerExecution - Emit CodeGenerationStarted
-        3. BuildWorkerPrompt - Via PromptBuilder
-        4. EmitPromptSent - Observability (target=dynamic -> tool name)
-        5. RunWorkerSession - Execute via worker_port, apply events
+        2. EmitOperationStarted - Timing observability
+        3. StartWorkerExecution - Emit CodeGenerationStarted
+        4. BuildWorkerPrompt - Via PromptBuilder
+        5. EmitPromptSent - Observability (target=dynamic -> tool name)
+        6. RunWorkerSession - Execute via worker_port, apply events
+        7. EmitOperationFinished - Timing observability
 
         Returns:
             Configured Pipeline for worker execution
@@ -153,9 +172,11 @@ class PipelineFactory:
             name="worker_execution",
             steps=[
                 ValidateWorkerAgent,
+                EmitOperationStarted(operation_type="worker_execution"),
                 StartWorkerExecution(),
                 BuildWorkerPrompt(self._prompt_builder),
                 EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
-                RunWorkerSession(self._worker_port),
+                RunWorkerSession(self._worker_port, self._realtime_callback),
+                EmitOperationFinished(operation_type="worker_execution"),
             ],
         )

@@ -2,6 +2,8 @@
 
 Provides endpoints for querying events and SSE streaming.
 SSE endpoints use incremental fetching to reduce database load.
+
+Real-time streaming of ThoughtCaptured events is enabled via EventBroadcaster.
 """
 
 import asyncio
@@ -13,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
+from core.application.services.event_broadcaster import EventBroadcaster
 
 logger = logging.getLogger(__name__)
 
@@ -295,10 +298,11 @@ async def get_hierarchy_events(
 async def sse_events(root_id: UUID, event_store: EventStoreDep) -> EventSourceResponse:
     """Server-Sent Events stream for real-time event updates.
 
-    Uses incremental fetching to reduce database load:
-    - Tracks last_sequence per agent
-    - Only fetches events after last seen sequence
-    - Discovers new child agents via ChildSpawned events
+    Uses hybrid approach for optimal real-time streaming:
+    - Real-time push via EventBroadcaster for ThoughtCaptured events (no delay)
+    - Incremental polling for other events (500ms interval)
+
+    Real-time events use 'thought' event type, polled events use 'message'.
 
     Example client usage:
         const source = new EventSource('/api/events/sse/{root_id}');
@@ -306,42 +310,77 @@ async def sse_events(root_id: UUID, event_store: EventStoreDep) -> EventSourceRe
             const data = JSON.parse(event.data);
             console.log(data);
         };
+        source.addEventListener('thought', (event) => {
+            const data = JSON.parse(event.data);
+            // Real-time ThoughtCaptured event
+        });
     """
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
-        """Generate SSE events by incrementally polling for new events."""
+        """Generate SSE events with real-time and polled events."""
         tracker = IncrementalHierarchyTracker(event_store, root_id)
+        broadcaster = EventBroadcaster.get_instance()
 
-        while True:
-            try:
-                # Fetch only new events (incremental)
-                new_events = await tracker.fetch_new_events()
+        # Track real-time event IDs to avoid duplicates from polling
+        seen_realtime_ids: set[tuple[str, int]] = set()
 
-                # Keep fetching if new children were discovered
-                while tracker.has_pending_children():
-                    child_events = await tracker.fetch_new_events()
-                    new_events.extend(child_events)
+        async with broadcaster.subscribe(root_id) as realtime_queue:
+            while True:
+                try:
+                    # 1. Drain real-time queue (non-blocking) for immediate ThoughtCaptured events
+                    while True:
+                        try:
+                            event = realtime_queue.get_nowait()
+                            # Track to avoid duplicates when polling later
+                            event_key = (str(event.aggregate_id), event.sequence_number)
+                            seen_realtime_ids.add(event_key)
+                            schema = event_to_schema(event)
+                            yield {
+                                "event": "thought",
+                                "data": schema.model_dump_json(),
+                            }
+                        except asyncio.QueueEmpty:
+                            break
 
-                # Stream new events to client
-                for event in new_events:
-                    schema = event_to_schema(event)
+                    # 2. Fetch events from database (incremental)
+                    new_events = await tracker.fetch_new_events()
+
+                    # Keep fetching if new children were discovered
+                    while tracker.has_pending_children():
+                        child_events = await tracker.fetch_new_events()
+                        new_events.extend(child_events)
+
+                    # 3. Stream polled events to client (skip duplicates from real-time)
+                    for event in new_events:
+                        event_key = (str(event.aggregate_id), event.sequence_number)
+                        if event_key in seen_realtime_ids:
+                            # Skip - already sent via real-time
+                            continue
+
+                        schema = event_to_schema(event)
+                        yield {
+                            "event": "message",
+                            "data": schema.model_dump_json(),
+                        }
+
+                    # Limit memory growth of seen_realtime_ids (keep last 10000)
+                    if len(seen_realtime_ids) > 10000:
+                        # Convert to list, sort by sequence, keep recent
+                        seen_list = list(seen_realtime_ids)
+                        seen_realtime_ids = set(seen_list[-5000:])
+
+                    # Poll interval
+                    await asyncio.sleep(0.5)
+
+                except Exception:
+                    # Log full error details server-side
+                    logger.exception("SSE stream error for root_id=%s", root_id)
+                    # Return sanitized error to client
                     yield {
-                        "event": "message",
-                        "data": schema.model_dump_json(),
+                        "event": "error",
+                        "data": '{"message": "Stream error occurred", "retry": true}',
                     }
-
-                # Poll interval
-                await asyncio.sleep(0.5)
-
-            except Exception as e:
-                # Log full error details server-side
-                logger.exception("SSE stream error for root_id=%s", root_id)
-                # Return sanitized error to client
-                yield {
-                    "event": "error",
-                    "data": '{"message": "Stream error occurred", "retry": true}',
-                }
-                break
+                    break
 
     return EventSourceResponse(event_generator())
 

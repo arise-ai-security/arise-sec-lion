@@ -13,6 +13,7 @@ from core.application.execution_service import (
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_registry import HierarchyLimitsRegistry
+from core.application.services.event_broadcaster import EventBroadcaster
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.sibling_context_builder import SiblingViewBuilder
@@ -21,6 +22,7 @@ from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_strategy import SecBenchPromptStrategy
 
 from .infrastructure import Infrastructure
+from .realtime_adapter import RealtimeCallbackAdapter
 
 
 @dataclass
@@ -76,11 +78,17 @@ def get_application(
         max_total_agents=config.system_limits.max_total_agents,
         manager_config=config.manager_config,
     )
+
+    # Create event broadcaster and adapter for real-time streaming
+    event_broadcaster = EventBroadcaster.get_instance()
+    realtime_callback = RealtimeCallbackAdapter(event_broadcaster)
+
     orchestrator = AgentOrchestrator(
         llm_port=infrastructure.llm_adapter,
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
         child_factory=child_factory,
+        realtime_callback=realtime_callback,
     )
 
     # Create sibling view builder (implements SiblingViewPort)
