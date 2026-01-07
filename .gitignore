@@ -697,6 +697,6 @@ output/
 # Custom
 data/
 
-# SEC-bench run artifacts
-src/
-testcase/
+# SEC-bench run artifacts (anchored to root to avoid matching query/web/src/)
+/src/
+/testcase/
