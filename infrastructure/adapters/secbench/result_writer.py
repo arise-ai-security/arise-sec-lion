@@ -2,12 +2,16 @@
 
 Writes results in SecVerifier-compatible format:
 {instance_id, result: {builder, exploiter, fixer}}
+
+Uses file locking to support concurrent writes from multiple instances.
 """
 
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from filelock import FileLock, Timeout as FileLockTimeout
 
 
 @dataclass
@@ -85,18 +89,36 @@ class SecBenchResultWriter:
         self,
         result: SecBenchResult,
         output_path: Path | None = None,
+        lock_timeout: float = 30.0,
     ) -> None:
-        """Append result to JSONL file.
+        """Append result to JSONL file with file locking.
+
+        Uses file locking to safely support concurrent writes from
+        multiple parallel instances.
 
         Args:
             result: SEC-bench evaluation result to write.
             output_path: Optional custom output path. Uses default if None.
+            lock_timeout: Maximum seconds to wait for lock (default 30s).
+
+        Raises:
+            FileLockTimeout: If lock cannot be acquired within timeout.
         """
         path = output_path or self.default_output_path
         record = result.to_jsonl_record()
 
-        with path.open("a") as f:
-            f.write(json.dumps(record) + "\n")
+        lock_path = str(path) + ".lock"
+        lock = FileLock(lock_path, timeout=lock_timeout)
+
+        try:
+            with lock:
+                with path.open("a") as f:
+                    f.write(json.dumps(record) + "\n")
+        except FileLockTimeout:
+            # Log warning but don't block - write to instance-specific file instead
+            fallback_path = path.parent / f"secbench_result_{result.instance_id}.jsonl"
+            with fallback_path.open("a") as f:
+                f.write(json.dumps(record) + "\n")
 
     def write_results(
         self,

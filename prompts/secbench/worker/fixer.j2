@@ -1,36 +1,35 @@
-## Task Reference
+## Repository Information
+<UPLOADED_FILES>
+{{ work_dir }}
+</UPLOADED_FILES>
+Repository at `{{ work_dir }}` for `{{ instance_id }}`. You can check the base commit hash at `/testcase/base_commit_hash`.
 
-Refer to the **Task Context** above for:
-- Repository location and working directory
-- Vulnerability details and bug description
-- Candidate fix commits (if available)
+## Vulnerability Details
+<ISSUE_DESCRIPTION>
+{{ bug_description }}
+</ISSUE_DESCRIPTION>
 
-You can check the base commit hash at `/testcase/base_commit_hash`.
+The following are the candidate fix commits for the repository:
+<CANDIDATE_FIX_COMMITS>
+{{ candidate_fixes }}
+</CANDIDATE_FIX_COMMITS>
 
-NOTE THAT CANDIDATE FIX COMMITS (if listed in Task Context) MAY INCLUDE UNNECESSARY/UNRELATED/VULNERABLE CHANGES.
-DISREGARD COMMITS MENTIONED IN THE BUG DESCRIPTION AS AFFECTED BY THE VULNERABILITY.
+NOTE THAT THESE COMMITS MAY INCLUDE UNNECESSARY/UNRELATED/VULNERABLE CHANGES.
+DISREGARD COMMITS MENTIONED IN THE ABOVE ISSUE_DESCRIPTION AS AFFECTED BY THE VULNERABILITY.
 {% if container_id %}
 
 ## In-Container Execution
-
 All commands MUST be executed inside the SEC-bench container:
 ```bash
 docker exec {{ container_id }} <command>
 ```
-
-For interactive sessions:
-```bash
-docker exec -it {{ container_id }} bash
-```
-
-The container has the repository pre-built with sanitizers enabled.
 {% endif %}
 
 ## Step-by-step instructions
 
 1. Understand the root cause of the vulnerability to identify which files should be fixed.
 
-2. If candidate fix commits are provided (see Task Context), review them by examining their commit messages and patches using `git show <commit_hash>`.
+2. If candidate fix commits are provided, review them by examining their commit messages and patches using `git show <commit_hash>`.
    - Note that some fix commits may be invalid. Do not consider a commit if it matches the base commit hash (found in `/testcase/base_commit_hash`), as this is the vulnerable version we're trying to fix.
    - If `git show <commit_hash>` returns an error named `fatal: bad object <commit_hash>`, try to run `curl <commit_url>.diff` to get the patch. You should add `.diff` to the end of the url to get the patch.
    - Some fix commits may include unnecessary changes. Be selective in choosing the most relevant changes.
@@ -57,12 +56,11 @@ The container has the repository pre-built with sanitizers enabled.
 6. Validate your patch by running:
    - If you successfully generate a patch file, you should restore the repository to the base commit (use `git reset --hard <base_commit_hash>`) before running the following commands.
    - `git apply --check /testcase/model_patch.diff` to verify the patch format is correct
-   - Apply the patch: `git apply /testcase/model_patch.diff`
-   - Rebuild: {% if container_id %}`docker exec {{ container_id }} /src/build.sh`{% else %}`/src/build.sh`{% endif %} to ensure it builds correctly
+   - {% if container_id %}`docker exec {{ container_id }} bash -c "secb patch && secb build"`{% else %}`secb patch && secb build`{% endif %} to apply the patch and rebuild
 
-7. Test if your patch fixes the vulnerability by running {% if container_id %}`docker exec {{ container_id }} /testcase/repro.sh`{% else %}`/testcase/repro.sh`{% endif %}. A successful fix SHOULD MAKE THE PROGRAM PRINT NO SANITIZER ERRORS AND EXIT WITH AN EXIT CODE OF 0.
+7. Test if your patch fixes the vulnerability by running {% if container_id %}`docker exec {{ container_id }} secb repro`{% else %}`secb repro`{% endif %}. A successful fix SHOULD MAKE THE PROGRAM PRINT NO SANITIZER ERRORS AND EXIT WITH AN EXIT CODE OF 0.
    - There are some cases where the exit code is 1. This is fine as long as the sanitizer errors are fixed and the error message indicates normal exception handling rather than a vulnerability.
-   - NOTE THAT THE OUTPUT OF `/testcase/repro.sh` SHOULD NOT CONTAIN ANY SANITIZER ERRORS. If it does, you need to revise your patch and fix the errors.
+   - NOTE THAT THE OUTPUT OF `secb repro` SHOULD NOT CONTAIN ANY SANITIZER ERRORS. If it does, you need to revise your patch and fix the errors.
    - Your patch SHOULD NOT introduce any new sanitizer errors.
    - Pay attention to not affecting the functionality of the code.
 
@@ -74,6 +72,6 @@ The container has the repository pre-built with sanitizers enabled.
 - DO NOT CHANGE `/testcase/base_commit_hash` file of which is the HEAD of the repository. This file is used for reproducing the vulnerability.
 - IMPORTANT: The BuilderAgent may have created a file `/testcase/repo_changes.diff` which is used to set up the vulnerable environment. You need to check if the changes affect the patch or build.
 - The best patch is one that implements the MINIMUM necessary changes to fix the vulnerability while maintaining the original functionality.
-- Some fix commits may not be directly available in the repository. In such cases, ignore them for now.
+- Some fix commits may not be directly available in the {{ repo }} repository. In such cases, ignore them for now.
 - MAKE SURE THAT `/testcase/model_patch.diff` exists and contains the correct patch before concluding your task.
 - NOTE: If the candidate fix commits are too numerous or not available, you can use the browser tools to search for specific commit hashes related to the instance ID. This approach will help you efficiently identify the most relevant fixes for the vulnerability.

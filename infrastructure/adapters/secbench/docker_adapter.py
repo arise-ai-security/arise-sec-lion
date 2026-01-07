@@ -42,6 +42,7 @@ class DockerContainerAdapter(SecBenchContainerPort):
         self._socket = docker_socket
         self._network = network
         self._containers: dict[str, ContainerInfo] = {}
+        self._testcase_paths: dict[str, Path] = {}  # Track testcase paths for artifact copy
 
     async def start_container(
         self,
@@ -113,23 +114,44 @@ class DockerContainerAdapter(SecBenchContainerPort):
         )
 
         self._containers[container_id] = info
+        self._testcase_paths[container_id] = testcase_path
         return info
 
     async def stop_container(self, container_id: str) -> None:
         """Stop and remove container.
 
+        Copies important artifacts from container before deletion:
+        - /usr/local/bin/secb (edited by exploiter)
+
         Args:
             container_id: Container ID to stop.
         """
-        # Stop container
-        await self._run_command(["docker", "stop", container_id])
+        # Copy artifacts before deletion (with timeout, non-blocking on failure)
+        testcase_path = self._testcase_paths.get(container_id)
+        if testcase_path:
+            try:
+                await self._copy_artifacts(container_id, testcase_path)
+            except TimeoutError:
+                pass  # Don't block container cleanup on artifact copy failure
+
+        # Stop container (docker stop has 10s default grace period)
+        try:
+            await self._run_command(["docker", "stop", container_id], timeout_seconds=30)
+        except TimeoutError:
+            # Force kill if graceful stop times out
+            await self._run_command(["docker", "kill", container_id], timeout_seconds=10)
 
         # Remove container
-        await self._run_command(["docker", "rm", "-f", container_id])
+        try:
+            await self._run_command(["docker", "rm", "-f", container_id], timeout_seconds=30)
+        except TimeoutError:
+            pass  # Container may already be removed
 
         # Update tracking
         if container_id in self._containers:
             del self._containers[container_id]
+        if container_id in self._testcase_paths:
+            del self._testcase_paths[container_id]
 
     async def is_running(self, container_id: str) -> bool:
         """Check if container is still running.
@@ -237,11 +259,16 @@ class DockerContainerAdapter(SecBenchContainerPort):
             duration_seconds=duration,
         )
 
-    async def stream_logs(self, container_id: str) -> AsyncIterator[str]:
-        """Stream container logs in real-time.
+    async def stream_logs(
+        self,
+        container_id: str,
+        timeout_seconds: int = 300,
+    ) -> AsyncIterator[str]:
+        """Stream container logs in real-time with timeout.
 
         Args:
             container_id: Container ID to stream logs from.
+            timeout_seconds: Maximum time to stream logs (default 5 minutes).
 
         Yields:
             Log lines as they become available.
@@ -254,21 +281,35 @@ class DockerContainerAdapter(SecBenchContainerPort):
             stderr=asyncio.subprocess.STDOUT,
         )
 
-        if process.stdout:
-            async for line in process.stdout:
-                yield line.decode("utf-8", errors="replace").rstrip()
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                if process.stdout:
+                    async for line in process.stdout:
+                        yield line.decode("utf-8", errors="replace").rstrip()
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
 
     async def _run_command(
         self,
         cmd: list[str],
+        timeout_seconds: int = 120,
     ) -> tuple[int, str, str]:
-        """Run shell command and return output.
+        """Run shell command and return output with timeout.
 
         Args:
             cmd: Command parts to execute.
+            timeout_seconds: Maximum time to wait for command (default 120s).
 
         Returns:
             Tuple of (exit_code, stdout, stderr).
+
+        Raises:
+            TimeoutError: If command exceeds timeout.
         """
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -276,7 +317,16 @@ class DockerContainerAdapter(SecBenchContainerPort):
             stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            # Kill the process if it times out
+            process.kill()
+            await process.wait()
+            raise TimeoutError(f"Command timed out after {timeout_seconds}s: {' '.join(cmd[:3])}")
 
         return (
             process.returncode or 0,
@@ -303,6 +353,29 @@ SECB_EOF
 chmod +x /usr/local/bin/secb
 """
         await self.exec_command(container_id, install_cmd)
+
+    async def _copy_artifacts(
+        self,
+        container_id: str,
+        testcase_path: Path,
+    ) -> None:
+        """Copy container artifacts to host before deletion.
+
+        Copies:
+        - /usr/local/bin/secb (edited by exploiter with repro() function)
+
+        Args:
+            container_id: Container ID to copy from.
+            testcase_path: Local path to copy artifacts to.
+        """
+        # Copy secb script (contains exploiter's repro() function)
+        secb_backup_path = testcase_path / "secb_backup"
+        await self._run_command([
+            "docker",
+            "cp",
+            f"{container_id}:/usr/local/bin/secb",
+            str(secb_backup_path),
+        ])
 
     async def get_container_info(self, container_id: str) -> ContainerInfo | None:
         """Get container info by ID.
