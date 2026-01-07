@@ -4,7 +4,9 @@ These steps emit events for monitoring, cost tracking, and debugging.
 They call pure domain methods on AgentSession to emit events.
 """
 
+import time
 
+from dataclasses import replace
 
 from core.application.pipeline.context import PipelineState, StepResult
 
@@ -76,3 +78,64 @@ class EmitTokensConsumed:
         )
 
         return StepResult.ok(state)
+
+
+class EmitOperationStarted:
+    """Emit OperationStarted event and store start time.
+
+    Records when an LLM operation begins for duration tracking.
+    Stores start time in pipeline state for later calculation.
+    """
+
+    def __init__(self, operation_type: str) -> None:
+        """Initialize with operation type.
+
+        Args:
+            operation_type: Type of operation (complexity_evaluation,
+                           task_decomposition, worker_execution)
+        """
+        self._operation_type = operation_type
+
+    async def execute(self, state: PipelineState) -> StepResult:
+        """Emit OperationStarted event and store start time."""
+        start_time = time.monotonic()
+
+        state.agent.emit_operation_started(operation_type=self._operation_type)
+
+        # Store start time in state for duration calculation
+        new_state = replace(state, operation_start_time=start_time)
+        return StepResult.ok(new_state)
+
+
+class EmitOperationFinished:
+    """Emit OperationFinished event with calculated duration.
+
+    Records when an LLM operation completes with duration.
+    Uses start time from pipeline state to calculate elapsed time.
+    """
+
+    def __init__(self, operation_type: str) -> None:
+        """Initialize with operation type.
+
+        Args:
+            operation_type: Type of operation (complexity_evaluation,
+                           task_decomposition, worker_execution)
+        """
+        self._operation_type = operation_type
+
+    async def execute(self, state: PipelineState) -> StepResult:
+        """Emit OperationFinished event with duration."""
+        if state.operation_start_time is None:
+            # No start time recorded, use 0 duration
+            duration = 0.0
+        else:
+            duration = time.monotonic() - state.operation_start_time
+
+        state.agent.emit_operation_finished(
+            operation_type=self._operation_type,
+            duration_seconds=duration,
+        )
+
+        # Clear start time from state
+        new_state = replace(state, operation_start_time=None)
+        return StepResult.ok(new_state)

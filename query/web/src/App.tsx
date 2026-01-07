@@ -3,7 +3,7 @@
  * Provides real-time visualization of agent hierarchy and events.
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentTree } from './components/AgentTree';
@@ -25,6 +25,7 @@ function Dashboard() {
   const [events, setEvents] = useState<CategorizedEvents | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [realtimeEvents, setRealtimeEvents] = useState<DomainEvent[]>([]);
+  const [nodeSSEEvents, setNodeSSEEvents] = useState<Map<string, DomainEvent[]>>(new Map());
   const [summary, setSummary] = useState<AgentSummary | null>(null);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [rightPanelView, setRightPanelView] = useState<'summary' | 'events' | 'costs' | 'prompts'>('summary');
@@ -186,6 +187,57 @@ function Dashboard() {
     };
   }, [selectedNodeId]);
 
+  // Merge API events with SSE events for real-time display
+  const mergedEvents = useMemo((): CategorizedEvents | null => {
+    if (!events) return null;
+    if (!selectedNodeId) return events;
+
+    const sseEvents = nodeSSEEvents.get(selectedNodeId) || [];
+    if (sseEvents.length === 0) return events;
+
+    // Get the highest sequence number from API events to filter out duplicates
+    const allApiEvents = [...events.received, ...events.produced, ...events.passed, ...events.thinking];
+    const maxApiSequence = Math.max(
+      ...allApiEvents.map(e => e.sequence_number || 0),
+      0
+    );
+
+    // Filter SSE events to only include new ones (higher sequence number)
+    const newSSEEvents = sseEvents.filter(e => (e.sequence_number || 0) > maxApiSequence);
+    if (newSSEEvents.length === 0) return events;
+
+    // Helper function to categorize event type
+    const categorizeEvent = (event: DomainEvent): keyof CategorizedEvents => {
+      // ThoughtCaptured events go to 'thinking'
+      if (event.event_type === 'ThoughtCaptured') return 'thinking';
+      // Most events are 'received' by the agent (incoming state changes)
+      const receivedTypes = ['AgentCreated', 'TaskAssigned', 'ChildCompleted', 'ChildFailed'];
+      if (receivedTypes.includes(event.event_type)) return 'received';
+      // Events the agent produces
+      const producedTypes = ['StatusChanged', 'ComplexityEvaluated', 'SubtasksDefined', 'ChildSpawned',
+                            'WorkCompleted', 'WorkFailed', 'CodeGenerationStarted', 'PromptSent',
+                            'TokensConsumed', 'WorkerCostRecorded', 'OperationStarted', 'OperationFinished'];
+      if (producedTypes.includes(event.event_type)) return 'produced';
+      // Default to 'passed' for other events
+      return 'passed';
+    };
+
+    // Create merged result with new SSE events
+    const merged: CategorizedEvents = {
+      received: [...events.received],
+      produced: [...events.produced],
+      passed: [...events.passed],
+      thinking: [...events.thinking],
+    };
+
+    for (const event of newSSEEvents) {
+      const category = categorizeEvent(event);
+      merged[category] = [...merged[category], event];
+    }
+
+    return merged;
+  }, [events, selectedNodeId, nodeSSEEvents]);
+
   // Fetch prompts for selected node
   const loadNodePrompts = useCallback(async () => {
     if (!selectedNodeId) {
@@ -307,13 +359,24 @@ function Dashboard() {
       return updated.slice(-100);
     });
 
+    // Append to node-specific SSE events for real-time display
+    setNodeSSEEvents(prev => {
+      const nodeId = event.aggregate_id;
+      const existing = prev.get(nodeId) || [];
+      const newMap = new Map(prev);
+      // Limit to last 100 events per node
+      newMap.set(nodeId, [...existing, event].slice(-100));
+      return newMap;
+    });
+
     // Refresh hierarchy when structure-changing events occur (throttled)
     const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed'];
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
     }
 
-    // Refresh summary and events when events arrive for the currently selected node (throttled)
+    // Refresh summary when events arrive for the currently selected node (throttled)
+    // Note: We no longer refresh events from API since we merge SSE events directly
     const currentNodeId = selectedNodeIdRef.current;
     if (currentNodeId && event.aggregate_id === currentNodeId) {
       refreshSelectedNodeData(currentNodeId);
@@ -336,6 +399,7 @@ function Dashboard() {
     setSelectedAgentId(agentId);
     setSelectedNodeId(agentId);
     setRealtimeEvents([]); // Clear realtime events for new selection
+    setNodeSSEEvents(new Map()); // Clear node-specific SSE events
   }, []);
 
   const handleNodeClick = useCallback((nodeId: string) => {
@@ -519,7 +583,7 @@ function Dashboard() {
           {rightPanelView === 'summary' ? (
             <SummaryPanel summary={summary} loading={loadingSummary} />
           ) : rightPanelView === 'events' ? (
-            <EventPanel events={events} loading={loadingEvents} />
+            <EventPanel events={mergedEvents} loading={loadingEvents} />
           ) : rightPanelView === 'costs' ? (
             <CostPanel
               summary={executionSummary}

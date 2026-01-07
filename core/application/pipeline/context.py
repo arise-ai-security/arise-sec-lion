@@ -55,6 +55,9 @@ class PipelineState:
     complexity: str | None = None
     reasoning: str | None = None
 
+    # Timing (for operation duration tracking)
+    operation_start_time: float | None = None
+
     # DELEGATION: Access limits via existing domain HierarchyLimits
     @property
     def hierarchy_limits(self) -> "HierarchyLimits | None":

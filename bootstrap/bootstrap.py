@@ -84,14 +84,10 @@ def _create_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=10, help="Number of runs to show")
     p.add_argument("--format", choices=["json", "text"], default="text")
 
-    # Prompt trace command
+    # Prompt trace command (simplified)
     p = sub.add_parser("prompts", help="Trace prompts through agent hierarchy")
     p.add_argument("--agent-id", type=UUID, help="Agent UUID (default: last run)")
-    p.add_argument("--depth", type=int, help="Max depth to show")
-    p.add_argument("--role", choices=["boss", "manager", "worker"], help="Filter by role")
-    p.add_argument("--format", choices=["tree", "json", "siblings"], default="tree", help="Output format")
-    p.add_argument("--section", type=str, help="Only show specific section (e.g., parent-context)")
-    p.add_argument("-o", "--output", type=Path, help="Output file path")
+    p.add_argument("--format", choices=["tree", "json"], default="tree", help="Output format")
 
     return parser
 
@@ -231,22 +227,10 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
         service = PromptTraceService(store, parser)
         trace = await service.trace(agent_id)
 
-        # Build render options
-        options = RenderOptions(
-            max_depth=args.depth,
-            filter_role=args.role,
-            section_filter=args.section,
-        )
-
-        # Render output
+        # Render output (simplified: no filtering options)
         renderer = get_renderer(args.format)
-        output = renderer.render(trace, options)
-
-        if args.output:
-            args.output.write_text(output)
-            print(f"Written to {args.output}")
-        else:
-            print(output)
+        output = renderer.render(trace, RenderOptions())
+        print(output)
 
 
 def _create_cli(settings: Settings, progress_callback=None):

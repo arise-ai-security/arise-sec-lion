@@ -1,8 +1,9 @@
 /**
  * Panel for displaying agent events with filtering and output type differentiation.
+ * Supports auto-scroll to show latest events in real-time.
  */
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { CategorizedEvents, DomainEvent, OutputType, ThoughtCapturedData } from '../types/api';
 
 interface EventPanelProps {
@@ -141,6 +142,9 @@ export function EventPanel({ events, loading }: EventPanelProps) {
   const [outputTypeFilter, setOutputTypeFilter] = useState<Set<OutputType>>(
     new Set(['thinking', 'progress', 'output', 'debug'])
   );
+  const [autoScroll, setAutoScroll] = useState(true);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const prevEventCountRef = useRef(0);
 
   const toggleOutputType = (type: OutputType) => {
     setOutputTypeFilter((prev) => {
@@ -153,6 +157,26 @@ export function EventPanel({ events, loading }: EventPanelProps) {
       return newSet;
     });
   };
+
+  // Get total event count for auto-scroll detection
+  const getTotalEventCount = () => {
+    if (!events) return 0;
+    return (events.received?.length || 0) +
+           (events.produced?.length || 0) +
+           (events.passed?.length || 0) +
+           (events.thinking?.length || 0);
+  };
+
+  // Auto-scroll to bottom when new events arrive
+  useEffect(() => {
+    const currentCount = getTotalEventCount();
+    const isNewEvent = currentCount > prevEventCountRef.current;
+    prevEventCountRef.current = currentCount;
+
+    if (autoScroll && isNewEvent && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [events, autoScroll]);
 
   if (loading) {
     return (
@@ -230,8 +254,31 @@ export function EventPanel({ events, loading }: EventPanelProps) {
         </div>
       )}
 
+      {/* Auto-scroll toggle */}
+      <div className="flex items-center justify-between px-2 py-1 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+        <span className="text-xs text-gray-500">
+          {filteredEvents.length} events
+        </span>
+        <button
+          onClick={() => setAutoScroll(!autoScroll)}
+          className={`
+            flex items-center gap-1 px-2 py-0.5 text-xs rounded transition-colors
+            ${autoScroll
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300'
+              : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+            }
+          `}
+          title={autoScroll ? 'Auto-scroll enabled' : 'Auto-scroll disabled'}
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+          </svg>
+          {autoScroll ? 'Live' : 'Paused'}
+        </button>
+      </div>
+
       {/* Event list */}
-      <div className="flex-1 overflow-y-auto p-2">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-2">
         {filteredEvents.length === 0 ? (
           <p className="text-gray-500 text-sm">No events in this category</p>
         ) : (

@@ -88,11 +88,7 @@ class TestPromptsCommandIntegration:
         args = argparse.Namespace(
             config=None,
             agent_id=boss_id,
-            depth=None,
-            role=None,
             format="tree",
-            section=None,
-            output=None,
         )
 
         # Capture output
@@ -132,11 +128,7 @@ class TestPromptsCommandIntegration:
         args = argparse.Namespace(
             config=None,
             agent_id=boss_id,
-            depth=None,
-            role=None,
             format="json",
-            section=None,
-            output=None,
         )
 
         output_lines = []
@@ -157,96 +149,6 @@ class TestPromptsCommandIntegration:
         assert "root" in data
         assert data["root"]["role"] == "boss"
 
-    @pytest.mark.asyncio
-    async def test_trace_prompts_respects_depth_filter(
-        self, mock_settings, mock_event_store
-    ) -> None:
-        """Test that depth filter works in CLI."""
-        from bootstrap.bootstrap import _trace_prompts
-        import argparse
-
-        boss_id = uuid4()
-        worker_id = uuid4()
-
-        mock_event_store.get_hierarchy_events_grouped.return_value = {
-            boss_id: create_test_events(boss_id, "boss", "Boss task", "<ROLE>Boss</ROLE>"),
-            worker_id: create_test_events(
-                worker_id, "worker", "Worker task", "<ROLE>Worker</ROLE>",
-                parent_id=boss_id,
-            ),
-        }
-
-        args = argparse.Namespace(
-            config=None,
-            agent_id=boss_id,
-            depth=0,  # Only show depth 0
-            role=None,
-            format="tree",
-            section=None,
-            output=None,
-        )
-
-        output_lines = []
-
-        with patch("bootstrap.bootstrap.Settings") as mock_settings_class, \
-             patch("bootstrap.bootstrap.PostgresEventStore") as mock_store_class, \
-             patch("presentation.persistence.RunPersistence"), \
-             patch("builtins.print", side_effect=lambda x: output_lines.append(x)):
-
-            mock_settings_class.load.return_value = mock_settings
-            mock_store_class.return_value = mock_event_store
-
-            await _trace_prompts(args)
-
-        output = "\n".join(output_lines)
-        assert "[BOSS]" in output
-        assert "Worker task" not in output  # Filtered out by depth=0
-
-    @pytest.mark.asyncio
-    async def test_trace_prompts_respects_role_filter(
-        self, mock_settings, mock_event_store
-    ) -> None:
-        """Test that role filter works in CLI."""
-        from bootstrap.bootstrap import _trace_prompts
-        import argparse
-
-        boss_id = uuid4()
-        worker_id = uuid4()
-
-        mock_event_store.get_hierarchy_events_grouped.return_value = {
-            boss_id: create_test_events(boss_id, "boss", "Boss task", "<ROLE>Boss</ROLE>"),
-            worker_id: create_test_events(
-                worker_id, "worker", "Worker task", "<ROLE>Worker</ROLE>",
-                parent_id=boss_id,
-            ),
-        }
-
-        args = argparse.Namespace(
-            config=None,
-            agent_id=boss_id,
-            depth=None,
-            role="worker",  # Only show workers
-            format="tree",
-            section=None,
-            output=None,
-        )
-
-        output_lines = []
-
-        with patch("bootstrap.bootstrap.Settings") as mock_settings_class, \
-             patch("bootstrap.bootstrap.PostgresEventStore") as mock_store_class, \
-             patch("presentation.persistence.RunPersistence"), \
-             patch("builtins.print", side_effect=lambda x: output_lines.append(x)):
-
-            mock_settings_class.load.return_value = mock_settings
-            mock_store_class.return_value = mock_event_store
-
-            await _trace_prompts(args)
-
-        output = "\n".join(output_lines)
-        assert "[WORKER]" in output
-        assert "[BOSS]" not in output  # Filtered out
-
 
 class TestPromptsCommandArgumentParsing:
     """Tests for CLI argument parsing."""
@@ -261,53 +163,15 @@ class TestPromptsCommandArgumentParsing:
         assert args.command == "prompts"
 
     def test_prompts_format_options(self) -> None:
-        """Test that format options are available."""
+        """Test that format options are available (simplified to tree/json only)."""
         from bootstrap.bootstrap import _create_parser
 
         parser = _create_parser()
 
-        # Test each format option
-        for fmt in ["tree", "json", "siblings"]:
+        # Test each format option (simplified CLI: only tree and json)
+        for fmt in ["tree", "json"]:
             args = parser.parse_args(["prompts", "--format", fmt])
             assert args.format == fmt
-
-    def test_prompts_depth_option(self) -> None:
-        """Test that depth option is parsed."""
-        from bootstrap.bootstrap import _create_parser
-
-        parser = _create_parser()
-        args = parser.parse_args(["prompts", "--depth", "2"])
-
-        assert args.depth == 2
-
-    def test_prompts_role_option(self) -> None:
-        """Test that role option is parsed."""
-        from bootstrap.bootstrap import _create_parser
-
-        parser = _create_parser()
-
-        for role in ["boss", "manager", "worker"]:
-            args = parser.parse_args(["prompts", "--role", role])
-            assert args.role == role
-
-    def test_prompts_section_option(self) -> None:
-        """Test that section filter option is parsed."""
-        from bootstrap.bootstrap import _create_parser
-
-        parser = _create_parser()
-        args = parser.parse_args(["prompts", "--section", "parent-context"])
-
-        assert args.section == "parent-context"
-
-    def test_prompts_output_option(self) -> None:
-        """Test that output file option is parsed."""
-        from bootstrap.bootstrap import _create_parser
-        from pathlib import Path
-
-        parser = _create_parser()
-        args = parser.parse_args(["prompts", "-o", "/tmp/trace.txt"])
-
-        assert args.output == Path("/tmp/trace.txt")
 
 
 class TestPromptsCommandErrorHandling:
@@ -322,11 +186,7 @@ class TestPromptsCommandErrorHandling:
         args = argparse.Namespace(
             config=None,
             agent_id=None,
-            depth=None,
-            role=None,
             format="tree",
-            section=None,
-            output=None,
         )
 
         output_lines = []

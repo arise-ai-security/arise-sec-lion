@@ -222,6 +222,55 @@ class LimitEnforced(DomainEvent):
 
 
 # =============================================================================
+# Timing/Observability Events
+# =============================================================================
+
+
+class AgentExecutionStarted(DomainEvent):
+    """Emitted when agent begins actual work (after PENDING state).
+
+    Used to measure agent execution duration and enable layer-level observability.
+    Paired with AgentExecutionFinished for duration calculation.
+    """
+
+    role: str  # "boss", "manager", "worker"
+    depth: int
+
+
+class AgentExecutionFinished(DomainEvent):
+    """Emitted when agent completes or fails execution.
+
+    Contains duration calculated from paired AgentExecutionStarted event.
+    Enables answering: "Which worker took longest?", "Total time by role"
+    """
+
+    role: str  # "boss", "manager", "worker"
+    status: str  # "completed", "failed"
+    duration_seconds: float
+
+
+class OperationStarted(DomainEvent):
+    """Emitted when an LLM operation begins.
+
+    Used to measure individual operation duration (complexity evaluation,
+    task decomposition, worker execution).
+    """
+
+    operation_type: str  # "complexity_evaluation", "task_decomposition", "worker_execution"
+
+
+class OperationFinished(DomainEvent):
+    """Emitted when an LLM operation completes.
+
+    Contains duration calculated from paired OperationStarted event.
+    Enables answering: "How long did complexity evaluation take?"
+    """
+
+    operation_type: str  # "complexity_evaluation", "task_decomposition", "worker_execution"
+    duration_seconds: float
+
+
+# =============================================================================
 # Shared Context Events
 # =============================================================================
 

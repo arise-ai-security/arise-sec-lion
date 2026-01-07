@@ -58,11 +58,12 @@ class ExecutionTimeSummary:
     per_role: dict[str, float] = field(default_factory=dict)
     per_phase: dict[str, float] = field(default_factory=dict)
     per_agent: dict[str, float] = field(default_factory=dict)
+    per_operation: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> "ExecutionTimeSummary":
         """Create empty execution time summary."""
-        return cls(total_seconds=0.0, per_role={}, per_phase={}, per_agent={})
+        return cls(total_seconds=0.0, per_role={}, per_phase={}, per_agent={}, per_operation={})
 
 
 @dataclass(frozen=True)

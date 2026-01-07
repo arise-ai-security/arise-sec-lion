@@ -16,6 +16,8 @@ from core.domain.values.context import (
 from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.events.events import (
     AgentCreated,
+    AgentExecutionFinished,
+    AgentExecutionStarted,
     ChildCompleted,
     ChildFailed,
     ChildSpawned,
@@ -23,6 +25,8 @@ from core.domain.events.events import (
     ComplexityEvaluated,
     DomainEvent,
     LimitEnforced,
+    OperationFinished,
+    OperationStarted,
     PromptSent,
     StatusChanged,
     SubtasksDefined,
@@ -274,6 +278,26 @@ class AgentSession:
     @_apply.register
     def _(self, event: PromptSent) -> None:
         # Prompt events are for observability, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: AgentExecutionStarted) -> None:
+        # Timing event for observability, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: AgentExecutionFinished) -> None:
+        # Timing event for observability, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: OperationStarted) -> None:
+        # Timing event for observability, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: OperationFinished) -> None:
+        # Timing event for observability, just increment version for OCC
         self.version += 1
 
     def _initialize_defaults(self, agent_id: UUID) -> None:
@@ -544,3 +568,55 @@ class AgentSession:
         corrected_event = type(tool_event)(**event_data)
         self._apply(corrected_event)
         self._changes.append(corrected_event)
+
+    # -------------------------------------------------------------------------
+    # Timing/Observability Events
+    # -------------------------------------------------------------------------
+
+    def emit_execution_started(self, role: str, depth: int) -> None:
+        """Emit AgentExecutionStarted event for timing observability."""
+        event = AgentExecutionStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            role=role,
+            depth=depth,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_execution_finished(
+        self, role: str, status: str, duration_seconds: float
+    ) -> None:
+        """Emit AgentExecutionFinished event for timing observability."""
+        event = AgentExecutionFinished(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            role=role,
+            status=status,
+            duration_seconds=duration_seconds,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_operation_started(self, operation_type: str) -> None:
+        """Emit OperationStarted event for timing observability."""
+        event = OperationStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            operation_type=operation_type,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_operation_finished(
+        self, operation_type: str, duration_seconds: float
+    ) -> None:
+        """Emit OperationFinished event for timing observability."""
+        event = OperationFinished(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            operation_type=operation_type,
+            duration_seconds=duration_seconds,
+        )
+        self._apply(event)
+        self._changes.append(event)
