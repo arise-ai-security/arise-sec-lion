@@ -190,11 +190,16 @@ class AgentSession:
         assert self.task_description, "Requires assigned task"
 
         # Build base complexity evaluation prompt
+        # =====================================================================
+        # ABLATION STUDY: Thinker Justification Pass Down DISABLED
+        # Design Choice 4 is disabled - agents do NOT receive supervisor
+        # justifications in their prompts.
+        # =====================================================================
         prompt = prompt_builder.build_complexity_evaluation_prompt(
             task_description=self.task_description,
             agent_id=self.session_id,
             parent_task=None,
-            justification=self.supervisor_justification,
+            justification=None,  # ABLATION: was self.supervisor_justification
         )
 
         # Append security-specific guidance for security tasks
@@ -270,12 +275,17 @@ class AgentSession:
         assert self.status == AgentStatus.ANALYZING, f"Requires ANALYZING status, got {self.status}"
 
         # Use auto_prompt for automatic security task detection
+        # =====================================================================
+        # ABLATION STUDY: Thinker Justification Pass Down DISABLED
+        # Design Choice 4 is disabled - agents do NOT receive supervisor
+        # justifications in their prompts.
+        # =====================================================================
         prompt = prompt_builder.build_auto_prompt(
             task_description=self.task_description,
             agent_id=self.session_id,
             agent_role=self.role.value.upper(),
             parent_task=None,
-            justification=self.supervisor_justification,
+            justification=None,  # ABLATION: was self.supervisor_justification
         )
 
         llm_config = ConfigResolver.resolve(self.config, operation="task_decomposition")
@@ -368,34 +378,39 @@ class AgentSession:
             "</WORKER_INSTRUCTIONS>\n\n"
         )
 
+        # =====================================================================
+        # ABLATION STUDY: Thinker Justification Pass Down DISABLED
+        # Design Choice 4 is disabled - workers do NOT receive supervisor
+        # justifications in their prompts.
+        # =====================================================================
         supervisor_context = ""
-        if self.supervisor_justification and self.supervisor_justification.has_content():
-            j = self.supervisor_justification
-            supervisor_context = (
-                "<SUPERVISOR_EXPECTATIONS>\n"
-                "Your supervisor assigned this task with the following context and expectations:\n\n"
-                f"**Supervisor's Original Task**: {j.parent_task}\n\n"
-                f"**Objective for This Subtask**: {j.objective}\n\n"
-                f"**Why This Was Assigned to You**: {j.split_reason}\n\n"
-                f"**Suggested Approach**: {j.plan}\n\n"
-                f"**Why This Should Work**: {j.why_it_may_work}\n\n"
-                f"**Expected Deliverables**: {j.expected_results}\n"
-            )
-            # Add budget allocation context if available
-            if j.budget_allocation:
-                supervisor_context += (
-                    "\n## Budget Allocation Context\n"
-                    "Your supervisor has allocated resources for this task with the following reasoning:\n\n"
-                    f"**Budget Allocation**: {j.budget_allocation}\n\n"
-                    f"**Complexity Assessment**: {j.complexity_assessment}\n\n"
-                    f"**Significance/Priority**: {j.significance_weight}\n\n"
-                    f"**Resource Justification**: {j.resource_justification}\n\n"
-                    "Use this context to calibrate your effort:\n"
-                    "- Higher budget % indicates more thorough work expected\n"
-                    "- The complexity assessment tells you expected difficulty\n"
-                    "- Significance helps prioritize quality vs. speed\n"
-                )
-            supervisor_context += "</SUPERVISOR_EXPECTATIONS>\n\n"
+        # if self.supervisor_justification and self.supervisor_justification.has_content():
+        #     j = self.supervisor_justification
+        #     supervisor_context = (
+        #         "<SUPERVISOR_EXPECTATIONS>\n"
+        #         "Your supervisor assigned this task with the following context and expectations:\n\n"
+        #         f"**Supervisor's Original Task**: {j.parent_task}\n\n"
+        #         f"**Objective for This Subtask**: {j.objective}\n\n"
+        #         f"**Why This Was Assigned to You**: {j.split_reason}\n\n"
+        #         f"**Suggested Approach**: {j.plan}\n\n"
+        #         f"**Why This Should Work**: {j.why_it_may_work}\n\n"
+        #         f"**Expected Deliverables**: {j.expected_results}\n"
+        #     )
+        #     # Add budget allocation context if available
+        #     if j.budget_allocation:
+        #         supervisor_context += (
+        #             "\n## Budget Allocation Context\n"
+        #             "Your supervisor has allocated resources for this task with the following reasoning:\n\n"
+        #             f"**Budget Allocation**: {j.budget_allocation}\n\n"
+        #             f"**Complexity Assessment**: {j.complexity_assessment}\n\n"
+        #             f"**Significance/Priority**: {j.significance_weight}\n\n"
+        #             f"**Resource Justification**: {j.resource_justification}\n\n"
+        #             "Use this context to calibrate your effort:\n"
+        #             "- Higher budget % indicates more thorough work expected\n"
+        #             "- The complexity assessment tells you expected difficulty\n"
+        #             "- Significance helps prioritize quality vs. speed\n"
+        #         )
+        #     supervisor_context += "</SUPERVISOR_EXPECTATIONS>\n\n"
 
         enhanced_description = f"{worker_system_prompt}{supervisor_context}<TASK>\n{self.task_description}\n</TASK>"
 
