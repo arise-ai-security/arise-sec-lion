@@ -22,8 +22,6 @@ Hexagonal Architecture + Event Sourcing | BOSS → MANAGER → WORKER hierarchy
    - Run `git commit` (user commits manually)
    - Run `ruff check/format` (user lints manually)
 
-4. **Off-Limits:** Do not read `user-docs/` directory
-
 ## Development
 
 All commands run inside Docker containers via profiles:
