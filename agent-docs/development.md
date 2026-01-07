@@ -199,3 +199,42 @@ results = await asyncio.gather(*[
     for child_id in child_ids
 ])
 ```
+
+---
+
+## Prompt Parser
+
+**Location**: `core/application/services/prompt_parser.py`
+
+Extracts XML-tagged sections from prompts and classifies their **provenance** (origin) for frontend display.
+
+### When to Update
+
+Update `PROVENANCE_RULES` in the parser when:
+- **Adding new context fields** to prompts (new tags in templates, `SpawnPayload`, or `SharedExecutionContext`)
+- **Changing tag semantics** (e.g., moving a section from parent-provided to system-provided)
+
+**No update needed** for:
+- Changing content within existing tags
+- Modifying template logic that doesn't add/remove XML tags
+
+### Provenance Types
+
+| Provenance | Convention | Examples |
+|------------|------------|----------|
+| TEMPLATE | UPPERCASE tags | `<ROLE>`, `<TASK>`, `<DECISION_GUIDE>` |
+| PARENT | lowercase with `-` | `<parent-context>`, `<ancestry>` |
+| SIBLING | lowercase with `-` | `<sibling-tasks>`, `<coworker_knowledge>` |
+| CHILDREN | lowercase with `-` | `<child-outcomes>` |
+| SHARED | lowercase with `-` | `<global-context>`, `<shared-decisions>` |
+| SYSTEM | lowercase with `-` | `<cve-info>`, `<workspace>`, `<hierarchy-limits>` |
+
+### Frontend Display
+
+```
+PromptSent Event → PromptParser.parse() → ParsedPromptSchema → React Components
+```
+
+- **API**: `GET /trace/{root_id}` returns parsed prompts with sections grouped by provenance
+- **UI**: `ParsedPromptCard` shows prompts with color-coded sections (blue=template, green=parent, yellow=sibling, etc.)
+- **Views**: Toggle between "Highlighted" (inline colored sections) and "Raw" (full text)

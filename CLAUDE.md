@@ -97,7 +97,7 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | Document | When to Read |
 |----------|--------------|
 | [`domain-model.md`](agent-docs/domain-model.md) | Modifying agents, events, state machine |
-| [`development.md`](agent-docs/development.md) | Testing, coding standards, adding features |
+| [`development.md`](agent-docs/development.md) | Testing, coding standards, adding features, **prompt parser** |
 | [`configuration.md`](agent-docs/configuration.md) | Config/secrets, environment setup |
 | [`api-reference.md`](agent-docs/api-reference.md) | REST API, SSE, schemas |
 | [`project-structure.md`](agent-docs/project-structure.md) | Directory layout, layer responsibilities |
