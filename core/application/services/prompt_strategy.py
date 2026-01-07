@@ -32,6 +32,7 @@ class PromptContext:
     cve_instance: "CVEInstance | None" = None
     sibling_view: Any = None
     workspace_context: str | None = None
+    container_id: str | None = None  # SEC-bench container ID for in-container execution
 
 
 class PromptStrategy(Protocol):
@@ -198,6 +199,10 @@ class SecBenchPromptStrategy:
             else {}
         )
         cve_ctx = context.cve_instance.to_template_context()
+
+        # Add container_id to template context for in-container execution
+        if context.container_id:
+            cve_ctx["container_id"] = context.container_id
 
         return (
             self._chain_factory()

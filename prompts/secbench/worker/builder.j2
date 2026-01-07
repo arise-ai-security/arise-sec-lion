@@ -4,6 +4,22 @@ Refer to the **Task Context** above for:
 - Repository location and working directory
 - Base commit hash
 - Vulnerability details and bug description
+{% if container_id %}
+
+## In-Container Execution
+
+All commands MUST be executed inside the SEC-bench container:
+```bash
+docker exec {{ container_id }} <command>
+```
+
+For interactive sessions:
+```bash
+docker exec -it {{ container_id }} bash
+```
+
+The container has the repository pre-cloned and build environment configured.
+{% endif %}
 
 ## Step-by-step instructions
 
@@ -15,7 +31,7 @@ Refer to the **Task Context** above for:
      a. Save it to `/testcase/base_commit_hash`
    - Note that `/testcase/base_commit_hash` FILE SHOULD BE CREATED before moving to the next step.
 
-2. Run `cd <work_dir> && /src/build.sh` command to build the project and check if the build is successful.
+2. Run {% if container_id %}`docker exec {{ container_id }} bash -c "cd <work_dir> && /src/build.sh"`{% else %}`cd <work_dir> && /src/build.sh`{% endif %} command to build the project and check if the build is successful.
 
 3. Improve the build script (`/src/build.sh`) by following the requirements below. Make concise but complete improvements.
     a. Make it standalone - remove any undefined variables or environment variables that aren't set in the script.
@@ -35,7 +51,7 @@ Refer to the **Task Context** above for:
     i. Cleaning project commands such as `make clean` should be located before `configure` and `make` commands.
     j. Exceptionally, if `$SRC` or `$WORK` is used in the script, it is predefined with `/src` or `/work` directory and can be used without definition.
 
-4. Build the project using `cd <work_dir> && /src/build.sh` command. Note that the build command should be executed in the repository path.
+4. Build the project using {% if container_id %}`docker exec {{ container_id }} bash -c "cd <work_dir> && /src/build.sh"`{% else %}`cd <work_dir> && /src/build.sh`{% endif %} command. Note that the build command should be executed in the repository path.
 
 5. If there are build errors, carefully analyze the BUILD ERRORS ONLY and identify quick solutions
     a. Ignore `warning` messages
@@ -48,9 +64,15 @@ Refer to the **Task Context** above for:
 7. If there are no build errors, you can finish the task. If not, please continue to fix the build errors.
 
 8. Save any changes made to code files in the repository by running the following command:
+{% if container_id %}
+   ```bash
+   docker exec {{ container_id }} bash -c "cd <work_dir> && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff"
+   ```
+{% else %}
    ```bash
    cd <work_dir> && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff
    ```
+{% endif %}
    This will create a diff file containing all your changes to the source code.
 
 9. Before finishing, please check that the following files are correctly generated or updated (if applicable):

@@ -9,6 +9,22 @@ You can check the base commit hash at `/testcase/base_commit_hash`.
 
 NOTE THAT CANDIDATE FIX COMMITS (if listed in Task Context) MAY INCLUDE UNNECESSARY/UNRELATED/VULNERABLE CHANGES.
 DISREGARD COMMITS MENTIONED IN THE BUG DESCRIPTION AS AFFECTED BY THE VULNERABILITY.
+{% if container_id %}
+
+## In-Container Execution
+
+All commands MUST be executed inside the SEC-bench container:
+```bash
+docker exec {{ container_id }} <command>
+```
+
+For interactive sessions:
+```bash
+docker exec -it {{ container_id }} bash
+```
+
+The container has the repository pre-built with sanitizers enabled.
+{% endif %}
 
 ## Step-by-step instructions
 
@@ -42,9 +58,9 @@ DISREGARD COMMITS MENTIONED IN THE BUG DESCRIPTION AS AFFECTED BY THE VULNERABIL
    - If you successfully generate a patch file, you should restore the repository to the base commit (use `git reset --hard <base_commit_hash>`) before running the following commands.
    - `git apply --check /testcase/model_patch.diff` to verify the patch format is correct
    - Apply the patch: `git apply /testcase/model_patch.diff`
-   - Rebuild: `/src/build.sh` to ensure it builds correctly
+   - Rebuild: {% if container_id %}`docker exec {{ container_id }} /src/build.sh`{% else %}`/src/build.sh`{% endif %} to ensure it builds correctly
 
-7. Test if your patch fixes the vulnerability by running `/testcase/repro.sh`. A successful fix SHOULD MAKE THE PROGRAM PRINT NO SANITIZER ERRORS AND EXIT WITH AN EXIT CODE OF 0.
+7. Test if your patch fixes the vulnerability by running {% if container_id %}`docker exec {{ container_id }} /testcase/repro.sh`{% else %}`/testcase/repro.sh`{% endif %}. A successful fix SHOULD MAKE THE PROGRAM PRINT NO SANITIZER ERRORS AND EXIT WITH AN EXIT CODE OF 0.
    - There are some cases where the exit code is 1. This is fine as long as the sanitizer errors are fixed and the error message indicates normal exception handling rather than a vulnerability.
    - NOTE THAT THE OUTPUT OF `/testcase/repro.sh` SHOULD NOT CONTAIN ANY SANITIZER ERRORS. If it does, you need to revise your patch and fix the errors.
    - Your patch SHOULD NOT introduce any new sanitizer errors.
