@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from .config import SecBenchConfig, is_enabled
 from .container_manager import CONTAINER_ARTIFACT_KEY, ContainerManager
 from .docker_adapter import DockerContainerAdapter
-from .lifecycle_callback import ContainerLifecycleCallback, compose_callbacks
+from .lifecycle_callback import ContainerLifecycleCallback, PromptBuilderProtocol, compose_callbacks
 from .result_writer import PhaseResult, SecBenchResult, SecBenchResultWriter
 from .verification_service import VerificationService
 
@@ -44,6 +44,7 @@ class SecBenchContext:
 def register_secbench(
     shared_context: "SharedExecutionContext",
     config: SecBenchConfig,
+    prompt_builder: PromptBuilderProtocol | None = None,
     progress_callback: object | None = None,
 ) -> SecBenchContext:
     """Register all SEC-bench components.
@@ -53,6 +54,7 @@ def register_secbench(
     Args:
         shared_context: Shared context for artifact storage.
         config: SEC-bench configuration.
+        prompt_builder: Prompt builder to inject container_id into.
         progress_callback: Original progress callback to compose with.
 
     Returns:
@@ -87,6 +89,7 @@ def register_secbench(
         container_manager=container_manager,
         verification_service=verification_service,
         result_writer=result_writer,
+        prompt_builder=prompt_builder,
         progress_callback=progress_callback,
     )
 

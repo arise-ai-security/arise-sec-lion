@@ -164,20 +164,35 @@ class PromptBuilder:
         # Run-level context (set once at start, used by all agents)
         self._user_prompt: str = ""
         self._cve_instance: "CVEInstance | None" = None
+        self._container_id: str | None = None
 
     def set_run_context(
         self,
         user_prompt: str,
         cve_instance: "CVEInstance | None" = None,
+        container_id: str | None = None,
     ) -> None:
         """Set global context for this run (called once at start).
 
         Args:
             user_prompt: Original user task description from CLI.
             cve_instance: CVE instance for benchmark runs.
+            container_id: SEC-bench container ID for in-container execution.
         """
         self._user_prompt = user_prompt
         self._cve_instance = cve_instance
+        self._container_id = container_id
+
+    def set_container_id(self, container_id: str | None) -> None:
+        """Set container ID for in-container execution.
+
+        Called by SEC-bench container lifecycle after starting container.
+        This updates the run context without resetting other fields.
+
+        Args:
+            container_id: SEC-bench container ID, or None to clear.
+        """
+        self._container_id = container_id
 
     def chain(self) -> TemplateChain:
         """Create a new template chain builder."""
@@ -409,6 +424,7 @@ class PromptBuilder:
             spawn_payload=spawn_payload,
             sibling_view=sibling_view,
             workspace_context=workspace_context,
+            container_id=self._container_id,  # SEC-bench container ID
         )
         custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
         if custom_prompt is not None:

@@ -1,6 +1,8 @@
 """Application Layer - Service Factories."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from config import BossConfig, ManagerConfig, OrchestrationConfig
 from core.application.agent_orchestrator import AgentOrchestrator
@@ -24,6 +26,20 @@ from core.application.services.prompt_strategy import SecBenchPromptStrategy
 from .infrastructure import Infrastructure
 from .realtime_adapter import RealtimeCallbackAdapter
 
+# Optional SEC-bench container integration
+try:
+    from infrastructure.adapters.secbench import (
+        SecBenchConfig,
+        SecBenchContext,
+        is_enabled,
+        register_secbench,
+    )
+    SECBENCH_AVAILABLE = True
+except ImportError:
+    SECBENCH_AVAILABLE = False
+    SecBenchConfig = None  # type: ignore[misc, assignment]
+    SecBenchContext = None  # type: ignore[misc, assignment]
+
 
 @dataclass
 class ApplicationConfig:
@@ -37,6 +53,7 @@ class ApplicationConfig:
     output_directory: str
     default_worker_tool: str
     progress_callback: ProgressCallback | None = None
+    secbench_config: Any | None = None  # SecBenchConfig when secbench module available
 
 
 @dataclass
@@ -44,6 +61,7 @@ class Application:
     """Container for all application services."""
 
     execution_service: AgentExecutionService
+    secbench_context: Any | None = None  # SecBenchContext when secbench module registered
 
 
 def get_application(
@@ -125,4 +143,17 @@ def get_application(
         progress_callback=config.progress_callback,
     )
 
-    return Application(execution_service=execution_service)
+    # Optional SEC-bench container integration
+    secbench_context = None
+    if SECBENCH_AVAILABLE and config.secbench_config and is_enabled(config.secbench_config):
+        secbench_context = register_secbench(
+            shared_context=infrastructure.shared_context,
+            config=config.secbench_config,
+            prompt_builder=prompt_builder,
+            progress_callback=config.progress_callback,
+        )
+
+    return Application(
+        execution_service=execution_service,
+        secbench_context=secbench_context,
+    )

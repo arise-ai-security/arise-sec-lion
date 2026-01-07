@@ -4,7 +4,7 @@ Hooks into agent lifecycle to automatically start/stop containers
 for SEC-bench CVE evaluation runs.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from .container_manager import ContainerManager
@@ -15,6 +15,14 @@ if TYPE_CHECKING:
     from core.ports.secbench_container_port import ContainerInfo
 
     from .verification_service import VerificationService
+
+
+class PromptBuilderProtocol(Protocol):
+    """Protocol for prompt builder container_id setter."""
+
+    def set_container_id(self, container_id: str | None) -> None:
+        """Set container ID for in-container execution."""
+        ...
 
 
 class ContainerLifecycleCallback:
@@ -31,6 +39,7 @@ class ContainerLifecycleCallback:
         container_manager: ContainerManager,
         verification_service: "VerificationService",
         result_writer: SecBenchResultWriter,
+        prompt_builder: PromptBuilderProtocol | None = None,
         progress_callback: Any | None = None,
     ):
         """Initialize lifecycle callback.
@@ -39,11 +48,13 @@ class ContainerLifecycleCallback:
             container_manager: Manager for container operations.
             verification_service: Service for running secb commands.
             result_writer: Writer for JSONL results.
+            prompt_builder: Prompt builder to inject container_id into.
             progress_callback: Original progress callback to compose with.
         """
         self._manager = container_manager
         self._verification = verification_service
         self._writer = result_writer
+        self._prompt_builder = prompt_builder
         self._original_callback = progress_callback
         self._cve_instances: dict[UUID, "CVEInstance"] = {}
 
@@ -66,6 +77,10 @@ class ContainerLifecycleCallback:
 
         # Start container
         container_info = await self._manager.start_container_for_cve(cve, root_id)
+
+        # Inject container_id into prompt builder for worker prompts
+        if self._prompt_builder is not None:
+            self._prompt_builder.set_container_id(container_info.container_id)
 
         # Print verification commands
         print(self._manager.print_verification_commands(
