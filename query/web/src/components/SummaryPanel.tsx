@@ -366,74 +366,90 @@ export function SummaryPanel({ summary, loading }: SummaryPanelProps) {
                   </div>
                 )}
 
-                {/* Justification (collapsible) */}
+                {/* Justification (collapsible) - ABLATION STUDY: NOT PASSED TO CHILDREN */}
                 {subtask.justification && subtask.justification.objective && (
                   <details className="mt-2">
                     <summary className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer hover:underline">
-                      View supervisor's justification
+                      View supervisor's justification (NOT passed to child)
                     </summary>
-                    <div className="mt-2 space-y-2 text-xs bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
-                      {subtask.justification.parent_task && subtask.justification.parent_task !== '(legacy event)' && (
-                        <div>
-                          <span className="font-semibold text-gray-600 dark:text-gray-400">Parent Task:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.parent_task}</p>
-                        </div>
-                      )}
-                      {subtask.justification.split_reason && subtask.justification.split_reason !== '(legacy event)' && (
-                        <div>
-                          <span className="font-semibold text-gray-600 dark:text-gray-400">Why Split:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.split_reason}</p>
-                        </div>
-                      )}
-                      {subtask.justification.objective && subtask.justification.objective !== '(legacy event)' && (
-                        <div>
-                          <span className="font-semibold text-gray-600 dark:text-gray-400">Objective:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.objective}</p>
-                        </div>
-                      )}
-                      {subtask.justification.plan && subtask.justification.plan !== '(legacy event)' && (
-                        <div>
-                          <span className="font-semibold text-gray-600 dark:text-gray-400">Plan:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.plan}</p>
-                        </div>
-                      )}
-                      {subtask.justification.why_it_may_work && subtask.justification.why_it_may_work !== '(legacy event)' && (
-                        <div>
-                          <span className="font-semibold text-gray-600 dark:text-gray-400">Why It May Work:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.why_it_may_work}</p>
-                        </div>
-                      )}
-                      {subtask.justification.expected_results && subtask.justification.expected_results !== '(legacy event)' && (
-                        <div>
-                          <span className="font-semibold text-gray-600 dark:text-gray-400">Expected Results:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.expected_results}</p>
-                        </div>
-                      )}
-                      {/* Budget Allocation Reasoning */}
-                      {subtask.justification.budget_allocation && (
-                        <div className="mt-2 pt-2 border-t border-purple-200 dark:border-purple-700">
-                          <span className="font-semibold text-purple-600 dark:text-purple-400">Budget Allocation:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.budget_allocation}</p>
-                        </div>
-                      )}
-                      {subtask.justification.complexity_assessment && (
-                        <div>
-                          <span className="font-semibold text-purple-600 dark:text-purple-400">Complexity:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.complexity_assessment}</p>
-                        </div>
-                      )}
-                      {subtask.justification.significance_weight && (
-                        <div>
-                          <span className="font-semibold text-purple-600 dark:text-purple-400">Significance:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.significance_weight}</p>
-                        </div>
-                      )}
-                      {subtask.justification.resource_justification && (
-                        <div>
-                          <span className="font-semibold text-purple-600 dark:text-purple-400">Resource Justification:</span>
-                          <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.resource_justification}</p>
-                        </div>
-                      )}
+                    <div className="mt-2">
+                      {/* EXPERIMENT MODE WARNING BANNER */}
+                      <div className="bg-red-100 dark:bg-red-900/40 p-2 rounded border-2 border-red-500 mb-2">
+                        <p className="text-xs font-bold text-red-700 dark:text-red-300 text-center">
+                          🚫 EXPERIMENT MODE 🚫
+                        </p>
+                        <p className="text-xs font-semibold text-red-600 dark:text-red-400 text-center mt-0.5">
+                          SUPERVISOR JUSTIFICATION DISABLED
+                        </p>
+                        <p className="text-xs text-red-600 dark:text-red-400 text-center mt-1 italic">
+                          The context below was generated by thinkers but NOT passed to the spawned child.
+                          <br />
+                          Child agent executed WITHOUT access to this supervisor justification.
+                        </p>
+                      </div>
+                      <div className="space-y-2 text-xs bg-blue-50 dark:bg-blue-900/20 p-2 rounded opacity-60">
+                        {subtask.justification.parent_task && subtask.justification.parent_task !== '(legacy event)' && (
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400 line-through">Parent Task:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.parent_task}</p>
+                          </div>
+                        )}
+                        {subtask.justification.split_reason && subtask.justification.split_reason !== '(legacy event)' && (
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400 line-through">Why Split:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.split_reason}</p>
+                          </div>
+                        )}
+                        {subtask.justification.objective && subtask.justification.objective !== '(legacy event)' && (
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400 line-through">Objective:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.objective}</p>
+                          </div>
+                        )}
+                        {subtask.justification.plan && subtask.justification.plan !== '(legacy event)' && (
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400 line-through">Plan:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.plan}</p>
+                          </div>
+                        )}
+                        {subtask.justification.why_it_may_work && subtask.justification.why_it_may_work !== '(legacy event)' && (
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400 line-through">Why It May Work:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.why_it_may_work}</p>
+                          </div>
+                        )}
+                        {subtask.justification.expected_results && subtask.justification.expected_results !== '(legacy event)' && (
+                          <div>
+                            <span className="font-semibold text-gray-600 dark:text-gray-400 line-through">Expected Results:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.expected_results}</p>
+                          </div>
+                        )}
+                        {/* Budget Allocation Reasoning */}
+                        {subtask.justification.budget_allocation && (
+                          <div className="mt-2 pt-2 border-t border-purple-200 dark:border-purple-700">
+                            <span className="font-semibold text-purple-600 dark:text-purple-400 line-through">Budget Allocation:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.budget_allocation}</p>
+                          </div>
+                        )}
+                        {subtask.justification.complexity_assessment && (
+                          <div>
+                            <span className="font-semibold text-purple-600 dark:text-purple-400 line-through">Complexity:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.complexity_assessment}</p>
+                          </div>
+                        )}
+                        {subtask.justification.significance_weight && (
+                          <div>
+                            <span className="font-semibold text-purple-600 dark:text-purple-400 line-through">Significance:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.significance_weight}</p>
+                          </div>
+                        )}
+                        {subtask.justification.resource_justification && (
+                          <div>
+                            <span className="font-semibold text-purple-600 dark:text-purple-400 line-through">Resource Justification:</span>
+                            <p className="text-gray-700 dark:text-gray-300 mt-0.5">{subtask.justification.resource_justification}</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </details>
                 )}

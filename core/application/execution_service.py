@@ -1385,9 +1385,14 @@ class AgentExecutionService:
                 parent_id=parent.session_id,
                 tree_sequence_id=child_sequence_id,
             )
+            # =====================================================================
+            # ABLATION STUDY: Thinker Justification Pass Down DISABLED
+            # Design Choice 4 is disabled - children do NOT receive supervisor
+            # justifications when spawned.
+            # =====================================================================
             child.assign_task(
                 child_event.subtask.description,
-                justification=child_event.subtask.justification,
+                justification=None,  # ABLATION: was child_event.subtask.justification
             )
 
             # Allocate budget proportionally based on subtask weight
@@ -1425,10 +1430,14 @@ class AgentExecutionService:
                     parent_id=parent.session_id,
                 )
 
-                # Assign the subtask to the child with justification
+                # =====================================================================
+                # ABLATION STUDY: Thinker Justification Pass Down DISABLED
+                # Design Choice 4 is disabled - subordinates do NOT receive
+                # supervisor justifications when spawned.
+                # =====================================================================
                 child.assign_task(
                     sub_event.subtask.description,
-                    justification=sub_event.subtask.justification,
+                    justification=None,  # ABLATION: was sub_event.subtask.justification
                 )
 
                 # Allocate budget if specified
