@@ -177,6 +177,25 @@ class EventStoreReadPort(Protocol):
         """
         ...
 
+    async def get_events_batch_incremental(
+        self,
+        agent_sequences: dict[UUID, int | None],
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get new events for multiple agents in a single query.
+
+        Optimized for SSE streaming: fetches events for N agents where each
+        agent has a different after_sequence threshold. Reduces N queries to 1.
+
+        Args:
+            agent_sequences: Dict mapping agent_id to last seen sequence number.
+                             If sequence is None, fetch all events for that agent.
+
+        Returns:
+            Dict mapping aggregate_id to list of new events ordered by sequence_number.
+            Only includes agents that have new events.
+        """
+        ...
+
 
 class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadPort, Protocol):
     """Composite event store interface with full capabilities.

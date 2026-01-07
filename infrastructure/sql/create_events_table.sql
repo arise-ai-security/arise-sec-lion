@@ -33,3 +33,20 @@ WHERE event_type = 'AgentCreated' AND payload->>'parent_id' IS NOT NULL;
 -- Composite index for agent summary queries (task descriptions and status lookups)
 CREATE INDEX IF NOT EXISTS idx_events_aggregate_type_time
 ON events (aggregate_id, event_type, occurred_at DESC);
+
+-- Index for event_type filtering (many queries filter by event_type alone)
+-- Covers: StatusChanged, WorkCompleted, WorkFailed lookups
+CREATE INDEX IF NOT EXISTS idx_events_event_type
+ON events (event_type);
+
+-- Composite index for incremental event fetching (SSE streams)
+-- Optimizes: get_events with after_sequence pagination
+CREATE INDEX IF NOT EXISTS idx_events_aggregate_sequence_after
+ON events (aggregate_id, sequence_number ASC)
+INCLUDE (event_type, payload);
+
+-- Covering index for ChildSpawned hierarchy traversal
+-- Avoids heap access in recursive CTE by including child_id in index
+CREATE INDEX IF NOT EXISTS idx_events_child_spawned
+ON events (aggregate_id, (payload->>'child_id'))
+WHERE event_type = 'ChildSpawned';

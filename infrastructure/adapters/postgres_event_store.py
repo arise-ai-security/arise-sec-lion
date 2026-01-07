@@ -8,6 +8,8 @@ import orjson
 
 from core.domain.events.events import (
     AgentCreated,
+    AgentExecutionFinished,
+    AgentExecutionStarted,
     ArtifactStored,
     BudgetConsumed,
     BudgetExceeded,
@@ -20,6 +22,8 @@ from core.domain.events.events import (
     DecisionRecorded,
     DomainEvent,
     LimitEnforced,
+    OperationFinished,
+    OperationStarted,
     ProgressUpdated,
     PromptSent,
     SharedContextCreated,
@@ -52,6 +56,11 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "ComplexityEvaluated": ComplexityEvaluated,
     # Observability events
     "PromptSent": PromptSent,
+    # Timing/observability events
+    "AgentExecutionStarted": AgentExecutionStarted,
+    "AgentExecutionFinished": AgentExecutionFinished,
+    "OperationStarted": OperationStarted,
+    "OperationFinished": OperationFinished,
     # Cost tracking events
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,
@@ -632,5 +641,69 @@ class PostgresEventStore(EventStorePort):
         except Exception as e:
             raise EventStoreError(
                 "Failed to retrieve BOSS agent summaries",
+                original_error=e,
+            ) from e
+
+    async def get_events_batch_incremental(
+        self,
+        agent_sequences: dict[UUID, int | None],
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get new events for multiple agents in a single query.
+
+        Uses LATERAL JOIN with VALUES to efficiently fetch events for each agent
+        with their respective after_sequence threshold.
+
+        Performance: 1 query instead of N queries for N agents.
+        """
+        if not agent_sequences:
+            return {}
+
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                # Build VALUES list for agent_id, after_sequence pairs
+                # Use -1 for agents with no previous sequence (fetch all)
+                values = [
+                    (agent_id, seq if seq is not None else -1)
+                    for agent_id, seq in agent_sequences.items()
+                ]
+
+                # Use LATERAL JOIN with unnest for efficient batch fetch
+                # Each agent gets events where sequence_number > its threshold
+                query = """
+                    WITH thresholds AS (
+                        SELECT * FROM unnest($1::uuid[], $2::int[])
+                        AS t(agent_id, after_seq)
+                    )
+                    SELECT e.aggregate_id, e.event_type, e.payload
+                    FROM thresholds t
+                    JOIN events e ON e.aggregate_id = t.agent_id
+                        AND e.sequence_number > t.after_seq
+                    ORDER BY e.aggregate_id, e.sequence_number ASC
+                """
+
+                agent_ids = [v[0] for v in values]
+                after_seqs = [v[1] for v in values]
+                rows = await conn.fetch(query, agent_ids, after_seqs)
+
+            grouped: dict[UUID, list[DomainEvent]] = {}
+            for row in rows:
+                aggregate_id = row["aggregate_id"]
+                event = self._deserialize_event(row["event_type"], row["payload"])
+
+                if aggregate_id not in grouped:
+                    grouped[aggregate_id] = []
+                grouped[aggregate_id].append(event)
+
+            return grouped
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to batch fetch incremental events",
                 original_error=e,
             ) from e

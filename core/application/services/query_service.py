@@ -178,10 +178,15 @@ class AgentQueryService:
                      left-to-right order. Non-workers (BOSS, MANAGER, PENDING)
                      are still returned in parallel for decomposition.
 
-        Uses get_all_events_grouped() for single-query efficiency (avoids N+1).
+        Uses hierarchy-specific query when root_id is provided to avoid
+        fetching events for unrelated agents.
         Uses lightweight read model instead of full aggregate reconstruction.
         """
-        all_events = await self._repository.get_all_events_grouped()
+        # Use hierarchy-specific query when root_id is provided
+        if root_id is not None:
+            all_events = await self._repository.get_hierarchy_events_grouped(root_id)
+        else:
+            all_events = await self._repository.get_all_events_grouped()
 
         # Build summaries for all agents
         summaries: dict[UUID, AgentSummaryReadModel] = {}
@@ -193,42 +198,36 @@ class AgentQueryService:
         # Build children map once for efficient tree operations
         children_map = self._build_children_map(summaries)
 
-        # If root_id specified, filter to only agents in that hierarchy
-        if root_id is not None:
-            hierarchy_ids = self._get_hierarchy_ids(root_id, summaries, children_map)
-            summaries = {k: v for k, v in summaries.items() if k in hierarchy_ids}
+        # Get non-terminal agents (single pass, combined filtering)
+        non_workers: list[UUID] = []
+        workers: list[tuple[UUID, AgentSummaryReadModel]] = []
 
-        # Get non-terminal agents
-        active_agents = [
-            (agent_id, summary)
-            for agent_id, summary in summaries.items()
-            if not summary.is_terminal
-        ]
+        for agent_id, summary in summaries.items():
+            if summary.is_terminal:
+                continue
+            if summary.role == "worker":
+                workers.append((agent_id, summary))
+            else:
+                non_workers.append(agent_id)
 
         if not sequential_workers:
-            return [agent_id for agent_id, _ in active_agents]
-
-        # Sequential workers mode: separate workers from non-workers
-        non_workers = [
-            agent_id
-            for agent_id, summary in active_agents
-            if summary.role != "worker"
-        ]
-        workers = [
-            (agent_id, summary)
-            for agent_id, summary in active_agents
-            if summary.role == "worker"
-        ]
+            return non_workers + [agent_id for agent_id, _ in workers]
 
         if not workers:
             return non_workers
 
+        # Pre-compute subtree completion status with memoization (O(n) instead of O(n²))
+        subtree_complete_cache: dict[UUID, bool] = {}
+        self._compute_all_subtree_completions(summaries, children_map, subtree_complete_cache)
+
         # Filter workers blocked by incomplete left sibling subtrees
-        eligible_workers = [
-            (agent_id, self._compute_hierarchical_path(agent_id, summaries))
-            for agent_id, _ in workers
-            if not self._has_incomplete_left_siblings(agent_id, summaries, children_map)
-        ]
+        eligible_workers: list[tuple[UUID, tuple[int, ...]]] = []
+        for agent_id, _ in workers:
+            if not self._has_incomplete_left_siblings_cached(
+                agent_id, summaries, children_map, subtree_complete_cache
+            ):
+                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
+                eligible_workers.append((agent_id, path))
 
         if not eligible_workers:
             return non_workers
@@ -358,6 +357,106 @@ class AgentQueryService:
             current_id = parent_id
 
         return False
+
+    def _compute_all_subtree_completions(
+        self,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+        cache: dict[UUID, bool],
+    ) -> None:
+        """Pre-compute subtree completion for all agents in O(n) time.
+
+        Uses bottom-up traversal: a node's subtree is complete iff the node
+        is terminal AND all children's subtrees are complete.
+
+        This eliminates O(n²) recursive checking by visiting each node once.
+        """
+        def compute_completion(agent_id: UUID) -> bool:
+            if agent_id in cache:
+                return cache[agent_id]
+
+            summary = summaries.get(agent_id)
+            if summary is None:
+                cache[agent_id] = True
+                return True
+
+            # Must be terminal to be complete
+            if not summary.is_terminal:
+                cache[agent_id] = False
+                return False
+
+            # Check all children recursively (will use cache for already computed)
+            for child_id in children_map.get(agent_id, []):
+                if not compute_completion(child_id):
+                    cache[agent_id] = False
+                    return False
+
+            cache[agent_id] = True
+            return True
+
+        # Compute for all agents
+        for agent_id in summaries:
+            if agent_id not in cache:
+                compute_completion(agent_id)
+
+    def _has_incomplete_left_siblings_cached(
+        self,
+        agent_id: UUID,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+        subtree_complete_cache: dict[UUID, bool],
+    ) -> bool:
+        """Check for incomplete left siblings using pre-computed cache.
+
+        O(depth) instead of O(n) per call since subtree completion is cached.
+        """
+        current_id = agent_id
+
+        while current_id is not None and current_id in summaries:
+            summary = summaries[current_id]
+            parent_id = summary.parent_id
+
+            if parent_id is not None:
+                current_sibling_index = summary.sibling_index
+                for sibling_id in children_map.get(parent_id, []):
+                    sibling = summaries[sibling_id]
+                    if sibling.sibling_index < current_sibling_index:
+                        # Use cached result instead of recursive computation
+                        if not subtree_complete_cache.get(sibling_id, True):
+                            return True
+
+            current_id = parent_id
+
+        return False
+
+    def _compute_hierarchical_path_optimized(
+        self,
+        agent_id: UUID,
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+    ) -> tuple[int, ...]:
+        """Compute hierarchical path without list reversal.
+
+        Builds path by collecting indices then creating tuple in reverse order.
+        Avoids: list allocation, append operations, and reversal.
+        """
+        # Count depth first to pre-allocate
+        depth = 0
+        current_id = agent_id
+        while current_id is not None and current_id in summaries:
+            depth += 1
+            current_id = summaries[current_id].parent_id
+
+        # Build result directly in correct order
+        result = [0] * depth
+        current_id = agent_id
+        idx = depth - 1
+
+        while current_id is not None and current_id in summaries:
+            result[idx] = summaries[current_id].sibling_index
+            current_id = summaries[current_id].parent_id
+            idx -= 1
+
+        return tuple(result)
 
     async def is_hierarchy_complete(self, root_id: UUID) -> bool:
         """Check if all agents in hierarchy have reached terminal state."""

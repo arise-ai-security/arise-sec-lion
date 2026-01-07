@@ -204,6 +204,22 @@ class AgentRepository:
         """
         return await self._event_store.get_children_events_grouped(parent_id)
 
+    async def get_hierarchy_events_grouped(
+        self, root_id: UUID
+    ) -> dict[UUID, list[DomainEvent]]:
+        """Get events for entire hierarchy starting from root agent.
+
+        Uses recursive CTE to efficiently traverse ChildSpawned events
+        and fetch all descendant events in a single query.
+
+        Args:
+            root_id: Root agent UUID to start hierarchy traversal.
+
+        Returns:
+            Dict mapping aggregate_id to list of events for hierarchy.
+        """
+        return await self._event_store.get_hierarchy_events_grouped(root_id)
+
     def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
         """Notify progress callback if set."""
         if self._progress_callback is not None:

@@ -3,6 +3,7 @@
 Handles child agent creation with hierarchy limits propagation.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -160,11 +161,53 @@ class ChildAgentFactory:
         Limit checking is done by CheckLimitViolations pipeline step before
         this method is called. This method assumes all events are valid.
 
+        Optimized: Uses asyncio.gather for parallel DB writes instead of
+        sequential awaits. With N children, reduces latency from N*RTT to ~1*RTT.
+
         Returns:
-            List of created children.
+            List of created children in same order as input events.
         """
-        results: list[ChildCreationResult] = []
-        for event in events:
-            result = await self.create_from_event(event, parent_id)
-            results.append(result)
-        return results
+        if not events:
+            return []
+
+        # Create all child agents in parallel using asyncio.gather
+        # This is safe because each event creates an independent agent
+        results = await asyncio.gather(
+            *[self._create_child_parallel(event, parent_id) for event in events]
+        )
+
+        # Update counter after all parallel operations complete
+        # This avoids race conditions on _total_created
+        self._total_created += len(events)
+
+        return list(results)
+
+    async def _create_child_parallel(
+        self,
+        event: ChildSpawned,
+        parent_id: UUID,
+    ) -> ChildCreationResult:
+        """Create a single child agent (for parallel execution).
+
+        Does NOT increment _total_created - caller handles that after gather.
+        """
+        child_role = AgentRole(event.child_role)
+        child_config = self._apply_manager_config(event.child_config)
+
+        child = AgentSession.create(
+            agent_id=event.child_id,
+            role=child_role,
+            config=child_config,
+            parent_id=parent_id,
+            sibling_index=event.sibling_index,
+            spawn_payload=event.parent_context,
+        )
+        child.assign_task(event.subtask.description)
+
+        # Propagate hierarchy limits
+        self._limits_registry.propagate_to_child(parent_id, event.child_id)
+
+        # Persist the new agent (parallel DB write)
+        await self._repository.save_new_agent(child)
+
+        return ChildCreationResult(agent=child, created=True)

@@ -95,8 +95,10 @@ def categorize_event(event: DomainEvent) -> str:
 class IncrementalHierarchyTracker:
     """Tracks hierarchy state for incremental event fetching.
 
-    Uses optimized batch fetching on first load, then incremental updates.
+    Uses optimized batch fetching on first load, then batch incremental updates.
     This reduces database load from O(total_events) to O(new_events) per poll.
+
+    Optimized: Uses single batch query for incremental updates instead of N queries.
     """
 
     def __init__(self, event_store: EventStoreReadPort, root_id: UUID) -> None:
@@ -110,12 +112,14 @@ class IncrementalHierarchyTracker:
         self._all_events: list[DomainEvent] = []
         # Whether initial load has been done
         self._initialized = False
+        # New children discovered that need initial fetch
+        self._pending_children: set[UUID] = set()
 
     async def fetch_new_events(self) -> list[DomainEvent]:
         """Fetch only new events since last poll.
 
         First call uses optimized single-query approach for entire hierarchy.
-        Subsequent calls fetch incrementally from known agents.
+        Subsequent calls use batch incremental fetch (1 query instead of N).
         """
         new_events: list[DomainEvent] = []
 
@@ -133,25 +137,33 @@ class IncrementalHierarchyTracker:
             self._all_events.extend(new_events)
             return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
 
-        # Subsequent calls: incremental fetch from known agents
-        for agent_id in list(self._known_agents):
-            last_seq = self._last_sequence.get(agent_id)
+        # Subsequent calls: batch incremental fetch (1 query instead of N)
+        # Build dict of agent_id -> last_sequence for batch query
+        agent_sequences: dict[UUID, int | None] = {}
+        for agent_id in self._known_agents:
+            agent_sequences[agent_id] = self._last_sequence.get(agent_id)
 
-            events = await self._event_store.get_events(
-                agent_id,
-                after_sequence=last_seq,
-            )
+        # Include pending children (new agents discovered via ChildSpawned)
+        for child_id in self._pending_children:
+            agent_sequences[child_id] = None  # Fetch all events for new agents
+        self._pending_children.clear()
 
-            if events:
-                self._last_sequence[agent_id] = events[-1].sequence_number
-                new_events.extend(events)
+        # Single batch query for all agents
+        if agent_sequences:
+            grouped = await self._event_store.get_events_batch_incremental(agent_sequences)
 
-                # Discover new children
-                for event in events:
-                    if isinstance(event, ChildSpawned):
-                        child_id = event.child_id
-                        if child_id not in self._known_agents:
-                            self._known_agents.add(child_id)
+            for agent_id, events in grouped.items():
+                if events:
+                    self._last_sequence[agent_id] = events[-1].sequence_number
+                    new_events.extend(events)
+
+                    # Discover new children
+                    for event in events:
+                        if isinstance(event, ChildSpawned):
+                            child_id = event.child_id
+                            if child_id not in self._known_agents:
+                                self._known_agents.add(child_id)
+                                self._pending_children.add(child_id)
 
         self._all_events.extend(new_events)
         return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
@@ -162,7 +174,7 @@ class IncrementalHierarchyTracker:
 
     def has_pending_children(self) -> bool:
         """Check if there are pending children to fetch."""
-        return False  # New children are added to known_agents directly
+        return len(self._pending_children) > 0
 
 
 @router.get("/{agent_id}", response_model=CategorizedEventsSchema)
