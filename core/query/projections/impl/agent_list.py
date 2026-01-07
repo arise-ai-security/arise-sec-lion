@@ -10,6 +10,7 @@ from core.domain.events.events import (
     AgentCreated,
     ChildSpawned,
     CodeGenerationStarted,
+    ComplexityEvaluated,
     DomainEvent,
     StatusChanged,
     TaskAssigned,
@@ -67,6 +68,10 @@ class AgentListProjection:
                 # Only update if not already in terminal state
                 if status not in terminal_states:
                     status = event.new_status
+
+            elif isinstance(event, ComplexityEvaluated):
+                # Update role based on complexity evaluation (pending → worker/manager)
+                role = event.determined_role
 
             elif isinstance(event, CodeGenerationStarted):
                 if status not in terminal_states:
