@@ -685,6 +685,7 @@ FodyWeavers.xsd
 !README.md
 !CLAUDE.md
 !agent-docs/*.md
+!solutions.md
 
 # Output directory (generated code, exports, last run tracking)
 output/
