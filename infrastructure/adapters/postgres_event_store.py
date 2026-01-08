@@ -26,6 +26,9 @@ from core.domain.events.events import (
     OperationStarted,
     ProgressUpdated,
     PromptSent,
+    ResearchCompleted,
+    ResearchStarted,
+    RoleTransitioned,
     RunCompleted,
     RunStarted,
     SharedContextCreated,
@@ -79,6 +82,10 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     # Budget events (part of shared context)
     "BudgetConsumed": BudgetConsumed,
     "BudgetExceeded": BudgetExceeded,
+    # Research events (RESEARCHER role)
+    "ResearchStarted": ResearchStarted,
+    "ResearchCompleted": ResearchCompleted,
+    "RoleTransitioned": RoleTransitioned,
 }
 
 
