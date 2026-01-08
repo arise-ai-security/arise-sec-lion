@@ -190,6 +190,8 @@ class TestSequentialWorkerOrdering:
             sibling_index: int,
             status: str = "analyzing",
         ) -> list:
+            from core.domain.events.events import StatusChanged
+
             events = [
                 AgentCreated(
                     aggregate_id=agent_id,
@@ -205,6 +207,16 @@ class TestSequentialWorkerOrdering:
                     task_description="test task",
                 ),
             ]
+            # Add status transition if not default "analyzing"
+            if status != "analyzing":
+                events.append(
+                    StatusChanged(
+                        aggregate_id=agent_id,
+                        sequence_number=3,
+                        old_status="analyzing",
+                        new_status=status,
+                    )
+                )
             return events
 
         # Create the repository mock

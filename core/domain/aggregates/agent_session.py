@@ -28,6 +28,8 @@ from core.domain.events.events import (
     OperationFinished,
     OperationStarted,
     PromptSent,
+    RunCompleted,
+    RunStarted,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -298,6 +300,16 @@ class AgentSession:
     @_apply.register
     def _(self, event: OperationFinished) -> None:
         # Timing event for observability, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RunStarted) -> None:
+        # Run-level timing event, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RunCompleted) -> None:
+        # Run-level timing event, just increment version for OCC
         self.version += 1
 
     def _initialize_defaults(self, agent_id: UUID) -> None:
@@ -617,6 +629,52 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             operation_type=operation_type,
             duration_seconds=duration_seconds,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    # -------------------------------------------------------------------------
+    # Run-Level Timing Events (BOSS only)
+    # -------------------------------------------------------------------------
+
+    def emit_run_started(
+        self,
+        task_description: str,
+        instance_id: str | None = None,
+    ) -> None:
+        """Emit RunStarted event when execution run begins.
+
+        Should only be called on BOSS agent (root of hierarchy).
+        """
+        event = RunStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            task_description=task_description,
+            instance_id=instance_id,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_run_completed(
+        self,
+        status: str,
+        duration_seconds: float,
+        total_agents: int,
+        completed_agents: int,
+        failed_agents: int,
+    ) -> None:
+        """Emit RunCompleted event when execution run finishes.
+
+        Should only be called on BOSS agent (root of hierarchy).
+        """
+        event = RunCompleted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            status=status,
+            duration_seconds=duration_seconds,
+            total_agents=total_agents,
+            completed_agents=completed_agents,
+            failed_agents=failed_agents,
         )
         self._apply(event)
         self._changes.append(event)
