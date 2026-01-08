@@ -45,7 +45,7 @@ services:
       - ..:/app
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
-      - secbench_output:/app/output  # Shared volume for SEC-bench artifacts
+      - ../output:/app/output  # Bind mount for visible output on host
     depends_on:
       db:
         condition: service_healthy
@@ -111,7 +111,7 @@ services:
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
       - ~/.claude:/home/appuser/.claude  # Mount local Claude config (API key + debug logs)
-      - secbench_output:/app/output  # Shared volume for SEC-bench artifacts (PoC, patches, logs)
+      - ../output:/app/output  # Bind mount for visible output on host
     env_file: .env.dev
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock  # Enable DooD for SEC-bench workers
@@ -158,4 +158,3 @@ services:
 
 volumes:
   postgres_data:
-  secbench_output:  # Shared volume for SEC-bench artifacts between containers
