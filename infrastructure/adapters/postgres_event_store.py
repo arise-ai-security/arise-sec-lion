@@ -26,6 +26,8 @@ from core.domain.events.events import (
     OperationStarted,
     ProgressUpdated,
     PromptSent,
+    RunCompleted,
+    RunStarted,
     SharedContextCreated,
     StatusChanged,
     SubtasksDefined,
@@ -61,6 +63,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "AgentExecutionFinished": AgentExecutionFinished,
     "OperationStarted": OperationStarted,
     "OperationFinished": OperationFinished,
+    "RunStarted": RunStarted,
+    "RunCompleted": RunCompleted,
     # Cost tracking events
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,
@@ -599,13 +603,13 @@ class PostgresEventStore(EventStorePort):
                         WHERE e.event_type IN ('StatusChanged', 'WorkCompleted', 'WorkFailed')
                         ORDER BY e.aggregate_id, e.occurred_at DESC
                     ),
-                    benchmark_info AS (
+                    run_info AS (
                         SELECT DISTINCT ON (e.aggregate_id)
                             e.aggregate_id,
                             e.payload->>'instance_id' as instance_id
                         FROM events e
                         INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
-                        WHERE e.event_type = 'BenchmarkStarted'
+                        WHERE e.event_type = 'RunStarted'
                         ORDER BY e.aggregate_id
                     )
                     SELECT
@@ -614,11 +618,11 @@ class PostgresEventStore(EventStorePort):
                         b.created_at,
                         t.task_description,
                         COALESCE(s.status, 'analyzing') as status,
-                        bi.instance_id
+                        ri.instance_id
                     FROM boss_agents b
                     LEFT JOIN task_descriptions t ON t.aggregate_id = b.agent_id
                     LEFT JOIN latest_status s ON s.aggregate_id = b.agent_id
-                    LEFT JOIN benchmark_info bi ON bi.aggregate_id = b.agent_id
+                    LEFT JOIN run_info ri ON ri.aggregate_id = b.agent_id
                     ORDER BY b.created_at DESC
                 """
                 rows = await conn.fetch(query, limit, offset)

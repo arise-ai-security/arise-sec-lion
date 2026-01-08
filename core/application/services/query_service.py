@@ -217,12 +217,12 @@ class AgentQueryService:
             if summary.is_terminal:
                 continue
             if summary.role == "worker":
-                # Only include worker if parent is in WAITING status
-                # This ensures all siblings are spawned before any worker starts
+                # Only include worker if parent has finished spawning children
+                # Parent must be in WAITING (spawned all children) or terminal state
                 parent_id = summary.parent_id
                 if parent_id and parent_id in summaries:
                     parent_summary = summaries[parent_id]
-                    if parent_summary.status != "waiting":
+                    if parent_summary.status not in ("waiting", "completed", "failed"):
                         continue  # Skip worker - parent still spawning children
                 workers.append((agent_id, summary))
             else:

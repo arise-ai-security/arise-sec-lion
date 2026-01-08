@@ -12,6 +12,7 @@ This is the main orchestration service that coordinates:
 import asyncio
 import logging
 import random
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -195,8 +196,13 @@ class AgentExecutionService:
         # Create shared context for this execution run
         await self._create_shared_context(root_id)
 
-        # Create and persist boss agent
+        # Create boss agent and emit RunStarted event
         boss_agent = self._create_boss_session(root_id, task_description)
+        instance_id = cve_instance.instance_id if cve_instance else None
+        boss_agent.emit_run_started(
+            task_description=task_description,
+            instance_id=instance_id,
+        )
         await self._repository.save_new_agent(boss_agent)
 
         return root_id
@@ -250,6 +256,7 @@ class AgentExecutionService:
         - Managers decompose in parallel, spawning children immediately
         - Workers execute one at a time in left-to-right tree order
         """
+        start_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
 
@@ -291,6 +298,9 @@ class AgentExecutionService:
         if tasks:
             await asyncio.gather(*tasks.values(), return_exceptions=True)
 
+        # Emit RunCompleted event on BOSS agent
+        await self._emit_run_completed(root_agent_id, start_time)
+
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
         """Execute agent step with exception handling, jitter, and rate limiting."""
         try:
@@ -304,6 +314,36 @@ class AgentExecutionService:
                 await self.run_agent_step(agent_id)
         except Exception:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
+
+    async def _emit_run_completed(
+        self,
+        root_agent_id: UUID,
+        start_time: float,
+    ) -> None:
+        """Emit RunCompleted event on BOSS agent with run statistics."""
+        duration_seconds = time.monotonic() - start_time
+
+        # Get final statistics for this run
+        stats = await self._query_service.get_statistics(root_id=root_agent_id)
+
+        # Load BOSS agent, emit event, and persist
+        boss_agent = await self._repository.load(root_agent_id)
+        current_version = boss_agent.version
+
+        # Determine overall run status from BOSS status
+        run_status = "completed" if boss_agent.status.value == "completed" else "failed"
+
+        boss_agent.emit_run_completed(
+            status=run_status,
+            duration_seconds=duration_seconds,
+            total_agents=stats.total_agents,
+            completed_agents=stats.completed,
+            failed_agents=stats.failed,
+        )
+
+        await self._repository.persist_events(
+            boss_agent, current_version, self._progress_callback
+        )
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
         """Get agent execution result."""
@@ -399,18 +439,38 @@ class AgentExecutionService:
         """Dispatch based on role: PENDING->complexity, BOSS/MANAGER->decompose, WORKER->execute.
 
         Uses AgentOrchestrator to handle LLM/worker interactions, keeping domain pure.
+        Emits AgentExecutionStarted/Finished events for timing observability.
         """
         if agent.status != AgentStatus.ANALYZING:
             return
 
         if agent.role == AgentRole.PENDING:
+            # PENDING agents don't emit execution timing - role not yet determined
             await self._orchestrator.evaluate_complexity(agent)
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
+            # Emit execution started for decomposition work
+            depth = self._get_agent_depth(agent)
+            start_time = time.monotonic()
+            agent.emit_execution_started(role=agent.role.value, depth=depth)
+
             await self._orchestrator.evaluate_task(agent)
+
+            # Emit execution finished with duration
+            duration = time.monotonic() - start_time
+            agent.emit_execution_finished(
+                role=agent.role.value,
+                status=agent.status.value,
+                duration_seconds=duration,
+            )
 
         elif agent.role == AgentRole.WORKER:
             async with self._worker_semaphore:
+                # Emit execution started for worker execution
+                depth = self._get_agent_depth(agent)
+                start_time = time.monotonic()
+                agent.emit_execution_started(role=agent.role.value, depth=depth)
+
                 root_id = self._limits_registry.get_root_id(agent.agent_id)
                 sibling_view = await self._sibling_view_port.build_view(
                     agent_id=agent.agent_id,
@@ -425,8 +485,21 @@ class AgentExecutionService:
                     sibling_view=sibling_view,
                 )
 
+                # Emit execution finished with duration
+                duration = time.monotonic() - start_time
+                agent.emit_execution_finished(
+                    role=agent.role.value,
+                    status=agent.status.value,
+                    duration_seconds=duration,
+                )
+
         else:
             raise ValueError(f"Unknown agent role: {agent.role}")
+
+    def _get_agent_depth(self, agent: AgentSession) -> int:
+        """Get agent depth from hierarchy limits, defaulting to 0."""
+        limits = self._limits_registry.get(agent.agent_id)
+        return limits.current_depth if limits else 0
 
     async def _persist_agent_events(
         self,
