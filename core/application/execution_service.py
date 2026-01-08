@@ -436,7 +436,7 @@ class AgentExecutionService:
         return agent
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
-        """Dispatch based on role: PENDING->complexity, BOSS/MANAGER->decompose, WORKER->execute.
+        """Dispatch based on role: PENDING->complexity, RESEARCHER->research, BOSS/MANAGER->decompose, WORKER->execute.
 
         Uses AgentOrchestrator to handle LLM/worker interactions, keeping domain pure.
         Emits AgentExecutionStarted/Finished events for timing observability.
@@ -447,6 +447,25 @@ class AgentExecutionService:
         if agent.role == AgentRole.PENDING:
             # PENDING agents don't emit execution timing - role not yet determined
             await self._orchestrator.evaluate_complexity(agent)
+
+        elif agent.role == AgentRole.RESEARCHER:
+            # RESEARCHER agents gather context via tool calling before becoming MANAGER
+            depth = self._get_agent_depth(agent)
+            start_time = time.monotonic()
+            agent.emit_execution_started(role=agent.role.value, depth=depth)
+
+            await self._orchestrator.execute_research(
+                agent,
+                working_directory=self._workspace.working_directory,
+            )
+
+            # Emit execution finished with duration
+            duration = time.monotonic() - start_time
+            agent.emit_execution_finished(
+                role=agent.role.value,
+                status=agent.status.value,
+                duration_seconds=duration,
+            )
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
             # Emit execution started for decomposition work

@@ -5,6 +5,7 @@ Return ONLY valid JSON:
 ```json
 {
   "complexity": "simple" | "complex",
+  "needs_research": true | false,
   "reasoning": "string (20-500 chars)"
 }
 ```
@@ -12,11 +13,16 @@ Return ONLY valid JSON:
 **Rules**:
 1. Pure JSON only (no markdown, no commentary)
 2. `complexity`: exactly `"simple"` or `"complex"` (lowercase)
-3. `reasoning`: specific task characteristics justifying your classification
+3. `needs_research`: true if context gathering is needed before decomposition (see strategy)
+4. `reasoning`: specific task characteristics justifying your classification
 
-**Example**:
+**Examples**:
 ```json
-{"complexity": "simple", "reasoning": "Single function with clear requirements, no dependencies, completable in one session."}
+{"complexity": "simple", "needs_research": false, "reasoning": "Single function with clear requirements, no dependencies, completable in one session."}
+```
+
+```json
+{"complexity": "complex", "needs_research": true, "reasoning": "Task requires analyzing existing codebase to understand Image class implementation before decomposing CVE fix into subtasks."}
 ```
 
 </OUTPUT_FORMAT>

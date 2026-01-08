@@ -89,6 +89,7 @@ def get_application(
         prompt_builder=prompt_builder,
         child_factory=child_factory,
         realtime_callback=realtime_callback,
+        research_port=infrastructure.research_adapter,
     )
 
     # Create sibling view builder (implements SiblingViewPort)

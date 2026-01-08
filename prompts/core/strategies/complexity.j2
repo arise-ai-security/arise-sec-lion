@@ -4,14 +4,28 @@
 
 Classify the task as **SIMPLE** or **COMPLEX**:
 - **SIMPLE** → Execute directly as WORKER
-- **COMPLEX** → Decompose into subtasks as MANAGER
+- **COMPLEX** → Decompose into subtasks as MANAGER (with optional research phase)
 
 ## Default: Favor SIMPLE
 
 **When uncertain, choose SIMPLE.** Over-decomposition causes task explosion and coordination overhead.
 Decompose ONLY when task genuinely requires multiple distinct artifacts or phases.
 
-## Indicators
+## Research Phase
+
+For COMPLEX tasks, also determine if **research is needed** before decomposition:
+
+| needs_research = true | needs_research = false |
+|----------------------|------------------------|
+| Task mentions "analyze", "review", "understand" existing code | Requirements are clear without codebase exploration |
+| Must find specific classes/functions before planning | Task is independent of existing implementation |
+| CVE fix requires locating vulnerable code paths | Standard feature addition with known structure |
+| Understanding project structure is prerequisite | New greenfield development |
+| Task depends on finding specific implementations | Clear entry points provided |
+
+**Research enables**: Reading files, searching code patterns, exploring project structure to gather context for better subtask decomposition.
+
+## Complexity Indicators
 
 | COMPLEX (3+ = COMPLEX) | SIMPLE (5+ = SIMPLE) |
 |------------------------|----------------------|
@@ -28,19 +42,23 @@ Decompose ONLY when task genuinely requires multiple distinct artifacts or phase
 COMPLEX indicators >= 3  →  COMPLEX
 SIMPLE indicators >= 5   →  SIMPLE
 Ambiguous               →  Default SIMPLE (bias toward action)
+
+For COMPLEX:
+  Task requires understanding existing code → needs_research = true
+  Task is self-contained/greenfield        → needs_research = false
 ```
 
 **Key test**: Can one person complete this in one sitting? → SIMPLE
 
 ## Examples
 
-| Task | Classification | Reason |
-|------|----------------|--------|
-| Write Fibonacci function | SIMPLE | Single function, known algorithm |
-| Fix logout bug | SIMPLE | Localized, clear scope |
-| Generate PoC for CVE | SIMPLE | Single focused security task |
-| Build full web app | COMPLEX | Multiple systems required |
-| Implement auth system | COMPLEX | Registration + login + session + security |
-| Add real-time notifications | COMPLEX | WebSocket + events + frontend integration |
+| Task | complexity | needs_research | Reason |
+|------|------------|----------------|--------|
+| Write Fibonacci function | simple | false | Single function, known algorithm |
+| Fix logout bug | simple | false | Localized, clear scope |
+| Analyze CVE-2017-14857 in image.cpp | complex | true | Must locate Image class and vulnerable code |
+| Build full web app | complex | false | Greenfield, requirements are clear |
+| Fix buffer overflow in Parser class | complex | true | Must understand Parser implementation |
+| Implement auth system | complex | false | Standard patterns, requirements clear |
 
 </COMPLEXITY_EVALUATION_STRATEGY>

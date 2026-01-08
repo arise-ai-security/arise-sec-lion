@@ -8,7 +8,7 @@ between pipeline steps:
 """
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -54,6 +54,11 @@ class PipelineState:
     # Parsing results
     complexity: str | None = None
     reasoning: str | None = None
+    needs_research: bool = False  # True if task requires research before decomposition
+
+    # Research-specific (RESEARCHER pipeline)
+    research_findings: str | None = None
+    research_context: dict[str, Any] | None = None
 
     # Timing (for operation duration tracking)
     operation_start_time: float | None = None
@@ -98,6 +103,16 @@ class PipelineState:
     ) -> "PipelineState":
         """Create new state with complexity evaluation result."""
         return replace(self, complexity=complexity, reasoning=reasoning)
+
+    def with_needs_research(self, needs_research: bool) -> "PipelineState":
+        """Create new state with needs_research flag."""
+        return replace(self, needs_research=needs_research)
+
+    def with_research_result(
+        self, findings: str, context: dict[str, Any]
+    ) -> "PipelineState":
+        """Create new state with research results."""
+        return replace(self, research_findings=findings, research_context=context)
 
     def with_worker_context(
         self,

@@ -24,6 +24,7 @@ class ParseComplexityResult:
     Expects JSON with format:
     {
         "complexity": "simple" | "complex",
+        "needs_research": true | false,
         "reasoning": "explanation..."
     }
     """
@@ -38,6 +39,7 @@ class ParseComplexityResult:
             data = json.loads(clean_response)
             complexity = data.get("complexity", "").lower()
             reasoning = data.get("reasoning", "")
+            needs_research = data.get("needs_research", False)
 
             if complexity not in ("simple", "complex"):
                 return StepResult.fail(f"Invalid complexity value: {complexity}")
@@ -47,7 +49,10 @@ class ParseComplexityResult:
         except (ValueError, KeyError) as e:
             return StepResult.fail(f"Failed to extract complexity: {e}")
 
-        return StepResult.ok(state.with_complexity_result(complexity, reasoning))
+        return StepResult.ok(
+            state.with_complexity_result(complexity, reasoning)
+            .with_needs_research(needs_research)
+        )
 
 
 class ParseSubtasks:
