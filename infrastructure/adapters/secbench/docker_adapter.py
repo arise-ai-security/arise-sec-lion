@@ -102,6 +102,13 @@ class DockerContainerAdapter(SecBenchContainerPort):
 
         container_id = stdout.strip()[:12]
 
+        # Install procps for process management tools (ps, top, etc.)
+        # Required by Claude Code tool for process tracking
+        await self.exec_command(
+            container_id,
+            "apt-get update -qq && apt-get install -y -qq procps > /dev/null 2>&1",
+        )
+
         # Install secb helper script if provided
         if cve.secb_sh:
             await self._install_secb_script(container_id, cve.secb_sh)
