@@ -309,9 +309,17 @@ class AgentExecutionService:
         """Get agent execution result."""
         return await self._query_service.get_result(agent_id)
 
-    async def get_system_statistics(self) -> SystemStatisticsDTO:
-        """Get system-wide agent statistics."""
-        return await self._query_service.get_statistics()
+    async def get_system_statistics(
+        self,
+        root_id: UUID | None = None,
+    ) -> SystemStatisticsDTO:
+        """Get agent statistics.
+
+        Args:
+            root_id: If provided, only count agents in this hierarchy.
+                     If None, counts all agents in the database.
+        """
+        return await self._query_service.get_statistics(root_id=root_id)
 
     # -------------------------------------------------------------------------
     # Internal Methods

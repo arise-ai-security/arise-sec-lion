@@ -131,13 +131,24 @@ class AgentQueryService:
             role=agent.role.value,
         )
 
-    async def get_statistics(self) -> SystemStatisticsDTO:
-        """Get system-wide statistics about all agents.
+    async def get_statistics(
+        self,
+        root_id: UUID | None = None,
+    ) -> SystemStatisticsDTO:
+        """Get statistics about agents.
 
-        Uses get_all_events_grouped() for single-query efficiency (avoids N+1).
-        Uses lightweight read model instead of full aggregate reconstruction.
+        Args:
+            root_id: If provided, only count agents in this hierarchy.
+                     If None, counts all agents in the database.
+
+        Uses hierarchy-specific query when root_id is provided for accurate
+        per-run statistics. Uses lightweight read model instead of full
+        aggregate reconstruction.
         """
-        all_events = await self._repository.get_all_events_grouped()
+        if root_id is not None:
+            all_events = await self._repository.get_hierarchy_events_grouped(root_id)
+        else:
+            all_events = await self._repository.get_all_events_grouped()
 
         total = 0
         completed = 0
