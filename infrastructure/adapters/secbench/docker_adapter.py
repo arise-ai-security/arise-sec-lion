@@ -80,8 +80,8 @@ class DockerContainerAdapter(SecBenchContainerPort):
             container_name,
             "--network",
             self._network,
-            "-v",
-            f"{testcase_path.absolute()}:/testcase",
+            "--volumes-from",
+            "arise-app",  # Share volumes from parent (DooD)
             "-v",
             f"{self._socket}:/var/run/docker.sock",
             "--label",
@@ -105,6 +105,9 @@ class DockerContainerAdapter(SecBenchContainerPort):
         # Install secb helper script if provided
         if cve.secb_sh:
             await self._install_secb_script(container_id, cve.secb_sh)
+
+        # Create /testcase symlink (volumes-from gives us same paths)
+        await self.exec_command(container_id, f"ln -sfn {testcase_path} /testcase")
 
         info = ContainerInfo(
             container_id=container_id,
