@@ -32,6 +32,7 @@ class PromptContext:
     cve_instance: "CVEInstance | None" = None
     sibling_view: Any = None
     workspace_context: str | None = None
+    research_findings: str | None = None
 
 
 class PromptStrategy(Protocol):
