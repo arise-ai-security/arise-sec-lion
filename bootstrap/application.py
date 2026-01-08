@@ -147,7 +147,6 @@ def get_application(
     secbench_context = None
     if SECBENCH_AVAILABLE and config.secbench_config and is_enabled(config.secbench_config):
         secbench_context = register_secbench(
-            shared_context=infrastructure.shared_context,
             config=config.secbench_config,
             prompt_builder=prompt_builder,
             progress_callback=config.progress_callback,

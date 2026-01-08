@@ -234,6 +234,9 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
 
 
 def _create_cli(settings: Settings, progress_callback=None):
+    from infrastructure.adapters.secbench import SecBenchConfig, is_enabled as secbench_is_enabled
+    from pathlib import Path as PathLib
+
     infra = get_infrastructure(InfrastructureConfig(
         postgres_connection_string=settings.database.connection_string,
         default_worker_tool=settings.worker.tool,
@@ -241,6 +244,16 @@ def _create_cli(settings: Settings, progress_callback=None):
         worker_tool_timeout=settings.worker.timeout,
         worker_max_tool_calls=settings.worker.max_tool_calls,
     ))
+
+    # Create SEC-bench config if security settings enable it
+    secbench_config = None
+    if getattr(settings, 'security', None) and settings.security.enabled:
+        secbench_config = SecBenchConfig(
+            enabled=True,
+            output_directory=PathLib(settings.output.directory),
+            keep_container_running=True,
+            default_timeout_seconds=settings.worker.timeout,  # Same timeout for verification
+        )
 
     app = get_application(infra, ApplicationConfig(
         system_limits=settings.orchestration.limits,
@@ -251,10 +264,12 @@ def _create_cli(settings: Settings, progress_callback=None):
         output_directory=settings.output.directory,
         default_worker_tool=settings.worker.tool,
         progress_callback=progress_callback,
+        secbench_config=secbench_config,
     ))
 
     return CLI(
         execution_service=app.execution_service,
+        secbench_context=app.secbench_context,
         config=CLIConfig(
             verbose=settings.output.verbose,
             output_directory=settings.output.directory,

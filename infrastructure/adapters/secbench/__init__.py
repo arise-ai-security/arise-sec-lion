@@ -15,14 +15,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import SecBenchConfig, is_enabled
-from .container_manager import CONTAINER_ARTIFACT_KEY, ContainerManager
+from .container_manager import ContainerManager
 from .docker_adapter import DockerContainerAdapter
 from .lifecycle_callback import ContainerLifecycleCallback, PromptBuilderProtocol, compose_callbacks
 from .result_writer import PhaseResult, SecBenchResult, SecBenchResultWriter
 from .verification_service import VerificationService
 
 if TYPE_CHECKING:
-    from core.domain.shared_context import SharedExecutionContext
     from core.ports.secbench_container_port import SecBenchContainerPort
 
 
@@ -42,7 +41,6 @@ class SecBenchContext:
 
 
 def register_secbench(
-    shared_context: "SharedExecutionContext",
     config: SecBenchConfig,
     prompt_builder: PromptBuilderProtocol | None = None,
     progress_callback: object | None = None,
@@ -52,7 +50,6 @@ def register_secbench(
     Creates and wires all SEC-bench services with proper dependency injection.
 
     Args:
-        shared_context: Shared context for artifact storage.
         config: SEC-bench configuration.
         prompt_builder: Prompt builder to inject container_id into.
         progress_callback: Original progress callback to compose with.
@@ -79,7 +76,6 @@ def register_secbench(
     # Create container manager
     container_manager = ContainerManager(
         container_port=container_adapter,
-        shared_context=shared_context,
         output_directory=config.output_directory,
         keep_running=config.keep_container_running,
     )
@@ -140,5 +136,4 @@ __all__ = [
     "PhaseResult",
     # Utilities
     "compose_callbacks",
-    "CONTAINER_ARTIFACT_KEY",
 ]

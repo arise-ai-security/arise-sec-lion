@@ -1,10 +1,8 @@
 """Container manager service for SEC-bench lifecycle orchestration.
 
-Manages container lifecycle and stores container_id in SharedContext
-for propagation through the agent hierarchy.
+Manages container lifecycle with in-memory tracking of active containers.
 """
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -12,11 +10,7 @@ from uuid import UUID
 from core.ports.secbench_container_port import ContainerInfo, SecBenchContainerPort
 
 if TYPE_CHECKING:
-    from core.domain.shared_context import SharedExecutionContext
     from core.domain.values.cve_instance import CVEInstance
-
-# Artifact key for storing active container info
-CONTAINER_ARTIFACT_KEY = "secbench:active_container"
 
 
 class ContainerManager:
@@ -24,7 +18,7 @@ class ContainerManager:
 
     Responsibilities:
     - Start/stop containers for SEC-bench CVE instances
-    - Store container info in SharedContext artifacts
+    - Track active containers in memory
     - Provide container info to prompt builders
     - Print verification commands on completion
     """
@@ -32,7 +26,6 @@ class ContainerManager:
     def __init__(
         self,
         container_port: SecBenchContainerPort,
-        shared_context: "SharedExecutionContext",
         output_directory: Path,
         keep_running: bool = True,
     ):
@@ -40,12 +33,10 @@ class ContainerManager:
 
         Args:
             container_port: Port for container operations.
-            shared_context: Shared context for artifact storage.
             output_directory: Directory for testcase files.
             keep_running: Keep container running after execution.
         """
         self._container_port = container_port
-        self._shared_context = shared_context
         self._output_dir = output_directory
         self._keep_running = keep_running
         self._active_containers: dict[UUID, ContainerInfo] = {}
@@ -75,10 +66,7 @@ class ContainerManager:
             root_id=root_id,
         )
 
-        # Store in SharedContext as artifact
-        await self._store_container_artifact(root_id, container_info, cve.instance_id)
-
-        # Track active container
+        # Track active container in memory
         self._active_containers[root_id] = container_info
 
         return container_info
@@ -115,7 +103,7 @@ class ContainerManager:
         return self._active_containers.get(root_id)
 
     def get_container_id_from_context(self, root_id: UUID) -> str | None:
-        """Get container ID from SharedContext artifact.
+        """Get container ID from in-memory tracking.
 
         This is the primary method for prompt builders to get container_id.
 
@@ -125,43 +113,8 @@ class ContainerManager:
         Returns:
             Container ID string if found, None otherwise.
         """
-        artifact = self._shared_context.get_artifact(CONTAINER_ARTIFACT_KEY)
-        if not artifact:
-            return None
-
-        try:
-            data = json.loads(artifact.content)
-            return data.get("container_id")
-        except (json.JSONDecodeError, AttributeError):
-            return None
-
-    async def _store_container_artifact(
-        self,
-        root_id: UUID,
-        container_info: ContainerInfo,
-        instance_id: str,
-    ) -> None:
-        """Store container info as SharedContext artifact.
-
-        Args:
-            root_id: Root agent ID (artifact owner).
-            container_info: Container information to store.
-            instance_id: CVE instance ID.
-        """
-        artifact_content = json.dumps({
-            "container_id": container_info.container_id,
-            "image": container_info.image,
-            "status": container_info.status,
-            "work_dir": container_info.work_dir,
-            "instance_id": instance_id,
-        })
-
-        self._shared_context.store_artifact(
-            key=CONTAINER_ARTIFACT_KEY,
-            content=artifact_content,
-            stored_by=root_id,
-            content_type="application/json",
-        )
+        container_info = self._active_containers.get(root_id)
+        return container_info.container_id if container_info else None
 
     def print_verification_commands(
         self,

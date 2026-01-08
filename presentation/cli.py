@@ -14,7 +14,7 @@ Architecture:
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from presentation.persistence import RunPersistence
@@ -46,9 +46,11 @@ class CLI:
     def __init__(
         self,
         execution_service: "AgentExecutionService",
+        secbench_context: Any | None = None,
         config: CLIConfig | None = None,
     ) -> None:
         self.execution_service = execution_service
+        self._secbench_context = secbench_context
         self.config = config or CLIConfig()
         self._output_dir = Path(self.config.output_directory)
         self._persistence = RunPersistence(self._output_dir)
@@ -101,6 +103,14 @@ class CLI:
                 if cve_instance is not None:
                     self._renderer.print_success(f"SEC-bench CVE: {cve_instance.instance_id}")
                 print()
+
+            # Start SEC-bench container if enabled
+            if self._secbench_context and cve_instance:
+                await self._secbench_context.lifecycle_callback.on_boss_created(
+                    root_id=root_id,
+                    cve=cve_instance,
+                )
+
             return root_id
         except Exception as e:
             self._renderer.print_error(f"Failed to create BOSS agent: {e}")
@@ -189,6 +199,14 @@ class CLI:
             await self._initialize_infrastructure()
             root_id = await self._bootstrap_boss_agent(task_description, cve_instance)
             await self._run_orchestration_loop(root_id)
+
+            # Run SEC-bench verification if enabled
+            if self._secbench_context and cve_instance:
+                await self._secbench_context.lifecycle_callback.on_work_completed(
+                    root_id=root_id,
+                    run_verification=True,
+                )
+
             await self._display_final_result(root_id)
             status = "completed"
         finally:
