@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from pydantic import TypeAdapter
 
+from core.domain.exceptions import InvalidRoleTransitionError
 from core.domain.values.agent_config import AgentConfig
 from core.domain.values.context import (
     HierarchyLimits,
@@ -28,6 +29,9 @@ from core.domain.events.events import (
     OperationFinished,
     OperationStarted,
     PromptSent,
+    ResearchCompleted,
+    ResearchStarted,
+    RoleTransitioned,
     RunCompleted,
     RunStarted,
     StatusChanged,
@@ -263,6 +267,26 @@ class AgentSession:
         self.version += 1
 
     @_apply.register
+    def _(self, event: ResearchStarted) -> None:
+        # RESEARCHER starts research, transition to IN_PROGRESS
+        self.status = AgentStatus.IN_PROGRESS
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ResearchCompleted) -> None:
+        # Store research findings for use in manager decomposition
+        self._research_findings = event.findings
+        self._research_context = event.gathered_context
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RoleTransitioned) -> None:
+        # Transition role (RESEARCHER -> MANAGER)
+        self.role = AgentRole(event.to_role)
+        self.status = AgentStatus.ANALYZING  # Ready for next action
+        self.version += 1
+
+    @_apply.register
     def _(self, event: TokensConsumed) -> None:
         # Cost events don't change agent state, just increment version for OCC
         self.version += 1
@@ -336,6 +360,9 @@ class AgentSession:
         self.structured_task_outcomes: dict[UUID, TaskOutcome] = {}
         # Position among siblings for left-to-right ordering (0 = first/leftmost)
         self.sibling_index: int = 0
+        # Research findings (populated by RESEARCHER role)
+        self._research_findings: str | None = None
+        self._research_context: dict[str, Any] = {}
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
@@ -426,10 +453,17 @@ class AgentSession:
         complexity: str,
         reasoning: str,
         determined_role: AgentRole,
+        needs_research: bool = False,
     ) -> None:
         """Apply complexity evaluation result (pure domain method).
 
         Called by orchestrator after LLM call completes.
+
+        Args:
+            complexity: "simple" or "complex"
+            reasoning: LLM's reasoning for the determination
+            determined_role: WORKER, MANAGER, or RESEARCHER
+            needs_research: True if task requires research before decomposition
         """
         complexity_event = ComplexityEvaluated(
             aggregate_id=self.agent_id,
@@ -437,6 +471,7 @@ class AgentSession:
             complexity=complexity,
             determined_role=determined_role.value,
             reasoning=reasoning,
+            needs_research=needs_research,
         )
         self._apply(complexity_event)
         self._changes.append(complexity_event)
@@ -571,6 +606,89 @@ class AgentSession:
         )
         self._apply(started_event)
         self._changes.append(started_event)
+
+    # -------------------------------------------------------------------------
+    # Research Domain Methods (RESEARCHER role lifecycle)
+    # -------------------------------------------------------------------------
+
+    def start_research(self, tools: list[str]) -> None:
+        """Emit ResearchStarted event and transition to IN_PROGRESS.
+
+        Called when RESEARCHER agent begins read-only research phase.
+
+        Args:
+            tools: List of available tools (e.g., ["file_read", "grep_search"])
+        """
+        event = ResearchStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            tools_available=tools,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def apply_research_result(
+        self,
+        findings: str,
+        tool_calls_count: int,
+        gathered_context: dict[str, Any],
+    ) -> None:
+        """Apply research results (pure domain method).
+
+        Called after research tool calling loop completes.
+
+        Args:
+            findings: Summary of research results
+            tool_calls_count: Number of tool calls made
+            gathered_context: Structured context gathered during research
+        """
+        event = ResearchCompleted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            findings=findings,
+            tool_calls_count=tool_calls_count,
+            gathered_context=gathered_context,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def transition_to_manager(self, reason: str = "") -> None:
+        """Transition from RESEARCHER to MANAGER role.
+
+        Called after research completes, allowing the agent to proceed
+        with task decomposition.
+
+        Args:
+            reason: Optional reason for the transition
+
+        Raises:
+            InvalidRoleTransitionError: If agent is not in RESEARCHER role
+        """
+        if self.role != AgentRole.RESEARCHER:
+            raise InvalidRoleTransitionError(
+                current_role=self.role.value,
+                target_role=AgentRole.MANAGER.value,
+                reason="Can only transition from RESEARCHER to MANAGER",
+            )
+        event = RoleTransitioned(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            from_role=AgentRole.RESEARCHER.value,
+            to_role=AgentRole.MANAGER.value,
+            reason=reason or "Research phase completed",
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    @property
+    def research_findings(self) -> str | None:
+        """Get research findings (available after research completes)."""
+        return self._research_findings
+
+    @property
+    def research_context(self) -> dict[str, Any]:
+        """Get research context (available after research completes)."""
+        return self._research_context
 
     def apply_worker_event(self, tool_event: DomainEvent) -> None:
         """Apply a worker tool event with corrected sequence number."""

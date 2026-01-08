@@ -7,10 +7,11 @@ from enum import Enum
 
 
 class AgentRole(str, Enum):
-    """Agent role: BOSS (root), PENDING (awaiting eval), MANAGER (decomposes), WORKER (executes)."""
+    """Agent role: BOSS (root), PENDING (awaiting eval), RESEARCHER (gathers context), MANAGER (decomposes), WORKER (executes)."""
 
     BOSS = "boss"
     PENDING = "pending"
+    RESEARCHER = "researcher"
     MANAGER = "manager"
     WORKER = "worker"
 

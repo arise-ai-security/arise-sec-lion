@@ -166,11 +166,48 @@ class ChildFailed(DomainEvent):
 
 
 class ComplexityEvaluated(DomainEvent):
-    """Task complexity evaluated, role determined (worker/manager)."""
+    """Task complexity evaluated, role determined (worker/manager/researcher)."""
 
     complexity: str
     determined_role: str
     reasoning: str = ""
+    needs_research: bool = False  # True if RESEARCHER role needed before MANAGER
+
+
+# =============================================================================
+# Research Events (RESEARCHER role lifecycle)
+# =============================================================================
+
+
+class ResearchStarted(DomainEvent):
+    """RESEARCHER agent started read-only research phase.
+
+    Emitted when a RESEARCHER begins gathering context via tool calling.
+    """
+
+    tools_available: list[str] = Field(default_factory=list)  # e.g., ["file_read", "grep_search"]
+
+
+class ResearchCompleted(DomainEvent):
+    """RESEARCHER completed research, ready for role transition.
+
+    Contains findings that will inform task decomposition.
+    """
+
+    findings: str  # Summary of research results
+    tool_calls_count: int  # Number of tool calls made
+    gathered_context: dict[str, Any] = Field(default_factory=dict)  # Structured context
+
+
+class RoleTransitioned(DomainEvent):
+    """Agent transitioned between roles (RESEARCHER -> MANAGER).
+
+    Used when an agent changes role mid-lifecycle after completing a phase.
+    """
+
+    from_role: str  # e.g., "researcher"
+    to_role: str  # e.g., "manager"
+    reason: str = ""  # e.g., "Research phase completed"
 
 
 # =============================================================================
@@ -233,7 +270,7 @@ class AgentExecutionStarted(DomainEvent):
     Paired with AgentExecutionFinished for duration calculation.
     """
 
-    role: str  # "boss", "manager", "worker"
+    role: str  # "boss", "manager", "worker", "researcher"
     depth: int
 
 
@@ -244,7 +281,7 @@ class AgentExecutionFinished(DomainEvent):
     Enables answering: "Which worker took longest?", "Total time by role"
     """
 
-    role: str  # "boss", "manager", "worker"
+    role: str  # "boss", "manager", "worker", "researcher"
     status: str  # "completed", "failed"
     duration_seconds: float
 
