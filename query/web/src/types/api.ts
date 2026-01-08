@@ -138,11 +138,7 @@ export interface InfrastructureConfig {
 
 export interface ApplicationConfig {
   max_retries: number;
-  retry_delay: number;
   poll_interval: number;
-  llm_timeout: number;
-  worker_timeout: number;
-  default_task_complexity_threshold: number;
 }
 
 export interface SystemConfig {
