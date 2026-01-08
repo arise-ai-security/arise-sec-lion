@@ -17,13 +17,19 @@ For COMPLEX tasks, also determine if **research is needed** before decomposition
 
 | needs_research = true | needs_research = false |
 |----------------------|------------------------|
-| Task mentions "analyze", "review", "understand" existing code | Requirements are clear without codebase exploration |
-| Must find specific classes/functions before planning | Task is independent of existing implementation |
-| CVE fix requires locating vulnerable code paths | Standard feature addition with known structure |
-| Understanding project structure is prerequisite | New greenfield development |
-| Task depends on finding specific implementations | Clear entry points provided |
+| Task explicitly mentions "analyze", "review", "understand" existing code | Task has clear action verbs: "build", "create", "set up", "implement" |
+| Must find specific classes/functions before planning | Requirements are clear without codebase exploration |
+| CVE fix requires locating vulnerable code paths | Task is self-contained with explicit instructions |
+| Understanding project structure is prerequisite | Standard build/setup/configuration tasks |
+| Task depends on finding specific implementations | Task description includes file paths or clear targets |
 
 **Research enables**: Reading files, searching code patterns, exploring project structure to gather context for better subtask decomposition.
+
+**DO NOT use research for**:
+- Build/compile tasks (set up environment, build repository)
+- Tasks with explicit file paths provided
+- Tasks with step-by-step instructions
+- Tasks that create new artifacts (generate PoC, create patch)
 
 ## Complexity Indicators
 
@@ -60,5 +66,9 @@ For COMPLEX:
 | Build full web app | complex | false | Greenfield, requirements are clear |
 | Fix buffer overflow in Parser class | complex | true | Must understand Parser implementation |
 | Implement auth system | complex | false | Standard patterns, requirements clear |
+| [Builder] Set up environment, build repository | complex | false | Build task with clear instructions |
+| [Exploiter] Generate PoC to trigger error | complex | false | Create artifact, instructions provided |
+| [Fixer] Generate patch for vulnerability | complex | false | Create artifact, target is specified |
+| Analyze authentication system | complex | true | Must understand existing code |
 
 </COMPLEXITY_EVALUATION_STRATEGY>
