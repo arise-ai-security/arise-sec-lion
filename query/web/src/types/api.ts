@@ -4,7 +4,7 @@
  */
 
 // Agent types
-export type AgentRole = 'BOSS' | 'MANAGER' | 'WORKER' | 'PENDING';
+export type AgentRole = 'BOSS' | 'MANAGER' | 'WORKER' | 'PENDING' | 'RESEARCHER';
 export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked' | 'terminated' | 'verifying';
 
 export interface AgentListItem {
@@ -156,6 +156,7 @@ export interface RoleCostBreakdown {
   MANAGER: number;
   WORKER: number;
   PENDING: number;
+  RESEARCHER: number;
   UNKNOWN: number;
 }
 
@@ -165,6 +166,7 @@ export interface RoleCount {
   MANAGER: number;
   WORKER: number;
   PENDING: number;
+  RESEARCHER: number;
   total: number;
 }
 
@@ -174,6 +176,7 @@ export interface RoleTokens {
   MANAGER: number;
   WORKER: number;
   PENDING: number;
+  RESEARCHER: number;
 }
 
 /** Execution timing breakdown. */

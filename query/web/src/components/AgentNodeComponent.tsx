@@ -21,6 +21,7 @@ const roleColors: Record<AgentRole, string> = {
   MANAGER: 'bg-blue-600 border-blue-700',
   WORKER: 'bg-green-600 border-green-700',
   PENDING: 'bg-yellow-500 border-yellow-600',
+  RESEARCHER: 'bg-cyan-600 border-cyan-700',
 };
 
 const statusIcons: Record<AgentStatus, string> = {

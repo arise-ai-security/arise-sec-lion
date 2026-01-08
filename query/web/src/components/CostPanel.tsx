@@ -114,6 +114,7 @@ const roleColors: Record<string, string> = {
   MANAGER: 'bg-blue-500',
   WORKER: 'bg-green-500',
   PENDING: 'bg-gray-400',
+  RESEARCHER: 'bg-cyan-500',
   UNKNOWN: 'bg-gray-300',
 };
 
@@ -122,6 +123,7 @@ const roleTextColors: Record<string, string> = {
   MANAGER: 'text-blue-600 dark:text-blue-400',
   WORKER: 'text-green-600 dark:text-green-400',
   PENDING: 'text-gray-600 dark:text-gray-400',
+  RESEARCHER: 'text-cyan-600 dark:text-cyan-400',
   UNKNOWN: 'text-gray-500',
 };
 
@@ -130,6 +132,7 @@ const roleIcons: Record<string, string> = {
   MANAGER: '📋',
   WORKER: '⚙️',
   PENDING: '⏳',
+  RESEARCHER: '🔬',
 };
 
 export function CostPanel({ summary, loading, isConnected }: CostPanelProps) {
@@ -264,14 +267,15 @@ export function CostPanel({ summary, loading, isConnected }: CostPanelProps) {
 
       {/* Agent Counts - Ultra Compact */}
       <Section title="Agents" badge={node_counts.total}>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 flex-wrap">
           {[
             { role: 'BOSS', count: node_counts.BOSS, color: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400' },
             { role: 'MANAGER', count: node_counts.MANAGER, color: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' },
             { role: 'WORKER', count: node_counts.WORKER, color: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' },
+            { role: 'RESEARCHER', count: node_counts.RESEARCHER, color: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400' },
             { role: 'PENDING', count: node_counts.PENDING, color: 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-400' },
           ].filter(r => r.count > 0).map(({ role, count, color }) => (
-            <div key={role} className={`flex-1 px-2 py-1.5 rounded text-center ${color}`}>
+            <div key={role} className={`flex-1 min-w-[60px] px-2 py-1.5 rounded text-center ${color}`}>
               <div className="text-sm font-semibold">{count}</div>
               <div className="text-[9px] uppercase">{role}</div>
             </div>

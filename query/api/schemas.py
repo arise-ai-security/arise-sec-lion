@@ -13,7 +13,7 @@ class AgentNodeSchema(BaseModel):
     """Schema for a single agent node in the hierarchy tree."""
 
     id: str = Field(..., description="Agent UUID")
-    role: str = Field(..., description="Agent role (BOSS, MANAGER, WORKER, PENDING)")
+    role: str = Field(..., description="Agent role (BOSS, MANAGER, WORKER, PENDING, RESEARCHER)")
     status: str = Field(..., description="Current status")
     task_description: str = Field(..., description="Task assigned to this agent")
     parent_id: str | None = Field(None, description="Parent agent UUID")
@@ -151,7 +151,7 @@ class AgentSummarySchema(BaseModel):
     """
 
     id: str = Field(..., description="Agent UUID")
-    role: str = Field(..., description="Agent role (BOSS, MANAGER, WORKER, PENDING)")
+    role: str = Field(..., description="Agent role (BOSS, MANAGER, WORKER, PENDING, RESEARCHER)")
     status: str = Field(..., description="Current status")
     task_description: str = Field(..., description="Task assigned to this agent")
 
@@ -227,6 +227,7 @@ class RoleCostBreakdownSchema(BaseModel):
     MANAGER: float = Field(0.0, description="Total cost from MANAGER agents")
     WORKER: float = Field(0.0, description="Total cost from WORKER agents")
     PENDING: float = Field(0.0, description="Total cost from PENDING agents")
+    RESEARCHER: float = Field(0.0, description="Total cost from RESEARCHER agents")
     UNKNOWN: float = Field(0.0, description="Cost from agents with unknown role")
 
 
@@ -237,6 +238,7 @@ class RoleCountSchema(BaseModel):
     MANAGER: int = Field(0, description="Number of MANAGER agents")
     WORKER: int = Field(0, description="Number of WORKER agents")
     PENDING: int = Field(0, description="Number of PENDING agents")
+    RESEARCHER: int = Field(0, description="Number of RESEARCHER agents")
     total: int = Field(0, description="Total number of agents")
 
 
@@ -247,6 +249,7 @@ class RoleTokensSchema(BaseModel):
     MANAGER: int = Field(0, description="Tokens used by MANAGER agents")
     WORKER: int = Field(0, description="Tokens used by WORKER agents")
     PENDING: int = Field(0, description="Tokens used by PENDING agents")
+    RESEARCHER: int = Field(0, description="Tokens used by RESEARCHER agents")
 
 
 class ExecutionTimingSchema(BaseModel):
@@ -394,7 +397,7 @@ class TraceAgentNodeSchema(BaseModel):
     """Schema for an agent node in the trace hierarchy tree."""
 
     agent_id: str = Field(..., description="Agent UUID")
-    role: str = Field(..., description="Agent role (boss|manager|worker|pending)")
+    role: str = Field(..., description="Agent role (boss|manager|worker|pending|researcher)")
     depth: int = Field(..., description="Depth in hierarchy (root=0)")
     task: str = Field(..., description="Task description")
     sibling_index: int = Field(..., description="Position among siblings (0-indexed)")
