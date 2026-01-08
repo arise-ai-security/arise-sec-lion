@@ -103,11 +103,7 @@ export function ConfigPanel({ isOpen, onClose }: ConfigPanelProps) {
 
               <ConfigSection title="Application">
                 <ConfigItem label="Max Retries" value={config.application.max_retries} />
-                <ConfigItem label="Retry Delay" value={`${config.application.retry_delay}s`} />
                 <ConfigItem label="Poll Interval" value={`${config.application.poll_interval}s`} />
-                <ConfigItem label="LLM Timeout" value={`${config.application.llm_timeout}s`} />
-                <ConfigItem label="Worker Timeout" value={`${config.application.worker_timeout}s`} />
-                <ConfigItem label="Complexity Threshold" value={config.application.default_task_complexity_threshold} />
               </ConfigSection>
 
               <p className="text-xs text-gray-400 dark:text-gray-500 text-center mt-4">

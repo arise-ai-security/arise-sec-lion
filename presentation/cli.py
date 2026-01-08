@@ -131,7 +131,8 @@ class CLI:
 
         try:
             final_result = await self.execution_service.get_agent_result(root_id)
-            stats = await self.execution_service.get_system_statistics()
+            # Use hierarchy-specific stats to count only agents from this run
+            stats = await self.execution_service.get_system_statistics(root_id=root_id)
 
             self._renderer.print_final_result(
                 result=final_result.result,

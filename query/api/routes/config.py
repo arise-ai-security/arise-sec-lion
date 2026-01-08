@@ -38,10 +38,6 @@ async def get_system_config() -> SystemConfigSchema:
         ),
         application=ApplicationConfigSchema(
             max_retries=settings.application.max_retries,
-            retry_delay=settings.application.retry_delay,
             poll_interval=settings.application.poll_interval,
-            llm_timeout=settings.application.llm_timeout,
-            worker_timeout=settings.application.worker_timeout,
-            default_task_complexity_threshold=settings.application.default_task_complexity_threshold,
         ),
     )

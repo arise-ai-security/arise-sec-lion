@@ -205,13 +205,7 @@ class ApplicationConfigSchema(BaseModel):
     """Schema for application configuration."""
 
     max_retries: int = Field(..., description="Maximum OCC retry attempts")
-    retry_delay: float = Field(..., description="Delay between retries (seconds)")
     poll_interval: float = Field(..., description="Agent polling interval (seconds)")
-    llm_timeout: float = Field(..., description="LLM query timeout (seconds)")
-    worker_timeout: float = Field(..., description="Worker task timeout (seconds)")
-    default_task_complexity_threshold: int = Field(
-        ..., description="Complexity threshold for task decomposition"
-    )
 
 
 class SystemConfigSchema(BaseModel):

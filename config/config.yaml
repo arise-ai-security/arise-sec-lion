@@ -22,12 +22,7 @@ worker:
 
 orchestration:
   max_retries: 3
-  retry_delay: 0.1
   poll_interval: 0.5  # seconds between orchestration loop iterations
-  llm_timeout: 30.0
-  worker_timeout: 300.0
-  default_task_complexity_threshold: 5
-  # Note: Budget tracking will be added via SharedExecutionContext (context-passing feature)
 
   limits:
     max_depth: 4               # Force workers at depth 4
@@ -59,17 +54,6 @@ cors:
     - "*"
   allow_credentials: true
 
-# Security benchmark generation settings
+# SEC-bench container settings
 security:
-  enabled: true
-  auto_detect: true                          # Auto-detect CVE/security tasks from keywords
-  default_model_poc: gpt-4o                  # Model for PoC generation (needs creativity)
-  default_model_patch: claude-3-5-sonnet-20241022  # Model for patch generation
-  default_model_validation: gpt-4o-mini      # Model for validation (deterministic)
-  poc_temperature: 0.6                       # Higher temp for creative exploit generation
-  patch_temperature: 0.5                     # Balanced for correctness + minimal change
-  validation_temperature: 0.2                # Low temp for deterministic validation
-  max_poc_attempts: 3                        # Retry PoC generation this many times
-  max_patch_attempts: 3                      # Retry patch generation this many times
-  docker_timeout: 300                        # Timeout for Docker build/run operations
-  sanitizer_flags: "-fsanitize=address,undefined -g"
+  enabled: true  # Uses worker.timeout for secb commands

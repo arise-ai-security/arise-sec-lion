@@ -126,11 +126,7 @@ class OrchestrationConfig(BaseModel):
             return self.max_concurrent_llm_calls > 0
 
     max_retries: int = Field(ge=0, le=10)
-    retry_delay: float = Field(ge=0.0)
     poll_interval: float = Field(ge=0.01)  # Minimum 10ms
-    llm_timeout: float = Field(gt=0.0)
-    worker_timeout: float = Field(gt=0.0)
-    default_task_complexity_threshold: int = Field(ge=1, le=10)
 
     limits: LimitsConfig
 
@@ -145,20 +141,9 @@ class OutputConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    """Security benchmark generation settings."""
+    """SEC-bench container settings."""
 
-    enabled: bool = True
-    auto_detect: bool = True  # Auto-detect security tasks from keywords
-    default_model_poc: str = "gpt-4o"  # Model for PoC generation
-    default_model_patch: str = "claude-3-5-sonnet-20241022"  # Model for patch generation
-    default_model_validation: str = "gpt-4o-mini"  # Model for validation
-    poc_temperature: float = Field(default=0.6, ge=0.0, le=2.0)
-    patch_temperature: float = Field(default=0.5, ge=0.0, le=2.0)
-    validation_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    max_poc_attempts: int = Field(default=3, ge=1, le=10)
-    max_patch_attempts: int = Field(default=3, ge=1, le=10)
-    docker_timeout: int = Field(default=300, gt=0)  # Seconds for Docker operations
-    sanitizer_flags: str = "-fsanitize=address,undefined -g"
+    enabled: bool = True  # Uses worker.timeout for secb commands
 
 
 class CorsConfig(BaseModel):
