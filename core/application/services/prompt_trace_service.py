@@ -10,6 +10,7 @@ from uuid import UUID
 from core.application.services.prompt_parser import PromptParser
 from core.domain.events.events import (
     AgentCreated,
+    ComplexityEvaluated,
     DomainEvent,
     PromptSent,
     TaskAssigned,
@@ -121,6 +122,9 @@ class PromptTraceService:
                     data["role"] = event.role
                     data["parent_id"] = event.parent_id
                     data["sibling_index"] = event.sibling_index
+                elif isinstance(event, ComplexityEvaluated):
+                    # Update role from complexity evaluation (PENDING → WORKER/MANAGER)
+                    data["role"] = event.determined_role
                 elif isinstance(event, TaskAssigned):
                     data["task"] = event.task_description
                 elif isinstance(event, PromptSent):
@@ -221,6 +225,9 @@ class PromptTraceService:
             if isinstance(event, AgentCreated):
                 role = event.role
                 sibling_index = event.sibling_index
+            elif isinstance(event, ComplexityEvaluated):
+                # Update role from complexity evaluation (PENDING → WORKER/MANAGER)
+                role = event.determined_role
             elif isinstance(event, TaskAssigned):
                 task = event.task_description
             elif isinstance(event, PromptSent):
