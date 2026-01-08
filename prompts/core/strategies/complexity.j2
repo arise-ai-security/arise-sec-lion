@@ -13,23 +13,17 @@ Decompose ONLY when task genuinely requires multiple distinct artifacts or phase
 
 ## Research Phase
 
-For COMPLEX tasks, also determine if **research is needed** before decomposition:
+For COMPLEX tasks, determine if **research is needed** before decomposition.
 
-| needs_research = true | needs_research = false |
-|----------------------|------------------------|
-| Task explicitly mentions "analyze", "review", "understand" existing code | Task has clear action verbs: "build", "create", "set up", "implement" |
-| Must find specific classes/functions before planning | Requirements are clear without codebase exploration |
-| CVE fix requires locating vulnerable code paths | Task is self-contained with explicit instructions |
-| Understanding project structure is prerequisite | Standard build/setup/configuration tasks |
-| Task depends on finding specific implementations | Task description includes file paths or clear targets |
+**Research tools**: `file_read`, `grep_search`, `list_files`, `web_fetch`
 
-**Research enables**: Reading files, searching code patterns, exploring project structure to gather context for better subtask decomposition.
+**Research adds overhead** (extra LLM calls, latency). Only use when genuinely blocked.
 
-**DO NOT use research for**:
-- Build/compile tasks (set up environment, build repository)
-- Tasks with explicit file paths provided
-- Tasks with step-by-step instructions
-- Tasks that create new artifacts (generate PoC, create patch)
+**Decision**: Can you create reasonable subtasks using ONLY the task description?
+- **YES** → `needs_research = false` (proceed to decomposition)
+- **NO, blocked** → `needs_research = true` (need to read code first)
+
+**Default: `needs_research = false`** — when uncertain, skip research.
 
 ## Complexity Indicators
 
