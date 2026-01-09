@@ -162,6 +162,12 @@ class AgentSummarySchema(BaseModel):
     # For WORKER agents (from CodeGenerationStarted event)
     worker_tool: str | None = Field(None, description="Worker tool used (claude_code/openhands)")
 
+    # For RESEARCHER agents (from ResearchCompleted event)
+    research_findings: str | None = Field(None, description="Research findings summary")
+    research_tool_calls: list[dict] = Field(
+        default_factory=list, description="Tool calls made during research phase"
+    )
+
     # For MANAGER agents (from SubtasksDefined event)
     subtasks: list[SubtaskSummarySchema] = Field(
         default_factory=list, description="Subtasks defined by this manager"

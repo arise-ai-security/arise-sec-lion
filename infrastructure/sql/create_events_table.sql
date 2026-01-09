@@ -44,3 +44,13 @@ ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_child_spawned
 ON events (aggregate_id)
 WHERE event_type = 'ChildSpawned';
+
+-- Index for time-range queries (e.g., "events in last hour")
+CREATE INDEX IF NOT EXISTS idx_events_occurred_at
+ON events (occurred_at DESC);
+
+-- Covering index for hierarchy CTE - includes child_id from payload
+-- Speeds up recursive queries that extract child_id from ChildSpawned events
+CREATE INDEX IF NOT EXISTS idx_events_child_spawned_covering
+ON events (aggregate_id, (payload->>'child_id'))
+WHERE event_type = 'ChildSpawned';

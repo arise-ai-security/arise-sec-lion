@@ -102,6 +102,12 @@ export interface SubtaskSummary {
   child_status: string | null;
 }
 
+export interface ResearchToolCall {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  result?: string;
+}
+
 export interface AgentSummary {
   id: string;
   role: AgentRole;
@@ -114,6 +120,10 @@ export interface AgentSummary {
 
   // For WORKER agents
   worker_tool: string | null;
+
+  // For RESEARCHER agents (from ResearchCompleted event)
+  research_findings: string | null;
+  research_tool_calls: ResearchToolCall[];
 
   // For MANAGER agents
   subtasks: SubtaskSummary[];

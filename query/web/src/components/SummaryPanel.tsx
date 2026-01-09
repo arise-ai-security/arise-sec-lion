@@ -5,7 +5,7 @@
  */
 
 import { useRef, useEffect, useState } from 'react';
-import type { AgentSummary, DomainEvent, ThoughtCapturedData } from '../types/api';
+import type { AgentSummary, DomainEvent, ThoughtCapturedData, ResearchToolCall } from '../types/api';
 
 interface SummaryPanelProps {
   summary: AgentSummary | null;
@@ -28,7 +28,15 @@ const roleIcons: Record<string, string> = {
   boss: '👑',
   manager: '📋',
   worker: '⚙️',
+  researcher: '🔍',
   pending: '⏳',
+};
+
+const toolIcons: Record<string, string> = {
+  file_read: '📄',
+  grep_search: '🔎',
+  list_files: '📁',
+  web_fetch: '🌐',
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -47,6 +55,92 @@ function getThoughtContent(event: DomainEvent): string | null {
   if (event.event_type !== 'ThoughtCaptured') return null;
   const data = event.data as Partial<ThoughtCapturedData>;
   return data.content || null;
+}
+
+/** Research findings and tool calls display */
+function ResearchSection({ findings, toolCalls }: { findings: string | null; toolCalls: ResearchToolCall[] }) {
+  const [expandedCalls, setExpandedCalls] = useState<Set<number>>(new Set());
+
+  const toggleExpand = (idx: number) => {
+    setExpandedCalls(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) {
+        next.delete(idx);
+      } else {
+        next.add(idx);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <Section title="Research">
+      {/* Findings Summary */}
+      {findings && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 p-2 rounded border-l-2 border-blue-500 mb-3">
+          <p className="text-xs font-medium text-gray-500 mb-1">Findings</p>
+          <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+            {findings}
+          </p>
+        </div>
+      )}
+
+      {/* Tool Calls */}
+      {toolCalls.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-gray-500">Tool Calls ({toolCalls.length})</p>
+          {toolCalls.map((call, idx) => {
+            const isExpanded = expandedCalls.has(idx);
+            const icon = toolIcons[call.tool_name] || '🔧';
+
+            return (
+              <div
+                key={idx}
+                className="bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 overflow-hidden"
+              >
+                {/* Tool call header */}
+                <button
+                  onClick={() => toggleExpand(idx)}
+                  className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                >
+                  <span>{icon}</span>
+                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                    {call.tool_name}
+                  </span>
+                  <span className="text-xs text-gray-500 truncate flex-1 text-left">
+                    {JSON.stringify(call.arguments).slice(0, 50)}...
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {isExpanded ? '▼' : '▶'}
+                  </span>
+                </button>
+
+                {/* Expanded details */}
+                {isExpanded && (
+                  <div className="border-t border-gray-200 dark:border-gray-700 p-2 space-y-2">
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">Arguments</p>
+                      <pre className="text-xs text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto">
+                        {JSON.stringify(call.arguments, null, 2)}
+                      </pre>
+                    </div>
+                    {call.result && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Result</p>
+                        <pre className="text-xs text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
+                          {call.result.length > 2000 ? call.result.slice(0, 2000) + '...' : call.result}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Section>
+  );
 }
 
 /** CLI-like output display for worker agents */
@@ -151,7 +245,7 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
       {summary.complexity && (
         <Section title="Complexity Evaluation">
           <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-medium text-gray-500">Result:</span>
               <span className={`px-2 py-0.5 text-xs rounded ${
                 summary.complexity === 'simple'
@@ -161,7 +255,7 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
                 {summary.complexity.toUpperCase()}
               </span>
               <span className="text-xs text-gray-500">
-                → became {summary.complexity === 'simple' ? 'WORKER' : 'MANAGER'}
+                → became {summary.complexity === 'simple' ? 'WORKER' : (summary.research_findings ? 'RESEARCHER → MANAGER' : 'MANAGER')}
               </span>
             </div>
             {summary.complexity_reasoning && (
@@ -185,6 +279,14 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
             </span>
           </div>
         </Section>
+      )}
+
+      {/* Research (for agents that went through RESEARCHER phase) */}
+      {(summary.research_findings || summary.research_tool_calls.length > 0) && (
+        <ResearchSection
+          findings={summary.research_findings}
+          toolCalls={summary.research_tool_calls}
+        />
       )}
 
       {/* Worker Output (CLI-like display for WORKER agents) */}
