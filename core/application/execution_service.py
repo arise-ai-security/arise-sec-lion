@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
+    from core.ports.repository_setup_port import RepositorySetupPort
     from core.ports.shared_context_port import SharedContextPort
     from core.ports.sibling_context_port import SiblingViewPort
 
@@ -82,6 +83,7 @@ class ExecutionServiceDependencies:
     sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
     prompt_builder: "PromptBuilder"
+    repository_setup: "RepositorySetupPort"
 
 
 class AgentExecutionService:
@@ -131,6 +133,7 @@ class AgentExecutionService:
         self._workspace = dependencies.workspace
         self._parent_notifier = dependencies.parent_notifier
         self._prompt_builder = dependencies.prompt_builder
+        self._repository_setup = dependencies.repository_setup
 
         # Worker concurrency control
         semaphore_limit = (
@@ -190,8 +193,8 @@ class AgentExecutionService:
             cve_instance=cve_instance,
         )
 
-        # Setup working directory
-        self._setup_working_directory(root_id)
+        # Setup working directory and clone CVE repo if provided
+        await self._setup_working_directory(root_id, cve_instance)
 
         # Create shared context for this execution run
         await self._create_shared_context(root_id)
@@ -385,8 +388,20 @@ class AgentExecutionService:
             cve_instance=cve_instance,
         )
 
-    def _setup_working_directory(self, root_id: UUID) -> None:
-        """Setup working directory for the run."""
+    async def _setup_working_directory(
+        self,
+        root_id: UUID,
+        cve_instance: "CVEInstance | None" = None,
+    ) -> None:
+        """Setup working directory and clone CVE repository if provided.
+
+        Creates output directory structure and optionally clones the CVE
+        repository for Researcher and Worker access.
+
+        Args:
+            root_id: Root agent UUID for directory naming.
+            cve_instance: Optional CVE instance with repo/commit info.
+        """
         if not self._config.output_directory:
             return
 
@@ -396,6 +411,24 @@ class AgentExecutionService:
         run_output_path = base_output / str(root_id)
         run_output_path.mkdir(parents=True, exist_ok=True)
 
+        # Clone CVE repository if instance provided
+        if cve_instance and cve_instance.repo and cve_instance.base_commit:
+            repo_path = run_output_path / "repo"
+            result = await self._repository_setup.clone_and_checkout(
+                repo=cve_instance.repo,
+                commit=cve_instance.base_commit,
+                target_dir=repo_path,
+            )
+            if result.success and result.repo_path:
+                self._workspace.set_working_directory(result.repo_path)
+                logger.info(
+                    "Working directory set to cloned repo: %s", result.repo_path
+                )
+                return
+            else:
+                logger.warning("Failed to clone repo: %s", result.error)
+
+        # Fallback: use output directory (empty)
         self._workspace.set_working_directory(run_output_path)
 
     def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
