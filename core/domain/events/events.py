@@ -188,6 +188,18 @@ class ResearchStarted(DomainEvent):
     tools_available: list[str] = Field(default_factory=list)  # e.g., ["file_read", "grep_search"]
 
 
+class ResearchToolCalled(DomainEvent):
+    """RESEARCHER agent executed a tool during research.
+
+    Emitted after each tool call to provide real-time progress visibility.
+    """
+
+    tool_name: str  # e.g., "file_read", "grep_search"
+    tool_arguments: dict[str, Any] = Field(default_factory=dict)  # Arguments passed to tool
+    result_preview: str = ""  # Truncated result for display (max ~200 chars)
+    iteration: int = 0  # Tool call iteration number (1-indexed)
+
+
 class ResearchCompleted(DomainEvent):
     """RESEARCHER completed research, ready for role transition.
 

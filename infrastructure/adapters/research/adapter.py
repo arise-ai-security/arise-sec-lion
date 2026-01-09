@@ -14,7 +14,12 @@ import litellm
 from jinja2 import Environment, FileSystemLoader
 
 from core.domain.exceptions import LLMError
-from core.ports.research_port import ResearchPort, ResearchResult
+from core.ports.research_port import (
+    ResearchPort,
+    ResearchResult,
+    ToolCallCallback,
+    ToolCallProgress,
+)
 from infrastructure.adapters.research.tool_registry import ResearchToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -75,6 +80,7 @@ class LiteLLMResearchAdapter(ResearchPort):
         config_dict: dict[str, Any],
         available_tools: list[str] | None = None,
         max_tool_calls: int = 10,
+        on_tool_call: ToolCallCallback | None = None,
     ) -> ResearchResult:
         """Execute research with tool calling loop.
 
@@ -84,6 +90,7 @@ class LiteLLMResearchAdapter(ResearchPort):
             config_dict: LLM configuration
             available_tools: Tools to enable (default: all)
             max_tool_calls: Maximum tool calls before forcing summary
+            on_tool_call: Optional callback invoked after each tool execution
 
         Returns:
             ResearchResult with findings and metadata
@@ -104,6 +111,7 @@ class LiteLLMResearchAdapter(ResearchPort):
         tool_calls_made: list[dict[str, Any]] = []
         total_prompt_tokens = 0
         total_completion_tokens = 0
+        tool_call_count = 0  # Track total tool calls for iteration number
 
         for iteration in range(max_tool_calls):
             response = await self._call_llm(model, messages, tools, merged_config)
@@ -133,11 +141,17 @@ class LiteLLMResearchAdapter(ResearchPort):
                     completion_tokens=total_completion_tokens,
                 )
 
-            # Process tool calls
+            # Process tool calls with progress callback
             messages.append(message.model_dump())
-            tool_calls_made.extend(
-                self._execute_tool_calls(message.tool_calls, tool_registry, messages)
+            new_records, new_count = self._execute_tool_calls(
+                message.tool_calls,
+                tool_registry,
+                messages,
+                on_tool_call,
+                tool_call_count,
             )
+            tool_calls_made.extend(new_records)
+            tool_call_count = new_count
 
         # Max iterations reached - request final summary
         return await self._request_summary(
@@ -176,12 +190,23 @@ class LiteLLMResearchAdapter(ResearchPort):
         tool_calls: list[Any],
         tool_registry: ResearchToolRegistry,
         messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
+        on_tool_call: ToolCallCallback | None = None,
+        current_count: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
         """Execute tool calls and append results to messages.
 
-        Returns list of tool call records for tracking.
+        Args:
+            tool_calls: List of tool calls from LLM response
+            tool_registry: Registry for executing tools
+            messages: Message list to append tool results to
+            on_tool_call: Optional callback for progress reporting
+            current_count: Current tool call count (for iteration numbering)
+
+        Returns:
+            Tuple of (tool call records, updated count)
         """
         records = []
+        count = current_count
 
         for tool_call in tool_calls:
             function_name = tool_call.function.name
@@ -198,6 +223,10 @@ class LiteLLMResearchAdapter(ResearchPort):
 
             # Execute via registry
             result = tool_registry.execute(function_name, arguments)
+            count += 1
+
+            # Create result preview (truncated for display)
+            result_preview = result[:200] + "..." if len(result) > 200 else result
 
             # Track tool call
             records.append({
@@ -213,7 +242,20 @@ class LiteLLMResearchAdapter(ResearchPort):
                 "content": result,
             })
 
-        return records
+            # Invoke progress callback if provided
+            if on_tool_call is not None:
+                try:
+                    progress = ToolCallProgress(
+                        tool_name=function_name,
+                        arguments=arguments,
+                        result_preview=result_preview,
+                        iteration=count,
+                    )
+                    on_tool_call(progress)
+                except Exception as e:
+                    logger.warning("Tool call callback failed: %s", e)
+
+        return records, count
 
     async def _request_summary(
         self,

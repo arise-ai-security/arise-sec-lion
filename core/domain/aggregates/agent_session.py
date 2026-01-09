@@ -31,6 +31,7 @@ from core.domain.events.events import (
     PromptSent,
     ResearchCompleted,
     ResearchStarted,
+    ResearchToolCalled,
     RoleTransitioned,
     RunCompleted,
     RunStarted,
@@ -270,6 +271,11 @@ class AgentSession:
     def _(self, event: ResearchStarted) -> None:
         # RESEARCHER starts research, transition to IN_PROGRESS
         self.status = AgentStatus.IN_PROGRESS
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ResearchToolCalled) -> None:
+        # Tool call events don't change agent state, just increment version for OCC
         self.version += 1
 
     @_apply.register
@@ -623,6 +629,34 @@ class AgentSession:
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             tools_available=tools,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_research_tool_called(
+        self,
+        tool_name: str,
+        tool_arguments: dict[str, Any],
+        result_preview: str,
+        iteration: int,
+    ) -> None:
+        """Emit ResearchToolCalled event for progress tracking.
+
+        Called after each tool execution during research phase.
+
+        Args:
+            tool_name: Name of the tool executed (e.g., "file_read", "grep_search")
+            tool_arguments: Arguments passed to the tool
+            result_preview: Truncated preview of the result (max ~200 chars)
+            iteration: Tool call iteration number (1-indexed)
+        """
+        event = ResearchToolCalled(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            tool_name=tool_name,
+            tool_arguments=tool_arguments,
+            result_preview=result_preview,
+            iteration=iteration,
         )
         self._apply(event)
         self._changes.append(event)

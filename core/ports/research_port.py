@@ -4,12 +4,31 @@ This port enables RESEARCHER agents to gather context via LLM tool calling
 before transitioning to MANAGER for task decomposition.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 # Available research tools (contract between core and infrastructure)
 RESEARCH_TOOL_NAMES = frozenset({"file_read", "grep_search", "list_files", "web_fetch"})
 DEFAULT_RESEARCH_TOOLS = list(RESEARCH_TOOL_NAMES)
+
+
+@dataclass(frozen=True)
+class ToolCallProgress:
+    """Progress report for a single tool call during research.
+
+    Used by the callback to report real-time progress.
+    """
+
+    tool_name: str  # e.g., "file_read", "grep_search"
+    arguments: dict[str, Any]  # Arguments passed to the tool
+    result_preview: str  # Truncated result (max ~200 chars)
+    iteration: int  # Tool call iteration number (1-indexed)
+
+
+# Callback type for reporting tool call progress
+# Called after each tool execution during research
+ToolCallCallback = Callable[[ToolCallProgress], None]
 
 
 @dataclass(frozen=True)
@@ -49,6 +68,7 @@ class ResearchPort(Protocol):
         config_dict: dict[str, Any],
         available_tools: list[str] | None = None,
         max_tool_calls: int = 10,
+        on_tool_call: ToolCallCallback | None = None,
     ) -> ResearchResult:
         """Execute research with LLM tool calling loop.
 
@@ -58,6 +78,8 @@ class ResearchPort(Protocol):
             config_dict: LLM configuration (model, temperature, etc.)
             available_tools: Tools to enable (default: all read-only tools)
             max_tool_calls: Maximum tool calls before forcing summary
+            on_tool_call: Optional callback invoked after each tool execution
+                         for real-time progress reporting
 
         Returns:
             ResearchResult with findings, tool calls, and token counts

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from core.application.pipeline.context import PipelineState, StepResult
 from core.domain.values.enums import AgentRole, AgentStatus
-from core.ports.research_port import DEFAULT_RESEARCH_TOOLS
+from core.ports.research_port import DEFAULT_RESEARCH_TOOLS, ToolCallProgress
 
 if TYPE_CHECKING:
     from core.ports.research_port import ResearchPort
@@ -49,6 +49,7 @@ class RunResearchSession:
 
     This step runs the actual research by calling the ResearchPort,
     which handles the tool calling loop with the LLM.
+    Emits ResearchToolCalled events after each tool execution for real-time progress.
     """
 
     def __init__(
@@ -78,13 +79,24 @@ class RunResearchSession:
         # Get working directory from state or use default
         working_directory = state.working_directory or "."
 
-        # Run research session
+        # Create callback that emits ResearchToolCalled events on the agent
+        def on_tool_call(progress: ToolCallProgress) -> None:
+            """Emit ResearchToolCalled event for each tool execution."""
+            agent.emit_research_tool_called(
+                tool_name=progress.tool_name,
+                tool_arguments=progress.arguments,
+                result_preview=progress.result_preview,
+                iteration=progress.iteration,
+            )
+
+        # Run research session with progress callback
         result = await self._research_port.run_research_session(
             task_description=task,
             working_directory=working_directory,
             config_dict=agent.config.base.model_dump(),
             available_tools=self._tools,
             max_tool_calls=self._max_tool_calls,
+            on_tool_call=on_tool_call,
         )
 
         # Update state with research results
