@@ -55,6 +55,11 @@ class PromptStrategy(Protocol):
         """Return custom worker prompt, or None to use default."""
         ...
 
+    def build_researcher_prompt(self, context: PromptContext) -> str | None:
+        """Return custom researcher prompt, or None to use default."""
+        ...
+
+
 
 class DefaultPromptStrategy:
     """Default strategy - returns None to use base prompts for all roles."""
@@ -66,6 +71,9 @@ class DefaultPromptStrategy:
         return None
 
     def build_worker_prompt(self, context: PromptContext) -> str | None:
+        return None
+
+    def build_researcher_prompt(self, context: PromptContext) -> str | None:
         return None
 
 
@@ -234,5 +242,34 @@ class SecBenchPromptStrategy:
             .render_if(branch == "fixer", "secbench/phases/fixer.j2", **cve_ctx)
             # Security ops reference for exploit/fix phases
             .render_if(branch in ("exploiter", "fixer"), "secbench/security_ops.j2")
+            .build()
+        )
+
+    def build_researcher_prompt(self, context: PromptContext) -> str | None:
+        """Build SEC-bench researcher prompt using layered composition.
+
+        Layer 1: core/roles/researcher.j2 (behavior)
+        Layer 2: parent context (global context)
+        Layer 3: secbench/context/* (CVE data, constraints)
+
+        RESEARCHER gathers context before MANAGER decomposes, so it needs
+        CVE instance data and constraints to guide its research.
+        """
+        if context.cve_instance is None:
+            return None
+
+        cve_ctx = context.cve_instance.to_template_context()
+        parent_task = context.spawn_payload.parent_task if context.spawn_payload else None
+
+        return (
+            self._chain_factory()
+            # Layer 1: Core behavior
+            .render("core/roles/researcher.j2")
+            # Layer 2: Parent context
+            .text_if(parent_task, f"<PARENT_TASK>\n{parent_task}\n</PARENT_TASK>")
+            # Layer 3: SEC-bench domain (CVE data + constraints)
+            .render("secbench/context/instance.j2", **cve_ctx)
+            .render("secbench/context/environment.j2", **cve_ctx)
+            .render("secbench/context/constraints.j2", **cve_ctx)
             .build()
         )

@@ -11,7 +11,36 @@ from core.domain.values.enums import AgentRole, AgentStatus
 from core.ports.research_port import DEFAULT_RESEARCH_TOOLS, ToolCallProgress
 
 if TYPE_CHECKING:
+    from core.application.services.prompt_builder import PromptBuilder
     from core.ports.research_port import ResearchPort
+
+
+class BuildResearchPrompt:
+    """Build system prompt for RESEARCHER using PromptBuilder.
+
+    This step uses the same prompt building pattern as other agents,
+    ensuring RESEARCHER gets SEC-bench context (CVE instance, constraints).
+    """
+
+    def __init__(self, prompt_builder: "PromptBuilder") -> None:
+        """Initialize with prompt builder.
+
+        Args:
+            prompt_builder: Builder for constructing domain-aware prompts
+        """
+        self._prompt_builder = prompt_builder
+
+    async def execute(self, state: PipelineState) -> StepResult:
+        """Build researcher prompt and store in state."""
+        agent = state.agent
+
+        prompt = self._prompt_builder.build_researcher_prompt(
+            task_description=agent.task_description,
+            cve_instance=state.cve_instance,
+            spawn_payload=agent.spawn_payload,
+        )
+
+        return StepResult.ok(state.with_prompt(prompt))
 
 
 class StartResearch:
@@ -73,8 +102,11 @@ class RunResearchSession:
         """Run research session and store results."""
         agent = state.agent
 
-        # Build task description (use prompt if set, otherwise task_description)
-        task = state.prompt or agent.task_description
+        # Task description is always from agent (what to research)
+        task = agent.task_description
+
+        # System prompt is built by BuildResearchPrompt step (stored in state.prompt)
+        system_prompt = state.prompt
 
         # Get working directory from state or use default
         working_directory = state.working_directory or "."
@@ -89,7 +121,7 @@ class RunResearchSession:
                 iteration=progress.iteration,
             )
 
-        # Run research session with progress callback
+        # Run research session with progress callback and system prompt
         result = await self._research_port.run_research_session(
             task_description=task,
             working_directory=working_directory,
@@ -97,6 +129,7 @@ class RunResearchSession:
             available_tools=self._tools,
             max_tool_calls=self._max_tool_calls,
             on_tool_call=on_tool_call,
+            system_prompt=system_prompt,
         )
 
         # Update state with research results
