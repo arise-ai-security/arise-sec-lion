@@ -70,9 +70,9 @@ class DefaultPromptStrategy:
 
 
 def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None:
-    """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
+    """Detect which SEC-bench branch (build/exploit/fix) this agent belongs to.
 
-    Checks ancestry chain for top-level subtask keywords.
+    Checks ancestry chain for phase keywords.
     Returns None if not in a benchmark run or branch not determinable.
     """
     if spawn_payload is None:
@@ -80,11 +80,14 @@ def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None
 
     for ancestor in spawn_payload.ancestry:
         task_lower = ancestor.task_summary.lower()
-        if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
+        # Check for Build phase keywords
+        if any(kw in task_lower for kw in ("[build]", "build phase", "builder", "environment", "setup")):
             return "builder"
-        if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
+        # Check for Exploit phase keywords
+        if any(kw in task_lower for kw in ("[exploit]", "exploit phase", "exploiter", "poc", "proof of concept")):
             return "exploiter"
-        if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
+        # Check for Fix phase keywords
+        if any(kw in task_lower for kw in ("[fix]", "fix phase", "fixer", "patch")):
             return "fixer"
 
     return None
@@ -93,20 +96,26 @@ def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None
 def _detect_branch_from_task(task_description: str) -> str | None:
     """Detect SEC-bench branch from task description keywords."""
     task_lower = task_description.lower()
-    if any(kw in task_lower for kw in ("[builder]", "builder", "environment", "setup")):
+    # Check for Build phase keywords
+    if any(kw in task_lower for kw in ("[build]", "build phase", "[builder]", "builder")):
         return "builder"
-    if any(kw in task_lower for kw in ("[exploiter]", "exploiter", "poc", "exploit")):
+    # Check for Exploit phase keywords
+    if any(kw in task_lower for kw in ("[exploit]", "exploit phase", "[exploiter]", "exploiter", "poc")):
         return "exploiter"
-    if any(kw in task_lower for kw in ("[fixer]", "fixer", "patch", "fix")):
+    # Check for Fix phase keywords
+    if any(kw in task_lower for kw in ("[fix]", "fix phase", "[fixer]", "fixer", "patch")):
         return "fixer"
     return None
 
 
 class SecBenchPromptStrategy:
-    """SEC-bench specific prompt strategy.
+    """SEC-bench specific prompt strategy with SRP layers.
 
-    Provides specialized prompts for CVE benchmark runs with
-    builder/exploiter/fixer phase detection.
+    Layer 1: Core behavior (core/roles/*.j2) - Agent mechanics
+    Layer 2: Shared context (core/context/*.j2) - user_prompt, sibling
+    Layer 3: SEC-bench domain (secbench/*.j2) - CVE data, constraints, phases
+
+    Each layer is separate and composable.
     """
 
     def __init__(self, chain_factory: "Callable[[], TemplateChain]") -> None:
@@ -118,79 +127,82 @@ class SecBenchPromptStrategy:
         self._chain_factory = chain_factory
 
     def build_boss_prompt(self, context: PromptContext) -> str | None:
-        """Build SEC-bench boss prompt if CVE instance is present."""
-        if context.cve_instance is None:
-            return None
+        """Build SEC-bench boss prompt using layered composition.
 
-        cve_ctx = context.cve_instance.to_template_context()
-        return (
-            self._chain_factory()
-            .render("core/roles/boss.j2", default_tool=context.default_tool)
-            .with_user_prompt(context.task_description)
-            .with_cve_display(context.cve_instance)
-            .render("secbench/boss.j2", **cve_ctx, default_tool=context.default_tool)
-            .build()
-        )
-
-    def build_manager_prompt(self, context: PromptContext) -> str | None:
-        """Build SEC-bench manager prompt for top-level phase managers only.
-
-        SEC-bench manager templates are ONLY for depth-1 managers (direct BOSS children)
-        e.g., [Builder], [Exploiter], [Fixer] - NOT for nested managers like [Builder-5].
+        Layer 1: core/roles/boss.j2 (behavior)
+        Layer 2: user_prompt (global context)
+        Layer 3: secbench/context/* + secbench/boss_decomposition.j2
         """
         if context.cve_instance is None:
             return None
 
-        # Detect branch from ancestry or task description
-        branch = _detect_benchmark_branch(context.spawn_payload)
-        if branch is None:
-            branch = _detect_branch_from_task(context.task_description)
+        cve_ctx = context.cve_instance.to_template_context()
 
+        return (
+            self._chain_factory()
+            # Layer 1: Core behavior
+            .render("core/roles/boss.j2", default_tool=context.default_tool)
+            # Layer 2: Shared global context
+            .with_user_prompt(context.task_description)
+            # Layer 3: SEC-bench domain
+            .render("secbench/context/instance.j2", **cve_ctx)
+            .render("secbench/context/environment.j2", **cve_ctx)
+            .render("secbench/context/constraints.j2", **cve_ctx)
+            .render("secbench/boss_decomposition.j2")
+            .build()
+        )
+
+    def build_manager_prompt(self, context: PromptContext) -> str | None:
+        """Build SEC-bench manager prompt using layered composition.
+
+        Layer 1: core/roles/manager.j2 (behavior)
+        Layer 2: user_prompt + parent context (global context)
+        Layer 3: secbench/context/* + secbench/phases/{phase}.j2
+        """
+        if context.cve_instance is None:
+            return None
+
+        branch = _detect_branch_from_task(context.task_description)
+        if branch is None:
+            branch = _detect_benchmark_branch(context.spawn_payload)
         if branch is None:
             return None
 
-        # Only apply to direct BOSS children (depth-1 managers)
-        # spawn_payload.depth == 0 means parent is BOSS
-        is_direct_boss_child = (
-            context.spawn_payload is not None and context.spawn_payload.depth == 0
-        )
-
-        if not is_direct_boss_child:
-            return None  # Use default prompt for nested managers
-
         cve_ctx = context.cve_instance.to_template_context()
+        parent_task = context.spawn_payload.parent_task if context.spawn_payload else None
+
         return (
             self._chain_factory()
+            # Layer 1: Core behavior
             .render("core/roles/manager.j2", default_tool=context.default_tool)
+            # Layer 2: Shared global context (including parent context)
             .with_user_prompt(context.task_description)
-            .with_cve_display(context.cve_instance)
-            .render_if(
-                branch == "builder",
-                "secbench/manager/builder.j2",
-                **cve_ctx,
-                default_tool=context.default_tool,
-            )
-            .render_if(
-                branch == "exploiter",
-                "secbench/manager/exploiter.j2",
-                **cve_ctx,
-                default_tool=context.default_tool,
-            )
-            .render_if(
-                branch == "fixer",
-                "secbench/manager/fixer.j2",
-                **cve_ctx,
-                default_tool=context.default_tool,
-            )
+            .text_if(parent_task, f"<PARENT_TASK>\n{parent_task}\n</PARENT_TASK>")
+            # Layer 3: SEC-bench domain
+            .render("secbench/context/instance.j2", **cve_ctx)
+            .render("secbench/context/environment.j2", **cve_ctx)
+            .render("secbench/context/constraints.j2", **cve_ctx)
+            .render_if(branch == "builder", "secbench/phases/builder.j2", **cve_ctx)
+            .render_if(branch == "exploiter", "secbench/phases/exploiter.j2", **cve_ctx)
+            .render_if(branch == "fixer", "secbench/phases/fixer.j2", **cve_ctx)
+            # Security ops reference for exploit/fix phases
+            .render_if(branch in ("exploiter", "fixer"), "secbench/security_ops.j2")
             .build()
         )
 
     def build_worker_prompt(self, context: PromptContext) -> str | None:
-        """Build SEC-bench worker prompt if in a benchmark branch."""
+        """Build SEC-bench worker prompt using layered composition.
+
+        Layer 1: core/roles/worker.j2 (behavior)
+        Layer 2: user_prompt + parent context + sibling context (global context)
+        Layer 3: secbench/context/* + secbench/phases/{phase}.j2
+        """
         if context.cve_instance is None:
             return None
 
         branch = _detect_benchmark_branch(context.spawn_payload)
+        if branch is None:
+            branch = _detect_branch_from_task(context.task_description)
         if branch is None:
             return None
 
@@ -200,19 +212,27 @@ class SecBenchPromptStrategy:
             else {}
         )
         cve_ctx = context.cve_instance.to_template_context()
+        parent_task = context.spawn_payload.parent_task if context.spawn_payload else None
 
-        # Add container_id to template context for in-container execution
         if context.container_id:
             cve_ctx["container_id"] = context.container_id
 
         return (
             self._chain_factory()
-            # .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)  # Disabled
+            # Layer 1: Core behavior
+            .render("core/roles/worker.j2")
+            # Layer 2: Shared global context (including parent and sibling context)
             .with_user_prompt(context.task_description)
-            .with_cve_display(context.cve_instance)
+            .text_if(parent_task, f"<PARENT_TASK>\n{parent_task}\n</PARENT_TASK>")
             .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)
-            .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
-            .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
-            .render_if(branch == "fixer", "secbench/worker/fixer.j2", **cve_ctx)
+            # Layer 3: SEC-bench domain
+            .render("secbench/context/instance.j2", **cve_ctx)
+            .render("secbench/context/environment.j2", **cve_ctx)
+            .render("secbench/context/constraints.j2", **cve_ctx)
+            .render_if(branch == "builder", "secbench/phases/builder.j2", **cve_ctx)
+            .render_if(branch == "exploiter", "secbench/phases/exploiter.j2", **cve_ctx)
+            .render_if(branch == "fixer", "secbench/phases/fixer.j2", **cve_ctx)
+            # Security ops reference for exploit/fix phases
+            .render_if(branch in ("exploiter", "fixer"), "secbench/security_ops.j2")
             .build()
         )
