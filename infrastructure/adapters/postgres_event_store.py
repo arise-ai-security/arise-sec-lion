@@ -28,6 +28,7 @@ from core.domain.events.events import (
     PromptSent,
     ResearchCompleted,
     ResearchStarted,
+    ResearchToolCalled,
     RoleTransitioned,
     RunCompleted,
     RunStarted,
@@ -84,6 +85,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "BudgetExceeded": BudgetExceeded,
     # Research events (RESEARCHER role)
     "ResearchStarted": ResearchStarted,
+    "ResearchToolCalled": ResearchToolCalled,
     "ResearchCompleted": ResearchCompleted,
     "RoleTransitioned": RoleTransitioned,
 }
