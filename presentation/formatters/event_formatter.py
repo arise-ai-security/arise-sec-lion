@@ -130,6 +130,53 @@ class ChildCompletedFormatter(EventFormatterStrategy):
         return f"   ✓ [{agent_id}] Child {child_id}... completed"
 
 
+class ResearchStartedFormatter(EventFormatterStrategy):
+    """Format ResearchStarted events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        tools = getattr(event, "tools_available", [])
+        tools_str = ", ".join(tools) if tools else "none"
+        return f"   🔬 [{agent_id}] Research started (tools: {tools_str})"
+
+
+class ResearchToolCalledFormatter(EventFormatterStrategy):
+    """Format ResearchToolCalled events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        tool = getattr(event, "tool_name", "?")
+        iteration = getattr(event, "iteration", 0)
+        preview = getattr(event, "result_preview", "")
+        # Truncate preview for display
+        preview_short = preview[:50] + "..." if len(preview) > 50 else preview
+        # Clean up newlines for display
+        preview_short = preview_short.replace("\n", " ")
+        return f"   🔍 [{agent_id}] Tool [{iteration}] {tool} -> {preview_short}"
+
+
+class ResearchCompletedFormatter(EventFormatterStrategy):
+    """Format ResearchCompleted events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        count = getattr(event, "tool_calls_count", 0)
+        findings = getattr(event, "findings", "")
+        findings_preview = findings[:60] + "..." if len(findings) > 60 else findings
+        findings_preview = findings_preview.replace("\n", " ")
+        return f"   📊 [{agent_id}] Research completed ({count} tool calls)"
+
+
+class RoleTransitionedFormatter(EventFormatterStrategy):
+    """Format RoleTransitioned events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        from_role = getattr(event, "from_role", "?")
+        to_role = getattr(event, "to_role", "?")
+        return f"   🔄 [{agent_id}] Role: {from_role.upper()} → {to_role.upper()}"
+
+
 class DefaultFormatter(EventFormatterStrategy):
     """Default formatter for unknown event types."""
 
@@ -174,6 +221,10 @@ EventFormatter.register("ThoughtCaptured", ThoughtCapturedFormatter())
 EventFormatter.register("WorkCompleted", WorkCompletedFormatter())
 EventFormatter.register("WorkFailed", WorkFailedFormatter())
 EventFormatter.register("ChildCompleted", ChildCompletedFormatter())
+EventFormatter.register("ResearchStarted", ResearchStartedFormatter())
+EventFormatter.register("ResearchToolCalled", ResearchToolCalledFormatter())
+EventFormatter.register("ResearchCompleted", ResearchCompletedFormatter())
+EventFormatter.register("RoleTransitioned", RoleTransitionedFormatter())
 
 
 class ProgressDisplayFormatter:

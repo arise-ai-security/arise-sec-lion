@@ -370,7 +370,7 @@ function Dashboard() {
     });
 
     // Refresh hierarchy when structure-changing events occur (throttled)
-    const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed'];
+    const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'RoleTransitioned', 'WorkCompleted', 'WorkFailed'];
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
     }

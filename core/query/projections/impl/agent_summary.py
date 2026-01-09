@@ -10,6 +10,7 @@ from core.domain.events.events import (
     CodeGenerationStarted,
     ComplexityEvaluated,
     DomainEvent,
+    ResearchCompleted,
     StatusChanged,
     SubtasksDefined,
     WorkCompleted,
@@ -73,6 +74,8 @@ class AgentSummaryService:
             complexity=summary_data["complexity"],
             complexity_reasoning=summary_data["complexity_reasoning"],
             worker_tool=summary_data["worker_tool"],
+            research_findings=summary_data["research_findings"],
+            research_tool_calls=tuple(summary_data["research_tool_calls"]),
             subtasks=subtasks,
             config_strategy=config_strategy,
             config_details=config_details,
@@ -87,13 +90,15 @@ class AgentSummaryService:
             events: List of domain events for the agent.
 
         Returns:
-            Dict containing complexity, worker_tool, subtasks, and child_ids.
+            Dict containing complexity, worker_tool, subtasks, child_ids, and research data.
         """
         complexity: str | None = None
         complexity_reasoning: str | None = None
         worker_tool: str | None = None
         subtask_descriptions: list[str] = []
         child_ids: list[UUID] = []
+        research_findings: str | None = None
+        research_tool_calls: list[dict] = []
 
         for event in events:
             if isinstance(event, ComplexityEvaluated):
@@ -109,12 +114,19 @@ class AgentSummaryService:
             elif isinstance(event, ChildSpawned):
                 child_ids.append(event.child_id)
 
+            elif isinstance(event, ResearchCompleted):
+                research_findings = event.findings
+                gathered_context = event.gathered_context or {}
+                research_tool_calls = gathered_context.get("tool_calls", [])
+
         return {
             "complexity": complexity,
             "complexity_reasoning": complexity_reasoning,
             "worker_tool": worker_tool,
             "subtask_descriptions": subtask_descriptions,
             "child_ids": child_ids,
+            "research_findings": research_findings,
+            "research_tool_calls": research_tool_calls,
         }
 
     async def _build_subtasks(

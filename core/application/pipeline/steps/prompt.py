@@ -79,6 +79,7 @@ class BuildDecompositionPrompt:
                 cve_instance=state.cve_instance,
                 spawn_payload=agent.spawn_payload,
                 hierarchy_limits=state.hierarchy_limits,
+                research_findings=agent.research_findings,
             )
 
         return StepResult.ok(state.with_prompt(prompt))

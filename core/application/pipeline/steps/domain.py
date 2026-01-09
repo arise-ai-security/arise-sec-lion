@@ -12,7 +12,12 @@ class ApplyComplexityResult:
     """Apply complexity evaluation result to agent.
 
     Calls agent.apply_complexity_result() which emits ComplexityEvaluated event
-    and transitions the agent from PENDING to WORKER or MANAGER.
+    and transitions the agent from PENDING to WORKER, RESEARCHER, or MANAGER.
+
+    Role determination:
+    - simple complexity → WORKER (execute directly)
+    - complex + needs_research → RESEARCHER (gather context first)
+    - complex + no research needed → MANAGER (decompose directly)
     """
 
     async def execute(self, state: PipelineState) -> StepResult:
@@ -20,14 +25,19 @@ class ApplyComplexityResult:
         if state.complexity is None:
             return StepResult.fail("No complexity result in state")
 
-        determined_role = (
-            AgentRole.WORKER if state.complexity == "simple" else AgentRole.MANAGER
-        )
+        # Determine role based on complexity and research needs
+        if state.complexity == "simple":
+            determined_role = AgentRole.WORKER
+        elif state.needs_research:
+            determined_role = AgentRole.RESEARCHER
+        else:
+            determined_role = AgentRole.MANAGER
 
         state.agent.apply_complexity_result(
             complexity=state.complexity,
             reasoning=state.reasoning or "",
             determined_role=determined_role,
+            needs_research=state.needs_research,
         )
 
         return StepResult.ok(state)

@@ -67,7 +67,7 @@ class AgentNode:
     """
 
     agent_id: UUID
-    role: str  # "boss", "manager", "worker", "pending"
+    role: str  # "boss", "manager", "worker", "pending", "researcher"
     depth: int
     task: str
     sibling_index: int

@@ -36,15 +36,23 @@ from core.application.pipeline.steps.prompt import (
 from core.application.pipeline.steps.validation import (
     ValidateDecomposingAgent,
     ValidatePendingAgent,
+    ValidateResearcherAgent,
     ValidateWorkerAgent,
 )
 from core.application.pipeline.steps.worker import RunWorkerSession
+from core.application.pipeline.steps.research import (
+    ApplyResearchResult,
+    EmitResearchTokensConsumed,
+    RunResearchSession,
+    StartResearch,
+)
 
 if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.llm_port import LLMPort
     from core.ports.realtime_callback_port import RealtimeCallbackPort
+    from core.ports.research_port import ResearchPort
     from core.ports.worker_port import WorkerToolPort
 
 
@@ -69,6 +77,7 @@ class PipelineFactory:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         realtime_callback: "RealtimeCallbackPort | None" = None,
+        research_port: "ResearchPort | None" = None,
     ) -> None:
         """Initialize factory with required ports.
 
@@ -78,12 +87,14 @@ class PipelineFactory:
             prompt_builder: Builder for constructing prompts
             child_factory: Factory for child agents (source of truth for agent counts)
             realtime_callback: Optional callback for real-time event streaming
+            research_port: Optional port for RESEARCHER agent tool calling
         """
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
         self._realtime_callback = realtime_callback
+        self._research_port = research_port
 
     def create_complexity_pipeline(self) -> Pipeline:
         """Create pipeline for PENDING agent complexity evaluation.
@@ -178,5 +189,39 @@ class PipelineFactory:
                 EmitPromptSent(prompt_type="worker_execution", target="dynamic"),
                 RunWorkerSession(self._worker_port, self._realtime_callback),
                 EmitOperationFinished(operation_type="worker_execution"),
+            ],
+        )
+
+    def create_research_pipeline(self) -> Pipeline:
+        """Create pipeline for RESEARCHER context gathering.
+
+        Pipeline steps:
+        1. ValidateResearcherAgent - Assert RESEARCHER + ANALYZING
+        2. EmitOperationStarted - Timing observability
+        3. StartResearch - Emit ResearchStarted event
+        4. RunResearchSession - Execute tool calling loop via ResearchPort
+        5. EmitResearchTokensConsumed - Token tracking for research
+        6. ApplyResearchResult - Emit ResearchCompleted + RoleTransitioned
+        7. EmitOperationFinished - Timing observability
+
+        Returns:
+            Configured Pipeline for research execution
+
+        Raises:
+            ValueError: If research_port is not configured
+        """
+        if self._research_port is None:
+            raise ValueError("ResearchPort not configured - cannot create research pipeline")
+
+        return Pipeline(
+            name="research_execution",
+            steps=[
+                ValidateResearcherAgent,
+                EmitOperationStarted(operation_type="research_execution"),
+                StartResearch(),
+                RunResearchSession(self._research_port),
+                EmitResearchTokensConsumed(),
+                ApplyResearchResult(),
+                EmitOperationFinished(operation_type="research_execution"),
             ],
         )

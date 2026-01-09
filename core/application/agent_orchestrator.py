@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from core.domain.values.context import SiblingView
     from core.ports.llm_port import LLMPort
     from core.ports.realtime_callback_port import RealtimeCallbackPort
+    from core.ports.research_port import ResearchPort
     from core.ports.worker_port import WorkerToolPort
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class AgentOrchestrator:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         realtime_callback: "RealtimeCallbackPort | None" = None,
+        research_port: "ResearchPort | None" = None,
     ) -> None:
         """Initialize orchestrator with required ports.
 
@@ -63,6 +65,7 @@ class AgentOrchestrator:
             prompt_builder: Builder for constructing prompts.
             child_factory: Factory for child agents (source of truth for agent counts).
             realtime_callback: Optional callback for real-time event streaming.
+            research_port: Optional port for RESEARCHER agent tool calling.
         """
         self._pipeline_factory = PipelineFactory(
             llm_port=llm_port,
@@ -70,12 +73,20 @@ class AgentOrchestrator:
             prompt_builder=prompt_builder,
             child_factory=child_factory,
             realtime_callback=realtime_callback,
+            research_port=research_port,
         )
 
         # Create pipelines (could also be lazy-created)
         self._complexity_pipeline = self._pipeline_factory.create_complexity_pipeline()
         self._decomposition_pipeline = self._pipeline_factory.create_decomposition_pipeline()
         self._worker_pipeline = self._pipeline_factory.create_worker_pipeline()
+
+        # Research pipeline only if research_port provided
+        self._research_pipeline = (
+            self._pipeline_factory.create_research_pipeline()
+            if research_port
+            else None
+        )
 
     async def evaluate_complexity(self, agent: "AgentSession") -> None:
         """Evaluate task complexity for a PENDING agent.
@@ -146,6 +157,40 @@ class AgentOrchestrator:
         if not result.success:
             logger.debug(
                 "Worker execution failed for agent=%s: %s",
+                agent.agent_id,
+                result.failure_reason,
+            )
+            agent.fail_with_reason(result.failure_reason or "Unknown failure")
+
+    async def execute_research(
+        self,
+        agent: "AgentSession",
+        working_directory: str | None = None,
+    ) -> None:
+        """Execute research for a RESEARCHER agent.
+
+        Performs LLM tool calling loop to gather context, then transitions
+        the agent to MANAGER role for task decomposition.
+
+        Args:
+            agent: The agent to execute (must be RESEARCHER with ANALYZING status).
+            working_directory: Working directory for file operations.
+        """
+        if self._research_pipeline is None:
+            agent.fail_with_reason("Research pipeline not configured")
+            return
+
+        state = PipelineState(
+            agent=agent,
+            operation="research_execution",
+            working_directory=working_directory,
+        )
+
+        result = await self._research_pipeline.execute(state)
+
+        if not result.success:
+            logger.debug(
+                "Research execution failed for agent=%s: %s",
                 agent.agent_id,
                 result.failure_reason,
             )

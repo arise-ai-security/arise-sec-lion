@@ -305,6 +305,7 @@ class PromptBuilder:
         cve_instance: "CVEInstance | None" = None,
         spawn_payload: "SpawnPayload | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
+        research_findings: str | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
 
@@ -316,6 +317,7 @@ class PromptBuilder:
             cve_instance: CVE instance for benchmark runs.
             spawn_payload: Spawn payload for hierarchy info.
             hierarchy_limits: Hierarchy limits with depth/children constraints.
+            research_findings: Research findings from RESEARCHER phase (if any).
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -327,6 +329,7 @@ class PromptBuilder:
             spawn_payload=spawn_payload,
             hierarchy_limits=hierarchy_limits,
             cve_instance=cve_instance,
+            research_findings=research_findings,
         )
         custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
         if custom_prompt is not None:
@@ -337,12 +340,23 @@ class PromptBuilder:
         limits = self._limits_context(hierarchy_limits)
         tool = self.default_tool
 
-        return (
+        chain = (
             self.chain()
             .render("core/roles/manager.j2", default_tool=tool)
             .with_user_prompt(self._user_prompt)
             .with_cve_display(self._cve_instance)
             .with_security("manager_overlay.j2", default_tool=tool)
+        )
+
+        # Inject research findings if available
+        if research_findings:
+            chain = chain.render(
+                "core/context/research.j2",
+                research_findings=research_findings,
+            )
+
+        return (
+            chain
             .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
             .render("core/context/task.j2", **ctx)
             .render("core/output/subtasks.j2", default_tool=tool, **limits)

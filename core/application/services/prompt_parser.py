@@ -49,6 +49,9 @@ class PromptParser:
         # Children sections (from ChildOutcomes)
         "child-outcomes": SectionProvenance.CHILDREN,
         "children": SectionProvenance.CHILDREN,
+        # Research sections (from RESEARCHER phase)
+        "research_findings": SectionProvenance.TEMPLATE,
+        "research-findings": SectionProvenance.TEMPLATE,
         # Shared sections (from SharedExecutionContext)
         "global-context": SectionProvenance.SHARED,
         "shared-decisions": SectionProvenance.SHARED,

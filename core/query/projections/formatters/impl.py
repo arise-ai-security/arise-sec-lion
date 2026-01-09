@@ -208,6 +208,24 @@ def _child_completed_summary(event: DomainEvent) -> str:
     return f"child={str(getattr(event, 'child_id', ''))[:8]}"
 
 
+def _research_tool_called_summary(event: DomainEvent) -> str:
+    tool = getattr(event, "tool_name", "")
+    iteration = getattr(event, "iteration", 0)
+    preview = getattr(event, "result_preview", "")[:40]
+    return f"[{iteration}] {tool} -> {preview}"
+
+
+def _research_started_summary(event: DomainEvent) -> str:
+    tools = getattr(event, "tools_available", [])
+    return f"tools=[{', '.join(tools)}]"
+
+
+def _research_completed_summary(event: DomainEvent) -> str:
+    count = getattr(event, "tool_calls_count", 0)
+    findings = getattr(event, "findings", "")[:40]
+    return f"{count} calls -> {findings}"
+
+
 _EVENT_SUMMARY_HANDLERS: dict[str, Callable[[DomainEvent], str]] = {
     "AgentCreated": _agent_created_summary,
     "TaskAssigned": _task_assigned_summary,
@@ -220,4 +238,7 @@ _EVENT_SUMMARY_HANDLERS: dict[str, Callable[[DomainEvent], str]] = {
     "ThoughtCaptured": _thought_captured_summary,
     "CodeGenerationStarted": _code_generation_started_summary,
     "ChildCompleted": _child_completed_summary,
+    "ResearchToolCalled": _research_tool_called_summary,
+    "ResearchStarted": _research_started_summary,
+    "ResearchCompleted": _research_completed_summary,
 }

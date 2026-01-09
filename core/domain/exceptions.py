@@ -89,3 +89,43 @@ class CostInvariantViolation(Exception):
             message += f"\n  Context: {context}"
 
         super().__init__(message)
+
+
+class ResearchError(Exception):
+    """Research operation failed (tool execution, context gathering).
+
+    Raised by ResearchPort implementations when research tool calling
+    encounters non-recoverable errors.
+    """
+
+    def __init__(self, message: str, original_error: Exception | None = None) -> None:
+        self.message = message
+        self.original_error = original_error
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        if self.original_error:
+            return f"{self.message} (caused by: {self.original_error!r})"
+        return self.message
+
+
+class InvalidRoleTransitionError(Exception):
+    """Invalid role transition attempted on an agent.
+
+    Raised when attempting a role transition that violates
+    the agent state machine (e.g., WORKER -> MANAGER).
+    """
+
+    def __init__(
+        self,
+        current_role: str,
+        target_role: str,
+        reason: str = "",
+    ) -> None:
+        self.current_role = current_role
+        self.target_role = target_role
+        self.reason = reason
+        message = f"Cannot transition from {current_role} to {target_role}"
+        if reason:
+            message += f": {reason}"
+        super().__init__(message)

@@ -86,6 +86,8 @@ def _agent_summary_to_schema(summary: AgentSummary) -> AgentSummarySchema:
         complexity=summary.complexity,
         complexity_reasoning=summary.complexity_reasoning,
         worker_tool=summary.worker_tool,
+        research_findings=summary.research_findings,
+        research_tool_calls=list(summary.research_tool_calls),
         subtasks=[
             SubtaskSummarySchema(
                 description=s.description,

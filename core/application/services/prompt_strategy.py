@@ -33,6 +33,7 @@ class PromptContext:
     sibling_view: Any = None
     workspace_context: str | None = None
     container_id: str | None = None  # SEC-bench container ID for in-container execution
+    research_findings: str | None = None
 
 
 class PromptStrategy(Protocol):

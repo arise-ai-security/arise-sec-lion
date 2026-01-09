@@ -57,3 +57,7 @@ ValidateDecomposingAgent = AgentRoleValidator(
 ValidateWorkerAgent = AgentRoleValidator(
     required_roles={AgentRole.WORKER},
 )
+
+ValidateResearcherAgent = AgentRoleValidator(
+    required_roles={AgentRole.RESEARCHER},
+)

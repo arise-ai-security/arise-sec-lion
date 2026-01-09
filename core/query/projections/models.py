@@ -239,6 +239,10 @@ class AgentSummary:
     # For WORKER agents (from CodeGenerationStarted event)
     worker_tool: str | None = None
 
+    # For RESEARCHER agents (from ResearchCompleted event)
+    research_findings: str | None = None
+    research_tool_calls: tuple[dict, ...] = field(default_factory=tuple)
+
     # For MANAGER agents (from SubtasksDefined event)
     subtasks: tuple[SubtaskSummary, ...] = field(default_factory=tuple)
 
