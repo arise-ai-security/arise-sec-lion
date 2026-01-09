@@ -70,7 +70,7 @@ def get_application(
         progress_callback=config.progress_callback,
     )
     limits_registry = HierarchyLimitsRegistry()
-    workspace = WorkspaceContextProvider()
+    workspace = WorkspaceContextProvider(scanner=infrastructure.workspace_scanner)
     query_service = AgentQueryService(repository)
     child_factory = ChildAgentFactory(
         repository=repository,
@@ -116,6 +116,7 @@ def get_application(
         sibling_view_port=sibling_view_builder,
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
+        repository_setup=infrastructure.repository_setup,
     )
 
     execution_service = AgentExecutionService(

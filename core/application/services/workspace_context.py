@@ -3,26 +3,35 @@
 Provides workspace file context to workers so they can see each other's files.
 """
 
+from typing import TYPE_CHECKING
 
-
-from pathlib import Path
+if TYPE_CHECKING:
+    from core.ports.workspace_scanner_port import WorkspaceScannerPort
 
 
 class WorkspaceContextProvider:
     """Provides fresh workspace file listing for worker context.
 
     Always scans fresh so workers see files created by other workers.
+    Delegates file system operations to WorkspaceScannerPort for DDD compliance.
     """
 
-    def __init__(self) -> None:
-        self._working_directory: Path | None = None
+    def __init__(self, scanner: "WorkspaceScannerPort") -> None:
+        """Initialize with workspace scanner.
 
-    def set_working_directory(self, path: str | Path | None) -> None:
-        """Set the working directory."""
-        if path is None:
-            self._working_directory = None
-        else:
-            self._working_directory = Path(path)
+        Args:
+            scanner: Port for file system scanning operations.
+        """
+        self._scanner = scanner
+        self._working_directory: str | None = None
+
+    def set_working_directory(self, path: str | None) -> None:
+        """Set the working directory.
+
+        Args:
+            path: Absolute path to working directory, or None to clear.
+        """
+        self._working_directory = str(path) if path is not None else None
 
     def reset(self) -> None:
         """Reset all state for a new run."""
@@ -37,37 +46,20 @@ class WorkspaceContextProvider:
         if self._working_directory is None:
             return None
 
-        if not self._working_directory.exists():
+        if not self._scanner.directory_exists(self._working_directory):
             return None
 
-        try:
-            files = self._scan_files()
-            if not files:
-                return None
+        files = self._scanner.scan_files(
+            self._working_directory,
+            exclude_hidden=True,
+        )
 
-            files.sort()
-            return "\n".join(f"- {f}" for f in files)
-
-        except OSError:
+        if not files:
             return None
 
-    def _scan_files(self) -> list[str]:
-        """Scan workspace for files, excluding hidden directories."""
-        if self._working_directory is None:
-            return []
-
-        files = []
-        for item in self._working_directory.rglob("*"):
-            # Skip hidden directories and their contents
-            if any(part.startswith(".") for part in item.parts):
-                continue
-            if item.is_file():
-                rel_path = item.relative_to(self._working_directory)
-                files.append(str(rel_path))
-
-        return files
+        return "\n".join(f"- {f}" for f in files)
 
     @property
     def working_directory(self) -> str | None:
         """Get the current working directory as string."""
-        return str(self._working_directory) if self._working_directory else None
+        return self._working_directory
