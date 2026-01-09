@@ -116,6 +116,42 @@ def _detect_branch_from_task(task_description: str) -> str | None:
     return None
 
 
+def _limits_context(hierarchy_limits: "HierarchyLimits | None") -> dict[str, Any]:
+    """Build limits context dict for templates.
+
+    Returns dict with limit variables for output templates:
+    - max_subtasks, depth_remaining, at_max_depth, agents_remaining
+    """
+    if hierarchy_limits is None:
+        return {
+            "max_subtasks": None,
+            "depth_remaining": None,
+            "at_max_depth": False,
+            "agents_remaining": None,
+        }
+
+    max_subtasks = None
+    if hierarchy_limits.is_children_limited():
+        max_subtasks = hierarchy_limits.max_children_per_node
+
+    depth_remaining = None
+    at_max_depth = False
+    if hierarchy_limits.is_depth_limited():
+        depth_remaining = hierarchy_limits.max_depth - hierarchy_limits.current_depth
+        at_max_depth = not hierarchy_limits.can_spawn_child()
+
+    agents_remaining = None
+    if hierarchy_limits.is_total_agents_limited():
+        agents_remaining = hierarchy_limits.max_total_agents - hierarchy_limits.current_total_agents
+
+    return {
+        "max_subtasks": max_subtasks,
+        "depth_remaining": depth_remaining,
+        "at_max_depth": at_max_depth,
+        "agents_remaining": agents_remaining,
+    }
+
+
 class SecBenchPromptStrategy:
     """SEC-bench specific prompt strategy with SRP layers.
 
@@ -140,11 +176,13 @@ class SecBenchPromptStrategy:
         Layer 1: core/roles/boss.j2 (behavior)
         Layer 2: user_prompt (global context)
         Layer 3: secbench/context/* + secbench/boss_decomposition.j2
+        Layer 4: core/output/subtasks.j2 (output format)
         """
         if context.cve_instance is None:
             return None
 
         cve_ctx = context.cve_instance.to_template_context()
+        limits = _limits_context(context.hierarchy_limits)
 
         return (
             self._chain_factory()
@@ -157,6 +195,8 @@ class SecBenchPromptStrategy:
             .render("secbench/context/environment.j2", **cve_ctx)
             .render("secbench/context/constraints.j2", **cve_ctx)
             .render("secbench/boss_decomposition.j2")
+            # Layer 4: Output format (required for valid config structure)
+            .render("core/output/subtasks.j2", default_tool=context.default_tool, **limits)
             .build()
         )
 
@@ -166,6 +206,7 @@ class SecBenchPromptStrategy:
         Layer 1: core/roles/manager.j2 (behavior)
         Layer 2: user_prompt + parent context (global context)
         Layer 3: secbench/context/* + secbench/phases/{phase}.j2
+        Layer 4: core/output/subtasks.j2 (output format)
         """
         if context.cve_instance is None:
             return None
@@ -177,6 +218,7 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = context.cve_instance.to_template_context()
+        limits = _limits_context(context.hierarchy_limits)
         parent_task = context.spawn_payload.parent_task if context.spawn_payload else None
 
         return (
@@ -195,6 +237,8 @@ class SecBenchPromptStrategy:
             .render_if(branch == "fixer", "secbench/phases/fixer.j2", **cve_ctx)
             # Security ops reference for exploit/fix phases
             .render_if(branch in ("exploiter", "fixer"), "secbench/security_ops.j2")
+            # Layer 4: Output format (required for valid config structure)
+            .render("core/output/subtasks.j2", default_tool=context.default_tool, **limits)
             .build()
         )
 
