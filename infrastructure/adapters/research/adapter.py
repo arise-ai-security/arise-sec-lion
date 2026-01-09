@@ -81,6 +81,7 @@ class LiteLLMResearchAdapter(ResearchPort):
         available_tools: list[str] | None = None,
         max_tool_calls: int = 10,
         on_tool_call: ToolCallCallback | None = None,
+        system_prompt: str | None = None,
     ) -> ResearchResult:
         """Execute research with tool calling loop.
 
@@ -91,6 +92,7 @@ class LiteLLMResearchAdapter(ResearchPort):
             available_tools: Tools to enable (default: all)
             max_tool_calls: Maximum tool calls before forcing summary
             on_tool_call: Optional callback invoked after each tool execution
+            system_prompt: System prompt built by PromptBuilder (uses default if None)
 
         Returns:
             ResearchResult with findings and metadata
@@ -102,10 +104,18 @@ class LiteLLMResearchAdapter(ResearchPort):
         tool_registry = ResearchToolRegistry(working_directory)
         tools = tool_registry.get_tools(available_tools)
 
-        # Build messages
+        # Use provided system prompt or fall back to default
+        effective_system_prompt = system_prompt or self._system_prompt
+
+        # Build messages - include working directory so researcher knows where code is located
+        user_content = (
+            f"Working directory: {working_directory}\n"
+            f"All file operations should use paths relative to or within this directory.\n\n"
+            f"Task to research:\n\n{task_description}"
+        )
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": f"Task to research:\n\n{task_description}"},
+            {"role": "system", "content": effective_system_prompt},
+            {"role": "user", "content": user_content},
         ]
 
         tool_calls_made: list[dict[str, Any]] = []

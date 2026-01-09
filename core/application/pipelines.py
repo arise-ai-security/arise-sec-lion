@@ -42,6 +42,7 @@ from core.application.pipeline.steps.validation import (
 from core.application.pipeline.steps.worker import RunWorkerSession
 from core.application.pipeline.steps.research import (
     ApplyResearchResult,
+    BuildResearchPrompt,
     EmitResearchTokensConsumed,
     RunResearchSession,
     StartResearch,
@@ -198,11 +199,12 @@ class PipelineFactory:
         Pipeline steps:
         1. ValidateResearcherAgent - Assert RESEARCHER + ANALYZING
         2. EmitOperationStarted - Timing observability
-        3. StartResearch - Emit ResearchStarted event
-        4. RunResearchSession - Execute tool calling loop via ResearchPort
-        5. EmitResearchTokensConsumed - Token tracking for research
-        6. ApplyResearchResult - Emit ResearchCompleted + RoleTransitioned
-        7. EmitOperationFinished - Timing observability
+        3. BuildResearchPrompt - Build system prompt with SEC-bench context
+        4. StartResearch - Emit ResearchStarted event
+        5. RunResearchSession - Execute tool calling loop via ResearchPort
+        6. EmitResearchTokensConsumed - Token tracking for research
+        7. ApplyResearchResult - Emit ResearchCompleted + RoleTransitioned
+        8. EmitOperationFinished - Timing observability
 
         Returns:
             Configured Pipeline for research execution
@@ -218,6 +220,7 @@ class PipelineFactory:
             steps=[
                 ValidateResearcherAgent,
                 EmitOperationStarted(operation_type="research_execution"),
+                BuildResearchPrompt(self._prompt_builder),
                 StartResearch(),
                 RunResearchSession(self._research_port),
                 EmitResearchTokensConsumed(),

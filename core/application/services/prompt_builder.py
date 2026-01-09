@@ -442,3 +442,41 @@ class PromptBuilder:
             .render_if(workspace_context, "core/context/workspace.j2", files=workspace_context)
             .build()
         )
+
+    def build_researcher_prompt(
+        self,
+        task_description: str,
+        cve_instance: "CVEInstance | None" = None,
+        spawn_payload: "SpawnPayload | None" = None,
+    ) -> str:
+        """Build prompt for RESEARCHER agent context gathering.
+
+        Args:
+            task_description: The task to research.
+            cve_instance: CVE instance for benchmark runs.
+            spawn_payload: Spawn payload for parent context.
+
+        Returns:
+            System prompt for researcher.
+        """
+        # Try strategy first (for SEC-bench or other specialized prompts)
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=UUID("00000000-0000-0000-0000-000000000000"),
+            agent_role=AgentRole.RESEARCHER,
+            default_tool=self.default_tool,
+            cve_instance=cve_instance,
+            spawn_payload=spawn_payload,
+        )
+        custom_prompt = self._strategy.build_researcher_prompt(prompt_ctx)
+        if custom_prompt is not None:
+            return custom_prompt
+
+        # Default generic prompt
+        return (
+            self.chain()
+            .render("core/roles/researcher.j2")
+            .with_user_prompt(self._user_prompt)
+            .with_cve_display(self._cve_instance)
+            .build()
+        )

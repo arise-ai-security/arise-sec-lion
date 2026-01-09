@@ -69,6 +69,7 @@ class ResearchPort(Protocol):
         available_tools: list[str] | None = None,
         max_tool_calls: int = 10,
         on_tool_call: ToolCallCallback | None = None,
+        system_prompt: str | None = None,
     ) -> ResearchResult:
         """Execute research with LLM tool calling loop.
 
@@ -80,6 +81,8 @@ class ResearchPort(Protocol):
             max_tool_calls: Maximum tool calls before forcing summary
             on_tool_call: Optional callback invoked after each tool execution
                          for real-time progress reporting
+            system_prompt: System prompt built by PromptBuilder (optional,
+                          uses default if not provided)
 
         Returns:
             ResearchResult with findings, tool calls, and token counts
