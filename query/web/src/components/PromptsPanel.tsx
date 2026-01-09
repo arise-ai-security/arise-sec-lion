@@ -17,12 +17,14 @@ const promptTypeLabels: Record<string, string> = {
   complexity_evaluation: 'Complexity Evaluation',
   task_decomposition: 'Task Decomposition',
   worker_execution: 'Worker Execution',
+  researcher_execution: 'Research',
 };
 
 const promptTypeColors: Record<string, string> = {
   complexity_evaluation: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
   task_decomposition: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
   worker_execution: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+  researcher_execution: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
 };
 
 export function PromptsPanel({

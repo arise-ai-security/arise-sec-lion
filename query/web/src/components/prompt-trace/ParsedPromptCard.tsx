@@ -23,6 +23,7 @@ const PROMPT_TYPE_COLORS: Record<string, string> = {
   complexity_evaluation: 'bg-blue-100 text-blue-800',
   task_decomposition: 'bg-purple-100 text-purple-800',
   worker_execution: 'bg-green-100 text-green-800',
+  researcher_execution: 'bg-cyan-100 text-cyan-800',
 };
 
 /** Badge colors for targets. */

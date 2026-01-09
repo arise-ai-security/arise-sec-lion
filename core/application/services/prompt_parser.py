@@ -17,8 +17,15 @@ class PromptParser:
     """
 
     # Explicit mapping from tag to provenance (case-insensitive lookup)
+    # Organized by the 3-layer prompt architecture:
+    #   Layer 1: Core Behavior (TEMPLATE) - Agent mechanics from core/roles/*.j2
+    #   Layer 2: Shared Context (PARENT, SIBLING, CHILDREN, SHARED)
+    #   Layer 3: Domain-Specific (SYSTEM) - SEC-bench CVE data, constraints
     PROVENANCE_RULES: dict[str, SectionProvenance] = {
-        # Template sections (from .j2 files) - UPPERCASE convention
+        # =================================================================
+        # Layer 1: Core Agent Behavior (TEMPLATE)
+        # Static template content from core/roles/*.j2, core/strategies/*.j2
+        # =================================================================
         "role": SectionProvenance.TEMPLATE,
         "task": SectionProvenance.TEMPLATE,
         "task_description": SectionProvenance.TEMPLATE,
@@ -37,9 +44,17 @@ class PromptParser:
         "success_criteria": SectionProvenance.TEMPLATE,
         "instructions": SectionProvenance.TEMPLATE,
         "worker_instructions": SectionProvenance.TEMPLATE,
+        # Research findings from RESEARCHER phase (becomes template context)
+        "research_findings": SectionProvenance.TEMPLATE,
+        "research-findings": SectionProvenance.TEMPLATE,
+        # =================================================================
+        # Layer 2: Shared Context (PARENT, SIBLING, CHILDREN, SHARED)
+        # Context passed between agents in the hierarchy
+        # =================================================================
         # Parent sections (from SpawnPayload)
         "parent-context": SectionProvenance.PARENT,
         "parent_context": SectionProvenance.PARENT,
+        "parent_task": SectionProvenance.PARENT,
         "ancestry": SectionProvenance.PARENT,
         "thinker_justification": SectionProvenance.PARENT,
         # Sibling sections (from SiblingViewBuilder)
@@ -49,9 +64,6 @@ class PromptParser:
         # Children sections (from ChildOutcomes)
         "child-outcomes": SectionProvenance.CHILDREN,
         "children": SectionProvenance.CHILDREN,
-        # Research sections (from RESEARCHER phase)
-        "research_findings": SectionProvenance.TEMPLATE,
-        "research-findings": SectionProvenance.TEMPLATE,
         # Shared sections (from SharedExecutionContext)
         "global-context": SectionProvenance.SHARED,
         "shared-decisions": SectionProvenance.SHARED,
@@ -62,29 +74,37 @@ class PromptParser:
         "context-update-instructions": SectionProvenance.SHARED,
         "decisions": SectionProvenance.SHARED,
         "artifacts": SectionProvenance.SHARED,
-        # System sections (CVE/benchmark data, workspace, limits)
-        "hierarchy-limits": SectionProvenance.SYSTEM,
-        "cve-context": SectionProvenance.SYSTEM,
-        "workspace": SectionProvenance.SYSTEM,
-        "workspace-context": SectionProvenance.SYSTEM,
-        "instance": SectionProvenance.SYSTEM,
-        "source_context": SectionProvenance.SYSTEM,
-        "security_context": SectionProvenance.SYSTEM,
-        "issue_description": SectionProvenance.SYSTEM,
-        "repository_info": SectionProvenance.SYSTEM,
+        # =================================================================
+        # Layer 3: Domain-Specific (SYSTEM)
+        # SEC-bench CVE data, environment, constraints from secbench/*.j2
+        # =================================================================
+        # SEC-bench CVE instance (secbench/context/instance.j2)
         "cve_instance": SectionProvenance.SYSTEM,
+        "cve-context": SectionProvenance.SYSTEM,
+        "bug_description": SectionProvenance.SYSTEM,
         "bug_report": SectionProvenance.SYSTEM,
-        "sanitizer": SectionProvenance.SYSTEM,
+        # SEC-bench environment (secbench/context/environment.j2)
+        "repository_info": SectionProvenance.SYSTEM,
         "work_dir": SectionProvenance.SYSTEM,
-        "user_prompt": SectionProvenance.SYSTEM,
-        "files": SectionProvenance.SYSTEM,
-        "uploaded_files": SectionProvenance.SYSTEM,
+        "sanitizer": SectionProvenance.SYSTEM,
         "base_commit_hash": SectionProvenance.SYSTEM,
         "commit_hash": SectionProvenance.SYSTEM,
         "commit_hash1": SectionProvenance.SYSTEM,
         "commit_hash2": SectionProvenance.SYSTEM,
         "commit_url": SectionProvenance.SYSTEM,
         "changed_file_path": SectionProvenance.SYSTEM,
+        # Workspace and hierarchy
+        "workspace": SectionProvenance.SYSTEM,
+        "workspace-context": SectionProvenance.SYSTEM,
+        "hierarchy-limits": SectionProvenance.SYSTEM,
+        "instance": SectionProvenance.SYSTEM,
+        "source_context": SectionProvenance.SYSTEM,
+        "security_context": SectionProvenance.SYSTEM,
+        "issue_description": SectionProvenance.SYSTEM,
+        "files": SectionProvenance.SYSTEM,
+        "uploaded_files": SectionProvenance.SYSTEM,
+        # User prompt (from core/context/user_prompt.j2)
+        "user_prompt": SectionProvenance.SYSTEM,
     }
 
     # Pattern-based inference for unknown tags

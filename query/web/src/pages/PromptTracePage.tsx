@@ -143,16 +143,33 @@ export function PromptTracePage() {
         </div>
       </header>
 
-      {/* Provenance Legend */}
+      {/* Provenance Legend - 3-Layer Architecture */}
       <div className="bg-white border-b border-gray-200 px-6 py-2">
-        <div className="flex items-center gap-4 overflow-x-auto">
-          <span className="text-xs text-gray-500 font-medium whitespace-nowrap">Legend:</span>
-          <span className="text-xs font-medium text-blue-700" title="Static template content from prompt files">Template</span>
-          <span className="text-xs font-medium text-green-700" title="Context passed down from parent agent">Parent</span>
-          <span className="text-xs font-medium text-yellow-700" title="Context shared between sibling agents">Sibling</span>
-          <span className="text-xs font-medium text-purple-700" title="Results and outcomes from child agents">Children</span>
-          <span className="text-xs font-medium text-orange-600" title="Global shared decisions and artifacts">Shared</span>
-          <span className="text-xs font-medium text-gray-600" title="System-injected context (CVE, workspace, user prompt)">System</span>
+        <div className="flex items-center gap-6 overflow-x-auto text-xs">
+          {/* Layer 1: Core Behavior */}
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 font-medium">L1:</span>
+            <span className="font-medium text-blue-700" title="Agent behavior templates (core/roles/*.j2)">📘 Template</span>
+          </div>
+
+          <div className="h-4 w-px bg-gray-300" />
+
+          {/* Layer 2: Shared Context */}
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 font-medium">L2:</span>
+            <span className="font-medium text-green-700" title="Context passed down from parent agent">🌲 Parent</span>
+            <span className="font-medium text-yellow-700" title="Context shared between sibling agents">🔗 Sibling</span>
+            <span className="font-medium text-purple-700" title="Results and outcomes from child agents">📤 Children</span>
+            <span className="font-medium text-orange-600" title="Global shared decisions and artifacts">🌐 Shared</span>
+          </div>
+
+          <div className="h-4 w-px bg-gray-300" />
+
+          {/* Layer 3: Domain-Specific */}
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 font-medium">L3:</span>
+            <span className="font-medium text-gray-600" title="SEC-bench CVE data, environment, constraints">🔒 Domain</span>
+          </div>
         </div>
       </div>
 
