@@ -1,0 +1,20 @@
+{# Layer 3: SEC-bench Domain - Constraints #}
+{# This template defines what agents should NOT do. Separate from behavior. #}
+
+## CONSTRAINTS (Critical)
+
+The following resources are **ALREADY PROVIDED**. DO NOT attempt to re-fetch:
+- Repository is cloned at `{{ work_dir }}`
+- Base commit `{{ base_commit }}` is checked out
+- Vulnerability description is provided above
+{% if candidate_fixes %}- Candidate fix commits are listed above{% endif %}
+
+### FORBIDDEN ACTIONS
+- DO NOT search GitHub issues or pull requests
+- DO NOT fetch commits from remote repositories
+- DO NOT clone any repositories
+- DO NOT query NVD, CVE, or MITRE databases
+- DO NOT research the CVE externally
+- DO NOT use web search for vulnerability information
+
+All necessary information for this task is provided in the context above.

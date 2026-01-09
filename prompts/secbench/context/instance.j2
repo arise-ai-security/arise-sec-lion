@@ -1,0 +1,18 @@
+{# Layer 3: SEC-bench Domain - CVE Instance Data #}
+{# This template displays CVE instance information. No behavior instructions. #}
+
+## CVE Instance
+<cve_instance>
+- Instance ID: {{ instance_id }}
+- Project: {{ project_name }} ({{ lang }})
+- Repository: {{ repo }}
+- Work Directory: {{ work_dir }}
+- Base Commit: {{ base_commit }}
+- Sanitizer: {{ sanitizer }}
+{% if candidate_fixes %}- Candidate Fixes: {{ candidate_fixes }}{% endif %}
+</cve_instance>
+
+## Vulnerability Description
+<bug_description>
+{{ bug_description }}
+</bug_description>

@@ -1,0 +1,11 @@
+{# Layer 2: Shared Global Context - Generic Data Injection Point #}
+{# Use this template to inject global data accessible by all agents in a run #}
+{# Example: CustomContext data passed via context-passing mechanism #}
+
+{% if global_data %}
+<GLOBAL_DATA>
+{% for key, value in global_data.items() %}
+{{ key }}: {{ value }}
+{% endfor %}
+</GLOBAL_DATA>
+{% endif %}

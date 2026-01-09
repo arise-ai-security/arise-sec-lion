@@ -1,68 +1,33 @@
-<COMPLEXITY_EVALUATION_STRATEGY>
+{# Layer 1: Core Behavior - Complexity Evaluation Strategy #}
+{# Domain-agnostic criteria for deciding SIMPLE vs COMPLEX #}
 
-## Binary Classification
+<COMPLEXITY_EVALUATION>
 
-Classify the task as **SIMPLE** or **COMPLEX**:
-- **SIMPLE** → Execute directly as WORKER
-- **COMPLEX** → Decompose into subtasks as MANAGER (with optional research phase)
+## Decision Criteria
 
-## Default: Favor SIMPLE
+### SIMPLE (Execute directly)
+- Task has numbered prefix (e.g., `[Step-1]`, `[Task-2]`) - already decomposed
+- Single clear action with known steps
+- Changes confined to 1-2 files
+- All required context is provided
+- Clear implementation path
 
-**When uncertain, choose SIMPLE.** Over-decomposition causes task explosion and coordination overhead.
-Decompose ONLY when task genuinely requires multiple distinct artifacts or phases.
+### COMPLEX (Decompose further)
+- Multiple distinct operations needed
+- Spans 3+ files or modules
+- Ambiguous requirements
+- Requires exploration before execution
+- Architectural decisions needed
 
-## Research Phase
+## Quick Test
+Can this be completed in ONE focused session without discovery? → SIMPLE
 
-For COMPLEX tasks, determine if **research is needed** before decomposition.
-
-**Research tools**: `file_read`, `grep_search`, `list_files`, `web_fetch`
-
-**Research adds overhead** (extra LLM calls, latency). Only use when genuinely blocked.
-
-**Decision**: Can you create reasonable subtasks using ONLY the task description?
-- **YES** → `needs_research = false` (proceed to decomposition)
-- **NO, blocked** → `needs_research = true` (need to read code first)
-
-**Default: `needs_research = false`** — when uncertain, skip research.
-
-## Complexity Indicators
-
-| COMPLEX (3+ = COMPLEX) | SIMPLE (5+ = SIMPLE) |
-|------------------------|----------------------|
-| Multiple domains (frontend + backend + DB) | Single well-defined task |
-| Requires research before execution | Clear, unambiguous requirements |
-| Ambiguous/underspecified requirements | Completable in one session (<1 hour) |
-| Multiple subtasks with dependencies | Standard CRUD, refactoring, bug fix |
-| Needs architectural decisions | Known patterns, single domain |
-| Coordinates multiple systems | No external dependencies |
-
-## Decision Rule
-
-```
-COMPLEX indicators >= 3  →  COMPLEX
-SIMPLE indicators >= 5   →  SIMPLE
-Ambiguous               →  Default SIMPLE (bias toward action)
-
-For COMPLEX:
-  Task requires understanding existing code → needs_research = true
-  Task is self-contained/greenfield        → needs_research = false
+## Output Format
+```json
+{
+  "complexity": "simple" | "complex",
+  "reasoning": "<one-line justification>"
+}
 ```
 
-**Key test**: Can one person complete this in one sitting? → SIMPLE
-
-## Examples
-
-| Task | complexity | needs_research | Reason |
-|------|------------|----------------|--------|
-| Write Fibonacci function | simple | false | Single function, known algorithm |
-| Fix logout bug | simple | false | Localized, clear scope |
-| Analyze CVE-2017-14857 in image.cpp | complex | true | Must locate Image class and vulnerable code |
-| Build full web app | complex | false | Greenfield, requirements are clear |
-| Fix buffer overflow in Parser class | complex | true | Must understand Parser implementation |
-| Implement auth system | complex | false | Standard patterns, requirements clear |
-| [Builder] Set up environment, build repository | complex | false | Build task with clear instructions |
-| [Exploiter] Generate PoC to trigger error | complex | false | Create artifact, instructions provided |
-| [Fixer] Generate patch for vulnerability | complex | false | Create artifact, target is specified |
-| Analyze authentication system | complex | true | Must understand existing code |
-
-</COMPLEXITY_EVALUATION_STRATEGY>
+</COMPLEXITY_EVALUATION>

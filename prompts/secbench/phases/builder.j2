@@ -1,0 +1,61 @@
+{# Layer 3: SEC-bench Domain - Builder Phase #}
+{# Based on SecVerifier/prompts/instructions/builder_agent_instruction.j2 #}
+
+## Repository Information
+<REPOSITORY_INFO>
+{{ work_dir }}
+</REPOSITORY_INFO>
+Repository at `{{ work_dir }}` with base commit `{{ base_commit }}` for `{{ instance_id }}`.
+You should update `/src/build.sh` which is outside the repository.
+
+## Step-by-step Instructions
+
+1. Read the vulnerability description to determine the most suitable base commit:
+   - Currently, the base commit of the repository is `{{ base_commit }}`
+   - If you identify a more suitable base commit based on the description:
+     a. Save the commit hash to `/testcase/base_commit_hash`
+     b. Switch to this commit using `git reset --hard <commit_hash>`
+   - Otherwise, use the provided `{{ base_commit }}` as the base commit:
+     a. Save it to `/testcase/base_commit_hash`
+   - Note that `/testcase/base_commit_hash` FILE SHOULD BE CREATED before moving to the next step.
+
+2. Run {% if container_id %}`docker exec {{ container_id }} bash -c "cd {{ work_dir }} && secb build"`{% else %}`cd {{ work_dir }} && secb build`{% endif %} to build the project.
+
+3. Improve the build script (`/src/build.sh`):
+   a. Make it standalone - remove undefined variables
+   b. Remove fuzzer-related build commands
+   c. Add `-j$(nproc)` to make commands
+   d. Add `-p` to mkdir commands
+   e. Keep only essential build commands
+   f. Preserve existing compiler flags when adding new ones
+   g. Add script existence checks before running local scripts (e.g., ./autogen.sh)
+   h. Place `make clean` before configure/make commands
+   i. `$SRC` and `$WORK` are predefined as `/src` and `/work`
+
+4. Build using {% if container_id %}`docker exec {{ container_id }} bash -c "cd {{ work_dir }} && secb build"`{% else %}`cd {{ work_dir }} && secb build`{% endif %}
+
+5. If build errors occur:
+   - Focus on `error` messages only (ignore warnings)
+   - Add suppression flags before configure command
+   - Make MINIMAL source code changes if necessary
+
+6. Record installed packages in `/testcase/packages.txt` (one per line, if any)
+
+7. Save source changes:
+   {% if container_id %}`docker exec {{ container_id }} bash -c "cd {{ work_dir }} && git diff --no-color {{ base_commit }} > /testcase/repo_changes.diff"`{% else %}`cd {{ work_dir }} && git diff --no-color {{ base_commit }} > /testcase/repo_changes.diff`{% endif %}
+
+8. Verify deliverables exist:
+   - `/testcase/base_commit_hash`
+   - `/testcase/repo_changes.diff`
+   - `/testcase/packages.txt` (if packages installed)
+   - `/src/build.sh`
+
+## Troubleshooting
+- C++17 errors: add `-std=c++14` to CFLAGS/CXXFLAGS
+- Implicit int errors: add explicit type declarations
+- Function overload errors: add `-D_GNU_SOURCE`
+
+## Notes
+- DO NOT disable sanitizer options
+- Use `secb build` to prevent long output logs
+- Limit command output with `head` when needed

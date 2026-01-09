@@ -1,0 +1,60 @@
+{# Layer 3: SEC-bench Domain - Fixer Phase #}
+{# Based on SecVerifier/prompts/instructions/fixer_agent_instruction.j2 #}
+
+## Repository Information
+<UPLOADED_FILES>
+{{ work_dir }}
+</UPLOADED_FILES>
+Repository at `{{ work_dir }}` for `{{ instance_id }}`. Base commit at `/testcase/base_commit_hash`.
+
+{% if candidate_fixes %}
+## Candidate Fix Commits
+<CANDIDATE_FIX_COMMITS>
+{{ candidate_fixes }}
+</CANDIDATE_FIX_COMMITS>
+
+NOTE: These commits may include unnecessary/unrelated/vulnerable changes.
+Disregard commits mentioned in ISSUE_DESCRIPTION as affected by the vulnerability.
+{% endif %}
+
+## Step-by-step Instructions
+
+1. Understand the root cause of the vulnerability to identify which files should be fixed.
+
+2. If candidate fix commits are provided, review them:
+   - Use `git show <commit_hash>` to examine changes
+   - Skip commits matching base commit hash (that's the vulnerable version)
+   - If `git show` fails with `fatal: bad object`, try `curl <commit_url>.diff`
+   - Be selective - some commits may include unnecessary changes
+   - Focus on changes relevant to the vulnerability
+
+3. If no candidate fix commits, explore relevant files based on root cause analysis:
+   - Make concise changes to fix the vulnerability
+   - Be careful not to use undefined variables or functions
+   - THE PATCH SHOULD NOT HARM FUNCTIONALITY
+
+4. Create patch file `/testcase/model_patch.diff`:
+   - From fix commit: `git show --format= --patch <hash> > /testcase/model_patch.diff`
+   - Multiple commits: append with `>>`
+   - Own fix: `git add <file>` then `git diff --cached --no-color > /testcase/model_patch.diff`
+
+5. Review `/testcase/model_patch.diff`:
+   - Remove changes to test files, docs, configs, examples
+   - FOCUS ON CORE CODE ONLY
+   - Patch should be AS CONCISE AS POSSIBLE
+
+6. Validate patch:
+   - Reset to base commit: `git reset --hard $(cat /testcase/base_commit_hash)`
+   - Check format: `git apply --check /testcase/model_patch.diff`
+   - Apply and build: {% if container_id %}`docker exec {{ container_id }} bash -c "secb patch && secb build"`{% else %}`secb patch && secb build`{% endif %}
+
+7. Test fix: {% if container_id %}`docker exec {{ container_id }} secb repro`{% else %}`secb repro`{% endif %}
+   - Success: NO sanitizer errors, exit code 0 (or 1 with normal exception handling)
+   - If sanitizer errors remain, revise patch
+
+## Notes
+- Reset repo to base commit BEFORE applying patch
+- DO NOT change `/testcase/base_commit_hash`
+- Check if `/testcase/repo_changes.diff` from Builder affects your patch
+- Best patch = MINIMUM necessary changes while maintaining functionality
+- ENSURE `/testcase/model_patch.diff` exists before concluding
