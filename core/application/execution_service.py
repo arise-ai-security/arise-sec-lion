@@ -420,7 +420,7 @@ class AgentExecutionService:
                 target_dir=repo_path,
             )
             if result.success and result.repo_path:
-                self._workspace.set_working_directory(result.repo_path)
+                self._workspace.set_working_directory(str(result.repo_path))
                 logger.info(
                     "Working directory set to cloned repo: %s", result.repo_path
                 )
@@ -429,7 +429,7 @@ class AgentExecutionService:
                 logger.warning("Failed to clone repo: %s", result.error)
 
         # Fallback: use output directory (empty)
-        self._workspace.set_working_directory(run_output_path)
+        self._workspace.set_working_directory(str(run_output_path))
 
     def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
         """Create the root BOSS agent session."""
