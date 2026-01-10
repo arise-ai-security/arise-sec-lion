@@ -118,6 +118,12 @@ def get_agent_summary(agent_id: str) -> dict:
     return result if isinstance(result, dict) else {}
 
 
+def get_system_config() -> dict:
+    """Fetch the system configuration (5s timeout, silent fail)."""
+    result = curl_get(f"{API_BASE}/config", timeout=5)
+    return result if isinstance(result, dict) else {}
+
+
 def truncate_label(text: str, max_len: int = 35) -> str:
     """Truncate text with ellipsis if too long."""
     if len(text) <= max_len:
@@ -285,11 +291,17 @@ def layout_tree(
     return children_width
 
 
-def generate_react_component(nodes: list, edges: list) -> str:
+def generate_react_component(nodes: list, edges: list, system_config: dict | None = None) -> str:
     """Generate the ReactFlow component code with modal support."""
     # Format nodes as JSON with indentation
     nodes_json = json.dumps(nodes, indent=2)
     edges_json = json.dumps(edges, indent=2)
+
+    # Extract unified_model from system config
+    unified_model = None
+    if system_config:
+        infra = system_config.get("infrastructure", {})
+        unified_model = infra.get("unified_model")
 
     # Build component using string concatenation to avoid f-string brace issues
     component = """import React, { useCallback, useState } from 'react';
@@ -303,6 +315,15 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
+// Unified Model Configuration (set at generation time)
+"""
+    # Add unified model as global variable if set
+    if unified_model:
+        component += f"window.__UNIFIED_MODEL__ = '{unified_model}';\n"
+    else:
+        component += "window.__UNIFIED_MODEL__ = null;\n"
+
+    component += """
 // Color legend:
 // BOSS: purple (#7c3aed)
 // MANAGER: blue (#2563eb)
@@ -535,6 +556,24 @@ function AgentModal({ agent, onClose }) {
         {/* Configuration */}
         {hasConfig && (
           <Section title="Configuration">
+            {/* Experiment Mode Warning - dynamically inserted */}
+            {window.__UNIFIED_MODEL__ && (
+              <div style={{ marginBottom: '12px', padding: '12px', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '16px' }}>🚫</span>
+                  <span style={{ fontWeight: '700', color: '#92400e' }}>EXPERIMENT MODE</span>
+                  <span style={{ fontSize: '16px' }}>🚫</span>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: '#b45309', marginBottom: '4px' }}>
+                    Multi-Model Mode <span style={{ color: '#dc2626' }}>DISABLED</span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#92400e' }}>
+                    All agents use <span style={{ fontFamily: 'monospace', fontWeight: '700' }}>{window.__UNIFIED_MODEL__}</span> regardless of the task
+                  </div>
+                </div>
+              </div>
+            )}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px' }}>
               {agent.configStrategy && (
                 <div style={{ marginBottom: agent.workerTool || Object.keys(agent.configDetails || {}).length > 0 ? '12px' : 0 }}>
@@ -1501,6 +1540,13 @@ Examples:
     agent_ids = collect_agent_ids(root)
     summaries = fetch_all_summaries(agent_ids)
 
+    # Fetch system config for unified model detection
+    print("Fetching system config...", file=sys.stderr)
+    system_config = get_system_config()
+    unified_model = system_config.get("infrastructure", {}).get("unified_model")
+    if unified_model:
+        print(f"  Unified model detected: {unified_model}", file=sys.stderr)
+
     nodes = []
     edges = []
     layout_tree(root, 0, 0, nodes, edges, summaries)
@@ -1508,7 +1554,7 @@ Examples:
     print(f"Generated {len(nodes)} nodes and {len(edges)} edges", file=sys.stderr)
 
     # Output the React component to stdout
-    print(generate_react_component(nodes, edges))
+    print(generate_react_component(nodes, edges, system_config))
 
 
 if __name__ == "__main__":

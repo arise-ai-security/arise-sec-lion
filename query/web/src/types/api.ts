@@ -272,6 +272,7 @@ export interface InfrastructureConfig {
   worker_tool_type: string;
   worker_tool_model: string;
   worker_tool_timeout: number;
+  unified_model: string | null;
 }
 
 export interface ApplicationConfig {

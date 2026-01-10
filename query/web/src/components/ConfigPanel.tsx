@@ -94,6 +94,25 @@ export function ConfigPanel({ isOpen, onClose }: ConfigPanelProps) {
 
           {config && !loading && (
             <>
+              {/* Experiment Mode Warning */}
+              {config.infrastructure.unified_model && (
+                <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <span className="text-lg">🚫</span>
+                    <span className="font-bold text-amber-800 dark:text-amber-200">EXPERIMENT MODE</span>
+                    <span className="text-lg">🚫</span>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                      Multi-Model Mode <span className="text-red-600 dark:text-red-400">DISABLED</span>
+                    </p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      All agents use <span className="font-mono font-bold">{config.infrastructure.unified_model}</span> regardless of the task
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <ConfigSection title="Infrastructure">
                 <ConfigItem label="BOSS Model" value={config.infrastructure.llm_model_boss} />
                 <ConfigItem label="Worker Tool" value={config.infrastructure.worker_tool_type} />

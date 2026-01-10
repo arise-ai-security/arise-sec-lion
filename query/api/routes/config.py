@@ -29,12 +29,18 @@ async def get_system_config() -> SystemConfigSchema:
     """
     settings = Settings.load()
 
+    # Detect unified model mode: all models are the same
+    boss_model = settings.llm.model_boss
+    worker_model = settings.worker.tool_model
+    unified_model = boss_model if boss_model == worker_model else None
+
     return SystemConfigSchema(
         infrastructure=InfrastructureConfigSchema(
-            llm_model_boss=settings.llm.model_boss,
+            llm_model_boss=boss_model,
             worker_tool_type=settings.worker.tool_type,
-            worker_tool_model=settings.worker.tool_model,
+            worker_tool_model=worker_model,
             worker_tool_timeout=settings.worker.tool_timeout,
+            unified_model=unified_model,
         ),
         application=ApplicationConfigSchema(
             max_retries=settings.orchestration.max_retries,

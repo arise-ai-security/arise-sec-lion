@@ -386,6 +386,9 @@ class InfrastructureConfigSchema(BaseModel):
     worker_tool_type: str = Field(..., description="Default worker tool type")
     worker_tool_model: str = Field(..., description="Model for OpenHands worker")
     worker_tool_timeout: int = Field(..., description="Worker tool timeout (seconds)")
+    unified_model: str | None = Field(
+        None, description="If set, all agents use this single model (experiment mode)"
+    )
 
 
 class ApplicationConfigSchema(BaseModel):
