@@ -1373,6 +1373,11 @@ class AgentExecutionService:
         for child_index, child_event in enumerate(child_spawned_events):
             child_config = child_event.child_config
 
+            # Apply unified model override if configured (--unified-model)
+            child_role_key = child_event.child_role.lower()
+            if child_role_key in self.model_config and isinstance(child_config, dict) and "base" in child_config:
+                child_config = {**child_config, "base": {**child_config["base"], "model": self.model_config[child_role_key]}}
+
             # Compute tree sequence ID for left-to-right worker execution ordering
             # Formula: parent_sequence_id * 1000 + child_index + 1
             # This gives left-to-right ordering across the entire tree
@@ -1417,6 +1422,11 @@ class AgentExecutionService:
                 child_config = config.get("config", {})
                 child_role = config.get("role", AgentRole.PENDING.value)
 
+                # Apply unified model override if configured (--unified-model)
+                child_role_key = child_role.lower()
+                if child_role_key in self.model_config and isinstance(child_config, dict) and "base" in child_config:
+                    child_config = {**child_config, "base": {**child_config["base"], "model": self.model_config[child_role_key]}}
+
                 # Create new subordinate agent
                 child = AgentSession.create(
                     session_id=child_id,
@@ -1445,11 +1455,16 @@ class AgentExecutionService:
         verifier_events = [e for e in events if isinstance(e, VerifierSpawned)]
 
         for verifier_event in verifier_events:
+            # Apply unified model override if configured (--unified-model)
+            verifier_config = verifier_event.verifier_config
+            if "pending" in self.model_config and isinstance(verifier_config, dict) and "base" in verifier_config:
+                verifier_config = {**verifier_config, "base": {**verifier_config["base"], "model": self.model_config["pending"]}}
+
             # Create new verifier agent
             verifier = AgentSession.create(
                 session_id=verifier_event.verifier_id,
                 role=AgentRole.PENDING,  # Verifier starts as PENDING
-                config=verifier_event.verifier_config,
+                config=verifier_config,
                 parent_id=parent.session_id,
             )
 

@@ -4,6 +4,8 @@ Provides a read-only endpoint for retrieving system configuration.
 This allows the dashboard to display current hyperparameters.
 """
 
+import os
+
 from fastapi import APIRouter
 
 from config import Settings
@@ -29,10 +31,10 @@ async def get_system_config() -> SystemConfigSchema:
     """
     settings = Settings.load()
 
-    # Detect unified model mode: all models are the same
-    boss_model = settings.llm.model_boss
-    worker_model = settings.worker.tool_model
-    unified_model = boss_model if boss_model == worker_model else None
+    # Detect unified model mode from env var (set by CLI --unified-model)
+    unified_model = os.environ.get("ARISE_UNIFIED_MODEL")
+    boss_model = unified_model if unified_model else settings.llm.model_boss
+    worker_model = unified_model if unified_model else settings.worker.tool_model
 
     return SystemConfigSchema(
         infrastructure=InfrastructureConfigSchema(

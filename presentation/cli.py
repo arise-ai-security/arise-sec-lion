@@ -456,7 +456,13 @@ def run(
 
         python main.py run --unified-model gpt-4o "Use gpt-4o for all agents"
     """
+    import os
+
     from bootstrap import bootstrap
+
+    # Set env var for API to detect experiment mode
+    if unified_model:
+        os.environ["ARISE_UNIFIED_MODEL"] = unified_model
 
     config_path = ctx.obj.get("config_path")
     app = bootstrap(
