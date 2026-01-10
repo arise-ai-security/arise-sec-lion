@@ -426,12 +426,19 @@ def cli(ctx: click.Context, config: str | None) -> None:
     default=None,
     help="Budget threshold (0.0-1.0) below which pending agents become workers (default: 0.02)",
 )
+@click.option(
+    "--unified-model",
+    type=str,
+    default=None,
+    help="Use a single model for all agents (boss, manager, worker). Example: gpt-4o",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
     task: str,
     worker_shortcut_prob: float | None,
     budget_threshold: float | None,
+    unified_model: str | None,
 ) -> None:
     """Run a task with the multi-agent system.
 
@@ -446,6 +453,8 @@ def run(
         python main.py run --worker-shortcut-prob 0.5 "Quick prototype"
 
         python main.py run --budget-threshold 0.05 "Complex task"
+
+        python main.py run --unified-model gpt-4o "Use gpt-4o for all agents"
     """
     from bootstrap import bootstrap
 
@@ -454,6 +463,7 @@ def run(
         config_path=config_path,
         worker_shortcut_probability=worker_shortcut_prob,
         budget_threshold_ratio=budget_threshold,
+        unified_model=unified_model,
     )
 
     asyncio.run(app.run_with_task(task))

@@ -17,12 +17,14 @@ def bootstrap(
     cli_config: CLIConfig | None = None,
     worker_shortcut_probability: float | None = None,
     budget_threshold_ratio: float | None = None,
+    unified_model: str | None = None,
 ) -> CLI:
     """Wire Infrastructure → Application → Presentation. Returns ready CLI.
 
     Args:
         worker_shortcut_probability: Override for random worker shortcut probability (0.0-1.0).
         budget_threshold_ratio: Override for budget threshold ratio (0.0-1.0).
+        unified_model: When set, all agents (boss, manager, worker) use this model.
     """
     # Only load settings if we need them (i.e., some config is not provided)
     settings = None
@@ -30,17 +32,28 @@ def bootstrap(
         settings = Settings.from_yaml(config_path) if config_path is not None else Settings.load()
 
     if infrastructure_config is None:
+        # Use unified_model for worker tool if provided
+        worker_tool_model = unified_model if unified_model else settings.worker.tool_model
         infrastructure_config = InfrastructureConfig(
             postgres_connection_string=settings.database.connection_string,
             default_worker_tool=settings.worker.tool_type,
-            worker_tool_model=settings.worker.tool_model,
+            worker_tool_model=worker_tool_model,
             worker_tool_timeout=settings.worker.tool_timeout,
         )
 
     infrastructure: Infrastructure = get_infrastructure(infrastructure_config)
 
     if application_config is None:
-        model_config = {"boss": settings.llm.model_boss}
+        # Use unified_model for all agent roles if provided
+        if unified_model:
+            model_config = {
+                "boss": unified_model,
+                "manager": unified_model,
+                "worker": unified_model,
+                "pending": unified_model,
+            }
+        else:
+            model_config = {"boss": settings.llm.model_boss}
         # Use CLI overrides if provided, otherwise use config defaults
         shortcut_prob = (
             worker_shortcut_probability
