@@ -116,13 +116,13 @@ export function AgentTree({ hierarchy, onNodeClick, hasAgents = true }: AgentTre
   const minimapNodeColor = useMemo(
     () => (node: AgentFlowNode) => {
       switch (node.data?.role) {
-        case 'boss':
+        case 'BOSS':
           return '#7c3aed';
-        case 'manager':
+        case 'MANAGER':
           return '#2563eb';
-        case 'worker':
+        case 'WORKER':
           return '#16a34a';
-        case 'pending':
+        case 'PENDING':
           return '#eab308';
         default:
           return '#6b7280';
