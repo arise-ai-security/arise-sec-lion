@@ -229,9 +229,8 @@ async def test_manager_llm_invalid_json_response() -> None:
     # When: Call orchestrator.evaluate_task(agent) with invalid JSON response
     await orchestrator.evaluate_task(agent)
 
-    # Then: Verify 6 events exist (AgentCreated, TaskAssigned, OperationStarted, PromptSent, TokensConsumed, WorkFailed)
-    # Note: OperationFinished is NOT emitted because pipeline fails before reaching it
-    assert len(agent.events) == 6, f"Expected 6 events, got {len(agent.events)}"
+    # Then: Verify 7 events (AgentCreated, TaskAssigned, OperationStarted, PromptSent, TokensConsumed, WorkFailed, OperationFinished)
+    assert len(agent.events) == 7, f"Expected 7 events, got {len(agent.events)}"
 
     # And: Find the WorkFailed event
     work_failed_event = None
