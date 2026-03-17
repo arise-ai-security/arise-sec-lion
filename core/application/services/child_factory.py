@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from config import ManagerConfig
     from core.application.services.agent_repository import AgentRepository
-    from core.application.services.context_registry import HierarchyLimitsRegistry
+    from core.application.execution_service import HierarchyLimitsRegistry
 
 
 @dataclass

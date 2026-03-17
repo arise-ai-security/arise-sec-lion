@@ -31,12 +31,11 @@ from core.application.execution_service import (
 )
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.context_registry import HierarchyLimitsRegistry
+from core.application.execution_service import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_trace_service import PromptTraceService
 from core.application.services.query_service import AgentQueryService
-from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.aggregates.agent_session import AgentRole, AgentStatus
 from core.domain.events.events import (
     AgentCreated,
@@ -447,7 +446,6 @@ def _wire_execution_service(
     prompt_builder = PromptBuilder("prompts", "claude_code")
     limits_registry = HierarchyLimitsRegistry()
     repository = AgentRepository(event_store=event_store, max_retries=3)
-    workspace = WorkspaceContextProvider()
     query_service = AgentQueryService(repository)
     child_factory = ChildAgentFactory(
         repository=repository,
@@ -472,7 +470,6 @@ def _wire_execution_service(
         limits_registry=limits_registry,
         child_factory=child_factory,
         query_service=query_service,
-        workspace=workspace,
         shared_context_port=shared_context or FakeSharedContextPort(),
         sibling_view_port=sibling_view or FakeSiblingViewPort(),
         parent_notifier=parent_notifier,

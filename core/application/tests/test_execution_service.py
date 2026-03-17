@@ -14,14 +14,13 @@ from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
     ExecutionServiceDependencies,
+    HierarchyLimitsRegistry,
     ServiceConfig,
 )
 from core.application.services.agent_repository import AgentNotFoundError, AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.context_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
-from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.events.events import AgentCreated, TaskAssigned
 from core.domain.exceptions import ConcurrencyError
 from core.domain.values.llm_response import LLMResponse, LLMUsage
@@ -106,7 +105,6 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, limits_
         event_store=mock_event_store,
         max_retries=config.max_retries,
     )
-    workspace = WorkspaceContextProvider()
     query_service = AgentQueryService(repository)
     child_factory = ChildAgentFactory(
         repository=repository,
@@ -144,7 +142,6 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, limits_
         limits_registry=limits_registry,
         child_factory=child_factory,
         query_service=query_service,
-        workspace=workspace,
         shared_context_port=AsyncMock(),
         sibling_view_port=sibling_view_mock,
         parent_notifier=parent_notifier,

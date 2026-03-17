@@ -8,7 +8,6 @@ This is the main orchestration service that coordinates:
 """
 
 
-
 import asyncio
 import logging
 import random
@@ -25,14 +24,13 @@ from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.context_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
-from core.application.services.workspace_context import WorkspaceContextProvider
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.events.events import ChildSpawned, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
+from core.domain.values.context import HierarchyLimits
 
 
 if TYPE_CHECKING:
@@ -49,12 +47,83 @@ if TYPE_CHECKING:
 type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
+# =============================================================================
+# HierarchyLimitsRegistry — dict wrapper for agent hierarchy limits
+# =============================================================================
+
+
+class HierarchyLimitsRegistry:
+    """Registry for managing hierarchy limits in agent hierarchy.
+
+    Tracks and propagates hierarchy limits from parent to child.
+    Used by both ExecutionService and ChildAgentFactory.
+    """
+
+    def __init__(self) -> None:
+        self._limits: dict[UUID, HierarchyLimits] = {}
+
+    def reset(self) -> None:
+        """Clear all limits for a new run."""
+        self._limits.clear()
+
+    def create_root(
+        self,
+        root_id: UUID,
+        max_depth: int,
+        max_children_per_node: int,
+        max_retries: int,
+        max_total_agents: int = -1,
+        cve_instance: "CVEInstance | None" = None,
+    ) -> HierarchyLimits:
+        """Create and register root hierarchy limits."""
+        limits = HierarchyLimits.create_root(
+            root_id=root_id,
+            max_depth=max_depth,
+            max_children_per_node=max_children_per_node,
+            max_retries=max_retries,
+            max_total_agents=max_total_agents,
+            cve_instance=cve_instance,
+        )
+        self._limits[root_id] = limits
+        return limits
+
+    def get(self, agent_id: UUID) -> HierarchyLimits | None:
+        """Get hierarchy limits for an agent."""
+        return self._limits.get(agent_id)
+
+    def set(self, agent_id: UUID, limits: HierarchyLimits) -> None:
+        """Set hierarchy limits for an agent."""
+        self._limits[agent_id] = limits
+
+    def propagate_to_child(self, parent_id: UUID, child_id: UUID) -> HierarchyLimits | None:
+        """Propagate hierarchy limits from parent to child with incremented depth."""
+        parent_limits = self._limits.get(parent_id)
+        if parent_limits is None:
+            return None
+        child_limits = parent_limits.for_child()
+        self._limits[child_id] = child_limits
+        return child_limits
+
+    def has_limits(self, agent_id: UUID) -> bool:
+        """Check if agent has registered hierarchy limits."""
+        return agent_id in self._limits
+
+    def get_root_id(self, agent_id: UUID) -> UUID:
+        """Get root ID for an agent's hierarchy limits."""
+        limits = self._limits.get(agent_id)
+        if limits is None:
+            raise KeyError(f"No hierarchy limits for agent {agent_id}")
+        return limits.root_id
+
+
+# =============================================================================
+# Configuration & Dependencies
+# =============================================================================
+
+
 @dataclass(frozen=True)
 class ServiceConfig:
-    """Configuration for AgentExecutionService.
-
-    Immutable configuration object following the Parameter Object pattern.
-    """
+    """Configuration for AgentExecutionService."""
 
     max_retries: int
     poll_interval: float
@@ -66,35 +135,26 @@ class ServiceConfig:
 
 @dataclass(frozen=True)
 class ExecutionServiceDependencies:
-    """Collaborators for AgentExecutionService (Parameter Object pattern).
-
-    Groups the injected dependencies to reduce constructor parameter count.
-    All collaborators follow Dependency Inversion Principle (DIP).
-    """
+    """Collaborators for AgentExecutionService (Parameter Object pattern)."""
 
     repository: AgentRepository
     orchestrator: AgentOrchestrator
     limits_registry: HierarchyLimitsRegistry
     child_factory: ChildAgentFactory
     query_service: AgentQueryService
-    workspace: WorkspaceContextProvider
     shared_context_port: "SharedContextPort"
     sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
     prompt_builder: "PromptBuilder"
 
 
-class AgentExecutionService:
-    """Orchestrates agent workflow using composed services.
+# =============================================================================
+# Execution Service
+# =============================================================================
 
-    This is a thin coordinator that delegates to specialized services:
-    - AgentRepository: Load/persist agent state
-    - ChildAgentFactory: Create child agents
-    - AgentQueryService: Read operations (CQRS)
-    - HierarchyLimitsRegistry: Manage hierarchy limits
-    - WorkspaceContextProvider: Workspace file context
-    - SharedContextPort: Shared execution context for budget and artifacts
-    """
+
+class AgentExecutionService:
+    """Orchestrates agent workflow using composed services."""
 
     def __init__(
         self,
@@ -104,15 +164,6 @@ class AgentExecutionService:
         system_limits: "SystemLimitsConfig",
         progress_callback: ProgressCallback | None = None,
     ) -> None:
-        """Initialize execution service.
-
-        Args:
-            event_store: Event store port for persistence.
-            dependencies: Grouped collaborators (repository, orchestrator, etc.).
-            config: Service configuration (retries, intervals, etc.).
-            system_limits: System resource limits (workers, depth, etc.).
-            progress_callback: Optional callback for progress notifications.
-        """
         # Core ports
         self._event_store = event_store
         self._shared_context_port = dependencies.shared_context_port
@@ -122,29 +173,31 @@ class AgentExecutionService:
         self._config = config
         self._system_limits = system_limits
 
-        # Injected collaborators (unpacked from dependencies)
+        # Injected collaborators
         self._repository = dependencies.repository
         self._orchestrator = dependencies.orchestrator
         self._limits_registry = dependencies.limits_registry
         self._child_factory = dependencies.child_factory
         self._query_service = dependencies.query_service
-        self._workspace = dependencies.workspace
         self._parent_notifier = dependencies.parent_notifier
         self._prompt_builder = dependencies.prompt_builder
+
+        # Workspace state (inlined from WorkspaceContextProvider)
+        self._working_directory: Path | None = None
 
         # Worker concurrency control
         semaphore_limit = (
             system_limits.max_concurrent_workers
             if system_limits.is_workers_limited()
-            else 10000  # Effectively unlimited
+            else 10000
         )
         self._worker_semaphore = asyncio.Semaphore(semaphore_limit)
 
-        # LLM concurrency control (prevents API rate limiting)
+        # LLM concurrency control
         llm_limit = (
             system_limits.max_concurrent_llm_calls
             if system_limits.is_llm_limited()
-            else 10000  # Effectively unlimited
+            else 10000
         )
         self._llm_semaphore = asyncio.Semaphore(llm_limit)
         self._llm_jitter_max_ms = system_limits.llm_jitter_max_ms
@@ -170,33 +223,17 @@ class AgentExecutionService:
         task_description: str,
         cve_instance: "CVEInstance | None" = None,
     ) -> UUID:
-        """Create root BOSS agent with task.
-
-        Initializes execution context and shared context for the agent hierarchy.
-
-        Args:
-            task_description: The task to execute.
-            cve_instance: Optional SEC-bench CVE instance for benchmark runs.
-
-        Returns:
-            The root agent UUID.
-        """
+        """Create root BOSS agent with task."""
         root_id = uuid4()
         self._reset_for_new_run(root_id, cve_instance=cve_instance)
 
-        # Set run-level context for prompt building (used by all agents)
         self._prompt_builder.set_run_context(
             user_prompt=task_description,
             cve_instance=cve_instance,
         )
-
-        # Setup working directory
         self._setup_working_directory(root_id)
-
-        # Create shared context for this execution run
         await self._create_shared_context(root_id)
 
-        # Create boss agent and emit RunStarted event
         boss_agent = self._create_boss_session(root_id, task_description)
         instance_id = cve_instance.instance_id if cve_instance else None
         boss_agent.emit_run_started(
@@ -210,10 +247,8 @@ class AgentExecutionService:
     async def _create_shared_context(self, root_id: UUID) -> None:
         """Create shared context for execution run."""
         shared_context = await self._shared_context_port.get_or_create(
-            root_id=root_id,
-            config={},
+            root_id=root_id, config={}
         )
-        # Persist the initial shared context
         await self._shared_context_port.save(shared_context, expected_version=0)
 
     async def run_agent_step(self, agent_id: UUID) -> None:
@@ -228,7 +263,7 @@ class AgentExecutionService:
                 await self._dispatch_agent_action(agent)
                 uncommitted = await self._persist_agent_events(agent, current_version)
                 await self._handle_post_step(agent, uncommitted)
-                return  # Success
+                return
 
             except ConcurrencyError as e:
                 retry_count += 1
@@ -238,35 +273,22 @@ class AgentExecutionService:
                         expected_version=e.expected_version,
                         actual_version=e.actual_version,
                     ) from e
-                # Will retry by reloading agent
 
             except Exception as e:
                 await self._handle_step_failure(agent_id, e)
                 raise
 
     async def run_system_loop(self, root_agent_id: UUID) -> None:
-        """Poll and execute active agents until all reach terminal state.
-
-        Args:
-            root_agent_id: Root agent ID to filter hierarchy. Only agents
-                           in this hierarchy will be processed.
-
-        Uses fire-and-forget pattern for non-blocking execution:
-        - Continuously polls for new agents without waiting for LLM calls
-        - Managers decompose in parallel, spawning children immediately
-        - Workers execute one at a time in left-to-right tree order
-        """
+        """Poll and execute active agents until all reach terminal state."""
         start_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
 
         while True:
-            # Clean up completed tasks
             completed = [aid for aid, task in tasks.items() if task.done()]
             for aid in completed:
                 in_progress.discard(aid)
                 task = tasks.pop(aid)
-                # Log any exceptions
                 if task.exception():
                     logger.error(
                         "Agent %s failed with exception",
@@ -274,63 +296,48 @@ class AgentExecutionService:
                         exc_info=task.exception(),
                     )
 
-            # Get active agents not already being processed
             active_agents = await self._query_service.get_active_agent_ids(
-                root_id=root_agent_id,
-                sequential_workers=True,
+                root_id=root_agent_id, sequential_workers=True
             )
             new_agents = [aid for aid in active_agents if aid not in in_progress]
 
-            # Spawn tasks for new agents (fire-and-forget)
             for agent_id in new_agents:
                 in_progress.add(agent_id)
                 tasks[agent_id] = asyncio.create_task(
                     self._run_agent_step_safe(agent_id)
                 )
 
-            # Exit when no active agents and no in-progress tasks
             if not active_agents and not in_progress:
                 break
 
             await asyncio.sleep(self._config.poll_interval)
 
-        # Wait for any remaining tasks to complete
         if tasks:
             await asyncio.gather(*tasks.values(), return_exceptions=True)
 
-        # Emit RunCompleted event on BOSS agent
         await self._emit_run_completed(root_agent_id, start_time)
 
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
         """Execute agent step with exception handling, jitter, and rate limiting."""
         try:
-            # Apply jitter to spread out API calls
             if self._llm_jitter_max_ms > 0:
                 jitter_ms = random.randint(0, self._llm_jitter_max_ms)
                 await asyncio.sleep(jitter_ms / 1000.0)
 
-            # Use LLM semaphore to limit concurrent API calls
             async with self._llm_semaphore:
                 await self.run_agent_step(agent_id)
         except Exception:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
 
     async def _emit_run_completed(
-        self,
-        root_agent_id: UUID,
-        start_time: float,
+        self, root_agent_id: UUID, start_time: float
     ) -> None:
         """Emit RunCompleted event on BOSS agent with run statistics."""
         duration_seconds = time.monotonic() - start_time
-
-        # Get final statistics for this run
         stats = await self._query_service.get_statistics(root_id=root_agent_id)
 
-        # Load BOSS agent, emit event, and persist
         boss_agent = await self._repository.load(root_agent_id)
         current_version = boss_agent.version
-
-        # Determine overall run status from BOSS status
         run_status = "completed" if boss_agent.status.value == "completed" else "failed"
 
         boss_agent.emit_run_completed(
@@ -350,15 +357,9 @@ class AgentExecutionService:
         return await self._query_service.get_result(agent_id)
 
     async def get_system_statistics(
-        self,
-        root_id: UUID | None = None,
+        self, root_id: UUID | None = None
     ) -> SystemStatisticsDTO:
-        """Get agent statistics.
-
-        Args:
-            root_id: If provided, only count agents in this hierarchy.
-                     If None, counts all agents in the database.
-        """
+        """Get agent statistics."""
         return await self._query_service.get_statistics(root_id=root_id)
 
     # -------------------------------------------------------------------------
@@ -366,16 +367,13 @@ class AgentExecutionService:
     # -------------------------------------------------------------------------
 
     def _reset_for_new_run(
-        self,
-        root_id: UUID,
-        cve_instance: "CVEInstance | None" = None,
+        self, root_id: UUID, cve_instance: "CVEInstance | None" = None
     ) -> None:
         """Reset all state for a new execution run."""
-        self._workspace.reset()
+        self._working_directory = None
         self._limits_registry.reset()
-        self._child_factory.reset(initial_count=1)  # Count the boss agent
+        self._child_factory.reset(initial_count=1)
 
-        # Create root hierarchy limits
         self._limits_registry.create_root(
             root_id=root_id,
             max_depth=self._system_limits.max_depth,
@@ -396,7 +394,36 @@ class AgentExecutionService:
         run_output_path = base_output / str(root_id)
         run_output_path.mkdir(parents=True, exist_ok=True)
 
-        self._workspace.set_working_directory(run_output_path)
+        self._working_directory = run_output_path
+
+    def _get_workspace_context(self) -> str | None:
+        """Return fresh file listing for workspace.
+
+        Always scans fresh so workers can see files created by other workers.
+        """
+        if self._working_directory is None or not self._working_directory.exists():
+            return None
+
+        try:
+            files = []
+            for item in self._working_directory.rglob("*"):
+                if any(part.startswith(".") for part in item.parts):
+                    continue
+                if item.is_file():
+                    rel_path = item.relative_to(self._working_directory)
+                    files.append(str(rel_path))
+
+            if not files:
+                return None
+
+            files.sort()
+            return "\n".join(f"- {f}" for f in files)
+        except OSError:
+            return None
+
+    def _get_working_directory_str(self) -> str | None:
+        """Get the current working directory as string."""
+        return str(self._working_directory) if self._working_directory else None
 
     def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
         """Create the root BOSS agent session."""
@@ -426,7 +453,6 @@ class AgentExecutionService:
 
         limits = self._limits_registry.get(agent_id)
         if limits is not None:
-            # Update limits with current agent counts for limit enforcement
             limits = limits.with_agent_counts(
                 current_total=self._child_factory.total_created,
                 max_total=self._child_factory.max_total_agents,
@@ -436,27 +462,20 @@ class AgentExecutionService:
         return agent
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
-        """Dispatch based on role: PENDING->complexity, BOSS/MANAGER->decompose, WORKER->execute.
-
-        Uses AgentOrchestrator to handle LLM/worker interactions, keeping domain pure.
-        Emits AgentExecutionStarted/Finished events for timing observability.
-        """
+        """Dispatch based on role."""
         if agent.status != AgentStatus.ANALYZING:
             return
 
         if agent.role == AgentRole.PENDING:
-            # PENDING agents don't emit execution timing - role not yet determined
             await self._orchestrator.evaluate_complexity(agent)
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
-            # Emit execution started for decomposition work
             depth = self._get_agent_depth(agent)
             start_time = time.monotonic()
             agent.emit_execution_started(role=agent.role.value, depth=depth)
 
             await self._orchestrator.evaluate_task(agent)
 
-            # Emit execution finished with duration
             duration = time.monotonic() - start_time
             agent.emit_execution_finished(
                 role=agent.role.value,
@@ -466,7 +485,6 @@ class AgentExecutionService:
 
         elif agent.role == AgentRole.WORKER:
             async with self._worker_semaphore:
-                # Emit execution started for worker execution
                 depth = self._get_agent_depth(agent)
                 start_time = time.monotonic()
                 agent.emit_execution_started(role=agent.role.value, depth=depth)
@@ -480,12 +498,11 @@ class AgentExecutionService:
 
                 await self._orchestrator.execute_task(
                     agent,
-                    working_directory=self._workspace.working_directory,
-                    workspace_context=self._workspace.get_context(),
+                    working_directory=self._get_working_directory_str(),
+                    workspace_context=self._get_workspace_context(),
                     sibling_view=sibling_view,
                 )
 
-                # Emit execution finished with duration
                 duration = time.monotonic() - start_time
                 agent.emit_execution_finished(
                     role=agent.role.value,
@@ -502,53 +519,27 @@ class AgentExecutionService:
         return limits.current_depth if limits else 0
 
     async def _persist_agent_events(
-        self,
-        agent: AgentSession,
-        base_version: int,
+        self, agent: AgentSession, base_version: int
     ) -> list[DomainEvent]:
-        """Persist uncommitted events and return them.
-
-        Delegates to repository for batch optimization and progress notification.
-        """
+        """Persist uncommitted events and return them."""
         return await self._repository.persist_events(
             agent, base_version, self._progress_callback
         )
 
     async def _handle_post_step(
-        self,
-        agent: AgentSession,
-        events: list[DomainEvent],
+        self, agent: AgentSession, events: list[DomainEvent]
     ) -> None:
-        """Handle post-step operations: child spawning, context updates, and parent notification."""
-        # Spawn children (limits are enforced pre-spawn in AgentOrchestrator)
+        """Handle post-step operations: child spawning, context updates, parent notification."""
         child_events = [e for e in events if isinstance(e, ChildSpawned)]
         if child_events:
             await self._child_factory.create_children_from_events(
-                child_events,
-                agent.agent_id,
+                child_events, agent.agent_id
             )
 
-        # Process context updates from completed workers (Event Sourcing)
         if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
             await self._process_worker_context_updates(agent)
 
-        # Notify parent of completion or failure
-        await self._notify_parent_if_complete(agent)
-        await self._notify_parent_if_failed(agent)
-
-    async def _notify_parent_if_complete(self, agent: AgentSession) -> None:
-        """Notify parent when child completes.
-
-        Delegates to ParentNotificationService for the full workflow.
-        """
         await self._parent_notifier.notify_if_complete(agent)
-
-    async def _notify_parent_if_failed(self, agent: AgentSession) -> None:
-        """Notify parent when child fails.
-
-        Delegates to ParentNotificationService for failure propagation.
-        This ensures failures bubble up the hierarchy so BOSS doesn't get stuck.
-        """
         await self._parent_notifier.notify_if_failed(agent)
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
@@ -567,7 +558,6 @@ class AgentExecutionService:
 
         current_version = context.version
 
-        # Store decisions via existing DecisionRecorded event
         for decision in parsed.decisions:
             context.record_decision(
                 decision_key=decision.key,
@@ -576,7 +566,6 @@ class AgentExecutionService:
                 decided_by=agent.agent_id,
             )
 
-        # Store outputs via existing ArtifactStored event
         for output in parsed.outputs:
             context.store_artifact(
                 key=output.key,
@@ -585,17 +574,12 @@ class AgentExecutionService:
                 content=output.description,
             )
 
-        # Persist if any updates (Event Sourcing)
         if context.events:
             await self._shared_context_port.save(context, expected_version=current_version)
             context.mark_changes_as_committed()
 
     async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
-        """Handle execution failure by persisting error state and notifying parent.
-
-        Failure propagates up the hierarchy so BOSS reaches FAILED status
-        instead of staying stuck in WAITING.
-        """
+        """Handle execution failure by persisting error state and notifying parent."""
         try:
             agent = await self._repository.load_if_exists(agent_id)
             if agent is None:
@@ -606,7 +590,6 @@ class AgentExecutionService:
                 agent, agent.version, self._progress_callback
             )
 
-            # Notify parent of failure - bubbles up to BOSS
             await self._parent_notifier.notify_if_failed(agent)
         except Exception as persist_error:
             raise RuntimeError(
