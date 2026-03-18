@@ -75,6 +75,7 @@ class TestHierarchicalPathComputation:
                 task_summary="test",
                 is_terminal=False,
                 sibling_index=sibling_index,
+                depends_on=(),
             )
             for agent_id, parent_id, sibling_index in tree_structure
         }

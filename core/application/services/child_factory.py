@@ -138,14 +138,12 @@ class ChildAgentFactory:
             config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
-            spawn_payload=event.parent_context,  # Persisted in AgentCreated event
+            spawn_payload=event.parent_context,
+            depends_on=event.subtask.depends_on,
         )
         child.assign_task(event.subtask.description)
 
-        # Propagate hierarchy limits
         self._limits_registry.propagate_to_child(parent_id, event.child_id)
-
-        # Persist the new agent
         await self._repository.save_new_agent(child)
         self._total_created += 1
 
@@ -201,10 +199,10 @@ class ChildAgentFactory:
             parent_id=parent_id,
             sibling_index=event.sibling_index,
             spawn_payload=event.parent_context,
+            depends_on=event.subtask.depends_on,
         )
         child.assign_task(event.subtask.description)
 
-        # Propagate hierarchy limits
         self._limits_registry.propagate_to_child(parent_id, event.child_id)
 
         # Persist the new agent (parallel DB write)

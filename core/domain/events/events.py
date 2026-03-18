@@ -68,6 +68,7 @@ class AgentCreated(DomainEvent):
     config: dict[str, Any] = Field(default_factory=dict)
     sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
     spawn_payload: dict[str, Any] | None = None  # Parent context for child agents
+    depends_on: list[int] = Field(default_factory=list)  # Sibling indices this agent depends on
 
 
 class TaskAssigned(DomainEvent):

@@ -57,6 +57,7 @@ class AgentSession:
         parent_id: UUID | None = None,
         sibling_index: int = 0,
         spawn_payload: dict[str, Any] | None = None,
+        depends_on: list[int] | None = None,
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -67,6 +68,7 @@ class AgentSession:
             config=config,
             sibling_index=sibling_index,
             spawn_payload=spawn_payload,
+            depends_on=depends_on or [],
         )
         instance._apply(event)
         instance._changes.append(event)

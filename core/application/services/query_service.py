@@ -41,7 +41,8 @@ class AgentSummaryReadModel:
     parent_id: UUID | None
     task_summary: str
     is_terminal: bool
-    sibling_index: int  # Position among siblings for left-to-right ordering
+    sibling_index: int  # Position among siblings for ordering
+    depends_on: tuple[int, ...]  # Sibling indices this agent depends on (DAG scheduling)
 
     @classmethod
     def from_events(cls, events: list[DomainEvent]) -> "AgentSummaryReadModel | None":
@@ -71,6 +72,7 @@ class AgentSummaryReadModel:
         role = first_event.role
         parent_id = first_event.parent_id
         sibling_index = first_event.sibling_index
+        depends_on = tuple(first_event.depends_on)
 
         # Default values
         task_summary = ""
@@ -105,6 +107,7 @@ class AgentSummaryReadModel:
             task_summary=task_summary,
             is_terminal=is_terminal,
             sibling_index=sibling_index,
+            depends_on=depends_on,
         )
 
 
@@ -241,18 +244,32 @@ class AgentQueryService:
         if not workers:
             return non_workers
 
-        # Pre-compute subtree completion status with memoization (O(n) instead of O(n²))
-        subtree_complete_cache: dict[UUID, bool] = {}
-        self._compute_all_subtree_completions(summaries, children_map, subtree_complete_cache)
-
-        # Filter workers blocked by incomplete left sibling subtrees
+        # DAG-aware scheduling: check if workers' dependencies are satisfied
+        # Group workers by parent for sibling-level dependency resolution
         eligible_workers: list[tuple[UUID, tuple[int, ...]]] = []
-        for agent_id, _ in workers:
-            if not self._has_incomplete_left_siblings_cached(
-                agent_id, summaries, children_map, subtree_complete_cache
-            ):
-                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
-                eligible_workers.append((agent_id, path))
+
+        has_dag_edges = any(s.depends_on for _, s in workers)
+
+        if has_dag_edges:
+            # DAG mode: use depends_on edges to determine readiness
+            eligible_workers = self._get_dag_ready_workers(
+                workers, summaries, children_map
+            )
+        else:
+            # Legacy mode: left-to-right ordering via subtree completion
+            subtree_complete_cache: dict[UUID, bool] = {}
+            self._compute_all_subtree_completions(
+                summaries, children_map, subtree_complete_cache
+            )
+
+            for agent_id, _ in workers:
+                if not self._has_incomplete_left_siblings_cached(
+                    agent_id, summaries, children_map, subtree_complete_cache
+                ):
+                    path = self._compute_hierarchical_path_optimized(
+                        agent_id, summaries
+                    )
+                    eligible_workers.append((agent_id, path))
 
         if not eligible_workers:
             return non_workers
@@ -260,6 +277,52 @@ class AgentQueryService:
         # Sort by path and return only the leftmost eligible worker
         eligible_workers.sort(key=lambda x: x[1])
         return non_workers + [eligible_workers[0][0]]
+
+    def _get_dag_ready_workers(
+        self,
+        workers: list[tuple[UUID, "AgentSummaryReadModel"]],
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+    ) -> list[tuple[UUID, tuple[int, ...]]]:
+        """Get workers whose DAG dependencies are satisfied.
+
+        A worker is ready when all sibling_indices in its depends_on
+        correspond to agents in terminal state (completed or failed).
+        """
+        eligible = []
+
+        for agent_id, summary in workers:
+            if not summary.depends_on:
+                # No dependencies — ready immediately
+                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
+                eligible.append((agent_id, path))
+                continue
+
+            # Find sibling agents by sibling_index
+            parent_id = summary.parent_id
+            if parent_id is None:
+                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
+                eligible.append((agent_id, path))
+                continue
+
+            siblings = children_map.get(parent_id, [])
+            # Build index → status lookup for siblings
+            sibling_status: dict[int, bool] = {}
+            for sib_id in siblings:
+                if sib_id in summaries:
+                    sib = summaries[sib_id]
+                    sibling_status[sib.sibling_index] = sib.is_terminal
+
+            # Check if all dependencies are in terminal state
+            deps_satisfied = all(
+                sibling_status.get(dep_idx, False) for dep_idx in summary.depends_on
+            )
+
+            if deps_satisfied:
+                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
+                eligible.append((agent_id, path))
+
+        return eligible
 
     def _compute_hierarchical_path(
         self,
