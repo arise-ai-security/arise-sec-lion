@@ -88,10 +88,7 @@ class WorkerConfig(BaseModel):
 
 
 class OrchestrationConfig(BaseModel):
-    """Execution behavior settings.
-
-    Note: Budget tracking will be added via SharedExecutionContext (context-passing feature).
-    """
+    """Execution behavior settings."""
 
     class LimitsConfig(BaseModel):
         """Agent hierarchy and concurrency limits."""
@@ -101,33 +98,62 @@ class OrchestrationConfig(BaseModel):
         max_total_agents: int
         max_concurrent_workers: int
         llm_rate_limit_rpm: int
-        max_concurrent_llm_calls: int = 5  # Concurrent LLM API calls (-1 = unlimited)
-        llm_jitter_max_ms: int = 500  # Max jitter before LLM calls in ms (0 = disabled)
+        max_concurrent_llm_calls: int = 5
+        llm_jitter_max_ms: int = 500
 
         def is_depth_limited(self) -> bool:
-            """Check if depth limit is enabled."""
             return self.max_depth > 0
 
         def is_children_limited(self) -> bool:
-            """Check if children-per-node limit is enabled."""
             return self.max_children_per_node > 0
 
         def is_agents_limited(self) -> bool:
-            """Check if total agents limit is enabled."""
             return self.max_total_agents > 0
 
         def is_workers_limited(self) -> bool:
-            """Check if concurrent workers limit is enabled."""
             return self.max_concurrent_workers > 0
 
         def is_llm_limited(self) -> bool:
-            """Check if concurrent LLM calls limit is enabled."""
             return self.max_concurrent_llm_calls > 0
 
+    class RetryConfig(BaseModel):
+        """Retry and auto-healing settings (Phase 4)."""
+
+        model_escalation_chain: list[str] = Field(
+            default_factory=list,
+            description="Models to try on failure, in order",
+        )
+        retry_budget_fraction: float = Field(
+            default=0.3,
+            ge=0.0,
+            le=1.0,
+            description="Fraction of remaining budget available for retries",
+        )
+        circuit_breaker_threshold: int = Field(
+            default=3,
+            ge=1,
+            description="Consecutive failures before tripping circuit breaker",
+        )
+        circuit_breaker_reset_seconds: int = Field(
+            default=300,
+            ge=0,
+            description="Seconds before circuit breaker resets",
+        )
+
     max_retries: int = Field(ge=0, le=10)
-    poll_interval: float = Field(ge=0.01)  # Minimum 10ms
+    poll_interval: float = Field(ge=0.01)
+    decomposition_strategy: str = Field(
+        default="recursive",
+        description="How tasks are decomposed: recursive (default) or flat",
+    )
+    global_budget_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Global budget limit in USD (0 = unlimited)",
+    )
 
     limits: LimitsConfig
+    retry: RetryConfig = RetryConfig()
 
 
 class OutputConfig(BaseModel):
