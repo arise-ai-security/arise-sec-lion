@@ -140,6 +140,7 @@ class ChildAgentFactory:
             sibling_index=event.sibling_index,
             spawn_payload=event.parent_context,
             depends_on=event.subtask.depends_on,
+            success_criteria=event.subtask.success_criteria,
         )
         child.assign_task(event.subtask.description)
 
@@ -200,6 +201,7 @@ class ChildAgentFactory:
             sibling_index=event.sibling_index,
             spawn_payload=event.parent_context,
             depends_on=event.subtask.depends_on,
+            success_criteria=event.subtask.success_criteria,
         )
         child.assign_task(event.subtask.description)
 

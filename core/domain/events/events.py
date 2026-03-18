@@ -66,9 +66,10 @@ class AgentCreated(DomainEvent):
     role: str
     parent_id: UUID | None = None
     config: dict[str, Any] = Field(default_factory=dict)
-    sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
-    spawn_payload: dict[str, Any] | None = None  # Parent context for child agents
-    depends_on: list[int] = Field(default_factory=list)  # Sibling indices this agent depends on
+    sibling_index: int = 0
+    spawn_payload: dict[str, Any] | None = None
+    depends_on: list[int] = Field(default_factory=list)
+    success_criteria: str = ""  # From Subtask.success_criteria, used by verification
 
 
 class TaskAssigned(DomainEvent):
@@ -118,6 +119,18 @@ class WorkFailed(DomainEvent):
     """Agent failed to complete work."""
 
     reason: str
+
+
+class VerificationFailed(DomainEvent):
+    """Worker output failed verification checks.
+
+    Emitted when a completed worker's output doesn't pass quality gates.
+    Transitions agent from COMPLETED to FAILED.
+    """
+
+    failed_stage: str  # "structural", "deterministic", "execution", "judge"
+    feedback: str  # Structured feedback for retry/parent
+    stages_passed: list[str] = Field(default_factory=list)  # Stages that passed before failure
 
 
 class CodeGenerationStarted(DomainEvent):

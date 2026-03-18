@@ -11,11 +11,12 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from core.domain.events.events import VerificationFailed
 from core.domain.exceptions import ToolNotAvailableError
 from core.domain.services import parse_subtasks_from_llm, strip_markdown_code_block
 from core.domain.services.config_resolver import ConfigResolver
 from core.domain.values.constraint_failure import ConstraintFailure
-from core.domain.values.enums import AgentRole
+from core.domain.values.enums import AgentRole, AgentStatus
 
 if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
@@ -281,6 +282,10 @@ class AgentOrchestrator:
                 agent.fail_with_reason(str(e))
                 return
 
+            # Verify worker output if completed successfully
+            if agent.status == AgentStatus.COMPLETED:
+                await self._verify_worker_output(agent)
+
         finally:
             duration = time.monotonic() - start_time
             agent.emit_operation_finished(operation_type=op, duration_seconds=duration)
@@ -333,3 +338,134 @@ class AgentOrchestrator:
         if agent.hierarchy_limits:
             return agent.hierarchy_limits.cve_instance
         return None
+
+    # -------------------------------------------------------------------------
+    # Verification Pipeline
+    # -------------------------------------------------------------------------
+
+    async def _verify_worker_output(self, agent: "AgentSession") -> None:
+        """Run 4-stage verification on completed worker output.
+
+        Stages:
+        1. Structural — non-empty result with content
+        2. Deterministic — placeholder (always passes)
+        3. Execution — placeholder (always passes)
+        4. LLM Judge — evaluates against success_criteria (skipped if no criteria)
+
+        On failure, emits VerificationFailed event and transitions to FAILED.
+        """
+        result = agent.result or ""
+        stages_passed: list[str] = []
+
+        # Stage 1: Structural check
+        if not self._verify_structural(result):
+            self._emit_verification_failed(
+                agent, "structural", "Worker produced empty or blank output", stages_passed
+            )
+            return
+        stages_passed.append("structural")
+
+        # Stage 2: Deterministic check (placeholder — extensible for compile checks etc.)
+        if not self._verify_deterministic(result):
+            self._emit_verification_failed(
+                agent, "deterministic", "Deterministic check failed", stages_passed
+            )
+            return
+        stages_passed.append("deterministic")
+
+        # Stage 3: Execution check (placeholder — extensible for runtime validation)
+        if not self._verify_execution(result):
+            self._emit_verification_failed(
+                agent, "execution", "Execution check failed", stages_passed
+            )
+            return
+        stages_passed.append("execution")
+
+        # Stage 4: LLM Judge (skipped if no success_criteria)
+        if agent.success_criteria:
+            judge_passed, feedback = await self._verify_with_judge(
+                result, agent.success_criteria, agent.config
+            )
+            if not judge_passed:
+                self._emit_verification_failed(
+                    agent, "judge", feedback, stages_passed
+                )
+                return
+            stages_passed.append("judge")
+
+    @staticmethod
+    def _verify_structural(result: str) -> bool:
+        """Stage 1: Check output is non-empty and has meaningful content."""
+        return bool(result and result.strip())
+
+    @staticmethod
+    def _verify_deterministic(result: str) -> bool:
+        """Stage 2: Deterministic checks (placeholder — always passes).
+
+        Future: compile checks, file existence, schema validation.
+        """
+        return True
+
+    @staticmethod
+    def _verify_execution(result: str) -> bool:
+        """Stage 3: Execution checks (placeholder — always passes).
+
+        Future: run output, check behavior matches expectations.
+        """
+        return True
+
+    async def _verify_with_judge(
+        self,
+        result: str,
+        success_criteria: str,
+        config: Any,
+    ) -> tuple[bool, str]:
+        """Stage 4: LLM judge evaluates output against success_criteria.
+
+        Returns (passed, feedback).
+        """
+        prompt = (
+            "You are a quality judge. Evaluate whether the following work output "
+            "satisfies the given success criteria.\n\n"
+            f"## Success Criteria\n{success_criteria}\n\n"
+            f"## Work Output\n{result[:3000]}\n\n"
+            "Respond with ONLY valid JSON:\n"
+            '{"passed": true/false, "feedback": "brief explanation"}'
+        )
+
+        try:
+            llm_config = ConfigResolver.resolve(config, operation="complexity_evaluation")
+            response = await self._llm_port.query_with_usage(
+                prompt, llm_config.model_dump()
+            )
+
+            clean = strip_markdown_code_block(response.content)
+            data = json.loads(clean)
+            if not isinstance(data, dict):
+                raise ValueError(f"Expected dict, got {type(data).__name__}")
+            passed = bool(data.get("passed", False))
+            feedback = data.get("feedback", "")
+            return passed, feedback
+
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+            logger.warning("Judge response parse failed: %s", e)
+            # On parse failure, pass (don't block on judge errors)
+            return True, ""
+
+    @staticmethod
+    def _emit_verification_failed(
+        agent: "AgentSession",
+        failed_stage: str,
+        feedback: str,
+        stages_passed: list[str],
+    ) -> None:
+        """Emit VerificationFailed event, transitioning agent to FAILED."""
+        event = VerificationFailed(
+            aggregate_id=agent.agent_id,
+            sequence_number=agent._next_sequence(),
+            failed_stage=failed_stage,
+            feedback=feedback,
+            stages_passed=stages_passed,
+        )
+        agent._apply(event)
+        agent._changes.append(event)

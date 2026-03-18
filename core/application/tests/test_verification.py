@@ -1,0 +1,221 @@
+"""Tests for the verification pipeline (Phase 3).
+
+Tests the 4-stage verification: structural → deterministic → execution → judge.
+"""
+
+import json
+from collections.abc import AsyncIterator
+from typing import Any
+from uuid import uuid4
+
+import pytest
+
+from core.application.agent_orchestrator import AgentOrchestrator
+from core.application.services.prompt_builder import PromptBuilder
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
+from core.domain.events.events import (
+    CodeGenerationStarted,
+    DomainEvent,
+    ThoughtCaptured,
+    VerificationFailed,
+    WorkCompleted,
+    WorkFailed,
+)
+from core.domain.values.llm_response import LLMResponse, LLMUsage
+
+
+def _config() -> dict[str, Any]:
+    return {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4o", "temperature": 0.7, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
+
+
+class FakeLLM:
+    """Fake LLM for verification tests."""
+
+    def __init__(self, judge_response: dict | None = None) -> None:
+        self._judge_response = judge_response or {"passed": True, "feedback": "ok"}
+        self.calls: list[str] = []
+
+    async def query(self, prompt: str, config_dict: dict) -> str:
+        return json.dumps(self._judge_response)
+
+    async def query_with_usage(self, prompt: str, config_dict: dict) -> LLMResponse:
+        self.calls.append(prompt)
+        return LLMResponse(
+            content=json.dumps(self._judge_response),
+            usage=LLMUsage(prompt_tokens=50, completion_tokens=25, total_tokens=75),
+            model="gpt-4o",
+            cost_usd=0.01,
+        )
+
+
+class FakeWorkerTool:
+    """Fake worker that yields configurable events."""
+
+    def __init__(self, result: str = "Task done", fail: bool = False) -> None:
+        self._result = result
+        self._fail = fail
+
+    async def run_session(self, task_context: dict) -> AsyncIterator[DomainEvent]:
+        agent_id = task_context["agent_id"]
+        yield CodeGenerationStarted(
+            aggregate_id=agent_id, sequence_number=0, tool_name="fake"
+        )
+        if self._fail:
+            yield WorkFailed(
+                aggregate_id=agent_id, sequence_number=0, reason="tool error"
+            )
+        else:
+            yield WorkCompleted(
+                aggregate_id=agent_id, sequence_number=0, result=self._result
+            )
+
+
+def _make_worker_agent(success_criteria: str = "") -> AgentSession:
+    """Create a WORKER agent ready for execution."""
+    from core.domain.events.events import ComplexityEvaluated
+
+    agent_id = uuid4()
+    agent = AgentSession.create(
+        agent_id=agent_id,
+        role=AgentRole.PENDING,
+        config=_config(),
+        parent_id=uuid4(),
+        success_criteria=success_criteria,
+    )
+    agent.assign_task("Do the thing")
+    agent.apply_complexity_result(
+        complexity="simple", reasoning="simple task", determined_role=AgentRole.WORKER
+    )
+    agent.mark_changes_as_committed()
+    return agent
+
+
+def _make_orchestrator(
+    llm: FakeLLM | None = None,
+    worker: FakeWorkerTool | None = None,
+) -> AgentOrchestrator:
+    from unittest.mock import MagicMock
+
+    return AgentOrchestrator(
+        llm_port=llm or FakeLLM(),
+        worker_port=worker or FakeWorkerTool(),
+        prompt_builder=PromptBuilder("prompts", "claude_code"),
+        child_factory=MagicMock(),
+    )
+
+
+class TestVerificationStructural:
+    """Stage 1: Structural check."""
+
+    @pytest.mark.asyncio
+    async def test_empty_result_fails_structural(self) -> None:
+        """Worker producing empty output fails structural verification."""
+        worker = FakeWorkerTool(result="")
+        orchestrator = _make_orchestrator(worker=worker)
+        agent = _make_worker_agent()
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.FAILED
+        verification_events = [e for e in agent.events if isinstance(e, VerificationFailed)]
+        assert len(verification_events) == 1
+        assert verification_events[0].failed_stage == "structural"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_fails_structural(self) -> None:
+        worker = FakeWorkerTool(result="   \n\t  ")
+        orchestrator = _make_orchestrator(worker=worker)
+        agent = _make_worker_agent()
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.FAILED
+        verification_events = [e for e in agent.events if isinstance(e, VerificationFailed)]
+        assert verification_events[0].failed_stage == "structural"
+
+    @pytest.mark.asyncio
+    async def test_non_empty_result_passes_structural(self) -> None:
+        worker = FakeWorkerTool(result="Valid output")
+        orchestrator = _make_orchestrator(worker=worker)
+        agent = _make_worker_agent()
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED
+
+
+class TestVerificationJudge:
+    """Stage 4: LLM Judge."""
+
+    @pytest.mark.asyncio
+    async def test_judge_passes(self) -> None:
+        llm = FakeLLM(judge_response={"passed": True, "feedback": "looks good"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Output must contain valid code")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_judge_fails(self) -> None:
+        llm = FakeLLM(judge_response={"passed": False, "feedback": "Missing tests"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Must include unit tests")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.FAILED
+        verification_events = [e for e in agent.events if isinstance(e, VerificationFailed)]
+        assert len(verification_events) == 1
+        assert verification_events[0].failed_stage == "judge"
+        assert "Missing tests" in verification_events[0].feedback
+        assert "structural" in verification_events[0].stages_passed
+
+    @pytest.mark.asyncio
+    async def test_no_criteria_skips_judge(self) -> None:
+        """Without success_criteria, judge stage is skipped entirely."""
+        llm = FakeLLM(judge_response={"passed": False, "feedback": "fail"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="")
+
+        await orchestrator.execute_task(agent)
+
+        # Should pass because judge is skipped
+        assert agent.status == AgentStatus.COMPLETED
+        # LLM should not have been called for judging
+        assert not any("quality judge" in c.lower() for c in llm.calls)
+
+    @pytest.mark.asyncio
+    async def test_judge_parse_failure_passes_gracefully(self) -> None:
+        """If judge response can't be parsed, verification passes (don't block)."""
+        llm = FakeLLM()
+        llm._judge_response = "not json at all"  # type: ignore
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Some criteria")
+
+        await orchestrator.execute_task(agent)
+
+        # Should still pass (parse failure = pass)
+        assert agent.status == AgentStatus.COMPLETED
+
+
+class TestVerificationSkipsOnWorkerFailure:
+    """Verification only runs on successful worker completion."""
+
+    @pytest.mark.asyncio
+    async def test_failed_worker_not_verified(self) -> None:
+        worker = FakeWorkerTool(fail=True)
+        orchestrator = _make_orchestrator(worker=worker)
+        agent = _make_worker_agent(success_criteria="Must work")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.FAILED
+        # Should be WorkFailed, not VerificationFailed
+        verification_events = [e for e in agent.events if isinstance(e, VerificationFailed)]
+        assert len(verification_events) == 0

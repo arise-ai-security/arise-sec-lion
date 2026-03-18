@@ -35,6 +35,7 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
+    VerificationFailed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -58,6 +59,7 @@ class AgentSession:
         sibling_index: int = 0,
         spawn_payload: dict[str, Any] | None = None,
         depends_on: list[int] | None = None,
+        success_criteria: str = "",
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -69,6 +71,7 @@ class AgentSession:
             sibling_index=sibling_index,
             spawn_payload=spawn_payload,
             depends_on=depends_on or [],
+            success_criteria=success_criteria,
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -197,7 +200,7 @@ class AgentSession:
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
-        # Restore spawn_payload from event if present
+        self.success_criteria = event.success_criteria
         if event.spawn_payload is not None:
             self.spawn_payload = SpawnPayload.model_validate(event.spawn_payload)
         self.version += 1
@@ -227,6 +230,12 @@ class AgentSession:
     def _(self, event: WorkFailed) -> None:
         self.status = AgentStatus.FAILED
         self.error_message = event.reason
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: VerificationFailed) -> None:
+        self.status = AgentStatus.FAILED
+        self.error_message = f"Verification failed ({event.failed_stage}): {event.feedback}"
         self.version += 1
 
     @_apply.register
@@ -336,8 +345,10 @@ class AgentSession:
         self.local_artifacts: list[str] = []
         # Structured task outcomes from children (keyed by child_id)
         self.structured_task_outcomes: dict[UUID, TaskOutcome] = {}
-        # Position among siblings for left-to-right ordering (0 = first/leftmost)
+        # Position among siblings for ordering (0 = first/leftmost)
         self.sibling_index: int = 0
+        # Verification criteria from subtask (used by verification pipeline)
+        self.success_criteria: str = ""
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
