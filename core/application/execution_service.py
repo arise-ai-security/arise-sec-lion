@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
-    from core.ports.shared_context_port import SharedContextPort
-    from core.ports.sibling_context_port import SiblingViewPort
+    from core.ports.runtime_ports import SharedContextPort
+    from core.ports.runtime_ports import SiblingViewPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 

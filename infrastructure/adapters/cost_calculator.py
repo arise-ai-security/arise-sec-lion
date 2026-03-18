@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from core.ports.cost_calculator_port import CostCalculatorPort
+from core.ports.runtime_ports import CostCalculatorPort
 
 
 if TYPE_CHECKING:

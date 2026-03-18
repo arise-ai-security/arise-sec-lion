@@ -15,7 +15,7 @@ from core.domain.shared_context import (
     SharedExecutionContext,
     shared_context_aggregate_id,
 )
-from core.ports.shared_context_port import SharedContextPort
+from core.ports.runtime_ports import SharedContextPort
 
 
 if TYPE_CHECKING:

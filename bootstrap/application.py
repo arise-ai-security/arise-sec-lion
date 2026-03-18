@@ -117,3 +117,13 @@ def get_application(
     )
 
     return Application(execution_service=execution_service)
+
+
+def get_cli(
+    execution_service: AgentExecutionService,
+    config: "CLIConfig | None" = None,
+) -> "CLI":
+    """Create CLI interface."""
+    from presentation.cli import CLI, CLIConfig
+
+    return CLI(execution_service=execution_service, config=config)

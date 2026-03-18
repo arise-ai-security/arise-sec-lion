@@ -24,7 +24,7 @@ from core.domain.values.context import SharedDecision, SiblingStatus, SiblingVie
 
 if TYPE_CHECKING:
     from core.application.services.agent_repository import AgentRepository
-    from core.ports.shared_context_port import SharedContextPort
+    from core.ports.runtime_ports import SharedContextPort
 
 
 @dataclass(frozen=True)

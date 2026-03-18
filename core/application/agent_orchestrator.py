@@ -23,9 +23,9 @@ if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.context import SiblingView
-    from core.ports.llm_port import LLMPort
-    from core.ports.realtime_callback_port import RealtimeCallbackPort
-    from core.ports.worker_port import WorkerToolPort
+    from core.ports.runtime_ports import LLMPort
+    from core.ports.runtime_ports import RealtimeCallbackPort
+    from core.ports.runtime_ports import WorkerToolPort
 
 logger = logging.getLogger(__name__)
 
