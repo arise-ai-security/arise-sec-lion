@@ -27,7 +27,7 @@ from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.domain.services.context_update_parser import parse_context_update
-from core.domain.events.events import ChildSpawned, DomainEvent
+from core.domain.events.events import ChildSpawned, DomainEvent, RetryScheduled
 from core.domain.exceptions import ConcurrencyError
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.values.context import HierarchyLimits
@@ -205,6 +205,12 @@ class AgentExecutionService:
         # Progress callback
         self._progress_callback = progress_callback
 
+        # Retry config (from OrchestrationConfig.retry)
+        self._retry_config = getattr(system_limits, "retry", None)
+
+        # Circuit breaker: {model_name: consecutive_failure_count}
+        self._model_failures: dict[str, int] = {}
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
@@ -373,6 +379,7 @@ class AgentExecutionService:
         self._working_directory = None
         self._limits_registry.reset()
         self._child_factory.reset(initial_count=1)
+        self._model_failures.clear()
 
         self._limits_registry.create_root(
             root_id=root_id,
@@ -529,7 +536,7 @@ class AgentExecutionService:
     async def _handle_post_step(
         self, agent: AgentSession, events: list[DomainEvent]
     ) -> None:
-        """Handle post-step operations: child spawning, context updates, parent notification."""
+        """Handle post-step operations: child spawning, context updates, retry, parent notification."""
         child_events = [e for e in events if isinstance(e, ChildSpawned)]
         if child_events:
             await self._child_factory.create_children_from_events(
@@ -540,7 +547,84 @@ class AgentExecutionService:
             await self._process_worker_context_updates(agent)
 
         await self._parent_notifier.notify_if_complete(agent)
+
+        # Retry failed agents before propagating failure to parent
+        if agent.status == AgentStatus.FAILED:
+            retried = await self._try_retry(agent)
+            if retried:
+                return  # Agent re-queued for execution, don't notify parent
+
         await self._parent_notifier.notify_if_failed(agent)
+
+    async def _try_retry(self, agent: AgentSession) -> bool:
+        """Attempt to retry a failed agent. Returns True if retry was scheduled.
+
+        Checks: max retries, circuit breaker, model escalation chain.
+        """
+        # Only retry workers (BOSS/MANAGER failures are structural)
+        if agent.role != AgentRole.WORKER:
+            return False
+
+        # Retry budget = length of escalation chain (0 = no retries)
+        retry_cfg = self._retry_config
+        max_retries = len(retry_cfg.model_escalation_chain) if retry_cfg and retry_cfg.model_escalation_chain else 0
+        if max_retries == 0 or agent.retry_count >= max_retries:
+            return False
+
+        # Circuit breaker check
+        current_model = getattr(getattr(agent.config, "base", None), "model", None)
+        if current_model and self._is_circuit_broken(current_model, retry_cfg):
+            escalated = self._get_escalated_model(agent, retry_cfg)
+            if escalated is None:
+                return False
+        else:
+            escalated = self._get_escalated_model(agent, retry_cfg) if retry_cfg else None
+
+        # Track model failure for circuit breaker
+        if current_model:
+            self._model_failures[current_model] = self._model_failures.get(current_model, 0) + 1
+
+        # Schedule retry
+        reason = agent.error_message or "Unknown failure"
+        agent.schedule_retry(reason=reason, escalated_model=escalated)
+
+        # Persist the retry event
+        await self._repository.persist_events(
+            agent, agent.version - 1, self._progress_callback
+        )
+
+        return True
+
+    def _is_circuit_broken(self, model: str, retry_cfg: Any) -> bool:
+        """Check if a model has tripped the circuit breaker."""
+        if retry_cfg is None:
+            return False
+        threshold = retry_cfg.circuit_breaker_threshold
+        failures = self._model_failures.get(model, 0)
+        return failures >= threshold
+
+    def _get_escalated_model(self, agent: AgentSession, retry_cfg: Any) -> str | None:
+        """Get next model from escalation chain, or None if exhausted."""
+        if retry_cfg is None or not retry_cfg.model_escalation_chain:
+            return None
+
+        chain = retry_cfg.model_escalation_chain
+        current_model = getattr(getattr(agent.config, "base", None), "model", None)
+
+        # Find current model in chain and return next
+        if current_model in chain:
+            idx = chain.index(current_model)
+            # Try remaining models in chain
+            for next_model in chain[idx + 1 :]:
+                if not self._is_circuit_broken(next_model, retry_cfg):
+                    return next_model
+            return None  # All remaining models circuit-broken
+        else:
+            # Current model not in chain, try first available
+            for model in chain:
+                if not self._is_circuit_broken(model, retry_cfg):
+                    return model
+            return None
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
         """Extract and store context updates from worker result."""

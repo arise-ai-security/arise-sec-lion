@@ -133,6 +133,18 @@ class VerificationFailed(DomainEvent):
     stages_passed: list[str] = Field(default_factory=list)  # Stages that passed before failure
 
 
+class RetryScheduled(DomainEvent):
+    """Agent scheduled for retry after failure.
+
+    Transitions agent from FAILED back to ANALYZING for re-execution.
+    Tracks retry attempt number and optional model escalation.
+    """
+
+    attempt: int  # 1-indexed retry attempt number
+    reason: str  # Why retry was scheduled (original failure reason)
+    escalated_model: str | None = None  # New model if escalated, None if same
+
+
 class CodeGenerationStarted(DomainEvent):
     """WORKER started execution with tool."""
 

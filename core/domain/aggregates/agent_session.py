@@ -35,6 +35,7 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
+    RetryScheduled,
     VerificationFailed,
     WorkCompleted,
     WorkerCostRecorded,
@@ -239,6 +240,21 @@ class AgentSession:
         self.version += 1
 
     @_apply.register
+    def _(self, event: RetryScheduled) -> None:
+        self.status = AgentStatus.ANALYZING
+        self.retry_count = event.attempt
+        self.result = None
+        self.error_message = None
+        if event.escalated_model:
+            # AgentConfig is a Pydantic model — dump, modify, re-validate
+            config_dict = self.config.model_dump()
+            if "base" in config_dict and isinstance(config_dict["base"], dict):
+                config_dict["base"]["model"] = event.escalated_model
+            adapter = TypeAdapter(AgentConfig)
+            self.config = adapter.validate_python(config_dict)
+        self.version += 1
+
+    @_apply.register
     def _(self, event: CodeGenerationStarted) -> None:
         self.status = AgentStatus.IN_PROGRESS
         self.version += 1
@@ -349,6 +365,8 @@ class AgentSession:
         self.sibling_index: int = 0
         # Verification criteria from subtask (used by verification pipeline)
         self.success_criteria: str = ""
+        # Retry tracking
+        self.retry_count: int = 0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
@@ -418,6 +436,18 @@ class AgentSession:
     def is_leaf(self) -> bool:
         """True if WORKER with no children."""
         return self.role == AgentRole.WORKER and len(self.child_ids) == 0
+
+    def schedule_retry(self, reason: str, escalated_model: str | None = None) -> None:
+        """Schedule retry, transitioning FAILED → ANALYZING."""
+        event = RetryScheduled(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            attempt=self.retry_count + 1,
+            reason=reason,
+            escalated_model=escalated_model,
+        )
+        self._apply(event)
+        self._changes.append(event)
 
     def fail_with_reason(self, reason: str) -> None:
         """Mark agent as failed with WorkFailed event."""
