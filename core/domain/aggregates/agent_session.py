@@ -35,6 +35,10 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
+    DecisionInfeasible,
+    ProbeCompleted,
+    ProbeStarted,
+    RedecompositionTriggered,
     RetryScheduled,
     VerificationFailed,
     WorkCompleted,
@@ -240,6 +244,28 @@ class AgentSession:
         self.version += 1
 
     @_apply.register
+    def _(self, event: DecisionInfeasible) -> None:
+        self.status = AgentStatus.FAILED
+        self.error_message = f"Infeasible: {event.reason}"
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RedecompositionTriggered) -> None:
+        self.status = AgentStatus.ANALYZING
+        self.child_ids.clear()
+        self.child_results.clear()
+        self.structured_task_outcomes.clear()
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProbeStarted) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProbeCompleted) -> None:
+        self.version += 1
+
+    @_apply.register
     def _(self, event: RetryScheduled) -> None:
         self.status = AgentStatus.ANALYZING
         self.retry_count = event.attempt
@@ -436,6 +462,34 @@ class AgentSession:
     def is_leaf(self) -> bool:
         """True if WORKER with no children."""
         return self.role == AgentRole.WORKER and len(self.child_ids) == 0
+
+    def mark_infeasible(
+        self,
+        reason: str,
+        minimum_subtasks: int | None = None,
+        minimum_depth: int | None = None,
+    ) -> None:
+        """Mark task as infeasible within given constraints."""
+        event = DecisionInfeasible(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            reason=reason,
+            minimum_subtasks=minimum_subtasks,
+            minimum_depth=minimum_depth,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def trigger_redecomposition(self, trigger_child_id: UUID, reason: str) -> None:
+        """Re-decompose after child signals infeasible. WAITING → ANALYZING."""
+        event = RedecompositionTriggered(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            trigger_child_id=trigger_child_id,
+            reason=reason,
+        )
+        self._apply(event)
+        self._changes.append(event)
 
     def schedule_retry(self, reason: str, escalated_model: str | None = None) -> None:
         """Schedule retry, transitioning FAILED → ANALYZING."""

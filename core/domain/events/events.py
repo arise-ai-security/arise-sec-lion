@@ -133,6 +133,49 @@ class VerificationFailed(DomainEvent):
     stages_passed: list[str] = Field(default_factory=list)  # Stages that passed before failure
 
 
+class DecisionInfeasible(DomainEvent):
+    """Agent determined task is infeasible within given constraints.
+
+    Emitted when LLM responds with constraints_unsatisfiable.
+    Transitions agent to FAILED with structured infeasibility feedback
+    that can trigger parent re-decomposition.
+    """
+
+    reason: str
+    minimum_subtasks: int | None = None
+    minimum_depth: int | None = None
+
+
+class RedecompositionTriggered(DomainEvent):
+    """Parent re-decomposes after child signals infeasible.
+
+    Transitions parent from WAITING → ANALYZING for a new decomposition
+    attempt with adjusted constraints or strategy.
+    """
+
+    trigger_child_id: UUID
+    reason: str
+
+
+class ProbeStarted(DomainEvent):
+    """Agent started a read-only probe before making a decision.
+
+    Observability event — does not change agent state.
+    """
+
+    probe_type: str  # "file_check", "repo_scan", "api_query", etc.
+
+
+class ProbeCompleted(DomainEvent):
+    """Agent completed a read-only probe.
+
+    Observability event — does not change agent state.
+    """
+
+    probe_type: str
+    result_summary: str = ""
+
+
 class RetryScheduled(DomainEvent):
     """Agent scheduled for retry after failure.
 

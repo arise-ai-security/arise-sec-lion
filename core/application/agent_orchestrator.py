@@ -182,7 +182,11 @@ class AgentOrchestrator:
                     agent.agent_id,
                     result.format_message(),
                 )
-                agent.fail_with_reason(result.format_message())
+                agent.mark_infeasible(
+                    reason=result.reason,
+                    minimum_subtasks=result.minimum_subtasks,
+                    minimum_depth=result.minimum_depth,
+                )
                 return
 
             subtasks = result
