@@ -77,18 +77,16 @@ Three configurable limits in `config/config.yaml` → `orchestration.limits`:
 
 Limits are passed to LLM prompts. LLM can respond with `constraints_unsatisfiable` if task cannot fit.
 
-## Pipeline Architecture
+## Orchestrator
 
-`AgentOrchestrator` uses composable Pipeline/Chain pattern:
+`AgentOrchestrator` handles three operations as direct method calls:
+- `evaluate_complexity()` — PENDING → WORKER/MANAGER
+- `evaluate_task()` — BOSS/MANAGER → decompose → spawn children
+- `execute_task()` — WORKER → tool execution → verification
 
-```
-core/application/pipeline/
-├── context.py      # PipelineState (delegates to HierarchyLimits)
-├── executor.py     # Pipeline executor (short-circuits on failure)
-└── steps/          # 14 focused steps across 8 modules
-```
-
-Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_execution`
+Features: DAG scheduling (`depends_on`), 4-stage verification pipeline,
+auto-healing retry with model escalation, circuit breaker, infeasible
+decision handling with parent re-decomposition.
 
 ## Documentation
 
@@ -103,19 +101,4 @@ Three pipelines: `complexity_evaluation`, `task_decomposition`, `worker_executio
 | [`project-structure.md`](agent-docs/project-structure.md) | Directory layout, layer responsibilities |
 | [`architecture-concepts.md`](agent-docs/architecture-concepts.md) | CQRS, OCC, Event Sourcing, Hexagonal, DDD |
 | [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
-| [`context-passing-mechanism.md`](agent-docs/context-passing-mechanism.md) | SharedContext, artifacts, decisions, budget |
-| [`context-passing-guide.md`](agent-docs/context-passing-guide.md) | ContextComposer API, practical scenarios, **example branches** |
-
-## Example Branches
-
-`example/**` branches contain working implementations of context-passing patterns:
-
-| Branch | What It Demonstrates |
-|--------|---------------------|
-| `example/global-date` | Add `current_date` to all agent prompts |
-| `example/json-global-context` | Pass structured JSON data globally |
-| `example/bidirectional-data` | Parent↔Child↔Sibling context types |
-| `example/worker-summary-broadcast` | Worker results to parent AND boss |
-| `example/worker-summary-depth` | Worker results to depth-1 ancestor |
-
-Each branch has `EXAMPLE_*.md` in root. View with: `git show origin/example/global-date:EXAMPLE_GLOBAL_DATE.md`
+| [`execution-flow.md`](agent-docs/execution-flow.md) | How tasks flow through system |
