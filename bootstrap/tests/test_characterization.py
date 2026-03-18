@@ -52,8 +52,8 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
-from core.domain.shared_context import SharedExecutionContext
-from core.domain.values.context.sibling_to_sibling import SiblingView
+from core.domain.shared_context import SharedStore
+from core.domain.values.node_message import Handoff
 from core.domain.values.llm_response import LLMResponse, LLMUsage
 from core.domain.values.subtask import Subtask
 from core.query.projections.impl import SummaryProjection
@@ -353,23 +353,23 @@ class FakeSharedContextPort:
     """Fake shared context port using in-memory storage."""
 
     def __init__(self) -> None:
-        self._contexts: dict[UUID, SharedExecutionContext] = {}
+        self._contexts: dict[UUID, SharedStore] = {}
 
     async def get_or_create(
         self,
         root_id: UUID,
         config: dict | None = None,
-    ) -> SharedExecutionContext:
+    ) -> SharedStore:
         if root_id not in self._contexts:
-            ctx = SharedExecutionContext.create(root_id=root_id, config=config or {})
+            ctx = SharedStore.create(root_id=root_id, config=config or {})
             self._contexts[root_id] = ctx
         return self._contexts[root_id]
 
-    async def get(self, root_id: UUID) -> SharedExecutionContext | None:
+    async def get(self, root_id: UUID) -> SharedStore | None:
         return self._contexts.get(root_id)
 
     async def save(
-        self, context: SharedExecutionContext, expected_version: int
+        self, context: SharedStore, expected_version: int
     ) -> None:
         self._contexts[context.root_id] = context
         context.mark_changes_as_committed()
@@ -379,18 +379,17 @@ class FakeSharedContextPort:
 
 
 class FakeSiblingViewPort:
-    """Fake sibling view port returning empty views."""
+    """Fake sibling view port returning empty handoffs."""
 
     async def build_view(
         self,
         agent_id: UUID,
         parent_id: UUID | None,
         root_id: UUID,
-    ) -> SiblingView:
-        return SiblingView(
-            current_agent_id=str(agent_id),
+    ) -> Handoff:
+        return Handoff(
             parent_task=None,
-            sibling_tasks=(),
+            siblings=(),
             shared_decisions=(),
         )
 

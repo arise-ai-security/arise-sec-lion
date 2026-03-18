@@ -4,36 +4,24 @@ Agent Role: {{ agent_role }}
 Parent Task: {{ parent_task or "Root task" }}
 </TASK_CONTEXT>
 
-{% if parent_context %}
-<PARENT_CONTEXT>
-Parent Task: {{ parent_context.parent_task }}
-Parent Role: {{ parent_context.parent_role }}
-Depth: {{ parent_context.depth }}
-{% if parent_context.ancestry %}
+{% if briefing %}
+<BRIEFING>
+Parent Task: {{ briefing.parent_task }}
+Parent Role: {{ briefing.parent_role }}
+Depth: {{ briefing.depth }}
+{% if briefing.ancestry %}
 Ancestry:
-{% for ancestor in parent_context.ancestry %}
+{% for ancestor in briefing.ancestry %}
   - [{{ ancestor.role }}] {{ ancestor.task_summary }}
 {% endfor %}
 {% endif %}
-{% if parent_context.decisions %}
+{% if briefing.decisions %}
 Parent Decisions (inherit these where appropriate):
-{% for decision in parent_context.decisions %}
+{% for decision in briefing.decisions %}
   - {{ decision }}
 {% endfor %}
 {% endif %}
-{% if parent_context.constraints %}
-Constraints:
-{% for key, value in parent_context.constraints.items() %}
-  - {{ key }}: {{ value }}
-{% endfor %}
-{% endif %}
-{% if parent_context.execution_limits %}
-Execution Limits:
-  - Depth Remaining: {{ parent_context.execution_limits.get('depth_remaining', 'unlimited') }}
-  - Max Children Per Node: {{ parent_context.execution_limits.get('max_children_per_node', 'unlimited') }}
-  - Agents Remaining: {{ parent_context.execution_limits.get('agents_remaining', 'unlimited') }}
-{% endif %}
-</PARENT_CONTEXT>
+</BRIEFING>
 {% endif %}
 
 <TASK_DESCRIPTION>

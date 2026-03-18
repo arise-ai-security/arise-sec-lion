@@ -5,7 +5,7 @@ parent to child agents, enabling depth tracking and limit enforcement.
 
 Limit values of -1 indicate "unlimited" (no limit enforced).
 
-Budget tracking is handled via SharedExecutionContext (keyed by root_id).
+Budget tracking is handled via SharedStore (keyed by root_id).
 CVE instance is optionally attached for SEC-bench benchmark runs.
 """
 
@@ -27,7 +27,7 @@ class HierarchyLimits(BaseModel):
         -1 = unlimited (no enforcement)
         >0 = enforced limit
 
-    The root_id references the SharedExecutionContext for this hierarchy.
+    The root_id references the SharedStore for this hierarchy.
     CVE instance is optionally attached for SEC-bench benchmark runs.
     """
 
@@ -37,7 +37,7 @@ class HierarchyLimits(BaseModel):
     max_depth: int  # -1 = unlimited
     max_children_per_node: int  # -1 = unlimited
     max_retries: int
-    root_id: UUID  # Reference to SharedExecutionContext
+    root_id: UUID  # Reference to SharedStore
     max_total_agents: int = -1  # -1 = unlimited, global limit across hierarchy
     current_total_agents: int = 0  # Snapshot of total agents created so far
     cve_instance: CVEInstance | None = None  # SEC-bench CVE context
@@ -120,7 +120,7 @@ class HierarchyLimits(BaseModel):
         """Create limits for root (BOSS) agent.
 
         Args:
-            root_id: Root agent ID (references SharedExecutionContext)
+            root_id: Root agent ID (references SharedStore)
             max_depth: Maximum hierarchy depth (-1 = unlimited)
             max_children_per_node: Max children per parent (-1 = unlimited)
             max_retries: Max retry attempts

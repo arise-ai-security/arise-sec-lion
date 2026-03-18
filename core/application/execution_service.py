@@ -30,7 +30,7 @@ from core.domain.services.context_update_parser import parse_context_update
 from core.domain.events.events import ChildSpawned, DomainEvent, RetryScheduled
 from core.domain.exceptions import ConcurrencyError
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.values.context import HierarchyLimits
+from core.domain.values.limits import HierarchyLimits
 
 
 if TYPE_CHECKING:
@@ -497,7 +497,7 @@ class AgentExecutionService:
                 agent.emit_execution_started(role=agent.role.value, depth=depth)
 
                 root_id = self._limits_registry.get_root_id(agent.agent_id)
-                sibling_view = await self._sibling_view_port.build_view(
+                handoff = await self._sibling_view_port.build_view(
                     agent_id=agent.agent_id,
                     parent_id=agent.parent_id,
                     root_id=root_id,
@@ -507,7 +507,7 @@ class AgentExecutionService:
                     agent,
                     working_directory=self._get_working_directory_str(),
                     workspace_context=self._get_workspace_context(),
-                    sibling_view=sibling_view,
+                    handoff=handoff,
                 )
 
                 duration = time.monotonic() - start_time
@@ -650,7 +650,7 @@ class AgentExecutionService:
                 decided_by=agent.agent_id,
             )
 
-        for output in parsed.outputs:
+        for output in parsed.artifacts:
             context.store_artifact(
                 key=output.key,
                 content_type="text/plain",

@@ -100,7 +100,6 @@ def test_subtask_defaults_for_new_fields() -> None:
     assert subtask.estimated_complexity == "unknown"
     assert subtask.success_criteria == ""
     assert subtask.failure_indicators == []
-    assert subtask.context_needs == []
     assert subtask.task_type == "general"
 
 
@@ -113,7 +112,6 @@ def test_subtask_with_enriched_fields() -> None:
         estimated_complexity="complex",
         success_criteria="All auth endpoints return 200",
         failure_indicators=["compilation error", "test failure"],
-        context_needs=["database schema from subtask 0"],
         task_type="implementation",
     )
 
@@ -121,7 +119,6 @@ def test_subtask_with_enriched_fields() -> None:
     assert subtask.estimated_complexity == "complex"
     assert subtask.success_criteria == "All auth endpoints return 200"
     assert subtask.failure_indicators == ["compilation error", "test failure"]
-    assert subtask.context_needs == ["database schema from subtask 0"]
     assert subtask.task_type == "implementation"
 
 

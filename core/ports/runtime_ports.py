@@ -12,8 +12,8 @@ from core.domain.events.events import DomainEvent
 from core.domain.values.llm_response import LLMResponse
 
 if TYPE_CHECKING:
-    from core.domain.shared_context import SharedExecutionContext
-    from core.domain.values.context import SiblingView
+    from core.domain.shared_context import SharedStore
+    from core.domain.values.node_message import Handoff
 
 
 # =============================================================================
@@ -88,12 +88,12 @@ class SharedContextPort(Protocol):
 
     async def get_or_create(
         self, root_id: UUID, config: dict | None = None
-    ) -> "SharedExecutionContext": ...
+    ) -> "SharedStore": ...
 
-    async def get(self, root_id: UUID) -> "SharedExecutionContext | None": ...
+    async def get(self, root_id: UUID) -> "SharedStore | None": ...
 
     async def save(
-        self, context: "SharedExecutionContext", expected_version: int
+        self, context: "SharedStore", expected_version: int
     ) -> None: ...
 
     async def exists(self, root_id: UUID) -> bool: ...
@@ -109,4 +109,4 @@ class SiblingViewPort(Protocol):
 
     async def build_view(
         self, agent_id: UUID, parent_id: UUID | None, root_id: UUID
-    ) -> "SiblingView": ...
+    ) -> "Handoff": ...

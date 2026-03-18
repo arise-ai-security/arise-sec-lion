@@ -42,12 +42,6 @@ class Subtask(BaseModel):
         description="Signs that the subtask has failed",
     )
 
-    # Context needs for sibling coordination
-    context_needs: list[str] = Field(
-        default_factory=list,
-        description="What context this subtask needs from completed siblings",
-    )
-
     # Task classification
     task_type: str = Field(
         default="general",

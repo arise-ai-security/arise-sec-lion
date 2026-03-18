@@ -68,7 +68,7 @@ class AgentRepository:
 
         Returns None if:
         - No events exist for this aggregate_id
-        - Events exist but don't represent an AgentSession (e.g., SharedExecutionContext)
+        - Events exist but don't represent an AgentSession (e.g., SharedStore)
         """
         events = await self._event_store.get_events(agent_id)
         if not events:

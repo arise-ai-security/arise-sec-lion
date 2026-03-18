@@ -3,7 +3,7 @@
 from core.domain.services.context_update_parser import (
     parse_context_update,
 )
-from core.domain.values.parsed_context import ParsedDecision, ParsedOutput, ParsedContextUpdate
+from core.domain.values.parsed_context import ParsedDecision, ParsedArtifact, ParsedUpdate
 
 
 class TestParseContextUpdate:
@@ -26,7 +26,7 @@ class TestParseContextUpdate:
 
         assert parsed is not None
         assert len(parsed.decisions) == 1
-        assert len(parsed.outputs) == 0
+        assert len(parsed.artifacts) == 0
         assert parsed.decisions[0].key == "api_framework"
         assert parsed.decisions[0].value == "FastAPI"
         assert parsed.decisions[0].rationale == "Better async support"
@@ -45,9 +45,9 @@ class TestParseContextUpdate:
 
         assert parsed is not None
         assert len(parsed.decisions) == 0
-        assert len(parsed.outputs) == 1
-        assert parsed.outputs[0].key == "user_model"
-        assert parsed.outputs[0].description == "Created User model in models/user.py"
+        assert len(parsed.artifacts) == 1
+        assert parsed.artifacts[0].key == "user_model"
+        assert parsed.artifacts[0].description == "Created User model in models/user.py"
 
     def test_parse_multiple_decisions_and_outputs(self) -> None:
         """Test parsing multiple decisions and outputs."""
@@ -70,11 +70,11 @@ class TestParseContextUpdate:
 
         assert parsed is not None
         assert len(parsed.decisions) == 2
-        assert len(parsed.outputs) == 2
+        assert len(parsed.artifacts) == 2
         assert parsed.decisions[0].key == "orm_framework"
         assert parsed.decisions[1].key == "testing_framework"
-        assert parsed.outputs[0].key == "database_schema"
-        assert parsed.outputs[1].key == "api_routes"
+        assert parsed.artifacts[0].key == "database_schema"
+        assert parsed.artifacts[1].key == "api_routes"
 
     def test_parse_no_context_update_returns_none(self) -> None:
         """Test that missing context-update section returns None."""
@@ -141,8 +141,8 @@ class TestParseContextUpdate:
         parsed = parse_context_update(result)
 
         assert parsed is not None
-        assert len(parsed.outputs) == 1
-        assert parsed.outputs[0].key == "valid_output"
+        assert len(parsed.artifacts) == 1
+        assert parsed.artifacts[0].key == "valid_output"
 
     def test_parse_decision_without_rationale(self) -> None:
         """Test parsing decision without rationale (optional)."""
@@ -202,7 +202,7 @@ class TestParseContextUpdate:
         assert parsed is not None
         assert parsed.decisions[0].value == "Some value with whitespace"
         assert parsed.decisions[0].rationale == "Some rationale with whitespace"
-        assert parsed.outputs[0].description == "Output with whitespace"
+        assert parsed.artifacts[0].description == "Output with whitespace"
 
     def test_context_update_at_end_of_output(self) -> None:
         """Test context-update at end of output (typical placement)."""
@@ -229,9 +229,9 @@ class TestParseContextUpdate:
 
         assert parsed is not None
         assert len(parsed.decisions) == 1
-        assert len(parsed.outputs) == 1
+        assert len(parsed.artifacts) == 1
         assert parsed.decisions[0].key == "auth_method"
-        assert parsed.outputs[0].key == "auth_module"
+        assert parsed.artifacts[0].key == "auth_module"
 
 
 class TestParsedDecision:
@@ -277,12 +277,12 @@ class TestParsedDecision:
         assert decision.rationale == ""
 
 
-class TestParsedOutput:
-    """Test cases for ParsedOutput dataclass."""
+class TestParsedArtifact:
+    """Test cases for ParsedArtifact dataclass."""
 
     def test_to_dict_serialization(self) -> None:
         """Test to_dict() serialization."""
-        output = ParsedOutput(
+        output = ParsedArtifact(
             key="user_model",
             description="Created User model in models/",
         )
@@ -299,32 +299,32 @@ class TestParsedOutput:
             "description": "Created User model",
         }
 
-        output = ParsedOutput.model_validate(data)
+        output = ParsedArtifact.model_validate(data)
 
         assert output.key == "user_model"
         assert output.description == "Created User model"
 
 
-class TestParsedContextUpdate:
-    """Test cases for ParsedContextUpdate dataclass."""
+class TestParsedUpdate:
+    """Test cases for ParsedUpdate dataclass."""
 
     def test_to_dict_serialization(self) -> None:
         """Test to_dict() serialization."""
-        update = ParsedContextUpdate(
+        update = ParsedUpdate(
             decisions=(
                 ParsedDecision(key="k1", value="v1", rationale="r1"),
             ),
-            outputs=(
-                ParsedOutput(key="o1", description="d1"),
+            artifacts=(
+                ParsedArtifact(key="o1", description="d1"),
             ),
         )
 
         data = update.model_dump()
 
         assert len(data["decisions"]) == 1
-        assert len(data["outputs"]) == 1
+        assert len(data["artifacts"]) == 1
         assert data["decisions"][0]["key"] == "k1"
-        assert data["outputs"][0]["key"] == "o1"
+        assert data["artifacts"][0]["key"] == "o1"
 
     def test_from_dict_deserialization(self) -> None:
         """Test from_dict() deserialization."""
@@ -332,23 +332,23 @@ class TestParsedContextUpdate:
             "decisions": [
                 {"key": "k1", "value": "v1", "rationale": "r1"},
             ],
-            "outputs": [
+            "artifacts": [
                 {"key": "o1", "description": "d1"},
             ],
         }
 
-        update = ParsedContextUpdate.model_validate(data)
+        update = ParsedUpdate.model_validate(data)
 
         assert len(update.decisions) == 1
-        assert len(update.outputs) == 1
+        assert len(update.artifacts) == 1
         assert update.decisions[0].key == "k1"
-        assert update.outputs[0].key == "o1"
+        assert update.artifacts[0].key == "o1"
 
     def test_from_dict_empty_lists(self) -> None:
-        """Test from_dict() with empty decisions/outputs."""
+        """Test from_dict() with empty decisions/artifacts."""
         data = {}
 
-        update = ParsedContextUpdate.model_validate(data)
+        update = ParsedUpdate.model_validate(data)
 
         assert update.decisions == ()
-        assert update.outputs == ()
+        assert update.artifacts == ()

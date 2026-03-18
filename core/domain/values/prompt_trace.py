@@ -14,10 +14,10 @@ class SectionProvenance(str, Enum):
     """Source of a prompt section - determines color coding in display."""
 
     TEMPLATE = "template"  # Base .j2 templates (ROLE, TASK, DECISION_GUIDE)
-    PARENT = "parent"  # From parent via SpawnPayload (parent-context, ancestry)
-    SIBLING = "sibling"  # From sibling workers (sibling-tasks)
-    CHILDREN = "children"  # From completed children (child-outcomes)
-    SHARED = "shared"  # From SharedExecutionContext (global-context, decisions)
+    PARENT = "parent"  # From parent via Briefing (ancestry, decisions)
+    SIBLING = "sibling"  # From sibling workers (Handoff)
+    CHILDREN = "children"  # From completed children (Report)
+    SHARED = "shared"  # From SharedStore (decisions, artifacts)
     SYSTEM = "system"  # Hierarchy limits, CVE, workspace
 
 

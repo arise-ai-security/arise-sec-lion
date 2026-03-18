@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.values.context import SpawnPayload
+from core.domain.values.node_message import Briefing
 from core.domain.events.events import ChildSpawned
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 
@@ -130,15 +130,15 @@ class ChildAgentFactory:
         # without date suffix). Applied to all roles, not just PENDING.
         child_config = self._apply_manager_config(child_config)
 
-        # Pass spawn_payload to create() so it's persisted in AgentCreated event
-        # This ensures spawn_payload is restored when agent is loaded from history
+        # Pass briefing to create() so it's persisted in AgentCreated event
+        # This ensures briefing is restored when agent is loaded from history
         child = AgentSession.create(
             agent_id=event.child_id,
             role=child_role,
             config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
-            spawn_payload=event.parent_context,
+            briefing=event.briefing,
             depends_on=event.subtask.depends_on,
             success_criteria=event.subtask.success_criteria,
         )
@@ -199,7 +199,7 @@ class ChildAgentFactory:
             config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
-            spawn_payload=event.parent_context,
+            briefing=event.briefing,
             depends_on=event.subtask.depends_on,
             success_criteria=event.subtask.success_criteria,
         )

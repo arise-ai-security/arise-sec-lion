@@ -120,14 +120,13 @@ def execution_service(mock_event_store, mock_llm_port, mock_worker_port, limits_
         child_factory=child_factory,
     )
 
-    # Mock sibling view to return empty view
-    from core.domain.values.context import SiblingView
+    # Mock sibling view to return empty handoff
+    from core.domain.values.node_message import Handoff
 
     sibling_view_mock = AsyncMock()
-    sibling_view_mock.build_view.return_value = SiblingView(
-        current_agent_id="test",
+    sibling_view_mock.build_view.return_value = Handoff(
         parent_task=None,
-        sibling_tasks=(),
+        siblings=(),
         shared_decisions=(),
     )
 

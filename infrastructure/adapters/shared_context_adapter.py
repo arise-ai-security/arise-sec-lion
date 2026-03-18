@@ -1,4 +1,4 @@
-"""PostgreSQL adapter for SharedExecutionContext persistence.
+"""PostgreSQL adapter for SharedStore persistence.
 
 Uses the same event store as AgentSession for consistency.
 Events are keyed by a derived aggregate_id (from root_id) to avoid PK collision.
@@ -12,7 +12,7 @@ from uuid import UUID
 from core.domain.shared_context import (
     Artifact,
     Decision,
-    SharedExecutionContext,
+    SharedStore,
     shared_context_aggregate_id,
 )
 from core.ports.runtime_ports import SharedContextPort
@@ -43,7 +43,7 @@ class PostgresSharedContextAdapter(SharedContextPort):
         root_id: UUID,
         initial_budget_usd: float = 0.0,
         config: dict | None = None,
-    ) -> SharedExecutionContext:
+    ) -> SharedStore:
         """Get existing context or create new one.
 
         Args:
@@ -52,36 +52,36 @@ class PostgresSharedContextAdapter(SharedContextPort):
             config: Configuration for new context
 
         Returns:
-            Existing or newly created SharedExecutionContext
+            Existing or newly created SharedStore
         """
         aggregate_id = shared_context_aggregate_id(root_id)
         events = await self._event_store.get_events(aggregate_id)
         if events:
-            return SharedExecutionContext.load_from_history(events)
-        return SharedExecutionContext.create(
+            return SharedStore.load_from_history(events)
+        return SharedStore.create(
             root_id=root_id,
             initial_budget_usd=initial_budget_usd,
             config=config,
         )
 
-    async def get(self, root_id: UUID) -> SharedExecutionContext | None:
+    async def get(self, root_id: UUID) -> SharedStore | None:
         """Get shared context by root ID.
 
         Args:
             root_id: Root agent ID
 
         Returns:
-            SharedExecutionContext if exists, None otherwise
+            SharedStore if exists, None otherwise
         """
         aggregate_id = shared_context_aggregate_id(root_id)
         events = await self._event_store.get_events(aggregate_id)
         if not events:
             return None
-        return SharedExecutionContext.load_from_history(events)
+        return SharedStore.load_from_history(events)
 
     async def save(
         self,
-        context: SharedExecutionContext,
+        context: SharedStore,
         expected_version: int,
     ) -> None:
         """Save shared context with OCC.

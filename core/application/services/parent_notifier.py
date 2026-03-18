@@ -75,13 +75,13 @@ class ParentNotificationService:
 
         parent_version = parent.version
 
-        # Build structured task outcome
-        task_outcome = child.build_task_outcome()
+        # Build structured report
+        report = child.build_report()
 
         parent.handle_child_update(
             child_id=child.agent_id,
             result=child.result or "",
-            task_outcome=task_outcome,
+            report=report,
         )
 
         await self._repository.persist_events(

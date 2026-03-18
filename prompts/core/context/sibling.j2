@@ -7,20 +7,18 @@ Parent Task: {{ parent_task }}
 </parent-context>
 {% endif %}
 
-{% if sibling_tasks %}
+{% if siblings %}
 <sibling-tasks>
 You are one of {{ total_siblings }} sibling worker(s). {{ completed_count }} completed, {{ in_progress_count }} in progress.
 Workers execute left-to-right. Earlier workers' results are available to you.
 
-{% for sibling in sibling_tasks %}
-{% if sibling.agent_id != current_agent_id %}
+{% for sibling in siblings %}
 <task index="{{ sibling.sibling_index + 1 }}" status="{{ sibling.status }}">
   <description>{{ sibling.task_summary }}</description>
 {% if sibling.status == 'completed' and sibling.result_summary %}
   <result>{{ sibling.result_summary }}</result>
 {% endif %}
 </task>
-{% endif %}
 {% endfor %}
 </sibling-tasks>
 {% endif %}

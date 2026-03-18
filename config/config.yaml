@@ -15,8 +15,8 @@ manager:
   max_tokens: 4000  # Needs enough tokens for subtask JSON arrays
 
 worker:
-  model: claude-sonnet-4-20250514
-  tool: claude_code
+  model: openai/gpt-4o
+  tool: openhands
   timeout: 120
 
 orchestration:
@@ -24,12 +24,12 @@ orchestration:
   poll_interval: 0.5  # seconds between orchestration loop iterations
 
   limits:
-    max_depth: 4               # Force workers at depth 4
-    max_children_per_node: 8   # Allow enough subtasks for validation workers
-    max_total_agents: 50       # Safety limit on total agents
-    max_concurrent_workers: -1 # -1 = unlimited
+    max_depth: 3               # BOSS(0) → children(1) → grandchildren(2) → forced-workers(3)
+    max_children_per_node: 5   # SEC-bench manager templates instruct LLM to produce 4-5 subtasks
+    max_total_agents: 25       # Safety cap for demo run (accommodates deeper trees)
+    max_concurrent_workers: 1  # Sequential execution so sibling context is populated
     llm_rate_limit_rpm: -1     # -1 = unlimited
-    max_concurrent_llm_calls: 10  # Concurrent LLM API calls (-1 = unlimited)
+    max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
 
 output:

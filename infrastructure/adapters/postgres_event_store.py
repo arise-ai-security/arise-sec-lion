@@ -11,20 +11,16 @@ from core.domain.events.events import (
     AgentExecutionFinished,
     AgentExecutionStarted,
     ArtifactStored,
-    BudgetConsumed,
-    BudgetExceeded,
     ChildCompleted,
     ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
-    ConfigOverrideSet,
     DecisionRecorded,
     DomainEvent,
     LimitEnforced,
     OperationFinished,
     OperationStarted,
-    ProgressUpdated,
     PromptSent,
     RunCompleted,
     RunStarted,
@@ -74,11 +70,6 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "SharedContextCreated": SharedContextCreated,
     "ArtifactStored": ArtifactStored,
     "DecisionRecorded": DecisionRecorded,
-    "ProgressUpdated": ProgressUpdated,
-    "ConfigOverrideSet": ConfigOverrideSet,
-    # Budget events (part of shared context)
-    "BudgetConsumed": BudgetConsumed,
-    "BudgetExceeded": BudgetExceeded,
 }
 
 

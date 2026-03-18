@@ -39,7 +39,7 @@ class AgentListProjection:
         if not events:
             return None
 
-        # Skip non-agent aggregates (e.g., SharedExecutionContext)
+        # Skip non-agent aggregates (e.g., SharedStore)
         first_event = events[0]
         if not isinstance(first_event, AgentCreated):
             return None

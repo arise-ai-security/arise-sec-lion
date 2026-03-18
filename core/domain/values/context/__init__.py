@@ -1,36 +1,35 @@
 """Context value objects for inter-agent communication.
 
-Organized by data flow direction:
-- parent_to_child: Parent → Child (spawn-time payload)
-- child_to_parent: Child → Parent (task results)
-- sibling_to_sibling: Child ↔ Child (worker coordination)
-- limits: Execution constraints (hierarchy limits)
+Canonical types now live in ``core.domain.values.node_message`` and
+``core.domain.values.limits``.  This package re-exports them so existing
+imports continue to work.
 """
 
-from core.domain.values.context.child_to_parent import TaskOutcome
-from core.domain.values.context.limits import HierarchyLimits
-from core.domain.values.context.parent_to_child import (
-    AncestorSummary,
-    SpawnPayload,
-    build_spawn_payload,
-)
-from core.domain.values.context.sibling_to_sibling import (
+from core.domain.values.limits import HierarchyLimits
+from core.domain.values.node_message import (
+    Ancestor,
+    Briefing,
+    Handoff,
+    NodeMessage,
+    PeerStatus,
+    Report,
     SharedDecision,
-    SiblingStatus,
-    SiblingView,
+    build_briefing,
 )
 
 __all__ = [
-    # Parent → Child
-    "AncestorSummary",
-    "SpawnPayload",
-    "build_spawn_payload",
-    # Child → Parent
-    "TaskOutcome",
-    # Sibling ↔ Sibling
+    # Down (parent → child)
+    "Ancestor",
+    "Briefing",
+    "build_briefing",
+    # Up (child → parent)
+    "Report",
+    # Lateral (sibling ↔ sibling)
+    "Handoff",
+    "PeerStatus",
     "SharedDecision",
-    "SiblingStatus",
-    "SiblingView",
+    # Union
+    "NodeMessage",
     # Limits
     "HierarchyLimits",
 ]

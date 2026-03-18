@@ -12,7 +12,8 @@ from core.domain.values.enums import AgentRole
 from core.application.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
-    from core.domain.values.context import HierarchyLimits, SpawnPayload
+    from core.domain.values.limits import HierarchyLimits
+    from core.domain.values.node_message import Briefing
     from core.domain.values.cve_instance import CVEInstance
 
 _CVE_DISPLAY_FIELDS = (
@@ -288,7 +289,7 @@ class PromptBuilder:
         agent_role: AgentRole = AgentRole.MANAGER,
         parent_task: str | None = None,
         cve_instance: "CVEInstance | None" = None,
-        spawn_payload: "SpawnPayload | None" = None,
+        briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition.
@@ -299,7 +300,7 @@ class PromptBuilder:
             agent_role: Agent role (should be MANAGER).
             parent_task: Parent task description.
             cve_instance: CVE instance for benchmark runs.
-            spawn_payload: Spawn payload for hierarchy info.
+            briefing: Briefing for hierarchy info.
             hierarchy_limits: Hierarchy limits with depth/children constraints.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
@@ -309,7 +310,7 @@ class PromptBuilder:
             agent_role=agent_role,
             default_tool=self.default_tool,
             parent_task=parent_task,
-            spawn_payload=spawn_payload,
+            briefing=briefing,
             hierarchy_limits=hierarchy_limits,
             cve_instance=cve_instance,
         )
@@ -385,19 +386,19 @@ class PromptBuilder:
     def build_worker_prompt(
         self,
         task_description: str,
-        sibling_view: Any = None,
+        handoff: Any = None,
         workspace_context: str | None = None,
         cve_instance: "CVEInstance | None" = None,
-        spawn_payload: "SpawnPayload | None" = None,
+        briefing: "Briefing | None" = None,
     ) -> str:
         """Build prompt for WORKER agent task execution.
 
         Args:
             task_description: The task to execute.
-            sibling_view: View of sibling workers (completed tasks).
+            handoff: Handoff view of sibling workers (completed tasks).
             workspace_context: Files in the workspace.
             cve_instance: CVE instance for benchmark runs.
-            spawn_payload: Spawn payload for hierarchy info.
+            briefing: Briefing for hierarchy info.
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -406,8 +407,8 @@ class PromptBuilder:
             agent_role=AgentRole.WORKER,
             default_tool=self.default_tool,
             cve_instance=cve_instance,
-            spawn_payload=spawn_payload,
-            sibling_view=sibling_view,
+            briefing=briefing,
+            handoff=handoff,
             workspace_context=workspace_context,
         )
         custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
@@ -415,11 +416,11 @@ class PromptBuilder:
             return custom_prompt
 
         # Default generic prompt
-        sibling_ctx = sibling_view.to_template_dict() if sibling_view else {}
+        sibling_ctx = handoff.to_template_dict() if handoff else {}
 
         return (
             self.chain()
-            .render_if(sibling_view, "core/context/sibling.j2", **sibling_ctx)
+            .render_if(handoff, "core/context/sibling.j2", **sibling_ctx)
             .render("core/roles/worker.j2")
             .with_user_prompt(self._user_prompt)
             .with_cve_display(self._cve_instance)

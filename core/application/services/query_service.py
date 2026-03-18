@@ -20,7 +20,7 @@ from core.domain.events.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.values.context import SharedDecision, SiblingStatus, SiblingView
+from core.domain.values.node_message import Handoff, PeerStatus, SharedDecision
 
 if TYPE_CHECKING:
     from core.application.services.agent_repository import AgentRepository
@@ -560,16 +560,15 @@ class AgentQueryService:
         agent_id: UUID,
         parent_id: UUID | None,
         root_id: UUID,
-    ) -> SiblingView:
-        """Build complete sibling view for a worker."""
+    ) -> Handoff:
+        """Build complete handoff view for a worker."""
         parent_task = await self._get_parent_task(parent_id)
         sibling_statuses = await self._get_sibling_statuses(agent_id, parent_id)
         shared_decisions = await self._get_shared_decisions(root_id)
 
-        return SiblingView(
-            current_agent_id=str(agent_id),
+        return Handoff(
             parent_task=parent_task,
-            sibling_tasks=tuple(sibling_statuses),
+            siblings=tuple(sibling_statuses),
             shared_decisions=tuple(shared_decisions),
         )
 
@@ -581,13 +580,13 @@ class AgentQueryService:
 
     async def _get_sibling_statuses(
         self, agent_id: UUID, parent_id: UUID | None
-    ) -> list[SiblingStatus]:
+    ) -> list[PeerStatus]:
         if parent_id is None:
             return []
 
         children_events = await self._repository.get_children_events_grouped(parent_id)
 
-        siblings: list[SiblingStatus] = []
+        siblings: list[PeerStatus] = []
         for agg_id, events in children_events.items():
             if agg_id == agent_id:
                 continue
@@ -603,7 +602,7 @@ class AgentQueryService:
                     result_summary = agent.result[:500]
 
             siblings.append(
-                SiblingStatus(
+                PeerStatus(
                     agent_id=str(agg_id),
                     sibling_index=summary.sibling_index,
                     status=summary.status,

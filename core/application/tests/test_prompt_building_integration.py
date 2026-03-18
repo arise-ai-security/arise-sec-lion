@@ -11,10 +11,10 @@ import pytest
 
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_parser import PromptParser
-from core.domain.values.context.sibling_to_sibling import (
+from core.domain.values.node_message import (
     SharedDecision,
-    SiblingStatus,
-    SiblingView,
+    PeerStatus,
+    Handoff,
 )
 from core.domain.values.prompt_trace import SectionProvenance
 
@@ -180,16 +180,15 @@ class TestProvenanceClassificationWithRealPrompts:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that parent context sections get PARENT provenance."""
-        sibling_view = SiblingView(
-            current_agent_id=str(uuid4()),
+        handoff = Handoff(
             parent_task="Parent's important task",
-            sibling_tasks=(),
+            siblings=(),
             shared_decisions=(),
         )
 
         prompt = builder.build_worker_prompt(
             task_description="Child task",
-            sibling_view=sibling_view,
+            handoff=handoff,
         )
         sections = parser.parse(prompt)
 
@@ -201,11 +200,10 @@ class TestProvenanceClassificationWithRealPrompts:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that sibling context sections get SIBLING provenance."""
-        sibling_view = SiblingView(
-            current_agent_id=str(uuid4()),
+        handoff = Handoff(
             parent_task="Parent task",
-            sibling_tasks=(
-                SiblingStatus(
+            siblings=(
+                PeerStatus(
                     agent_id=str(uuid4()),
                     sibling_index=0,
                     status="completed",
@@ -218,7 +216,7 @@ class TestProvenanceClassificationWithRealPrompts:
 
         prompt = builder.build_worker_prompt(
             task_description="My task",
-            sibling_view=sibling_view,
+            handoff=handoff,
         )
         sections = parser.parse(prompt)
 
@@ -230,10 +228,9 @@ class TestProvenanceClassificationWithRealPrompts:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that shared context sections get SHARED provenance."""
-        sibling_view = SiblingView(
-            current_agent_id=str(uuid4()),
+        handoff = Handoff(
             parent_task="Task",
-            sibling_tasks=(),
+            siblings=(),
             shared_decisions=(
                 SharedDecision(
                     key="test_key",
@@ -245,7 +242,7 @@ class TestProvenanceClassificationWithRealPrompts:
 
         prompt = builder.build_worker_prompt(
             task_description="Task",
-            sibling_view=sibling_view,
+            handoff=handoff,
         )
         sections = parser.parse(prompt)
 

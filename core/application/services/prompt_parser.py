@@ -37,19 +37,20 @@ class PromptParser:
         "success_criteria": SectionProvenance.TEMPLATE,
         "instructions": SectionProvenance.TEMPLATE,
         "worker_instructions": SectionProvenance.TEMPLATE,
-        # Parent sections (from SpawnPayload)
+        # Parent sections (from Briefing)
+        "briefing": SectionProvenance.PARENT,
         "parent-context": SectionProvenance.PARENT,
         "parent_context": SectionProvenance.PARENT,
         "ancestry": SectionProvenance.PARENT,
         "thinker_justification": SectionProvenance.PARENT,
-        # Sibling sections (from SiblingViewBuilder)
+        # Sibling sections (from Handoff)
         "sibling-tasks": SectionProvenance.SIBLING,
         "sibling_context": SectionProvenance.SIBLING,
         "coworker_knowledge": SectionProvenance.SIBLING,
-        # Children sections (from ChildOutcomes)
+        # Children sections (from Report)
         "child-outcomes": SectionProvenance.CHILDREN,
         "children": SectionProvenance.CHILDREN,
-        # Shared sections (from SharedExecutionContext)
+        # Shared sections (from SharedStore)
         "global-context": SectionProvenance.SHARED,
         "shared-decisions": SectionProvenance.SHARED,
         "shared_decisions": SectionProvenance.SHARED,

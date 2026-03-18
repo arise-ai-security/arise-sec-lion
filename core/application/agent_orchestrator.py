@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
     from core.domain.aggregates.agent_session import AgentSession
-    from core.domain.values.context import SiblingView
+    from core.domain.values.node_message import Handoff
     from core.ports.runtime_ports import LLMPort
     from core.ports.runtime_ports import RealtimeCallbackPort
     from core.ports.runtime_ports import WorkerToolPort
@@ -147,7 +147,7 @@ class AgentOrchestrator:
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
                     cve_instance=self._get_cve_instance(agent),
-                    spawn_payload=agent.spawn_payload,
+                    briefing=agent.briefing,
                     hierarchy_limits=agent.hierarchy_limits,
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
@@ -214,11 +214,11 @@ class AgentOrchestrator:
             )
 
             # Spawn children
-            spawn_payload = agent.get_spawn_payload_for_child()
+            briefing = agent.build_briefing_for_child()
             agent.apply_subtasks_and_spawn_children(
                 subtasks=subtasks,
                 child_role=child_role,
-                spawn_payload=spawn_payload,
+                briefing=briefing,
             )
 
         finally:
@@ -230,7 +230,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         working_directory: str | None = None,
         workspace_context: str | None = None,
-        sibling_view: "SiblingView | None" = None,
+        handoff: "Handoff | None" = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -252,10 +252,10 @@ class AgentOrchestrator:
             # Build worker prompt
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,
-                sibling_view=sibling_view,
+                handoff=handoff,
                 workspace_context=workspace_context,
                 cve_instance=self._get_cve_instance(agent),
-                spawn_payload=agent.spawn_payload,
+                briefing=agent.briefing,
             )
             agent.emit_prompt_sent(
                 prompt=prompt, prompt_type=op, target=tool_name

@@ -12,7 +12,6 @@ from pydantic import ValidationError
 from core.domain.events.events import (
     AgentCreated,
     ArtifactStored,
-    BudgetConsumed,
     ChildCompleted,
     ChildSpawned,
     SharedContextCreated,
@@ -88,10 +87,10 @@ class TestEventImmutability:
         assert event.constraints["rules"] == ["no_sql", "use_orm"]
 
     def test_child_spawned_dicts_are_deep_copied(self):
-        """Both child_config and parent_context should be deep copied."""
+        """Both child_config and briefing should be deep copied."""
         # Given
         child_config = {"tool": "claude", "settings": {"verbose": True}}
-        parent_context = {"task": "main", "depth": 1}
+        briefing = {"parent_task": "main", "parent_role": "boss"}
         parent_id = uuid4()
         child_id = uuid4()
 
@@ -103,22 +102,22 @@ class TestEventImmutability:
             child_role="PENDING",
             subtask=Subtask(description="Sub task", config={}),
             child_config=child_config,
-            parent_context=parent_context,
+            briefing=briefing,
         )
 
         # Then
         child_config["tool"] = "openhands"
         child_config["settings"]["verbose"] = False
-        parent_context["task"] = "changed"
+        briefing["parent_task"] = "changed"
 
         assert event.child_config["tool"] == "claude"
         assert event.child_config["settings"]["verbose"] is True
-        assert event.parent_context["task"] == "main"
+        assert event.briefing["parent_task"] == "main"
 
-    def test_child_completed_result_is_deep_copied(self):
-        """child_result dict should be deep copied."""
+    def test_child_completed_report_is_deep_copied(self):
+        """report dict should be deep copied."""
         # Given
-        child_result = {"status": "success", "files": ["a.py", "b.py"]}
+        report = {"direction": "up", "result": "success", "artifacts": ["a.py", "b.py"]}
         parent_id = uuid4()
         child_id = uuid4()
 
@@ -128,15 +127,15 @@ class TestEventImmutability:
             sequence_number=1,
             child_id=child_id,
             result="Done",
-            child_result=child_result,
+            report=report,
         )
 
         # Then
-        child_result["status"] = "failed"
-        child_result["files"].append("c.py")
+        report["result"] = "failed"
+        report["artifacts"].append("c.py")
 
-        assert event.child_result["status"] == "success"
-        assert event.child_result["files"] == ["a.py", "b.py"]
+        assert event.report["result"] == "success"
+        assert event.report["artifacts"] == ["a.py", "b.py"]
 
     def test_shared_context_created_config_is_deep_copied(self):
         """SharedContextCreated config should be deep copied."""
@@ -181,30 +180,6 @@ class TestEventImmutability:
 
         assert event.metadata["size"] == 1024
         assert event.metadata["tags"] == ["code", "python"]
-
-    def test_budget_consumed_tokens_is_deep_copied(self):
-        """BudgetConsumed tokens dict should be deep copied."""
-        # Given
-        tokens = {"prompt": 100, "completion": 50}
-        agent_id = uuid4()
-
-        # When
-        event = BudgetConsumed(
-            aggregate_id=agent_id,
-            sequence_number=1,
-            consumed_by=agent_id,
-            amount_usd=0.01,
-            operation="llm_call",
-            tokens=tokens,
-        )
-
-        # Then
-        tokens["prompt"] = 999
-        tokens["completion"] = 888
-
-        assert event.tokens["prompt"] == 100
-        assert event.tokens["completion"] == 50
-
 
 class TestFrozenEventAttributeAssignment:
     """Tests that frozen events reject attribute assignment."""
