@@ -1,428 +1,75 @@
 # Architecture Concepts
 
-This document explains the core architectural patterns used in Arise Sec Lion. These patterns work together to create a system that is maintainable, testable, and resilient to concurrent operations.
-
----
-
 ## Event Sourcing
 
-**What it is:** Instead of storing current state, we store a sequence of events that represent everything that happened. State is derived by replaying these events.
+State is derived by replaying immutable events, never stored directly.
 
-**How we use it:**
 ```
 Traditional: UPDATE agents SET status = 'completed' WHERE id = 123
-Event Sourcing: APPEND events (AgentCreated, TaskAssigned, WorkCompleted)
+This system: APPEND events (AgentCreated, TaskAssigned, WorkCompleted)
 ```
 
-**In this codebase:**
-- `AgentSession` (aggregate) has no persistent fields—state is rebuilt from events
-- `AgentSession.load_from_history(events)` replays events to reconstruct state
-- Events are immutable Pydantic models stored in `core/domain/events/events.py`
+- `AgentSession.load_from_history(events)` replays to reconstruct state
+- ~30 frozen `DomainEvent` Pydantic models in `core/domain/events/events.py`
 - PostgreSQL `events` table is append-only
-
-**Benefits:**
-- Complete audit trail of everything that happened
-- Can replay to any point in time
-- Debug by examining event history
-- Natural fit for distributed systems
-
-**Key files:**
-- `core/domain/events/events.py` — All domain events
-- `core/domain/aggregates/agent_session.py` — `load_from_history()` replays events
-- `infrastructure/adapters/postgres_event_store.py` — Persistence
-
----
-
-## CQRS (Command Query Responsibility Segregation)
-
-**What it is:** Separate the write model (commands that change state) from the read model (queries that return data). They can use different data structures optimized for their purpose.
-
-```
-┌─────────────┐         ┌─────────────────────────────┐
-│   Command   │────────▶│  Domain Model (Write Side)  │
-│  "Run task" │         │  AgentSession + Events      │
-└─────────────┘         └──────────────┬──────────────┘
-                                       │ events
-                                       ▼
-                        ┌─────────────────────────────┐
-                        │      Event Store            │
-                        │      (PostgreSQL)           │
-                        └──────────────┬──────────────┘
-                                       │ events
-                                       ▼
-┌─────────────┐         ┌─────────────────────────────┐
-│    Query    │◀────────│  Read Model (Query Side)    │
-│  "Get summary" │      │  Projections                │
-└─────────────┘         └─────────────────────────────┘
-```
-
-**In this codebase:**
-- **Write side:** `AgentSession` aggregate handles commands, emits events
-- **Read side:** `core/query/projections/` builds read-optimized views from events
-- **Projections:** Transform events into summaries, statistics, formatted output
-
-**Example projection flow:**
-```python
-# Write: Command creates events
-agent.assign_task("Create fizzbuzz")  # Emits TaskAssigned event
-
-# Read: Query builds projection from events
-summary = AgentSummaryService(event_store).build(agent_id)
-# Returns: {role, status, subtasks, result, ...}
-```
-
-**Key files:**
-- `core/application/execution_service.py` — Command side (write)
-- `core/query/projections/` — Query side (read)
-- `query/api/routes/` — REST endpoints use projections
-
----
+- Complete audit trail, time-travel debugging
 
 ## OCC (Optimistic Concurrency Control)
 
-**What it is:** Instead of locking rows before updates, we assume no conflicts and check at write time. If another process modified the data, we retry.
+No locks — assume no conflict, check at write time:
 
 ```
 Process A: Read agent (version=5)
 Process B: Read agent (version=5)
-Process B: Write event (expected_version=5) ✓ → version becomes 6
-Process A: Write event (expected_version=5) ✗ → ConcurrencyError (actual=6)
-Process A: Reload, retry with version=6
+Process B: Write event (expected_version=5) ✓ → version=6
+Process A: Write event (expected_version=5) ✗ → ConcurrencyError → reload and retry
 ```
 
-**In this codebase:**
-- Every `append()` call includes `expected_version`
-- PostgreSQL checks version matches before insert
-- On conflict, `ConcurrencyError` is raised and operation retries
+`AgentExecutionService.run_agent_step()` retries on `ConcurrencyError` automatically.
 
-**Implementation:**
-```python
-# execution_service.py:178
-async def run_agent_step(self, agent_id: UUID) -> None:
-    while retry_count < self._config.max_retries:
-        try:
-            agent = await self._repository.load(agent_id)
-            current_version = agent.version  # e.g., 5
+## CQRS
 
-            await self._dispatch_agent_action(agent)
+Write side (commands) and read side (queries) use different models:
 
-            # Append with version check
-            for event in agent.events:
-                await self._event_store.append(event, expected_version=current_version)
-                current_version += 1
-            return
-
-        except ConcurrencyError:
-            retry_count += 1  # Reload and retry
-```
-
-**Key files:**
-- `core/ports/event_store_port.py` — `append(event, expected_version)`
-- `infrastructure/adapters/postgres_event_store.py` — Version check in SQL
-- `core/domain/exceptions.py` — `ConcurrencyError`
-
----
+- **Write**: `AgentSession` aggregate handles commands, emits events
+- **Read**: `core/query/projections/` builds optimized views from events
+- Projections: Summary, AgentList, Cost, AgentSummary
 
 ## Hexagonal Architecture (Ports & Adapters)
 
-**What it is:** The domain core is isolated from external systems (databases, APIs, UIs) through abstract interfaces called "ports". Concrete implementations called "adapters" plug into these ports.
-
 ```
-                    ┌─────────────────────────────────┐
-                    │         Presentation            │
-                    │      (CLI, REST API, Web)       │
-                    └───────────────┬─────────────────┘
-                                    │
-                    ┌───────────────▼─────────────────┐
-                    │          Application            │
-                    │    (AgentExecutionService)      │
-                    └───────────────┬─────────────────┘
-                                    │
-        ┌───────────────────────────┼───────────────────────────┐
-        │                           │                           │
-        ▼                           ▼                           ▼
-   ┌─────────┐                ┌─────────┐                ┌─────────┐
-   │  Port   │                │  Port   │                │  Port   │
-   │EventStore│               │   LLM   │                │ Worker  │
-   └────┬────┘                └────┬────┘                └────┬────┘
-        │                          │                          │
-        ▼                          ▼                          ▼
-   ┌─────────┐                ┌─────────┐                ┌─────────┐
-   │ Adapter │                │ Adapter │                │ Adapter │
-   │Postgres │                │ LiteLLM │                │ClaudeCode│
-   └─────────┘                └─────────┘                └─────────┘
+                  Presentation (CLI, API)
+                         │
+                    Application
+                         │
+              ┌──────────┼──────────┐
+              ▼          ▼          ▼
+          EventStore   LLM      Worker     ← Ports (core/ports/)
+              │          │          │
+              ▼          ▼          ▼
+          Postgres    LiteLLM   Claude SDK  ← Adapters (infrastructure/)
 ```
 
-**Critical rule:** `core/` never imports from `infrastructure/`
-
-```
-✓ infrastructure/adapters/postgres_event_store.py imports core/ports/event_store_port.py
-✗ core/domain/model.py imports infrastructure/adapters/...  (FORBIDDEN)
-```
-
-**In this codebase:**
-- **Ports** (interfaces): `core/ports/` — `EventStorePort`, `LLMPort`, `WorkerToolPort`
-- **Adapters** (implementations): `infrastructure/adapters/` — PostgreSQL, LiteLLM, Claude Code
-- **Bootstrap** wires adapters to ports at startup
-
-**Benefits:**
-- Swap PostgreSQL for MongoDB without touching domain code
-- Test domain logic with in-memory fakes
-- Each adapter is independently testable
-
-**Key files:**
-- `core/ports/event_store_port.py` — Abstract interface
-- `core/ports/llm_port.py` — LLM interface
-- `core/ports/worker_port.py` — Worker tool interface
-- `infrastructure/adapters/` — Concrete implementations
-- `bootstrap/` — Wires everything together
-
----
+**Critical rule**: `core/` never imports from `infrastructure/`. Bootstrap wires adapters to ports at startup.
 
 ## DDD (Domain-Driven Design)
 
-**What it is:** Structure code around the business domain, using a ubiquitous language shared between developers and domain experts. Key concepts include aggregates, entities, value objects, and domain events.
+- **Aggregate**: `AgentSession` — single unit for state changes, event-sourced
+- **Domain Events**: Immutable facts, past tense (`AgentCreated`, `WorkCompleted`)
+- **Value Objects**: Frozen Pydantic models (`NodeMessage`, `HierarchyLimits`, `Subtask`)
+- **Ubiquitous Language**: BOSS, MANAGER, WORKER, PENDING, Subtask, Briefing, Report, Handoff
 
-**Key DDD concepts in this codebase:**
+## SharedStore
 
-### Aggregate
-A cluster of domain objects treated as a single unit for data changes. Has a root entity that controls all access.
+`core/domain/shared_context.py` — event-sourced cross-agent state per execution hierarchy (keyed by `root_id`):
 
-```python
-# AgentSession is our aggregate root
-class AgentSession:
-    """Event-sourced aggregate for agent sessions."""
+- `ArtifactStore` — shared outputs between agents
+- `DecisionLog` — architectural/design decisions
 
-    def assign_task(self, task_description: str) -> None:
-        """Command method - emits TaskAssigned event."""
-
-    def handle_child_update(self, child_id, result) -> None:
-        """Command method - emits ChildCompleted event."""
-```
-
-### Domain Events
-Immutable facts about something that happened. Named in past tense.
-
-```python
-# core/domain/events.py
-class AgentCreated(DomainEvent): ...      # Agent was created
-class TaskAssigned(DomainEvent): ...      # Task was assigned
-class WorkCompleted(DomainEvent): ...     # Work was completed
-class ChildSpawned(DomainEvent): ...      # Child agent was spawned
-```
-
-### Value Objects
-Immutable objects defined by their attributes, not identity. Now using Pydantic models:
-
-```python
-# core/domain/values/context/parent_to_child.py
-class SpawnPayload(BaseModel):
-    """Immutable context passed from parent to child."""
-    model_config = ConfigDict(frozen=True)
-    ancestry: tuple[AncestorSummary, ...]
-    decisions: tuple[str, ...]
-    artifacts: tuple[str, ...]
-```
-
-### Ubiquitous Language
-Terms used consistently in code and conversation:
-
-| Term | Meaning |
-|------|---------|
-| **BOSS** | Root agent that receives the initial task |
-| **MANAGER** | Agent that decomposes complex tasks |
-| **WORKER** | Agent that executes simple tasks |
-| **PENDING** | Agent awaiting complexity evaluation |
-| **Subtask** | Decomposed piece of a larger task |
-
-**Key files:**
-- `core/domain/aggregates/agent_session.py` — `AgentSession` aggregate
-- `core/domain/events/events.py` — Domain events
-- `core/domain/values/context/` — Context value objects (SpawnPayload, TaskOutcome, SiblingView)
-- `core/domain/values/enums.py` — `AgentRole`, `AgentStatus`
-
----
-
-## How They Work Together
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              User: "Run task"                                 │
-└───────────────────────────────────────┬──────────────────────────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  CLI (Presentation) calls AgentExecutionService (Application)                │
-│  Hexagonal: UI layer talks to application through defined interface          │
-└───────────────────────────────────────┬──────────────────────────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  AgentExecutionService uses Ports (EventStorePort, LLMPort)                  │
-│  Hexagonal: Application depends on abstractions, not implementations         │
-└───────────────────────────────────────┬──────────────────────────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  AgentSession (DDD Aggregate) processes command                              │
-│  DDD: Business logic lives in the aggregate                                  │
-│                                                                              │
-│  agent.assign_task("Create fizzbuzz")                                        │
-│    → Emits TaskAssigned event                                                │
-│  Event Sourcing: State change = new event                                    │
-└───────────────────────────────────────┬──────────────────────────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  event_store.append(event, expected_version=5)                               │
-│  OCC: Check version before write, retry on conflict                         │
-│  Event Sourcing: Append-only storage                                         │
-└───────────────────────────────────────┬──────────────────────────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  Query: ProjectionPipeline builds summary from events                        │
-│  CQRS: Read model is separate, built from events                             │
-│  Event Sourcing: Can rebuild any view by replaying events                    │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Shared Execution Context
-
-**What it is:** A centralized, event-sourced store for cross-agent state sharing within a single execution run. One SharedExecutionContext exists per hierarchy (keyed by root_id).
-
-**Problem it solves:** In a recursive multi-agent system, agents need to share:
-- Artifacts (files, code, analysis results)
-- Decisions (architectural choices, tool selections)
-- Progress checkpoints
-- Budget tracking
-
-**In this codebase:**
-
-```
-SharedExecutionContext (Facade)
-├── ArtifactStore      - Shared outputs between agents
-├── DecisionLog        - Architectural/design decisions
-├── ProgressTracker    - Progress checkpoints
-└── BudgetAccount      - Cost tracking with enforcement
-```
-
-**Usage pattern:**
-```python
-# Get or create context for this run
-context = await shared_context_port.get_or_create(root_id)
-
-# Record a decision
-context.record_decision(
-    decision_key="target_framework",
-    decision_value="django",
-    rationale="Based on requirements.txt analysis",
-    decided_by=agent_id,
-)
-
-# Store an artifact
-context.store_artifact(
-    key="exploit_poc",
-    content_type="text/python",
-    content="import requests...",
-    stored_by=agent_id,
-)
-
-# Save with OCC
-await shared_context_port.save(context, expected_version=context.version)
-```
-
-**Key files:**
-- `core/domain/shared_context.py` — Domain model
-- `core/ports/shared_context_port.py` — Port interface
-- `infrastructure/adapters/shared_context_adapter.py` — PostgreSQL adapter
-
-See [`context-passing-mechanism.md`](context-passing-mechanism.md) for detailed documentation.
-
----
+Uses UUID5-derived aggregate_id to avoid collision with AgentSession aggregates.
 
 ## Docker-out-of-Docker (DooD)
 
-**What it is:** A pattern where containers access the host's Docker daemon instead of running their own Docker daemon inside the container. This is achieved by mounting the host's Docker socket.
+Containers access the host's Docker daemon via mounted socket (`/var/run/docker.sock`). SEC-bench workers build/run Docker containers on the host daemon. Simpler and faster than Docker-in-Docker (no `--privileged`, shared layer cache).
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Host Machine                          │
-│  ┌─────────────────┐                                         │
-│  │  Docker Daemon  │◀──────────────────────────┐            │
-│  └────────┬────────┘                           │            │
-│           │                                     │            │
-│           ▼                                     │            │
-│  /var/run/docker.sock                          │            │
-│           │                                     │            │
-│  ┌────────┴────────────────────────────────────┴─────────┐  │
-│  │              Arise Container (app-dev)                 │  │
-│  │                                                        │  │
-│  │   /var/run/docker.sock  ◀── mounted from host         │  │
-│  │           │                                            │  │
-│  │           ▼                                            │  │
-│  │   ┌──────────────────┐                                 │  │
-│  │   │  Worker Agent    │──▶ docker build/run             │  │
-│  │   │  (SEC-bench)     │    (uses host's Docker)         │  │
-│  │   └──────────────────┘                                 │  │
-│  └────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Why not Docker-in-Docker (DinD)?**
-- DinD runs a full Docker daemon inside the container (requires `--privileged`)
-- DinD has storage driver conflicts, slower builds, and cache isolation issues
-- DooD reuses host's Docker daemon, build cache, and images
-
-**How we use it:**
-
-SEC-bench workers need to build and run Docker containers for vulnerability reproduction:
-1. Build target project with specific commit/sanitizer
-2. Run exploit PoC in isolated container
-3. Apply and verify patches
-
-```yaml
-# deployment/docker-compose.yml
-services:
-  app-dev:
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  # Mount host's Docker socket
-    environment:
-      - DOCKER_HOST=unix:///var/run/docker.sock    # Tell Docker client where to connect
-```
-
-**In this codebase:**
-- Worker agents use Claude Code or custom tools to run `docker build` and `docker run`
-- These commands execute on the **host's Docker daemon**, not inside the container
-- Built images and containers appear on the host (visible via `docker ps` on host)
-- Shared output volume (`secbench_output`) stores artifacts
-
-**Security considerations:**
-- Container has **root-equivalent access** to host's Docker daemon
-- Only use in trusted development/CI environments
-- Production deployments should use isolated VMs or remote Docker hosts
-
-**Benefits:**
-- Faster builds (shared layer cache with host)
-- Lower resource usage (no nested daemon)
-- Simpler networking (containers on same Docker network)
-- Access to host's pre-pulled images
-
-**Key configuration:**
-- `deployment/docker-compose.yml` — Socket mount and `DOCKER_HOST` env var
-
----
-
-## Quick Reference
-
-| Pattern | Problem It Solves | Where in Code |
-|---------|-------------------|---------------|
-| Event Sourcing | "What happened?" audit trail, time travel | `core/domain/events/`, `aggregates/` |
-| CQRS | Read vs write optimization | `core/query/projections/` |
-| OCC | Concurrent writes without locks | `event_store.append(expected_version)` |
-| Hexagonal | Swap infrastructure without domain changes | `core/ports/`, `infrastructure/adapters/` |
-| DDD | Business logic clarity, ubiquitous language | `core/domain/` |
-| Shared Context | Cross-agent state sharing | `core/domain/shared_context.py` |
-| DooD | Container Docker access without DinD overhead | `docker-compose.yml` socket mount |
+**Security**: container has root-equivalent access to host's Docker. Only use in trusted environments.
