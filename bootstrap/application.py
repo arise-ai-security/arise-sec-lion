@@ -1,8 +1,8 @@
 """Application Layer - Service Factories."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig
+from config import BossConfig, ManagerConfig, OrchestrationConfig, SecurityConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -18,6 +18,7 @@ from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_strategy import SecBenchPromptStrategy
+from core.application.services.tool_calling_service import ToolCallingService
 
 from .infrastructure import Infrastructure
 from .realtime_adapter import RealtimeCallbackAdapter
@@ -34,6 +35,7 @@ class ApplicationConfig:
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
+    security_config: SecurityConfig = field(default_factory=SecurityConfig)
     progress_callback: ProgressCallback | None = None
 
 
@@ -59,7 +61,12 @@ def get_application(
     )
 
     # Create collaborators (composition root wiring)
-    prompt_builder = PromptBuilder("prompts", config.default_worker_tool)
+    security_tools = config.security_config.tools if config.security_config.enabled else []
+    prompt_builder = PromptBuilder(
+        "prompts",
+        config.default_worker_tool,
+        enabled_security_tools=security_tools,
+    )
     prompt_builder.set_strategy(SecBenchPromptStrategy(prompt_builder.chain))
 
     repository = AgentRepository(
@@ -83,12 +90,19 @@ def get_application(
     event_broadcaster = EventBroadcaster.get_instance()
     realtime_callback = RealtimeCallbackAdapter(event_broadcaster)
 
+    tool_calling_service = ToolCallingService(
+        llm_port=infrastructure.llm_adapter,
+        recon_port=infrastructure.recon_tool,
+        max_iterations=config.system_limits.max_recon_iterations,
+    )
+
     orchestrator = AgentOrchestrator(
         llm_port=infrastructure.llm_adapter,
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
         child_factory=child_factory,
         realtime_callback=realtime_callback,
+        tool_calling_service=tool_calling_service,
     )
 
     parent_notifier = ParentNotificationService(

@@ -1,17 +1,28 @@
 <operation>
-Assess this task. You have two options:
+Assess this task. You have reconnaissance tools available — use them to inspect the
+codebase before deciding.
+
+**Available tools:**
+- `read_file(path)` — read file contents
+- `list_directory(path)` — list directory entries
+- `search_codebase(pattern, path?)` — grep for a regex pattern across source files
+- `find_file(pattern, path?)` — find files matching a glob pattern
+- `get_file_structure(path?, max_depth?)` — tree view of directory structure
+
+**Workflow:** Investigate first, then decide.
+1. Use tools to understand the scope — check file structure, read key files, search for patterns
+2. Based on what you find, choose one of the two options below
 
 **Execute directly** when ALL are true:
 - You know exactly which files to modify and what changes to make
 - You can verify correctness (expected output, test, or behavior)
-- No exploration, research, or design decisions remain
+- No further exploration or design decisions remain
 - A single coding session will complete it
 
 **Decompose** when ANY are true:
-- You'd need to explore the codebase to find the right approach
 - Multiple independent changes across different subsystems
-- Requires decisions that depend on information you don't have
-- The task mixes distinct concerns
+- The task mixes distinct concerns that benefit from parallel work
+- The scope is too large for a single worker session
 {% if at_max_depth %}
 
 **CONSTRAINT: Maximum depth reached.** You MUST execute directly.
@@ -23,9 +34,6 @@ Assess this task. You have two options:
 
 **CONSTRAINT: No agents remaining.** You MUST execute directly.
 {% endif %}
-
-**The test:** If you started coding right now, would you need to stop and investigate?
-YES → Decompose. NO → Execute.
 </operation>
 {% if briefing %}
 

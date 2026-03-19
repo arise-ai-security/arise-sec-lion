@@ -21,6 +21,7 @@ from core.domain.values.enums import AgentRole, AgentStatus
 if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
+    from core.application.services.tool_calling_service import ToolCallingService
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.node_message import Handoff
     from core.ports.runtime_ports import LLMPort
@@ -46,12 +47,14 @@ class AgentOrchestrator:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         realtime_callback: "RealtimeCallbackPort | None" = None,
+        tool_calling_service: "ToolCallingService | None" = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
         self._realtime_callback = realtime_callback
+        self._tool_calling_service = tool_calling_service
 
     async def assess_task(self, agent: "AgentSession") -> None:
         """Assess a PENDING agent: execute directly or decompose.
@@ -78,19 +81,8 @@ class AgentOrchestrator:
             )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-            # Query LLM
-            llm_config = ConfigResolver.resolve(agent.config, operation=op)
-            response = await self._llm_port.query_with_usage(
-                prompt, llm_config.model_dump()
-            )
-            agent.emit_tokens_consumed(
-                model=response.model,
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-                cost_usd=response.cost_usd,
-                operation=op,
-            )
+            # Query LLM (with tool calling if available)
+            response = await self._query_with_recon(agent, prompt, op)
 
             # Parse assessment
             result = parse_assessment_response(response.content)
@@ -192,19 +184,8 @@ class AgentOrchestrator:
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-            # Query LLM
-            llm_config = ConfigResolver.resolve(agent.config, operation=op)
-            response = await self._llm_port.query_with_usage(
-                prompt, llm_config.model_dump()
-            )
-            agent.emit_tokens_consumed(
-                model=response.model,
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-                cost_usd=response.cost_usd,
-                operation=op,
-            )
+            # Query LLM (with tool calling if available)
+            response = await self._query_with_recon(agent, prompt, op)
 
             # Parse subtasks
             try:
@@ -376,12 +357,64 @@ class AgentOrchestrator:
 
         return None
 
+    async def _query_with_recon(
+        self,
+        agent: "AgentSession",
+        prompt: str,
+        operation: str,
+    ) -> "LLMResponse":
+        """Query LLM with optional tool-calling reconnaissance.
+
+        Dispatches to ToolCallingService (if available) or raw LLMPort,
+        emits probe events for any tool calls, and emits TokensConsumed.
+
+        Returns:
+            The final LLMResponse (aggregated across all tool-calling turns).
+        """
+        from core.domain.values.llm_response import LLMResponse
+
+        llm_config = ConfigResolver.resolve(agent.config, operation=operation)
+        config_dict = llm_config.model_dump()
+
+        if self._tool_calling_service is not None:
+            tc_result = await self._tool_calling_service.run_with_tools(
+                prompt, config_dict
+            )
+            response = tc_result.response
+            self._emit_probe_events(agent, tc_result.tool_records)
+        else:
+            response = await self._llm_port.query_with_usage(prompt, config_dict)
+
+        agent.emit_tokens_consumed(
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            cost_usd=response.cost_usd,
+            operation=operation,
+        )
+
+        return response
+
     @staticmethod
     def _get_cve_instance(agent: "AgentSession"):
         """Extract CVE instance from hierarchy limits if available."""
         if agent.hierarchy_limits:
             return agent.hierarchy_limits.cve_instance
         return None
+
+    @staticmethod
+    def _emit_probe_events(
+        agent: "AgentSession",
+        tool_records: list,
+    ) -> None:
+        """Emit ProbeStarted/ProbeCompleted events for each recon tool call."""
+        for record in tool_records:
+            agent.emit_probe_started(probe_type=record.tool_name)
+            agent.emit_probe_completed(
+                probe_type=record.tool_name,
+                result_summary=record.result_summary,
+            )
 
     # -------------------------------------------------------------------------
     # Verification Pipeline

@@ -100,6 +100,7 @@ class OrchestrationConfig(BaseModel):
         llm_rate_limit_rpm: int
         max_concurrent_llm_calls: int = 5
         llm_jitter_max_ms: int = 500
+        max_recon_iterations: int = 10
 
         def is_depth_limited(self) -> bool:
             return self.max_depth > 0
@@ -169,6 +170,10 @@ class SecurityConfig(BaseModel):
     """SEC-bench container settings."""
 
     enabled: bool = True  # Uses worker.timeout for secb commands
+    tools: list[str] = Field(
+        default_factory=lambda: ["valgrind", "klee"],
+        description="Security analysis tools to enable in SEC-bench containers",
+    )
 
 
 class CorsConfig(BaseModel):

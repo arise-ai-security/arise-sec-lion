@@ -4,11 +4,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 from core.ports.event_store_port import EventStorePort
-from core.ports.runtime_ports import LLMPort
+from core.ports.runtime_ports import LLMPort, ReconToolPort
 from core.ports.runtime_ports import SharedContextPort
 from core.ports.runtime_ports import WorkerToolPort
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from infrastructure.adapters.recon_tool_adapter import ReconToolAdapter
 from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
 from infrastructure.adapters.worker import (
     ADKAdapterConfig,
@@ -41,6 +42,7 @@ class Infrastructure:
     llm_adapter: LLMPort
     worker_tool: WorkerToolPort
     shared_context: SharedContextPort
+    recon_tool: ReconToolPort
 
 
 def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
@@ -77,10 +79,12 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     llm_adapter = LiteLLMAdapter()
     worker_tool = _create_worker_adapter(config)
     shared_context = PostgresSharedContextAdapter(event_store)
+    recon_tool = ReconToolAdapter()
 
     return Infrastructure(
         event_store=event_store,
         llm_adapter=llm_adapter,
         worker_tool=worker_tool,
         shared_context=shared_context,
+        recon_tool=recon_tool,
     )

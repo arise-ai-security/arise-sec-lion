@@ -721,6 +721,33 @@ class AgentSession:
         self._changes.append(event)
 
     # -------------------------------------------------------------------------
+    # Probe Events (reconnaissance tool calls)
+    # -------------------------------------------------------------------------
+
+    def emit_probe_started(self, probe_type: str) -> None:
+        """Emit ProbeStarted event for tool-calling observability."""
+        event = ProbeStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            probe_type=probe_type,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_probe_completed(
+        self, probe_type: str, result_summary: str = ""
+    ) -> None:
+        """Emit ProbeCompleted event for tool-calling observability."""
+        event = ProbeCompleted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            probe_type=probe_type,
+            result_summary=result_summary,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    # -------------------------------------------------------------------------
     # Run-Level Timing Events (BOSS only)
     # -------------------------------------------------------------------------
 
