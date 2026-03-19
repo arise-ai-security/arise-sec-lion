@@ -14,9 +14,13 @@ from core.domain.events.events import (
     AgentCreated,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    DecisionInfeasible,
     DomainEvent,
+    RedecompositionTriggered,
+    RetryScheduled,
     StatusChanged,
     TaskAssigned,
+    VerificationFailed,
     WorkCompleted,
     WorkFailed,
 )
@@ -96,6 +100,16 @@ class AgentSummaryReadModel:
                 status = "completed"
             elif isinstance(event, WorkFailed):
                 status = "failed"
+            elif isinstance(event, VerificationFailed):
+                status = "failed"
+            elif isinstance(event, DecisionInfeasible):
+                status = "failed"
+            elif isinstance(event, RetryScheduled):
+                # FAILED → ANALYZING: agent is retrying, no longer terminal
+                status = "analyzing"
+            elif isinstance(event, RedecompositionTriggered):
+                # WAITING → ANALYZING: parent re-decomposes after child infeasible
+                status = "analyzing"
 
         is_terminal = status in ("completed", "failed")
 

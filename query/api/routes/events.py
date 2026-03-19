@@ -25,12 +25,18 @@ from core.domain.events.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    DecisionInfeasible,
     DomainEvent,
+    ProbeCompleted,
+    ProbeStarted,
     PromptSent,
+    RedecompositionTriggered,
+    RetryScheduled,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
     ThoughtCaptured,
+    VerificationFailed,
     WorkCompleted,
     WorkFailed,
 )
@@ -62,6 +68,12 @@ PRODUCED_EVENTS = {
     CodeGenerationStarted,
     WorkCompleted,
     WorkFailed,
+    VerificationFailed,
+    DecisionInfeasible,
+    RetryScheduled,
+    RedecompositionTriggered,
+    ProbeStarted,
+    ProbeCompleted,
 }
 PASSED_EVENTS = {ChildSpawned, ChildCompleted}
 THINKING_EVENTS = {ThoughtCaptured}

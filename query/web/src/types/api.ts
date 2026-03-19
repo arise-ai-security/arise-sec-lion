@@ -5,7 +5,7 @@
 
 // Agent types
 export type AgentRole = 'BOSS' | 'MANAGER' | 'WORKER' | 'PENDING';
-export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked' | 'terminated' | 'verifying';
+export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked';
 
 export interface AgentListItem {
   id: string;
@@ -247,28 +247,6 @@ export interface ExecutionSummary {
 
   /** Whether all agents have completed. */
   is_complete: boolean;
-}
-
-// =============================================================================
-// Task Registry Types (for deduplication visibility)
-// =============================================================================
-
-/** Registered task in the global deduplication registry. */
-export interface RegisteredTask {
-  /** Normalized hash of task description (16 chars). */
-  task_key: string;
-  /** Original task description (truncated to 200 chars). */
-  task_description: string;
-  /** Agent UUID that registered this task. */
-  registered_by: string;
-  /** Parent agent UUID. */
-  parent_id: string | null;
-}
-
-/** List of registered tasks. */
-export interface RegisteredTaskList {
-  tasks: RegisteredTask[];
-  total: number;
 }
 
 // =============================================================================

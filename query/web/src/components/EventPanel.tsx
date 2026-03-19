@@ -33,6 +33,12 @@ const eventTypeColors: Record<string, string> = {
   WorkCompleted: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
   WorkFailed: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   ThoughtCaptured: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
+  VerificationFailed: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  DecisionInfeasible: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  RetryScheduled: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  RedecompositionTriggered: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  ProbeStarted: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
+  ProbeCompleted: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
 };
 
 /** Color coding by output_type for ThoughtCaptured events */

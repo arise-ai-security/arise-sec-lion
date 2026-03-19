@@ -17,7 +17,6 @@ import type {
   SystemConfig,
   ExecutionSummary,
   PaginatedAgentList,
-  RegisteredTaskList,
   HierarchyTrace,
   TraceAgentNode,
 } from '../types/api';
@@ -157,16 +156,6 @@ export async function getExecutionSummary(agentId: string): Promise<ExecutionSum
  */
 export function createSummaryEventSource(rootId: string): EventSource {
   return new EventSource(`${API_BASE}/events/sse/${rootId}/summary`);
-}
-
-// Task Registry endpoints
-
-/**
- * Get all registered tasks for a root agent (execution run).
- * Shows tasks in the deduplication registry.
- */
-export async function getRegisteredTasks(rootId: string): Promise<RegisteredTaskList> {
-  return fetchJson<RegisteredTaskList>(`/tasks/${rootId}`);
 }
 
 // Prompt endpoints

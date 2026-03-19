@@ -587,11 +587,19 @@ class PostgresEventStore(EventStorePort):
                             CASE e.event_type
                                 WHEN 'WorkCompleted' THEN 'completed'
                                 WHEN 'WorkFailed' THEN 'failed'
+                                WHEN 'VerificationFailed' THEN 'failed'
+                                WHEN 'DecisionInfeasible' THEN 'failed'
+                                WHEN 'RetryScheduled' THEN 'analyzing'
+                                WHEN 'RedecompositionTriggered' THEN 'analyzing'
                                 ELSE e.payload->>'new_status'
                             END as status
                         FROM events e
                         INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
-                        WHERE e.event_type IN ('StatusChanged', 'WorkCompleted', 'WorkFailed')
+                        WHERE e.event_type IN (
+                            'StatusChanged', 'WorkCompleted', 'WorkFailed',
+                            'VerificationFailed', 'DecisionInfeasible',
+                            'RetryScheduled', 'RedecompositionTriggered'
+                        )
                         ORDER BY e.aggregate_id, e.occurred_at DESC
                     ),
                     run_info AS (
