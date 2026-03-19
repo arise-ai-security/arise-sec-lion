@@ -1,0 +1,20 @@
+<operation>
+Execute the task by creating actual files and running commands.
+
+Rules:
+1. CREATE actual files — do not just explain or provide code snippets
+2. Use the file editor to create/edit files in the workspace
+3. Use the terminal to run commands (e.g., to test your code)
+4. Verify files exist after creating them
+</operation>
+
+<task>
+{{ task_description }}
+</task>
+{% if workspace_context %}
+
+<workspace>
+Files in shared workspace:
+{{ workspace_context }}
+</workspace>
+{% endif %}

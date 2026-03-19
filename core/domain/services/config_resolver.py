@@ -5,7 +5,7 @@ from typing import Literal
 from core.domain.values.agent_config import AgentConfig, LLMConfig
 
 
-type OperationType = Literal["complexity_evaluation", "task_decomposition"]
+type OperationType = Literal["complexity_evaluation", "task_decomposition", "task_assessment"]
 
 
 class ConfigResolver:
@@ -29,6 +29,10 @@ class ConfigResolver:
                 max_tokens=min(base.max_tokens, 500),
             )
         if operation == "task_decomposition":
+            return base
+
+        if operation == "task_assessment":
+            # Use base config — needs full token budget for potential subtask output
             return base
 
         raise ValueError(f"Unknown operation: {operation}")

@@ -1,4 +1,11 @@
-"""Domain service for building hierarchical prompts from Jinja2 templates."""
+"""Domain service for building hierarchical prompts from Jinja2 templates.
+
+4-tier prompt architecture:
+  Tier 1 (system.j2)     — Global constraints, config reference
+  Tier 2 (roles/*.j2)    — Per-role persona and responsibility
+  Tier 3 (operations/*.j2) — Per-operation criteria and output format
+  Tier 4 (domains/*.j2)  — Domain-specific context (e.g., SEC-bench)
+"""
 
 
 
@@ -72,41 +79,18 @@ class TemplateChain:
             self._parts.append(self._env.get_template(template).render(**kwargs))
         return self
 
-    def with_security(self, overlay_name: str, **kwargs: Any) -> Self:
-        """Inject security template if it exists. Looks in security/ directory."""
-        return self.render_optional(f"security/{overlay_name}", **kwargs)
-
-    def with_secbench(self, template_name: str, **kwargs: Any) -> Self:
-        """Inject SEC-bench template if it exists. Looks in secbench/ directory."""
-        return self.render_optional(f"secbench/{template_name}", **kwargs)
-
-    def with_user_prompt(self, user_prompt: str) -> Self:
-        """Inject user prompt context (generic, reusable).
-
-        Renders core/context/user_prompt.j2 with the user's original input.
-        Independent of SEC-bench - can be used in any context.
-
-        Args:
-            user_prompt: Original user task description from CLI.
-        """
-        if user_prompt:
-            return self.render_optional("core/context/user_prompt.j2", user_prompt=user_prompt)
-        return self
-
     def with_cve_display(
         self,
         cve_instance: "CVEInstance | None",
         display_fields: tuple[str, ...] | None = None,
+        phase: str | None = None,
     ) -> Self:
-        """Inject SEC-bench CVE display context.
-
-        Renders secbench/cve-context.j2 with CVE instance data.
-        Independent of user_prompt - use with_user_prompt() separately.
+        """Inject domain CVE context if cve_instance is present.
 
         Args:
             cve_instance: CVE instance data (optional).
             display_fields: Fields to include in cve dict for iteration.
-                          Defaults to standard display fields.
+            phase: Phase filter ('builder', 'exploiter', 'fixer', or None for all).
         """
         if cve_instance is None:
             return self
@@ -115,7 +99,7 @@ class TemplateChain:
         cve_ctx = cve_instance.to_template_context()
         cve_display = {k: v for k, v in cve_ctx.items() if k in fields and v}
 
-        return self.with_secbench("cve-context.j2", cve=cve_display, **cve_ctx)
+        return self.render("domains/secbench/cve.j2", cve=cve_display, phase=phase, **cve_ctx)
 
     def text(self, content: str) -> Self:
         """Add raw text to chain."""
@@ -134,7 +118,7 @@ class TemplateChain:
 
 
 class PromptBuilder:
-    """Compose hierarchical prompts with automatic security injection.
+    """Compose hierarchical prompts using 4-tier architecture.
 
     Uses Strategy Pattern to delegate specialized prompt building
     (e.g., SEC-bench) to injected strategies, following SRP.
@@ -146,13 +130,6 @@ class PromptBuilder:
         default_tool: str,
         strategy: PromptStrategy | None = None,
     ) -> None:
-        """Initialize prompt builder.
-
-        Args:
-            template_dir: Directory containing Jinja2 templates.
-            default_tool: Default tool name for worker execution.
-            strategy: Optional prompt strategy for specialized prompts.
-        """
         self.template_dir = Path(template_dir)
         self.default_tool = default_tool
         self._strategy = strategy or DefaultPromptStrategy()
@@ -171,12 +148,7 @@ class PromptBuilder:
         user_prompt: str,
         cve_instance: "CVEInstance | None" = None,
     ) -> None:
-        """Set global context for this run (called once at start).
-
-        Args:
-            user_prompt: Original user task description from CLI.
-            cve_instance: CVE instance for benchmark runs.
-        """
+        """Set global context for this run (called once at start)."""
         self._user_prompt = user_prompt
         self._cve_instance = cve_instance
 
@@ -185,47 +157,14 @@ class PromptBuilder:
         return TemplateChain(self.env, "template")
 
     def set_strategy(self, strategy: PromptStrategy) -> None:
-        """Set the prompt strategy after initialization.
-
-        Useful for breaking circular dependencies when the strategy
-        needs access to this builder's chain() method.
-        """
+        """Set the prompt strategy after initialization."""
         self._strategy = strategy
-
-    def _task_context(
-        self,
-        task_description: str,
-        agent_id: UUID,
-        agent_role: AgentRole,
-        parent_task: str | None = None,
-    ) -> dict[str, Any]:
-        """Build common task context dict."""
-        return {
-            "task_description": task_description,
-            "agent_id": str(agent_id),
-            "agent_role": agent_role.value.upper(),
-            "parent_task": parent_task,
-            "default_tool": self.default_tool,
-        }
 
     def _limits_context(
         self,
         hierarchy_limits: "HierarchyLimits | None",
     ) -> dict[str, Any]:
-        """Build limits context dict for templates.
-
-        Args:
-            hierarchy_limits: Current hierarchy limits for depth/children constraints.
-
-        Returns:
-            Dict with limit variables for templates:
-            - max_subtasks: Max children allowed (None = no limit)
-            - depth_remaining: Levels of hierarchy remaining (None = unlimited)
-            - at_max_depth: True if children must be workers
-            - agents_remaining: How many more agents can be created (None = unlimited)
-            - max_total_agents: Maximum total agents allowed (None = unlimited)
-            - current_total_agents: Current count of agents created (None = unknown)
-        """
+        """Build limits context dict for templates."""
         if hierarchy_limits is None:
             return {
                 "max_subtasks": None,
@@ -246,7 +185,6 @@ class PromptBuilder:
             depth_remaining = hierarchy_limits.max_depth - hierarchy_limits.current_depth
             at_max_depth = not hierarchy_limits.can_spawn_child()
 
-        # Total agents limit info
         agents_remaining = None
         max_total_agents = None
         current_total_agents = None
@@ -264,74 +202,47 @@ class PromptBuilder:
             "current_total_agents": current_total_agents,
         }
 
-    def build_complexity_evaluation_prompt(
+    def build_assessment_prompt(
         self,
         task_description: str,
         agent_id: UUID,
-        parent_task: str | None = None,
-    ) -> str:
-        """Build prompt for PENDING agent complexity evaluation."""
-        return (
-            self.chain()
-            .render("core/roles/pending.j2")
-            .render("core/strategies/complexity.j2")
-            .text(f"<TASK_TO_EVALUATE>\n{task_description}\n</TASK_TO_EVALUATE>")
-            .text_if(parent_task, f"<PARENT_TASK>\n{parent_task}\n</PARENT_TASK>")
-            .render("core/output/complexity.j2")
-            .with_security("complexity_overlay.j2")
-            .build()
-        )
-
-    def build_manager_decomposition_prompt(
-        self,
-        task_description: str,
-        agent_id: UUID,
-        agent_role: AgentRole = AgentRole.MANAGER,
-        parent_task: str | None = None,
-        cve_instance: "CVEInstance | None" = None,
         briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
+        cve_instance: "CVEInstance | None" = None,
     ) -> str:
-        """Build prompt for MANAGER agent task decomposition.
+        """Build prompt for PENDING agent task assessment.
 
-        Args:
-            task_description: The task to decompose.
-            agent_id: Current agent's ID.
-            agent_role: Agent role (should be MANAGER).
-            parent_task: Parent task description.
-            cve_instance: CVE instance for benchmark runs.
-            briefing: Briefing for hierarchy info.
-            hierarchy_limits: Hierarchy limits with depth/children constraints.
+        Single prompt that decides: execute directly or decompose.
+        Tiers: system → roles/pending → user_prompt → [domain] → operations/assess
         """
-        # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
-            agent_role=agent_role,
+            agent_role=AgentRole.PENDING,
             default_tool=self.default_tool,
-            parent_task=parent_task,
             briefing=briefing,
             hierarchy_limits=hierarchy_limits,
             cve_instance=cve_instance,
         )
-        custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
+        custom_prompt = self._strategy.build_assessment_prompt(prompt_ctx)
         if custom_prompt is not None:
             return custom_prompt
 
-        # Default generic prompt (no SEC-bench logic here - follows SRP)
-        ctx = self._task_context(task_description, agent_id, agent_role, parent_task)
         limits = self._limits_context(hierarchy_limits)
-        tool = self.default_tool
 
         return (
             self.chain()
-            .render("core/roles/manager.j2", default_tool=tool)
-            .with_user_prompt(self._user_prompt)
+            .render("system.j2", default_tool=self.default_tool)
+            .render("roles/pending.j2")
+            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
             .with_cve_display(self._cve_instance)
-            .with_security("manager_overlay.j2", default_tool=tool)
-            .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
-            .render("core/context/task.j2", **ctx)
-            .render("core/output/subtasks.j2", default_tool=tool, **limits)
+            .render(
+                "operations/assess.j2",
+                task_description=task_description,
+                briefing=briefing,
+                default_tool=self.default_tool,
+                **limits,
+            )
             .build()
         )
 
@@ -345,12 +256,7 @@ class PromptBuilder:
     ) -> str:
         """Build prompt for BOSS agent task delegation.
 
-        Args:
-            task_description: The task to delegate.
-            agent_id: Current agent's ID.
-            parent_task: Parent task description.
-            cve_instance: CVE instance for benchmark runs.
-            hierarchy_limits: Hierarchy limits with depth/children constraints.
+        Tiers: system → roles/boss → user_prompt → [domain] → operations/decomposition
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -367,19 +273,69 @@ class PromptBuilder:
             return custom_prompt
 
         # Default generic prompt
-        ctx = self._task_context(task_description, agent_id, AgentRole.BOSS, parent_task)
         limits = self._limits_context(hierarchy_limits)
-        tool = self.default_tool
 
         return (
             self.chain()
-            .render("core/roles/boss.j2", default_tool=tool)
-            .with_user_prompt(self._user_prompt)
+            .render("system.j2", default_tool=self.default_tool)
+            .render("roles/boss.j2")
+            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
             .with_cve_display(self._cve_instance)
-            .with_security("boss_overlay.j2", default_tool=tool)
-            .render("core/strategies/decomposition.j2", default_tool=tool, **limits)
-            .render("core/context/task.j2", **ctx)
-            .render("core/output/subtasks.j2", default_tool=tool, **limits)
+            .render(
+                "operations/decomposition.j2",
+                task_description=task_description,
+                briefing=None,
+                default_tool=self.default_tool,
+                **limits,
+            )
+            .build()
+        )
+
+    def build_manager_decomposition_prompt(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        agent_role: AgentRole = AgentRole.MANAGER,
+        parent_task: str | None = None,
+        cve_instance: "CVEInstance | None" = None,
+        briefing: "Briefing | None" = None,
+        hierarchy_limits: "HierarchyLimits | None" = None,
+    ) -> str:
+        """Build prompt for MANAGER agent task decomposition.
+
+        Tiers: system → roles/manager → user_prompt → [domain] → operations/decomposition
+        """
+        # Try strategy first (for SEC-bench or other specialized prompts)
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=agent_id,
+            agent_role=agent_role,
+            default_tool=self.default_tool,
+            parent_task=parent_task,
+            briefing=briefing,
+            hierarchy_limits=hierarchy_limits,
+            cve_instance=cve_instance,
+        )
+        custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
+        if custom_prompt is not None:
+            return custom_prompt
+
+        # Default generic prompt
+        limits = self._limits_context(hierarchy_limits)
+
+        return (
+            self.chain()
+            .render("system.j2", default_tool=self.default_tool)
+            .render("roles/manager.j2")
+            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .with_cve_display(self._cve_instance)
+            .render(
+                "operations/decomposition.j2",
+                task_description=task_description,
+                briefing=briefing,
+                default_tool=self.default_tool,
+                **limits,
+            )
             .build()
         )
 
@@ -393,12 +349,7 @@ class PromptBuilder:
     ) -> str:
         """Build prompt for WORKER agent task execution.
 
-        Args:
-            task_description: The task to execute.
-            handoff: Handoff view of sibling workers (completed tasks).
-            workspace_context: Files in the workspace.
-            cve_instance: CVE instance for benchmark runs.
-            briefing: Briefing for hierarchy info.
+        Tiers: system → roles/worker → [sibling] → user_prompt → [domain] → operations/execution
         """
         # Try strategy first (for SEC-bench or other specialized prompts)
         prompt_ctx = PromptContext(
@@ -420,12 +371,15 @@ class PromptBuilder:
 
         return (
             self.chain()
-            .render_if(handoff, "core/context/sibling.j2", **sibling_ctx)
-            .render("core/roles/worker.j2")
-            .with_user_prompt(self._user_prompt)
+            .render("system.j2", default_tool=self.default_tool)
+            .render("roles/worker.j2")
+            .render_if(handoff, "context/sibling.j2", **sibling_ctx)
+            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
             .with_cve_display(self._cve_instance)
-            .render("core/worker/execution.j2")
-            .text(f"<TASK>\n{task_description}\n</TASK>")
-            .render_if(workspace_context, "core/context/workspace.j2", files=workspace_context)
+            .render(
+                "operations/execution.j2",
+                task_description=task_description,
+                workspace_context=workspace_context,
+            )
             .build()
         )

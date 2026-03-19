@@ -1,0 +1,53 @@
+<domain_operation>
+## Fixer Manager — Decomposition
+
+Decompose the patch generation phase into worker subtasks.
+Base commit is at `/testcase/base_commit_hash`.
+
+**NOTE:** Candidate fix commits (if listed in Task Context) may include unnecessary/unrelated changes. Be selective.
+
+### Phase Deliverable
+- `/testcase/model_patch.diff` (required)
+
+### Success
+- Patch applies cleanly to base commit
+- Patched code compiles without errors
+- `/testcase/repro.sh` does NOT trigger sanitizer error after patching
+- Patch is minimal (only fixes vulnerability)
+
+### Subtasks
+
+1. **Analyze Root Cause**: Understand WHY the vulnerability exists. Identify files that need fixing. Locate vulnerable code sections.
+
+2. **Review Candidate Fixes**: For each candidate commit, run `git show <hash>`. If `fatal: bad object`, try `curl <url>.diff`. Skip commits matching base_commit_hash. Focus on vulnerability-relevant changes.
+
+3. **Create Patch File**: From candidate fix: `git show --format= --patch <hash> > /testcase/model_patch.diff`. Own fix: stage changes, `git diff --cached --no-color > /testcase/model_patch.diff`. Remove unnecessary changes (tests, docs, config). Keep AS CONCISE AS POSSIBLE.
+
+4. **Validate Patch**: Reset to base: `git reset --hard $(cat /testcase/base_commit_hash)`. Check: `git apply --check /testcase/model_patch.diff`. Apply: `git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: `/testcase/repro.sh` should NOT trigger sanitizer error.
+
+### Output
+
+```json
+[
+  {
+    "description": "[Fixer-1] Analyze root cause: identify vulnerable files, understand why vulnerability exists",
+    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.4, "max_tokens": 4000}, "tool": "{{ default_tool }}"}
+  },
+  {
+    "description": "[Fixer-2] Review candidate fixes: examine commits with git show, identify relevant changes",
+    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.4, "max_tokens": 6000}, "tool": "{{ default_tool }}"}
+  },
+  {
+    "description": "[Fixer-3] Create patch: generate /testcase/model_patch.diff with minimal fix",
+    "config": {"strategy": "heuristic", "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000}, "tool": "{{ default_tool }}"}
+  },
+  {
+    "description": "[Fixer-4] Validate patch: reset to base, apply, rebuild, verify repro.sh no longer triggers error",
+    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 6000}, "tool": "{{ default_tool }}"}
+  }
+]
+```
+
+ALWAYS reset to base commit before applying patch. DO NOT change `/testcase/base_commit_hash`.
+Check if `/testcase/repo_changes.diff` exists (Builder may have made changes).
+</domain_operation>

@@ -1,0 +1,45 @@
+<domain_instructions>
+## Fixer Worker — Step-by-Step
+
+Refer to Task Context above for repository location, vulnerability details, and candidate fix commits.
+Base commit hash is at `/testcase/base_commit_hash`.
+
+**NOTE:** Candidate fix commits may include unnecessary/unrelated/vulnerable changes.
+Disregard commits mentioned in the bug description as affected by the vulnerability.
+
+### Steps
+
+1. **Understand root cause**: Identify WHY the vulnerability exists and which files need fixing
+
+2. **Review candidate fix commits** (if provided in Task Context):
+   - Run `git show <commit_hash>` to examine changes
+   - If `fatal: bad object`, try `curl <commit_url>.diff`
+   - Skip commits matching base_commit_hash (vulnerable version)
+   - Focus on changes to vulnerability-relevant files
+   - Precisely edit matching files to apply the fix
+
+3. **If no candidates**: Explore relevant files based on root cause analysis. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
+
+4. **Create `/testcase/model_patch.diff`**:
+   - From candidate: `git show --format= --patch <hash> > /testcase/model_patch.diff`
+   - Multiple candidates: append with `>>`
+   - Own fix: `git add <files> && git diff --cached --no-color > /testcase/model_patch.diff`
+
+5. **Review patch**: Remove unnecessary changes (tests, docs, config). FOCUS ON CORE CODE. Keep AS CONCISE AS POSSIBLE.
+
+6. **Validate**:
+   - Reset: `git reset --hard $(cat /testcase/base_commit_hash)`
+   - Check format: `git apply --check /testcase/model_patch.diff`
+   - Apply: `git apply /testcase/model_patch.diff`
+   - Rebuild: `/src/build.sh`
+
+7. **Test fix**: Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability). Patch MUST NOT introduce new sanitizer errors.
+
+### Rules
+- ALWAYS reset to base commit before applying patch
+- DO NOT change `/testcase/base_commit_hash`
+- Check if `/testcase/repo_changes.diff` exists (Builder may have made changes)
+- Run only necessary commands, limit output
+- Verify `/testcase/model_patch.diff` exists and is correct before concluding
+- If candidate commits unavailable, use browser tools to search for commit hashes
+</domain_instructions>

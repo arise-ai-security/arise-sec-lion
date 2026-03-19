@@ -54,29 +54,22 @@ class TestPromptBuilderWithRealTemplates:
         """Create a PromptParser."""
         return PromptParser()
 
-    def test_complexity_evaluation_prompt_uses_real_templates(
+    def test_assessment_prompt_uses_real_templates(
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
-        """Test that complexity evaluation prompt renders from real templates."""
-        prompt = builder.build_complexity_evaluation_prompt(
+        """Test that assessment prompt renders from real templates."""
+        prompt = builder.build_assessment_prompt(
             task_description="Fix the buffer overflow vulnerability",
             agent_id=uuid4(),
-            parent_task="Analyze security issues",
         )
 
-        # Verify prompt is non-empty and contains expected sections
-        assert len(prompt) > 100  # Non-trivial content
+        assert len(prompt) > 100
         sections = parser.parse(prompt)
-
-        # Should have ROLE from pending.j2
         tags = [s.tag for s in sections]
-        assert "ROLE" in tags
-
-        # Should have task to evaluate
-        assert "TASK_TO_EVALUATE" in tags
-
-        # Should have parent task
-        assert "PARENT_TASK" in tags
+        assert "persona" in tags
+        assert "operation" in tags
+        assert "task" in tags
+        assert "output_format" in tags
 
     def test_boss_delegation_prompt_uses_real_templates(
         self, builder: PromptBuilder, parser: PromptParser
@@ -92,16 +85,15 @@ class TestPromptBuilderWithRealTemplates:
         sections = parser.parse(prompt)
         tags = [s.tag for s in sections]
 
-        # Should have ROLE from boss.j2
-        assert "ROLE" in tags
-
-        # Should have CAPABILITIES and CONSTRAINTS
-        assert "CAPABILITIES" in tags
-        assert "CONSTRAINTS" in tags
+        # Should have persona from roles/boss.j2
+        assert "persona" in tags
 
         # Verify boss role content
-        role_section = next(s for s in sections if s.tag == "ROLE")
-        assert "BOSS" in role_section.content
+        persona_section = next(s for s in sections if s.tag == "persona")
+        assert "BOSS" in persona_section.content
+
+        # Should have system tier
+        assert "system" in tags
 
     def test_manager_decomposition_prompt_uses_real_templates(
         self, builder: PromptBuilder, parser: PromptParser
@@ -118,12 +110,12 @@ class TestPromptBuilderWithRealTemplates:
         sections = parser.parse(prompt)
         tags = [s.tag for s in sections]
 
-        # Should have ROLE from manager.j2
-        assert "ROLE" in tags
+        # Should have persona from roles/manager.j2
+        assert "persona" in tags
 
         # Verify manager role content
-        role_section = next(s for s in sections if s.tag == "ROLE")
-        assert "MANAGER" in role_section.content
+        persona_section = next(s for s in sections if s.tag == "persona")
+        assert "MANAGER" in persona_section.content
 
     def test_worker_prompt_uses_real_templates(
         self, builder: PromptBuilder, parser: PromptParser
@@ -138,15 +130,15 @@ class TestPromptBuilderWithRealTemplates:
         sections = parser.parse(prompt)
         tags = [s.tag for s in sections]
 
-        # Should have ROLE from worker.j2
-        assert "ROLE" in tags
+        # Should have persona from roles/worker.j2
+        assert "persona" in tags
 
-        # Should have TASK
-        assert "TASK" in tags
+        # Should have task from operations/execution.j2
+        assert "task" in tags
 
         # Verify worker role content
-        role_section = next(s for s in sections if s.tag == "ROLE")
-        assert "WORKER" in role_section.content
+        persona_section = next(s for s in sections if s.tag == "persona")
+        assert "WORKER" in persona_section.content
 
 
 class TestProvenanceClassificationWithRealPrompts:
@@ -170,11 +162,11 @@ class TestProvenanceClassificationWithRealPrompts:
         template_sections = [s for s in sections if s.provenance == SectionProvenance.TEMPLATE]
         template_tags = [s.tag for s in template_sections]
 
-        # These should all be TEMPLATE
-        assert "ROLE" in template_tags
-        assert "CAPABILITIES" in template_tags
-        assert "CONSTRAINTS" in template_tags
-        assert "TASK" in template_tags
+        # These should all be TEMPLATE (4-tier architecture tags)
+        assert "system" in template_tags
+        assert "persona" in template_tags
+        assert "operation" in template_tags
+        assert "task" in template_tags
 
     def test_parent_sections_classified_correctly(
         self, builder: PromptBuilder, parser: PromptParser
@@ -194,7 +186,7 @@ class TestProvenanceClassificationWithRealPrompts:
 
         parent_sections = [s for s in sections if s.provenance == SectionProvenance.PARENT]
         assert len(parent_sections) >= 1
-        assert any(s.tag == "parent-context" for s in parent_sections)
+        assert any(s.tag == "parent_context" for s in parent_sections)
 
     def test_sibling_sections_classified_correctly(
         self, builder: PromptBuilder, parser: PromptParser
@@ -222,7 +214,7 @@ class TestProvenanceClassificationWithRealPrompts:
 
         sibling_sections = [s for s in sections if s.provenance == SectionProvenance.SIBLING]
         assert len(sibling_sections) >= 1
-        assert any(s.tag == "sibling-tasks" for s in sibling_sections)
+        assert any(s.tag == "sibling_tasks" for s in sibling_sections)
 
     def test_shared_sections_classified_correctly(
         self, builder: PromptBuilder, parser: PromptParser
@@ -248,7 +240,7 @@ class TestProvenanceClassificationWithRealPrompts:
 
         shared_sections = [s for s in sections if s.provenance == SectionProvenance.SHARED]
         assert len(shared_sections) >= 1
-        assert any(s.tag == "shared-decisions" for s in shared_sections)
+        assert any(s.tag == "shared_decisions" for s in shared_sections)
 
     def test_system_sections_classified_correctly(
         self, builder: PromptBuilder, parser: PromptParser

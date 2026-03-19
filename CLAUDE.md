@@ -15,18 +15,18 @@ BOSS (root)
   │ decomposes task
   ▼
 PENDING ──────────────────────────────┐
-  │ evaluates complexity              │
-  ├─── SIMPLE ──► WORKER              │
+  │ assesses task (single LLM call)   │
+  ├─── EXECUTE ──► WORKER             │
   │                 └─► executes      │
-  └─── COMPLEX ──► MANAGER            │
-                     └─► spawns ──────┘ (recursive)
+  └─── DECOMPOSE ──► MANAGER          │
+                      └─► spawns ─────┘ (recursive)
 ```
 
 ## Key Patterns
 
 - **Event Sourcing**: All state from replaying ~30 frozen `DomainEvent` Pydantic models. OCC via version.
 - **NodeMessage union** (`values/node_message.py`): Discriminated on `direction` — `Briefing` (↓ parent→child), `Report` (↑ child→parent), `Handoff` (↔ sibling context).
-- **3 orchestrator operations**: `evaluate_complexity`, `evaluate_task`, `execute_task` — direct methods, no pipeline abstraction.
+- **3 orchestrator operations**: `assess_task` (PENDING — execute or decompose in one LLM call), `evaluate_task` (BOSS/MANAGER — decompose), `execute_task` (WORKER) — direct methods, no pipeline abstraction.
 - **Auto-healing retry**: Model escalation chain + circuit breaker. Retry budget = chain length.
 - **Infeasible handling**: LLM declares `constraints_unsatisfiable` → parent re-decomposes.
 - **4-stage verification**: structural → deterministic → execution → LLM judge.

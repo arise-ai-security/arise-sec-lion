@@ -1,0 +1,52 @@
+<domain_instructions>
+## Builder Worker — Step-by-Step
+
+Refer to Task Context above for repository location, base commit hash, and vulnerability details.
+
+### Steps
+
+1. **Determine base commit** from vulnerability description (Task Context):
+   - If a more suitable commit exists: save to `/testcase/base_commit_hash`, run `git reset --hard <hash>`
+   - Otherwise: save the provided base commit to `/testcase/base_commit_hash`
+   - `/testcase/base_commit_hash` MUST exist before proceeding
+
+2. **Build the project**: `cd <work_dir> && /src/build.sh`
+
+3. **Improve `/src/build.sh`**:
+   - Make standalone — remove undefined/environment variables not set in script
+   - Remove fuzzer-related build commands
+   - Add `-j$(nproc)` to make commands (no `make all` or `make install`)
+   - Add `-p` to mkdir commands
+   - Place `make clean` before configure/make
+   - Preserve existing flags: `export CFLAGS="$CFLAGS -fsanitize=address"`
+   - Define exports before `./configure` or `cmake`
+   - Check local script existence before running (e.g., `[ -f ./autogen.sh ] && ./autogen.sh`)
+   - Exception: `$SRC` = `/src`, `$WORK` = `/work` are predefined
+
+4. **Rebuild**: `cd <work_dir> && /src/build.sh`
+
+5. **Fix build errors** (if any):
+   - Focus on `error` messages only, ignore warnings
+   - C++17 errors: add `-std=c++14` to CFLAGS/CXXFLAGS
+   - Implicit int: add explicit type declarations
+   - Function overload: add `-D_GNU_SOURCE`
+   - Define suppression flags before `./configure` or `cmake`
+   - Make MINIMAL source changes if needed
+
+6. **Record installed packages**: If packages installed via `apt`, write to `/testcase/packages.txt` (one per line)
+
+7. **Save source changes**: `cd <work_dir> && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
+
+8. **Verify deliverables exist**:
+   - `/testcase/base_commit_hash`
+   - `/testcase/repo_changes.diff`
+   - `/testcase/packages.txt` (if applicable)
+   - `/src/build.sh`
+
+### Rules
+- DO NOT disable sanitizer options — they are essential for bug detection
+- Run only necessary commands, limit output with `head`
+- Use `/src/build.sh` for building (prevents excessive output)
+- For custom build commands, append `1> /dev/null` to suppress output
+- Use concrete commands (`ls`, `cat`, `find`, `grep`) to explore before making changes
+</domain_instructions>

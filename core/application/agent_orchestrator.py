@@ -1,7 +1,7 @@
 """Agent Orchestrator - coordinates LLM and worker interactions.
 
 Handles the three orchestration operations as direct method calls:
-1. Complexity evaluation (PENDING -> WORKER/MANAGER)
+1. Task assessment (PENDING -> WORKER or MANAGER+children in single call)
 2. Task decomposition (BOSS/MANAGER -> children)
 3. Worker execution (WORKER -> complete)
 """
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.domain.events.events import VerificationFailed
 from core.domain.exceptions import ToolNotAvailableError
-from core.domain.services import parse_subtasks_from_llm, strip_markdown_code_block
+from core.domain.services import parse_assessment_response, parse_subtasks_from_llm, strip_markdown_code_block
 from core.domain.services.config_resolver import ConfigResolver
 from core.domain.values.constraint_failure import ConstraintFailure
 from core.domain.values.enums import AgentRole, AgentStatus
@@ -34,7 +34,7 @@ class AgentOrchestrator:
     """Orchestrates agent interactions with LLM and worker tools.
 
     Three operations:
-    - evaluate_complexity: PENDING agent → LLM decides WORKER or MANAGER
+    - assess_task: PENDING agent → single LLM call decides execute (WORKER) or decompose (MANAGER+children)
     - evaluate_task: BOSS/MANAGER agent → LLM decomposes → spawn children
     - execute_task: WORKER agent → worker tool executes
     """
@@ -53,27 +53,28 @@ class AgentOrchestrator:
         self._child_factory = child_factory
         self._realtime_callback = realtime_callback
 
-    async def evaluate_complexity(self, agent: "AgentSession") -> None:
-        """Evaluate task complexity for a PENDING agent.
+    async def assess_task(self, agent: "AgentSession") -> None:
+        """Assess a PENDING agent: execute directly or decompose.
 
-        LLM classifies as simple (→ WORKER) or complex (→ MANAGER).
-        On failure, agent is failed with reason.
+        Single LLM call replaces separate complexity evaluation + decomposition.
+        On execute → WORKER. On decompose → MANAGER with children spawned.
         """
-        # Validate
         if agent.role != AgentRole.PENDING:
             agent.fail_with_reason(f"Expected PENDING role, got {agent.role}")
             return
 
-        op = "complexity_evaluation"
+        op = "task_assessment"
         start_time = time.monotonic()
         agent.emit_operation_started(operation_type=op)
 
         try:
             # Build prompt
-            prompt = self._prompt_builder.build_complexity_evaluation_prompt(
+            prompt = self._prompt_builder.build_assessment_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
-                parent_task=None,
+                briefing=agent.briefing,
+                hierarchy_limits=agent.hierarchy_limits,
+                cve_instance=self._get_cve_instance(agent),
             )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
@@ -91,29 +92,68 @@ class AgentOrchestrator:
                 operation=op,
             )
 
-            # Parse complexity result
-            clean = strip_markdown_code_block(response.content)
-            data = json.loads(clean)
-            complexity = data.get("complexity", "").lower()
-            reasoning = data.get("reasoning", "")
+            # Parse assessment
+            result = parse_assessment_response(response.content)
 
-            if complexity not in ("simple", "complex"):
-                agent.fail_with_reason(f"Invalid complexity value: {complexity}")
+            if result.action == "infeasible":
+                if result.constraint_failure is None:
+                    agent.fail_with_reason("Assessment reported infeasible but no failure details")
+                    return
+                agent.mark_infeasible(
+                    reason=result.constraint_failure.reason,
+                    minimum_subtasks=result.constraint_failure.minimum_subtasks,
+                    minimum_depth=result.constraint_failure.minimum_depth,
+                )
                 return
 
-            # Apply result
-            determined_role = (
-                AgentRole.WORKER if complexity == "simple" else AgentRole.MANAGER
-            )
+            if result.action == "execute":
+                agent.apply_complexity_result(
+                    complexity="simple",
+                    reasoning=result.reasoning,
+                    determined_role=AgentRole.WORKER,
+                )
+                return
+
+            # action == "decompose": become MANAGER + spawn children
             agent.apply_complexity_result(
-                complexity=complexity,
-                reasoning=reasoning,
-                determined_role=determined_role,
+                complexity="complex",
+                reasoning=result.reasoning,
+                determined_role=AgentRole.MANAGER,
+            )
+
+            subtasks = result.subtasks
+
+            # Check hard limits
+            failure_msg = self._check_limit_violations(agent, subtasks)
+            if failure_msg:
+                agent.fail_with_reason(failure_msg)
+                return
+
+            # Determine child role (soft depth limit)
+            limits = agent.hierarchy_limits
+            force_worker = False
+            if limits is not None and not limits.can_spawn_child():
+                force_worker = True
+                agent.emit_limit_enforced(
+                    limit_type="depth",
+                    limit_value=limits.max_depth,
+                    attempted_value=limits.current_depth + 1,
+                    action_taken="forced_worker_role",
+                )
+
+            child_role = (
+                AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
+            )
+
+            briefing = agent.build_briefing_for_child()
+            agent.apply_subtasks_and_spawn_children(
+                subtasks=subtasks,
+                child_role=child_role,
+                briefing=briefing,
             )
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:
-            agent.fail_with_reason(f"Failed to parse complexity: {e}")
-            return
+            agent.fail_with_reason(f"Assessment failed: {e}")
 
         finally:
             duration = time.monotonic() - start_time

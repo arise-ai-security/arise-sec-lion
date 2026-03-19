@@ -18,7 +18,16 @@ class PromptParser:
 
     # Explicit mapping from tag to provenance (case-insensitive lookup)
     PROVENANCE_RULES: dict[str, SectionProvenance] = {
-        # Template sections (from .j2 files) - UPPERCASE convention
+        # 4-tier architecture tags
+        "system": SectionProvenance.TEMPLATE,
+        "persona": SectionProvenance.TEMPLATE,
+        "operation": SectionProvenance.TEMPLATE,
+        "domain": SectionProvenance.SYSTEM,
+        "domain_operation": SectionProvenance.TEMPLATE,
+        "domain_instructions": SectionProvenance.TEMPLATE,
+        "config_reference": SectionProvenance.TEMPLATE,
+        "environment": SectionProvenance.SYSTEM,
+        # Template sections (from .j2 files)
         "role": SectionProvenance.TEMPLATE,
         "task": SectionProvenance.TEMPLATE,
         "task_description": SectionProvenance.TEMPLATE,
@@ -41,6 +50,7 @@ class PromptParser:
         "briefing": SectionProvenance.PARENT,
         "parent-context": SectionProvenance.PARENT,
         "parent_context": SectionProvenance.PARENT,
+        "parent_task": SectionProvenance.PARENT,
         "ancestry": SectionProvenance.PARENT,
         "thinker_justification": SectionProvenance.PARENT,
         # Sibling sections (from Handoff)

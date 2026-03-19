@@ -474,7 +474,7 @@ class AgentExecutionService:
             return
 
         if agent.role == AgentRole.PENDING:
-            await self._orchestrator.evaluate_complexity(agent)
+            await self._orchestrator.assess_task(agent)
 
         elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
             depth = self._get_agent_depth(agent)

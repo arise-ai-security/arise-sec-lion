@@ -250,14 +250,15 @@ class FakeLLM:
         )
 
     def set_complexity_response(self, response: str) -> None:
-        """Set response for complexity evaluation prompts.
+        """Set response for task assessment prompts.
 
-        Accepts "SIMPLE" or "COMPLEX" (will be wrapped in proper JSON).
+        Accepts "SIMPLE" or "COMPLEX". SIMPLE → {"action": "execute"},
+        COMPLEX uses subtasks from set_subtasks_response.
         """
         self._complexity_response = response
 
     def set_subtasks_response(self, descriptions: list[str]) -> None:
-        """Set response for task decomposition prompts.
+        """Set subtasks for assessment decompose responses and direct decomposition.
 
         Args:
             descriptions: List of subtask description strings.
@@ -287,14 +288,22 @@ class FakeLLM:
         )
 
     def _determine_response(self, prompt: str) -> str:
-        # Complexity prompts contain this unique template marker
-        if "COMPLEXITY_EVALUATION_STRATEGY" in prompt:
-            # Return valid JSON complexity response
+        # Assessment prompts (PENDING agents) contain markers from assess.j2
+        if "Assess this task" in prompt:
             complexity = self._complexity_response.lower()
-            return json.dumps({
-                "complexity": complexity,
-                "reasoning": f"Task classified as {complexity}",
-            })
+            if complexity == "simple":
+                return json.dumps({
+                    "action": "execute",
+                    "reasoning": f"Task classified as {complexity}",
+                })
+            else:
+                # Complex: return decompose with inline subtasks
+                subtasks = json.loads(self._default_subtasks)
+                return json.dumps({
+                    "action": "decompose",
+                    "reasoning": f"Task classified as {complexity}",
+                    "subtasks": subtasks,
+                })
         return self._default_subtasks
 
 
@@ -489,8 +498,30 @@ def _subtasks_json(descriptions: list[str]) -> str:
     return json.dumps([{"description": d, "config": config} for d in descriptions])
 
 
+def _assessment_execute_json() -> str:
+    """Build valid assessment execute JSON for FakeLLM responses."""
+    return json.dumps({
+        "action": "execute",
+        "reasoning": "Task classified as simple",
+    })
+
+
+def _assessment_decompose_json(descriptions: list[str]) -> str:
+    """Build valid assessment decompose JSON with inline subtasks."""
+    config = FakeLLM.VALID_CONFIG
+    return json.dumps({
+        "action": "decompose",
+        "reasoning": "Task classified as complex",
+        "subtasks": [{"description": d, "config": config} for d in descriptions],
+    })
+
+
 def _complexity_json(complexity: str) -> str:
-    """Build valid complexity JSON for FakeLLM responses."""
+    """Build valid complexity JSON for FakeLLM responses.
+
+    DEPRECATED: Only kept for backward compatibility with smart_response functions.
+    Use _assessment_execute_json() or _assessment_decompose_json() instead.
+    """
     return json.dumps({
         "complexity": complexity.lower(),
         "reasoning": f"Task classified as {complexity.lower()}",
@@ -618,28 +649,25 @@ class TestMultiLevelRun:
         llm = FakeLLM()
         worker = FakeWorkerTool()
 
-        call_count = 0
+        assess_count = 0
 
         # We need the LLM to respond differently at different stages:
         # 1st decomposition (Boss): returns 1 subtask
-        # 1st complexity eval (child): returns COMPLEX → becomes MANAGER
-        # 2nd decomposition (Manager): returns 2 subtasks
-        # 2nd+3rd complexity eval (grandchildren): returns SIMPLE → become WORKERs
+        # 1st assessment (child): COMPLEX → becomes MANAGER + spawns 2 children
+        # 2nd+3rd assessment (grandchildren): SIMPLE → become WORKERs
         def smart_response(prompt: str) -> str:
-            nonlocal call_count
-            call_count += 1
+            nonlocal assess_count
 
-            if "COMPLEXITY_EVALUATION_STRATEGY" in prompt:
-                # 1st complexity eval → COMPLEX (becomes MANAGER)
-                # 2nd, 3rd → SIMPLE (become WORKERs)
-                if call_count <= 2:
-                    return _complexity_json("complex")
-                return _complexity_json("simple")
+            if "Assess this task" in prompt:
+                assess_count += 1
+                if assess_count <= 1:
+                    # 1st assessment → COMPLEX with inline subtasks
+                    return _assessment_decompose_json(["Worker task A", "Worker task B"])
+                # 2nd, 3rd → SIMPLE
+                return _assessment_execute_json()
 
-            # Decomposition: 1st call returns 1 subtask, 2nd returns 2
-            if call_count <= 1:
-                return _subtasks_json(["Handle the complex part"])
-            return _subtasks_json(["Worker task A", "Worker task B"])
+            # Decomposition (Boss): returns 1 subtask
+            return _subtasks_json(["Handle the complex part"])
 
         llm._determine_response = smart_response
 
@@ -654,17 +682,14 @@ class TestMultiLevelRun:
         assert len(manager_ids) == 1
         manager_id = manager_ids[0]
 
-        # Child evaluates complexity → COMPLEX → becomes MANAGER
+        # Child assesses → COMPLEX → becomes MANAGER + spawns 2 children in one step
         await svc.run_agent_step(manager_id)
         assert _get_agent_role(event_store, manager_id) == "manager"
-
-        # Manager decomposes → 2 children
-        await svc.run_agent_step(manager_id)
         worker_ids = _find_child_ids(event_store, manager_id)
         assert len(worker_ids) == 2
         assert _get_agent_status(event_store, manager_id) == "waiting"
 
-        # Workers evaluate complexity → SIMPLE → become WORKERs
+        # Workers assess → SIMPLE → become WORKERs
         for wid in worker_ids:
             await svc.run_agent_step(wid)
             assert _get_agent_role(event_store, wid) == "worker"
@@ -687,18 +712,16 @@ class TestMultiLevelRun:
         llm = FakeLLM()
         worker = FakeWorkerTool()
 
-        call_count = 0
+        assess_count = 0
 
         def smart_response(prompt: str) -> str:
-            nonlocal call_count
-            call_count += 1
-            if "COMPLEXITY_EVALUATION_STRATEGY" in prompt:
-                if call_count <= 2:
-                    return _complexity_json("complex")
-                return _complexity_json("simple")
-            if call_count <= 1:
-                return _subtasks_json(["Sub"])
-            return _subtasks_json(["A", "B"])
+            nonlocal assess_count
+            if "Assess this task" in prompt:
+                assess_count += 1
+                if assess_count <= 1:
+                    return _assessment_decompose_json(["A", "B"])
+                return _assessment_execute_json()
+            return _subtasks_json(["Sub"])
 
         llm._determine_response = smart_response
         svc = _wire_execution_service(event_store, llm, worker)
@@ -706,7 +729,7 @@ class TestMultiLevelRun:
         boss_id = await svc.create_boss_agent("Task")
         await svc.run_agent_step(boss_id)
         manager_id = _find_child_ids(event_store, boss_id)[0]
-        await svc.run_agent_step(manager_id)
+        # assess_task: COMPLEX → MANAGER + spawns 2 children in one step
         await svc.run_agent_step(manager_id)
         worker_ids = _find_child_ids(event_store, manager_id)
 
@@ -761,18 +784,18 @@ class TestChildFailurePropagation:
         worker = FakeWorkerTool()
         worker.set_failure("Timeout")
 
-        call_count = 0
+        assess_count = 0
 
         def smart_response(prompt: str) -> str:
-            nonlocal call_count
-            call_count += 1
-            if "COMPLEXITY_EVALUATION_STRATEGY" in prompt:
-                if call_count <= 2:
-                    return _complexity_json("complex")
-                return _complexity_json("simple")
-            if call_count <= 1:
-                return _subtasks_json(["Sub"])
-            return _subtasks_json(["Worker task"])
+            nonlocal assess_count
+            if "Assess this task" in prompt:
+                assess_count += 1
+                if assess_count <= 1:
+                    # 1st assessment → COMPLEX with 1 inline subtask
+                    return _assessment_decompose_json(["Worker task"])
+                return _assessment_execute_json()
+            # Boss decomposition
+            return _subtasks_json(["Sub"])
 
         llm._determine_response = smart_response
         svc = _wire_execution_service(event_store, llm, worker)
@@ -781,11 +804,11 @@ class TestChildFailurePropagation:
         await svc.run_agent_step(boss_id)
 
         manager_id = _find_child_ids(event_store, boss_id)[0]
-        await svc.run_agent_step(manager_id)  # complexity → MANAGER
-        await svc.run_agent_step(manager_id)  # decompose → 1 worker
+        # assess_task: COMPLEX → MANAGER + spawns 1 worker child in one step
+        await svc.run_agent_step(manager_id)
 
         worker_id = _find_child_ids(event_store, manager_id)[0]
-        await svc.run_agent_step(worker_id)  # complexity → WORKER
+        await svc.run_agent_step(worker_id)  # assess → WORKER
         await svc.run_agent_step(worker_id)  # execute → FAILED
 
         # Failure propagation: worker → manager → boss
