@@ -60,14 +60,16 @@ class AgentCreated(DomainEvent):
 
     sibling_index tracks position among siblings for left-to-right ordering.
     Root agents (BOSS) have sibling_index=0.
-    spawn_payload contains parent context for branch detection in SEC-bench.
+    briefing contains parent context for branch detection in SEC-bench.
     """
 
     role: str
     parent_id: UUID | None = None
     config: dict[str, Any] = Field(default_factory=dict)
-    sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
-    spawn_payload: dict[str, Any] | None = None  # Parent context for child agents
+    sibling_index: int = 0
+    briefing: dict[str, Any] | None = None
+    depends_on: list[int] = Field(default_factory=list)
+    success_criteria: str = ""  # From Subtask.success_criteria, used by verification
 
 
 class TaskAssigned(DomainEvent):
@@ -92,9 +94,8 @@ class SubtasksDefined(DomainEvent):
 
 
 class ChildSpawned(DomainEvent):
-    """Parent spawned a child agent with rich context.
+    """Parent spawned a child agent with Briefing context.
 
-    Includes SpawnPayload for bidirectional context flow.
     sibling_index tracks the child's position among siblings (0-indexed)
     for left-to-right execution ordering.
     """
@@ -103,7 +104,7 @@ class ChildSpawned(DomainEvent):
     child_role: str
     subtask: Subtask
     child_config: dict[str, Any]
-    parent_context: dict[str, Any] = Field(default_factory=dict)  # Serialized SpawnPayload
+    briefing: dict[str, Any] = Field(default_factory=dict)  # Serialized Briefing
     sibling_index: int = 0  # Position among siblings (0 = first/leftmost)
 
 
@@ -117,6 +118,73 @@ class WorkFailed(DomainEvent):
     """Agent failed to complete work."""
 
     reason: str
+
+
+class VerificationFailed(DomainEvent):
+    """Worker output failed verification checks.
+
+    Emitted when a completed worker's output doesn't pass quality gates.
+    Transitions agent from COMPLETED to FAILED.
+    """
+
+    failed_stage: str  # "structural", "deterministic", "execution", "judge"
+    feedback: str  # Structured feedback for retry/parent
+    stages_passed: list[str] = Field(default_factory=list)  # Stages that passed before failure
+
+
+class DecisionInfeasible(DomainEvent):
+    """Agent determined task is infeasible within given constraints.
+
+    Emitted when LLM responds with constraints_unsatisfiable.
+    Transitions agent to FAILED with structured infeasibility feedback
+    that can trigger parent re-decomposition.
+    """
+
+    reason: str
+    minimum_subtasks: int | None = None
+    minimum_depth: int | None = None
+
+
+class RedecompositionTriggered(DomainEvent):
+    """Parent re-decomposes after child signals infeasible.
+
+    Transitions parent from WAITING → ANALYZING for a new decomposition
+    attempt with adjusted constraints or strategy.
+    """
+
+    trigger_child_id: UUID
+    reason: str
+
+
+class ProbeStarted(DomainEvent):
+    """Agent started a read-only probe before making a decision.
+
+    Observability event — does not change agent state.
+    """
+
+    probe_type: str  # "file_check", "repo_scan", "api_query", etc.
+
+
+class ProbeCompleted(DomainEvent):
+    """Agent completed a read-only probe.
+
+    Observability event — does not change agent state.
+    """
+
+    probe_type: str
+    result_summary: str = ""
+
+
+class RetryScheduled(DomainEvent):
+    """Agent scheduled for retry after failure.
+
+    Transitions agent from FAILED back to ANALYZING for re-execution.
+    Tracks retry attempt number and optional model escalation.
+    """
+
+    attempt: int  # 1-indexed retry attempt number
+    reason: str  # Why retry was scheduled (original failure reason)
+    escalated_model: str | None = None  # New model if escalated, None if same
 
 
 class CodeGenerationStarted(DomainEvent):
@@ -145,14 +213,11 @@ class PromptSent(DomainEvent):
 
 
 class ChildCompleted(DomainEvent):
-    """Child agent completed, parent notified with structured result.
-
-    Includes TaskOutcome for rich feedback from child to parent.
-    """
+    """Child agent completed, parent notified with structured Report."""
 
     child_id: UUID
-    result: str  # Simple result text
-    child_result: dict[str, Any] = Field(default_factory=dict)  # Rich TaskOutcome structure
+    result: str  # Simple result text (kept for quick access)
+    report: dict[str, Any] = Field(default_factory=dict)  # Serialized Report
 
 
 class ChildFailed(DomainEvent):
@@ -301,14 +366,12 @@ class RunCompleted(DomainEvent):
 
 
 class SharedContextCreated(DomainEvent):
-    """Shared execution context created for a run.
+    """Shared store created for a run.
 
-    One shared context per execution hierarchy (keyed by root_id).
-    Stores initial budget and configuration.
+    One shared store per execution hierarchy (keyed by root_id).
     """
 
     root_id: UUID
-    initial_budget_usd: float = 0.0
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -341,58 +404,3 @@ class DecisionRecorded(DomainEvent):
     decided_by: UUID  # Agent that made the decision
 
 
-class ProgressUpdated(DomainEvent):
-    """Progress checkpoint updated in shared context.
-
-    Enables agents to report progress on named checkpoints.
-    """
-
-    checkpoint_key: str
-    status: str  # "started", "in_progress", "completed", "blocked"
-    progress_pct: float = 0.0
-    message: str = ""
-    reported_by: UUID  # Agent reporting progress
-
-
-class ConfigOverrideSet(DomainEvent):
-    """Configuration override set in shared context.
-
-    Allows runtime configuration changes that propagate
-    to all or a subtree of agents.
-    """
-
-    config_key: str
-    config_value: str  # JSON-serialized value
-    set_by: UUID  # Agent that set the override
-    scope: str = "global"  # "global" | "subtree:{agent_id}"
-
-
-# =============================================================================
-# Budget Events (part of shared context)
-# =============================================================================
-
-
-class BudgetConsumed(DomainEvent):
-    """Budget consumption recorded in shared context.
-
-    Event-sourced budget tracking with OCC guarantees.
-    Emitted for each cost-incurring operation.
-    """
-
-    consumed_by: UUID  # Agent that consumed budget
-    amount_usd: float  # Cost of this operation
-    operation: str  # "llm_call", "worker_execution"
-    model: str | None = None  # Model used if applicable
-    tokens: dict[str, int] = Field(default_factory=dict)  # {"prompt": N, "completion": M}
-
-
-class BudgetExceeded(DomainEvent):
-    """Budget limit exceeded, execution should halt.
-
-    Emitted when consumed budget reaches or exceeds the limit.
-    Agents should check for this and stop processing.
-    """
-
-    limit_usd: float
-    consumed_usd: float
-    triggered_by: UUID  # Agent that triggered the limit

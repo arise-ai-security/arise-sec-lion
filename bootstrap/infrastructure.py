@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from core.ports.event_store_port import EventStorePort
-from core.ports.llm_port import LLMPort
-from core.ports.shared_context_port import SharedContextPort
-from core.ports.worker_port import WorkerToolPort
+from core.ports.runtime_ports import LLMPort
+from core.ports.runtime_ports import SharedContextPort
+from core.ports.runtime_ports import WorkerToolPort
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
@@ -17,6 +17,7 @@ from infrastructure.adapters.worker import (
     OpenHandsAdapter,
     SDKAdapterConfig,
 )
+import infrastructure.adapters.sinks as _sinks  # noqa: F401 - registers sinks via decorators
 
 
 type WorkerToolType = Literal["claude_code", "openhands", "google_adk"]

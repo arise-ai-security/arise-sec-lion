@@ -20,8 +20,6 @@ const statusColors: Record<string, string> = {
   completed: 'bg-green-400',
   failed: 'bg-red-400',
   blocked: 'bg-orange-400',
-  terminated: 'bg-gray-400',
-  verifying: 'bg-purple-400',
 };
 
 export function AgentSidebar({ agents, selectedId, onSelect, loading, error }: AgentSidebarProps) {

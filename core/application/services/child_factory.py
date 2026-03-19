@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.values.context import SpawnPayload
+from core.domain.values.node_message import Briefing
 from core.domain.events.events import ChildSpawned
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from config import ManagerConfig
     from core.application.services.agent_repository import AgentRepository
-    from core.application.services.context_registry import HierarchyLimitsRegistry
+    from core.application.execution_service import HierarchyLimitsRegistry
 
 
 @dataclass
@@ -130,22 +130,21 @@ class ChildAgentFactory:
         # without date suffix). Applied to all roles, not just PENDING.
         child_config = self._apply_manager_config(child_config)
 
-        # Pass spawn_payload to create() so it's persisted in AgentCreated event
-        # This ensures spawn_payload is restored when agent is loaded from history
+        # Pass briefing to create() so it's persisted in AgentCreated event
+        # This ensures briefing is restored when agent is loaded from history
         child = AgentSession.create(
             agent_id=event.child_id,
             role=child_role,
             config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
-            spawn_payload=event.parent_context,  # Persisted in AgentCreated event
+            briefing=event.briefing,
+            depends_on=event.subtask.depends_on,
+            success_criteria=event.subtask.success_criteria,
         )
         child.assign_task(event.subtask.description)
 
-        # Propagate hierarchy limits
         self._limits_registry.propagate_to_child(parent_id, event.child_id)
-
-        # Persist the new agent
         await self._repository.save_new_agent(child)
         self._total_created += 1
 
@@ -200,11 +199,12 @@ class ChildAgentFactory:
             config=child_config,
             parent_id=parent_id,
             sibling_index=event.sibling_index,
-            spawn_payload=event.parent_context,
+            briefing=event.briefing,
+            depends_on=event.subtask.depends_on,
+            success_criteria=event.subtask.success_criteria,
         )
         child.assign_task(event.subtask.description)
 
-        # Propagate hierarchy limits
         self._limits_registry.propagate_to_child(parent_id, event.child_id)
 
         # Persist the new agent (parallel DB write)

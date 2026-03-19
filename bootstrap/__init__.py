@@ -1,7 +1,6 @@
-from .application import Application, ApplicationConfig, get_application
+from .application import Application, ApplicationConfig, get_application, get_cli
 from .bootstrap import main
 from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastructure
-from .presentation import get_cli
 
 
 __all__ = [

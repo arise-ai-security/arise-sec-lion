@@ -7,10 +7,12 @@ from uuid import UUID
 
 from core.domain.events.events import (
     AgentCreated,
+    DecisionInfeasible,
     DomainEvent,
     OperationFinished,
     StatusChanged,
     TokensConsumed,
+    VerificationFailed,
     WorkerCostRecorded,
     WorkFailed,
 )
@@ -131,6 +133,12 @@ class IncrementalSummaryProjection:
             self._agent_phase_start[(agent_id, new_phase)] = event.occurred_at
 
         elif isinstance(event, WorkFailed):
+            self._errors.append(event)
+
+        elif isinstance(event, VerificationFailed):
+            self._errors.append(event)
+
+        elif isinstance(event, DecisionInfeasible):
             self._errors.append(event)
 
         elif isinstance(event, OperationFinished):
@@ -353,6 +361,12 @@ class SummaryProjection(Projection):
                 agent_phase_start[(agent_id, new_phase)] = event.occurred_at
 
             elif isinstance(event, WorkFailed):
+                errors.append(event)
+
+            elif isinstance(event, VerificationFailed):
+                errors.append(event)
+
+            elif isinstance(event, DecisionInfeasible):
                 errors.append(event)
 
             elif isinstance(event, OperationFinished):
@@ -642,4 +656,7 @@ class SummaryProjection(Projection):
         Returns:
             Tuple of WorkFailed events.
         """
-        return tuple(event for event in events if isinstance(event, WorkFailed))
+        return tuple(
+            event for event in events
+            if isinstance(event, (WorkFailed, VerificationFailed, DecisionInfeasible))
+        )

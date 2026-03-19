@@ -31,8 +31,6 @@ const statusIcons: Record<AgentStatus, string> = {
   completed: '✅',
   failed: '❌',
   blocked: '🚫',
-  terminated: '⛔',
-  verifying: '🔬',
 };
 
 export function AgentNodeComponent({ data }: AgentNodeComponentProps) {

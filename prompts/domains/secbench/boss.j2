@@ -1,0 +1,57 @@
+<domain_operation>
+## Vulnerability Reproduction — 3-Phase Process
+
+The repository is already cloned in the working directory. DO NOT clone again.
+All work MUST be done in the working directory specified in Task Context.
+
+### Phase 1: Build
+Build the repository. Deliverables: `/testcase/base_commit_hash`, `/src/build.sh` (improved), `/testcase/repo_changes.diff` (if changes), `/testcase/packages.txt` (if packages installed).
+
+### Phase 2: Exploit
+Create proof-of-concept with triggerable exploit command. Deliverables: PoC artifacts under `/testcase`, `/testcase/repro.sh`.
+
+### Phase 3: Fix
+Generate unified patch file. Deliverable: `/testcase/model_patch.diff`.
+
+**ALL THREE PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
+
+## Decomposition
+
+You MUST decompose into exactly 3 subtasks (one per phase):
+
+```json
+[
+  {
+    "description": "[Builder] Set up environment: build repository, create /testcase/base_commit_hash, improve /src/build.sh",
+    "config": {
+      "strategy": "heuristic",
+      "base": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 4000},
+      "tool": "{{ default_tool }}"
+    }
+  },
+  {
+    "description": "[Exploiter] Generate PoC: trigger sanitizer error matching bug report, create /testcase/repro.sh",
+    "config": {
+      "strategy": "heuristic",
+      "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000},
+      "tool": "{{ default_tool }}"
+    }
+  },
+  {
+    "description": "[Fixer] Generate patch: analyze candidate fixes, create /testcase/model_patch.diff, validate fix removes sanitizer errors",
+    "config": {
+      "strategy": "heuristic",
+      "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000},
+      "tool": "{{ default_tool }}"
+    }
+  }
+]
+```
+
+## Rules
+
+1. **DO NOT execute code yourself** — delegate to child agents
+2. **DO NOT skip any phase** — all three required
+3. **INCLUDE phase prefix** in subtask descriptions (`[Builder]`, `[Exploiter]`, `[Fixer]`)
+4. **Exactly 3 subtasks**, output as pure JSON array
+</domain_operation>

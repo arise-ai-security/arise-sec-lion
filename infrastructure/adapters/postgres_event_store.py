@@ -11,21 +11,22 @@ from core.domain.events.events import (
     AgentExecutionFinished,
     AgentExecutionStarted,
     ArtifactStored,
-    BudgetConsumed,
-    BudgetExceeded,
     ChildCompleted,
     ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
-    ConfigOverrideSet,
+    DecisionInfeasible,
     DecisionRecorded,
     DomainEvent,
     LimitEnforced,
     OperationFinished,
     OperationStarted,
-    ProgressUpdated,
+    ProbeCompleted,
+    ProbeStarted,
     PromptSent,
+    RedecompositionTriggered,
+    RetryScheduled,
     RunCompleted,
     RunStarted,
     SharedContextCreated,
@@ -34,6 +35,7 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
+    VerificationFailed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -74,11 +76,13 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "SharedContextCreated": SharedContextCreated,
     "ArtifactStored": ArtifactStored,
     "DecisionRecorded": DecisionRecorded,
-    "ProgressUpdated": ProgressUpdated,
-    "ConfigOverrideSet": ConfigOverrideSet,
-    # Budget events (part of shared context)
-    "BudgetConsumed": BudgetConsumed,
-    "BudgetExceeded": BudgetExceeded,
+    # New lifecycle events (refac/simplify-with-new-features)
+    "VerificationFailed": VerificationFailed,
+    "DecisionInfeasible": DecisionInfeasible,
+    "RetryScheduled": RetryScheduled,
+    "RedecompositionTriggered": RedecompositionTriggered,
+    "ProbeStarted": ProbeStarted,
+    "ProbeCompleted": ProbeCompleted,
 }
 
 
@@ -596,11 +600,19 @@ class PostgresEventStore(EventStorePort):
                             CASE e.event_type
                                 WHEN 'WorkCompleted' THEN 'completed'
                                 WHEN 'WorkFailed' THEN 'failed'
+                                WHEN 'VerificationFailed' THEN 'failed'
+                                WHEN 'DecisionInfeasible' THEN 'failed'
+                                WHEN 'RetryScheduled' THEN 'analyzing'
+                                WHEN 'RedecompositionTriggered' THEN 'analyzing'
                                 ELSE e.payload->>'new_status'
                             END as status
                         FROM events e
                         INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
-                        WHERE e.event_type IN ('StatusChanged', 'WorkCompleted', 'WorkFailed')
+                        WHERE e.event_type IN (
+                            'StatusChanged', 'WorkCompleted', 'WorkFailed',
+                            'VerificationFailed', 'DecisionInfeasible',
+                            'RetryScheduled', 'RedecompositionTriggered'
+                        )
                         ORDER BY e.aggregate_id, e.occurred_at DESC
                     ),
                     run_info AS (

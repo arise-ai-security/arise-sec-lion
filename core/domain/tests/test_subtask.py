@@ -91,6 +91,49 @@ def test_subtask_inequality() -> None:
     assert subtask1 != subtask2
 
 
+def test_subtask_defaults_for_new_fields() -> None:
+    """Test that new enriched fields have sensible defaults."""
+    subtask = Subtask(description="Do thing", config=_test_config())
+
+    assert subtask.depends_on == []
+    assert subtask.dependency_type == "finish_to_start"
+    assert subtask.estimated_complexity == "unknown"
+    assert subtask.success_criteria == ""
+    assert subtask.failure_indicators == []
+    assert subtask.task_type == "general"
+
+
+def test_subtask_with_enriched_fields() -> None:
+    """Test that enriched fields can be set from LLM response dicts."""
+    subtask = Subtask(
+        description="Implement auth module",
+        config=_test_config(),
+        depends_on=[0],
+        estimated_complexity="complex",
+        success_criteria="All auth endpoints return 200",
+        failure_indicators=["compilation error", "test failure"],
+        task_type="implementation",
+    )
+
+    assert subtask.depends_on == [0]
+    assert subtask.estimated_complexity == "complex"
+    assert subtask.success_criteria == "All auth endpoints return 200"
+    assert subtask.failure_indicators == ["compilation error", "test failure"]
+    assert subtask.task_type == "implementation"
+
+
+def test_subtask_from_dict_with_extra_fields_ignored() -> None:
+    """Test that unknown fields from LLM are ignored (Pydantic default)."""
+    data = {
+        "description": "Task",
+        "config": _test_config(),
+        "justification": {"objective": "x", "plan": "y"},  # LLM adds this
+        "unknown_field": "should be ignored",
+    }
+    subtask = Subtask(**data)
+    assert subtask.description == "Task"
+
+
 def test_subtask_not_hashable_due_to_config() -> None:
     """Test that Subtask is not hashable due to dict config field.
 

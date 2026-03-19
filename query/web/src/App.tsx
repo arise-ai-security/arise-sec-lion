@@ -216,7 +216,9 @@ function Dashboard() {
       // Events the agent produces
       const producedTypes = ['StatusChanged', 'ComplexityEvaluated', 'SubtasksDefined', 'ChildSpawned',
                             'WorkCompleted', 'WorkFailed', 'CodeGenerationStarted', 'PromptSent',
-                            'TokensConsumed', 'WorkerCostRecorded', 'OperationStarted', 'OperationFinished'];
+                            'TokensConsumed', 'WorkerCostRecorded', 'OperationStarted', 'OperationFinished',
+                            'VerificationFailed', 'DecisionInfeasible', 'RetryScheduled',
+                            'RedecompositionTriggered', 'ProbeStarted', 'ProbeCompleted'];
       if (producedTypes.includes(event.event_type)) return 'produced';
       // Default to 'passed' for other events
       return 'passed';
@@ -370,7 +372,10 @@ function Dashboard() {
     });
 
     // Refresh hierarchy when structure-changing events occur (throttled)
-    const structureEvents = ['AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed'];
+    const structureEvents = [
+      'AgentCreated', 'ChildSpawned', 'StatusChanged', 'WorkCompleted', 'WorkFailed',
+      'VerificationFailed', 'DecisionInfeasible', 'RetryScheduled', 'RedecompositionTriggered',
+    ];
     if (structureEvents.includes(event.event_type)) {
       refreshHierarchy();
     }

@@ -4,7 +4,8 @@
 
 import json
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -120,3 +121,56 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
             raise ValueError(f"Subtask {idx}: validation failed: {e}") from e
 
     return subtasks
+
+
+# ---------------------------------------------------------------------------
+# Assessment parsing (unified evaluate+decompose response)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AssessmentResult:
+    """Result of task assessment: execute, decompose, or infeasible."""
+
+    action: Literal["execute", "decompose", "infeasible"]
+    reasoning: str = ""
+    subtasks: list[Subtask] | None = None
+    constraint_failure: ConstraintFailure | None = None
+
+
+def parse_assessment_response(response: str) -> AssessmentResult:
+    """Parse LLM assessment response (execute/decompose union).
+
+    Returns:
+        AssessmentResult with action, reasoning, and optional subtasks.
+
+    Raises:
+        json.JSONDecodeError: If response is not valid JSON.
+        ValueError: If action is invalid or subtasks are malformed.
+    """
+    clean = strip_markdown_code_block(response)
+    data = json.loads(clean)
+
+    # Check constraint failure first
+    if ConstraintFailure.matches(data):
+        return AssessmentResult(
+            action="infeasible",
+            constraint_failure=ConstraintFailure.from_llm_response(data),
+        )
+
+    action = data.get("action", "").lower()
+    reasoning = data.get("reasoning", "")
+
+    if action == "execute":
+        return AssessmentResult(action="execute", reasoning=reasoning)
+
+    if action == "decompose":
+        raw_subtasks = data.get("subtasks", [])
+        subtasks = _validate_subtasks(raw_subtasks)
+        return AssessmentResult(
+            action="decompose",
+            reasoning=reasoning,
+            subtasks=subtasks,
+        )
+
+    raise ValueError(f"Invalid action: '{action}'. Expected 'execute' or 'decompose'.")

@@ -25,8 +25,8 @@ from core.domain.values.llm_response import LLMResponse, LLMUsage
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.application.services.prompt_builder import PromptBuilder
 from core.domain.values.subtask import Subtask
-from core.ports.llm_port import LLMPort
-from core.ports.worker_port import WorkerToolPort
+from core.ports.runtime_ports import LLMPort
+from core.ports.runtime_ports import WorkerToolPort
 
 
 def _test_agent_config() -> dict[str, Any]:
@@ -229,9 +229,8 @@ async def test_manager_llm_invalid_json_response() -> None:
     # When: Call orchestrator.evaluate_task(agent) with invalid JSON response
     await orchestrator.evaluate_task(agent)
 
-    # Then: Verify 6 events exist (AgentCreated, TaskAssigned, OperationStarted, PromptSent, TokensConsumed, WorkFailed)
-    # Note: OperationFinished is NOT emitted because pipeline fails before reaching it
-    assert len(agent.events) == 6, f"Expected 6 events, got {len(agent.events)}"
+    # Then: Verify 7 events (AgentCreated, TaskAssigned, OperationStarted, PromptSent, TokensConsumed, WorkFailed, OperationFinished)
+    assert len(agent.events) == 7, f"Expected 7 events, got {len(agent.events)}"
 
     # And: Find the WorkFailed event
     work_failed_event = None
@@ -389,7 +388,7 @@ def test_cannot_spawn_boss_child() -> None:
 
 @pytest.mark.asyncio
 async def test_child_evaluates_simple_complexity() -> None:
-    """Test that child agent evaluates SIMPLE task and becomes WORKER."""
+    """Test that child agent assesses SIMPLE task and becomes WORKER."""
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
@@ -400,21 +399,21 @@ async def test_child_evaluates_simple_complexity() -> None:
     )
     agent.assign_task("Write a Python function to calculate fibonacci numbers")
 
-    # And: Prepare FakeLLM that returns SIMPLE complexity
+    # And: Prepare FakeLLM that returns execute action (SIMPLE)
     import json
 
     fake_llm = FakeLLM(
         canned_response=json.dumps(
             {
-                "complexity": "simple",
+                "action": "execute",
                 "reasoning": "This is a single, focused task that can be implemented directly",
             }
         )
     )
     orchestrator = _create_orchestrator(llm_port=fake_llm)
 
-    # When: Child evaluates complexity
-    await orchestrator.evaluate_complexity(agent)
+    # When: Child assesses task
+    await orchestrator.assess_task(agent)
 
     # Then: Agent role transitions from PENDING to WORKER
     assert agent.role == AgentRole.WORKER, "Agent should become WORKER for SIMPLE tasks"
@@ -434,7 +433,7 @@ async def test_child_evaluates_simple_complexity() -> None:
 
 @pytest.mark.asyncio
 async def test_child_evaluates_complex_complexity() -> None:
-    """Test that child agent evaluates COMPLEX task and becomes MANAGER."""
+    """Test that child agent assesses COMPLEX task and becomes MANAGER with children."""
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
@@ -445,21 +444,26 @@ async def test_child_evaluates_complex_complexity() -> None:
     )
     agent.assign_task("Build a complete web scraping system with monitoring")
 
-    # And: Prepare FakeLLM that returns COMPLEX complexity
+    # And: Prepare FakeLLM that returns decompose action with inline subtasks
     import json
 
+    child_config = _test_child_config()
     fake_llm = FakeLLM(
         canned_response=json.dumps(
             {
-                "complexity": "complex",
+                "action": "decompose",
                 "reasoning": "Requires multiple subtasks: scraping, storage, monitoring, alerting",
+                "subtasks": [
+                    {"description": "Implement web scraping", "config": child_config},
+                    {"description": "Set up monitoring", "config": child_config},
+                ],
             }
         )
     )
     orchestrator = _create_orchestrator(llm_port=fake_llm)
 
-    # When: Child evaluates complexity
-    await orchestrator.evaluate_complexity(agent)
+    # When: Child assesses task
+    await orchestrator.assess_task(agent)
 
     # Then: Agent role transitions from PENDING to MANAGER
     assert agent.role == AgentRole.MANAGER, "Agent should become MANAGER for COMPLEX tasks"
@@ -473,13 +477,18 @@ async def test_child_evaluates_complex_complexity() -> None:
     assert complexity_events[0].determined_role == AgentRole.MANAGER.value
     assert "multiple" in complexity_events[0].reasoning.lower()
 
-    # And: Agent status remains ANALYZING (ready to decompose)
-    assert agent.status == AgentStatus.ANALYZING
+    # And: Agent also spawned children and transitioned to WAITING
+    assert agent.status == AgentStatus.WAITING
+    assert len(agent.child_ids) == 2, "Agent should have spawned 2 children"
+
+    # And: ChildSpawned events are recorded
+    child_spawned_events = [e for e in agent.events if isinstance(e, ChildSpawned)]
+    assert len(child_spawned_events) == 2
 
 
 @pytest.mark.asyncio
 async def test_complexity_evaluation_invalid_response() -> None:
-    """Test that invalid LLM response for complexity evaluation fails gracefully."""
+    """Test that invalid LLM response for task assessment fails gracefully."""
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
@@ -494,16 +503,16 @@ async def test_complexity_evaluation_invalid_response() -> None:
     fake_llm = FakeLLM(canned_response="This is not valid JSON!")
     orchestrator = _create_orchestrator(llm_port=fake_llm)
 
-    # When: Child attempts to evaluate complexity
-    await orchestrator.evaluate_complexity(agent)
+    # When: Child attempts to assess task
+    await orchestrator.assess_task(agent)
 
     # Then: Agent transitions to FAILED status
-    assert agent.status == AgentStatus.FAILED, "Agent should fail when complexity evaluation fails"
+    assert agent.status == AgentStatus.FAILED, "Agent should fail when assessment fails"
 
     # And: WorkFailed event is recorded
     work_failed_events = [e for e in agent.events if isinstance(e, WorkFailed)]
     assert len(work_failed_events) == 1, "Should have 1 WorkFailed event"
-    assert "complexity" in work_failed_events[0].reason.lower()
+    assert "assessment" in work_failed_events[0].reason.lower()
 
     # And: Role remains PENDING (never determined)
     assert agent.role == AgentRole.PENDING

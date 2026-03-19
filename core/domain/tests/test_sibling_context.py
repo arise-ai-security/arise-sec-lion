@@ -2,19 +2,19 @@
 
 import pytest
 
-from core.domain.values.context import (
+from core.domain.values.node_message import (
     SharedDecision,
-    SiblingStatus,
-    SiblingView,
+    PeerStatus,
+    Handoff,
 )
 
 
-class TestSiblingStatus:
-    """Test cases for SiblingStatus value object."""
+class TestPeerStatus:
+    """Test cases for PeerStatus value object."""
 
-    def test_create_sibling_status(self) -> None:
-        """Test creating SiblingStatus instance."""
-        status = SiblingStatus(
+    def test_create_peer_status(self) -> None:
+        """Test creating PeerStatus instance."""
+        status = PeerStatus(
             agent_id="agent-123",
             sibling_index=0,
             status="completed",
@@ -30,7 +30,7 @@ class TestSiblingStatus:
 
     def test_model_dump_serialization(self) -> None:
         """Test model_dump() serialization."""
-        status = SiblingStatus(
+        status = PeerStatus(
             agent_id="agent-123",
             sibling_index=1,
             status="in_progress",
@@ -56,7 +56,7 @@ class TestSiblingStatus:
             "result_summary": None,
         }
 
-        status = SiblingStatus.model_validate(data)
+        status = PeerStatus.model_validate(data)
 
         assert status.agent_id == "agent-456"
         assert status.sibling_index == 2
@@ -65,10 +65,10 @@ class TestSiblingStatus:
         assert status.result_summary is None
 
     def test_immutability(self) -> None:
-        """Test that SiblingStatus is immutable (frozen)."""
+        """Test that PeerStatus is immutable (frozen)."""
         from pydantic import ValidationError
 
-        status = SiblingStatus(
+        status = PeerStatus(
             agent_id="agent-123",
             sibling_index=0,
             status="pending",
@@ -130,43 +130,41 @@ class TestSharedDecision:
         assert decision.decided_by == "agent-789"
 
 
-class TestSiblingView:
-    """Test cases for SiblingView value object."""
+class TestHandoff:
+    """Test cases for Handoff value object."""
 
-    def test_create_empty_view(self) -> None:
-        """Test creating view with no siblings or decisions."""
-        view = SiblingView(
-            current_agent_id="agent-123",
+    def test_create_empty_handoff(self) -> None:
+        """Test creating handoff with no siblings or decisions."""
+        handoff = Handoff(
             parent_task=None,
-            sibling_tasks=(),
+            siblings=(),
             shared_decisions=(),
         )
 
-        assert view.current_agent_id == "agent-123"
-        assert view.parent_task is None
-        assert view.sibling_tasks == ()
-        assert view.shared_decisions == ()
-        assert view.total_siblings == 0
-        assert view.completed_count == 0
-        assert view.in_progress_count == 0
+        assert handoff.parent_task is None
+        assert handoff.siblings == ()
+        assert handoff.shared_decisions == ()
+        assert handoff.total_siblings == 0
+        assert handoff.completed_count == 0
+        assert handoff.in_progress_count == 0
 
-    def test_create_view_with_siblings(self) -> None:
-        """Test creating view with sibling tasks."""
-        sibling1 = SiblingStatus(
+    def test_create_handoff_with_siblings(self) -> None:
+        """Test creating handoff with sibling tasks."""
+        sibling1 = PeerStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="completed",
             task_summary="First task",
             result_summary="Done",
         )
-        sibling2 = SiblingStatus(
+        sibling2 = PeerStatus(
             agent_id="sibling-2",
             sibling_index=1,
             status="in_progress",
             task_summary="Second task",
             result_summary=None,
         )
-        sibling3 = SiblingStatus(
+        sibling3 = PeerStatus(
             agent_id="sibling-3",
             sibling_index=3,
             status="pending",
@@ -174,27 +172,26 @@ class TestSiblingView:
             result_summary=None,
         )
 
-        view = SiblingView(
-            current_agent_id="agent-current",
+        handoff = Handoff(
             parent_task="Build REST API",
-            sibling_tasks=(sibling1, sibling2, sibling3),
+            siblings=(sibling1, sibling2, sibling3),
             shared_decisions=(),
         )
 
-        assert view.total_siblings == 3
-        assert view.completed_count == 1
-        assert view.in_progress_count == 1
+        assert handoff.total_siblings == 3
+        assert handoff.completed_count == 1
+        assert handoff.in_progress_count == 1
 
     def test_in_progress_includes_analyzing(self) -> None:
         """Test that in_progress_count includes 'analyzing' status."""
-        sibling1 = SiblingStatus(
+        sibling1 = PeerStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="analyzing",
             task_summary="Task 1",
             result_summary=None,
         )
-        sibling2 = SiblingStatus(
+        sibling2 = PeerStatus(
             agent_id="sibling-2",
             sibling_index=1,
             status="in_progress",
@@ -202,18 +199,17 @@ class TestSiblingView:
             result_summary=None,
         )
 
-        view = SiblingView(
-            current_agent_id="agent-current",
+        handoff = Handoff(
             parent_task=None,
-            sibling_tasks=(sibling1, sibling2),
+            siblings=(sibling1, sibling2),
             shared_decisions=(),
         )
 
-        assert view.in_progress_count == 2
+        assert handoff.in_progress_count == 2
 
     def test_to_template_dict(self) -> None:
         """Test to_template_dict() for Jinja2 rendering."""
-        sibling = SiblingStatus(
+        sibling = PeerStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="completed",
@@ -227,18 +223,16 @@ class TestSiblingView:
             decided_by="agent-123",
         )
 
-        view = SiblingView(
-            current_agent_id="agent-current",
+        handoff = Handoff(
             parent_task="Build REST API",
-            sibling_tasks=(sibling,),
+            siblings=(sibling,),
             shared_decisions=(decision,),
         )
 
-        template_dict = view.to_template_dict()
+        template_dict = handoff.to_template_dict()
 
-        assert template_dict["current_agent_id"] == "agent-current"
         assert template_dict["parent_task"] == "Build REST API"
-        assert len(template_dict["sibling_tasks"]) == 1
+        assert len(template_dict["siblings"]) == 1
         assert len(template_dict["shared_decisions"]) == 1
         assert template_dict["total_siblings"] == 1
         assert template_dict["completed_count"] == 1
@@ -246,7 +240,7 @@ class TestSiblingView:
 
     def test_roundtrip_serialization(self) -> None:
         """Test model_dump() -> model_validate() roundtrip."""
-        sibling = SiblingStatus(
+        sibling = PeerStatus(
             agent_id="sibling-1",
             sibling_index=0,
             status="completed",
@@ -260,19 +254,17 @@ class TestSiblingView:
             decided_by="agent-123",
         )
 
-        original = SiblingView(
-            current_agent_id="agent-current",
+        original = Handoff(
             parent_task="Build REST API",
-            sibling_tasks=(sibling,),
+            siblings=(sibling,),
             shared_decisions=(decision,),
         )
 
         data = original.model_dump()
-        restored = SiblingView.model_validate(data)
+        restored = Handoff.model_validate(data)
 
-        assert restored.current_agent_id == original.current_agent_id
         assert restored.parent_task == original.parent_task
-        assert len(restored.sibling_tasks) == len(original.sibling_tasks)
+        assert len(restored.siblings) == len(original.siblings)
         assert len(restored.shared_decisions) == len(original.shared_decisions)
-        assert restored.sibling_tasks[0].agent_id == original.sibling_tasks[0].agent_id
+        assert restored.siblings[0].agent_id == original.siblings[0].agent_id
         assert restored.shared_decisions[0].key == original.shared_decisions[0].key

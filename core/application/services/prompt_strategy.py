@@ -13,7 +13,8 @@ from uuid import UUID
 from core.domain.values.enums import AgentRole
 
 if TYPE_CHECKING:
-    from core.domain.values.context import HierarchyLimits, SpawnPayload
+    from core.domain.values.limits import HierarchyLimits
+    from core.domain.values.node_message import Briefing
     from core.domain.values.cve_instance import CVEInstance
     from core.application.services.prompt_builder import TemplateChain
 
@@ -27,10 +28,10 @@ class PromptContext:
     agent_role: AgentRole
     default_tool: str
     parent_task: str | None = None
-    spawn_payload: "SpawnPayload | None" = None
+    briefing: "Briefing | None" = None
     hierarchy_limits: "HierarchyLimits | None" = None
     cve_instance: "CVEInstance | None" = None
-    sibling_view: Any = None
+    handoff: Any = None
     workspace_context: str | None = None
 
 
@@ -53,6 +54,10 @@ class PromptStrategy(Protocol):
         """Return custom worker prompt, or None to use default."""
         ...
 
+    def build_assessment_prompt(self, context: PromptContext) -> str | None:
+        """Return custom assessment prompt, or None to use default."""
+        ...
+
 
 class DefaultPromptStrategy:
     """Default strategy - returns None to use base prompts for all roles."""
@@ -66,17 +71,20 @@ class DefaultPromptStrategy:
     def build_worker_prompt(self, context: PromptContext) -> str | None:
         return None
 
+    def build_assessment_prompt(self, context: PromptContext) -> str | None:
+        return None
 
-def _detect_benchmark_branch(spawn_payload: "SpawnPayload | None") -> str | None:
+
+def _detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
     """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
 
     Checks ancestry chain for top-level subtask keywords.
     Returns None if not in a benchmark run or branch not determinable.
     """
-    if spawn_payload is None:
+    if briefing is None:
         return None
 
-    for ancestor in spawn_payload.ancestry:
+    for ancestor in briefing.ancestry:
         task_lower = ancestor.task_summary.lower()
         if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
             return "builder"
@@ -105,14 +113,12 @@ class SecBenchPromptStrategy:
 
     Provides specialized prompts for CVE benchmark runs with
     builder/exploiter/fixer phase detection.
+
+    Uses 4-tier template architecture:
+      system.j2 → roles/*.j2 → domains/secbench/*.j2
     """
 
     def __init__(self, chain_factory: "Callable[[], TemplateChain]") -> None:
-        """Initialize with a factory for creating template chains.
-
-        Args:
-            chain_factory: Callable that creates a new TemplateChain instance.
-        """
         self._chain_factory = chain_factory
 
     def build_boss_prompt(self, context: PromptContext) -> str | None:
@@ -123,10 +129,11 @@ class SecBenchPromptStrategy:
         cve_ctx = context.cve_instance.to_template_context()
         return (
             self._chain_factory()
-            .render("core/roles/boss.j2", default_tool=context.default_tool)
-            .with_user_prompt(context.task_description)
-            .with_cve_display(context.cve_instance)
-            .render("secbench/boss.j2", **cve_ctx, default_tool=context.default_tool)
+            .render("system.j2", default_tool=context.default_tool)
+            .render("roles/boss.j2")
+            .text(f"<user_prompt>\n{context.task_description}\n</user_prompt>")
+            .with_cve_display(context.cve_instance, phase=None)
+            .render("domains/secbench/boss.j2", **cve_ctx, default_tool=context.default_tool)
             .build()
         )
 
@@ -140,7 +147,7 @@ class SecBenchPromptStrategy:
             return None
 
         # Detect branch from ancestry or task description
-        branch = _detect_benchmark_branch(context.spawn_payload)
+        branch = _detect_benchmark_branch(context.briefing)
         if branch is None:
             branch = _detect_branch_from_task(context.task_description)
 
@@ -148,9 +155,8 @@ class SecBenchPromptStrategy:
             return None
 
         # Only apply to direct BOSS children (depth-1 managers)
-        # spawn_payload.depth == 0 means parent is BOSS
         is_direct_boss_child = (
-            context.spawn_payload is not None and context.spawn_payload.depth == 0
+            context.briefing is not None and len(context.briefing.ancestry) == 1
         )
 
         if not is_direct_boss_child:
@@ -159,54 +165,59 @@ class SecBenchPromptStrategy:
         cve_ctx = context.cve_instance.to_template_context()
         return (
             self._chain_factory()
-            .render("core/roles/manager.j2", default_tool=context.default_tool)
-            .with_user_prompt(context.task_description)
-            .with_cve_display(context.cve_instance)
+            .render("system.j2", default_tool=context.default_tool)
+            .render("roles/manager.j2")
+            .text(f"<user_prompt>\n{context.task_description}\n</user_prompt>")
+            .with_cve_display(context.cve_instance, phase=branch)
             .render_if(
                 branch == "builder",
-                "secbench/manager/builder.j2",
+                "domains/secbench/manager/builder.j2",
                 **cve_ctx,
                 default_tool=context.default_tool,
             )
             .render_if(
                 branch == "exploiter",
-                "secbench/manager/exploiter.j2",
+                "domains/secbench/manager/exploiter.j2",
                 **cve_ctx,
                 default_tool=context.default_tool,
             )
             .render_if(
                 branch == "fixer",
-                "secbench/manager/fixer.j2",
+                "domains/secbench/manager/fixer.j2",
                 **cve_ctx,
                 default_tool=context.default_tool,
             )
             .build()
         )
 
+    def build_assessment_prompt(self, context: PromptContext) -> str | None:
+        return None  # SEC-bench uses default confidence-based assessment
+
     def build_worker_prompt(self, context: PromptContext) -> str | None:
         """Build SEC-bench worker prompt if in a benchmark branch."""
         if context.cve_instance is None:
             return None
 
-        branch = _detect_benchmark_branch(context.spawn_payload)
+        branch = _detect_benchmark_branch(context.briefing)
         if branch is None:
             return None
 
         sibling_ctx = (
-            context.sibling_view.to_template_dict()
-            if context.sibling_view
+            context.handoff.to_template_dict()
+            if context.handoff
             else {}
         )
         cve_ctx = context.cve_instance.to_template_context()
 
         return (
             self._chain_factory()
-            # .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)  # Disabled
-            .with_user_prompt(context.task_description)
-            .with_cve_display(context.cve_instance)
-            .render_if(context.sibling_view, "core/context/sibling.j2", **sibling_ctx)
-            .render_if(branch == "builder", "secbench/worker/builder.j2", **cve_ctx)
-            .render_if(branch == "exploiter", "secbench/worker/exploiter.j2", **cve_ctx)
-            .render_if(branch == "fixer", "secbench/worker/fixer.j2", **cve_ctx)
+            .render("system.j2", default_tool=context.default_tool)
+            .render("roles/worker.j2")
+            .text(f"<user_prompt>\n{context.task_description}\n</user_prompt>")
+            .with_cve_display(context.cve_instance, phase=branch)
+            .render_if(context.handoff, "context/sibling.j2", **sibling_ctx)
+            .render_if(branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx)
+            .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
+            .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
             .build()
         )

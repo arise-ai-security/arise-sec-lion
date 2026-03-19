@@ -7,12 +7,8 @@ from uuid import UUID, uuid4
 from pydantic import TypeAdapter
 
 from core.domain.values.agent_config import AgentConfig
-from core.domain.values.context import (
-    HierarchyLimits,
-    SpawnPayload,
-    TaskOutcome,
-    build_spawn_payload,
-)
+from core.domain.values.limits import HierarchyLimits
+from core.domain.values.node_message import Briefing, Report, build_briefing
 from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.events.events import (
     AgentCreated,
@@ -35,6 +31,12 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
+    DecisionInfeasible,
+    ProbeCompleted,
+    ProbeStarted,
+    RedecompositionTriggered,
+    RetryScheduled,
+    VerificationFailed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -56,7 +58,9 @@ class AgentSession:
         config: dict[str, Any],
         parent_id: UUID | None = None,
         sibling_index: int = 0,
-        spawn_payload: dict[str, Any] | None = None,
+        briefing: dict[str, Any] | None = None,
+        depends_on: list[int] | None = None,
+        success_criteria: str = "",
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -66,7 +70,9 @@ class AgentSession:
             parent_id=parent_id,
             config=config,
             sibling_index=sibling_index,
-            spawn_payload=spawn_payload,
+            briefing=briefing,
+            depends_on=depends_on or [],
+            success_criteria=success_criteria,
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -95,14 +101,14 @@ class AgentSession:
         self,
         child_id: UUID,
         result: str,
-        task_outcome: TaskOutcome | None = None,
+        report: Report | None = None,
     ) -> None:
         """For BOSS/MANAGER: record child completion, complete self when all children done.
 
         Args:
             child_id: ID of completed child
             result: Simple result text for the event
-            task_outcome: Structured TaskOutcome (optional, provides additional context)
+            report: Structured Report (optional, provides additional context)
         """
         assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
             f"Requires BOSS/MANAGER, got {self.role}"
@@ -111,24 +117,20 @@ class AgentSession:
         assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
         assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
 
-        # Use structured result if provided, otherwise create simple one
-        if task_outcome is None:
-            task_outcome = TaskOutcome.simple(result)
-
-        # NOTE: structured_task_outcomes is populated in _apply(ChildCompleted)
-        # to maintain event sourcing invariant: state only changes through events
+        if report is None:
+            report = Report.simple(result)
 
         child_completed_event = ChildCompleted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             child_id=child_id,
             result=result,
-            child_result=task_outcome.model_dump(),
+            report=report.model_dump(),
         )
         self._apply(child_completed_event)
         self._changes.append(child_completed_event)
 
-        if len(self.child_results) == len(self.child_ids):
+        if len(self.child_reports) == len(self.child_ids):
             aggregated_result = self._aggregate_child_results()
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
@@ -139,11 +141,19 @@ class AgentSession:
             self._changes.append(work_completed_event)
 
     def _aggregate_child_results(self) -> str:
-        """Combine results from all completed children."""
+        """Combine results from all completed children using structured Reports."""
         lines = ["All subtasks completed successfully:", ""]
         for child_id in self.child_ids:
-            child_result = self.child_results.get(child_id, "No result")
-            lines.append(f"- {child_result}")
+            report = self.child_reports.get(child_id)
+            if report is None:
+                lines.append("- No result")
+                continue
+            header = f"[{report.task}]" if report.task else "[subtask]"
+            lines.append(f"- {header}: {report.result}")
+            if report.artifacts:
+                lines.append(f"  Artifacts: {', '.join(report.artifacts)}")
+            if report.decisions:
+                lines.append(f"  Decisions: {', '.join(report.decisions)}")
         return "\n".join(lines)
 
     def handle_child_failure(self, child_id: UUID, reason: str) -> None:
@@ -195,9 +205,9 @@ class AgentSession:
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
-        # Restore spawn_payload from event if present
-        if event.spawn_payload is not None:
-            self.spawn_payload = SpawnPayload.model_validate(event.spawn_payload)
+        self.success_criteria = event.success_criteria
+        if event.briefing is not None:
+            self.briefing = Briefing.model_validate(event.briefing)
         self.version += 1
 
     @_apply.register
@@ -228,6 +238,48 @@ class AgentSession:
         self.version += 1
 
     @_apply.register
+    def _(self, event: VerificationFailed) -> None:
+        self.status = AgentStatus.FAILED
+        self.error_message = f"Verification failed ({event.failed_stage}): {event.feedback}"
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: DecisionInfeasible) -> None:
+        self.status = AgentStatus.FAILED
+        self.error_message = f"Infeasible: {event.reason}"
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RedecompositionTriggered) -> None:
+        self.status = AgentStatus.ANALYZING
+        self.child_ids.clear()
+        self.child_reports.clear()
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProbeStarted) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProbeCompleted) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RetryScheduled) -> None:
+        self.status = AgentStatus.ANALYZING
+        self.retry_count = event.attempt
+        self.result = None
+        self.error_message = None
+        if event.escalated_model:
+            # AgentConfig is a Pydantic model — dump, modify, re-validate
+            config_dict = self.config.model_dump()
+            if "base" in config_dict and isinstance(config_dict["base"], dict):
+                config_dict["base"]["model"] = event.escalated_model
+            adapter = TypeAdapter(AgentConfig)
+            self.config = adapter.validate_python(config_dict)
+        self.version += 1
+
+    @_apply.register
     def _(self, event: CodeGenerationStarted) -> None:
         self.status = AgentStatus.IN_PROGRESS
         self.version += 1
@@ -244,12 +296,10 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ChildCompleted) -> None:
-        self.child_results[event.child_id] = event.result
-        # Reconstruct structured result from event data
-        if event.child_result:
-            self.structured_task_outcomes[event.child_id] = TaskOutcome.model_validate(
-                event.child_result
-            )
+        if event.report:
+            self.child_reports[event.child_id] = Report.model_validate(event.report)
+        else:
+            self.child_reports[event.child_id] = Report.simple(event.result)
         self.version += 1
 
     @_apply.register
@@ -318,7 +368,7 @@ class AgentSession:
         self.status: AgentStatus = AgentStatus.PENDING
         self.parent_id: UUID | None = None
         self.child_ids: list[UUID] = []
-        self.child_results: dict[UUID, str] = {}
+        self.child_reports: dict[UUID, Report] = {}
         self.task_description: str = ""
         self.result: str | None = None
         self.error_message: str | None = None
@@ -328,25 +378,27 @@ class AgentSession:
         self._sequence: int = 0
         # Hierarchy limits for limit enforcement (set by ExecutionService)
         self.hierarchy_limits: HierarchyLimits | None = None
-        # Context passing: spawn payload received from parent and local state
-        self.spawn_payload: SpawnPayload | None = None
+        # Context passing: briefing received from parent and local state
+        self.briefing: Briefing | None = None
         self.local_decisions: list[str] = []
         self.local_artifacts: list[str] = []
-        # Structured task outcomes from children (keyed by child_id)
-        self.structured_task_outcomes: dict[UUID, TaskOutcome] = {}
-        # Position among siblings for left-to-right ordering (0 = first/leftmost)
+        # Position among siblings for ordering (0 = first/leftmost)
         self.sibling_index: int = 0
+        # Verification criteria from subtask (used by verification pipeline)
+        self.success_criteria: str = ""
+        # Retry tracking
+        self.retry_count: int = 0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
         self.hierarchy_limits = limits
 
-    def get_spawn_payload_for_child(self) -> SpawnPayload:
-        """Build spawn payload to pass to child agents.
+    def build_briefing_for_child(self) -> Briefing:
+        """Build Briefing to pass to child agents.
 
-        Constructs full ancestry chain and execution limits.
+        Constructs full ancestry chain.
         """
-        return build_spawn_payload(self, self.spawn_payload)
+        return build_briefing(self, self.briefing)
 
     def record_decision(self, decision: str) -> None:
         """Record a local decision made during execution."""
@@ -356,12 +408,8 @@ class AgentSession:
         """Record an artifact produced during execution."""
         self.local_artifacts.append(artifact_key)
 
-    def build_task_outcome(self) -> TaskOutcome:
-        """Build structured task outcome to return to parent.
-
-        Includes task summary, result text, artifacts, decisions, and execution summary.
-        """
-        # Build execution summary from cost events if available
+    def build_report(self) -> Report:
+        """Build structured Report to return to parent."""
         execution_summary: dict[str, Any] = {}
         total_cost = 0.0
         for event in self._changes:
@@ -370,12 +418,11 @@ class AgentSession:
         if total_cost > 0:
             execution_summary["cost_usd"] = total_cost
 
-        return TaskOutcome(
-            task_summary=self.task_description or "",
-            result_text=self.result or "",
+        return Report(
+            task=self.task_description or "",
+            result=self.result or "",
             artifacts=tuple(self.local_artifacts),
             decisions=tuple(self.local_decisions),
-            context_updates={},
             execution_summary=execution_summary,
         )
 
@@ -405,6 +452,46 @@ class AgentSession:
     def is_leaf(self) -> bool:
         """True if WORKER with no children."""
         return self.role == AgentRole.WORKER and len(self.child_ids) == 0
+
+    def mark_infeasible(
+        self,
+        reason: str,
+        minimum_subtasks: int | None = None,
+        minimum_depth: int | None = None,
+    ) -> None:
+        """Mark task as infeasible within given constraints."""
+        event = DecisionInfeasible(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            reason=reason,
+            minimum_subtasks=minimum_subtasks,
+            minimum_depth=minimum_depth,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def trigger_redecomposition(self, trigger_child_id: UUID, reason: str) -> None:
+        """Re-decompose after child signals infeasible. WAITING → ANALYZING."""
+        event = RedecompositionTriggered(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            trigger_child_id=trigger_child_id,
+            reason=reason,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def schedule_retry(self, reason: str, escalated_model: str | None = None) -> None:
+        """Schedule retry, transitioning FAILED → ANALYZING."""
+        event = RetryScheduled(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            attempt=self.retry_count + 1,
+            reason=reason,
+            escalated_model=escalated_model,
+        )
+        self._apply(event)
+        self._changes.append(event)
 
     def fail_with_reason(self, reason: str) -> None:
         """Mark agent as failed with WorkFailed event."""
@@ -515,7 +602,7 @@ class AgentSession:
         self,
         subtasks: list,
         child_role: str,
-        spawn_payload: SpawnPayload,
+        briefing: Briefing,
     ) -> list[tuple[UUID, Any]]:
         """Apply subtask decomposition and spawn children (pure domain method).
 
@@ -542,7 +629,7 @@ class AgentSession:
                 child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
-                parent_context=spawn_payload.model_dump(),
+                briefing=briefing.model_dump(),
                 sibling_index=sibling_index,
             )
             self._apply(child_event)

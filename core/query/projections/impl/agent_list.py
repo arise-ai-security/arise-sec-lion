@@ -11,9 +11,13 @@ from core.domain.events.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    DecisionInfeasible,
     DomainEvent,
+    RedecompositionTriggered,
+    RetryScheduled,
     StatusChanged,
     TaskAssigned,
+    VerificationFailed,
     WorkCompleted,
     WorkFailed,
 )
@@ -39,7 +43,7 @@ class AgentListProjection:
         if not events:
             return None
 
-        # Skip non-agent aggregates (e.g., SharedExecutionContext)
+        # Skip non-agent aggregates (e.g., SharedStore)
         first_event = events[0]
         if not isinstance(first_event, AgentCreated):
             return None
@@ -82,6 +86,20 @@ class AgentListProjection:
 
             elif isinstance(event, WorkFailed):
                 status = "failed"
+
+            elif isinstance(event, VerificationFailed):
+                status = "failed"
+
+            elif isinstance(event, DecisionInfeasible):
+                status = "failed"
+
+            elif isinstance(event, RetryScheduled):
+                # FAILED → ANALYZING: agent is retrying, no longer terminal
+                status = "analyzing"
+
+            elif isinstance(event, RedecompositionTriggered):
+                # WAITING → ANALYZING: parent re-decomposes after child infeasible
+                status = "analyzing"
 
             elif isinstance(event, ChildSpawned):
                 child_ids.append(event.child_id)

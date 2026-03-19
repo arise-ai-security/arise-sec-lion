@@ -18,7 +18,16 @@ class PromptParser:
 
     # Explicit mapping from tag to provenance (case-insensitive lookup)
     PROVENANCE_RULES: dict[str, SectionProvenance] = {
-        # Template sections (from .j2 files) - UPPERCASE convention
+        # 4-tier architecture tags
+        "system": SectionProvenance.TEMPLATE,
+        "persona": SectionProvenance.TEMPLATE,
+        "operation": SectionProvenance.TEMPLATE,
+        "domain": SectionProvenance.SYSTEM,
+        "domain_operation": SectionProvenance.TEMPLATE,
+        "domain_instructions": SectionProvenance.TEMPLATE,
+        "config_reference": SectionProvenance.TEMPLATE,
+        "environment": SectionProvenance.SYSTEM,
+        # Template sections (from .j2 files)
         "role": SectionProvenance.TEMPLATE,
         "task": SectionProvenance.TEMPLATE,
         "task_description": SectionProvenance.TEMPLATE,
@@ -37,19 +46,21 @@ class PromptParser:
         "success_criteria": SectionProvenance.TEMPLATE,
         "instructions": SectionProvenance.TEMPLATE,
         "worker_instructions": SectionProvenance.TEMPLATE,
-        # Parent sections (from SpawnPayload)
+        # Parent sections (from Briefing)
+        "briefing": SectionProvenance.PARENT,
         "parent-context": SectionProvenance.PARENT,
         "parent_context": SectionProvenance.PARENT,
+        "parent_task": SectionProvenance.PARENT,
         "ancestry": SectionProvenance.PARENT,
         "thinker_justification": SectionProvenance.PARENT,
-        # Sibling sections (from SiblingViewBuilder)
+        # Sibling sections (from Handoff)
         "sibling-tasks": SectionProvenance.SIBLING,
         "sibling_context": SectionProvenance.SIBLING,
         "coworker_knowledge": SectionProvenance.SIBLING,
-        # Children sections (from ChildOutcomes)
+        # Children sections (from Report)
         "child-outcomes": SectionProvenance.CHILDREN,
         "children": SectionProvenance.CHILDREN,
-        # Shared sections (from SharedExecutionContext)
+        # Shared sections (from SharedStore)
         "global-context": SectionProvenance.SHARED,
         "shared-decisions": SectionProvenance.SHARED,
         "shared_decisions": SectionProvenance.SHARED,

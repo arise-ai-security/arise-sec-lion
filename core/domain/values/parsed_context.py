@@ -34,8 +34,8 @@ class ParsedDecision(BaseModel):
         )
 
 
-class ParsedOutput(BaseModel):
-    """An output/artifact extracted from worker output."""
+class ParsedArtifact(BaseModel):
+    """An artifact extracted from worker output."""
 
     model_config = {"frozen": True}
 
@@ -50,14 +50,14 @@ class ParsedOutput(BaseModel):
         return cls(key=key, description=_text(elem))
 
 
-class ParsedContextUpdate(BaseModel):
-    """Parsed context update containing decisions and outputs."""
+class ParsedUpdate(BaseModel):
+    """Parsed context update containing decisions and artifacts."""
 
     model_config = {"frozen": True}
 
     decisions: tuple[ParsedDecision, ...] = ()
-    outputs: tuple[ParsedOutput, ...] = ()
+    artifacts: tuple[ParsedArtifact, ...] = ()
 
     def __bool__(self) -> bool:
-        """True if any decisions or outputs were parsed."""
-        return bool(self.decisions or self.outputs)
+        """True if any decisions or artifacts were parsed."""
+        return bool(self.decisions or self.artifacts)
