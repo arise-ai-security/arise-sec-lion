@@ -165,8 +165,12 @@ class TestPromptParserProvenanceClassification:
     def test_system_tags(self, parser: PromptParser) -> None:
         """Test that system tags are classified as SYSTEM."""
         system_tags = [
-            "cve_instance", "user_prompt", "workspace", "SOURCE_CONTEXT",
-            "work_dir", "commit_hash", "sanitizer",
+            "user_prompt",
+            "workspace",
+            "SOURCE_CONTEXT",
+            "work_dir",
+            "commit_hash",
+            "changed_file_path",
         ]
         for tag in system_tags:
             prompt = f"<{tag}>content</{tag}>"
@@ -215,9 +219,9 @@ class TestPromptParserPatternInference:
         sections = parser.parse(prompt)
         assert sections[0].provenance == SectionProvenance.SIBLING
 
-    def test_cve_pattern_inference(self, parser: PromptParser) -> None:
-        """Test that tags containing 'cve' are inferred as SYSTEM."""
-        prompt = "<cve_details>content</cve_details>"
+    def test_legacy_system_pattern_inference(self, parser: PromptParser) -> None:
+        """Test that historical system tags still classify as SYSTEM."""
+        prompt = "<bug_report_details>content</bug_report_details>"
         sections = parser.parse(prompt)
         assert sections[0].provenance == SectionProvenance.SYSTEM
 
@@ -283,11 +287,10 @@ Primary responsibility: Strategic task analysis and delegation.</ROLE>
 - Each subtask MUST be independently executable
 - Optimal: 2-3 subtasks (avoid over-decomposition)</CONSTRAINTS>
 
-<cve_instance>- Instance Id: exiv2.cve-2017-14857
-- Repo: exiv2/exiv2
-- Sanitizer: address</cve_instance>
+<work_dir>/workspace/exiv2</work_dir>
+<commit_hash>0123456789abcdef0123456789abcdef01234567</commit_hash>
 
-<user_prompt>Fix the CVE</user_prompt>
+<user_prompt>Fix the defect</user_prompt>
 """
         sections = parser.parse(prompt)
 
@@ -296,13 +299,15 @@ Primary responsibility: Strategic task analysis and delegation.</ROLE>
         assert "ROLE" in tags
         assert "CAPABILITIES" in tags
         assert "CONSTRAINTS" in tags
-        assert "cve_instance" in tags
+        assert "work_dir" in tags
+        assert "commit_hash" in tags
         assert "user_prompt" in tags
 
         # Verify provenance
         provenance_map = {s.tag: s.provenance for s in sections}
         assert provenance_map["ROLE"] == SectionProvenance.TEMPLATE
-        assert provenance_map["cve_instance"] == SectionProvenance.SYSTEM
+        assert provenance_map["work_dir"] == SectionProvenance.SYSTEM
+        assert provenance_map["commit_hash"] == SectionProvenance.SYSTEM
         assert provenance_map["user_prompt"] == SectionProvenance.SYSTEM
 
     def test_worker_prompt_with_sibling_context(self, parser: PromptParser) -> None:
@@ -314,7 +319,7 @@ Primary responsibility: Strategic task analysis and delegation.</ROLE>
 
 <THINKER_JUSTIFICATION>Your thinker (parent agent) assigned this task with the following context:
 
-**Thinker's Original Task**: Fix the CVE
+**Thinker's Original Task**: Fix the parser defect
 **Budget Allocation**: 33% of budget (weight 1.0 of 3.0 across 3 subtasks)</THINKER_JUSTIFICATION>
 
 <COWORKER_KNOWLEDGE count="2">
@@ -339,7 +344,7 @@ Primary responsibility: Strategic task analysis and delegation.</ROLE>
 <ROLE>You are a **PENDING** agent evaluating task complexity.
 Decide: **SIMPLE** (become WORKER, execute) or **COMPLEX** (become MANAGER, decompose)</ROLE>
 
-<TASK_TO_EVALUATE>[Builder] Compile project with ASAN</TASK_TO_EVALUATE>
+<TASK_TO_EVALUATE>[Builder] Compile project in debug mode</TASK_TO_EVALUATE>
 
 <DECISION_GUIDE>| COMPLEX (→ MANAGER) | SIMPLE (→ WORKER) |
 |---------------------|-------------------|

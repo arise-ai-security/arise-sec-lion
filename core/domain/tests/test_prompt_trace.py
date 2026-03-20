@@ -82,7 +82,7 @@ class TestParsedPrompt:
             PromptSection("ROLE", "Boss agent", SectionProvenance.TEMPLATE),
             PromptSection("TASK", "Do work", SectionProvenance.TEMPLATE),
             PromptSection("parent-context", "Parent info", SectionProvenance.PARENT),
-            PromptSection("cve_instance", "CVE data", SectionProvenance.SYSTEM),
+            PromptSection("work_dir", "/workspace/app", SectionProvenance.SYSTEM),
         )
 
     def test_create_parsed_prompt(self, sample_sections) -> None:
@@ -161,7 +161,7 @@ class TestAgentNode:
             agent_id=agent_id,
             role="boss",
             depth=0,
-            task="Fix the CVE",
+            task="Fix the parser defect",
             sibling_index=0,
             prompts=(),
             children=(),
@@ -169,7 +169,7 @@ class TestAgentNode:
         assert node.agent_id == agent_id
         assert node.role == "boss"
         assert node.depth == 0
-        assert node.task == "Fix the CVE"
+        assert node.task == "Fix the parser defect"
         assert node.sibling_index == 0
 
     def test_agent_node_with_children(self) -> None:

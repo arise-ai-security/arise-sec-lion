@@ -1,10 +1,4 @@
-"""Benchmark result value objects for SEC-bench integration.
-
-Tracks success/failure of each benchmark stage (Builder, Exploiter, Fixer)
-and provides aggregation for overall benchmark success determination.
-"""
-
-
+"""Benchmark result value objects for SEC-bench integration."""
 
 from typing import Self
 
@@ -12,18 +6,14 @@ from pydantic import BaseModel, computed_field
 
 
 class StageResult(BaseModel):
-    """Result of a single benchmark stage.
-
-    Captures the outcome of a Builder, Exploiter, or Fixer stage
-    with details for debugging and reporting.
-    """
+    """Result of a single benchmark stage."""
 
     model_config = {"frozen": True}
 
-    stage: str  # "builder" | "exploiter" | "fixer"
+    stage: str
     success: bool
-    details: str  # Success message or error description
-    sanitizer_output: str | None = None  # For exploiter/fixer stages
+    details: str
+    sanitizer_output: str | None = None
     duration_seconds: float = 0.0
 
     @classmethod
@@ -34,7 +24,6 @@ class StageResult(BaseModel):
         sanitizer_output: str | None = None,
         duration_seconds: float = 0.0,
     ) -> Self:
-        """Create a successful stage result."""
         return cls(
             stage=stage,
             success=True,
@@ -51,7 +40,6 @@ class StageResult(BaseModel):
         sanitizer_output: str | None = None,
         duration_seconds: float = 0.0,
     ) -> Self:
-        """Create a failed stage result."""
         return cls(
             stage=stage,
             success=False,
@@ -62,11 +50,7 @@ class StageResult(BaseModel):
 
 
 class BenchmarkResult(BaseModel):
-    """Aggregated result for a CVE benchmark run.
-
-    Combines results from all three stages (Builder, Exploiter, Fixer)
-    to determine overall benchmark success.
-    """
+    """Aggregated result for a benchmark run."""
 
     model_config = {"frozen": True}
 
@@ -79,7 +63,6 @@ class BenchmarkResult(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def overall_success(self) -> bool:
-        """True if all three stages succeeded."""
         return (
             self.builder is not None
             and self.builder.success
@@ -92,7 +75,6 @@ class BenchmarkResult(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_duration_seconds(self) -> float:
-        """Sum of all stage durations."""
         total = 0.0
         if self.builder:
             total += self.builder.duration_seconds
@@ -105,7 +87,6 @@ class BenchmarkResult(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def stages_completed(self) -> int:
-        """Count of stages that have completed (success or failure)."""
         count = 0
         if self.builder is not None:
             count += 1
@@ -118,11 +99,9 @@ class BenchmarkResult(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def is_complete(self) -> bool:
-        """True if all three stages have completed."""
         return self.stages_completed == 3
 
     def with_stage_result(self, stage_result: StageResult) -> Self:
-        """Return new BenchmarkResult with the given stage result added."""
         if stage_result.stage == "builder":
             return self.model_copy(update={"builder": stage_result})
         elif stage_result.stage == "exploiter":
@@ -133,7 +112,6 @@ class BenchmarkResult(BaseModel):
             raise ValueError(f"Unknown stage: {stage_result.stage}")
 
     def to_report(self) -> str:
-        """Generate human-readable benchmark report."""
         lines = [
             "=== SEC-bench Benchmark Result ===",
             "",
@@ -142,7 +120,6 @@ class BenchmarkResult(BaseModel):
             "Stage Results:",
         ]
 
-        # Builder
         if self.builder:
             status = "[+]" if self.builder.success else "[x]"
             lines.append(
@@ -151,7 +128,6 @@ class BenchmarkResult(BaseModel):
         else:
             lines.append("  [ ] Builder:   Not started")
 
-        # Exploiter
         if self.exploiter:
             status = "[+]" if self.exploiter.success else "[x]"
             lines.append(
@@ -160,7 +136,6 @@ class BenchmarkResult(BaseModel):
         else:
             lines.append("  [ ] Exploiter: Not started")
 
-        # Fixer
         if self.fixer:
             status = "[+]" if self.fixer.success else "[x]"
             lines.append(
@@ -169,7 +144,6 @@ class BenchmarkResult(BaseModel):
         else:
             lines.append("  [ ] Fixer:     Not started")
 
-        # Overall
         lines.append("")
         if self.is_complete:
             overall = "SUCCESS" if self.overall_success else "FAILED"

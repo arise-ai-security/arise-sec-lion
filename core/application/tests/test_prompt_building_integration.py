@@ -11,16 +11,12 @@ import pytest
 
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_parser import PromptParser
-from core.domain.aggregates.agent_session import AgentRole
 from core.domain.values.node_message import (
-    Ancestor,
-    SharedDecision,
-    PeerStatus,
-    Briefing,
     Handoff,
+    PeerStatus,
+    SharedDecision,
 )
 from core.domain.values.prompt_trace import SectionProvenance
-from plugins.security import CVEInstance, SecurityDomainPlugin
 
 
 # Path to actual templates - works both locally and in Docker
@@ -40,20 +36,6 @@ def get_prompts_dir() -> Path:
 
 
 PROMPTS_DIR = get_prompts_dir()
-
-
-def make_test_cve_instance() -> CVEInstance:
-    """Create a minimal SEC-bench CVE instance for prompt tests."""
-    return CVEInstance(
-        instance_id="demo.cve-2024-0001",
-        repo="demo/project",
-        project_name="demo",
-        lang="c",
-        work_dir="/src/demo",
-        sanitizer="address",
-        bug_description="Heap overflow in demo parser.",
-        base_commit="a" * 40,
-    )
 
 
 class TestPromptBuilderWithRealTemplates:
@@ -93,10 +75,10 @@ class TestPromptBuilderWithRealTemplates:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that boss delegation prompt renders from real templates."""
-        builder.set_run_context(user_prompt="Fix the CVE vulnerability")
+        builder.set_run_context(user_prompt="Fix the parser defect")
 
         prompt = builder.build_boss_delegation_prompt(
-            task_description="Fix the CVE vulnerability",
+            task_description="Fix the parser defect",
             agent_id=uuid4(),
         )
 
@@ -117,12 +99,12 @@ class TestPromptBuilderWithRealTemplates:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that manager decomposition prompt renders from real templates."""
-        builder.set_run_context(user_prompt="Patch the security vulnerability")
+        builder.set_run_context(user_prompt="Patch the parser defect")
 
         prompt = builder.build_manager_decomposition_prompt(
-            task_description="Develop and test the security patch",
+            task_description="Develop and test the parser patch",
             agent_id=uuid4(),
-            parent_task="Patch the security vulnerability",
+            parent_task="Patch the parser defect",
         )
 
         sections = parser.parse(prompt)
@@ -139,10 +121,10 @@ class TestPromptBuilderWithRealTemplates:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that worker prompt renders from real templates."""
-        builder.set_run_context(user_prompt="Build the project with ASAN")
+        builder.set_run_context(user_prompt="Build the project in debug mode")
 
         prompt = builder.build_worker_prompt(
-            task_description="Compile the project with AddressSanitizer enabled",
+            task_description="Compile the project and run the smoke checks",
         )
 
         sections = parser.parse(prompt)
@@ -157,75 +139,6 @@ class TestPromptBuilderWithRealTemplates:
         # Verify worker role content
         persona_section = next(s for s in sections if s.tag == "persona")
         assert "WORKER" in persona_section.content
-
-    def test_secbench_manager_prompt_strategy_path_renders(
-        self, parser: PromptParser
-    ) -> None:
-        """SEC-bench manager path should render without stale helper errors."""
-        builder = PromptBuilder(
-            template_dir=PROMPTS_DIR,
-            default_tool="claude_code",
-            domain_plugin=SecurityDomainPlugin(),
-        )
-
-        briefing = Briefing(
-            parent_task="Top-level SEC-bench task",
-            parent_role="boss",
-            ancestry=(
-                Ancestor(
-                    agent_id=str(uuid4()),
-                    role="boss",
-                    task_summary="[Builder] Prepare the benchmark environment",
-                ),
-            ),
-        )
-
-        prompt = builder.build_manager_decomposition_prompt(
-            task_description="[Builder] Verify the environment setup",
-            agent_id=uuid4(),
-            agent_role=AgentRole.MANAGER,
-            domain_context=make_test_cve_instance(),
-            briefing=briefing,
-        )
-
-        sections = parser.parse(prompt)
-        assert any(s.tag == "persona" for s in sections)
-        assert "<cve_instance>" in prompt
-        assert "Builder Manager" in prompt
-
-    def test_secbench_worker_prompt_strategy_path_renders(
-        self, parser: PromptParser
-    ) -> None:
-        """SEC-bench worker path should render without stale helper errors."""
-        builder = PromptBuilder(
-            template_dir=PROMPTS_DIR,
-            default_tool="claude_code",
-            domain_plugin=SecurityDomainPlugin(),
-        )
-
-        briefing = Briefing(
-            parent_task="Top-level SEC-bench task",
-            parent_role="manager",
-            ancestry=(
-                Ancestor(
-                    agent_id=str(uuid4()),
-                    role="manager",
-                    task_summary="[Exploiter] Develop a proof of concept",
-                ),
-            ),
-        )
-
-        prompt = builder.build_worker_prompt(
-            task_description="Reproduce the vulnerability with a PoC",
-            domain_context=make_test_cve_instance(),
-            briefing=briefing,
-        )
-
-        sections = parser.parse(prompt)
-        assert any(s.tag == "persona" for s in sections)
-        assert "<cve_instance>" in prompt
-        assert "Exploiter Worker" in prompt
-
 
 class TestProvenanceClassificationWithRealPrompts:
     """Tests that provenance classification works correctly with real prompts."""

@@ -94,12 +94,12 @@ class TestPromptTraceServiceBasic:
     async def test_trace_single_agent(self, service, mock_event_store) -> None:
         """Test tracing a single agent (boss only)."""
         root_id = uuid4()
-        prompt = "<ROLE>Boss agent</ROLE><TASK>Fix CVE</TASK>"
+        prompt = "<ROLE>Boss agent</ROLE><TASK>Fix defect</TASK>"
 
         mock_event_store.get_hierarchy_events_grouped.return_value = {
             root_id: [
                 create_agent_created(root_id, "boss"),
-                create_task_assigned(root_id, "Fix the CVE"),
+                create_task_assigned(root_id, "Fix the defect"),
                 create_prompt_sent(root_id, prompt),
             ]
         }
@@ -110,7 +110,7 @@ class TestPromptTraceServiceBasic:
         assert trace.max_depth == 0
         assert trace.root.agent_id == root_id
         assert trace.root.role == "boss"
-        assert trace.root.task == "Fix the CVE"
+        assert trace.root.task == "Fix the defect"
         assert len(trace.root.prompts) == 1
         assert len(trace.root.children) == 0
 
@@ -184,8 +184,8 @@ class TestPromptTraceServicePromptParsing:
         root_id = uuid4()
         prompt = """
 <ROLE>You are a BOSS agent.</ROLE>
-<TASK>Fix the CVE</TASK>
-<cve_instance>CVE-2023-1234</cve_instance>
+<TASK>Fix the defect</TASK>
+<work_dir>/workspace/app</work_dir>
 """
         mock_event_store.get_hierarchy_events_grouped.return_value = {
             root_id: [
@@ -203,7 +203,7 @@ class TestPromptTraceServicePromptParsing:
         tags = {s.tag for s in parsed.sections}
         assert "ROLE" in tags
         assert "TASK" in tags
-        assert "cve_instance" in tags
+        assert "work_dir" in tags
 
     @pytest.mark.asyncio
     async def test_multiple_prompts_per_agent(self, service, mock_event_store) -> None:
