@@ -31,7 +31,7 @@ orchestration:
     llm_rate_limit_rpm: -1     # -1 = unlimited
     max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
-    max_recon_iterations: 10   # Max tool-calling loop iterations for manager reconnaissance
+    max_recon_iterations: 5    # Max tool-calling loop iterations for manager reconnaissance
 
 output:
   verbose: true

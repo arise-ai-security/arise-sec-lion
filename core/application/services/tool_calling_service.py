@@ -158,8 +158,10 @@ class ToolCallingService:
             "role": "user",
             "content": (
                 "You have reached the maximum number of tool calls. "
-                "Based on the information gathered so far, provide your "
-                "final assessment as JSON now."
+                "You MUST now provide your final answer as the JSON object "
+                "described in the output_format section above. Do NOT return "
+                "a status message — return the actual assessment/decomposition JSON. "
+                "Use whatever information you have gathered so far."
             ),
         })
 

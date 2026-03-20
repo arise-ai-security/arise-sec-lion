@@ -1085,7 +1085,7 @@ class TestCostSummary:
             assert len(token_events) >= 1, "Should have TokensConsumed events from LLM calls"
             assert result.cost.llm_cost_usd > 0
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
 
 # =============================================================================

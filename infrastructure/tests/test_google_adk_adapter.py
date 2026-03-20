@@ -116,14 +116,13 @@ class TestGoogleADKAdapter:
         assert GoogleADKAdapter.STREAM_NAME == "google_adk"
 
     def test_build_instruction(self) -> None:
-        """Instruction includes security research context."""
+        """Instruction is generic and task-execution oriented."""
         adapter = GoogleADKAdapter(ADKAdapterConfig())
         instruction = adapter._build_instruction()
 
-        assert "security researcher" in instruction.lower()
-        assert "CVE" in instruction
+        assert "task execution agent" in instruction.lower()
         assert "filesystem" in instruction.lower()
-        assert "execute" in instruction.lower()
+        assert "shell" in instruction.lower()
 
     def test_calculate_cost(self) -> None:
         """Cost calculation uses correct pricing."""

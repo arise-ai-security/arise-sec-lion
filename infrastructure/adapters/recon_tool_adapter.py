@@ -7,8 +7,66 @@ a working directory. All operations are read-only.
 import asyncio
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class _ToolSpec:
+    """Schema + metadata for a single recon tool (single source of truth)."""
+
+    name: str
+    description: str
+    parameters: dict[str, dict[str, str]]
+    required: list[str] = field(default_factory=list)
+
+
+_TOOL_SPECS: list[_ToolSpec] = [
+    _ToolSpec(
+        name="read_file",
+        description="Read the contents of a file. Returns up to 200 lines.",
+        parameters={
+            "path": {"type": "string", "description": "File path relative to the working directory."},
+            "max_lines": {"type": "integer", "description": "Maximum lines to read (default 200)."},
+        },
+        required=["path"],
+    ),
+    _ToolSpec(
+        name="list_directory",
+        description="List files and subdirectories in a directory.",
+        parameters={
+            "path": {"type": "string", "description": "Directory path relative to the working directory."},
+        },
+        required=["path"],
+    ),
+    _ToolSpec(
+        name="search_codebase",
+        description="Search for a regex pattern across source files (grep). Returns up to 50 matches with file paths and line numbers.",
+        parameters={
+            "pattern": {"type": "string", "description": "Regex pattern to search for."},
+            "path": {"type": "string", "description": "Directory to search in (default: working directory)."},
+        },
+        required=["pattern"],
+    ),
+    _ToolSpec(
+        name="find_file",
+        description="Find files matching a glob pattern (e.g., '*.py', 'test_*.py').",
+        parameters={
+            "pattern": {"type": "string", "description": "Glob pattern for file names."},
+            "path": {"type": "string", "description": "Directory to search in (default: working directory)."},
+        },
+        required=["pattern"],
+    ),
+    _ToolSpec(
+        name="get_file_structure",
+        description="Get a tree view of the directory structure, showing files and folders.",
+        parameters={
+            "path": {"type": "string", "description": "Root directory (default: working directory)."},
+            "max_depth": {"type": "integer", "description": "Maximum directory depth to show (default 3)."},
+        },
+    ),
+]
 
 
 class ReconToolAdapter:
@@ -22,7 +80,14 @@ class ReconToolAdapter:
         self._workdir = Path(working_directory).resolve()
 
     def _resolve_path(self, path: str) -> Path:
-        """Resolve a path relative to working directory, preventing escapes."""
+        """Resolve a path relative to working directory, preventing escapes.
+
+        Absolute paths are resolved as-is (the LLM may reference paths
+        from the CVE context like /src/project). Relative paths are
+        resolved against the working directory.
+        """
+        if Path(path).is_absolute():
+            return Path(path).resolve()
         resolved = (self._workdir / path).resolve()
         if not str(resolved).startswith(str(self._workdir)):
             raise ValueError(f"Path escapes working directory: {path}")
@@ -160,117 +225,33 @@ class ReconToolAdapter:
             {
                 "type": "function",
                 "function": {
-                    "name": "read_file",
-                    "description": "Read the contents of a file. Returns up to 200 lines.",
+                    "name": spec.name,
+                    "description": spec.description,
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "File path relative to the working directory.",
-                            },
-                            "max_lines": {
-                                "type": "integer",
-                                "description": "Maximum lines to read (default 200).",
-                            },
-                        },
-                        "required": ["path"],
+                        "properties": spec.parameters,
+                        "required": spec.required,
                     },
                 },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_directory",
-                    "description": "List files and subdirectories in a directory.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Directory path relative to the working directory.",
-                            },
-                        },
-                        "required": ["path"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_codebase",
-                    "description": "Search for a regex pattern across source files (grep). Returns up to 50 matches with file paths and line numbers.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "pattern": {
-                                "type": "string",
-                                "description": "Regex pattern to search for.",
-                            },
-                            "path": {
-                                "type": "string",
-                                "description": "Directory to search in (default: working directory).",
-                            },
-                        },
-                        "required": ["pattern"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "find_file",
-                    "description": "Find files matching a glob pattern (e.g., '*.py', 'test_*.py').",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "pattern": {
-                                "type": "string",
-                                "description": "Glob pattern for file names.",
-                            },
-                            "path": {
-                                "type": "string",
-                                "description": "Directory to search in (default: working directory).",
-                            },
-                        },
-                        "required": ["pattern"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_file_structure",
-                    "description": "Get a tree view of the directory structure, showing files and folders.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Root directory (default: working directory).",
-                            },
-                            "max_depth": {
-                                "type": "integer",
-                                "description": "Maximum directory depth to show (default 3).",
-                            },
-                        },
-                        "required": [],
-                    },
-                },
-            },
+            }
+            for spec in _TOOL_SPECS
         ]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """Dispatch a tool call by name to the appropriate method."""
-        dispatch = {
-            "read_file": self.read_file,
-            "list_directory": self.list_directory,
-            "search_codebase": self.search_codebase,
-            "find_file": self.find_file,
-            "get_file_structure": self.get_file_structure,
-        }
-        handler = dispatch.get(name)
-        if handler is None:
+        """Dispatch a tool call by name to the appropriate method.
+
+        Filters arguments to only pass parameters the handler accepts,
+        since LLMs sometimes hallucinate extra kwargs.
+        """
+        import inspect
+
+        handler = getattr(self, name, None)
+        if handler is None or name not in {s.name for s in _TOOL_SPECS}:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
-        return await handler(**arguments)
+        # Filter to only accepted parameters
+        sig = inspect.signature(handler)
+        valid_params = set(sig.parameters.keys())
+        filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
+
+        return await handler(**filtered_args)
