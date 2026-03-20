@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from core.domain.events.events import DomainEvent
+from core.domain.values.json_types import JsonObject
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class AgentListItem:
     task_description: str | None
     parent_id: UUID | None
     created_at: datetime | None
+    domain_metadata: JsonObject | None = None
     child_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -33,6 +35,7 @@ class AgentListItem:
             task_description=None,
             parent_id=None,
             created_at=None,
+            domain_metadata=None,
             child_ids=(),
         )
 

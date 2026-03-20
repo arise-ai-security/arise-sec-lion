@@ -1,9 +1,4 @@
-"""Google ADK Adapter: use Google Agent Development Kit with Gemini models.
-
-Provides MCP filesystem tools and shell execution for CVE/security research tasks.
-Yields ThoughtCaptured events with output_type values based on ADK event types,
-plus WorkerCostRecorded for cost tracking and WorkCompleted/WorkFailed on completion.
-"""
+"""Google ADK adapter using Gemini models plus filesystem and shell tools."""
 
 import asyncio
 import logging
@@ -48,7 +43,7 @@ def execute_command(
     """Execute shell command for building, compiling, or running code.
 
     This is a custom function tool for ADK that enables shell access
-    for CVE/security research tasks.
+    for implementation, debugging, and verification tasks.
 
     Args:
         command: Shell command to execute (e.g., 'gcc -o poc poc.c', 'make', './poc')
@@ -97,7 +92,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
     - Function calls -> "tool_use"
     - Function responses -> "tool_result"
 
-    Supports CVE/security research with:
+    Supports general task execution with:
     - MCP filesystem server for file read/write/list operations
     - Custom execute_command tool for shell execution
     """
@@ -126,7 +121,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
     ) -> AsyncIterator[DomainEvent]:
         """Execute task via ADK, stream ThoughtCaptured events, yield final event.
 
-        Uses MCP filesystem tools and custom shell execution for CVE tasks.
+        Uses MCP filesystem tools and custom shell execution.
         """
         self._start_timing()
 
@@ -146,7 +141,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
             # Create agent with MCP filesystem + shell tools
             agent = LlmAgent(
                 model=self.config.model,
-                name="security_worker_agent",
+                name="worker_agent",
                 instruction=self._build_instruction(),
                 tools=[
                     # MCP Filesystem tools
@@ -274,19 +269,15 @@ class GoogleADKAdapter(WorkerAdapterBase):
             yield sequencer.failed(f"Google ADK adapter error: {e!r}")
 
     def _build_instruction(self) -> str:
-        """Build the agent instruction for security research tasks."""
-        return """You are a security researcher working on CVE vulnerability analysis.
+        """Build the agent instruction for general task execution."""
+        return """You are a task execution agent.
 
 You have access to:
 1. Filesystem tools (read_file, write_file, list_directory, create_directory)
 2. Shell command execution (shell_execute) for building, compiling, and running code
 
-For CVE exploitation/patching tasks:
-- Read source files to understand vulnerabilities
-- Write PoC exploit code or patches
-- Build using gcc, make, cmake etc.
-- Execute tests to verify exploits/patches
-- Fix compilation errors and iterate
+Use those tools to inspect the workspace, make changes, run builds/tests, and
+verify the task outcome.
 
 Always explain your reasoning and provide clear output about what you're doing."""
 

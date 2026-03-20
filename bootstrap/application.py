@@ -1,8 +1,9 @@
 """Application Layer - Service Factories."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig, SecurityConfig
+from config import BossConfig, ManagerConfig, OrchestrationConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -17,11 +18,13 @@ from core.application.services.event_broadcaster import EventBroadcaster
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.prompt_strategy import SecBenchPromptStrategy
 from core.application.services.tool_calling_service import ToolCallingService
 
 from .infrastructure import Infrastructure
 from .realtime_adapter import RealtimeCallbackAdapter
+
+if TYPE_CHECKING:
+    from core.ports.domain_plugin_port import DomainPlugin
 
 
 @dataclass
@@ -35,7 +38,7 @@ class ApplicationConfig:
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
-    security_config: SecurityConfig = field(default_factory=SecurityConfig)
+    domain_plugin: "DomainPlugin | None" = None
     progress_callback: ProgressCallback | None = None
 
 
@@ -61,13 +64,11 @@ def get_application(
     )
 
     # Create collaborators (composition root wiring)
-    security_tools = config.security_config.tools if config.security_config.enabled else []
     prompt_builder = PromptBuilder(
         "prompts",
         config.default_worker_tool,
-        enabled_security_tools=security_tools,
+        domain_plugin=config.domain_plugin,
     )
-    prompt_builder.set_strategy(SecBenchPromptStrategy(prompt_builder.chain))
 
     repository = AgentRepository(
         event_store=infrastructure.event_store,
@@ -120,6 +121,7 @@ def get_application(
         sibling_view_port=query_service,  # AgentQueryService implements SiblingViewPort
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
+        domain_plugin=config.domain_plugin,
     )
 
     execution_service = AgentExecutionService(

@@ -15,11 +15,18 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Settings
 from core.ports.event_store_port import EventStorePort
+from plugins.security import SecurityDomainPlugin
 from query.api.routes import agents, config, events, prompt_trace, prompts
 
 
 # Factory function injected by bootstrap layer (avoids query→infrastructure dependency)
 _event_store_factory: Callable[[str], EventStorePort] | None = None
+
+
+def _build_domain_plugin(settings: Settings):
+    if not settings.security.enabled:
+        return None
+    return SecurityDomainPlugin(enabled_tools=settings.security.tools)
 
 
 def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
@@ -99,6 +106,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    app.state.domain_plugin = _build_domain_plugin(settings)
 
     # CORS middleware (configured via config.yaml)
     app.add_middleware(

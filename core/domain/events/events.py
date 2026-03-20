@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.domain.values.json_types import JsonObject
 from core.domain.values.subtask import Subtask
 
 
@@ -60,7 +61,7 @@ class AgentCreated(DomainEvent):
 
     sibling_index tracks position among siblings for left-to-right ordering.
     Root agents (BOSS) have sibling_index=0.
-    briefing contains parent context for branch detection in SEC-bench.
+    briefing contains parent context for domain-specific prompt strategies.
     """
 
     role: str
@@ -343,7 +344,7 @@ class RunStarted(DomainEvent):
     """
 
     task_description: str
-    instance_id: str | None = None  # SEC-bench CVE instance ID if applicable
+    domain_metadata: JsonObject | None = None
 
 
 class RunCompleted(DomainEvent):
@@ -402,5 +403,3 @@ class DecisionRecorded(DomainEvent):
     decision_value: str  # JSON-serialized value
     rationale: str
     decided_by: UUID  # Agent that made the decision
-
-

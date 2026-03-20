@@ -1,13 +1,11 @@
 """Domain service for building hierarchical prompts from Jinja2 templates.
 
 4-tier prompt architecture:
-  Tier 1 (system.j2)     — Global constraints, config reference
-  Tier 2 (roles/*.j2)    — Per-role persona and responsibility
-  Tier 3 (operations/*.j2) — Per-operation criteria and output format
-  Tier 4 (domains/*.j2)  — Domain-specific context (e.g., SEC-bench)
+  Tier 1 (system.j2)       - Global constraints, config reference
+  Tier 2 (roles/*.j2)      - Per-role persona and responsibility
+  Tier 3 (operations/*.j2) - Per-operation criteria and output format
+  Tier 4 (domains/*.j2)    - Optional domain-specific context
 """
-
-
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -15,26 +13,17 @@ from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
+from core.application.services.prompt_strategy import (
+    DefaultPromptStrategy,
+    PromptContext,
+    PromptStrategy,
+)
 from core.domain.values.enums import AgentRole
-from core.application.services.prompt_strategy import DefaultPromptStrategy, PromptContext, PromptStrategy
 
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
-    from core.domain.values.cve_instance import CVEInstance
-
-_CVE_DISPLAY_FIELDS = (
-    "instance_id",
-    "cve_id",
-    "repo",
-    "project_name",
-    "lang",
-    "sanitizer",
-    "base_commit",
-    "work_dir",
-    "bug_description",
-    "candidate_fixes",
-)
+    from core.ports.domain_plugin_port import DomainPlugin
 
 
 class TemplateChain:
@@ -52,7 +41,6 @@ class TemplateChain:
         self._error_context = error_context
 
     def _template_exists(self, name: str) -> bool:
-        """Check if a template exists without raising."""
         try:
             self._env.get_template(name)
             return True
@@ -60,7 +48,6 @@ class TemplateChain:
             return False
 
     def render(self, template: str, **kwargs: Any) -> Self:
-        """Render a template and add to chain."""
         try:
             self._parts.append(self._env.get_template(template).render(**kwargs))
         except TemplateNotFound as e:
@@ -68,89 +55,67 @@ class TemplateChain:
         return self
 
     def render_if(self, condition: Any, template: str, **kwargs: Any) -> Self:
-        """Render a template only if condition is truthy."""
         if condition:
             return self.render(template, **kwargs)
         return self
 
     def render_optional(self, template: str, **kwargs: Any) -> Self:
-        """Render a template if it exists, skip silently otherwise."""
         if self._template_exists(template):
             self._parts.append(self._env.get_template(template).render(**kwargs))
         return self
 
-    def with_cve_display(
-        self,
-        cve_instance: "CVEInstance | None",
-        display_fields: tuple[str, ...] | None = None,
-        phase: str | None = None,
-    ) -> Self:
-        """Inject domain CVE context if cve_instance is present.
-
-        Args:
-            cve_instance: CVE instance data (optional).
-            display_fields: Fields to include in cve dict for iteration.
-            phase: Phase filter ('builder', 'exploiter', 'fixer', or None for all).
-        """
-        if cve_instance is None:
-            return self
-
-        fields = display_fields or _CVE_DISPLAY_FIELDS
-        cve_ctx = cve_instance.to_template_context()
-        cve_display = {k: v for k, v in cve_ctx.items() if k in fields and v}
-
-        return self.render("domains/secbench/cve.j2", cve=cve_display, phase=phase, **cve_ctx)
-
     def text(self, content: str) -> Self:
-        """Add raw text to chain."""
         self._parts.append(content)
         return self
 
     def text_if(self, condition: Any, content: str) -> Self:
-        """Add raw text only if condition is truthy."""
         if condition:
             self._parts.append(content)
         return self
 
     def build(self, separator: str = "\n\n") -> str:
-        """Join all parts into final prompt."""
         return separator.join(self._parts)
 
 
 class PromptBuilder:
-    """Compose hierarchical prompts using 4-tier architecture.
-
-    Uses Strategy Pattern to delegate specialized prompt building
-    (e.g., SEC-bench) to injected strategies, following SRP.
-    """
+    """Compose hierarchical prompts using 4-tier architecture."""
 
     def __init__(
         self,
         template_dir: str | Path,
         default_tool: str,
         strategy: PromptStrategy | None = None,
+        domain_plugin: "DomainPlugin | None" = None,
     ) -> None:
         self.template_dir = Path(template_dir)
         self.default_tool = default_tool
-        self._strategy = strategy or DefaultPromptStrategy()
+        self._domain_plugin = domain_plugin
         self.env = Environment(
             loader=FileSystemLoader(str(self.template_dir)),
             autoescape=False,  # noqa: S701 - plain text prompts, not HTML
             trim_blocks=True,
             lstrip_blocks=True,
         )
-        # Run-level context (set once at start, used by all agents)
+        self._strategy = strategy or self._create_strategy(domain_plugin)
         self._user_prompt: str = ""
-        self._cve_instance: "CVEInstance | None" = None
+        self._domain_context: object | None = None
+
+    def _create_strategy(
+        self,
+        domain_plugin: "DomainPlugin | None",
+    ) -> PromptStrategy:
+        if domain_plugin is None:
+            return DefaultPromptStrategy()
+        return domain_plugin.create_prompt_strategy(self.chain)
 
     def set_run_context(
         self,
         user_prompt: str,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
     ) -> None:
         """Set global context for this run (called once at start)."""
         self._user_prompt = user_prompt
-        self._cve_instance = cve_instance
+        self._domain_context = domain_context
 
     def chain(self) -> TemplateChain:
         """Create a new template chain builder."""
@@ -159,6 +124,11 @@ class PromptBuilder:
     def set_strategy(self, strategy: PromptStrategy) -> None:
         """Set the prompt strategy after initialization."""
         self._strategy = strategy
+
+    def set_domain_plugin(self, domain_plugin: "DomainPlugin | None") -> None:
+        """Replace the active domain plugin and reset the derived strategy."""
+        self._domain_plugin = domain_plugin
+        self._strategy = self._create_strategy(domain_plugin)
 
     def _limits_context(
         self,
@@ -208,13 +178,9 @@ class PromptBuilder:
         agent_id: UUID,
         briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
     ) -> str:
-        """Build prompt for PENDING agent task assessment.
-
-        Single prompt that decides: execute directly or decompose.
-        Tiers: system → roles/pending → user_prompt → [domain] → operations/assess
-        """
+        """Build prompt for PENDING agent task assessment."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -222,7 +188,7 @@ class PromptBuilder:
             default_tool=self.default_tool,
             briefing=briefing,
             hierarchy_limits=hierarchy_limits,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
         )
         custom_prompt = self._strategy.build_assessment_prompt(prompt_ctx)
         if custom_prompt is not None:
@@ -235,7 +201,6 @@ class PromptBuilder:
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/pending.j2")
             .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
-            .with_cve_display(self._cve_instance)
             .render(
                 "operations/assess.j2",
                 task_description=task_description,
@@ -251,28 +216,23 @@ class PromptBuilder:
         task_description: str,
         agent_id: UUID,
         parent_task: str | None = None,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
     ) -> str:
-        """Build prompt for BOSS agent task delegation.
-
-        Tiers: system → roles/boss → user_prompt → [domain] → operations/decomposition
-        """
-        # Try strategy first (for SEC-bench or other specialized prompts)
+        """Build prompt for BOSS agent task delegation."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
             agent_role=AgentRole.BOSS,
             default_tool=self.default_tool,
             parent_task=parent_task,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
             hierarchy_limits=hierarchy_limits,
         )
         custom_prompt = self._strategy.build_boss_prompt(prompt_ctx)
         if custom_prompt is not None:
             return custom_prompt
 
-        # Default generic prompt
         limits = self._limits_context(hierarchy_limits)
 
         return (
@@ -280,7 +240,6 @@ class PromptBuilder:
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/boss.j2")
             .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
-            .with_cve_display(self._cve_instance)
             .render(
                 "operations/decomposition.j2",
                 task_description=task_description,
@@ -297,15 +256,11 @@ class PromptBuilder:
         agent_id: UUID,
         agent_role: AgentRole = AgentRole.MANAGER,
         parent_task: str | None = None,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
         briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
     ) -> str:
-        """Build prompt for MANAGER agent task decomposition.
-
-        Tiers: system → roles/manager → user_prompt → [domain] → operations/decomposition
-        """
-        # Try strategy first (for SEC-bench or other specialized prompts)
+        """Build prompt for MANAGER agent task decomposition."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -314,13 +269,12 @@ class PromptBuilder:
             parent_task=parent_task,
             briefing=briefing,
             hierarchy_limits=hierarchy_limits,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
         )
         custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
         if custom_prompt is not None:
             return custom_prompt
 
-        # Default generic prompt
         limits = self._limits_context(hierarchy_limits)
 
         return (
@@ -328,7 +282,6 @@ class PromptBuilder:
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/manager.j2")
             .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
-            .with_cve_display(self._cve_instance)
             .render(
                 "operations/decomposition.j2",
                 task_description=task_description,
@@ -339,47 +292,68 @@ class PromptBuilder:
             .build()
         )
 
+    def _apply_domain_enrichment(
+        self,
+        prompt: str,
+        *,
+        domain_context: object | None = None,
+        briefing: "Briefing | None" = None,
+    ) -> str:
+        if self._domain_plugin is None:
+            return prompt
+
+        active_domain_context = domain_context if domain_context is not None else self._domain_context
+        return self._domain_plugin.enrich_prompt(
+            prompt,
+            domain_context=active_domain_context,
+            briefing=briefing,
+            chain_factory=self.chain,
+        )
+
     def build_worker_prompt(
         self,
         task_description: str,
         handoff: Any = None,
         workspace_context: str | None = None,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
         briefing: "Briefing | None" = None,
     ) -> str:
-        """Build prompt for WORKER agent task execution.
-
-        Tiers: system → roles/worker → [sibling] → user_prompt → [domain] → operations/execution
-        """
-        # Try strategy first (for SEC-bench or other specialized prompts)
+        """Build prompt for WORKER agent task execution."""
         prompt_ctx = PromptContext(
             task_description=task_description,
-            agent_id=UUID("00000000-0000-0000-0000-000000000000"),  # Worker doesn't need ID
+            agent_id=UUID("00000000-0000-0000-0000-000000000000"),
             agent_role=AgentRole.WORKER,
             default_tool=self.default_tool,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
             briefing=briefing,
             handoff=handoff,
             workspace_context=workspace_context,
         )
         custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
         if custom_prompt is not None:
-            return custom_prompt
+            return self._apply_domain_enrichment(
+                custom_prompt,
+                domain_context=domain_context,
+                briefing=briefing,
+            )
 
-        # Default generic prompt
         sibling_ctx = handoff.to_template_dict() if handoff else {}
-
-        return (
+        prompt = (
             self.chain()
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/worker.j2")
             .render_if(handoff, "context/sibling.j2", **sibling_ctx)
             .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
-            .with_cve_display(self._cve_instance)
             .render(
                 "operations/execution.j2",
                 task_description=task_description,
                 workspace_context=workspace_context,
             )
             .build()
+        )
+
+        return self._apply_domain_enrichment(
+            prompt,
+            domain_context=domain_context,
+            briefing=briefing,
         )

@@ -1,35 +1,13 @@
-"""Hierarchy limits passed down the agent hierarchy.
-
-This immutable value object carries limits and state that propagate from
-parent to child agents, enabling depth tracking and limit enforcement.
-
-Limit values of -1 indicate "unlimited" (no limit enforced).
-
-Budget tracking is handled via SharedStore (keyed by root_id).
-CVE instance is optionally attached for SEC-bench benchmark runs.
-"""
+"""Hierarchy limits passed down the agent hierarchy."""
 
 from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel
 
-from core.domain.values.cve_instance import CVEInstance
-
 
 class HierarchyLimits(BaseModel):
-    """Immutable limits passed down agent hierarchy.
-
-    Tracks current position in the hierarchy and enforces limits.
-    Each child receives a new context with incremented depth.
-
-    Limit values:
-        -1 = unlimited (no enforcement)
-        >0 = enforced limit
-
-    The root_id references the SharedStore for this hierarchy.
-    CVE instance is optionally attached for SEC-bench benchmark runs.
-    """
+    """Immutable limits passed down agent hierarchy."""
 
     model_config = {"frozen": True, "arbitrary_types_allowed": True}
 
@@ -40,7 +18,7 @@ class HierarchyLimits(BaseModel):
     root_id: UUID  # Reference to SharedStore
     max_total_agents: int = -1  # -1 = unlimited, global limit across hierarchy
     current_total_agents: int = 0  # Snapshot of total agents created so far
-    cve_instance: CVEInstance | None = None  # SEC-bench CVE context
+    domain_context: object | None = None
 
     def for_child(self) -> Self:
         """Create limits for child agent (increments depth)."""
@@ -99,13 +77,13 @@ class HierarchyLimits(BaseModel):
             return -1
         return max(0, self.max_depth - self.current_depth)
 
-    def has_cve_context(self) -> bool:
-        """Check if this is a CVE-based security benchmark task."""
-        return self.cve_instance is not None
+    def has_domain_context(self) -> bool:
+        """Check if the hierarchy carries domain-specific context."""
+        return self.domain_context is not None
 
-    def with_cve_instance(self, cve: CVEInstance) -> Self:
-        """Create new limits with CVE instance attached."""
-        return self.model_copy(update={"cve_instance": cve})
+    def with_domain_context(self, domain_context: object) -> Self:
+        """Create new limits with domain context attached."""
+        return self.model_copy(update={"domain_context": domain_context})
 
     @classmethod
     def create_root(
@@ -115,18 +93,9 @@ class HierarchyLimits(BaseModel):
         max_children_per_node: int,
         max_retries: int,
         max_total_agents: int = -1,
-        cve_instance: CVEInstance | None = None,
+        domain_context: object | None = None,
     ) -> Self:
-        """Create limits for root (BOSS) agent.
-
-        Args:
-            root_id: Root agent ID (references SharedStore)
-            max_depth: Maximum hierarchy depth (-1 = unlimited)
-            max_children_per_node: Max children per parent (-1 = unlimited)
-            max_retries: Max retry attempts
-            max_total_agents: Max total agents in hierarchy (-1 = unlimited)
-            cve_instance: Optional SEC-bench CVE instance for benchmark runs
-        """
+        """Create limits for root (BOSS) agent."""
         return cls(
             current_depth=0,
             max_depth=max_depth,
@@ -135,5 +104,5 @@ class HierarchyLimits(BaseModel):
             root_id=root_id,
             max_total_agents=max_total_agents,
             current_total_agents=1,  # Root agent counts as 1
-            cve_instance=cve_instance,
+            domain_context=domain_context,
         )

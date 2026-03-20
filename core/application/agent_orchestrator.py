@@ -77,7 +77,7 @@ class AgentOrchestrator:
                 agent_id=agent.agent_id,
                 briefing=agent.briefing,
                 hierarchy_limits=agent.hierarchy_limits,
-                cve_instance=self._get_cve_instance(agent),
+                domain_context=self._get_domain_context(agent),
             )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
@@ -171,14 +171,14 @@ class AgentOrchestrator:
                 prompt = self._prompt_builder.build_boss_delegation_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
-                    cve_instance=self._get_cve_instance(agent),
+                    domain_context=self._get_domain_context(agent),
                     hierarchy_limits=agent.hierarchy_limits,
                 )
             else:
                 prompt = self._prompt_builder.build_manager_decomposition_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
-                    cve_instance=self._get_cve_instance(agent),
+                    domain_context=self._get_domain_context(agent),
                     briefing=agent.briefing,
                     hierarchy_limits=agent.hierarchy_limits,
                 )
@@ -275,7 +275,7 @@ class AgentOrchestrator:
                 task_description=agent.task_description,
                 handoff=handoff,
                 workspace_context=workspace_context,
-                cve_instance=self._get_cve_instance(agent),
+                domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
             )
             agent.emit_prompt_sent(
@@ -397,10 +397,10 @@ class AgentOrchestrator:
         return response
 
     @staticmethod
-    def _get_cve_instance(agent: "AgentSession"):
-        """Extract CVE instance from hierarchy limits if available."""
+    def _get_domain_context(agent: "AgentSession") -> object | None:
+        """Extract optional domain context from hierarchy limits."""
         if agent.hierarchy_limits:
-            return agent.hierarchy_limits.cve_instance
+            return agent.hierarchy_limits.domain_context
         return None
 
     @staticmethod

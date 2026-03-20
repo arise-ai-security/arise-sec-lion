@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from core.application.services.prompt_parser import PromptParser
 from core.application.services.prompt_trace_service import PromptTraceService
 from core.domain.values.prompt_trace import AgentNode, HierarchyTrace, ParsedPrompt
-from query.api.dependencies import EventStoreDep
+from query.api.dependencies import DomainPluginDep, EventStoreDep
 from query.api.schemas import (
     HierarchyTraceSchema,
     ParsedPromptSchema,
@@ -83,6 +83,7 @@ def _find_agent_in_tree(node: AgentNode, target_id: UUID) -> AgentNode | None:
 async def get_hierarchy_trace(
     root_id: UUID,
     event_store: EventStoreDep,
+    domain_plugin: DomainPluginDep,
 ) -> HierarchyTraceSchema:
     """Get the complete prompt trace for an agent hierarchy.
 
@@ -99,7 +100,15 @@ async def get_hierarchy_trace(
     Raises:
         HTTPException: 404 if agent not found.
     """
-    service = PromptTraceService(event_store, PromptParser())
+    service = PromptTraceService(
+        event_store,
+        PromptParser(
+            extra_tag_mappings=domain_plugin.get_tag_mappings() if domain_plugin else None,
+            extra_provenance_patterns=(
+                domain_plugin.get_provenance_patterns() if domain_plugin else None
+            ),
+        ),
+    )
     trace = await service.trace(root_id)
 
     if trace.total_agents == 0:
@@ -116,6 +125,7 @@ async def get_hierarchy_trace(
 async def get_agent_trace(
     agent_id: UUID,
     event_store: EventStoreDep,
+    domain_plugin: DomainPluginDep,
 ) -> TraceAgentNodeSchema:
     """Get the prompt trace for a single agent.
 
@@ -132,7 +142,15 @@ async def get_agent_trace(
     Raises:
         HTTPException: 404 if agent not found.
     """
-    service = PromptTraceService(event_store, PromptParser())
+    service = PromptTraceService(
+        event_store,
+        PromptParser(
+            extra_tag_mappings=domain_plugin.get_tag_mappings() if domain_plugin else None,
+            extra_provenance_patterns=(
+                domain_plugin.get_provenance_patterns() if domain_plugin else None
+            ),
+        ),
+    )
     agent_node = await service.trace_single_agent(agent_id)
 
     if not agent_node:

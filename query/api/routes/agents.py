@@ -42,6 +42,7 @@ def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
         status=item.status,
         task_description=item.task_description or "",
         created_at=item.created_at,
+        domain_metadata=item.domain_metadata,
     )
 
 
@@ -152,7 +153,7 @@ async def list_boss_agents(
             status=s["status"],
             task_description=s["task_description"] or "",
             created_at=s["created_at"],
-            instance_id=s.get("instance_id"),
+            domain_metadata=s.get("domain_metadata"),
         )
         for s in summaries
     ]

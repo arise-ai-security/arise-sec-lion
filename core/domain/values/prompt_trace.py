@@ -18,7 +18,7 @@ class SectionProvenance(str, Enum):
     SIBLING = "sibling"  # From sibling workers (Handoff)
     CHILDREN = "children"  # From completed children (Report)
     SHARED = "shared"  # From SharedStore (decisions, artifacts)
-    SYSTEM = "system"  # Hierarchy limits, CVE, workspace
+    SYSTEM = "system"  # Hierarchy limits, domain context, workspace
 
 
 @dataclass(frozen=True)

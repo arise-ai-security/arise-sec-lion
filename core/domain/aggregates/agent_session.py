@@ -754,7 +754,7 @@ class AgentSession:
     def emit_run_started(
         self,
         task_description: str,
-        instance_id: str | None = None,
+        domain_metadata: dict[str, str | int | float | bool | None] | None = None,
     ) -> None:
         """Emit RunStarted event when execution run begins.
 
@@ -764,7 +764,7 @@ class AgentSession:
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             task_description=task_description,
-            instance_id=instance_id,
+            domain_metadata=domain_metadata,
         )
         self._apply(event)
         self._changes.append(event)

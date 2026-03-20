@@ -11,9 +11,7 @@ import pytest
 
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_parser import PromptParser
-from core.application.services.prompt_strategy import SecBenchPromptStrategy
 from core.domain.aggregates.agent_session import AgentRole
-from core.domain.values.cve_instance import CVEInstance
 from core.domain.values.node_message import (
     Ancestor,
     SharedDecision,
@@ -22,6 +20,7 @@ from core.domain.values.node_message import (
     Handoff,
 )
 from core.domain.values.prompt_trace import SectionProvenance
+from plugins.security import CVEInstance, SecurityDomainPlugin
 
 
 # Path to actual templates - works both locally and in Docker
@@ -33,7 +32,7 @@ def get_prompts_dir() -> Path:
     if docker_path.exists():
         return docker_path
     # Fall back to relative path from test file
-    local_path = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    local_path = Path(__file__).parent.parent.parent.parent / "prompts"
     if local_path.exists():
         return local_path
     # Last resort: relative path from CWD
@@ -166,8 +165,8 @@ class TestPromptBuilderWithRealTemplates:
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
+            domain_plugin=SecurityDomainPlugin(),
         )
-        builder.set_strategy(SecBenchPromptStrategy(builder.chain))
 
         briefing = Briefing(
             parent_task="Top-level SEC-bench task",
@@ -185,7 +184,7 @@ class TestPromptBuilderWithRealTemplates:
             task_description="[Builder] Verify the environment setup",
             agent_id=uuid4(),
             agent_role=AgentRole.MANAGER,
-            cve_instance=make_test_cve_instance(),
+            domain_context=make_test_cve_instance(),
             briefing=briefing,
         )
 
@@ -201,8 +200,8 @@ class TestPromptBuilderWithRealTemplates:
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
+            domain_plugin=SecurityDomainPlugin(),
         )
-        builder.set_strategy(SecBenchPromptStrategy(builder.chain))
 
         briefing = Briefing(
             parent_task="Top-level SEC-bench task",
@@ -218,7 +217,7 @@ class TestPromptBuilderWithRealTemplates:
 
         prompt = builder.build_worker_prompt(
             task_description="Reproduce the vulnerability with a PoC",
-            cve_instance=make_test_cve_instance(),
+            domain_context=make_test_cve_instance(),
             briefing=briefing,
         )
 
