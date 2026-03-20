@@ -276,6 +276,8 @@ def _create_cli(settings: Settings, progress_callback=None, domain_plugin=None):
         worker_tool_model=settings.worker.model,
         worker_tool_timeout=settings.worker.timeout,
     ))
+    if domain_plugin is not None and hasattr(domain_plugin, "set_container_runtime"):
+        domain_plugin.set_container_runtime(infra.secbench_runtime)
 
     app = get_application(infra, ApplicationConfig(
         system_limits=settings.orchestration.limits,
@@ -297,4 +299,3 @@ def _create_cli(settings: Settings, progress_callback=None, domain_plugin=None):
             default_worker_tool=settings.worker.tool,
         ),
     )
-

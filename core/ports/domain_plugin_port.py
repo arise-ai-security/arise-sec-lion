@@ -1,13 +1,32 @@
 """Bridge port for optional domain-specific behavior."""
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
+from uuid import UUID
 
 from core.domain.values.json_types import JsonObject
 from core.domain.values.prompt_trace import SectionProvenance
 
+
 if TYPE_CHECKING:
     from core.application.services.prompt_strategy import PromptStrategy
+
+
+@dataclass(frozen=True)
+class PreparedRunWorkspace:
+    """Optional workspace override returned by a domain plugin."""
+
+    working_directory: str
+
+
+@dataclass(frozen=True)
+class WorkerExecutionContext:
+    """Optional worker runtime data returned by a domain plugin."""
+
+    working_directory: str | None = None
+    task_context: dict[str, Any] = field(default_factory=dict)
 
 
 class DomainPlugin(Protocol):
@@ -45,4 +64,35 @@ class DomainPlugin(Protocol):
 
     def get_provenance_patterns(self) -> list[tuple[str, SectionProvenance]]:
         """Return prompt tag provenance pattern rules for this domain."""
+        ...
+
+    async def prepare_run(
+        self,
+        *,
+        root_id: UUID,
+        run_output_path: Path,
+        domain_context: object | None,
+    ) -> PreparedRunWorkspace | None:
+        """Prepare an optional run workspace before the boss agent is created."""
+        ...
+
+    async def prepare_worker_execution(
+        self,
+        *,
+        root_id: UUID,
+        agent_id: UUID,
+        run_output_path: Path,
+        domain_context: object | None,
+    ) -> WorkerExecutionContext | None:
+        """Prepare optional runtime state before a worker executes."""
+        ...
+
+    async def cleanup_worker_execution(
+        self,
+        *,
+        root_id: UUID,
+        agent_id: UUID,
+        domain_context: object | None,
+    ) -> None:
+        """Clean up optional runtime state after worker execution."""
         ...

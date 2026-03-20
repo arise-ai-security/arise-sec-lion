@@ -240,7 +240,7 @@ class AgentExecutionService:
             user_prompt=task_description,
             domain_context=domain_context,
         )
-        self._setup_working_directory(root_id)
+        await self._setup_working_directory(root_id, domain_context)
         await self._create_shared_context(root_id)
 
         boss_agent = self._create_boss_session(root_id, task_description)
@@ -401,7 +401,11 @@ class AgentExecutionService:
         metadata = self._domain_plugin.get_run_metadata(domain_context)
         return metadata or None
 
-    def _setup_working_directory(self, root_id: UUID) -> None:
+    async def _setup_working_directory(
+        self,
+        root_id: UUID,
+        domain_context: object | None = None,
+    ) -> None:
         """Setup working directory for the run."""
         if not self._config.output_directory:
             return
@@ -413,6 +417,16 @@ class AgentExecutionService:
         run_output_path.mkdir(parents=True, exist_ok=True)
 
         self._working_directory = run_output_path
+        if self._domain_plugin is None:
+            return
+
+        prepared = await self._domain_plugin.prepare_run(
+            root_id=root_id,
+            run_output_path=run_output_path,
+            domain_context=domain_context,
+        )
+        if prepared is not None and prepared.working_directory:
+            self._working_directory = Path(prepared.working_directory)
 
     def _get_workspace_context(self) -> str | None:
         """Return fresh file listing for workspace.
@@ -514,12 +528,41 @@ class AgentExecutionService:
                     root_id=root_id,
                 )
 
-                await self._orchestrator.execute_task(
-                    agent,
-                    working_directory=self._get_working_directory_str(),
-                    workspace_context=self._get_workspace_context(),
-                    handoff=handoff,
+                domain_context = (
+                    agent.hierarchy_limits.domain_context
+                    if agent.hierarchy_limits is not None
+                    else None
                 )
+                worker_context = None
+                if self._domain_plugin is not None and self._working_directory is not None:
+                    worker_context = await self._domain_plugin.prepare_worker_execution(
+                        root_id=root_id,
+                        agent_id=agent.agent_id,
+                        run_output_path=self._working_directory,
+                        domain_context=domain_context,
+                    )
+
+                try:
+                    await self._orchestrator.execute_task(
+                        agent,
+                        working_directory=(
+                            worker_context.working_directory
+                            if worker_context and worker_context.working_directory
+                            else self._get_working_directory_str()
+                        ),
+                        workspace_context=self._get_workspace_context(),
+                        handoff=handoff,
+                        task_context_overrides=(
+                            worker_context.task_context if worker_context else None
+                        ),
+                    )
+                finally:
+                    if self._domain_plugin is not None:
+                        await self._domain_plugin.cleanup_worker_execution(
+                            root_id=root_id,
+                            agent_id=agent.agent_id,
+                            domain_context=domain_context,
+                        )
 
                 duration = time.monotonic() - start_time
                 agent.emit_execution_finished(

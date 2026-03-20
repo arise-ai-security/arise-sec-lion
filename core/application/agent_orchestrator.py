@@ -252,6 +252,7 @@ class AgentOrchestrator:
         working_directory: str | None = None,
         workspace_context: str | None = None,
         handoff: "Handoff | None" = None,
+        task_context_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -291,6 +292,8 @@ class AgentOrchestrator:
             }
             if working_directory:
                 task_context["working_directory"] = working_directory
+            if task_context_overrides:
+                task_context.update(task_context_overrides)
 
             root_id = (
                 agent.hierarchy_limits.root_id

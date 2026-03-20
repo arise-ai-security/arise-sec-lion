@@ -3,13 +3,13 @@
 from dataclasses import dataclass
 from typing import Literal
 
+import infrastructure.adapters.sinks as _sinks  # noqa: F401 - registers sinks via decorators
 from core.ports.event_store_port import EventStorePort
-from core.ports.runtime_ports import LLMPort, ReconToolPort
-from core.ports.runtime_ports import SharedContextPort
-from core.ports.runtime_ports import WorkerToolPort
+from core.ports.runtime_ports import LLMPort, ReconToolPort, SharedContextPort, WorkerToolPort
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.adapters.recon_tool_adapter import ReconToolAdapter
+from infrastructure.adapters.secbench_runtime import DockerSecBenchRuntime
 from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
 from infrastructure.adapters.worker import (
     ADKAdapterConfig,
@@ -18,7 +18,6 @@ from infrastructure.adapters.worker import (
     OpenHandsAdapter,
     SDKAdapterConfig,
 )
-import infrastructure.adapters.sinks as _sinks  # noqa: F401 - registers sinks via decorators
 
 
 type WorkerToolType = Literal["claude_code", "openhands", "google_adk"]
@@ -43,6 +42,7 @@ class Infrastructure:
     worker_tool: WorkerToolPort
     shared_context: SharedContextPort
     recon_tool: ReconToolPort
+    secbench_runtime: DockerSecBenchRuntime
 
 
 def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
@@ -57,20 +57,19 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
                 model=config.worker_tool_model,
             )
         )
-    elif config.default_worker_tool == "openhands":
+    if config.default_worker_tool == "openhands":
         return OpenHandsAdapter(
             model=config.worker_tool_model,
             timeout_seconds=config.worker_tool_timeout,
         )
-    elif config.default_worker_tool == "google_adk":
+    if config.default_worker_tool == "google_adk":
         return GoogleADKAdapter(
             ADKAdapterConfig(
                 model=config.worker_tool_model,
                 timeout_seconds=config.worker_tool_timeout,
             )
         )
-    else:
-        raise ValueError(f"Unknown worker tool: {config.default_worker_tool}")
+    raise ValueError(f"Unknown worker tool: {config.default_worker_tool}")
 
 
 def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
@@ -80,6 +79,7 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     worker_tool = _create_worker_adapter(config)
     shared_context = PostgresSharedContextAdapter(event_store)
     recon_tool = ReconToolAdapter()
+    secbench_runtime = DockerSecBenchRuntime()
 
     return Infrastructure(
         event_store=event_store,
@@ -87,4 +87,5 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
         worker_tool=worker_tool,
         shared_context=shared_context,
         recon_tool=recon_tool,
+        secbench_runtime=secbench_runtime,
     )

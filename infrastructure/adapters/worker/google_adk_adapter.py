@@ -11,7 +11,12 @@ from uuid import UUID, uuid4
 from core.domain.events.events import DomainEvent
 
 from .base import WorkerAdapterBase
-from .shared import EventSequencer, format_tool_event, get_model_pricing
+from .shared import (
+    ContainerSessionContext,
+    EventSequencer,
+    format_tool_event,
+    get_model_pricing,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -118,12 +123,19 @@ class GoogleADKAdapter(WorkerAdapterBase):
         agent_id: UUID,
         working_dir: str,
         sequencer: EventSequencer,
+        task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
         """Execute task via ADK, stream ThoughtCaptured events, yield final event.
 
         Uses MCP filesystem tools and custom shell execution.
         """
         self._start_timing()
+        container_session = ContainerSessionContext.from_task_context(task_context)
+        if container_session is not None:
+            task_description = container_session.apply_task_prefix(
+                task_description,
+                auto_shell=True,
+            )
 
         try:
             # Import ADK modules (lazy import to avoid import errors if not installed)
@@ -136,7 +148,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
             from mcp import StdioServerParameters
 
             # Create shell tool bound to working directory
-            shell_tool = self._create_shell_tool(working_dir)
+            shell_tool = self._create_shell_tool(working_dir, container_session)
 
             # Create agent with MCP filesystem + shell tools
             agent = LlmAgent(
@@ -281,7 +293,11 @@ verify the task outcome.
 
 Always explain your reasoning and provide clear output about what you're doing."""
 
-    def _create_shell_tool(self, working_dir: str) -> Any:
+    def _create_shell_tool(
+        self,
+        working_dir: str,
+        container_session: ContainerSessionContext | None = None,
+    ) -> Any:
         """Create shell execution tool with bound working directory."""
 
         def shell_execute(command: str, timeout: int = 300) -> dict[str, Any]:
@@ -294,6 +310,8 @@ Always explain your reasoning and provide clear output about what you're doing."
             Returns:
                 Dict with stdout, stderr, exit_code, and status
             """
+            if container_session is not None:
+                command = container_session.wrap_shell_command(command)
             return execute_command(command, working_dir=working_dir, timeout=timeout)
 
         return shell_execute

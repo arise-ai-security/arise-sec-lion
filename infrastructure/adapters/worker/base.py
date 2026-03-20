@@ -65,6 +65,7 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
             agent_id=agent_id,
             working_dir=working_dir,
             sequencer=sequencer,
+            task_context=task_context,
         ):
             yield event
 
@@ -75,6 +76,7 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         agent_id: UUID,
         working_dir: str,
         sequencer: EventSequencer,
+        task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
         """Execute task and yield events.
 
