@@ -11,9 +11,14 @@ import pytest
 
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_parser import PromptParser
+from core.application.services.prompt_strategy import SecBenchPromptStrategy
+from core.domain.aggregates.agent_session import AgentRole
+from core.domain.values.cve_instance import CVEInstance
 from core.domain.values.node_message import (
+    Ancestor,
     SharedDecision,
     PeerStatus,
+    Briefing,
     Handoff,
 )
 from core.domain.values.prompt_trace import SectionProvenance
@@ -36,6 +41,20 @@ def get_prompts_dir() -> Path:
 
 
 PROMPTS_DIR = get_prompts_dir()
+
+
+def make_test_cve_instance() -> CVEInstance:
+    """Create a minimal SEC-bench CVE instance for prompt tests."""
+    return CVEInstance(
+        instance_id="demo.cve-2024-0001",
+        repo="demo/project",
+        project_name="demo",
+        lang="c",
+        work_dir="/src/demo",
+        sanitizer="address",
+        bug_description="Heap overflow in demo parser.",
+        base_commit="a" * 40,
+    )
 
 
 class TestPromptBuilderWithRealTemplates:
@@ -139,6 +158,74 @@ class TestPromptBuilderWithRealTemplates:
         # Verify worker role content
         persona_section = next(s for s in sections if s.tag == "persona")
         assert "WORKER" in persona_section.content
+
+    def test_secbench_manager_prompt_strategy_path_renders(
+        self, parser: PromptParser
+    ) -> None:
+        """SEC-bench manager path should render without stale helper errors."""
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+        )
+        builder.set_strategy(SecBenchPromptStrategy(builder.chain))
+
+        briefing = Briefing(
+            parent_task="Top-level SEC-bench task",
+            parent_role="boss",
+            ancestry=(
+                Ancestor(
+                    agent_id=str(uuid4()),
+                    role="boss",
+                    task_summary="[Builder] Prepare the benchmark environment",
+                ),
+            ),
+        )
+
+        prompt = builder.build_manager_decomposition_prompt(
+            task_description="[Builder] Verify the environment setup",
+            agent_id=uuid4(),
+            agent_role=AgentRole.MANAGER,
+            cve_instance=make_test_cve_instance(),
+            briefing=briefing,
+        )
+
+        sections = parser.parse(prompt)
+        assert any(s.tag == "persona" for s in sections)
+        assert "<cve_instance>" in prompt
+        assert "Builder Manager" in prompt
+
+    def test_secbench_worker_prompt_strategy_path_renders(
+        self, parser: PromptParser
+    ) -> None:
+        """SEC-bench worker path should render without stale helper errors."""
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+        )
+        builder.set_strategy(SecBenchPromptStrategy(builder.chain))
+
+        briefing = Briefing(
+            parent_task="Top-level SEC-bench task",
+            parent_role="manager",
+            ancestry=(
+                Ancestor(
+                    agent_id=str(uuid4()),
+                    role="manager",
+                    task_summary="[Exploiter] Develop a proof of concept",
+                ),
+            ),
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="Reproduce the vulnerability with a PoC",
+            cve_instance=make_test_cve_instance(),
+            briefing=briefing,
+        )
+
+        sections = parser.parse(prompt)
+        assert any(s.tag == "persona" for s in sections)
+        assert "<cve_instance>" in prompt
+        assert "Exploiter Worker" in prompt
 
 
 class TestProvenanceClassificationWithRealPrompts:

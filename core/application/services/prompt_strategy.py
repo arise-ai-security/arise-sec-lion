@@ -75,7 +75,7 @@ class DefaultPromptStrategy:
         return None
 
 
-def _detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
+def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
     """Detect which SEC-bench branch (builder/exploiter/fixer) this agent belongs to.
 
     Checks ancestry chain for top-level subtask keywords.
@@ -147,7 +147,7 @@ class SecBenchPromptStrategy:
             return None
 
         # Detect branch from ancestry or task description
-        branch = _detect_benchmark_branch(context.briefing)
+        branch = detect_benchmark_branch(context.briefing)
         if branch is None:
             branch = _detect_branch_from_task(context.task_description)
 
@@ -198,7 +198,7 @@ class SecBenchPromptStrategy:
         if context.cve_instance is None:
             return None
 
-        branch = _detect_benchmark_branch(context.briefing)
+        branch = detect_benchmark_branch(context.briefing)
         if branch is None:
             return None
 
