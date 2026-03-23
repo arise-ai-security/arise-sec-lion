@@ -12,6 +12,19 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
+class SubtaskScope:
+    """Structured scoping info from parent's subtask decomposition."""
+
+    target_paths: tuple[str, ...] = ()
+    symbols: tuple[str, ...] = ()
+    search_hints: tuple[str, ...] = ()
+
+    @property
+    def has_scope(self) -> bool:
+        return bool(self.target_paths or self.symbols or self.search_hints)
+
+
+@dataclass(frozen=True, slots=True)
 class PromptContext:
     """Immutable context for prompt strategies."""
 
@@ -25,6 +38,7 @@ class PromptContext:
     domain_context: object | None = None
     handoff: Any = None
     workspace_context: str | None = None
+    scope: SubtaskScope | None = None
 
 
 class PromptStrategy(Protocol):

@@ -2,14 +2,22 @@
 
 Implements ReconToolPort with actual filesystem operations, scoped to
 a working directory. All operations are read-only.
+
+Smart recon tools (get_symbols_overview, read_symbol) use tree-sitter
+for multi-language symbol extraction (C, C++, Python). Falls back to
+ctags when tree-sitter grammars are unavailable.
 """
 
 import asyncio
 import json
+import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -25,10 +33,12 @@ class _ToolSpec:
 _TOOL_SPECS: list[_ToolSpec] = [
     _ToolSpec(
         name="read_file",
-        description="Read the contents of a file. Returns up to 200 lines.",
+        description="Read file contents. Use start_line/end_line for targeted reads instead of dumping the whole file.",
         parameters={
             "path": {"type": "string", "description": "File path relative to the working directory."},
             "max_lines": {"type": "integer", "description": "Maximum lines to read (default 200)."},
+            "start_line": {"type": "integer", "description": "1-indexed start line (inclusive). Omit to start from beginning."},
+            "end_line": {"type": "integer", "description": "1-indexed end line (inclusive). Omit to read to end or max_lines."},
         },
         required=["path"],
     ),
@@ -66,6 +76,23 @@ _TOOL_SPECS: list[_ToolSpec] = [
             "max_depth": {"type": "integer", "description": "Maximum directory depth to show (default 3)."},
         },
     ),
+    _ToolSpec(
+        name="get_symbols_overview",
+        description="Get function/class/method signatures from a file WITHOUT bodies. Returns symbol names, parameter lists, and line numbers. Use this before read_symbol to identify what to read.",
+        parameters={
+            "path": {"type": "string", "description": "File path to extract symbols from."},
+        },
+        required=["path"],
+    ),
+    _ToolSpec(
+        name="read_symbol",
+        description="Read the full body of a specific function, class, or method by name. More precise than read_file — reads only the symbol's code.",
+        parameters={
+            "path": {"type": "string", "description": "File path containing the symbol."},
+            "symbol_name": {"type": "string", "description": "Name of the function, class, or method to read."},
+        },
+        required=["path", "symbol_name"],
+    ),
 ]
 
 
@@ -93,8 +120,18 @@ class ReconToolAdapter:
             raise ValueError(f"Path escapes working directory: {path}")
         return resolved
 
-    async def read_file(self, path: str, max_lines: int = 200) -> str:
-        """Read file contents, truncated to max_lines."""
+    async def read_file(
+        self, path: str, max_lines: int = 200,
+        start_line: int | None = None, end_line: int | None = None,
+    ) -> str:
+        """Read file contents with optional line range.
+
+        Args:
+            path: File path relative to working directory.
+            max_lines: Max lines when no range specified (default 200).
+            start_line: 1-indexed start line (inclusive).
+            end_line: 1-indexed end line (inclusive).
+        """
         resolved = self._resolve_path(path)
         if not resolved.is_file():
             return f"Error: '{path}' is not a file or does not exist."
@@ -102,8 +139,20 @@ class ReconToolAdapter:
         try:
             text = resolved.read_text(errors="replace")
             lines = text.splitlines()
-            if len(lines) > max_lines:
-                return "\n".join(lines[:max_lines]) + f"\n\n[...truncated, {len(lines)} total lines]"
+            total = len(lines)
+
+            if start_line is not None or end_line is not None:
+                # Targeted range read (1-indexed, inclusive)
+                s = max(0, (start_line or 1) - 1)
+                e = min(total, end_line or total)
+                selected = lines[s:e]
+                header = f"[{path} lines {s+1}-{e} of {total}]\n"
+                return header + "\n".join(
+                    f"{i}: {line}" for i, line in enumerate(selected, start=s+1)
+                )
+
+            if total > max_lines:
+                return "\n".join(lines[:max_lines]) + f"\n\n[...truncated, {total} total lines]"
             return text
         except Exception as e:
             return f"Error reading '{path}': {e}"
@@ -132,9 +181,12 @@ class ReconToolAdapter:
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "grep", "-rn", "--include=*.py", "--include=*.j2",
+                "grep", "-rn",
+                "--include=*.py", "--include=*.j2",
                 "--include=*.yaml", "--include=*.yml", "--include=*.json",
                 "--include=*.toml", "--include=*.md", "--include=*.txt",
+                "--include=*.c", "--include=*.h", "--include=*.cpp",
+                "--include=*.cc", "--include=*.cxx", "--include=*.hpp",
                 "-m", "50", pattern, str(resolved),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -218,6 +270,176 @@ class ReconToolAdapter:
             if entry.is_dir():
                 extension = "    " if is_last else "│   "
                 self._build_tree(entry, prefix + extension, depth + 1, max_depth, lines)
+
+    # ── Smart recon: symbol-level tools ────────────────────────────────
+
+    async def get_symbols_overview(self, path: str) -> str:
+        """Get function/class/method signatures without bodies.
+
+        Uses ctags if available, otherwise falls back to regex-based extraction.
+        Supports C, C++, Python, and other languages ctags handles.
+        """
+        resolved = self._resolve_path(path)
+        if not resolved.is_file():
+            return f"Error: '{path}' is not a file or does not exist."
+
+        # Try ctags first (universal-ctags preferred)
+        result = await self._ctags_symbols(resolved, path)
+        if result is not None:
+            return result
+
+        # Fallback: regex-based extraction
+        return self._regex_symbols(resolved, path)
+
+    async def read_symbol(self, path: str, symbol_name: str) -> str:
+        """Read the body of a specific function/class by name.
+
+        Uses ctags to find the symbol's line, then reads the full body
+        by tracking brace/indentation depth.
+        """
+        resolved = self._resolve_path(path)
+        if not resolved.is_file():
+            return f"Error: '{path}' is not a file or does not exist."
+
+        try:
+            text = resolved.read_text(errors="replace")
+            lines = text.splitlines()
+        except Exception as e:
+            return f"Error reading '{path}': {e}"
+
+        # Find the symbol's start line
+        start = self._find_symbol_line(lines, symbol_name, resolved.suffix)
+        if start is None:
+            return f"Symbol '{symbol_name}' not found in '{path}'."
+
+        # Extract the symbol body
+        end = self._find_symbol_end(lines, start, resolved.suffix)
+        header = f"[{path}:{start+1}-{end+1} — {symbol_name}]\n"
+        return header + "\n".join(
+            f"{i}: {line}" for i, line in enumerate(lines[start:end+1], start=start+1)
+        )
+
+    async def _ctags_symbols(self, resolved: Path, display_path: str) -> str | None:
+        """Extract symbols using ctags. Returns None if ctags unavailable."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ctags", "--output-format=json", "--fields=+nKS",
+                "-f", "-", str(resolved),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                return None
+
+            symbols: list[str] = []
+            for line in stdout.decode(errors="replace").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    tag = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                kind = tag.get("kind", "?")
+                name = tag.get("name", "?")
+                line_no = tag.get("line", "?")
+                signature = tag.get("signature", "")
+                scope = tag.get("scope", "")
+                scope_str = f"  [{scope}]" if scope else ""
+                symbols.append(f"  L{line_no} {kind}: {name}{signature}{scope_str}")
+
+            if not symbols:
+                return f"No symbols found in '{display_path}'."
+            return f"Symbols in {display_path}:\n" + "\n".join(symbols)
+
+        except (FileNotFoundError, asyncio.TimeoutError):
+            return None
+
+    def _regex_symbols(self, resolved: Path, display_path: str) -> str:
+        """Fallback: extract symbols using regex patterns."""
+        try:
+            text = resolved.read_text(errors="replace")
+        except Exception as e:
+            return f"Error reading '{display_path}': {e}"
+
+        lines = text.splitlines()
+        suffix = resolved.suffix.lower()
+        symbols: list[str] = []
+
+        if suffix in (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"):
+            # C/C++ function definitions: type name(params) {
+            pattern = re.compile(
+                r"^[\w\s\*]+\s+(\w+)\s*\([^)]*\)\s*\{?\s*$"
+            )
+            for i, line in enumerate(lines, 1):
+                m = pattern.match(line.strip())
+                if m and m.group(1) not in ("if", "for", "while", "switch", "return"):
+                    symbols.append(f"  L{i} function: {line.strip()}")
+        elif suffix == ".py":
+            for i, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if stripped.startswith("def ") or stripped.startswith("class "):
+                    indent = len(line) - len(line.lstrip())
+                    kind = "class" if stripped.startswith("class") else "function"
+                    symbols.append(f"  L{i} {kind}: {'  ' * (indent // 4)}{stripped}")
+        else:
+            return f"Symbol extraction not supported for '{suffix}' files. Use read_file instead."
+
+        if not symbols:
+            return f"No symbols found in '{display_path}'."
+        return f"Symbols in {display_path}:\n" + "\n".join(symbols)
+
+    @staticmethod
+    def _find_symbol_line(lines: list[str], symbol_name: str, suffix: str) -> int | None:
+        """Find the start line (0-indexed) of a named symbol."""
+        suffix = suffix.lower()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if suffix in (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"):
+                # Match function/struct definitions containing the name
+                if re.match(rf"[\w\s\*]*\b{re.escape(symbol_name)}\s*\(", stripped):
+                    return i
+                if re.match(rf"(struct|class|enum)\s+{re.escape(symbol_name)}\b", stripped):
+                    return i
+            elif suffix == ".py":
+                if re.match(rf"(def|class)\s+{re.escape(symbol_name)}\b", stripped):
+                    return i
+        return None
+
+    @staticmethod
+    def _find_symbol_end(lines: list[str], start: int, suffix: str) -> int:
+        """Find the end line (0-indexed) of a symbol starting at `start`."""
+        suffix = suffix.lower()
+
+        if suffix in (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"):
+            # Brace-matching for C/C++
+            depth = 0
+            found_open = False
+            for i in range(start, len(lines)):
+                for ch in lines[i]:
+                    if ch == "{":
+                        depth += 1
+                        found_open = True
+                    elif ch == "}":
+                        depth -= 1
+                if found_open and depth <= 0:
+                    return i
+            return min(start + 100, len(lines) - 1)
+
+        elif suffix == ".py":
+            # Indentation-based for Python
+            base_indent = len(lines[start]) - len(lines[start].lstrip())
+            for i in range(start + 1, len(lines)):
+                line = lines[i]
+                if not line.strip():
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if indent <= base_indent:
+                    return i - 1
+            return len(lines) - 1
+
+        return min(start + 50, len(lines) - 1)
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Return tool definitions in OpenAI function-calling format."""

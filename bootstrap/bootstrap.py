@@ -287,6 +287,7 @@ def _create_cli(settings: Settings, progress_callback=None, domain_plugin=None):
         manager_config=settings.manager,
         output_directory=settings.output.directory,
         default_worker_tool=settings.worker.tool,
+        recon_config=settings.orchestration.recon,
         domain_plugin=domain_plugin,
         progress_callback=progress_callback,
     ))

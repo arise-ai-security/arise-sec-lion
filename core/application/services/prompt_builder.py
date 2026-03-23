@@ -17,6 +17,7 @@ from core.application.services.prompt_strategy import (
     DefaultPromptStrategy,
     PromptContext,
     PromptStrategy,
+    SubtaskScope,
 )
 from core.domain.values.enums import AgentRole
 
@@ -179,6 +180,7 @@ class PromptBuilder:
         briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
         domain_context: object | None = None,
+        scope: SubtaskScope | None = None,
     ) -> str:
         """Build prompt for PENDING agent task assessment."""
         prompt_ctx = PromptContext(
@@ -189,6 +191,7 @@ class PromptBuilder:
             briefing=briefing,
             hierarchy_limits=hierarchy_limits,
             domain_context=domain_context,
+            scope=scope,
         )
         custom_prompt = self._strategy.build_assessment_prompt(prompt_ctx)
         if custom_prompt is not None:
@@ -201,6 +204,11 @@ class PromptBuilder:
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/pending.j2")
             .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .render_if(
+                scope and scope.has_scope,
+                "context/scope.j2",
+                scope=scope,
+            )
             .render(
                 "operations/assess.j2",
                 task_description=task_description,
@@ -259,6 +267,7 @@ class PromptBuilder:
         domain_context: object | None = None,
         briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
+        scope: SubtaskScope | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition."""
         prompt_ctx = PromptContext(
@@ -270,6 +279,7 @@ class PromptBuilder:
             briefing=briefing,
             hierarchy_limits=hierarchy_limits,
             domain_context=domain_context,
+            scope=scope,
         )
         custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
         if custom_prompt is not None:
@@ -282,6 +292,11 @@ class PromptBuilder:
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/manager.j2")
             .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .render_if(
+                scope and scope.has_scope,
+                "context/scope.j2",
+                scope=scope,
+            )
             .render(
                 "operations/decomposition.j2",
                 task_description=task_description,

@@ -61,6 +61,9 @@ class AgentSession:
         briefing: dict[str, Any] | None = None,
         depends_on: list[int] | None = None,
         success_criteria: str = "",
+        target_paths: list[str] | None = None,
+        symbols: list[str] | None = None,
+        search_hints: list[str] | None = None,
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -73,6 +76,9 @@ class AgentSession:
             briefing=briefing,
             depends_on=depends_on or [],
             success_criteria=success_criteria,
+            target_paths=target_paths or [],
+            symbols=symbols or [],
+            search_hints=search_hints or [],
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -206,6 +212,9 @@ class AgentSession:
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
         self.success_criteria = event.success_criteria
+        self.target_paths = tuple(event.target_paths)
+        self.symbols = tuple(event.symbols)
+        self.search_hints = tuple(event.search_hints)
         if event.briefing is not None:
             self.briefing = Briefing.model_validate(event.briefing)
         self.version += 1
@@ -386,6 +395,10 @@ class AgentSession:
         self.sibling_index: int = 0
         # Verification criteria from subtask (used by verification pipeline)
         self.success_criteria: str = ""
+        # Structured child scoping (from parent's subtask decomposition)
+        self.target_paths: tuple[str, ...] = ()
+        self.symbols: tuple[str, ...] = ()
+        self.search_hints: tuple[str, ...] = ()
         # Retry tracking
         self.retry_count: int = 0
 

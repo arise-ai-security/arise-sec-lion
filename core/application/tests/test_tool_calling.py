@@ -416,7 +416,7 @@ class TestReconToolAdapter:
         adapter = ReconToolAdapter(str(tmp_path))
         defs = adapter.get_tool_definitions()
 
-        assert len(defs) == 5
+        assert len(defs) == 7  # 5 original + get_symbols_overview + read_symbol
         for d in defs:
             assert d["type"] == "function"
             assert "name" in d["function"]

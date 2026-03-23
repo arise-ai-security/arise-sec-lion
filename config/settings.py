@@ -87,6 +87,38 @@ class WorkerConfig(BaseModel):
     timeout: int = Field(default=300, gt=0)
 
 
+class ReconRoleConfig(BaseModel):
+    """Per-role recon policy defaults."""
+
+    enabled: bool = True
+    max_iterations: int = 5
+    result_char_limit: int = 6_000
+    allowed_tools: list[str] | None = None
+
+
+class ReconConfig(BaseModel):
+    """Per-role + per-domain recon policy config.
+
+    Shape::
+
+        recon:
+          default:
+            pending: {enabled: true, max_iterations: 5}
+            manager: {enabled: true, max_iterations: 5}
+            boss: {enabled: false}
+          domains:
+            secbench:
+              manager: {max_iterations: 3, allowed_tools: [...]}
+    """
+
+    default: dict[str, ReconRoleConfig] = Field(default_factory=dict)
+    domains: dict[str, dict[str, ReconRoleConfig]] = Field(default_factory=dict)
+
+    def to_raw_dict(self) -> dict[str, Any]:
+        """Convert to the raw dict format consumed by AgentOrchestrator."""
+        return self.model_dump(mode="python")
+
+
 class OrchestrationConfig(BaseModel):
     """Execution behavior settings."""
 
@@ -101,6 +133,11 @@ class OrchestrationConfig(BaseModel):
         max_concurrent_llm_calls: int = 5
         llm_jitter_max_ms: int = 500
         max_recon_iterations: int = 10
+
+        # Context condensation for recon tool-calling loop
+        recon_result_char_limit: int = 6_000
+        recon_condense_after_iteration: int = 2
+        recon_token_budget: int = 80_000
 
         def is_depth_limited(self) -> bool:
             return self.max_depth > 0
@@ -155,6 +192,7 @@ class OrchestrationConfig(BaseModel):
 
     limits: LimitsConfig
     retry: RetryConfig = RetryConfig()
+    recon: ReconConfig = ReconConfig()
 
 
 class OutputConfig(BaseModel):

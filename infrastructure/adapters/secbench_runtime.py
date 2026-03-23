@@ -22,6 +22,18 @@ class DockerSecBenchRuntime:
 
     def __init__(self, container_prefix: str = "secbench-worker") -> None:
         self._container_prefix = container_prefix
+        # DooD path mapping: container /app → host project root.
+        # When running inside a container that mounts Docker socket, volume
+        # bind paths must be expressed as host paths since the Docker daemon
+        # runs on the host. HOST_PROJECT_ROOT overrides automatic detection.
+        self._host_project_root = os.environ.get("HOST_PROJECT_ROOT", "")
+
+    def _host_path(self, container_path: Path) -> str:
+        """Map a container-local path to a host path for DooD volume mounts."""
+        resolved = str(container_path.resolve())
+        if self._host_project_root and resolved.startswith("/app/"):
+            return resolved.replace("/app/", self._host_project_root + "/", 1)
+        return resolved
 
     async def prepare_workspace(
         self,
@@ -73,6 +85,8 @@ class DockerSecBenchRuntime:
             "docker",
             "run",
             "-d",
+            "--platform",
+            "linux/amd64",
             "--name",
             container_name,
             "--label",
@@ -82,9 +96,9 @@ class DockerSecBenchRuntime:
             "--label",
             f"arise.instance_id={cve.instance_id}",
             "-v",
-            f"{workspace.host_source_dir.resolve()}:{workspace.container_source_dir}",
+            f"{self._host_path(workspace.host_source_dir)}:{workspace.container_source_dir}",
             "-v",
-            f"{workspace.host_testcase_dir.resolve()}:{workspace.container_testcase_dir}",
+            f"{self._host_path(workspace.host_testcase_dir)}:{workspace.container_testcase_dir}",
             workspace.image,
             "tail",
             "-f",

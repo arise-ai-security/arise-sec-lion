@@ -47,3 +47,18 @@ class Subtask(BaseModel):
         default="general",
         description="Category: general, research, implementation, testing, analysis, etc.",
     )
+
+    # Structured child scoping — machine-readable context for targeted recon.
+    # All optional with empty defaults so old-style prose-only subtasks work.
+    target_paths: tuple[str, ...] = Field(
+        default=(),
+        description="File/directory paths the child should focus on",
+    )
+    symbols: tuple[str, ...] = Field(
+        default=(),
+        description="Function/class/method names relevant to this subtask",
+    )
+    search_hints: tuple[str, ...] = Field(
+        default=(),
+        description="Keywords or patterns to search for (CVE IDs, error strings, etc.)",
+    )

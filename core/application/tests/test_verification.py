@@ -219,3 +219,116 @@ class TestVerificationSkipsOnWorkerFailure:
         # Should be WorkFailed, not VerificationFailed
         verification_events = [e for e in agent.events if isinstance(e, VerificationFailed)]
         assert len(verification_events) == 0
+
+
+class TestJudgeLargeOutput:
+    """Verify the judge sees enough of large worker output to make correct decisions."""
+
+    @pytest.mark.asyncio
+    async def test_judge_sees_tail_of_large_output(self) -> None:
+        """Key evidence at the end of a large output must reach the judge.
+
+        This is the A1 fix: previously truncated to 3000 chars, now uses
+        head+tail with 12000 char budget.
+        """
+        # Build a large output where the proof of success is at the very end
+        padding = "Analyzing source code...\n" * 500  # ~12K chars of filler
+        evidence = "\n[SUCCESS] Exploit triggered: AddressSanitizer: heap-use-after-free confirmed"
+        large_output = padding + evidence
+
+        # Judge checks for the evidence keyword in the output
+        class EvidenceCheckingLLM(FakeLLM):
+            async def query_with_usage(self, prompt: str, config_dict: dict) -> LLMResponse:
+                self.calls.append(prompt)
+                # If judge can see the evidence, it passes
+                if "heap-use-after-free confirmed" in prompt:
+                    verdict = {"passed": True, "feedback": "Exploit confirmed"}
+                else:
+                    verdict = {"passed": False, "feedback": "No evidence of exploit"}
+                return LLMResponse(
+                    content=json.dumps(verdict),
+                    usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+                    model="gpt-4o",
+                    cost_usd=0.01,
+                )
+
+        llm = EvidenceCheckingLLM()
+        worker = FakeWorkerTool(result=large_output)
+        orchestrator = _make_orchestrator(llm=llm, worker=worker)
+        agent = _make_worker_agent(success_criteria="Must trigger heap-use-after-free")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED, (
+            "Judge should see evidence at tail of large output"
+        )
+
+    @pytest.mark.asyncio
+    async def test_judge_sees_head_of_large_output(self) -> None:
+        """Key evidence at the start of a large output must also reach the judge."""
+        evidence = "[PATCH APPLIED] Fixed buffer overflow in parse_header()\n"
+        padding = "Running verification tests...\n" * 500
+        large_output = evidence + padding
+
+        class EvidenceCheckingLLM(FakeLLM):
+            async def query_with_usage(self, prompt: str, config_dict: dict) -> LLMResponse:
+                self.calls.append(prompt)
+                if "Fixed buffer overflow" in prompt:
+                    verdict = {"passed": True, "feedback": "Patch applied"}
+                else:
+                    verdict = {"passed": False, "feedback": "No patch found"}
+                return LLMResponse(
+                    content=json.dumps(verdict),
+                    usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+                    model="gpt-4o",
+                    cost_usd=0.01,
+                )
+
+        llm = EvidenceCheckingLLM()
+        worker = FakeWorkerTool(result=large_output)
+        orchestrator = _make_orchestrator(llm=llm, worker=worker)
+        agent = _make_worker_agent(success_criteria="Must apply patch")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED
+
+
+class TestHeadTailHelper:
+    """Tests for the _head_tail truncation utility."""
+
+    def test_short_text_unchanged(self) -> None:
+        from core.application.agent_orchestrator import _head_tail
+
+        text = "short text"
+        assert _head_tail(text, 100) == text
+
+    def test_exact_limit_unchanged(self) -> None:
+        from core.application.agent_orchestrator import _head_tail
+
+        text = "x" * 100
+        assert _head_tail(text, 100) == text
+
+    def test_large_text_preserves_head_and_tail(self) -> None:
+        from core.application.agent_orchestrator import _head_tail
+
+        head_marker = "HEAD_EVIDENCE"
+        tail_marker = "TAIL_EVIDENCE"
+        middle = "x" * 10000
+        text = head_marker + middle + tail_marker
+
+        result = _head_tail(text, 1000)
+
+        assert head_marker in result
+        assert tail_marker in result
+        assert "chars omitted" in result
+        assert len(result) < len(text)
+
+    def test_query_service_head_tail(self) -> None:
+        from core.application.services.query_service import _head_tail
+
+        exploit = "EXPLOIT_START: trigger UAF via JSON parse\n" + "x" * 5000 + "\nEXPLOIT_END: ASan confirmed"
+        result = _head_tail(exploit, 2000)
+
+        assert "EXPLOIT_START" in result
+        assert "ASan confirmed" in result

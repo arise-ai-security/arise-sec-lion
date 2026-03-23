@@ -142,8 +142,11 @@ class ReconToolPort(Protocol):
     deciding whether to execute or decompose. All operations are read-only.
     """
 
-    async def read_file(self, path: str, max_lines: int = 200) -> str:
-        """Read file contents (truncated to max_lines)."""
+    async def read_file(
+        self, path: str, max_lines: int = 200,
+        start_line: int | None = None, end_line: int | None = None,
+    ) -> str:
+        """Read file contents. Use start_line/end_line for targeted reads."""
         ...
 
     async def list_directory(self, path: str) -> str:
@@ -160,6 +163,14 @@ class ReconToolPort(Protocol):
 
     async def get_file_structure(self, path: str = ".", max_depth: int = 3) -> str:
         """Get a tree view of the directory structure."""
+        ...
+
+    async def get_symbols_overview(self, path: str) -> str:
+        """Get function/class/method signatures without bodies."""
+        ...
+
+    async def read_symbol(self, path: str, symbol_name: str) -> str:
+        """Read the body of a specific function/class by name."""
         ...
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:

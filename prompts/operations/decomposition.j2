@@ -1,5 +1,8 @@
 <operation>
 ## Task Decomposition
+
+**Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns during recon.
+These fields (`target_paths`, `symbols`, `search_hints`) help children focus their own recon precisely.
 {% if at_max_depth %}
 
 **CONSTRAINT: Maximum depth reached.** Each subtask MUST be atomic and worker-executable.
@@ -61,7 +64,10 @@ Return ONLY a valid JSON array:
     "depends_on": [],
     "estimated_complexity": "simple | complex | unknown",
     "success_criteria": "what constitutes success",
-    "task_type": "general | research | implementation | testing | analysis"
+    "task_type": "general | research | implementation | testing | analysis",
+    "target_paths": ["src/relevant_file.c"],
+    "symbols": ["function_name"],
+    "search_hints": ["CVE-XXXX", "error keyword"]
   }
 ]
 ```
@@ -81,7 +87,7 @@ Rules:
 5. **NEAR MAX DEPTH**: Prefer simpler, worker-executable subtasks
 {% endif %}
 6. Required fields: `description`, `justification`, `config`
-7. Optional fields: `depends_on`, `estimated_complexity`, `success_criteria`, `task_type`
+7. Optional fields: `depends_on`, `estimated_complexity`, `success_criteria`, `task_type`, `target_paths`, `symbols`, `search_hints`
 8. Temperature: 0.0-2.0 | max_tokens: 1-100000
 {% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
 

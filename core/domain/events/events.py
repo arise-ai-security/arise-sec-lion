@@ -72,6 +72,11 @@ class AgentCreated(DomainEvent):
     depends_on: list[int] = Field(default_factory=list)
     success_criteria: str = ""  # From Subtask.success_criteria, used by verification
 
+    # Structured child scoping — from Subtask, persisted for replay
+    target_paths: list[str] = Field(default_factory=list)
+    symbols: list[str] = Field(default_factory=list)
+    search_hints: list[str] = Field(default_factory=list)
+
 
 class TaskAssigned(DomainEvent):
     """Task assigned to agent."""
