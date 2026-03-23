@@ -45,7 +45,7 @@ services:
       - ..:/app
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
-      - secbench_output:/app/output  # Shared volume for SEC-bench artifacts
+      - ../output:/app/output  # Host bind mount for SEC-bench artifacts (DooD needs host paths)
     depends_on:
       db:
         condition: service_healthy
