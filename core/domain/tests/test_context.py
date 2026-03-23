@@ -63,13 +63,46 @@ class TestAncestor:
             role=AgentRole.BOSS,
             config=config,
         )
-        long_task = "A" * 200  # 200 chars
+        long_task = "A" * 400  # 400 chars
         agent.assign_task(long_task)
 
         info = Ancestor.from_agent(agent)
 
-        assert len(info.task_summary) == 100
-        assert info.task_summary == "A" * 100
+        assert len(info.task_summary) == 300
+        assert info.task_summary == "A" * 300
+
+    def test_secbench_task_preserves_critical_details(self) -> None:
+        """A realistic SEC-bench task must preserve CVE ID, file path, and function name.
+
+        A15 fix: raised from 100 to 300 chars so child agents receive
+        enough ancestry context for proper alignment.
+        """
+        agent_id = uuid4()
+        config = {
+            "strategy": "heuristic",
+            "base": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
+            "tool": "claude_code",
+        }
+        agent = AgentSession.create(
+            agent_id=agent_id,
+            role=AgentRole.MANAGER,
+            config=config,
+        )
+        # Realistic SEC-bench task (typical length ~200 chars)
+        task = (
+            "Analyze CVE-2020-36048 heap-use-after-free in njs "
+            "njs_json_parse_iterator_call() at src/njs_json.c and develop "
+            "a targeted exploit PoC that triggers the AddressSanitizer "
+            "detection within the container environment"
+        )
+        agent.assign_task(task)
+        info = Ancestor.from_agent(agent)
+
+        # All critical details must survive truncation
+        assert "CVE-2020-36048" in info.task_summary
+        assert "njs_json_parse_iterator_call" in info.task_summary
+        assert "src/njs_json.c" in info.task_summary
+        assert "AddressSanitizer" in info.task_summary
 
     def test_serialization_roundtrip(self) -> None:
         """Test model_dump and model_validate roundtrip."""

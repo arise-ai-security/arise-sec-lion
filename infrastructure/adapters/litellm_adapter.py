@@ -5,12 +5,13 @@ various LLM providers (OpenAI, Anthropic, Google, etc.) with optional
 cost tracking via the CostCalculatorPort.
 """
 
+import json
 from typing import Any
 
 import litellm
 
 from core.domain.exceptions import LLMError
-from core.domain.values.llm_response import LLMResponse, LLMUsage
+from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage, ToolCall
 from core.ports.runtime_ports import CostCalculatorPort
 from core.ports.runtime_ports import LLMPort
 
@@ -33,22 +34,12 @@ class LiteLLMAdapter(LLMPort):
         self.default_config = default_config or {}
         self._cost_calculator = cost_calculator
 
-    async def _execute_completion(
-        self,
-        model: str,
-        prompt: str,
-        temperature: float,
-        max_tokens: int,
-        top_p: float | None,
-    ) -> Any:
-        """Execute LiteLLM completion with unified exception handling.
+    async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
+        """Call litellm.acompletion with unified exception handling.
 
         Args:
             model: Model identifier (e.g., 'gpt-4', 'claude-3-opus').
-            prompt: The prompt to send to the LLM.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens in response.
-            top_p: Optional nucleus sampling parameter.
+            **kwargs: Passed directly to litellm.acompletion (messages, tools, etc.).
 
         Returns:
             Raw LiteLLM response object.
@@ -57,13 +48,7 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On any API failure, with specific error messages.
         """
         try:
-            return await litellm.acompletion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-            )
+            return await litellm.acompletion(model=model, **kwargs)
 
         except litellm.exceptions.AuthenticationError as e:
             raise LLMError(
@@ -101,6 +86,27 @@ class LiteLLMAdapter(LLMPort):
                 original_error=e,
             ) from e
 
+    def _extract_usage(self, model: str, response: Any) -> tuple[LLMUsage, float]:
+        """Extract token usage and cost from a raw LiteLLM response.
+
+        Returns:
+            Tuple of (LLMUsage, cost_usd).
+        """
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        completion_tokens = usage.completion_tokens if usage else 0
+        total_tokens = usage.total_tokens if usage else 0
+        cost_usd = self._calculate_cost(model, prompt_tokens, completion_tokens, response)
+
+        return (
+            LLMUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            ),
+            cost_usd,
+        )
+
     async def query(self, prompt: str, config_dict: dict[str, Any]) -> str:
         """Query LLM and return response content.
 
@@ -117,9 +123,9 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
 
-        response = await self._execute_completion(
+        response = await self._call_litellm(
             model=model,
-            prompt=prompt,
+            messages=[{"role": "user", "content": prompt}],
             temperature=merged_config.get("temperature", 0.7),
             max_tokens=merged_config.get("max_tokens", 1000),
             top_p=merged_config.get("top_p"),
@@ -132,10 +138,6 @@ class LiteLLMAdapter(LLMPort):
 
     async def query_with_usage(self, prompt: str, config_dict: dict[str, Any]) -> LLMResponse:
         """Query LLM and return response with usage and cost metadata.
-
-        This method extracts token usage from the LLM response and calculates
-        cost using either the injected CostCalculatorPort or LiteLLM's built-in
-        cost calculation.
 
         Args:
             prompt: The prompt to send to the LLM.
@@ -150,9 +152,9 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
 
-        response = await self._execute_completion(
+        response = await self._call_litellm(
             model=model,
-            prompt=prompt,
+            messages=[{"role": "user", "content": prompt}],
             temperature=merged_config.get("temperature", 0.7),
             max_tokens=merged_config.get("max_tokens", 1000),
             top_p=merged_config.get("top_p"),
@@ -162,22 +164,57 @@ class LiteLLMAdapter(LLMPort):
         if content is None:
             raise LLMError("LLM returned empty response")
 
-        # Extract usage from response
-        usage = response.usage
-        prompt_tokens = usage.prompt_tokens if usage else 0
-        completion_tokens = usage.completion_tokens if usage else 0
-        total_tokens = usage.total_tokens if usage else 0
-
-        # Calculate cost
-        cost_usd = self._calculate_cost(model, prompt_tokens, completion_tokens, response)
+        llm_usage, cost_usd = self._extract_usage(model, response)
 
         return LLMResponse(
             content=content,
-            usage=LLMUsage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-            ),
+            usage=llm_usage,
+            model=model,
+            cost_usd=cost_usd,
+        )
+
+    async def query_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        config_dict: dict[str, Any],
+        tools: list[dict[str, Any]],
+    ) -> LLMToolResponse:
+        """Query LLM with tool definitions, returning content or tool calls.
+
+        Uses litellm's native tool-calling support. The response either contains
+        text content (final answer) or tool_calls (requesting tool execution).
+        """
+        merged_config = {**self.default_config, **config_dict}
+        model = merged_config.get("model", "gpt-4")
+
+        response = await self._call_litellm(
+            model=model,
+            messages=messages,
+            tools=tools,
+            temperature=merged_config.get("temperature", 0.7),
+            max_tokens=merged_config.get("max_tokens", 4000),
+            top_p=merged_config.get("top_p"),
+        )
+
+        message = response.choices[0].message
+
+        # Parse tool calls if present
+        tool_calls: list[ToolCall] = []
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    args = json.loads(args)
+                tool_calls.append(
+                    ToolCall(id=tc.id, name=tc.function.name, arguments=args)
+                )
+
+        llm_usage, cost_usd = self._extract_usage(model, response)
+
+        return LLMToolResponse(
+            content=message.content,
+            tool_calls=tool_calls,
+            usage=llm_usage,
             model=model,
             cost_usd=cost_usd,
         )

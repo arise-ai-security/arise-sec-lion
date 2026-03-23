@@ -141,6 +141,9 @@ class ChildAgentFactory:
             briefing=event.briefing,
             depends_on=event.subtask.depends_on,
             success_criteria=event.subtask.success_criteria,
+            target_paths=list(event.subtask.target_paths),
+            symbols=list(event.subtask.symbols),
+            search_hints=list(event.subtask.search_hints),
         )
         child.assign_task(event.subtask.description)
 
@@ -202,6 +205,9 @@ class ChildAgentFactory:
             briefing=event.briefing,
             depends_on=event.subtask.depends_on,
             success_criteria=event.subtask.success_criteria,
+            target_paths=list(event.subtask.target_paths),
+            symbols=list(event.subtask.symbols),
+            search_hints=list(event.subtask.search_hints),
         )
         child.assign_task(event.subtask.description)
 

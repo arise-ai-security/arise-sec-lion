@@ -6,6 +6,7 @@
 // Agent types
 export type AgentRole = 'BOSS' | 'MANAGER' | 'WORKER' | 'PENDING';
 export type AgentStatus = 'pending' | 'analyzing' | 'in_progress' | 'waiting' | 'completed' | 'failed' | 'blocked';
+export type DomainMetadataValue = string | number | boolean | null;
 
 export interface AgentListItem {
   id: string;
@@ -13,7 +14,7 @@ export interface AgentListItem {
   status: AgentStatus;
   task_description: string;
   created_at: string | null;
-  instance_id: string | null;
+  domain_metadata: Record<string, DomainMetadataValue> | null;
 }
 
 export interface PaginationMeta {

@@ -15,6 +15,7 @@ from core.domain.events.events import (
     DomainEvent,
     RedecompositionTriggered,
     RetryScheduled,
+    RunStarted,
     StatusChanged,
     TaskAssigned,
     VerificationFailed,
@@ -62,12 +63,14 @@ class AgentListProjection:
 
         # Track task description and child IDs
         task_description: str | None = None
+        domain_metadata = None
         child_ids: list[UUID] = []
 
         for event in events:
             if isinstance(event, TaskAssigned):
                 task_description = event.task_description
-
+            elif isinstance(event, RunStarted):
+                domain_metadata = event.domain_metadata
             elif isinstance(event, StatusChanged):
                 # Only update if not already in terminal state
                 if status not in terminal_states:
@@ -111,6 +114,7 @@ class AgentListProjection:
             task_description=task_description,
             parent_id=parent_id,
             created_at=created_at,
+            domain_metadata=domain_metadata,
             child_ids=tuple(child_ids),
         )
 

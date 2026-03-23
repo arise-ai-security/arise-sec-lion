@@ -65,7 +65,7 @@ class AgentListItemSchema(BaseModel):
     status: str
     task_description: str
     created_at: datetime | None = None
-    instance_id: str | None = None
+    domain_metadata: dict[str, str | int | float | bool | None] | None = None
 
     model_config = {"from_attributes": True}
 

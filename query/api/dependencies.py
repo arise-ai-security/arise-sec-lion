@@ -9,6 +9,7 @@ from typing import Annotated, TypeAlias
 from fastapi import Depends, Request
 
 from core.application.execution_service import AgentExecutionService
+from core.ports.domain_plugin_port import DomainPlugin
 from core.ports.event_store_port import EventStoreReadPort
 
 
@@ -38,7 +39,13 @@ def get_execution_service(request: Request) -> AgentExecutionService:
     return request.app.state.execution_service
 
 
+def get_domain_plugin(request: Request) -> DomainPlugin | None:
+    """Get the optional domain plugin from application state."""
+    return getattr(request.app.state, "domain_plugin", None)
+
+
 # Type aliases for cleaner route signatures
 # Query API uses read-only port (ISP - Interface Segregation Principle)
 EventStoreDep: TypeAlias = Annotated[EventStoreReadPort, Depends(get_event_store)]
 ExecutionServiceDep: TypeAlias = Annotated[AgentExecutionService, Depends(get_execution_service)]
+DomainPluginDep: TypeAlias = Annotated[DomainPlugin | None, Depends(get_domain_plugin)]

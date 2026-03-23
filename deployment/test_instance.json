@@ -1,0 +1,18 @@
+{
+  "instance_id": "njs.cve-2020-36048",
+  "repo": "nickypp/njs",
+  "project_name": "njs",
+  "lang": "c",
+  "work_dir": "/src/njs",
+  "sanitizer": "address",
+  "bug_description": "An issue was discovered in njs through 0.5.0. A use-after-free condition occurs in njs_json_parse_iterator_call() in njs_json.c during JSON parsing when the iterator callback triggers a garbage collection cycle that frees an object still referenced by the parser.",
+  "base_commit": "a0cab2c9cbc3e4a3aa7c89b7e69782cfc6518571",
+  "build_sh": "",
+  "secb_sh": "",
+  "dockerfile": "",
+  "patch": "",
+  "exit_code": 1,
+  "sanitizer_report": "ERROR: AddressSanitizer: heap-use-after-free on address 0x60200000ef50",
+  "bug_report": "",
+  "candidate_fixes": "https://github.com/nickypp/njs/commit/5f4ac7c5"
+}

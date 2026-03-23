@@ -61,6 +61,9 @@ class AgentSession:
         briefing: dict[str, Any] | None = None,
         depends_on: list[int] | None = None,
         success_criteria: str = "",
+        target_paths: list[str] | None = None,
+        symbols: list[str] | None = None,
+        search_hints: list[str] | None = None,
     ) -> "AgentSession":
         instance = cls(agent_id)
         event = AgentCreated(
@@ -73,6 +76,9 @@ class AgentSession:
             briefing=briefing,
             depends_on=depends_on or [],
             success_criteria=success_criteria,
+            target_paths=target_paths or [],
+            symbols=symbols or [],
+            search_hints=search_hints or [],
         )
         instance._apply(event)
         instance._changes.append(event)
@@ -206,6 +212,9 @@ class AgentSession:
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
         self.success_criteria = event.success_criteria
+        self.target_paths = tuple(event.target_paths)
+        self.symbols = tuple(event.symbols)
+        self.search_hints = tuple(event.search_hints)
         if event.briefing is not None:
             self.briefing = Briefing.model_validate(event.briefing)
         self.version += 1
@@ -386,6 +395,10 @@ class AgentSession:
         self.sibling_index: int = 0
         # Verification criteria from subtask (used by verification pipeline)
         self.success_criteria: str = ""
+        # Structured child scoping (from parent's subtask decomposition)
+        self.target_paths: tuple[str, ...] = ()
+        self.symbols: tuple[str, ...] = ()
+        self.search_hints: tuple[str, ...] = ()
         # Retry tracking
         self.retry_count: int = 0
 
@@ -721,13 +734,40 @@ class AgentSession:
         self._changes.append(event)
 
     # -------------------------------------------------------------------------
+    # Probe Events (reconnaissance tool calls)
+    # -------------------------------------------------------------------------
+
+    def emit_probe_started(self, probe_type: str) -> None:
+        """Emit ProbeStarted event for tool-calling observability."""
+        event = ProbeStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            probe_type=probe_type,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    def emit_probe_completed(
+        self, probe_type: str, result_summary: str = ""
+    ) -> None:
+        """Emit ProbeCompleted event for tool-calling observability."""
+        event = ProbeCompleted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            probe_type=probe_type,
+            result_summary=result_summary,
+        )
+        self._apply(event)
+        self._changes.append(event)
+
+    # -------------------------------------------------------------------------
     # Run-Level Timing Events (BOSS only)
     # -------------------------------------------------------------------------
 
     def emit_run_started(
         self,
         task_description: str,
-        instance_id: str | None = None,
+        domain_metadata: dict[str, str | int | float | bool | None] | None = None,
     ) -> None:
         """Emit RunStarted event when execution run begins.
 
@@ -737,7 +777,7 @@ class AgentSession:
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             task_description=task_description,
-            instance_id=instance_id,
+            domain_metadata=domain_metadata,
         )
         self._apply(event)
         self._changes.append(event)

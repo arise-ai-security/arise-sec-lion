@@ -41,14 +41,12 @@ class PostgresSharedContextAdapter(SharedContextPort):
     async def get_or_create(
         self,
         root_id: UUID,
-        initial_budget_usd: float = 0.0,
         config: dict | None = None,
     ) -> SharedStore:
         """Get existing context or create new one.
 
         Args:
             root_id: Root agent ID
-            initial_budget_usd: Budget limit for new context (0 = unlimited)
             config: Configuration for new context
 
         Returns:
@@ -60,7 +58,6 @@ class PostgresSharedContextAdapter(SharedContextPort):
             return SharedStore.load_from_history(events)
         return SharedStore.create(
             root_id=root_id,
-            initial_budget_usd=initial_budget_usd,
             config=config,
         )
 

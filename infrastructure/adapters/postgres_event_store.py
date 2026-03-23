@@ -618,7 +618,14 @@ class PostgresEventStore(EventStorePort):
                     run_info AS (
                         SELECT DISTINCT ON (e.aggregate_id)
                             e.aggregate_id,
-                            e.payload->>'instance_id' as instance_id
+                            COALESCE(
+                                e.payload->'domain_metadata',
+                                CASE
+                                    WHEN e.payload ? 'instance_id'
+                                    THEN jsonb_build_object('instance_id', e.payload->>'instance_id')
+                                    ELSE NULL
+                                END
+                            ) as domain_metadata
                         FROM events e
                         INNER JOIN boss_agents b ON e.aggregate_id = b.agent_id
                         WHERE e.event_type = 'RunStarted'
@@ -630,7 +637,7 @@ class PostgresEventStore(EventStorePort):
                         b.created_at,
                         t.task_description,
                         COALESCE(s.status, 'analyzing') as status,
-                        ri.instance_id
+                        ri.domain_metadata
                     FROM boss_agents b
                     LEFT JOIN task_descriptions t ON t.aggregate_id = b.agent_id
                     LEFT JOIN latest_status s ON s.aggregate_id = b.agent_id
@@ -646,7 +653,7 @@ class PostgresEventStore(EventStorePort):
                     "status": row["status"],
                     "task_description": row["task_description"],
                     "created_at": row["created_at"],
-                    "instance_id": row["instance_id"],
+                    "domain_metadata": row["domain_metadata"],
                 }
                 for row in rows
             ]

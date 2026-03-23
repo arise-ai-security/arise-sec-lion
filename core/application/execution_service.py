@@ -30,14 +30,15 @@ from core.domain.services.context_update_parser import parse_context_update
 from core.domain.events.events import ChildSpawned, DomainEvent, RetryScheduled
 from core.domain.exceptions import ConcurrencyError
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
+from core.domain.values.json_types import JsonObject
 from core.domain.values.limits import HierarchyLimits
 
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig, OrchestrationConfig
     from core.application.services.prompt_builder import PromptBuilder
-    from core.domain.values.cve_instance import CVEInstance
     from core.ports.event_store_port import EventStorePort
+    from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.runtime_ports import SharedContextPort
     from core.ports.runtime_ports import SiblingViewPort
 
@@ -73,7 +74,7 @@ class HierarchyLimitsRegistry:
         max_children_per_node: int,
         max_retries: int,
         max_total_agents: int = -1,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
     ) -> HierarchyLimits:
         """Create and register root hierarchy limits."""
         limits = HierarchyLimits.create_root(
@@ -82,7 +83,7 @@ class HierarchyLimitsRegistry:
             max_children_per_node=max_children_per_node,
             max_retries=max_retries,
             max_total_agents=max_total_agents,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
         )
         self._limits[root_id] = limits
         return limits
@@ -146,6 +147,7 @@ class ExecutionServiceDependencies:
     sibling_view_port: "SiblingViewPort"
     parent_notifier: ParentNotificationService
     prompt_builder: "PromptBuilder"
+    domain_plugin: "DomainPlugin | None" = None
 
 
 # =============================================================================
@@ -181,6 +183,7 @@ class AgentExecutionService:
         self._query_service = dependencies.query_service
         self._parent_notifier = dependencies.parent_notifier
         self._prompt_builder = dependencies.prompt_builder
+        self._domain_plugin = dependencies.domain_plugin
 
         # Workspace state (inlined from WorkspaceContextProvider)
         self._working_directory: Path | None = None
@@ -227,24 +230,24 @@ class AgentExecutionService:
     async def create_boss_agent(
         self,
         task_description: str,
-        cve_instance: "CVEInstance | None" = None,
+        domain_context: object | None = None,
     ) -> UUID:
         """Create root BOSS agent with task."""
         root_id = uuid4()
-        self._reset_for_new_run(root_id, cve_instance=cve_instance)
+        self._reset_for_new_run(root_id, domain_context=domain_context)
 
         self._prompt_builder.set_run_context(
             user_prompt=task_description,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
         )
-        self._setup_working_directory(root_id)
+        await self._setup_working_directory(root_id, domain_context)
         await self._create_shared_context(root_id)
 
         boss_agent = self._create_boss_session(root_id, task_description)
-        instance_id = cve_instance.instance_id if cve_instance else None
+        domain_metadata = self._get_run_metadata(domain_context)
         boss_agent.emit_run_started(
             task_description=task_description,
-            instance_id=instance_id,
+            domain_metadata=domain_metadata,
         )
         await self._repository.save_new_agent(boss_agent)
 
@@ -373,7 +376,7 @@ class AgentExecutionService:
     # -------------------------------------------------------------------------
 
     def _reset_for_new_run(
-        self, root_id: UUID, cve_instance: "CVEInstance | None" = None
+        self, root_id: UUID, domain_context: object | None = None
     ) -> None:
         """Reset all state for a new execution run."""
         self._working_directory = None
@@ -387,10 +390,22 @@ class AgentExecutionService:
             max_children_per_node=self._system_limits.max_children_per_node,
             max_retries=self._config.max_retries,
             max_total_agents=self._system_limits.max_total_agents,
-            cve_instance=cve_instance,
+            domain_context=domain_context,
         )
 
-    def _setup_working_directory(self, root_id: UUID) -> None:
+    def _get_run_metadata(self, domain_context: object | None) -> JsonObject | None:
+        """Build JSON-safe run metadata from the active domain plugin."""
+        if self._domain_plugin is None or domain_context is None:
+            return None
+
+        metadata = self._domain_plugin.get_run_metadata(domain_context)
+        return metadata or None
+
+    async def _setup_working_directory(
+        self,
+        root_id: UUID,
+        domain_context: object | None = None,
+    ) -> None:
         """Setup working directory for the run."""
         if not self._config.output_directory:
             return
@@ -402,6 +417,16 @@ class AgentExecutionService:
         run_output_path.mkdir(parents=True, exist_ok=True)
 
         self._working_directory = run_output_path
+        if self._domain_plugin is None:
+            return
+
+        prepared = await self._domain_plugin.prepare_run(
+            root_id=root_id,
+            run_output_path=run_output_path,
+            domain_context=domain_context,
+        )
+        if prepared is not None and prepared.working_directory:
+            self._working_directory = Path(prepared.working_directory)
 
     def _get_workspace_context(self) -> str | None:
         """Return fresh file listing for workspace.
@@ -503,12 +528,41 @@ class AgentExecutionService:
                     root_id=root_id,
                 )
 
-                await self._orchestrator.execute_task(
-                    agent,
-                    working_directory=self._get_working_directory_str(),
-                    workspace_context=self._get_workspace_context(),
-                    handoff=handoff,
+                domain_context = (
+                    agent.hierarchy_limits.domain_context
+                    if agent.hierarchy_limits is not None
+                    else None
                 )
+                worker_context = None
+                if self._domain_plugin is not None and self._working_directory is not None:
+                    worker_context = await self._domain_plugin.prepare_worker_execution(
+                        root_id=root_id,
+                        agent_id=agent.agent_id,
+                        run_output_path=self._working_directory,
+                        domain_context=domain_context,
+                    )
+
+                try:
+                    await self._orchestrator.execute_task(
+                        agent,
+                        working_directory=(
+                            worker_context.working_directory
+                            if worker_context and worker_context.working_directory
+                            else self._get_working_directory_str()
+                        ),
+                        workspace_context=self._get_workspace_context(),
+                        handoff=handoff,
+                        task_context_overrides=(
+                            worker_context.task_context if worker_context else None
+                        ),
+                    )
+                finally:
+                    if self._domain_plugin is not None:
+                        await self._domain_plugin.cleanup_worker_execution(
+                            root_id=root_id,
+                            agent_id=agent.agent_id,
+                            domain_context=domain_context,
+                        )
 
                 duration = time.monotonic() - start_time
                 agent.emit_execution_finished(

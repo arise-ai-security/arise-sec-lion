@@ -1,17 +1,42 @@
+{#
+  Assessment prompt for PENDING agents.
+
+  Design rationale: execute is the DEFAULT.  Decompose only when the task
+  genuinely spans multiple independent subsystems.
+
+  Smart recon tools are available with observation masking — older tool
+  results are automatically replaced with stubs, so context stays lean.
+  The LLM should follow the precision-first workflow: grep → identify
+  symbols → read_symbol for specifics.
+#}
 <operation>
-Assess this task. You have two options:
+Assess this task. You have reconnaissance tools available to inspect the
+codebase before deciding.
 
-**Execute directly** when ALL are true:
-- You know exactly which files to modify and what changes to make
-- You can verify correctness (expected output, test, or behavior)
-- No exploration, research, or design decisions remain
-- A single coding session will complete it
+**Available tools:**
+- `search_codebase(pattern, path?)` — grep for a regex pattern across source files
+- `read_file(path, start_line?, end_line?)` — read file contents (use line ranges for precision)
+- `get_symbols_overview(path)` — list function/class signatures without bodies
+- `read_symbol(path, symbol_name)` — read a specific function/class body
+- `list_directory(path)` — list directory entries
+- `find_file(pattern, path?)` — find files matching a glob pattern
+- `get_file_structure(path?, max_depth?)` — tree view of directory structure
 
-**Decompose** when ANY are true:
-- You'd need to explore the codebase to find the right approach
-- Multiple independent changes across different subsystems
-- Requires decisions that depend on information you don't have
-- The task mixes distinct concerns
+**Recon workflow** (precision-first):
+1. If you have scope hints (target_paths, symbols), start there
+2. `search_codebase` or `get_symbols_overview` to identify relevant symbols
+3. `read_symbol` for the specific functions you need — NOT full files
+4. Decide execute vs decompose based on what you found
+
+**Execute directly** (default) — unless the task clearly requires decomposition:
+- The task is about a single concern or a small set of related changes
+- You have a reasonable idea of what needs to happen
+- A single focused coding session can complete it
+
+**Decompose** — only when the task genuinely requires coordination:
+- The task spans 3+ independent subsystems that cannot share a session
+- The changes are completely unrelated and must be done in parallel
+- You are confident a single worker cannot reasonably handle the full scope
 {% if at_max_depth %}
 
 **CONSTRAINT: Maximum depth reached.** You MUST execute directly.
@@ -23,9 +48,6 @@ Assess this task. You have two options:
 
 **CONSTRAINT: No agents remaining.** You MUST execute directly.
 {% endif %}
-
-**The test:** If you started coding right now, would you need to stop and investigate?
-YES → Decompose. NO → Execute.
 </operation>
 {% if briefing %}
 
@@ -74,7 +96,10 @@ To decompose:
       },
       "depends_on": [],
       "estimated_complexity": "simple | complex | unknown",
-      "success_criteria": "what constitutes success"
+      "success_criteria": "what constitutes success",
+      "target_paths": ["src/relevant_file.c"],
+      "symbols": ["function_name"],
+      "search_hints": ["CVE-XXXX", "error keyword"]
     }
   ]
 }

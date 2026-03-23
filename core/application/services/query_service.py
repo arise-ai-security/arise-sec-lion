@@ -26,6 +26,16 @@ from core.domain.events.events import (
 )
 from core.domain.values.node_message import Handoff, PeerStatus, SharedDecision
 
+def _head_tail(text: str, limit: int) -> str:
+    """Keep first 2/3 + last 1/3 of text, showing omission count."""
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    tail = limit - head
+    omitted = len(text) - limit
+    return f"{text[:head]}\n\n[...{omitted} chars omitted...]\n\n{text[-tail:]}"
+
+
 if TYPE_CHECKING:
     from core.application.services.agent_repository import AgentRepository
     from core.ports.runtime_ports import SharedContextPort
@@ -613,7 +623,7 @@ class AgentQueryService:
             if summary.status == "completed":
                 agent = await self._repository.load_if_exists(agg_id)
                 if agent and agent.result:
-                    result_summary = agent.result[:500]
+                    result_summary = _head_tail(agent.result, 2000)
 
             siblings.append(
                 PeerStatus(

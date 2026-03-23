@@ -17,10 +17,23 @@ from core.domain.services import parse_assessment_response, parse_subtasks_from_
 from core.domain.services.config_resolver import ConfigResolver
 from core.domain.values.constraint_failure import ConstraintFailure
 from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.values.recon_policy import ReconPolicy
+from core.application.services.prompt_strategy import SubtaskScope
+
+def _head_tail(text: str, limit: int) -> str:
+    """Keep first 2/3 + last 1/3 of text, showing omission count."""
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    tail = limit - head
+    omitted = len(text) - limit
+    return f"{text[:head]}\n\n[...{omitted} chars omitted...]\n\n{text[-tail:]}"
+
 
 if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
+    from core.application.services.tool_calling_service import ToolCallingService
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.node_message import Handoff
     from core.ports.runtime_ports import LLMPort
@@ -46,12 +59,16 @@ class AgentOrchestrator:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         realtime_callback: "RealtimeCallbackPort | None" = None,
+        tool_calling_service: "ToolCallingService | None" = None,
+        recon_config: dict[str, Any] | None = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
         self._realtime_callback = realtime_callback
+        self._tool_calling_service = tool_calling_service
+        self._recon_config = recon_config or {}
 
     async def assess_task(self, agent: "AgentSession") -> None:
         """Assess a PENDING agent: execute directly or decompose.
@@ -69,28 +86,19 @@ class AgentOrchestrator:
 
         try:
             # Build prompt
+            scope = self._build_scope(agent)
             prompt = self._prompt_builder.build_assessment_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
                 briefing=agent.briefing,
                 hierarchy_limits=agent.hierarchy_limits,
-                cve_instance=self._get_cve_instance(agent),
+                domain_context=self._get_domain_context(agent),
+                scope=scope,
             )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-            # Query LLM
-            llm_config = ConfigResolver.resolve(agent.config, operation=op)
-            response = await self._llm_port.query_with_usage(
-                prompt, llm_config.model_dump()
-            )
-            agent.emit_tokens_consumed(
-                model=response.model,
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-                cost_usd=response.cost_usd,
-                operation=op,
-            )
+            # Query LLM (with tool calling if available)
+            response = await self._query_with_recon(agent, prompt, op)
 
             # Parse assessment
             result = parse_assessment_response(response.content)
@@ -179,32 +187,23 @@ class AgentOrchestrator:
                 prompt = self._prompt_builder.build_boss_delegation_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
-                    cve_instance=self._get_cve_instance(agent),
+                    domain_context=self._get_domain_context(agent),
                     hierarchy_limits=agent.hierarchy_limits,
                 )
             else:
+                scope = self._build_scope(agent)
                 prompt = self._prompt_builder.build_manager_decomposition_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
-                    cve_instance=self._get_cve_instance(agent),
+                    domain_context=self._get_domain_context(agent),
                     briefing=agent.briefing,
                     hierarchy_limits=agent.hierarchy_limits,
+                    scope=scope,
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-            # Query LLM
-            llm_config = ConfigResolver.resolve(agent.config, operation=op)
-            response = await self._llm_port.query_with_usage(
-                prompt, llm_config.model_dump()
-            )
-            agent.emit_tokens_consumed(
-                model=response.model,
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-                cost_usd=response.cost_usd,
-                operation=op,
-            )
+            # Query LLM (with tool calling if available)
+            response = await self._query_with_recon(agent, prompt, op)
 
             # Parse subtasks
             try:
@@ -271,6 +270,7 @@ class AgentOrchestrator:
         working_directory: str | None = None,
         workspace_context: str | None = None,
         handoff: "Handoff | None" = None,
+        task_context_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -294,7 +294,7 @@ class AgentOrchestrator:
                 task_description=agent.task_description,
                 handoff=handoff,
                 workspace_context=workspace_context,
-                cve_instance=self._get_cve_instance(agent),
+                domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
             )
             agent.emit_prompt_sent(
@@ -310,6 +310,8 @@ class AgentOrchestrator:
             }
             if working_directory:
                 task_context["working_directory"] = working_directory
+            if task_context_overrides:
+                task_context.update(task_context_overrides)
 
             root_id = (
                 agent.hierarchy_limits.root_id
@@ -376,12 +378,145 @@ class AgentOrchestrator:
 
         return None
 
+    async def _query_with_recon(
+        self,
+        agent: "AgentSession",
+        prompt: str,
+        operation: str,
+    ) -> "LLMResponse":
+        """Query LLM with optional tool-calling reconnaissance.
+
+        Dispatches to ToolCallingService (if available) or raw LLMPort,
+        emits probe events for any tool calls, and emits TokensConsumed.
+
+        Returns:
+            The final LLMResponse (aggregated across all tool-calling turns).
+        """
+        from core.domain.values.llm_response import LLMResponse
+
+        llm_config = ConfigResolver.resolve(agent.config, operation=operation)
+        config_dict = llm_config.model_dump()
+
+        if self._tool_calling_service is not None:
+            # Resolve per-call recon policy from role + domain
+            domain = (
+                agent.hierarchy_limits.domain_context
+                if agent.hierarchy_limits
+                else None
+            )
+            policy = self._resolve_recon_policy(agent.role, domain)
+
+            if not policy.enabled:
+                # Recon disabled for this role/domain — skip tool calling
+                response = await self._llm_port.query_with_usage(prompt, config_dict)
+            else:
+                tc_result = await self._tool_calling_service.run_with_tools(
+                    prompt, config_dict, policy=policy,
+                )
+                response = tc_result.response
+                self._emit_probe_events(agent, tc_result.tool_records)
+        else:
+            response = await self._llm_port.query_with_usage(prompt, config_dict)
+
+        agent.emit_tokens_consumed(
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            cost_usd=response.cost_usd,
+            operation=operation,
+        )
+
+        return response
+
     @staticmethod
-    def _get_cve_instance(agent: "AgentSession"):
-        """Extract CVE instance from hierarchy limits if available."""
+    def _get_domain_context(agent: "AgentSession") -> object | None:
+        """Extract optional domain context from hierarchy limits."""
         if agent.hierarchy_limits:
-            return agent.hierarchy_limits.cve_instance
+            return agent.hierarchy_limits.domain_context
         return None
+
+    def _resolve_recon_policy(
+        self, role: AgentRole, domain: object | None,
+    ) -> ReconPolicy:
+        """Resolve per-call recon policy from config.
+
+        Resolution order: domain-specific override → role default → hardcoded fallback.
+        Config shape (``orchestration.recon``):
+            default:
+              pending: {enabled, max_iterations, result_char_limit}
+              manager: ...
+              boss: {enabled: false}
+            domains:
+              secbench:
+                manager: {max_iterations: 3, allowed_tools: [...]}
+        """
+        role_key = role.value.lower()  # "pending", "manager", "boss", "worker"
+
+        # Start with role-level defaults
+        defaults = self._recon_config.get("default", {})
+        role_cfg: dict[str, Any] = dict(defaults.get(role_key, {}))
+
+        # Layer domain-specific overrides
+        domain_key = self._domain_key(domain)
+        if domain_key:
+            domain_overrides = (
+                self._recon_config
+                .get("domains", {})
+                .get(domain_key, {})
+                .get(role_key, {})
+            )
+            role_cfg.update(domain_overrides)
+
+        if not role_cfg:
+            return ReconPolicy()
+
+        # Build policy from merged config
+        allowed = role_cfg.get("allowed_tools")
+        return ReconPolicy(
+            enabled=role_cfg.get("enabled", True),
+            max_iterations=role_cfg.get("max_iterations", 5),
+            result_char_limit=role_cfg.get("result_char_limit", 6_000),
+            allowed_tools=frozenset(allowed) if allowed is not None else None,
+        )
+
+    @staticmethod
+    def _domain_key(domain: object | None) -> str | None:
+        """Extract a string key from the domain context object."""
+        if domain is None:
+            return None
+        # CVEInstance or similar objects with a known type
+        type_name = type(domain).__name__.lower()
+        if "cve" in type_name or "secbench" in type_name:
+            return "secbench"
+        # Allow plain string domain markers
+        if isinstance(domain, str):
+            return domain
+        return None
+
+    @staticmethod
+    def _build_scope(agent: "AgentSession") -> SubtaskScope | None:
+        """Build SubtaskScope from agent's structured scoping fields."""
+        if not (agent.target_paths or agent.symbols or agent.search_hints):
+            return None
+        return SubtaskScope(
+            target_paths=agent.target_paths,
+            symbols=agent.symbols,
+            search_hints=agent.search_hints,
+        )
+
+    @staticmethod
+    def _emit_probe_events(
+        agent: "AgentSession",
+        tool_records: list,
+    ) -> None:
+        """Emit ProbeStarted/ProbeCompleted events for each recon tool call."""
+        for record in tool_records:
+            agent.emit_probe_started(probe_type=record.tool_name)
+            agent.emit_probe_completed(
+                probe_type=record.tool_name,
+                result_summary=record.result_summary,
+            )
 
     # -------------------------------------------------------------------------
     # Verification Pipeline
@@ -472,7 +607,7 @@ class AgentOrchestrator:
             "You are a quality judge. Evaluate whether the following work output "
             "satisfies the given success criteria.\n\n"
             f"## Success Criteria\n{success_criteria}\n\n"
-            f"## Work Output\n{result[:3000]}\n\n"
+            f"## Work Output\n{_head_tail(result, 12000)}\n\n"
             "Respond with ONLY valid JSON:\n"
             '{"passed": true/false, "feedback": "brief explanation"}'
         )

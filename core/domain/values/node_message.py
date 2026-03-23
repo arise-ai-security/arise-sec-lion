@@ -26,11 +26,11 @@ class Ancestor(BaseModel):
 
     agent_id: str
     role: str
-    task_summary: str  # First 100 chars of task description
+    task_summary: str  # First 300 chars of task description
 
     @classmethod
     def from_agent(cls, agent: "AgentSession") -> Self:
-        task_summary = (agent.task_description or "")[:100]
+        task_summary = (agent.task_description or "")[:300]
         return cls(
             agent_id=str(agent.agent_id),
             role=agent.role.value,

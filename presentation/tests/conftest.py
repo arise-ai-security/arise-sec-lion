@@ -53,7 +53,7 @@ class FakeExecutionService:
     async def create_boss_agent(
         self,
         task_description: str,
-        cve_instance: object | None = None,
+        domain_context: object | None = None,
     ) -> str:
         """Simulate BOSS agent creation."""
         self.last_task_description = task_description

@@ -12,9 +12,9 @@ import pytest
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_parser import PromptParser
 from core.domain.values.node_message import (
-    SharedDecision,
-    PeerStatus,
     Handoff,
+    PeerStatus,
+    SharedDecision,
 )
 from core.domain.values.prompt_trace import SectionProvenance
 
@@ -28,7 +28,7 @@ def get_prompts_dir() -> Path:
     if docker_path.exists():
         return docker_path
     # Fall back to relative path from test file
-    local_path = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    local_path = Path(__file__).parent.parent.parent.parent / "prompts"
     if local_path.exists():
         return local_path
     # Last resort: relative path from CWD
@@ -75,10 +75,10 @@ class TestPromptBuilderWithRealTemplates:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that boss delegation prompt renders from real templates."""
-        builder.set_run_context(user_prompt="Fix the CVE vulnerability")
+        builder.set_run_context(user_prompt="Fix the parser defect")
 
         prompt = builder.build_boss_delegation_prompt(
-            task_description="Fix the CVE vulnerability",
+            task_description="Fix the parser defect",
             agent_id=uuid4(),
         )
 
@@ -99,12 +99,12 @@ class TestPromptBuilderWithRealTemplates:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that manager decomposition prompt renders from real templates."""
-        builder.set_run_context(user_prompt="Patch the security vulnerability")
+        builder.set_run_context(user_prompt="Patch the parser defect")
 
         prompt = builder.build_manager_decomposition_prompt(
-            task_description="Develop and test the security patch",
+            task_description="Develop and test the parser patch",
             agent_id=uuid4(),
-            parent_task="Patch the security vulnerability",
+            parent_task="Patch the parser defect",
         )
 
         sections = parser.parse(prompt)
@@ -121,10 +121,10 @@ class TestPromptBuilderWithRealTemplates:
         self, builder: PromptBuilder, parser: PromptParser
     ) -> None:
         """Test that worker prompt renders from real templates."""
-        builder.set_run_context(user_prompt="Build the project with ASAN")
+        builder.set_run_context(user_prompt="Build the project in debug mode")
 
         prompt = builder.build_worker_prompt(
-            task_description="Compile the project with AddressSanitizer enabled",
+            task_description="Compile the project and run the smoke checks",
         )
 
         sections = parser.parse(prompt)
@@ -139,7 +139,6 @@ class TestPromptBuilderWithRealTemplates:
         # Verify worker role content
         persona_section = next(s for s in sections if s.tag == "persona")
         assert "WORKER" in persona_section.content
-
 
 class TestProvenanceClassificationWithRealPrompts:
     """Tests that provenance classification works correctly with real prompts."""

@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from core.query.ports.sink_port import SinkPort
-from core.query.projections.registry import register_sink
+from core.query.projections.registry import RegistryError, register_sink
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
@@ -471,7 +471,6 @@ def cost_events_hierarchy() -> list[DomainEvent]:
     ]
 
 
-@register_sink("string")
 class FakeStringSink(SinkPort):
     """Simple string sink for testing (no infrastructure dependency)."""
 
@@ -487,6 +486,14 @@ class FakeStringSink(SinkPort):
     @property
     def lines(self) -> list[str]:
         return list(self._lines)
+
+
+try:
+    register_sink("string")(FakeStringSink)
+except RegistryError:
+    # "string" may already be registered by infrastructure bootstrap imports.
+    # Query projection tests should not depend on global import order.
+    pass
 
 
 @pytest.fixture

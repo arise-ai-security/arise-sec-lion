@@ -19,6 +19,7 @@ from claude_agent_sdk import (
     HookContext,
     HookInput,
     HookMatcher,
+    PermissionResultAllow,
     ResultMessage,
     TextBlock,
     ThinkingBlock,
@@ -29,7 +30,7 @@ from claude_agent_sdk.types import SyncHookJSONOutput
 from core.domain.events.events import DomainEvent, ThoughtCaptured
 
 from .base import WorkerAdapterBase
-from .shared import EventSequencer, format_tool_event
+from .shared import ContainerSessionContext, EventSequencer, format_tool_event
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
@@ -78,6 +79,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         agent_id: UUID,
         working_dir: str,
         sequencer: EventSequencer,
+        task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
         """Execute task via SDK, stream ThoughtCaptured events, yield final event.
 
@@ -86,9 +88,19 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         """
         self._start_timing()
         tool_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        container_session = ContainerSessionContext.from_task_context(task_context)
+        if container_session is not None:
+            task_description = container_session.apply_task_prefix(
+                task_description,
+                auto_shell=True,
+            )
 
         try:
-            options = self._build_options(working_dir, tool_queue)
+            options = self._build_options(
+                working_dir,
+                tool_queue,
+                container_session,
+            )
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task_description)
@@ -127,6 +139,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         self,
         working_dir: str,
         tool_queue: asyncio.Queue[tuple[str, str]],
+        container_session: ContainerSessionContext | None,
     ) -> ClaudeAgentOptions:
         """Build SDK options with PostToolUse hook for event capture."""
 
@@ -142,11 +155,26 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             await tool_queue.put((content, "tool_use"))
             return SyncHookJSONOutput()
 
+        async def can_use_tool(
+            tool_name: str,
+            tool_input: dict[str, Any],
+            _context: Any,
+        ) -> PermissionResultAllow:
+            if container_session is None:
+                return PermissionResultAllow()
+            return PermissionResultAllow(
+                updated_input=container_session.translate_tool_input(
+                    tool_name,
+                    tool_input,
+                )
+            )
+
         return ClaudeAgentOptions(
             model=self.config.model,
             cwd=working_dir,
             allowed_tools=self.config.allowed_tools,
             permission_mode=self.config.permission_mode,
+            can_use_tool=can_use_tool if container_session is not None else None,
             hooks={
                 "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
             },

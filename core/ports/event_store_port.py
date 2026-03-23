@@ -173,7 +173,8 @@ class EventStoreReadPort(Protocol):
             offset: Number of agents to skip for pagination.
 
         Returns:
-            List of dicts with keys: agent_id, role, status, task_description, created_at
+            List of dicts with keys: agent_id, role, status, task_description, created_at,
+            domain_metadata
         """
         ...
 

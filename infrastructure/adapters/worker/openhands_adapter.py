@@ -13,7 +13,7 @@ from uuid import UUID
 from core.domain.events.events import DomainEvent
 
 from .base import WorkerAdapterBase
-from .shared import EventSequencer, get_model_pricing
+from .shared import ContainerSessionContext, EventSequencer, get_model_pricing
 
 
 # Suppress verbose OpenHands logging
@@ -96,9 +96,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
         agent_id: UUID,
         working_dir: str,
         sequencer: EventSequencer,
+        task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
         """Execute task via OpenHands SDK with cost tracking."""
         self._start_timing()
+        container_session = ContainerSessionContext.from_task_context(task_context)
+        if container_session is not None:
+            task_description = container_session.apply_task_prefix(
+                task_description,
+                auto_shell=False,
+            )
 
         try:
             from openhands.sdk import LLM, Agent, Conversation, Tool

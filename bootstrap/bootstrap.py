@@ -58,6 +58,12 @@ def _create_parser() -> argparse.ArgumentParser:
         help="Path to SEC-bench CVE instance JSON file for benchmark runs",
     )
     p.add_argument(
+        "--domain",
+        type=str,
+        choices=["security"],
+        help="Enable an optional domain plugin for this run",
+    )
+    p.add_argument(
         "--worker-model",
         type=str,
         help="Override worker LLM model (e.g., gpt-4o, claude-sonnet-4-20250514)",
@@ -106,9 +112,6 @@ async def _event_store(settings: Settings):
 async def _run_task(args: argparse.Namespace) -> None:
     from presentation.formatters import ProgressDisplayFormatter
 
-    from core.application.services.cve_inference import CVEInstanceInferenceService
-    from core.domain.values.cve_instance import CVEInstance
-
     settings = Settings.from_yaml(args.config) if args.config else Settings.load()
 
     # Apply CLI overrides for worker configuration
@@ -116,17 +119,25 @@ async def _run_task(args: argparse.Namespace) -> None:
 
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
 
-    # Load or infer CVE instance
-    if (cve_file := getattr(args, "cve_file", None)) is not None:
-        cve_instance = CVEInstance.from_json_file(cve_file)
-    else:
-        # Attempt inference from task description (fail_fast=True: error if missing required fields)
-        inference_service = CVEInstanceInferenceService()
-        cve_instance = inference_service.infer_instance(args.task, fail_fast=True)
+    domain_plugin = _get_run_domain_plugin(settings, args)
+    domain_context = None
+    if domain_plugin is not None:
+        domain_context = domain_plugin.infer_context(
+            args.task,
+            cve_file=getattr(args, "cve_file", None),
+            fail_fast=True,
+        )
         if settings.output.verbose:
-            print(f"[Inferred] SEC-bench CVE: {cve_instance.instance_id}")
+            metadata = domain_plugin.get_run_metadata(domain_context) if domain_context else {}
+            instance_id = metadata.get("instance_id")
+            if isinstance(instance_id, str):
+                print(f"[Inferred] SEC-bench CVE: {instance_id}")
 
-    await _create_cli(settings, callback).run_task(args.task, cve_instance=cve_instance)
+    await _create_cli(
+        settings,
+        callback,
+        domain_plugin=domain_plugin,
+    ).run_task(args.task, domain_context=domain_context)
 
 
 def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
@@ -223,7 +234,13 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
 
     async with _event_store(settings) as store:
         # Build service and trace
-        parser = PromptParser()
+        domain_plugin = _get_available_domain_plugin(settings)
+        parser = PromptParser(
+            extra_tag_mappings=domain_plugin.get_tag_mappings() if domain_plugin else None,
+            extra_provenance_patterns=(
+                domain_plugin.get_provenance_patterns() if domain_plugin else None
+            ),
+        )
         service = PromptTraceService(store, parser)
         trace = await service.trace(agent_id)
 
@@ -233,13 +250,34 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
         print(output)
 
 
-def _create_cli(settings: Settings, progress_callback=None):
+def _get_available_domain_plugin(settings: Settings):
+    """Build the configured domain plugin, if one is available."""
+    if not settings.security.enabled:
+        return None
+
+    from plugins.security import SecurityDomainPlugin
+
+    return SecurityDomainPlugin(enabled_tools=settings.security.tools)
+
+
+def _get_run_domain_plugin(settings: Settings, args: argparse.Namespace):
+    """Build the domain plugin for a specific run when explicitly requested."""
+    requested_domain = getattr(args, "domain", None)
+    cve_file = getattr(args, "cve_file", None)
+    if requested_domain != "security" and cve_file is None:
+        return None
+    return _get_available_domain_plugin(settings)
+
+
+def _create_cli(settings: Settings, progress_callback=None, domain_plugin=None):
     infra = get_infrastructure(InfrastructureConfig(
         postgres_connection_string=settings.database.connection_string,
         default_worker_tool=settings.worker.tool,
         worker_tool_model=settings.worker.model,
         worker_tool_timeout=settings.worker.timeout,
     ))
+    if domain_plugin is not None and hasattr(domain_plugin, "set_container_runtime"):
+        domain_plugin.set_container_runtime(infra.secbench_runtime)
 
     app = get_application(infra, ApplicationConfig(
         system_limits=settings.orchestration.limits,
@@ -249,6 +287,8 @@ def _create_cli(settings: Settings, progress_callback=None):
         manager_config=settings.manager,
         output_directory=settings.output.directory,
         default_worker_tool=settings.worker.tool,
+        recon_config=settings.orchestration.recon,
+        domain_plugin=domain_plugin,
         progress_callback=progress_callback,
     ))
 
@@ -260,5 +300,3 @@ def _create_cli(settings: Settings, progress_callback=None):
             default_worker_tool=settings.worker.tool,
         ),
     )
-
-

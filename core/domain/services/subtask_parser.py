@@ -1,17 +1,18 @@
 """Domain services: parsing and utility functions."""
 
-
-
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
-from core.domain.values.agent_config import AgentConfig
+from core.domain.values.agent_config import DEFAULT_WORKER_TOOL, VALID_WORKER_TOOLS, AgentConfig
 from core.domain.values.subtask import Subtask
 from core.domain.values.constraint_failure import ConstraintFailure
+
+logger = logging.getLogger(__name__)
 
 
 # Patterns for extracting JSON from LLM responses
@@ -95,6 +96,44 @@ def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
             raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")
 
 
+def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
+    """Normalize LLM-hallucinated values in a subtask dict.
+
+    Fixes known hallucination patterns (invalid tool names, non-integer
+    depends_on) so downstream validation sees clean data.  Logs warnings
+    when corrections are applied so regressions are observable.
+    """
+    cfg = item.get("config")
+    if isinstance(cfg, dict):
+        tool = cfg.get("tool")
+        if tool is not None and tool not in VALID_WORKER_TOOLS:
+            logger.warning(
+                "Subtask %d: sanitized invalid tool %r → %r",
+                idx, tool, DEFAULT_WORKER_TOOL,
+            )
+            cfg["tool"] = DEFAULT_WORKER_TOOL
+
+    if "depends_on" in item:
+        raw = item["depends_on"]
+        clean: list[int] = []
+        dropped: list[Any] = []
+        for v in raw:
+            if isinstance(v, int):
+                clean.append(v)
+            elif isinstance(v, str) and v.isdigit():
+                clean.append(int(v))
+            else:
+                dropped.append(v)
+        if dropped:
+            logger.warning(
+                "Subtask %d: dropped non-integer depends_on values: %r",
+                idx, dropped,
+            )
+        item["depends_on"] = clean
+
+    return item
+
+
 def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
     """Validate and create Subtask objects from dicts."""
     if not items:
@@ -109,6 +148,8 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
 
         if "config" not in item:
             raise ValueError(f"Subtask {idx}: missing 'config' field")
+
+        item = _sanitize_llm_subtask(item, idx)
 
         try:
             config_adapter.validate_python(item["config"])

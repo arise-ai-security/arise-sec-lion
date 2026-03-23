@@ -1,8 +1,9 @@
 """Application Layer - Service Factories."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig
+from config import BossConfig, ManagerConfig, OrchestrationConfig, ReconConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -17,10 +18,14 @@ from core.application.services.event_broadcaster import EventBroadcaster
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.prompt_strategy import SecBenchPromptStrategy
+from core.application.services.context_condenser import ContextCondenser
+from core.application.services.tool_calling_service import ToolCallingService
 
 from .infrastructure import Infrastructure
 from .realtime_adapter import RealtimeCallbackAdapter
+
+if TYPE_CHECKING:
+    from core.ports.domain_plugin_port import DomainPlugin
 
 
 @dataclass
@@ -34,6 +39,8 @@ class ApplicationConfig:
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
+    recon_config: ReconConfig = field(default_factory=ReconConfig)
+    domain_plugin: "DomainPlugin | None" = None
     progress_callback: ProgressCallback | None = None
 
 
@@ -59,8 +66,11 @@ def get_application(
     )
 
     # Create collaborators (composition root wiring)
-    prompt_builder = PromptBuilder("prompts", config.default_worker_tool)
-    prompt_builder.set_strategy(SecBenchPromptStrategy(prompt_builder.chain))
+    prompt_builder = PromptBuilder(
+        "prompts",
+        config.default_worker_tool,
+        domain_plugin=config.domain_plugin,
+    )
 
     repository = AgentRepository(
         event_store=infrastructure.event_store,
@@ -83,12 +93,28 @@ def get_application(
     event_broadcaster = EventBroadcaster.get_instance()
     realtime_callback = RealtimeCallbackAdapter(event_broadcaster)
 
+    condenser = ContextCondenser(
+        llm_port=infrastructure.llm_adapter,
+        result_char_limit=config.system_limits.recon_result_char_limit,
+        condense_after_iteration=config.system_limits.recon_condense_after_iteration,
+        token_budget=config.system_limits.recon_token_budget,
+    )
+
+    tool_calling_service = ToolCallingService(
+        llm_port=infrastructure.llm_adapter,
+        recon_port=infrastructure.recon_tool,
+        max_iterations=config.system_limits.max_recon_iterations,
+        condenser=condenser,
+    )
+
     orchestrator = AgentOrchestrator(
         llm_port=infrastructure.llm_adapter,
         worker_port=infrastructure.worker_tool,
         prompt_builder=prompt_builder,
         child_factory=child_factory,
         realtime_callback=realtime_callback,
+        tool_calling_service=tool_calling_service,
+        recon_config=config.recon_config.to_raw_dict(),
     )
 
     parent_notifier = ParentNotificationService(
@@ -106,6 +132,7 @@ def get_application(
         sibling_view_port=query_service,  # AgentQueryService implements SiblingViewPort
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
+        domain_plugin=config.domain_plugin,
     )
 
     execution_service = AgentExecutionService(

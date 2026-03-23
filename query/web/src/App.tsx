@@ -444,11 +444,11 @@ function Dashboard() {
                       {selectedAgentId}
                     </code>
                   </div>
-                  {agents.find(a => a.id === selectedAgentId)?.instance_id && (
+                  {agents.find(a => a.id === selectedAgentId)?.domain_metadata?.instance_id && (
                     <div className="flex items-center gap-1">
                       <span className="text-gray-500">Instance:</span>
                       <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded text-xs">
-                        {agents.find(a => a.id === selectedAgentId)?.instance_id}
+                        {agents.find(a => a.id === selectedAgentId)?.domain_metadata?.instance_id}
                       </span>
                     </div>
                   )}
