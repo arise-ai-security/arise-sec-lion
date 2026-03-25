@@ -4,20 +4,10 @@ Handles notifying parent agents when children complete or fail.
 Extracted from ExecutionService to follow Single Responsibility Principle.
 """
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
-
-from core.domain.events.events import DomainEvent
+from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentSession, AgentStatus
 
 from .agent_repository import AgentNotFoundError, AgentRepository
-
-
-if TYPE_CHECKING:
-    pass
-
-
-type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
 class ParentNotificationService:
@@ -63,8 +53,8 @@ class ParentNotificationService:
 
         try:
             parent = await self._repository.load(child.parent_id)
-        except AgentNotFoundError:
-            raise ValueError(f"Parent agent {child.parent_id} not found")
+        except AgentNotFoundError as e:
+            raise ValueError(f"Parent agent {child.parent_id} not found") from e
 
         # Skip if parent is not in WAITING status (already completed or failed)
         # This handles race conditions where:
@@ -107,8 +97,8 @@ class ParentNotificationService:
 
         try:
             parent = await self._repository.load(child.parent_id)
-        except AgentNotFoundError:
-            raise ValueError(f"Parent agent {child.parent_id} not found")
+        except AgentNotFoundError as e:
+            raise ValueError(f"Parent agent {child.parent_id} not found") from e
 
         if parent.status != AgentStatus.WAITING:
             return

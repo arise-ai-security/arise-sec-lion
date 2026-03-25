@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from core.domain.values.node_message import Briefing
-from core.domain.events.events import ChildSpawned
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
+from core.domain.events.events import ChildSpawned
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from config import ManagerConfig
     from core.application.services.agent_repository import AgentRepository
-    from core.application.execution_service import HierarchyLimitsRegistry
+    from core.application.services.hierarchy_limits_registry import HierarchyLimitsRegistry
 
 
 @dataclass

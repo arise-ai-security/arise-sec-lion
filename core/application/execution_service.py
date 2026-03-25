@@ -12,16 +12,16 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
+from core.application.services.hierarchy_limits_registry import HierarchyLimitsRegistry
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
 from core.application.services.retry_policy import RetryPolicy
@@ -29,12 +29,12 @@ from core.application.services.role_dispatch import (
     DispatchContext,
     build_role_handlers,
 )
+from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import ChildSpawned, DomainEvent
 from core.domain.exceptions import ConcurrencyError
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
-from core.domain.values.limits import HierarchyLimits
 
 
 logger = logging.getLogger(__name__)
@@ -48,84 +48,6 @@ if TYPE_CHECKING:
     from core.ports.runtime_ports import SharedContextPort, SiblingViewPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
-
-
-type ProgressCallback = Callable[[DomainEvent, Any], None]
-
-
-# =============================================================================
-# HierarchyLimitsRegistry — dict wrapper for agent hierarchy limits
-# =============================================================================
-
-
-class HierarchyLimitsRegistry:
-    """Registry for managing hierarchy limits in agent hierarchy.
-
-    Tracks and propagates hierarchy limits from parent to child.
-    Used by both ExecutionService and ChildAgentFactory.
-    """
-
-    def __init__(self) -> None:
-        self._limits: dict[UUID, HierarchyLimits] = {}
-
-    def reset(self) -> None:
-        """Clear all limits for a new run."""
-        self._limits.clear()
-
-    def create_root(
-        self,
-        root_id: UUID,
-        max_depth: int,
-        max_children_per_node: int,
-        max_retries: int,
-        max_total_agents: int = -1,
-        domain_context: object | None = None,
-    ) -> HierarchyLimits:
-        """Create and register root hierarchy limits."""
-        limits = HierarchyLimits.create_root(
-            root_id=root_id,
-            max_depth=max_depth,
-            max_children_per_node=max_children_per_node,
-            max_retries=max_retries,
-            max_total_agents=max_total_agents,
-            domain_context=domain_context,
-        )
-        self._limits[root_id] = limits
-        return limits
-
-    def get(self, agent_id: UUID) -> HierarchyLimits | None:
-        """Get hierarchy limits for an agent."""
-        return self._limits.get(agent_id)
-
-    def set(self, agent_id: UUID, limits: HierarchyLimits) -> None:
-        """Set hierarchy limits for an agent."""
-        self._limits[agent_id] = limits
-
-    def propagate_to_child(self, parent_id: UUID, child_id: UUID) -> HierarchyLimits | None:
-        """Propagate hierarchy limits from parent to child with incremented depth."""
-        parent_limits = self._limits.get(parent_id)
-        if parent_limits is None:
-            return None
-        child_limits = parent_limits.for_child()
-        self._limits[child_id] = child_limits
-        return child_limits
-
-    def has_limits(self, agent_id: UUID) -> bool:
-        """Check if agent has registered hierarchy limits."""
-        return agent_id in self._limits
-
-    def get_root_id(self, agent_id: UUID) -> UUID:
-        """Get root ID for an agent's hierarchy limits."""
-        limits = self._limits.get(agent_id)
-        if limits is None:
-            raise KeyError(f"No hierarchy limits for agent {agent_id}")
-        return limits.root_id
-
-
-# =============================================================================
-# Configuration & Dependencies
-# =============================================================================
-
 
 @dataclass(frozen=True)
 class ServiceConfig:
@@ -550,15 +472,16 @@ class AgentExecutionService:
         if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
             await self._process_worker_context_updates(agent)
 
-        await self._parent_notifier.notify_if_complete(agent)
+        if agent.status == AgentStatus.COMPLETED:
+            await self._parent_notifier.notify_if_complete(agent)
+            return
 
-        # Retry failed agents before propagating failure to parent
         if agent.status == AgentStatus.FAILED:
             retried = await self._retry_policy.maybe_schedule_retry(agent)
             if retried:
                 return  # Agent re-queued for execution, don't notify parent
 
-        await self._parent_notifier.notify_if_failed(agent)
+            await self._parent_notifier.notify_if_failed(agent)
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
         """Extract and store context updates from worker result."""

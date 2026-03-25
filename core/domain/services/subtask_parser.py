@@ -8,9 +8,15 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
-from core.domain.values.agent_config import DEFAULT_WORKER_TOOL, VALID_WORKER_TOOLS, AgentConfig
-from core.domain.values.subtask import Subtask
+from core.domain.exceptions import InfeasibleError
+from core.domain.values.agent_config import (
+    DEFAULT_WORKER_TOOL,
+    VALID_WORKER_TOOLS,
+    AgentConfig,
+)
 from core.domain.values.constraint_failure import ConstraintFailure
+from core.domain.values.subtask import Subtask
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +54,17 @@ def strip_markdown_code_block(text: str) -> str:
     return stripped
 
 
-def parse_subtasks_from_llm(response: str) -> list[Subtask] | ConstraintFailure:
+def parse_subtasks_from_llm(response: str) -> list[Subtask]:
     """Parse LLM response into domain objects.
 
-    Returns ConstraintFailure if LLM indicates constraints cannot be satisfied.
-    Returns list of validated Subtask objects otherwise.
+    Raises:
+        InfeasibleError: If LLM indicates constraints cannot be satisfied.
+        ValueError: If the response cannot be parsed into valid subtasks.
     """
     data = _parse_json(response)
 
-    # Objects recognize themselves - Tell, Don't Ask
     if ConstraintFailure.matches(data):
-        return ConstraintFailure.from_llm_response(data)
+        raise InfeasibleError(ConstraintFailure.from_llm_response(data))
 
     items = _extract_subtask_list(data)
     return _validate_subtasks(items)
@@ -89,9 +95,7 @@ def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
         case {"description": _} | {"config": _}:
             return [data]  # Single subtask wrapped
         case dict() as d:
-            raise ValueError(
-                f"Expected list of subtasks, got dict with keys: {list(d.keys())}"
-            )
+            raise ValueError(f"Expected list of subtasks, got dict with keys: {list(d.keys())}")
         case _:
             raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")
 
@@ -109,7 +113,9 @@ def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
         if tool is not None and tool not in VALID_WORKER_TOOLS:
             logger.warning(
                 "Subtask %d: sanitized invalid tool %r → %r",
-                idx, tool, DEFAULT_WORKER_TOOL,
+                idx,
+                tool,
+                DEFAULT_WORKER_TOOL,
             )
             cfg["tool"] = DEFAULT_WORKER_TOOL
 
@@ -127,7 +133,8 @@ def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
         if dropped:
             logger.warning(
                 "Subtask %d: dropped non-integer depends_on values: %r",
-                idx, dropped,
+                idx,
+                dropped,
             )
         item["depends_on"] = clean
 
@@ -149,15 +156,15 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
         if "config" not in item:
             raise ValueError(f"Subtask {idx}: missing 'config' field")
 
-        item = _sanitize_llm_subtask(item, idx)
+        sanitized_item = _sanitize_llm_subtask(item, idx)
 
         try:
-            config_adapter.validate_python(item["config"])
+            config_adapter.validate_python(sanitized_item["config"])
         except ValidationError as e:
             raise ValueError(f"Subtask {idx}: invalid config: {e}") from e
 
         try:
-            subtasks.append(Subtask(**item))
+            subtasks.append(Subtask(**sanitized_item))
         except ValidationError as e:
             raise ValueError(f"Subtask {idx}: validation failed: {e}") from e
 

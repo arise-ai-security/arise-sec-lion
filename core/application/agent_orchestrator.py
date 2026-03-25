@@ -9,25 +9,24 @@ Handles the three orchestration operations as direct method calls:
 import json
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from core.domain.events.events import VerificationFailed
-from core.domain.exceptions import ToolNotAvailableError
-from core.domain.services import parse_assessment_response, parse_subtasks_from_llm, strip_markdown_code_block
+from core.application.services.prompt_strategy import SubtaskScope
+from core.application.services.verification_pipeline import (
+    VerificationPipeline,
+    _head_tail as _verification_head_tail,
+)
+from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
+from core.domain.services import (
+    AssessmentResult,
+    parse_assessment_response,
+    parse_subtasks_from_llm,
+)
 from core.domain.services.config_resolver import ConfigResolver
-from core.domain.values.constraint_failure import ConstraintFailure
 from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.values.recon_policy import ReconPolicy
-from core.application.services.prompt_strategy import SubtaskScope
-
-def _head_tail(text: str, limit: int) -> str:
-    """Keep first 2/3 + last 1/3 of text, showing omission count."""
-    if len(text) <= limit:
-        return text
-    head = limit * 2 // 3
-    tail = limit - head
-    omitted = len(text) - limit
-    return f"{text[:head]}\n\n[...{omitted} chars omitted...]\n\n{text[-tail:]}"
 
 
 if TYPE_CHECKING:
@@ -35,19 +34,25 @@ if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.application.services.tool_calling_service import ToolCallingService
     from core.domain.aggregates.agent_session import AgentSession
+    from core.domain.values.llm_response import LLMResponse
     from core.domain.values.node_message import Handoff
-    from core.ports.runtime_ports import LLMPort
-    from core.ports.runtime_ports import RealtimeCallbackPort
-    from core.ports.runtime_ports import WorkerToolPort
+    from core.domain.values.subtask import Subtask
+    from core.ports.runtime_ports import LLMPort, RealtimeCallbackPort, WorkerToolPort
 
 logger = logging.getLogger(__name__)
+
+
+def _head_tail(text: str, limit: int) -> str:
+    """Compatibility wrapper for the verification helper."""
+    return _verification_head_tail(text, limit)
 
 
 class AgentOrchestrator:
     """Orchestrates agent interactions with LLM and worker tools.
 
     Three operations:
-    - assess_task: PENDING agent → single LLM call decides execute (WORKER) or decompose (MANAGER+children)
+    - assess_task: PENDING agent → single LLM call decides execute (WORKER)
+      or decompose (MANAGER+children)
     - evaluate_task: BOSS/MANAGER agent → LLM decomposes → spawn children
     - execute_task: WORKER agent → worker tool executes
     """
@@ -69,6 +74,7 @@ class AgentOrchestrator:
         self._realtime_callback = realtime_callback
         self._tool_calling_service = tool_calling_service
         self._recon_config = recon_config or {}
+        self._verification_pipeline = VerificationPipeline(llm_port)
 
     async def assess_task(self, agent: "AgentSession") -> None:
         """Assess a PENDING agent: execute directly or decompose.
@@ -81,91 +87,29 @@ class AgentOrchestrator:
             return
 
         op = "task_assessment"
-        start_time = time.monotonic()
-        agent.emit_operation_started(operation_type=op)
-
-        try:
-            # Build prompt
-            scope = self._build_scope(agent)
-            prompt = self._prompt_builder.build_assessment_prompt(
-                task_description=agent.task_description,
-                agent_id=agent.agent_id,
-                briefing=agent.briefing,
-                hierarchy_limits=agent.hierarchy_limits,
-                domain_context=self._get_domain_context(agent),
-                scope=scope,
-            )
-            agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
-
-            # Query LLM (with tool calling if available)
-            response = await self._query_with_recon(agent, prompt, op)
-
-            # Parse assessment
-            result = parse_assessment_response(response.content)
-
-            if result.action == "infeasible":
-                if result.constraint_failure is None:
-                    agent.fail_with_reason("Assessment reported infeasible but no failure details")
-                    return
-                agent.mark_infeasible(
-                    reason=result.constraint_failure.reason,
-                    minimum_subtasks=result.constraint_failure.minimum_subtasks,
-                    minimum_depth=result.constraint_failure.minimum_depth,
+        with self._timed_operation(agent, op):
+            try:
+                # Build prompt
+                scope = self._build_scope(agent)
+                prompt = self._prompt_builder.build_assessment_prompt(
+                    task_description=agent.task_description,
+                    agent_id=agent.agent_id,
+                    briefing=agent.briefing,
+                    hierarchy_limits=agent.hierarchy_limits,
+                    domain_context=self._get_domain_context(agent),
+                    scope=scope,
                 )
-                return
+                agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-            if result.action == "execute":
-                agent.apply_complexity_result(
-                    complexity="simple",
-                    reasoning=result.reasoning,
-                    determined_role=AgentRole.WORKER,
-                )
-                return
+                # Query LLM (with tool calling if available)
+                response = await self._query_with_recon(agent, prompt, op)
 
-            # action == "decompose": become MANAGER + spawn children
-            agent.apply_complexity_result(
-                complexity="complex",
-                reasoning=result.reasoning,
-                determined_role=AgentRole.MANAGER,
-            )
+                # Parse assessment
+                result = parse_assessment_response(response.content)
 
-            subtasks = result.subtasks
-
-            # Check hard limits
-            failure_msg = self._check_limit_violations(agent, subtasks)
-            if failure_msg:
-                agent.fail_with_reason(failure_msg)
-                return
-
-            # Determine child role (soft depth limit)
-            limits = agent.hierarchy_limits
-            force_worker = False
-            if limits is not None and not limits.can_spawn_child():
-                force_worker = True
-                agent.emit_limit_enforced(
-                    limit_type="depth",
-                    limit_value=limits.max_depth,
-                    attempted_value=limits.current_depth + 1,
-                    action_taken="forced_worker_role",
-                )
-
-            child_role = (
-                AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
-            )
-
-            briefing = agent.build_briefing_for_child()
-            agent.apply_subtasks_and_spawn_children(
-                subtasks=subtasks,
-                child_role=child_role,
-                briefing=briefing,
-            )
-
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            agent.fail_with_reason(f"Assessment failed: {e}")
-
-        finally:
-            duration = time.monotonic() - start_time
-            agent.emit_operation_finished(operation_type=op, duration_seconds=duration)
+                self._apply_assessment_result(agent, result)
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                agent.fail_with_reason(f"Assessment failed: {e}")
 
     async def evaluate_task(self, agent: "AgentSession") -> None:
         """Decompose task into subtasks for a BOSS/MANAGER agent.
@@ -178,10 +122,7 @@ class AgentOrchestrator:
             return
 
         op = "task_decomposition"
-        start_time = time.monotonic()
-        agent.emit_operation_started(operation_type=op)
-
-        try:
+        with self._timed_operation(agent, op):
             # Build role-specific prompt
             if agent.role == AgentRole.BOSS:
                 prompt = self._prompt_builder.build_boss_delegation_prompt(
@@ -207,62 +148,28 @@ class AgentOrchestrator:
 
             # Parse subtasks
             try:
-                result = parse_subtasks_from_llm(response.content)
-            except ValueError as e:
-                logger.warning(
-                    "Failed to parse subtasks for agent=%s: %s", agent.agent_id, e
-                )
-                agent.fail_with_reason(f"Failed to parse subtasks: {e}")
-                return
-
-            if isinstance(result, ConstraintFailure):
+                subtasks = parse_subtasks_from_llm(response.content)
+            except InfeasibleError as e:
                 logger.warning(
                     "Agent %s reported unsatisfiable constraints: %s",
                     agent.agent_id,
-                    result.format_message(),
+                    e.failure.format_message(),
                 )
                 agent.mark_infeasible(
-                    reason=result.reason,
-                    minimum_subtasks=result.minimum_subtasks,
-                    minimum_depth=result.minimum_depth,
+                    reason=e.failure.reason,
+                    minimum_subtasks=e.failure.minimum_subtasks,
+                    minimum_depth=e.failure.minimum_depth,
                 )
                 return
+            except ValueError as e:
+                logger.warning("Failed to parse subtasks for agent=%s: %s", agent.agent_id, e)
+                agent.fail_with_reason(f"Failed to parse subtasks: {e}")
+                return
 
-            subtasks = result
-
-            # Check hard limits
-            failure = self._check_limit_violations(agent, subtasks)
+            failure = self._spawn_children(agent, subtasks)
             if failure:
                 agent.fail_with_reason(failure)
                 return
-
-            # Determine child role (soft depth limit)
-            limits = agent.hierarchy_limits
-            force_worker = False
-            if limits is not None and not limits.can_spawn_child():
-                force_worker = True
-                agent.emit_limit_enforced(
-                    limit_type="depth",
-                    limit_value=limits.max_depth,
-                    attempted_value=limits.current_depth + 1,
-                    action_taken="forced_worker_role",
-                )
-
-            child_role = (
-                AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
-            )
-
-            # Spawn children
-            briefing = agent.build_briefing_for_child()
-            agent.apply_subtasks_and_spawn_children(
-                subtasks=subtasks,
-                child_role=child_role,
-                briefing=briefing,
-            )
-
-        finally:
-            duration = time.monotonic() - start_time
-            agent.emit_operation_finished(operation_type=op, duration_seconds=duration)
 
     async def execute_task(
         self,
@@ -281,10 +188,7 @@ class AgentOrchestrator:
             return
 
         op = "worker_execution"
-        start_time = time.monotonic()
-        agent.emit_operation_started(operation_type=op)
-
-        try:
+        with self._timed_operation(agent, op):
             # Start worker execution (CodeGenerationStarted event, -> IN_PROGRESS)
             tool_name = agent.config.tool
             agent.start_worker_execution(tool_name)
@@ -297,9 +201,7 @@ class AgentOrchestrator:
                 domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
             )
-            agent.emit_prompt_sent(
-                prompt=prompt, prompt_type=op, target=tool_name
-            )
+            agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
             # Run worker session
             task_context: dict[str, Any] = {
@@ -313,11 +215,7 @@ class AgentOrchestrator:
             if task_context_overrides:
                 task_context.update(task_context_overrides)
 
-            root_id = (
-                agent.hierarchy_limits.root_id
-                if agent.hierarchy_limits
-                else None
-            )
+            root_id = agent.hierarchy_limits.root_id if agent.hierarchy_limits else None
 
             try:
                 async for tool_event in self._worker_port.run_session(task_context):
@@ -330,32 +228,49 @@ class AgentOrchestrator:
 
             # Verify worker output if completed successfully
             if agent.status == AgentStatus.COMPLETED:
-                await self._verify_worker_output(agent)
-
-        finally:
-            duration = time.monotonic() - start_time
-            agent.emit_operation_finished(operation_type=op, duration_seconds=duration)
+                await self._verification_pipeline.verify(agent)
 
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
 
-    def _check_limit_violations(
-        self, agent: "AgentSession", subtasks: list
-    ) -> str | None:
+    @contextmanager
+    def _timed_operation(
+        self,
+        agent: "AgentSession",
+        operation_type: str,
+    ) -> Iterator[None]:
+        """Emit start/finish telemetry around an operation."""
+        start_time = time.monotonic()
+        agent.emit_operation_started(operation_type=operation_type)
+        try:
+            yield
+        finally:
+            duration = time.monotonic() - start_time
+            agent.emit_operation_finished(
+                operation_type=operation_type,
+                duration_seconds=duration,
+            )
+
+    def _check_limit_violations(self, agent: "AgentSession", subtasks: list) -> str | None:
         """Check hard limits. Returns failure reason or None."""
         limits = agent.hierarchy_limits
         violations: list[dict[str, Any]] = []
 
         # Hard limit: children per node
-        if limits is not None and limits.is_children_limited():
-            if len(subtasks) > limits.max_children_per_node:
-                violations.append({
+        if (
+            limits is not None
+            and limits.is_children_limited()
+            and len(subtasks) > limits.max_children_per_node
+        ):
+            violations.append(
+                {
                     "limit_type": "children",
                     "limit_value": limits.max_children_per_node,
                     "attempted_value": len(subtasks),
                     "action_taken": "agent_failed",
-                })
+                }
+            )
 
         # Hard limit: total agents
         max_total = self._child_factory.max_total_agents
@@ -363,12 +278,14 @@ class AgentOrchestrator:
             current_total = self._child_factory.total_created
             remaining = max_total - current_total
             if len(subtasks) > remaining:
-                violations.append({
-                    "limit_type": "total_agents",
-                    "limit_value": max_total,
-                    "attempted_value": current_total + len(subtasks),
-                    "action_taken": "agent_failed",
-                })
+                violations.append(
+                    {
+                        "limit_type": "total_agents",
+                        "limit_value": max_total,
+                        "attempted_value": current_total + len(subtasks),
+                        "action_taken": "agent_failed",
+                    }
+                )
 
         if violations:
             for v in violations:
@@ -377,6 +294,76 @@ class AgentOrchestrator:
             return f"LLM violated limits: {types}"
 
         return None
+
+    def _spawn_children(
+        self,
+        agent: "AgentSession",
+        subtasks: list["Subtask"],
+    ) -> str | None:
+        """Validate limits, determine child role, and spawn children."""
+        failure = self._check_limit_violations(agent, subtasks)
+        if failure:
+            return failure
+
+        limits = agent.hierarchy_limits
+        force_worker = False
+        if limits is not None and not limits.can_spawn_child():
+            force_worker = True
+            agent.emit_limit_enforced(
+                limit_type="depth",
+                limit_value=limits.max_depth,
+                attempted_value=limits.current_depth + 1,
+                action_taken="forced_worker_role",
+            )
+
+        child_role = AgentRole.WORKER.value if force_worker else AgentRole.PENDING.value
+
+        agent.apply_subtasks_and_spawn_children(
+            subtasks=subtasks,
+            child_role=child_role,
+            briefing=agent.build_briefing_for_child(),
+        )
+        return None
+
+    def _apply_assessment_result(
+        self,
+        agent: "AgentSession",
+        result: AssessmentResult,
+    ) -> None:
+        """Apply the parsed assessment outcome to the agent."""
+        if result.action == "infeasible":
+            if result.constraint_failure is None:
+                agent.fail_with_reason(
+                    "Assessment reported infeasible but no failure details"
+                )
+                return
+            agent.mark_infeasible(
+                reason=result.constraint_failure.reason,
+                minimum_subtasks=result.constraint_failure.minimum_subtasks,
+                minimum_depth=result.constraint_failure.minimum_depth,
+            )
+            return
+
+        if result.action == "execute":
+            agent.apply_complexity_result(
+                complexity="simple",
+                reasoning=result.reasoning,
+                determined_role=AgentRole.WORKER,
+            )
+            return
+
+        agent.apply_complexity_result(
+            complexity="complex",
+            reasoning=result.reasoning,
+            determined_role=AgentRole.MANAGER,
+        )
+        if result.subtasks is None:
+            agent.fail_with_reason("Assessment requested decomposition without subtasks")
+            return
+
+        failure_msg = self._spawn_children(agent, result.subtasks)
+        if failure_msg:
+            agent.fail_with_reason(failure_msg)
 
     async def _query_with_recon(
         self,
@@ -392,18 +379,12 @@ class AgentOrchestrator:
         Returns:
             The final LLMResponse (aggregated across all tool-calling turns).
         """
-        from core.domain.values.llm_response import LLMResponse
-
         llm_config = ConfigResolver.resolve(agent.config, operation=operation)
         config_dict = llm_config.model_dump()
 
         if self._tool_calling_service is not None:
             # Resolve per-call recon policy from role + domain
-            domain = (
-                agent.hierarchy_limits.domain_context
-                if agent.hierarchy_limits
-                else None
-            )
+            domain = agent.hierarchy_limits.domain_context if agent.hierarchy_limits else None
             policy = self._resolve_recon_policy(agent.role, domain)
 
             if not policy.enabled:
@@ -411,7 +392,9 @@ class AgentOrchestrator:
                 response = await self._llm_port.query_with_usage(prompt, config_dict)
             else:
                 tc_result = await self._tool_calling_service.run_with_tools(
-                    prompt, config_dict, policy=policy,
+                    prompt,
+                    config_dict,
+                    policy=policy,
                 )
                 response = tc_result.response
                 self._emit_probe_events(agent, tc_result.tool_records)
@@ -437,7 +420,9 @@ class AgentOrchestrator:
         return None
 
     def _resolve_recon_policy(
-        self, role: AgentRole, domain: object | None,
+        self,
+        role: AgentRole,
+        domain: object | None,
     ) -> ReconPolicy:
         """Resolve per-call recon policy from config.
 
@@ -461,10 +446,7 @@ class AgentOrchestrator:
         domain_key = self._domain_key(domain)
         if domain_key:
             domain_overrides = (
-                self._recon_config
-                .get("domains", {})
-                .get(domain_key, {})
-                .get(role_key, {})
+                self._recon_config.get("domains", {}).get(domain_key, {}).get(role_key, {})
             )
             role_cfg.update(domain_overrides)
 
@@ -517,134 +499,3 @@ class AgentOrchestrator:
                 probe_type=record.tool_name,
                 result_summary=record.result_summary,
             )
-
-    # -------------------------------------------------------------------------
-    # Verification Pipeline
-    # -------------------------------------------------------------------------
-
-    async def _verify_worker_output(self, agent: "AgentSession") -> None:
-        """Run 4-stage verification on completed worker output.
-
-        Stages:
-        1. Structural — non-empty result with content
-        2. Deterministic — placeholder (always passes)
-        3. Execution — placeholder (always passes)
-        4. LLM Judge — evaluates against success_criteria (skipped if no criteria)
-
-        On failure, emits VerificationFailed event and transitions to FAILED.
-        """
-        result = agent.result or ""
-        stages_passed: list[str] = []
-
-        # Stage 1: Structural check
-        if not self._verify_structural(result):
-            self._emit_verification_failed(
-                agent, "structural", "Worker produced empty or blank output", stages_passed
-            )
-            return
-        stages_passed.append("structural")
-
-        # Stage 2: Deterministic check (placeholder — extensible for compile checks etc.)
-        if not self._verify_deterministic(result):
-            self._emit_verification_failed(
-                agent, "deterministic", "Deterministic check failed", stages_passed
-            )
-            return
-        stages_passed.append("deterministic")
-
-        # Stage 3: Execution check (placeholder — extensible for runtime validation)
-        if not self._verify_execution(result):
-            self._emit_verification_failed(
-                agent, "execution", "Execution check failed", stages_passed
-            )
-            return
-        stages_passed.append("execution")
-
-        # Stage 4: LLM Judge (skipped if no success_criteria)
-        if agent.success_criteria:
-            judge_passed, feedback = await self._verify_with_judge(
-                result, agent.success_criteria, agent.config
-            )
-            if not judge_passed:
-                self._emit_verification_failed(
-                    agent, "judge", feedback, stages_passed
-                )
-                return
-            stages_passed.append("judge")
-
-    @staticmethod
-    def _verify_structural(result: str) -> bool:
-        """Stage 1: Check output is non-empty and has meaningful content."""
-        return bool(result and result.strip())
-
-    @staticmethod
-    def _verify_deterministic(result: str) -> bool:
-        """Stage 2: Deterministic checks (placeholder — always passes).
-
-        Future: compile checks, file existence, schema validation.
-        """
-        return True
-
-    @staticmethod
-    def _verify_execution(result: str) -> bool:
-        """Stage 3: Execution checks (placeholder — always passes).
-
-        Future: run output, check behavior matches expectations.
-        """
-        return True
-
-    async def _verify_with_judge(
-        self,
-        result: str,
-        success_criteria: str,
-        config: Any,
-    ) -> tuple[bool, str]:
-        """Stage 4: LLM judge evaluates output against success_criteria.
-
-        Returns (passed, feedback).
-        """
-        prompt = (
-            "You are a quality judge. Evaluate whether the following work output "
-            "satisfies the given success criteria.\n\n"
-            f"## Success Criteria\n{success_criteria}\n\n"
-            f"## Work Output\n{_head_tail(result, 12000)}\n\n"
-            "Respond with ONLY valid JSON:\n"
-            '{"passed": true/false, "feedback": "brief explanation"}'
-        )
-
-        try:
-            llm_config = ConfigResolver.resolve(config, operation="complexity_evaluation")
-            response = await self._llm_port.query_with_usage(
-                prompt, llm_config.model_dump()
-            )
-
-            clean = strip_markdown_code_block(response.content)
-            data = json.loads(clean)
-            if not isinstance(data, dict):
-                raise ValueError(f"Expected dict, got {type(data).__name__}")
-            passed = bool(data.get("passed", False))
-            feedback = data.get("feedback", "")
-            return passed, feedback
-
-        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
-            logger.warning("Judge response parse failed: %s", e)
-            # On parse failure, pass (don't block on judge errors)
-            return True, ""
-
-    @staticmethod
-    def _emit_verification_failed(
-        agent: "AgentSession",
-        failed_stage: str,
-        feedback: str,
-        stages_passed: list[str],
-    ) -> None:
-        """Emit VerificationFailed event, transitioning agent to FAILED."""
-        event = VerificationFailed(
-            aggregate_id=agent.agent_id,
-            sequence_number=agent._next_sequence(),
-            failed_stage=failed_stage,
-            feedback=feedback,
-            stages_passed=stages_passed,
-        )
-        agent._apply(event)
-        agent._changes.append(event)

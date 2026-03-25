@@ -1,15 +1,13 @@
 """Core domain models for the multi-agent system."""
 
+from __future__ import annotations
+
 from functools import singledispatchmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from pydantic import TypeAdapter
 
-from core.domain.values.agent_config import AgentConfig
-from core.domain.values.limits import HierarchyLimits
-from core.domain.values.node_message import Briefing, Report, build_briefing
-from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.events.events import (
     AgentCreated,
     AgentExecutionFinished,
@@ -19,11 +17,16 @@ from core.domain.events.events import (
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    DecisionInfeasible,
     DomainEvent,
     LimitEnforced,
     OperationFinished,
     OperationStarted,
+    ProbeCompleted,
+    ProbeStarted,
     PromptSent,
+    RedecompositionTriggered,
+    RetryScheduled,
     RunCompleted,
     RunStarted,
     StatusChanged,
@@ -31,16 +34,20 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
-    DecisionInfeasible,
-    ProbeCompleted,
-    ProbeStarted,
-    RedecompositionTriggered,
-    RetryScheduled,
     VerificationFailed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
 )
+from core.domain.exceptions import DomainInvariantError, InvalidEventHistoryError
+from core.domain.values.agent_config import AgentConfig
+from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.values.node_message import Briefing, Report, build_briefing
+
+
+if TYPE_CHECKING:
+    from core.domain.values.limits import HierarchyLimits
+    from core.domain.values.subtask import Subtask
 
 
 class AgentSession:
@@ -64,7 +71,7 @@ class AgentSession:
         target_paths: list[str] | None = None,
         symbols: list[str] | None = None,
         search_hints: list[str] | None = None,
-    ) -> "AgentSession":
+    ) -> AgentSession:
         instance = cls(agent_id)
         event = AgentCreated(
             aggregate_id=agent_id,
@@ -80,8 +87,7 @@ class AgentSession:
             symbols=symbols or [],
             search_hints=search_hints or [],
         )
-        instance._apply(event)
-        instance._changes.append(event)
+        instance._emit(event)
         return instance
 
     @property
@@ -100,8 +106,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             task_description=task_description,
         )
-        self._apply(task_event)
-        self._changes.append(task_event)
+        self._emit(task_event)
 
     def handle_child_update(
         self,
@@ -116,12 +121,7 @@ class AgentSession:
             result: Simple result text for the event
             report: Structured Report (optional, provides additional context)
         """
-        assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
-            f"Requires BOSS/MANAGER, got {self.role}"
-        )
-        assert len(self.child_ids) > 0, "Requires agent with children"
-        assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
-        assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
+        self._assert_parent_can_receive_child_event(child_id)
 
         if report is None:
             report = Report.simple(result)
@@ -133,8 +133,7 @@ class AgentSession:
             result=result,
             report=report.model_dump(),
         )
-        self._apply(child_completed_event)
-        self._changes.append(child_completed_event)
+        self._emit(child_completed_event)
 
         if len(self.child_reports) == len(self.child_ids):
             aggregated_result = self._aggregate_child_results()
@@ -143,8 +142,7 @@ class AgentSession:
                 sequence_number=self._next_sequence(),
                 result=aggregated_result,
             )
-            self._apply(work_completed_event)
-            self._changes.append(work_completed_event)
+            self._emit(work_completed_event)
 
     def _aggregate_child_results(self) -> str:
         """Combine results from all completed children using structured Reports."""
@@ -172,12 +170,7 @@ class AgentSession:
             child_id: ID of failed child
             reason: Error message from child
         """
-        assert self.role in (AgentRole.MANAGER, AgentRole.BOSS), (
-            f"Requires BOSS/MANAGER, got {self.role}"
-        )
-        assert len(self.child_ids) > 0, "Requires agent with children"
-        assert self.status == AgentStatus.WAITING, f"Requires WAITING status, got {self.status}"
-        assert child_id in self.child_ids, f"child_id {child_id} not in spawned children"
+        self._assert_parent_can_receive_child_event(child_id)
 
         # Record child failure
         child_failed_event = ChildFailed(
@@ -186,8 +179,7 @@ class AgentSession:
             child_id=child_id,
             reason=reason,
         )
-        self._apply(child_failed_event)
-        self._changes.append(child_failed_event)
+        self._emit(child_failed_event)
 
         # Parent also fails when any child fails
         work_failed_event = WorkFailed(
@@ -195,13 +187,18 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             reason=f"Child agent {child_id} failed: {reason}",
         )
-        self._apply(work_failed_event)
-        self._changes.append(work_failed_event)
+        self._emit(work_failed_event)
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
         """Apply event to update state. Raises TypeError for unregistered event types."""
         raise TypeError(f"No handler for {type(event).__name__}. Register with @_apply.register.")
+
+    def _emit(self, event: DomainEvent) -> DomainEvent:
+        """Apply and record an uncommitted domain event."""
+        self._apply(event)
+        self._changes.append(event)
+        return event
 
     @_apply.register
     def _(self, event: AgentCreated) -> None:
@@ -236,7 +233,8 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ChildSpawned) -> None:
-        assert event.child_role != AgentRole.BOSS.value, "Cannot spawn BOSS child"
+        if event.child_role == AgentRole.BOSS.value:
+            raise DomainInvariantError("Cannot spawn BOSS child")
         self.child_ids.append(event.child_id)
         self.version += 1
 
@@ -440,13 +438,15 @@ class AgentSession:
         )
 
     @classmethod
-    def load_from_history(cls, events: list[DomainEvent]) -> "AgentSession":
+    def load_from_history(cls, events: list[DomainEvent]) -> AgentSession:
         """Reconstruct AgentSession by replaying events."""
-        assert events, "Cannot load from empty event history"
+        if not events:
+            raise InvalidEventHistoryError("Cannot load from empty event history")
         first_event = events[0]
-        assert isinstance(first_event, AgentCreated), (
-            f"First event must be AgentCreated, got {type(first_event).__name__}"
-        )
+        if not isinstance(first_event, AgentCreated):
+            raise InvalidEventHistoryError(
+                f"First event must be AgentCreated, got {type(first_event).__name__}"
+            )
 
         instance = cls(first_event.aggregate_id)
         for event in events:
@@ -457,6 +457,21 @@ class AgentSession:
     def _next_sequence(self) -> int:
         self._sequence += 1
         return self._sequence
+
+    def _assert_parent_can_receive_child_event(self, child_id: UUID) -> None:
+        """Validate parent state before applying a child completion/failure event."""
+        if self.role not in (AgentRole.MANAGER, AgentRole.BOSS):
+            raise DomainInvariantError(f"Requires BOSS/MANAGER, got {self.role}")
+        if not self.child_ids:
+            raise DomainInvariantError("Requires agent with children")
+        if self.status != AgentStatus.WAITING:
+            raise DomainInvariantError(
+                f"Requires WAITING status, got {self.status}"
+            )
+        if child_id not in self.child_ids:
+            raise DomainInvariantError(
+                f"child_id {child_id} not in spawned children"
+            )
 
     def is_terminal(self) -> bool:
         """True if COMPLETED or FAILED."""
@@ -480,8 +495,7 @@ class AgentSession:
             minimum_subtasks=minimum_subtasks,
             minimum_depth=minimum_depth,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def trigger_redecomposition(self, trigger_child_id: UUID, reason: str) -> None:
         """Re-decompose after child signals infeasible. WAITING → ANALYZING."""
@@ -491,8 +505,7 @@ class AgentSession:
             trigger_child_id=trigger_child_id,
             reason=reason,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def schedule_retry(self, reason: str, escalated_model: str | None = None) -> None:
         """Schedule retry, transitioning FAILED → ANALYZING."""
@@ -503,8 +516,7 @@ class AgentSession:
             reason=reason,
             escalated_model=escalated_model,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def fail_with_reason(self, reason: str) -> None:
         """Mark agent as failed with WorkFailed event."""
@@ -513,8 +525,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             reason=reason,
         )
-        self._apply(failed_event)
-        self._changes.append(failed_event)
+        self._emit(failed_event)
 
     # -------------------------------------------------------------------------
     # Pure Domain Methods (event emission only, no I/O)
@@ -538,8 +549,7 @@ class AgentSession:
             determined_role=determined_role.value,
             reasoning=reasoning,
         )
-        self._apply(complexity_event)
-        self._changes.append(complexity_event)
+        self._emit(complexity_event)
 
     def emit_tokens_consumed(
         self,
@@ -564,8 +574,7 @@ class AgentSession:
             cost_usd=cost_usd,
             operation=operation,
         )
-        self._apply(cost_event)
-        self._changes.append(cost_event)
+        self._emit(cost_event)
 
     def emit_limit_enforced(
         self,
@@ -583,8 +592,7 @@ class AgentSession:
             attempted_value=attempted_value,
             action_taken=action_taken,
         )
-        self._apply(limit_event)
-        self._changes.append(limit_event)
+        self._emit(limit_event)
 
     def emit_prompt_sent(
         self,
@@ -598,7 +606,8 @@ class AgentSession:
 
         Args:
             prompt: The full prompt text being sent.
-            prompt_type: Type of prompt (complexity_evaluation, task_decomposition, worker_execution).
+            prompt_type: Type of prompt
+                (complexity_evaluation, task_decomposition, worker_execution).
             target: Where prompt is sent (llm, claude_code, openhands, etc.).
         """
         prompt_event = PromptSent(
@@ -608,8 +617,7 @@ class AgentSession:
             prompt_type=prompt_type,
             target=target,
         )
-        self._apply(prompt_event)
-        self._changes.append(prompt_event)
+        self._emit(prompt_event)
 
     def apply_subtasks_and_spawn_children(
         self,
@@ -621,16 +629,33 @@ class AgentSession:
 
         Returns list of (child_id, subtask) tuples for the orchestrator to create.
         """
-        from core.domain.values.subtask import Subtask
+        self._emit_subtasks_defined(subtasks)
+        children_to_spawn = self._emit_child_spawns(
+            subtasks=subtasks,
+            child_role=child_role,
+            briefing=briefing,
+        )
+        self._emit_waiting_for_children()
 
+        return children_to_spawn
+
+    def _emit_subtasks_defined(self, subtasks: list[Any]) -> None:
+        """Record the decomposition result before spawning children."""
         subtasks_event = SubtasksDefined(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             subtasks=subtasks,
         )
-        self._apply(subtasks_event)
-        self._changes.append(subtasks_event)
+        self._emit(subtasks_event)
 
+    def _emit_child_spawns(
+        self,
+        *,
+        subtasks: list[Any],
+        child_role: str,
+        briefing: Briefing,
+    ) -> list[tuple[UUID, Subtask]]:
+        """Emit child spawn events for each generated subtask."""
         children_to_spawn: list[tuple[UUID, Subtask]] = []
 
         for sibling_index, subtask in enumerate(subtasks):
@@ -645,11 +670,13 @@ class AgentSession:
                 briefing=briefing.model_dump(),
                 sibling_index=sibling_index,
             )
-            self._apply(child_event)
-            self._changes.append(child_event)
+            self._emit(child_event)
             children_to_spawn.append((child_id, subtask))
 
-        # Transition to WAITING status
+        return children_to_spawn
+
+    def _emit_waiting_for_children(self) -> None:
+        """Transition the parent into WAITING after child creation."""
         status_event = StatusChanged(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -657,10 +684,7 @@ class AgentSession:
             new_status=AgentStatus.WAITING.value,
             reason="Decomposed task, waiting for child agents",
         )
-        self._apply(status_event)
-        self._changes.append(status_event)
-
-        return children_to_spawn
+        self._emit(status_event)
 
     def start_worker_execution(self, tool_name: str) -> None:
         """Emit CodeGenerationStarted event (pure domain method)."""
@@ -669,8 +693,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             tool_name=tool_name,
         )
-        self._apply(started_event)
-        self._changes.append(started_event)
+        self._emit(started_event)
 
     def apply_worker_event(self, tool_event: DomainEvent) -> None:
         """Apply a worker tool event with corrected sequence number."""
@@ -678,8 +701,23 @@ class AgentSession:
         event_data["aggregate_id"] = self.agent_id
         event_data["sequence_number"] = self._next_sequence()
         corrected_event = type(tool_event)(**event_data)
-        self._apply(corrected_event)
-        self._changes.append(corrected_event)
+        self._emit(corrected_event)
+
+    def mark_verification_failed(
+        self,
+        failed_stage: str,
+        feedback: str,
+        stages_passed: list[str],
+    ) -> None:
+        """Record a verification failure via the public aggregate API."""
+        event = VerificationFailed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            failed_stage=failed_stage,
+            feedback=feedback,
+            stages_passed=stages_passed,
+        )
+        self._emit(event)
 
     # -------------------------------------------------------------------------
     # Timing/Observability Events
@@ -693,8 +731,7 @@ class AgentSession:
             role=role,
             depth=depth,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def emit_execution_finished(
         self, role: str, status: str, duration_seconds: float
@@ -707,8 +744,7 @@ class AgentSession:
             status=status,
             duration_seconds=duration_seconds,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def emit_operation_started(self, operation_type: str) -> None:
         """Emit OperationStarted event for timing observability."""
@@ -717,8 +753,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             operation_type=operation_type,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def emit_operation_finished(
         self, operation_type: str, duration_seconds: float
@@ -730,8 +765,7 @@ class AgentSession:
             operation_type=operation_type,
             duration_seconds=duration_seconds,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     # -------------------------------------------------------------------------
     # Probe Events (reconnaissance tool calls)
@@ -744,8 +778,7 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             probe_type=probe_type,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def emit_probe_completed(
         self, probe_type: str, result_summary: str = ""
@@ -757,8 +790,7 @@ class AgentSession:
             probe_type=probe_type,
             result_summary=result_summary,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     # -------------------------------------------------------------------------
     # Run-Level Timing Events (BOSS only)
@@ -779,8 +811,7 @@ class AgentSession:
             task_description=task_description,
             domain_metadata=domain_metadata,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)
 
     def emit_run_completed(
         self,
@@ -803,5 +834,4 @@ class AgentSession:
             completed_agents=completed_agents,
             failed_agents=failed_agents,
         )
-        self._apply(event)
-        self._changes.append(event)
+        self._emit(event)

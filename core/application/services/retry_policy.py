@@ -3,16 +3,12 @@
 Owns retry state, model escalation, and circuit-breaker decisions.
 """
 
-from collections.abc import Callable
 from typing import Any
 
+from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
-from core.domain.events.events import DomainEvent
 
 from .agent_repository import AgentRepository
-
-
-type ProgressCallback = Callable[[DomainEvent, Any], None]
 
 
 class RetryPolicy:

@@ -11,7 +11,7 @@ All changes are event-sourced for OCC and auditability.
 
 from dataclasses import dataclass, field
 from functools import singledispatchmethod
-from typing import Any, Protocol
+from typing import Any
 from uuid import UUID, uuid5
 
 from core.domain.events.events import (
@@ -20,6 +20,8 @@ from core.domain.events.events import (
     DomainEvent,
     SharedContextCreated,
 )
+from core.domain.exceptions import InvalidEventHistoryError
+
 
 # Fixed namespace UUID for deriving SharedStore aggregate IDs.
 # This ensures SharedStore has a unique aggregate_id derived from root_id,
@@ -69,29 +71,6 @@ class Decision:
     decided_by: UUID
 
 
-# =============================================================================
-# Aggregate Protocol & Base Class
-# =============================================================================
-
-
-class EventSourcedAggregate(Protocol):
-    """Protocol for event-sourced aggregates."""
-
-    @property
-    def version(self) -> int:
-        """Current version for OCC."""
-        ...
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        """Uncommitted events pending persistence."""
-        ...
-
-    def mark_changes_as_committed(self) -> None:
-        """Clear uncommitted changes after successful persistence."""
-        ...
-
-
 class EventSourcedAggregateBase:
     """Base class providing event-sourcing boilerplate for aggregates.
 
@@ -117,7 +96,7 @@ class EventSourcedAggregateBase:
         Called at end of __init__. Subclasses should set up their
         domain-specific collections and fields here.
         """
-        pass
+        return
 
     @property
     def aggregate_id(self) -> UUID:
@@ -178,45 +157,52 @@ class EventSourcedAggregateBase:
 
 
 # =============================================================================
-# ArtifactStore Aggregate
+# Shared State Projections
 # =============================================================================
 
 
-class ArtifactStore(EventSourcedAggregateBase):
-    """Event-sourced aggregate for artifact storage.
+class ArtifactStore:
+    """Projection for stored artifacts."""
 
-    Stores shared outputs between agents with content type and metadata.
-    """
+    def __init__(self) -> None:
+        self._artifacts: dict[str, Artifact] = {}
 
-    _artifacts: dict[str, Artifact]
-
-    def _initialize_state(self) -> None:
-        self._artifacts = {}
-
-    def store_artifact(
-        self,
+    @staticmethod
+    def create_store_event(
+        *,
+        aggregate_id: UUID,
+        sequence_number: int,
         key: str,
         content_type: str,
         stored_by: UUID,
         content: str | None = None,
         content_hash: str | None = None,
-        **metadata: Any,
-    ) -> DomainEvent:
-        """Store an artifact in shared context.
+        metadata: dict[str, Any] | None = None,
+    ) -> ArtifactStored:
+        """Construct an ArtifactStored event for the owning aggregate."""
+        return ArtifactStored(
+            aggregate_id=aggregate_id,
+            sequence_number=sequence_number,
+            key=key,
+            content_type=content_type,
+            content=content,
+            content_hash=content_hash,
+            stored_by=stored_by,
+            metadata=metadata or {},
+        )
 
-        Returns the event for the facade to collect.
-        """
-        return self._emit(
-            ArtifactStored(
-                aggregate_id=self._aggregate_id,
-                sequence_number=self._next_sequence(),
-                key=key,
-                content_type=content_type,
-                content=content,
-                content_hash=content_hash,
-                stored_by=stored_by,
-                metadata=dict(metadata),
-            )
+    def apply_event(
+        self,
+        event: ArtifactStored,
+    ) -> None:
+        """Apply an ArtifactStored event to the projection state."""
+        self._artifacts[event.key] = Artifact(
+            key=event.key,
+            content_type=event.content_type,
+            content=event.content,
+            content_hash=event.content_hash,
+            stored_by=event.stored_by,
+            metadata=event.metadata,
         )
 
     def get_artifact(self, key: str) -> Artifact | None:
@@ -227,59 +213,40 @@ class ArtifactStore(EventSourcedAggregateBase):
         """List all artifact keys."""
         return list(self._artifacts.keys())
 
-    @singledispatchmethod
-    def _apply(self, event: Any) -> None:
-        raise TypeError(f"No handler for {type(event).__name__}")
 
-    @_apply.register
-    def _(self, event: ArtifactStored) -> None:
-        self._artifacts[event.key] = Artifact(
-            key=event.key,
-            content_type=event.content_type,
-            content=event.content,
-            content_hash=event.content_hash,
-            stored_by=event.stored_by,
-            metadata=event.metadata,
-        )
-        self._increment_version()
+class DecisionLog:
+    """Projection for shared decisions."""
 
+    def __init__(self) -> None:
+        self._decisions: dict[str, Decision] = {}
 
-# =============================================================================
-# DecisionLog Aggregate
-# =============================================================================
-
-
-class DecisionLog(EventSourcedAggregateBase):
-    """Event-sourced aggregate for decision tracking.
-
-    Records architectural and design decisions with rationale.
-    """
-
-    _decisions: dict[str, Decision]
-
-    def _initialize_state(self) -> None:
-        self._decisions = {}
-
-    def record_decision(
-        self,
+    @staticmethod
+    def create_record_event(
+        *,
+        aggregate_id: UUID,
+        sequence_number: int,
         decision_key: str,
         decision_value: str,
         rationale: str,
         decided_by: UUID,
-    ) -> DomainEvent:
-        """Record a key decision.
+    ) -> DecisionRecorded:
+        """Construct a DecisionRecorded event for the owning aggregate."""
+        return DecisionRecorded(
+            aggregate_id=aggregate_id,
+            sequence_number=sequence_number,
+            decision_key=decision_key,
+            decision_value=decision_value,
+            rationale=rationale,
+            decided_by=decided_by,
+        )
 
-        Returns the event for the facade to collect.
-        """
-        return self._emit(
-            DecisionRecorded(
-                aggregate_id=self._aggregate_id,
-                sequence_number=self._next_sequence(),
-                decision_key=decision_key,
-                decision_value=decision_value,
-                rationale=rationale,
-                decided_by=decided_by,
-            )
+    def apply_event(self, event: DecisionRecorded) -> None:
+        """Apply a DecisionRecorded event to the projection state."""
+        self._decisions[event.decision_key] = Decision(
+            key=event.decision_key,
+            value=event.decision_value,
+            rationale=event.rationale,
+            decided_by=event.decided_by,
         )
 
     def get_decision(self, key: str) -> Decision | None:
@@ -289,25 +256,6 @@ class DecisionLog(EventSourcedAggregateBase):
     def list_decisions(self) -> list[str]:
         """List all decision keys."""
         return list(self._decisions.keys())
-
-    @singledispatchmethod
-    def _apply(self, event: Any) -> None:
-        raise TypeError(f"No handler for {type(event).__name__}")
-
-    @_apply.register
-    def _(self, event: DecisionRecorded) -> None:
-        self._decisions[event.decision_key] = Decision(
-            key=event.decision_key,
-            value=event.decision_value,
-            rationale=event.rationale,
-            decided_by=event.decided_by,
-        )
-        self._increment_version()
-
-
-# =============================================================================
-# SharedStore Facade
-# =============================================================================
 
 
 class SharedStore(EventSourcedAggregateBase):
@@ -322,7 +270,6 @@ class SharedStore(EventSourcedAggregateBase):
     """
 
     _root_id: UUID
-    _config: dict[str, Any]
     _artifact_store: ArtifactStore
     _decision_log: DecisionLog
 
@@ -334,10 +281,8 @@ class SharedStore(EventSourcedAggregateBase):
         super().__init__(aggregate_id)
 
     def _initialize_state(self) -> None:
-        self._config = {}
-        # Composed aggregates
-        self._artifact_store = ArtifactStore(self._aggregate_id)
-        self._decision_log = DecisionLog(self._aggregate_id)
+        self._artifact_store = ArtifactStore()
+        self._decision_log = DecisionLog()
 
     @property
     def root_id(self) -> UUID:
@@ -387,13 +332,16 @@ class SharedStore(EventSourcedAggregateBase):
             Reconstructed SharedStore
 
         Raises:
-            AssertionError: If events list is empty or first event is not SharedContextCreated
+            InvalidEventHistoryError: If the event history is malformed.
         """
-        assert events, "Cannot load from empty event history"
+        if not events:
+            raise InvalidEventHistoryError("Cannot load from empty event history")
         first_event = events[0]
-        assert isinstance(first_event, SharedContextCreated), (
-            f"First event must be SharedContextCreated, got {type(first_event).__name__}"
-        )
+        if not isinstance(first_event, SharedContextCreated):
+            raise InvalidEventHistoryError(
+                "First event must be SharedContextCreated, "
+                f"got {type(first_event).__name__}"
+            )
 
         instance = cls(first_event.root_id)
         for event in events:
@@ -404,9 +352,6 @@ class SharedStore(EventSourcedAggregateBase):
     def mark_changes_as_committed(self) -> None:
         """Clear uncommitted changes after successful persistence."""
         super().mark_changes_as_committed()
-        # Also clear sub-aggregate changes (they share events with facade)
-        self._artifact_store.mark_changes_as_committed()
-        self._decision_log.mark_changes_as_committed()
 
     # -------------------------------------------------------------------------
     # Delegated Commands - Artifacts
@@ -422,18 +367,17 @@ class SharedStore(EventSourcedAggregateBase):
         **metadata: Any,
     ) -> None:
         """Store an artifact in shared context (delegated to ArtifactStore)."""
-        self._emit(
-            ArtifactStored(
-                aggregate_id=self._aggregate_id,
-                sequence_number=self._next_sequence(),
-                key=key,
-                content_type=content_type,
-                content=content,
-                content_hash=content_hash,
-                stored_by=stored_by,
-                metadata=dict(metadata),
-            )
+        event = self._artifact_store.create_store_event(
+            aggregate_id=self._aggregate_id,
+            sequence_number=self._next_sequence(),
+            key=key,
+            content_type=content_type,
+            content=content,
+            content_hash=content_hash,
+            stored_by=stored_by,
+            metadata=dict(metadata),
         )
+        self._emit(event)
 
     def get_artifact(self, key: str) -> Artifact | None:
         """Get artifact by key (delegated to ArtifactStore)."""
@@ -455,16 +399,15 @@ class SharedStore(EventSourcedAggregateBase):
         decided_by: UUID,
     ) -> None:
         """Record a key decision (delegated to DecisionLog)."""
-        self._emit(
-            DecisionRecorded(
-                aggregate_id=self._aggregate_id,
-                sequence_number=self._next_sequence(),
-                decision_key=decision_key,
-                decision_value=decision_value,
-                rationale=rationale,
-                decided_by=decided_by,
-            )
+        event = self._decision_log.create_record_event(
+            aggregate_id=self._aggregate_id,
+            sequence_number=self._next_sequence(),
+            decision_key=decision_key,
+            decision_value=decision_value,
+            rationale=rationale,
+            decided_by=decided_by,
         )
+        self._emit(event)
 
     def get_decision(self, key: str) -> Decision | None:
         """Get decision by key (delegated to DecisionLog)."""
@@ -486,7 +429,6 @@ class SharedStore(EventSourcedAggregateBase):
 
     @_apply.register
     def _(self, event: SharedContextCreated) -> None:
-        self._config = event.config
         self._increment_version()
 
     @_apply.register

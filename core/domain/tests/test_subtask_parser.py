@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from core.domain.exceptions import InfeasibleError
 from core.domain.services import parse_subtasks_from_llm
 from core.domain.values.constraint_failure import ConstraintFailure
 from core.domain.values.subtask import Subtask
@@ -308,7 +309,7 @@ def test_constraint_failure_format_message_minimal() -> None:
 
 
 def test_parse_constraint_failure_response() -> None:
-    """Test that parse_subtasks_from_llm returns ConstraintFailure for unsatisfiable response."""
+    """Test that parse_subtasks_from_llm raises InfeasibleError for unsatisfiable response."""
     # Given: LLM constraint failure response
     llm_response = json.dumps(
         {
@@ -318,10 +319,10 @@ def test_parse_constraint_failure_response() -> None:
         }
     )
 
-    # When: Parse response
-    result = parse_subtasks_from_llm(llm_response)
+    # When/Then: Parse response raises InfeasibleError carrying the failure details
+    with pytest.raises(InfeasibleError) as exc_info:
+        parse_subtasks_from_llm(llm_response)
 
-    # Then: Returns ConstraintFailure, not a list
-    assert isinstance(result, ConstraintFailure)
-    assert result.reason == "Depth limit reached"
-    assert result.minimum_subtasks == 2
+    failure = exc_info.value.failure
+    assert failure.reason == "Depth limit reached"
+    assert failure.minimum_subtasks == 2

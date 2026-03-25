@@ -6,23 +6,20 @@ Encapsulates event store operations with OCC retry logic.
 
 
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID
 
+from core.application.types import ProgressCallback
+from core.domain.aggregates.agent_session import AgentSession
 from core.domain.events.events import AgentCreated, DomainEvent
 from core.domain.exceptions import ConcurrencyError
-from core.domain.aggregates.agent_session import AgentSession
+
 
 logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
     from core.ports.event_store_port import EventStorePort
-
-
-type ProgressCallback = Callable[[DomainEvent, Any], None]
-
 
 class AgentNotFoundError(Exception):
     """Raised when an agent cannot be found in the event store."""

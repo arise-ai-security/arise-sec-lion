@@ -7,26 +7,26 @@ subtasks and spawn child agents.
 import json
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from core.application.agent_orchestrator import AgentOrchestrator
+from core.application.services.prompt_builder import PromptBuilder
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     ChildSpawned,
+    DecisionInfeasible,
     DomainEvent,
     StatusChanged,
     SubtasksDefined,
     WorkCompleted,
     WorkFailed,
 )
+from core.domain.exceptions import DomainInvariantError
 from core.domain.values.llm_response import LLMResponse, LLMUsage
-from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.application.services.prompt_builder import PromptBuilder
 from core.domain.values.subtask import Subtask
-from core.ports.runtime_ports import LLMPort
-from core.ports.runtime_ports import WorkerToolPort
+from core.ports.runtime_ports import LLMPort, WorkerToolPort
 
 
 def _test_agent_config() -> dict[str, Any]:
@@ -229,7 +229,9 @@ async def test_manager_llm_invalid_json_response() -> None:
     # When: Call orchestrator.evaluate_task(agent) with invalid JSON response
     await orchestrator.evaluate_task(agent)
 
-    # Then: Verify 7 events (AgentCreated, TaskAssigned, OperationStarted, PromptSent, TokensConsumed, WorkFailed, OperationFinished)
+    # Then: Verify 7 events:
+    # AgentCreated, TaskAssigned, OperationStarted, PromptSent,
+    # TokensConsumed, WorkFailed, OperationFinished
     assert len(agent.events) == 7, f"Expected 7 events, got {len(agent.events)}"
 
     # And: Find the WorkFailed event
@@ -256,6 +258,42 @@ async def test_manager_llm_invalid_json_response() -> None:
     # And: Verify error_message is set
     assert agent.error_message is not None, "error_message should be set"
     assert len(agent.error_message) > 0, "error_message should not be empty"
+
+
+@pytest.mark.asyncio
+async def test_manager_constraint_failure_marks_infeasible() -> None:
+    """Test that a constraints-unsatisfiable response marks the agent infeasible."""
+
+    agent_id = uuid4()
+    config = _test_agent_config()
+
+    agent = AgentSession.create(
+        agent_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
+    )
+    agent.assign_task("Break an indivisible task into subtasks")
+
+    fake_llm = FakeLLM(
+        canned_response=json.dumps(
+            {
+                "status": "constraints_unsatisfiable",
+                "reason": "Depth limit reached",
+                "minimum_required": {"subtasks": 2, "depth_levels": 1},
+            }
+        )
+    )
+    orchestrator = _create_orchestrator(llm_port=fake_llm)
+
+    await orchestrator.evaluate_task(agent)
+
+    infeasible_events = [e for e in agent.events if isinstance(e, DecisionInfeasible)]
+    child_spawned_events = [e for e in agent.events if isinstance(e, ChildSpawned)]
+
+    assert agent.status == AgentStatus.FAILED
+    assert len(infeasible_events) == 1
+    assert infeasible_events[0].reason == "Depth limit reached"
+    assert infeasible_events[0].minimum_subtasks == 2
+    assert infeasible_events[0].minimum_depth == 1
+    assert len(child_spawned_events) == 0
 
 
 @pytest.mark.asyncio
@@ -370,7 +408,7 @@ def test_cannot_spawn_boss_child() -> None:
         agent_id=agent_id, role=AgentRole.MANAGER, config=config, parent_id=uuid4()
     )
 
-    # When/Then: Attempting to spawn a BOSS child raises AssertionError
+    # When/Then: Attempting to spawn a BOSS child raises a domain invariant violation
     # Try to create ChildSpawned event with BOSS role (invalid)
     child_config = _test_child_config()
     invalid_event = ChildSpawned(
@@ -382,7 +420,7 @@ def test_cannot_spawn_boss_child() -> None:
         child_config=child_config,
     )
     # Applying this event should fail the invariant check
-    with pytest.raises(AssertionError, match=r"(?i)(boss|invariant)"):
+    with pytest.raises(DomainInvariantError, match=r"(?i)(boss|invariant)"):
         agent._apply(invalid_event)
 
 
