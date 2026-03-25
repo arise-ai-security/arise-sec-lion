@@ -18,29 +18,34 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-logger = logging.getLogger(__name__)
-
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.query_service import AgentQueryService
-from core.domain.services.context_update_parser import parse_context_update
-from core.domain.events.events import ChildSpawned, DomainEvent, RetryScheduled
-from core.domain.exceptions import ConcurrencyError
+from core.application.services.retry_policy import RetryPolicy
+from core.application.services.role_dispatch import (
+    DispatchContext,
+    build_role_handlers,
+)
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
+from core.domain.events.events import ChildSpawned, DomainEvent
+from core.domain.exceptions import ConcurrencyError
+from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
 from core.domain.values.limits import HierarchyLimits
+
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig, OrchestrationConfig
     from core.application.services.prompt_builder import PromptBuilder
-    from core.ports.event_store_port import EventStorePort
     from core.ports.domain_plugin_port import DomainPlugin
-    from core.ports.runtime_ports import SharedContextPort
-    from core.ports.runtime_ports import SiblingViewPort
+    from core.ports.event_store_port import EventStorePort
+    from core.ports.runtime_ports import SharedContextPort, SiblingViewPort
 
     SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
@@ -210,9 +215,24 @@ class AgentExecutionService:
 
         # Retry config (from OrchestrationConfig.retry)
         self._retry_config = getattr(system_limits, "retry", None)
-
-        # Circuit breaker: {model_name: consecutive_failure_count}
-        self._model_failures: dict[str, int] = {}
+        self._retry_policy = RetryPolicy(
+            repository=self._repository,
+            retry_config=self._retry_config,
+            progress_callback=self._progress_callback,
+        )
+        self._role_handlers = build_role_handlers(
+            DispatchContext(
+                orchestrator=self._orchestrator,
+                sibling_view_port=self._sibling_view_port,
+                worker_semaphore=self._worker_semaphore,
+                domain_plugin=self._domain_plugin,
+                get_agent_depth=self._get_agent_depth,
+                get_root_id=self._limits_registry.get_root_id,
+                get_run_output_path=lambda: self._working_directory,
+                get_working_directory=self._get_working_directory_str,
+                get_workspace_context=self._get_workspace_context,
+            )
+        )
 
     # -------------------------------------------------------------------------
     # Public API
@@ -382,7 +402,7 @@ class AgentExecutionService:
         self._working_directory = None
         self._limits_registry.reset()
         self._child_factory.reset(initial_count=1)
-        self._model_failures.clear()
+        self._retry_policy.reset()
 
         self._limits_registry.create_root(
             root_id=root_id,
@@ -498,81 +518,11 @@ class AgentExecutionService:
         if agent.status != AgentStatus.ANALYZING:
             return
 
-        if agent.role == AgentRole.PENDING:
-            await self._orchestrator.assess_task(agent)
-
-        elif agent.role in (AgentRole.BOSS, AgentRole.MANAGER):
-            depth = self._get_agent_depth(agent)
-            start_time = time.monotonic()
-            agent.emit_execution_started(role=agent.role.value, depth=depth)
-
-            await self._orchestrator.evaluate_task(agent)
-
-            duration = time.monotonic() - start_time
-            agent.emit_execution_finished(
-                role=agent.role.value,
-                status=agent.status.value,
-                duration_seconds=duration,
-            )
-
-        elif agent.role == AgentRole.WORKER:
-            async with self._worker_semaphore:
-                depth = self._get_agent_depth(agent)
-                start_time = time.monotonic()
-                agent.emit_execution_started(role=agent.role.value, depth=depth)
-
-                root_id = self._limits_registry.get_root_id(agent.agent_id)
-                handoff = await self._sibling_view_port.build_view(
-                    agent_id=agent.agent_id,
-                    parent_id=agent.parent_id,
-                    root_id=root_id,
-                )
-
-                domain_context = (
-                    agent.hierarchy_limits.domain_context
-                    if agent.hierarchy_limits is not None
-                    else None
-                )
-                worker_context = None
-                if self._domain_plugin is not None and self._working_directory is not None:
-                    worker_context = await self._domain_plugin.prepare_worker_execution(
-                        root_id=root_id,
-                        agent_id=agent.agent_id,
-                        run_output_path=self._working_directory,
-                        domain_context=domain_context,
-                    )
-
-                try:
-                    await self._orchestrator.execute_task(
-                        agent,
-                        working_directory=(
-                            worker_context.working_directory
-                            if worker_context and worker_context.working_directory
-                            else self._get_working_directory_str()
-                        ),
-                        workspace_context=self._get_workspace_context(),
-                        handoff=handoff,
-                        task_context_overrides=(
-                            worker_context.task_context if worker_context else None
-                        ),
-                    )
-                finally:
-                    if self._domain_plugin is not None:
-                        await self._domain_plugin.cleanup_worker_execution(
-                            root_id=root_id,
-                            agent_id=agent.agent_id,
-                            domain_context=domain_context,
-                        )
-
-                duration = time.monotonic() - start_time
-                agent.emit_execution_finished(
-                    role=agent.role.value,
-                    status=agent.status.value,
-                    duration_seconds=duration,
-                )
-
-        else:
+        handler = self._role_handlers.get(agent.role)
+        if handler is None:
             raise ValueError(f"Unknown agent role: {agent.role}")
+
+        await handler.handle(agent)
 
     def _get_agent_depth(self, agent: AgentSession) -> int:
         """Get agent depth from hierarchy limits, defaulting to 0."""
@@ -590,7 +540,7 @@ class AgentExecutionService:
     async def _handle_post_step(
         self, agent: AgentSession, events: list[DomainEvent]
     ) -> None:
-        """Handle post-step operations: child spawning, context updates, retry, parent notification."""
+        """Handle post-step operations after agent events are persisted."""
         child_events = [e for e in events if isinstance(e, ChildSpawned)]
         if child_events:
             await self._child_factory.create_children_from_events(
@@ -604,81 +554,11 @@ class AgentExecutionService:
 
         # Retry failed agents before propagating failure to parent
         if agent.status == AgentStatus.FAILED:
-            retried = await self._try_retry(agent)
+            retried = await self._retry_policy.maybe_schedule_retry(agent)
             if retried:
                 return  # Agent re-queued for execution, don't notify parent
 
         await self._parent_notifier.notify_if_failed(agent)
-
-    async def _try_retry(self, agent: AgentSession) -> bool:
-        """Attempt to retry a failed agent. Returns True if retry was scheduled.
-
-        Checks: max retries, circuit breaker, model escalation chain.
-        """
-        # Only retry workers (BOSS/MANAGER failures are structural)
-        if agent.role != AgentRole.WORKER:
-            return False
-
-        # Retry budget = length of escalation chain (0 = no retries)
-        retry_cfg = self._retry_config
-        max_retries = len(retry_cfg.model_escalation_chain) if retry_cfg and retry_cfg.model_escalation_chain else 0
-        if max_retries == 0 or agent.retry_count >= max_retries:
-            return False
-
-        # Circuit breaker check
-        current_model = getattr(getattr(agent.config, "base", None), "model", None)
-        if current_model and self._is_circuit_broken(current_model, retry_cfg):
-            escalated = self._get_escalated_model(agent, retry_cfg)
-            if escalated is None:
-                return False
-        else:
-            escalated = self._get_escalated_model(agent, retry_cfg) if retry_cfg else None
-
-        # Track model failure for circuit breaker
-        if current_model:
-            self._model_failures[current_model] = self._model_failures.get(current_model, 0) + 1
-
-        # Schedule retry
-        reason = agent.error_message or "Unknown failure"
-        agent.schedule_retry(reason=reason, escalated_model=escalated)
-
-        # Persist the retry event
-        await self._repository.persist_events(
-            agent, agent.version - 1, self._progress_callback
-        )
-
-        return True
-
-    def _is_circuit_broken(self, model: str, retry_cfg: Any) -> bool:
-        """Check if a model has tripped the circuit breaker."""
-        if retry_cfg is None:
-            return False
-        threshold = retry_cfg.circuit_breaker_threshold
-        failures = self._model_failures.get(model, 0)
-        return failures >= threshold
-
-    def _get_escalated_model(self, agent: AgentSession, retry_cfg: Any) -> str | None:
-        """Get next model from escalation chain, or None if exhausted."""
-        if retry_cfg is None or not retry_cfg.model_escalation_chain:
-            return None
-
-        chain = retry_cfg.model_escalation_chain
-        current_model = getattr(getattr(agent.config, "base", None), "model", None)
-
-        # Find current model in chain and return next
-        if current_model in chain:
-            idx = chain.index(current_model)
-            # Try remaining models in chain
-            for next_model in chain[idx + 1 :]:
-                if not self._is_circuit_broken(next_model, retry_cfg):
-                    return next_model
-            return None  # All remaining models circuit-broken
-        else:
-            # Current model not in chain, try first available
-            for model in chain:
-                if not self._is_circuit_broken(model, retry_cfg):
-                    return model
-            return None
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
         """Extract and store context updates from worker result."""
