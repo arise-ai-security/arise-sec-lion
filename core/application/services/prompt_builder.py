@@ -78,6 +78,52 @@ class TemplateChain:
         return separator.join(self._parts)
 
 
+def compute_limits_context(
+    hierarchy_limits: "HierarchyLimits | None",
+) -> dict[str, Any]:
+    """Build limits context dict for templates.
+
+    Standalone helper so both PromptBuilder and domain prompt strategies
+    can derive the same template variables from HierarchyLimits.
+    """
+    if hierarchy_limits is None:
+        return {
+            "max_subtasks": None,
+            "depth_remaining": None,
+            "at_max_depth": False,
+            "agents_remaining": None,
+            "max_total_agents": None,
+            "current_total_agents": None,
+        }
+
+    max_subtasks = None
+    if hierarchy_limits.is_children_limited():
+        max_subtasks = hierarchy_limits.max_children_per_node
+
+    depth_remaining = None
+    at_max_depth = False
+    if hierarchy_limits.is_depth_limited():
+        depth_remaining = hierarchy_limits.max_depth - hierarchy_limits.current_depth
+        at_max_depth = not hierarchy_limits.can_spawn_child()
+
+    agents_remaining = None
+    max_total_agents = None
+    current_total_agents = None
+    if hierarchy_limits.is_total_agents_limited():
+        agents_remaining = hierarchy_limits.agents_remaining()
+        max_total_agents = hierarchy_limits.max_total_agents
+        current_total_agents = hierarchy_limits.current_total_agents
+
+    return {
+        "max_subtasks": max_subtasks,
+        "depth_remaining": depth_remaining,
+        "at_max_depth": at_max_depth,
+        "agents_remaining": agents_remaining,
+        "max_total_agents": max_total_agents,
+        "current_total_agents": current_total_agents,
+    }
+
+
 class PromptBuilder:
     """Compose hierarchical prompts using 4-tier architecture."""
 
@@ -136,42 +182,7 @@ class PromptBuilder:
         hierarchy_limits: "HierarchyLimits | None",
     ) -> dict[str, Any]:
         """Build limits context dict for templates."""
-        if hierarchy_limits is None:
-            return {
-                "max_subtasks": None,
-                "depth_remaining": None,
-                "at_max_depth": False,
-                "agents_remaining": None,
-                "max_total_agents": None,
-                "current_total_agents": None,
-            }
-
-        max_subtasks = None
-        if hierarchy_limits.is_children_limited():
-            max_subtasks = hierarchy_limits.max_children_per_node
-
-        depth_remaining = None
-        at_max_depth = False
-        if hierarchy_limits.is_depth_limited():
-            depth_remaining = hierarchy_limits.max_depth - hierarchy_limits.current_depth
-            at_max_depth = not hierarchy_limits.can_spawn_child()
-
-        agents_remaining = None
-        max_total_agents = None
-        current_total_agents = None
-        if hierarchy_limits.is_total_agents_limited():
-            agents_remaining = hierarchy_limits.agents_remaining()
-            max_total_agents = hierarchy_limits.max_total_agents
-            current_total_agents = hierarchy_limits.current_total_agents
-
-        return {
-            "max_subtasks": max_subtasks,
-            "depth_remaining": depth_remaining,
-            "at_max_depth": at_max_depth,
-            "agents_remaining": agents_remaining,
-            "max_total_agents": max_total_agents,
-            "current_total_agents": current_total_agents,
-        }
+        return compute_limits_context(hierarchy_limits)
 
     def build_assessment_prompt(
         self,

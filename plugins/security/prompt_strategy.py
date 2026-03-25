@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from core.application.services.prompt_builder import compute_limits_context
 from core.application.services.prompt_strategy import PromptContext
 from plugins.security.cve_instance import CVEInstance
 
@@ -143,54 +144,53 @@ class SecBenchPromptStrategy:
         )
 
     def build_assessment_prompt(self, context: PromptContext) -> str | None:
-        """Return a direct-execute prompt for known SEC-bench phases.
+        """Return a phase-aware assessment prompt for SEC-bench tasks.
 
-        SEC-bench tasks follow a fixed 3-phase pipeline (Builder → Exploiter
-        → Fixer). The BOSS already decomposes into these well-scoped phases,
-        so PENDING children should execute directly as WORKERs — no further
-        decomposition is useful.
+        The LLM can choose execute OR decompose based on phase complexity,
+        guided by the domain template.  Recon tools are skipped — the
+        domain context provides enough information to decide.
 
-        Without this override, the generic assess.j2 prompt runs a full
-        recon tool-calling loop (read_file, search_codebase, etc.) over the
-        entire codebase.  This causes two problems:
+        Depth-awareness via ``ancestry_depth``:
+        - depth 1 (direct BOSS child): decomposition is valuable for
+          complex phases — the manager templates define rich sub-tasks.
+        - depth 2+ (sub-task from a manager template): already pre-scoped,
+          strongly defaults to execute.
 
-        1. **Context window overflow** — recon accumulates tool results
-           across iterations, easily exceeding gpt-4o-mini's 128K limit
-           (observed: ~1M tokens).
-        2. **Over-decomposition** — exploring the codebase makes the LLM
-           perceive more complexity, so it almost always chooses "decompose",
-           cascading until hitting the max_total_agents cap.
-
-        By returning a direct prompt for known phases, we skip recon entirely
-        and the LLM simply returns {"action": "execute"}.
+        Structural safeguards (``at_max_depth``, ``agents_remaining``) are
+        enforced via the shared ``assess_output.j2`` template.
         """
         branch = detect_benchmark_branch(context.briefing)
         if branch is None:
             branch = _detect_branch_from_task(context.task_description)
         if branch is None:
-            # Unknown phase — fall back to generic assessment with recon.
             return None
 
-        # Known SEC-bench phase: instruct the LLM to execute directly.
-        # The prompt is intentionally minimal — no recon tool instructions,
-        # no codebase exploration.  The LLM receives the task description
-        # and responds with a simple execute action.
+        cve_instance = _as_cve_instance(context.domain_context)
+        cve_id = cve_instance.cve_id if cve_instance else "unknown"
+        ancestry_depth = len(context.briefing.ancestry) if context.briefing else 0
+        limits = compute_limits_context(context.hierarchy_limits)
+
         return (
-            self._chain_factory()
-            .render("system.j2", default_tool=context.default_tool)
-            .render("roles/pending.j2")
-            .text(
-                f"<task>\n{context.task_description}\n</task>\n\n"
-                "<operation>\n"
-                f"This is a SEC-bench [{branch}] phase task.  "
-                "These phases are already well-scoped leaf tasks produced by "
-                "the BOSS decomposition — execute directly as a WORKER.\n\n"
-                "Do NOT decompose further.  Do NOT use reconnaissance tools.\n\n"
-                "Return ONLY valid JSON:\n"
-                '```json\n{"action": "execute", "reasoning": "SEC-bench '
-                f'{branch} phase — well-scoped leaf task, execute directly'
-                '"}\n```\n'
-                "</operation>"
+            _with_cve_display(
+                self._chain_factory()
+                .render("system.j2", default_tool=context.default_tool)
+                .render("roles/pending.j2"),
+                cve_instance,
+                phase=branch,
+            )
+            .render(
+                "domains/secbench/assess.j2",
+                phase=branch,
+                cve_id=cve_id,
+                task_description=context.task_description,
+                ancestry_depth=ancestry_depth,
+                briefing=context.briefing,
+                **limits,
+            )
+            .render(
+                "operations/assess_output.j2",
+                default_tool=context.default_tool,
+                **limits,
             )
             .build()
         )

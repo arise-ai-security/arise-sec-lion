@@ -1,0 +1,62 @@
+{#
+  Assessment output format — shared by generic assess.j2 and domain-specific
+  assessment templates (e.g. domains/secbench/assess.j2).
+
+  Expected variables:
+    at_max_depth        (bool)
+    depth_remaining     (int | none)
+    agents_remaining    (int | none)
+    max_subtasks        (int | none)
+    default_tool        (str)
+#}
+<output_format>
+Return ONLY valid JSON.
+
+To execute directly:
+```json
+{"action": "execute", "reasoning": "why you're confident (20-500 chars)"}
+```
+
+To decompose:
+```json
+{
+  "action": "decompose",
+  "reasoning": "what uncertainty requires decomposition (20-500 chars)",
+  "subtasks": [
+    {
+      "description": "concrete subtask (10-500 chars)",
+      "justification": {"objective": "what this achieves", "plan": "how to execute"},
+      "config": {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
+        "tool": "{{ default_tool }}"
+      },
+      "depends_on": [],
+      "estimated_complexity": "simple | complex | unknown",
+      "success_criteria": "what constitutes success",
+      "target_paths": ["src/relevant_file.c"],
+      "symbols": ["function_name"],
+      "search_hints": ["CVE-XXXX", "error keyword"]
+    }
+  ]
+}
+```
+
+Rules:
+1. Pure JSON only (no markdown, no commentary)
+2. `action`: exactly `"execute"` or `"decompose"`
+{% if at_max_depth or (agents_remaining is not none and agents_remaining <= 0) %}
+3. **FORCED**: You MUST choose `"execute"` (constraint reached)
+{% else %}
+3. If decomposing: 2-3 subtasks optimal{% if max_subtasks %} (max {{ max_subtasks }}){% endif %}
+
+4. Each subtask should pass the "execute directly" confidence test
+{% endif %}
+{% if max_subtasks or (agents_remaining is not none and agents_remaining > 0 and agents_remaining <= 10) %}
+
+If constraints cannot be satisfied:
+```json
+{"status": "constraints_unsatisfiable", "reason": "explanation", "minimum_required": {"subtasks": N, "depth_levels": N}}
+```
+{% endif %}
+</output_format>

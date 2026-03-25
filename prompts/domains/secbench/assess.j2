@@ -1,0 +1,88 @@
+{#
+  SEC-bench assessment prompt — standalone domain assessment template.
+  Provides CVE context, phase-aware decomposition guidance, and
+  depth-aware bias so the LLM can choose execute vs decompose.
+
+  Expected variables:
+    phase             (str)       — builder | exploiter | fixer
+    cve_id            (str)
+    task_description  (str)
+    ancestry_depth    (int)       — len(briefing.ancestry); 1 = direct BOSS child
+    at_max_depth      (bool)
+    depth_remaining   (int | none)
+    agents_remaining  (int | none)
+    briefing          (Briefing | none)
+#}
+<domain_operation>
+This is a SEC-bench **[{{ phase }}]** phase task for vulnerability {{ cve_id }}.
+
+{% if phase == 'builder' %}
+**Builder phase scope**: Build the repository from source with sanitizers enabled.
+Typical sub-steps: identify base commit → initial build → fix build script → fix
+compiler errors → record changes.
+
+Decompose when the build is non-trivial (unfamiliar build system, multiple
+compilation targets, known compiler-flag issues).  Execute directly when the
+build script works out of the box or needs only minor fixes.
+{% elif phase == 'exploiter' %}
+**Exploiter phase scope**: Create a proof-of-concept that triggers the exact
+sanitizer error described in the bug report.
+
+Decompose when the vulnerability requires multi-stage analysis: crash triage →
+root-cause identification → PoC crafting → validation.  Execute directly when a
+working PoC already exists in the bug description and only needs minor adaptation.
+{% elif phase == 'fixer' %}
+**Fixer phase scope**: Generate a minimal patch that eliminates the vulnerability
+while preserving functionality.
+
+Decompose when the fix involves analysing multiple candidate patches, understanding
+complex control flow, or validating against regression tests.  Execute directly
+when the root cause is obvious and a single-function fix suffices.
+{% endif %}
+
+{% if ancestry_depth >= 2 %}
+**This is a pre-scoped sub-task** created by a manager decomposition.  The task
+description already defines a focused, well-bounded piece of work.  You should
+execute directly unless the task is genuinely too broad for a single worker.
+{% else %}
+**Decision guidance**: Prefer decomposition for phases that involve distinct
+independent concerns (e.g., analysis vs. crafting vs. validation).  The tree
+topology lets sub-workers specialise and share context via sibling handoff.
+{% endif %}
+{% if at_max_depth %}
+
+**CONSTRAINT: Maximum depth reached.** You MUST execute directly.
+{% elif depth_remaining is not none and depth_remaining <= 1 %}
+
+**Note**: {{ depth_remaining }} level(s) remaining — prefer executing directly.
+{% endif %}
+{% if agents_remaining is not none and agents_remaining <= 0 %}
+
+**CONSTRAINT: No agents remaining.** You MUST execute directly.
+{% endif %}
+
+Do NOT use reconnaissance tools — the domain context above provides sufficient
+information to decide.
+</domain_operation>
+{% if briefing %}
+
+<briefing>
+Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
+{% if briefing.ancestry %}
+Ancestry:
+{% for ancestor in briefing.ancestry %}
+  - [{{ ancestor.role }}] {{ ancestor.task_summary }}
+{% endfor %}
+{% endif %}
+{% if briefing.decisions %}
+Inherited decisions:
+{% for decision in briefing.decisions %}
+  - {{ decision }}
+{% endfor %}
+{% endif %}
+</briefing>
+{% endif %}
+
+<task>
+{{ task_description }}
+</task>
