@@ -1,7 +1,4 @@
-"""OpenHands SDK Adapter: use OpenHands agent via Python SDK for task execution.
-
-Includes cost tracking via conversation.conversation_stats API.
-"""
+"""OpenHands SDK adapter: use the SDK conversation directly for task execution."""
 
 import asyncio
 import logging
@@ -21,6 +18,10 @@ logging.getLogger("openhands").setLevel(logging.WARNING)
 logging.getLogger("openhands.sdk").setLevel(logging.WARNING)
 logging.getLogger("openhands.tools").setLevel(logging.WARNING)
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_ITERATIONS_PER_RUN = 20
+
 
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
     "ActionEvent": "thinking",
@@ -36,13 +37,7 @@ SDK_EVENT_TYPE_MAP: dict[str, str] = {
 
 
 class OpenHandsAdapter(WorkerAdapterBase):
-    """Execute tasks via OpenHands SDK with cost tracking.
-
-    Cost tracking uses conversation.conversation_stats API which provides:
-    - accumulated_cost: Total cost in USD
-    - prompt_tokens: Input token count
-    - completion_tokens: Output token count
-    """
+    """Execute tasks via the OpenHands SDK with native conversation controls."""
 
     STREAM_NAME = "openhands"
 
@@ -51,39 +46,24 @@ class OpenHandsAdapter(WorkerAdapterBase):
         model: str | None = None,
         api_key: str | None = None,
         timeout_seconds: int = 300,
+        max_iterations_per_run: int = DEFAULT_MAX_ITERATIONS_PER_RUN,
     ) -> None:
-        """Initialize OpenHands adapter.
-
-        Args:
-            model: LLM model to use (default: gpt-4o via env or fallback).
-            api_key: API key for LLM provider.
-            timeout_seconds: Execution timeout.
-        """
+        """Initialize OpenHands adapter."""
         super().__init__(timeout_seconds=timeout_seconds)
         self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
         self.api_key = api_key or self._detect_api_key()
+        self.max_iterations_per_run = max_iterations_per_run
 
     def _detect_api_key(self) -> str | None:
-        """Detect appropriate API key based on model name.
-
-        Returns:
-            API key from environment, prioritizing provider-specific keys.
-        """
-        # Check for explicit LLM_API_KEY first
+        """Detect appropriate API key based on model name."""
         if api_key := os.getenv("LLM_API_KEY"):
             return api_key
 
         model_lower = self.model.lower()
-
-        # Anthropic/Claude models
         if "claude" in model_lower or "anthropic" in model_lower:
             return os.getenv("ANTHROPIC_API_KEY")
-
-        # Google models
         if "gemini" in model_lower or "google" in model_lower:
             return os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-        # Default to OpenAI
         return os.getenv("OPENAI_API_KEY")
 
     def _get_tool_name(self) -> str:
@@ -98,7 +78,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
         sequencer: EventSequencer,
         task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
-        """Execute task via OpenHands SDK with cost tracking."""
+        """Execute task via OpenHands SDK with native conversation lifecycle."""
+        del agent_id
         self._start_timing()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
@@ -108,42 +89,41 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
 
         try:
-            from openhands.sdk import LLM, Agent, Conversation, Tool
-            from openhands.tools.file_editor import FileEditorTool
-            from openhands.tools.terminal import TerminalTool
-
-            llm = LLM(model=self.model, api_key=self.api_key)
-            agent = Agent(
-                llm=llm,
-                tools=[
-                    Tool(name=TerminalTool.name),
-                    Tool(name=FileEditorTool.name),
-                ],
+            conversation = self._build_conversation(working_dir)
+        except ImportError as error:
+            yield sequencer.failed(
+                "OpenHands packages not installed. "
+                f"Install with: uv add openhands-sdk openhands-tools. Error: {error}"
             )
-            conversation = Conversation(agent=agent, workspace=working_dir)
+            return
+        except Exception as error:
+            yield sequencer.failed(f"OpenHands adapter error: {error!r}")
+            return
+
+        try:
             conversation.send_message(task_description)
 
-            # Run with timeout
-            loop = asyncio.get_running_loop()
-            await asyncio.wait_for(
-                loop.run_in_executor(None, conversation.run),
-                timeout=self.timeout_seconds,
-            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(conversation.run),
+                    timeout=self.timeout_seconds,
+                )
+            except TimeoutError:
+                self._request_shutdown(conversation)
+                yield sequencer.failed(
+                    f"Task timed out after {self.timeout_seconds} seconds"
+                )
+                return
 
-            # Yield thought events from conversation history
-            # Events are stored in conversation.state.events, not conversation.events
-            state = getattr(conversation, "state", None)
-            if state and hasattr(state, "events"):
-                for event in state.events:
-                    content = self._extract_event_content(event)
-                    if content and content.strip():
-                        output_type = self._classify_event(event)
-                        yield sequencer.thought(content.strip(), output_type)
+            for event in self._iter_conversation_events(conversation):
+                content = self._extract_event_content(event)
+                if content and content.strip():
+                    yield sequencer.thought(
+                        content.strip(),
+                        self._classify_event(event),
+                    )
 
-            # Extract cost from conversation_stats
             cost_usd, tokens = self._extract_cost_data(conversation)
-
-            # Emit cost event
             yield sequencer.cost_recorded(
                 tool_name=self._get_tool_name(),
                 cost_usd=cost_usd,
@@ -152,77 +132,95 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 tokens=tokens,
             )
 
-            # Emit completion
-            result = self._extract_result(conversation, working_dir)
-            yield sequencer.completed(result)
+            yield sequencer.completed(self._extract_result(conversation, working_dir))
+        except Exception as error:
+            yield sequencer.failed(f"OpenHands adapter error: {error!r}")
+        finally:
+            self._request_shutdown(conversation)
 
-        except ImportError as e:
-            yield sequencer.failed(
-                f"OpenHands packages not installed. "
-                f"Install with: uv add openhands-sdk openhands-tools. Error: {e}"
-            )
+    def _build_conversation(self, working_dir: str) -> Any:
+        """Create an OpenHands SDK conversation for the current task."""
+        from openhands.sdk import LLM, Agent, Conversation, Tool
+        from openhands.tools.file_editor import FileEditorTool
+        from openhands.tools.terminal import TerminalTool
 
-        except TimeoutError:
-            yield sequencer.failed(
-                f"Task timed out after {self.timeout_seconds} seconds"
-            )
+        llm = LLM(model=self.model, api_key=self.api_key)
+        agent = Agent(
+            llm=llm,
+            tools=[
+                Tool(name=TerminalTool.name),
+                Tool(name=FileEditorTool.name),
+            ],
+        )
+        return Conversation(
+            agent=agent,
+            workspace=working_dir,
+            max_iteration_per_run=self.max_iterations_per_run,
+        )
 
-        except Exception as e:
-            yield sequencer.failed(f"OpenHands adapter error: {e!r}")
+    def _iter_conversation_events(self, conversation: Any) -> list[Any]:
+        """Return the SDK events recorded for this conversation."""
+        state = getattr(conversation, "state", None)
+        if state is None or not hasattr(state, "events"):
+            return []
+        return list(state.events)
 
     def _extract_cost_data(self, conversation: Any) -> tuple[float, int | None]:
-        """Extract cost from conversation_stats API.
-
-        OpenHands SDK provides ConversationStats object with attributes:
-        - accumulated_cost: Total cost in USD
-        - prompt_tokens: Input token count
-        - completion_tokens: Output token count
-
-        Falls back to token-based calculation if accumulated_cost not available.
-        """
+        """Extract cost from conversation_stats API."""
         stats = getattr(conversation, "conversation_stats", None)
         if stats is None:
             return 0.0, None
 
-        # Helper to get attribute from stats (handles both object and dict)
         def get_stat(name: str, default: Any = None) -> Any:
             if isinstance(stats, dict):
                 return stats.get(name, default)
             return getattr(stats, name, default)
 
-        # Primary: use accumulated_cost from SDK (most accurate)
         accumulated_cost = get_stat("accumulated_cost")
         if accumulated_cost is not None:
             prompt_tokens = get_stat("prompt_tokens", 0) or 0
             completion_tokens = get_stat("completion_tokens", 0) or 0
-            total_tokens = prompt_tokens + completion_tokens if (prompt_tokens or completion_tokens) else None
+            total_tokens = (
+                prompt_tokens + completion_tokens
+                if (prompt_tokens or completion_tokens)
+                else None
+            )
             return float(accumulated_cost), total_tokens
 
-        # Fallback: calculate from tokens using our pricing registry
         prompt_tokens = get_stat("prompt_tokens", 0) or 0
         completion_tokens = get_stat("completion_tokens", 0) or 0
-
         if prompt_tokens or completion_tokens:
             pricing = get_model_pricing(self.model)
             cost = pricing.calculate_cost(prompt_tokens, completion_tokens)
             return cost, prompt_tokens + completion_tokens
 
-        # No cost data available
         return 0.0, None
 
     def _extract_result(self, conversation: Any, working_dir: str) -> str:
         """Extract result from conversation events."""
-        state = getattr(conversation, "state", None)
-        if state and hasattr(state, "events") and state.events:
-            output_events = [
-                self._extract_event_content(e)
-                for e in state.events
-                if self._classify_event(e) == "output"
-            ]
-            output_events = [e for e in output_events if e]
-            if output_events:
-                return "\n".join(output_events[-5:])
+        output_events = [
+            self._extract_event_content(event)
+            for event in self._iter_conversation_events(conversation)
+            if self._classify_event(event) == "output"
+        ]
+        output_events = [event for event in output_events if event]
+        if output_events:
+            return "\n".join(output_events[-5:])
         return f"Task completed successfully in workspace: {working_dir}"
+
+    def _request_shutdown(self, conversation: Any) -> None:
+        """Best-effort SDK-native cleanup for the conversation."""
+        for method_name in ("pause", "close"):
+            method = getattr(conversation, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    logger.debug(
+                        "OpenHands conversation %s() failed during cleanup",
+                        method_name,
+                        exc_info=True,
+                    )
 
     @staticmethod
     def _classify_event(event: Any) -> str:
