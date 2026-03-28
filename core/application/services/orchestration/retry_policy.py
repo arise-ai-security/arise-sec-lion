@@ -8,7 +8,7 @@ from typing import Any
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 
-from .agent_repository import AgentRepository
+from core.application.services.lifecycle.agent_repository import AgentRepository
 
 
 class RetryPolicy:

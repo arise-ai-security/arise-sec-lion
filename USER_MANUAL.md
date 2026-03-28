@@ -1,5 +1,49 @@
 # User Manual
 
+## Getting Started
+
+### Prerequisites
+
+- Docker and Docker Compose (v2+)
+- A `.env` file in `deployment/` with required secrets (copy from `.env.example`)
+
+### Building and Starting
+
+```bash
+cd deployment
+docker compose --profile local up -d --build
+```
+
+This builds the application image and starts three containers:
+
+| Container | Service | Purpose |
+|-----------|---------|---------|
+| `arise-app` | `app` | CLI entry point (sleeps until you exec into it) |
+| `arise-db` | `db` | PostgreSQL 16 (local profile only) |
+| `arise-api` | `api` | REST API + Dashboard on `http://localhost:8000` |
+
+Wait for health checks to pass before running commands:
+
+```bash
+docker compose --profile local ps   # all should show "Up" / "healthy"
+```
+
+### Rebuilding After Code Changes
+
+After modifying source code, rebuild the app container:
+
+```bash
+docker compose --profile local up -d --build app
+```
+
+To rebuild all services (e.g. after dependency changes):
+
+```bash
+docker compose --profile local up -d --build
+```
+
+---
+
 ## CLI Reference
 
 The CLI runs inside the Docker container. Prefix every command with `docker compose exec`:

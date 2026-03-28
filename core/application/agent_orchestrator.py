@@ -24,13 +24,16 @@ from core.domain.services.config_resolver import ConfigResolver
 from core.domain.values.enums import AgentRole, AgentStatus
 
 
+from core.application.services import (
+    LLMQueryExecutor,
+    ToolsetPolicyResolver,
+    VerificationPipeline,
+)
+
 if TYPE_CHECKING:
     from core.application.services import (
         ChildAgentFactory,
-        LLMQueryExecutor,
         PromptBuilder,
-        ToolsetPolicyResolver,
-        VerificationPipeline,
     )
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.llm_response import LLMResponse
