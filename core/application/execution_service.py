@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from config import BossConfig, ManagerConfig
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStorePort
@@ -231,18 +232,19 @@ class AgentExecutionService:
         start_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
+        run_status_override: str | None = None
 
         while True:
-            completed = [aid for aid, task in tasks.items() if task.done()]
-            for aid in completed:
-                in_progress.discard(aid)
-                task = tasks.pop(aid)
-                if task.exception():
-                    logger.error(
-                        "Agent %s failed with exception",
-                        aid,
-                        exc_info=task.exception(),
-                    )
+            self._reap_completed_tasks(tasks, in_progress)
+
+            if self._is_run_timed_out(start_time):
+                run_status_override = "timed_out"
+                await self._handle_run_timeout(
+                    root_agent_id=root_agent_id,
+                    tasks=tasks,
+                    in_progress=in_progress,
+                )
+                break
 
             active_agents = await self._query_service.get_active_agent_ids(
                 root_id=root_agent_id, sequential_workers=True
@@ -263,7 +265,11 @@ class AgentExecutionService:
         if tasks:
             await asyncio.gather(*tasks.values(), return_exceptions=True)
 
-        await self._emit_run_completed(root_agent_id, start_time)
+        await self._emit_run_completed(
+            root_agent_id,
+            start_time,
+            status_override=run_status_override,
+        )
 
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
         """Execute agent step with exception handling, jitter, and rate limiting."""
@@ -274,11 +280,17 @@ class AgentExecutionService:
 
             async with self._llm_semaphore:
                 await self.run_agent_step(agent_id)
+        except asyncio.CancelledError:
+            logger.warning("Agent %s step cancelled", agent_id)
+            raise
         except Exception:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
 
     async def _emit_run_completed(
-        self, root_agent_id: UUID, start_time: float
+        self,
+        root_agent_id: UUID,
+        start_time: float,
+        status_override: str | None = None,
     ) -> None:
         """Emit RunCompleted event on BOSS agent with run statistics."""
         duration_seconds = time.monotonic() - start_time
@@ -286,7 +298,9 @@ class AgentExecutionService:
 
         boss_agent = await self._repository.load(root_agent_id)
         current_version = boss_agent.version
-        run_status = "completed" if boss_agent.status.value == "completed" else "failed"
+        run_status = status_override or (
+            "completed" if boss_agent.status.value == "completed" else "failed"
+        )
 
         boss_agent.emit_run_completed(
             status=run_status,
@@ -299,6 +313,151 @@ class AgentExecutionService:
         await self._repository.persist_events(
             boss_agent, current_version, self._progress_callback
         )
+
+    def _reap_completed_tasks(
+        self,
+        tasks: dict[UUID, asyncio.Task],
+        in_progress: set[UUID],
+    ) -> None:
+        """Remove completed tasks and log their terminal state."""
+        completed = [aid for aid, task in tasks.items() if task.done()]
+        for aid in completed:
+            in_progress.discard(aid)
+            task = tasks.pop(aid)
+            if task.cancelled():
+                logger.warning("Agent %s task was cancelled", aid)
+                continue
+            exc = task.exception()
+            if exc is not None:
+                logger.error("Agent %s failed with exception", aid, exc_info=exc)
+
+    def _is_run_timed_out(self, start_time: float) -> bool:
+        """Return True when the global orchestration deadline has elapsed."""
+        max_run_duration = getattr(
+            self._system_limits,
+            "max_run_duration_seconds",
+            None,
+        )
+        if max_run_duration is None or max_run_duration <= 0:
+            return False
+        return (time.monotonic() - start_time) > max_run_duration
+
+    async def _handle_run_timeout(
+        self,
+        *,
+        root_agent_id: UUID,
+        tasks: dict[UUID, asyncio.Task],
+        in_progress: set[UUID],
+    ) -> None:
+        """Cancel in-flight work and fail any remaining active agents."""
+        max_run_duration = getattr(
+            self._system_limits,
+            "max_run_duration_seconds",
+            None,
+        )
+        timeout_reason = (
+            f"Run timed out after {max_run_duration} seconds"
+            if max_run_duration is not None
+            else "Run timed out"
+        )
+
+        logger.error(
+            "System loop timed out for root %s after %s seconds",
+            root_agent_id,
+            max_run_duration,
+        )
+
+        await self._cancel_inflight_tasks(tasks, in_progress)
+        await self._fail_remaining_active_agents(root_agent_id, timeout_reason)
+
+    async def _cancel_inflight_tasks(
+        self,
+        tasks: dict[UUID, asyncio.Task],
+        in_progress: set[UUID],
+    ) -> None:
+        """Cancel all in-flight tasks and wait for cancellation to settle."""
+        if not tasks:
+            return
+
+        for task in tasks.values():
+            task.cancel()
+
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
+        tasks.clear()
+        in_progress.clear()
+
+    async def _fail_remaining_active_agents(
+        self,
+        root_agent_id: UUID,
+        reason: str,
+    ) -> None:
+        """Best-effort failure propagation for agents still active at timeout."""
+        previous_active_ids: tuple[UUID, ...] | None = None
+
+        while True:
+            active_ids = tuple(
+                await self._query_service.get_active_agent_ids(
+                    root_id=root_agent_id,
+                    sequential_workers=True,
+                )
+            )
+            if not active_ids:
+                return
+
+            if active_ids == previous_active_ids:
+                logger.error(
+                    "Active agents remained after timeout handling for root %s: %s",
+                    root_agent_id,
+                    ", ".join(str(agent_id) for agent_id in active_ids),
+                )
+                return
+
+            previous_active_ids = active_ids
+            candidates: list[AgentSession] = []
+            for agent_id in active_ids:
+                agent = await self._repository.load_if_exists(agent_id)
+                if agent is None or agent.is_terminal():
+                    continue
+                candidates.append(agent)
+
+            candidates.sort(key=self._get_agent_depth, reverse=True)
+
+            for agent in candidates:
+                try:
+                    await self._fail_agent(agent, reason)
+                except Exception:
+                    logger.exception(
+                        "Failed to mark agent %s as timed out",
+                        agent.agent_id,
+                    )
+
+    async def _fail_agent(self, agent: AgentSession, reason: str) -> None:
+        """Persist a failure for a still-active agent and notify its parent."""
+        if agent.is_terminal():
+            return
+
+        try:
+            current_version = agent.version
+            agent.fail_with_reason(reason)
+            await self._repository.persist_events(
+                agent,
+                current_version,
+                self._progress_callback,
+            )
+            await self._parent_notifier.notify_if_failed(agent)
+        except ConcurrencyError:
+            reloaded = await self._repository.load_if_exists(agent.agent_id)
+            if reloaded is None or reloaded.is_terminal():
+                return
+
+            current_version = reloaded.version
+            reloaded.fail_with_reason(reason)
+            await self._repository.persist_events(
+                reloaded,
+                current_version,
+                self._progress_callback,
+            )
+            await self._parent_notifier.notify_if_failed(reloaded)
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
         """Get agent execution result."""

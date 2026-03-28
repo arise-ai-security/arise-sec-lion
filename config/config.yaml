@@ -18,10 +18,13 @@ worker:
   model: openai/gpt-4o
   tool: openhands
   timeout: 600
+  max_iterations_per_run: 20
 
 orchestration:
   max_retries: 3
   poll_interval: 0.5  # seconds between orchestration loop iterations
+  max_run_duration_seconds: 1800  # hard stop for the full orchestration run
+  max_redecompositions: 2  # per-parent limit for infeasibility-driven re-planning
 
   topology:
     max_depth: 3               # BOSS(0) → children(1) → grandchildren(2) → forced-workers(3)
