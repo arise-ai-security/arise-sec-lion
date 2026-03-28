@@ -19,6 +19,7 @@ from .shared import (
     validate_task_context,
 )
 
+
 __all__ = [
     # Base class
     "WorkerAdapterBase",

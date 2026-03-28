@@ -5,14 +5,14 @@ Tests the serialization/deserialization and factory methods.
 
 from uuid import uuid4
 
-from core.domain.values.node_message import (
-    Ancestor,
-    Report,
-    Briefing,
-    build_briefing,
-)
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 from core.domain.values.context import HierarchyLimits
+from core.domain.values.node_message import (
+    Ancestor,
+    Briefing,
+    Report,
+    build_briefing,
+)
 
 
 class TestAncestor:

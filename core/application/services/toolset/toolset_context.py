@@ -11,6 +11,7 @@ from core.domain.values.prompt_capabilities import (
     PromptToolDescriptor,
 )
 
+
 if TYPE_CHECKING:
     from core.ports.runtime_ports import Toolset
 
@@ -37,7 +38,7 @@ class ActiveToolContext:
 
     tool_definitions: tuple[dict[str, Any], ...] = ()
     loop_policy: LoopPolicy = LoopPolicy()
-    executors: Mapping[str, "Toolset"] = field(default_factory=dict)
+    executors: Mapping[str, Toolset] = field(default_factory=dict)
 
     @property
     def has_tools(self) -> bool:

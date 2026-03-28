@@ -3,7 +3,7 @@
 from core.domain.services.context_update_parser import (
     parse_context_update,
 )
-from core.domain.values.parsed_context import ParsedDecision, ParsedArtifact, ParsedUpdate
+from core.domain.values.parsed_context import ParsedArtifact, ParsedDecision, ParsedUpdate
 
 
 class TestParseContextUpdate:

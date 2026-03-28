@@ -4,7 +4,6 @@ from .infrastructure import Infrastructure, InfrastructureConfig, get_infrastruc
 
 
 __all__ = [
-    "main",
     "Application",
     "ApplicationConfig",
     "Infrastructure",
@@ -12,4 +11,5 @@ __all__ = [
     "get_application",
     "get_cli",
     "get_infrastructure",
+    "main",
 ]

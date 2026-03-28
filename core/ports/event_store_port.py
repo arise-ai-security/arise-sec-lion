@@ -210,4 +210,3 @@ class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadP
     Clients should depend on the narrowest interface they need.
     """
 
-    pass

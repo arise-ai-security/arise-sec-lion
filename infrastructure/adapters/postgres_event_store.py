@@ -208,10 +208,9 @@ class PostgresEventStore(EventStorePort):
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
-            async with self.pool.acquire() as conn:
-                async with conn.transaction():
-                    await conn.executemany(
-                        """
+            async with self.pool.acquire() as conn, conn.transaction():
+                await conn.executemany(
+                    """
                         INSERT INTO events (
                             event_id,
                             aggregate_id,
@@ -222,19 +221,19 @@ class PostgresEventStore(EventStorePort):
                             metadata
                         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                         """,
-                        [
-                            (
-                                event.event_id,
-                                event.aggregate_id,
-                                event.sequence_number,
-                                event.__class__.__name__,
-                                event.model_dump(mode="json"),
-                                event.occurred_at,
-                                event.metadata,
-                            )
-                            for event in events
-                        ],
-                    )
+                    [
+                        (
+                            event.event_id,
+                            event.aggregate_id,
+                            event.sequence_number,
+                            event.__class__.__name__,
+                            event.model_dump(mode="json"),
+                            event.occurred_at,
+                            event.metadata,
+                        )
+                        for event in events
+                    ],
+                )
 
         except asyncpg.UniqueViolationError as e:
             raise ConcurrencyError(

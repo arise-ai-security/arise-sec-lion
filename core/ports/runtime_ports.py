@@ -11,6 +11,7 @@ from uuid import UUID
 from core.domain.events.events import DomainEvent
 from core.domain.values.llm_response import LLMResponse, LLMToolResponse
 
+
 if TYPE_CHECKING:
     from core.domain.shared_context import SharedStore
     from core.domain.values.node_message import Handoff

@@ -3,20 +3,17 @@
 Tests hierarchy building, event processing, and tree construction.
 """
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
-from core.application.services.prompt_parser import PromptParser
-from core.application.services.prompt_trace_service import PromptTraceService
+from core.application.services import PromptParser, PromptTraceService
 from core.domain.events.events import (
     AgentCreated,
     PromptSent,
     TaskAssigned,
 )
-from core.domain.values.prompt_trace import SectionProvenance
 
 
 def create_agent_created(

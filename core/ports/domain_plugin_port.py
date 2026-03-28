@@ -11,8 +11,9 @@ from uuid import UUID
 from core.domain.values.json_types import JsonObject
 from core.domain.values.prompt_trace import SectionProvenance
 
+
 if TYPE_CHECKING:
-    from core.application.services.prompt_strategy import PromptStrategy
+    from core.application.services import PromptStrategy
 
 
 @dataclass(frozen=True)

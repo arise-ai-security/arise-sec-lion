@@ -5,6 +5,7 @@ from core.domain.services.subtask_parser import (
     strip_markdown_code_block,
 )
 
+
 __all__ = [
     "AssessmentResult",
     "parse_assessment_response",

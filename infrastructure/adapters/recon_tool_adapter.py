@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -207,7 +208,7 @@ class ReconToolAdapter:
             result = result.replace(workdir_str, "")
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return f"Search timed out for pattern '{pattern}'."
         except Exception as e:
             return f"Search error: {e}"
@@ -358,7 +359,7 @@ class ReconToolAdapter:
                 return f"No symbols found in '{display_path}'."
             return f"Symbols in {display_path}:\n" + "\n".join(symbols)
 
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (TimeoutError, FileNotFoundError):
             return None
 
     def _regex_symbols(self, resolved: Path, display_path: str) -> str:
@@ -432,7 +433,7 @@ class ReconToolAdapter:
                     return i
             return min(start + 100, len(lines) - 1)
 
-        elif suffix == ".py":
+        if suffix == ".py":
             # Indentation-based for Python
             base_indent = len(lines[start]) - len(lines[start].lstrip())
             for i in range(start + 1, len(lines)):

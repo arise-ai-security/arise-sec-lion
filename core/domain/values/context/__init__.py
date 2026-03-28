@@ -17,6 +17,7 @@ from core.domain.values.node_message import (
     build_briefing,
 )
 
+
 __all__ = [
     # Down (parent → child)
     "Ancestor",

@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from core.application.agent_orchestrator import AgentOrchestrator
-from core.application.services.prompt_builder import PromptBuilder
+from core.application.services import PromptBuilder
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     ChildSpawned,

@@ -12,8 +12,6 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
-import pytest
-
 from presentation.formatters import EventFormatter, ProgressDisplayFormatter
 
 

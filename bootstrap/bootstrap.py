@@ -284,8 +284,7 @@ async def _list_runs(args: argparse.Namespace) -> None:
 
 async def _trace_prompts(args: argparse.Namespace) -> None:
     """Trace prompts through agent hierarchy."""
-    from core.application.services.prompt_parser import PromptParser
-    from core.application.services.prompt_trace_service import PromptTraceService
+    from core.application.services import PromptParser, PromptTraceService
     from core.domain.values.prompt_trace import RenderOptions
     from presentation.formatters.prompt_trace_formatter import get_renderer
 

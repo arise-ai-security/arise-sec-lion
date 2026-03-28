@@ -5,11 +5,12 @@ from presentation.formatters import EventFormatter, ProgressDisplayFormatter
 from presentation.persistence import RunPersistence
 from presentation.rendering import OutputRenderer
 
+
 __all__ = [
     "CLI",
     "CLIConfig",
     "EventFormatter",
+    "OutputRenderer",
     "ProgressDisplayFormatter",
     "RunPersistence",
-    "OutputRenderer",
 ]

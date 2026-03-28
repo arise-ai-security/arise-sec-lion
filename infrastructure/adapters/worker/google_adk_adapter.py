@@ -61,7 +61,7 @@ def execute_command(
     try:
         result = subprocess.run(
             command,
-            shell=True,
+            check=False, shell=True,
             cwd=working_dir,
             capture_output=True,
             text=True,

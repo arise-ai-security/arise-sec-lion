@@ -10,8 +10,7 @@ Usage:
 from fastapi import FastAPI
 
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
-from query.api.app import create_app as _create_app
-from query.api.app import set_event_store_factory
+from query.api.app import create_app as _create_app, set_event_store_factory
 
 
 def create_app() -> FastAPI:

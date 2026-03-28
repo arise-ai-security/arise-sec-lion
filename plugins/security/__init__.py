@@ -7,14 +7,15 @@ from plugins.security.image_resolver import resolve_secbench_image
 from plugins.security.plugin import SecurityDomainPlugin
 from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
 
+
 __all__ = [
     "BenchmarkResult",
     "CVEInferenceError",
     "CVEInstance",
     "CVEInstanceInferenceService",
-    "resolve_secbench_image",
     "SecBenchPromptStrategy",
     "SecurityDomainPlugin",
     "StageResult",
     "detect_benchmark_branch",
+    "resolve_secbench_image",
 ]

@@ -8,9 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import pytest
-
-from bootstrap.bootstrap import main, _create_parser as create_parser
+from bootstrap.bootstrap import _create_parser as create_parser, main
 from presentation.persistence import RunPersistence
 
 

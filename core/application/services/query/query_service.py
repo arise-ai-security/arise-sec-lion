@@ -38,7 +38,7 @@ def _head_tail(text: str, limit: int) -> str:
 
 
 if TYPE_CHECKING:
-    from core.application.services.agent_repository import AgentRepository
+    from core.application.services.lifecycle.agent_repository import AgentRepository
     from core.ports.runtime_ports import SharedContextPort
 
 
@@ -109,11 +109,7 @@ class AgentSummaryReadModel:
                 status = "in_progress"
             elif isinstance(event, WorkCompleted):
                 status = "completed"
-            elif isinstance(event, WorkFailed):
-                status = "failed"
-            elif isinstance(event, VerificationFailed):
-                status = "failed"
-            elif isinstance(event, DecisionInfeasible):
+            elif isinstance(event, WorkFailed) or isinstance(event, VerificationFailed) or isinstance(event, DecisionInfeasible):
                 status = "failed"
             elif isinstance(event, RetryScheduled):
                 # FAILED → ANALYZING: agent is retrying, no longer terminal

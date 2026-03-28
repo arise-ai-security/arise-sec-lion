@@ -1,7 +1,6 @@
 """Optimized hierarchy event collection using single-query approach."""
 
 from collections import deque
-from collections.abc import AsyncIterator
 from uuid import UUID
 
 from core.domain.events.events import ChildSpawned, DomainEvent

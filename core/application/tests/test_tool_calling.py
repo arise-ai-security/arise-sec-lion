@@ -6,15 +6,12 @@ events emitted correctly through the orchestrator.
 """
 
 import json
+
 import pytest
 
-from core.application.services.toolset_context import ActiveToolContext, LoopPolicy
-from core.application.services.tool_calling_service import (
-    ToolCallingService,
-    ToolCallingResult,
-)
+from core.application.services import ActiveToolContext, LoopPolicy, ToolCallingService
+from core.application.services.toolset.tool_calling_service import ToolCallingResult
 from core.domain.values.llm_response import (
-    LLMResponse,
     LLMToolResponse,
     LLMUsage,
     ToolCall,
@@ -379,7 +376,7 @@ class TestToolsetPolicyResolver:
     """Tests for role/domain toolset resolution."""
 
     def test_domain_override_filters_tools(self):
-        from core.application.services.toolset_policy_resolver import ToolsetPolicyResolver
+        from core.application.services import ToolsetPolicyResolver
         from core.domain.values.enums import AgentRole
 
         recon = MockReconToolPort()

@@ -8,8 +8,8 @@ Simplified to heuristic strategy only.
 
 import pytest
 
-from core.domain.values.agent_config import HeuristicConfig, LLMConfig
 from core.domain.services.config_resolver import ConfigResolver
+from core.domain.values.agent_config import HeuristicConfig, LLMConfig
 
 
 class TestConfigResolverHeuristic:

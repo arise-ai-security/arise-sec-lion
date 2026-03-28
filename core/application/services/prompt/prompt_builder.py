@@ -13,7 +13,7 @@ from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
-from core.application.services.prompt_strategy import (
+from core.application.services.prompt.prompt_strategy import (
     PromptContext,
     PromptStrategy,
     SubtaskScope,

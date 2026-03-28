@@ -7,7 +7,7 @@ hierarchy trace. Uses ports for infrastructure abstraction.
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from core.application.services.prompt_parser import PromptParser
+from core.application.services.prompt.prompt_parser import PromptParser
 from core.domain.events.events import (
     AgentCreated,
     ComplexityEvaluated,
@@ -20,6 +20,7 @@ from core.domain.values.prompt_trace import (
     HierarchyTrace,
     ParsedPrompt,
 )
+
 
 if TYPE_CHECKING:
     from core.ports.event_store_port import EventStoreReadPort

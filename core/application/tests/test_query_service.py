@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from core.application.services.query_service import AgentSummaryReadModel
+from core.application.services import AgentSummaryReadModel
 
 
 class TestAgentSummaryReadModel:
@@ -82,7 +82,7 @@ class TestHierarchicalPathComputation:
 
     def test_root_agent_path(self) -> None:
         """Test that root agent has path (0,)."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         # Given: A root agent with sibling_index=0
         root_id = uuid4()
@@ -97,7 +97,7 @@ class TestHierarchicalPathComputation:
 
     def test_child_agent_path(self) -> None:
         """Test that child agent has path (parent_sibling, child_sibling)."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         # Given: A tree with root and second child (sibling_index=1)
         root_id = uuid4()
@@ -116,7 +116,7 @@ class TestHierarchicalPathComputation:
 
     def test_grandchild_agent_path(self) -> None:
         """Test that grandchild has correct 3-level path."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         # Given: A 3-level tree
         root_id = uuid4()
@@ -137,7 +137,7 @@ class TestHierarchicalPathComputation:
 
     def test_path_ordering_is_left_to_right(self) -> None:
         """Test that lexicographic sorting gives left-to-right order."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         # Given: A tree like:
         #        BOSS (0)
@@ -231,7 +231,7 @@ class TestSequentialWorkerOrdering:
         self, mock_repository
     ) -> None:
         """Test that sequential_workers=True returns only the leftmost active worker."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         repository, create_events = mock_repository
 
@@ -263,7 +263,7 @@ class TestSequentialWorkerOrdering:
     @pytest.mark.asyncio
     async def test_non_workers_returned_in_parallel(self, mock_repository) -> None:
         """Test that non-workers are still returned even with sequential_workers."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         repository, create_events = mock_repository
 
@@ -307,7 +307,7 @@ class TestSequentialWorkerOrdering:
         right subtree has workers ready. Workers in right subtree should NOT execute
         until the left subtree is complete.
         """
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         repository, create_events = mock_repository
 
@@ -346,7 +346,7 @@ class TestSequentialWorkerOrdering:
         self, mock_repository
     ) -> None:
         """Test that workers can proceed once left sibling subtrees are complete."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         repository, create_events = mock_repository
 
@@ -392,7 +392,7 @@ class TestSequentialWorkerOrdering:
         Scenario: Left manager is completed but has children still working.
         Right worker should NOT execute until entire left subtree is done.
         """
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         repository, create_events = mock_repository
 
@@ -431,7 +431,7 @@ class TestSequentialWorkerOrdering:
     @pytest.mark.asyncio
     async def test_sequential_false_returns_all_workers(self, mock_repository) -> None:
         """Test that sequential_workers=False returns all active workers."""
-        from core.application.services.query_service import AgentQueryService
+        from core.application.services import AgentQueryService
 
         repository, create_events = mock_repository
 

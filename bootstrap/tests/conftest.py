@@ -29,8 +29,7 @@ from core.domain.events.events import (
     ThoughtCaptured,
     WorkCompleted,
 )
-from core.ports.runtime_ports import LLMPort
-from core.ports.runtime_ports import WorkerToolPort
+from core.ports.runtime_ports import LLMPort, WorkerToolPort
 from presentation.cli import CLI, CLIConfig
 
 

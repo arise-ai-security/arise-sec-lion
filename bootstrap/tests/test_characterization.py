@@ -18,7 +18,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
@@ -28,15 +28,17 @@ from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
     ExecutionServiceDependencies,
+    HierarchyLimitsRegistry,
     ServiceConfig,
 )
-from core.application.services.agent_repository import AgentRepository
-from core.application.services.child_factory import ChildAgentFactory
-from core.application.execution_service import HierarchyLimitsRegistry
-from core.application.services.parent_notifier import ParentNotificationService
-from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.prompt_trace_service import PromptTraceService
-from core.application.services.query_service import AgentQueryService
+from core.application.services import (
+    AgentQueryService,
+    AgentRepository,
+    ChildAgentFactory,
+    ParentNotificationService,
+    PromptBuilder,
+    PromptTraceService,
+)
 from core.domain.aggregates.agent_session import AgentRole, AgentStatus
 from core.domain.events.events import (
     AgentCreated,
@@ -45,7 +47,6 @@ from core.domain.events.events import (
     ComplexityEvaluated,
     DomainEvent,
     PromptSent,
-    StatusChanged,
     TaskAssigned,
     ThoughtCaptured,
     TokensConsumed,
@@ -54,8 +55,8 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from core.domain.shared_context import SharedStore
-from core.domain.values.node_message import Handoff
 from core.domain.values.llm_response import LLMResponse, LLMUsage
+from core.domain.values.node_message import Handoff
 from core.domain.values.subtask import Subtask
 from core.query.projections.impl import SummaryProjection
 
@@ -297,14 +298,13 @@ class FakeLLM:
                     "action": "execute",
                     "reasoning": f"Task classified as {complexity}",
                 })
-            else:
-                # Complex: return decompose with inline subtasks
-                subtasks = json.loads(self._default_subtasks)
-                return json.dumps({
-                    "action": "decompose",
-                    "reasoning": f"Task classified as {complexity}",
-                    "subtasks": subtasks,
-                })
+            # Complex: return decompose with inline subtasks
+            subtasks = json.loads(self._default_subtasks)
+            return json.dumps({
+                "action": "decompose",
+                "reasoning": f"Task classified as {complexity}",
+                "subtasks": subtasks,
+            })
         return self._default_subtasks
 
 

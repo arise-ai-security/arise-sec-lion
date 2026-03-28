@@ -273,12 +273,12 @@ class SiblingFlowRenderer(PromptTraceRenderer):
                     # Extract summary info from sibling-tasks content
                     content = section.content
                     preview = content[:200] + "..." if len(content) > 200 else content
-                    lines.append(f"      📥 Received sibling data:")
+                    lines.append("      📥 Received sibling data:")
                     for line in preview.split("\n")[:5]:
                         lines.append(f"         {line}")
                 break
         else:
-            lines.append(f"      📥 Received: No sibling data (first worker)")
+            lines.append("      📥 Received: No sibling data (first worker)")
 
         lines.append("")
 

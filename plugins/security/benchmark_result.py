@@ -104,12 +104,11 @@ class BenchmarkResult(BaseModel):
     def with_stage_result(self, stage_result: StageResult) -> Self:
         if stage_result.stage == "builder":
             return self.model_copy(update={"builder": stage_result})
-        elif stage_result.stage == "exploiter":
+        if stage_result.stage == "exploiter":
             return self.model_copy(update={"exploiter": stage_result})
-        elif stage_result.stage == "fixer":
+        if stage_result.stage == "fixer":
             return self.model_copy(update={"fixer": stage_result})
-        else:
-            raise ValueError(f"Unknown stage: {stage_result.stage}")
+        raise ValueError(f"Unknown stage: {stage_result.stage}")
 
     def to_report(self) -> str:
         lines = [

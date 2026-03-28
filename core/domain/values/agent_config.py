@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+
 VALID_WORKER_TOOLS: set[str] = {"claude_code", "openhands", "google_adk"}
 DEFAULT_WORKER_TOOL: str = "claude_code"
 

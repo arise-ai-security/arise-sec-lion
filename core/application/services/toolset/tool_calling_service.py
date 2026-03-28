@@ -17,12 +17,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from core.application.services.toolset_context import ActiveToolContext
+from core.application.services.toolset.toolset_context import ActiveToolContext
 from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage
 from core.ports.runtime_ports import LLMPort
 
+
 if TYPE_CHECKING:
-    from core.application.services.context_condenser import ContextCondenser
+    from core.application.services.orchestration.context_condenser import ContextCondenser
 
 logger = logging.getLogger(__name__)
 

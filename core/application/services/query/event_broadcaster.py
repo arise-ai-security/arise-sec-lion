@@ -7,9 +7,11 @@ without waiting for database persistence.
 import asyncio
 import logging
 from collections import defaultdict
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 from uuid import UUID
+
 
 if TYPE_CHECKING:
     from core.domain.events.events import DomainEvent
@@ -32,7 +34,7 @@ class EventBroadcaster:
 
     def __init__(self) -> None:
         """Initialize broadcaster with empty subscriber registry."""
-        self._subscribers: dict[UUID, list[asyncio.Queue["DomainEvent"]]] = (
+        self._subscribers: dict[UUID, list[asyncio.Queue[DomainEvent]]] = (
             defaultdict(list)
         )
         self._registry_lock = asyncio.Lock()
@@ -89,7 +91,7 @@ class EventBroadcaster:
         Yields:
             asyncio.Queue for receiving events
         """
-        queue: asyncio.Queue["DomainEvent"] = asyncio.Queue(maxsize=maxsize)
+        queue: asyncio.Queue[DomainEvent] = asyncio.Queue(maxsize=maxsize)
 
         async with self._registry_lock:
             self._subscribers[root_id].append(queue)

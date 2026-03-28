@@ -9,8 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.prompt_parser import PromptParser
+from core.application.services import PromptBuilder, PromptParser
 from core.domain.values.node_message import (
     Handoff,
     PeerStatus,

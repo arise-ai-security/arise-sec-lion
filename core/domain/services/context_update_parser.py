@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 
 from core.domain.values.parsed_context import ParsedArtifact, ParsedDecision, ParsedUpdate
 
+
 # Regex pattern for extracting context-update block
 _CONTEXT_UPDATE_PATTERN = re.compile(
     r"<context-update>(.*?)</context-update>",

@@ -3,8 +3,6 @@
 Tests the full flow from CLI invocation to output.
 """
 
-from datetime import UTC, datetime
-from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -75,8 +73,9 @@ class TestPromptsCommandIntegration:
         self, mock_settings, mock_event_store
     ) -> None:
         """Test that prompts command outputs tree format by default."""
-        from bootstrap.bootstrap import _trace_prompts
         import argparse
+
+        from bootstrap.bootstrap import _trace_prompts
 
         boss_id = uuid4()
         prompt = "<ROLE>You are a BOSS agent.</ROLE><TASK>Fix CVE</TASK>"
@@ -114,9 +113,10 @@ class TestPromptsCommandIntegration:
         self, mock_settings, mock_event_store
     ) -> None:
         """Test that prompts command outputs JSON when requested."""
-        from bootstrap.bootstrap import _trace_prompts
         import argparse
         import json
+
+        from bootstrap.bootstrap import _trace_prompts
 
         boss_id = uuid4()
         prompt = "<ROLE>You are a BOSS agent.</ROLE>"
@@ -180,8 +180,9 @@ class TestPromptsCommandErrorHandling:
     @pytest.mark.asyncio
     async def test_no_agent_id_and_no_last_run(self) -> None:
         """Test error when no agent ID provided and no last run exists."""
-        from bootstrap.bootstrap import _trace_prompts
         import argparse
+
+        from bootstrap.bootstrap import _trace_prompts
 
         args = argparse.Namespace(
             config=None,

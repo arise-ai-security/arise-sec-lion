@@ -22,8 +22,9 @@ from plugins.security.image_resolver import resolve_secbench_image
 from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
 from plugins.security.security_tool import get_tools_for_phase
 
+
 if TYPE_CHECKING:
-    from core.application.services.prompt_strategy import PromptStrategy
+    from core.application.services import PromptStrategy
 
 
 logger = logging.getLogger(__name__)

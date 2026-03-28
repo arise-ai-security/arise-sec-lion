@@ -5,8 +5,7 @@ from uuid import uuid4
 import pytest
 
 from bootstrap.tests.test_characterization import InMemoryEventStore
-from core.application.services.agent_repository import AgentRepository
-from core.application.services.parent_notifier import ParentNotificationService
+from core.application.services import AgentRepository, ParentNotificationService
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.values.node_message import Briefing
 from core.domain.values.subtask import Subtask

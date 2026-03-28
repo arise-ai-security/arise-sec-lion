@@ -87,13 +87,7 @@ class AgentListProjection:
             elif isinstance(event, WorkCompleted):
                 status = "completed"
 
-            elif isinstance(event, WorkFailed):
-                status = "failed"
-
-            elif isinstance(event, VerificationFailed):
-                status = "failed"
-
-            elif isinstance(event, DecisionInfeasible):
+            elif isinstance(event, WorkFailed) or isinstance(event, VerificationFailed) or isinstance(event, DecisionInfeasible):
                 status = "failed"
 
             elif isinstance(event, RetryScheduled):

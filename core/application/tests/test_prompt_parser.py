@@ -5,7 +5,7 @@ Tests the dynamic XML tag extraction and provenance classification.
 
 import pytest
 
-from core.application.services.prompt_parser import PromptParser
+from core.application.services import PromptParser
 from core.domain.values.prompt_trace import SectionProvenance
 
 

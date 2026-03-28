@@ -2,4 +2,5 @@
 
 from presentation.persistence.run_persistence import RunPersistence
 
+
 __all__ = ["RunPersistence"]

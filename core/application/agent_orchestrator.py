@@ -13,14 +13,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from core.application.services.llm_query_executor import LLMQueryExecutor
-from core.application.services.prompt_strategy import SubtaskScope
-from core.application.services.toolset_context import build_prompt_capabilities
-from core.application.services.toolset_policy_resolver import ToolsetPolicyResolver
-from core.application.services.verification_pipeline import (
-    VerificationPipeline,
-    _head_tail as _verification_head_tail,
-)
+from core.application.services import SubtaskScope, build_prompt_capabilities
 from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
 from core.domain.services import (
     AssessmentResult,
@@ -32,8 +25,13 @@ from core.domain.values.enums import AgentRole, AgentStatus
 
 
 if TYPE_CHECKING:
-    from core.application.services.child_factory import ChildAgentFactory
-    from core.application.services.prompt_builder import PromptBuilder
+    from core.application.services import (
+        ChildAgentFactory,
+        LLMQueryExecutor,
+        PromptBuilder,
+        ToolsetPolicyResolver,
+        VerificationPipeline,
+    )
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.llm_response import LLMResponse
     from core.domain.values.node_message import Handoff
@@ -43,14 +41,10 @@ if TYPE_CHECKING:
         RealtimeCallbackPort,
         WorkerToolPort,
     )
-    from core.application.services.toolset_context import ActiveToolContext
 
 logger = logging.getLogger(__name__)
 
-
-def _head_tail(text: str, limit: int) -> str:
-    """Compatibility wrapper for the verification helper."""
-    return _verification_head_tail(text, limit)
+_ASSESSMENT_PARSE_RETRIES = 2
 
 
 class AgentOrchestrator:
@@ -64,14 +58,14 @@ class AgentOrchestrator:
     """
 
     def __init__(
-        self,
-        llm_port: "LLMPort",
-        worker_port: "WorkerToolPort",
-        prompt_builder: "PromptBuilder",
-        child_factory: "ChildAgentFactory",
-        realtime_callback: "RealtimeCallbackPort | None" = None,
-        llm_query_executor: LLMQueryExecutor | None = None,
-        toolset_resolver: ToolsetPolicyResolver | None = None,
+            self,
+            llm_port: "LLMPort",
+            worker_port: "WorkerToolPort",
+            prompt_builder: "PromptBuilder",
+            child_factory: "ChildAgentFactory",
+            realtime_callback: "RealtimeCallbackPort | None" = None,
+            llm_query_executor: LLMQueryExecutor | None = None,
+            toolset_resolver: ToolsetPolicyResolver | None = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -111,16 +105,35 @@ class AgentOrchestrator:
                 )
                 agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-                # Query LLM (with tool calling if available)
-                response = await self._query_llm(
-                    agent,
-                    prompt,
-                    op,
-                    tool_context=tool_context,
-                )
-
-                # Parse assessment
-                result = parse_assessment_response(response.content)
+                # Query LLM and parse; retry on malformed JSON
+                last_parse_error: Exception | None = None
+                for attempt in range(_ASSESSMENT_PARSE_RETRIES):
+                    response = await self._query_llm(
+                        agent,
+                        prompt,
+                        op,
+                        tool_context=tool_context,
+                    )
+                    try:
+                        result = parse_assessment_response(response.content)
+                        break
+                    except (json.JSONDecodeError, ValueError, KeyError) as e:
+                        last_parse_error = e
+                        if attempt < _ASSESSMENT_PARSE_RETRIES - 1:
+                            logger.warning(
+                                "Assessment parse attempt %d/%d failed for "
+                                "agent=%s: %s",
+                                attempt + 1,
+                                _ASSESSMENT_PARSE_RETRIES,
+                                agent.agent_id,
+                                e,
+                            )
+                else:
+                    agent.fail_with_reason(
+                        f"Assessment failed after {_ASSESSMENT_PARSE_RETRIES} "
+                        f"attempts: {last_parse_error}"
+                    )
+                    return
 
                 self._apply_assessment_result(agent, result)
             except (json.JSONDecodeError, ValueError, KeyError) as e:
@@ -195,12 +208,12 @@ class AgentOrchestrator:
                 return
 
     async def execute_task(
-        self,
-        agent: "AgentSession",
-        working_directory: str | None = None,
-        workspace_context: str | None = None,
-        handoff: "Handoff | None" = None,
-        task_context_overrides: dict[str, Any] | None = None,
+            self,
+            agent: "AgentSession",
+            working_directory: str | None = None,
+            workspace_context: str | None = None,
+            handoff: "Handoff | None" = None,
+            task_context_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -260,9 +273,9 @@ class AgentOrchestrator:
 
     @contextmanager
     def _timed_operation(
-        self,
-        agent: "AgentSession",
-        operation_type: str,
+            self,
+            agent: "AgentSession",
+            operation_type: str,
     ) -> Iterator[None]:
         """Emit start/finish telemetry around an operation."""
         start_time = time.monotonic()
@@ -283,9 +296,9 @@ class AgentOrchestrator:
 
         # Hard limit: children per node
         if (
-            limits is not None
-            and limits.is_children_limited()
-            and len(subtasks) > limits.max_children_per_node
+                limits is not None
+                and limits.is_children_limited()
+                and len(subtasks) > limits.max_children_per_node
         ):
             violations.append(
                 {
@@ -320,9 +333,9 @@ class AgentOrchestrator:
         return None
 
     def _spawn_children(
-        self,
-        agent: "AgentSession",
-        subtasks: list["Subtask"],
+            self,
+            agent: "AgentSession",
+            subtasks: list["Subtask"],
     ) -> str | None:
         """Validate limits, determine child role, and spawn children."""
         failure = self._check_limit_violations(agent, subtasks)
@@ -350,9 +363,9 @@ class AgentOrchestrator:
         return None
 
     def _apply_assessment_result(
-        self,
-        agent: "AgentSession",
-        result: AssessmentResult,
+            self,
+            agent: "AgentSession",
+            result: AssessmentResult,
     ) -> None:
         """Apply the parsed assessment outcome to the agent."""
         if result.action == "infeasible":
@@ -390,11 +403,11 @@ class AgentOrchestrator:
             agent.fail_with_reason(failure_msg)
 
     async def _query_llm(
-        self,
-        agent: "AgentSession",
-        prompt: str,
-        operation: str,
-        tool_context: "ActiveToolContext | None" = None,
+            self,
+            agent: "AgentSession",
+            prompt: str,
+            operation: str,
+            tool_context: "ActiveToolContext | None" = None,
     ) -> "LLMResponse":
         """Query the LLM with optional tool-calling context.
 
@@ -445,8 +458,8 @@ class AgentOrchestrator:
 
     @staticmethod
     def _emit_probe_events(
-        agent: "AgentSession",
-        tool_records: list,
+            agent: "AgentSession",
+            tool_records: list,
     ) -> None:
         """Emit ProbeStarted/ProbeCompleted events for each recon tool call."""
         for record in tool_records:

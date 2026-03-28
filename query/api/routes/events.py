@@ -15,7 +15,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
-from core.application.services.event_broadcaster import EventBroadcaster
+from core.application.services import EventBroadcaster
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,6 @@ from core.domain.events.events import (
 )
 from core.ports.event_store_port import EventStoreReadPort
 from core.query.projections.hierarchy_collector import HierarchyCollector
-from core.query.projections.impl import SummaryProjection
 from core.query.projections.impl.summary import IncrementalSummaryProjection
 from query.api.dependencies import EventStoreDep
 from query.api.routes.agents import _projection_summary_to_schema

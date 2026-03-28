@@ -6,8 +6,8 @@ Test-Driven Development principles.
 
 from uuid import uuid4
 
-from core.domain.events.events import AgentCreated, TaskAssigned
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
+from core.domain.events.events import AgentCreated, TaskAssigned
 
 
 def test_boss_initialization_flow() -> None:

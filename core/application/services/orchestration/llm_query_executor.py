@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from core.application.services.tool_calling_service import ToolCallingService, ToolRecord
+from core.application.services.toolset.tool_calling_service import ToolCallingService, ToolRecord
 from core.domain.values.llm_response import LLMResponse
 
+
 if TYPE_CHECKING:
-    from core.application.services.toolset_context import ActiveToolContext
+    from core.application.services.toolset.toolset_context import ActiveToolContext
     from core.ports.runtime_ports import LLMPort
 
 
@@ -26,7 +27,7 @@ class LLMQueryExecutor:
 
     def __init__(
         self,
-        llm_port: "LLMPort",
+        llm_port: LLMPort,
         tool_calling_service: ToolCallingService | None = None,
     ) -> None:
         self._llm_port = llm_port
@@ -36,7 +37,7 @@ class LLMQueryExecutor:
         self,
         prompt: str,
         config_dict: dict[str, Any],
-        tool_context: "ActiveToolContext | None" = None,
+        tool_context: ActiveToolContext | None = None,
     ) -> LLMQueryResult:
         """Execute the query with tools when a non-empty tool context is active."""
         if self._tool_calling_service is None or tool_context is None or not tool_context.has_tools:

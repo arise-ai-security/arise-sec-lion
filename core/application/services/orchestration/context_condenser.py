@@ -15,6 +15,7 @@ from typing import Any
 
 from core.ports.runtime_ports import LLMPort
 
+
 logger = logging.getLogger(__name__)
 
 # Rough estimate: 1 token ≈ 4 chars for English/code text.

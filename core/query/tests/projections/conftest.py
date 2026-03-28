@@ -5,8 +5,6 @@ from uuid import UUID
 
 import pytest
 
-from core.query.ports.sink_port import SinkPort
-from core.query.projections.registry import RegistryError, register_sink
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
@@ -24,6 +22,8 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from core.domain.values.subtask import Subtask
+from core.query.ports.sink_port import SinkPort
+from core.query.projections.registry import RegistryError, register_sink
 
 
 # Fixed UUIDs for predictable tests

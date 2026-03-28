@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from config import Settings
     from core.application.execution_service import ProgressCallback
-    from core.application.services.prompt_strategy import PromptStrategy
+    from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
 
 

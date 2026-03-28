@@ -9,7 +9,6 @@ from pathlib import Path
 
 import aiofiles
 import aiofiles.os
-
 from fastapi import APIRouter, HTTPException
 from jinja2 import Environment, TemplateSyntaxError
 
@@ -70,7 +69,7 @@ async def _path_exists(path: Path) -> bool:
 
 async def _read_file(path: Path) -> str:
     """Read file content asynchronously."""
-    async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
+    async with aiofiles.open(path, encoding="utf-8") as f:
         return await f.read()
 
 

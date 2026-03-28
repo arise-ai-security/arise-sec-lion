@@ -2,12 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from core.application.services.prompt_strategy import PromptContext
+from core.application.services import PromptContext
 from plugins.security.cve_instance import CVEInstance
 
 
 if TYPE_CHECKING:
-    from core.application.services.prompt_builder import TemplateChain
+    from core.application.services import TemplateChain
     from core.domain.values.node_message import Briefing
 
 

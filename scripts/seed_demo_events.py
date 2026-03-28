@@ -11,16 +11,29 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from core.domain.events.events import (
-    AgentCreated, TaskAssigned, StatusChanged, ComplexityEvaluated,
-    SubtasksDefined, ChildSpawned, ChildCompleted, CodeGenerationStarted,
-    WorkCompleted, WorkFailed, ThoughtCaptured, TokensConsumed,
-    WorkerCostRecorded, OperationFinished, RunStarted, PromptSent,
-    VerificationFailed, DecisionInfeasible, RetryScheduled,
-    RedecompositionTriggered, ProbeStarted, ProbeCompleted,
+    AgentCreated,
+    ChildCompleted,
+    ChildSpawned,
+    CodeGenerationStarted,
+    ComplexityEvaluated,
+    OperationFinished,
+    ProbeCompleted,
+    ProbeStarted,
+    PromptSent,
+    RetryScheduled,
+    RunStarted,
+    StatusChanged,
+    SubtasksDefined,
+    TaskAssigned,
+    ThoughtCaptured,
+    TokensConsumed,
+    VerificationFailed,
+    WorkCompleted,
+    WorkerCostRecorded,
 )
 from core.domain.values.subtask import Subtask
+from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
 
 async def main():
@@ -269,9 +282,9 @@ async def main():
 
     print(f"Seeded {len(events_only)} events for {len(seq)} agents")
     print(f"  BOSS: {boss_id}")
-    print(f"  Hierarchy: 1 BOSS -> 3 MANAGERS -> 6 WORKERS")
-    print(f"  Includes: VerificationFailed, RetryScheduled, ProbeStarted/Completed")
-    print(f"  Dashboard: http://localhost:8000")
+    print("  Hierarchy: 1 BOSS -> 3 MANAGERS -> 6 WORKERS")
+    print("  Includes: VerificationFailed, RetryScheduled, ProbeStarted/Completed")
+    print("  Dashboard: http://localhost:8000")
 
     await store.disconnect()
 

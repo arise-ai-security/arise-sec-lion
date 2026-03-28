@@ -5,7 +5,7 @@ Implements RealtimeCallbackPort by delegating to EventBroadcaster.
 
 from uuid import UUID
 
-from core.application.services.event_broadcaster import EventBroadcaster
+from core.application.services import EventBroadcaster
 from core.domain.events.events import DomainEvent
 
 

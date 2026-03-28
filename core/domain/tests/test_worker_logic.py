@@ -6,12 +6,13 @@ external tools (Claude Code, OpenHands) and capture their thinking process.
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from core.application.agent_orchestrator import AgentOrchestrator
+from core.application.services import PromptBuilder
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
@@ -19,10 +20,7 @@ from core.domain.events.events import (
     WorkCompleted,
 )
 from core.domain.values.llm_response import LLMResponse, LLMUsage
-from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.application.services.prompt_builder import PromptBuilder
-from core.ports.runtime_ports import LLMPort
-from core.ports.runtime_ports import WorkerToolPort
+from core.ports.runtime_ports import LLMPort, WorkerToolPort
 
 
 class FakeWorkerTool(WorkerToolPort):

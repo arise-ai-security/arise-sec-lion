@@ -15,6 +15,7 @@ from infrastructure.adapters.worker.claude_sdk_adapter import (
     SDKAdapterConfig,
 )
 
+
 # Module path for patching (use actual implementation module)
 SDK_ADAPTER_MODULE = "infrastructure.adapters.worker.claude_sdk_adapter"
 

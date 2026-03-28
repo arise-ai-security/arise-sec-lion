@@ -5,6 +5,7 @@ Builds AgentSummary read models from events with efficient child loading.
 
 from uuid import UUID
 
+from core.domain.aggregates.agent_session import AgentSession
 from core.domain.events.events import (
     ChildSpawned,
     CodeGenerationStarted,
@@ -15,7 +16,6 @@ from core.domain.events.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.aggregates.agent_session import AgentSession
 from core.ports.event_store_port import EventStoreReadPort
 from core.query.projections.models import AgentSummary, SubtaskSummary
 

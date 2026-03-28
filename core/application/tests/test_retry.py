@@ -1,6 +1,5 @@
 """Tests for auto-healing and retry logic (Phase 4)."""
 
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
@@ -8,6 +7,16 @@ from uuid import uuid4
 import pytest
 
 from bootstrap.application import ExecutionLimitsBridge
+
+# Reuse InMemoryEventStore from characterization tests
+from bootstrap.tests.test_characterization import (
+    FakeLLM,
+    FakeSharedContextPort,
+    FakeSiblingViewPort,
+    InMemoryEventStore,
+    _find_child_ids,
+    _get_agent_status,
+)
 from config import BossConfig, ManagerConfig, RetryConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
@@ -16,11 +25,13 @@ from core.application.execution_service import (
     HierarchyLimitsRegistry,
     ServiceConfig,
 )
-from core.application.services.agent_repository import AgentRepository
-from core.application.services.child_factory import ChildAgentFactory
-from core.application.services.parent_notifier import ParentNotificationService
-from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.query_service import AgentQueryService
+from core.application.services import (
+    AgentQueryService,
+    AgentRepository,
+    ChildAgentFactory,
+    ParentNotificationService,
+    PromptBuilder,
+)
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     CodeGenerationStarted,
@@ -28,20 +39,6 @@ from core.domain.events.events import (
     RetryScheduled,
     WorkCompleted,
     WorkFailed,
-)
-from core.domain.values.llm_response import LLMResponse, LLMUsage
-
-
-# Reuse InMemoryEventStore from characterization tests
-from bootstrap.tests.test_characterization import (
-    FakeLLM,
-    FakeSharedContextPort,
-    FakeSiblingViewPort,
-    InMemoryEventStore,
-    _complexity_json,
-    _find_child_ids,
-    _get_agent_status,
-    _subtasks_json,
 )
 
 

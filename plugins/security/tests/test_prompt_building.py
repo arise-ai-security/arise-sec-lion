@@ -3,8 +3,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.prompt_parser import PromptParser
+from core.application.services import PromptBuilder, PromptParser
 from core.domain.aggregates.agent_session import AgentRole
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy, SecurityDomainPlugin

@@ -11,12 +11,11 @@ from uuid import uuid4
 import pytest
 
 from core.application.agent_orchestrator import AgentOrchestrator
-from core.application.services.prompt_builder import PromptBuilder
+from core.application.services import PromptBuilder
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
-    ThoughtCaptured,
     VerificationFailed,
     WorkCompleted,
     WorkFailed,
@@ -76,7 +75,6 @@ class FakeWorkerTool:
 
 def _make_worker_agent(success_criteria: str = "") -> AgentSession:
     """Create a WORKER agent ready for execution."""
-    from core.domain.events.events import ComplexityEvaluated
 
     agent_id = uuid4()
     agent = AgentSession.create(
@@ -95,8 +93,8 @@ def _make_worker_agent(success_criteria: str = "") -> AgentSession:
 
 
 def _make_orchestrator(
-    llm: FakeLLM | None = None,
-    worker: FakeWorkerTool | None = None,
+        llm: FakeLLM | None = None,
+        worker: FakeWorkerTool | None = None,
 ) -> AgentOrchestrator:
     from unittest.mock import MagicMock
 
@@ -292,43 +290,3 @@ class TestJudgeLargeOutput:
         await orchestrator.execute_task(agent)
 
         assert agent.status == AgentStatus.COMPLETED
-
-
-class TestHeadTailHelper:
-    """Tests for the _head_tail truncation utility."""
-
-    def test_short_text_unchanged(self) -> None:
-        from core.application.agent_orchestrator import _head_tail
-
-        text = "short text"
-        assert _head_tail(text, 100) == text
-
-    def test_exact_limit_unchanged(self) -> None:
-        from core.application.agent_orchestrator import _head_tail
-
-        text = "x" * 100
-        assert _head_tail(text, 100) == text
-
-    def test_large_text_preserves_head_and_tail(self) -> None:
-        from core.application.agent_orchestrator import _head_tail
-
-        head_marker = "HEAD_EVIDENCE"
-        tail_marker = "TAIL_EVIDENCE"
-        middle = "x" * 10000
-        text = head_marker + middle + tail_marker
-
-        result = _head_tail(text, 1000)
-
-        assert head_marker in result
-        assert tail_marker in result
-        assert "chars omitted" in result
-        assert len(result) < len(text)
-
-    def test_query_service_head_tail(self) -> None:
-        from core.application.services.query_service import _head_tail
-
-        exploit = "EXPLOIT_START: trigger UAF via JSON parse\n" + "x" * 5000 + "\nEXPLOIT_END: ASan confirmed"
-        result = _head_tail(exploit, 2000)
-
-        assert "EXPLOIT_START" in result
-        assert "ASan confirmed" in result

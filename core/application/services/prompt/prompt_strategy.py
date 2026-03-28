@@ -9,7 +9,7 @@ from core.domain.values.prompt_capabilities import PromptCapabilities
 
 
 if TYPE_CHECKING:
-    from core.application.services.prompt_builder import TemplateChain
+    from core.application.services.prompt.prompt_builder import TemplateChain
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
 
