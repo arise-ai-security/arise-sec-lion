@@ -1,6 +1,7 @@
 """OpenHands SDK adapter: use the SDK conversation directly for task execution."""
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -21,6 +22,7 @@ logging.getLogger("openhands.tools").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
+_SHUTDOWN_GRACE_SECONDS = 5
 
 
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
@@ -100,16 +102,21 @@ class OpenHandsAdapter(WorkerAdapterBase):
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
             return
 
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="openhands"
+        )
         try:
             conversation.send_message(task_description)
+            future = executor.submit(conversation.run)
 
             try:
                 await asyncio.wait_for(
-                    asyncio.to_thread(conversation.run),
+                    asyncio.wrap_future(future),
                     timeout=self.timeout_seconds,
                 )
             except TimeoutError:
                 self._request_shutdown(conversation)
+                await self._await_thread_exit(future)
                 yield sequencer.failed(
                     f"Task timed out after {self.timeout_seconds} seconds"
                 )
@@ -137,6 +144,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
         finally:
             self._request_shutdown(conversation)
+            executor.shutdown(wait=False)
 
     def _build_conversation(self, working_dir: str) -> Any:
         """Create an OpenHands SDK conversation for the current task."""
@@ -221,6 +229,27 @@ class OpenHandsAdapter(WorkerAdapterBase):
                         method_name,
                         exc_info=True,
                     )
+
+    async def _await_thread_exit(
+        self, future: concurrent.futures.Future,  # type: ignore[type-arg]
+    ) -> None:
+        """Give the background thread a grace period to exit after shutdown."""
+        if future.done():
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.wrap_future(future),
+                timeout=_SHUTDOWN_GRACE_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "OpenHands thread did not exit within %ds after shutdown; "
+                "it will run until max_iteration_per_run (%d) is reached",
+                _SHUTDOWN_GRACE_SECONDS,
+                self.max_iterations_per_run,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _classify_event(event: Any) -> str:

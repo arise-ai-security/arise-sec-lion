@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStorePort
-    from core.ports.runtime_ports import SharedContextPort, SiblingViewPort
+    from core.ports.runtime_ports import SharedContextPort, SiblingViewPort, SystemLimitsPort
 
 @dataclass(frozen=True)
 class ServiceConfig:
@@ -88,7 +88,7 @@ class AgentExecutionService:
         event_store: "EventStorePort",
         dependencies: ExecutionServiceDependencies,
         config: ServiceConfig,
-        system_limits: object,
+        system_limits: "SystemLimitsPort",
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         # Core ports
@@ -333,14 +333,9 @@ class AgentExecutionService:
 
     def _is_run_timed_out(self, start_time: float) -> bool:
         """Return True when the global orchestration deadline has elapsed."""
-        max_run_duration = getattr(
-            self._system_limits,
-            "max_run_duration_seconds",
-            None,
-        )
-        if max_run_duration is None or max_run_duration <= 0:
-            return False
-        return (time.monotonic() - start_time) > max_run_duration
+        return (
+            time.monotonic() - start_time
+        ) > self._system_limits.max_run_duration_seconds
 
     async def _handle_run_timeout(
         self,
@@ -350,16 +345,8 @@ class AgentExecutionService:
         in_progress: set[UUID],
     ) -> None:
         """Cancel in-flight work and fail any remaining active agents."""
-        max_run_duration = getattr(
-            self._system_limits,
-            "max_run_duration_seconds",
-            None,
-        )
-        timeout_reason = (
-            f"Run timed out after {max_run_duration} seconds"
-            if max_run_duration is not None
-            else "Run timed out"
-        )
+        max_run_duration = self._system_limits.max_run_duration_seconds
+        timeout_reason = f"Run timed out after {max_run_duration} seconds"
 
         logger.error(
             "System loop timed out for root %s after %s seconds",

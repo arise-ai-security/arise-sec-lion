@@ -11,6 +11,7 @@ from bootstrap.tests.test_characterization import (
     FakeLLM,
     FakeSharedContextPort,
     FakeSiblingViewPort,
+    FakeWorkerTool,
     InMemoryEventStore,
     _find_child_ids,
     _get_agent_status,
@@ -58,7 +59,8 @@ class HangingWorker:
 def _wire_service(
     event_store: InMemoryEventStore,
     llm: FakeLLM,
-    worker: HangingWorker,
+    worker: Any,
+    max_run_duration_seconds: float = 0.1,
 ) -> AgentExecutionService:
     config = ServiceConfig(
         max_retries=3,
@@ -73,7 +75,7 @@ def _wire_service(
         max_children_per_node=-1,
         max_total_agents=-1,
         max_concurrent_workers=-1,
-        max_run_duration_seconds=0.1,
+        max_run_duration_seconds=max_run_duration_seconds,
     )
 
     prompt_builder = PromptBuilder("prompts", "claude_code")
@@ -136,3 +138,25 @@ async def test_run_system_loop_times_out_and_fails_active_agents() -> None:
     assert _get_agent_status(event_store, child_id) == "failed"
     assert _get_agent_status(event_store, boss_id) == "failed"
     assert run_completed_events[-1].status == "timed_out"
+
+
+@pytest.mark.asyncio
+async def test_run_system_loop_completes_naturally_when_timeout_is_large() -> None:
+    """When timeout is high, the loop exits on natural completion, not timeout."""
+    event_store = InMemoryEventStore()
+    llm = FakeLLM()
+    worker = FakeWorkerTool()
+    service = _wire_service(
+        event_store, llm, worker, max_run_duration_seconds=9999,
+    )
+
+    boss_id = await service.create_boss_agent("Normal task")
+    await service.run_system_loop(boss_id)
+
+    run_completed_events = [
+        event for event in event_store.events_for(boss_id)
+        if isinstance(event, RunCompleted)
+    ]
+
+    assert run_completed_events[-1].status in ("completed", "failed")
+    assert run_completed_events[-1].status != "timed_out"

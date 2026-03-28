@@ -135,6 +135,21 @@ class SiblingViewPort(Protocol):
 # =============================================================================
 
 
+class SystemLimitsPort(Protocol):
+    """Execution limits for the orchestration system loop."""
+
+    max_depth: int
+    max_children_per_node: int
+    max_total_agents: int
+    max_concurrent_workers: int
+    max_concurrent_llm_calls: int
+    llm_jitter_max_ms: int
+    max_run_duration_seconds: float
+
+    def is_workers_limited(self) -> bool: ...
+    def is_llm_limited(self) -> bool: ...
+
+
 class Toolset(Protocol):
     """Named tool provider that can advertise and execute tools."""
 

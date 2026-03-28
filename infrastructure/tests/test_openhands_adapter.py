@@ -1,5 +1,7 @@
 """Tests for OpenHandsAdapter."""
 
+import logging
+import threading
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -7,7 +9,10 @@ from uuid import uuid4
 import pytest
 
 from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
-from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+from infrastructure.adapters.worker.openhands_adapter import (
+    OpenHandsAdapter,
+    _SHUTDOWN_GRACE_SECONDS,
+)
 
 
 def _mock_event(
@@ -57,6 +62,20 @@ class _FakeConversation:
 class _SlowConversation(_FakeConversation):
     def run(self) -> None:
         time.sleep(0.05)
+
+
+class _StuckConversation(_FakeConversation):
+    """Conversation whose run() ignores pause/close and blocks until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._gate = threading.Event()
+
+    def run(self) -> None:
+        self._gate.wait(timeout=30)
+
+    def release(self) -> None:
+        self._gate.set()
 
 
 class TestOpenHandsAdapter:
@@ -111,3 +130,33 @@ class TestOpenHandsAdapter:
         assert conversation.closed is True
         assert isinstance(events[-1], WorkFailed)
         assert "timed out" in events[-1].reason
+
+    @pytest.mark.asyncio
+    async def test_timeout_logs_warning_when_thread_outlives_grace_period(
+        self, monkeypatch, caplog,
+    ) -> None:
+        monkeypatch.setattr(
+            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            0.05,
+        )
+        adapter = OpenHandsAdapter(timeout_seconds=0.01)
+        conversation = _StuckConversation()
+        monkeypatch.setattr(
+            adapter, "_build_conversation", lambda working_dir: conversation,
+        )
+
+        events = []
+        with caplog.at_level(logging.WARNING):
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Stuck task",
+                    "agent_id": uuid4(),
+                    "working_directory": "/tmp",
+                }
+            ):
+                events.append(event)
+
+        assert isinstance(events[-1], WorkFailed)
+        assert any("did not exit" in record.message for record in caplog.records)
+
+        conversation.release()
