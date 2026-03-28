@@ -259,6 +259,7 @@ class AgentSession:
     @_apply.register
     def _(self, event: RedecompositionTriggered) -> None:
         self.status = AgentStatus.ANALYZING
+        self.redecomposition_count += 1
         self.child_ids.clear()
         self.child_reports.clear()
         self.version += 1
@@ -399,6 +400,7 @@ class AgentSession:
         self.search_hints: tuple[str, ...] = ()
         # Retry tracking
         self.retry_count: int = 0
+        self.redecomposition_count: int = 0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
