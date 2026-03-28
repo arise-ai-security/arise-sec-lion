@@ -275,6 +275,9 @@ class CostBreakdownSchema(BaseModel):
     total_tokens: int = Field(..., description="Total tokens consumed")
     prompt_tokens: int = Field(..., description="Input tokens consumed")
     completion_tokens: int = Field(..., description="Output tokens consumed")
+    cache_read_tokens: int = Field(0, description="Cache read tokens consumed")
+    cache_write_tokens: int = Field(0, description="Cache write tokens consumed")
+    reasoning_tokens: int = Field(0, description="Reasoning tokens consumed")
 
     # Breakdowns
     cost_by_role: RoleCostBreakdownSchema = Field(
@@ -340,9 +343,16 @@ class AgentPromptSchema(BaseModel):
 
     prompt: str = Field(..., description="Full prompt text")
     prompt_type: str = Field(
-        ..., description="Type of prompt (complexity_evaluation, task_decomposition, worker_execution)"
+        ...,
+        description=(
+            "Type of prompt "
+            "(complexity_evaluation, task_decomposition, worker_execution)"
+        ),
     )
-    target: str = Field(..., description="Where prompt was sent (llm, claude_code, openhands, etc.)")
+    target: str = Field(
+        ...,
+        description="Where prompt was sent (llm, claude_code, openhands, etc.)",
+    )
     occurred_at: datetime = Field(..., description="When the prompt was sent")
 
 

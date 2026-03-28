@@ -224,8 +224,8 @@ async def get_agent_hierarchy(
     builder = HierarchyBuilder(agents_by_id)
     try:
         hierarchy = builder.build(agent_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    except KeyError as err:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found") from err
 
     return AgentHierarchySchema(
         root=_agent_node_to_schema(hierarchy.root, max_depth=max_depth),
@@ -278,6 +278,9 @@ def _projection_summary_to_schema(summary: ProjectionSummary) -> ExecutionSummar
         total_tokens=cost.total_tokens if cost else 0,
         prompt_tokens=cost.prompt_tokens if cost else 0,
         completion_tokens=cost.completion_tokens if cost else 0,
+        cache_read_tokens=cost.cache_read_tokens if cost else 0,
+        cache_write_tokens=cost.cache_write_tokens if cost else 0,
+        reasoning_tokens=cost.reasoning_tokens if cost else 0,
         cost_by_role=RoleCostBreakdownSchema(
             BOSS=cost.cost_by_role.get(AgentRole.BOSS.name, 0.0) if cost else 0.0,
             MANAGER=cost.cost_by_role.get(AgentRole.MANAGER.name, 0.0) if cost else 0.0,

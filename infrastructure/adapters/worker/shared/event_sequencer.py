@@ -5,7 +5,13 @@ Tracks sequence numbers and creates domain events with proper sequencing.
 
 from uuid import UUID
 
-from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed, WorkerCostRecorded
+from core.domain.events.events import (
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkerCostRecorded,
+    WorkerUsageMetrics,
+    WorkFailed,
+)
 
 
 class EventSequencer:
@@ -96,6 +102,12 @@ class EventSequencer:
         duration_seconds: float,
         model: str | None = None,
         tokens: int | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
+        usage_metrics: list[WorkerUsageMetrics] | None = None,
     ) -> WorkerCostRecorded:
         """Create a WorkerCostRecorded event and increment sequence.
 
@@ -105,6 +117,12 @@ class EventSequencer:
             duration_seconds: Execution duration.
             model: Underlying model if known.
             tokens: Total tokens if available.
+            prompt_tokens: Prompt/input tokens if available.
+            completion_tokens: Completion/output tokens if available.
+            cache_read_tokens: Cache read tokens if available.
+            cache_write_tokens: Cache write tokens if available.
+            reasoning_tokens: Reasoning tokens if available.
+            usage_metrics: Detailed per-usage worker SDK metrics if available.
 
         Returns:
             WorkerCostRecorded event with current sequence number.
@@ -115,6 +133,12 @@ class EventSequencer:
             tool_name=tool_name,
             model=model,
             tokens=tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
+            usage_metrics=usage_metrics or [],
             cost_usd=cost_usd,
             duration_seconds=duration_seconds,
         )

@@ -2,8 +2,19 @@
 
 ## CLI Reference
 
+The CLI runs inside the Docker container. Prefix every command with `docker compose exec`:
+
+```bash
+cd deployment
+docker compose --profile local exec app python main.py <command> [options]
 ```
-python main.py [-c CONFIG] <command> [options]
+
+Or open a shell first and run commands directly:
+
+```bash
+docker compose --profile local exec app bash
+# now inside the container:
+python main.py <command> [options]
 ```
 
 Global option `-c` / `--config` overrides the YAML config file (default: auto-loaded from `config/`).
@@ -23,14 +34,57 @@ python main.py run <task> [--worker-tool TOOL] [--worker-model MODEL]
 | `--domain` | Enable domain plugin: `security` |
 | `--cve-file` | SEC-bench CVE instance JSON (implies `--domain security`) |
 
-**Examples:**
+#### Generic Tasks (No Plugin)
+
+By default, the system operates as a **generic multi-agent orchestrator** with no security domain. Any task description works:
 
 ```bash
-python main.py run "Refactor the authentication module"
-python main.py run "Fix memory leak" --worker-tool claude_code --worker-model claude-sonnet-4-20250514
-python main.py run "Patch CVE-2023-1234" --cve-file instances/cve-2023-1234.json
-python main.py run "Analyze buffer overflow" --domain security
+# Simple task — workers execute directly
+docker compose --profile local exec app \
+  python main.py run "Refactor the authentication module"
+
+# Override the worker tool (default is set in config.yaml)
+docker compose --profile local exec app \
+  python main.py run "Fix memory leak in parser" --worker-tool claude_code
+
+# Override the worker LLM model
+docker compose --profile local exec app \
+  python main.py run "Add pagination to the API" --worker-model claude-sonnet-4-20250514
+
+# Combine both overrides
+docker compose --profile local exec app \
+  python main.py run "Migrate database schema" --worker-tool openhands --worker-model gpt-4o
 ```
+
+The system decomposes the task (BOSS -> MANAGER -> WORKER), executes it, and writes results to the output directory.
+
+#### Security Tasks (Plugin Enabled)
+
+The security plugin activates **only** when explicitly requested. It adds CVE context inference, SEC-bench container lifecycle, and security-specific prompt strategies.
+
+**Option A — CVE instance file** (implies `--domain security` automatically):
+
+```bash
+docker compose --profile local exec app \
+  python main.py run "Patch CVE-2023-1234" --cve-file deployment/gpac_cve_instance.json
+```
+
+**Option B — Domain flag** (no CVE file, security prompts still active):
+
+```bash
+docker compose --profile local exec app \
+  python main.py run "Analyze buffer overflow in libxml2" --domain security
+```
+
+Both approaches enable the same plugin — `--cve-file` just additionally loads the CVE context from the JSON file.
+
+#### Worker Tools
+
+| Tool | Flag | Description |
+|------|------|-------------|
+| Claude Code | `--worker-tool claude_code` | Claude Agent SDK with file/shell tools |
+| OpenHands | `--worker-tool openhands` | OpenHands AI developer (default in config) |
+| Google ADK | `--worker-tool google_adk` | Google ADK with Gemini + MCP filesystem tools |
 
 ### `list` — List Past Runs
 
@@ -129,29 +183,43 @@ Recon is an automatic capability — not a CLI command. During PENDING/MANAGER a
 
 ### Enabling / Disabling
 
-Per-role in `config.yaml` under `orchestration.recon`:
+Per-role in `config.yaml` under `orchestration.tool_calling.policies`:
 
 ```yaml
 orchestration:
-  recon:
-    default:
-      pending:  { enabled: true,  max_iterations: 5 }
-      manager:  { enabled: true,  max_iterations: 5 }
-      boss:     { enabled: false }
+  tool_calling:
+    policies:
+      default:
+        pending:
+          toolsets:
+            recon: { enabled: false }
+        manager:
+          toolsets:
+            recon: { enabled: false }
+        boss:
+          toolsets:
+            recon: { enabled: false }
 ```
 
-Set `enabled: false` on any role to disable recon for that role.
+Set `enabled: true` on any role to enable recon for that role.
 
 ### Per-Domain Overrides
 
 Domain-specific policies override defaults:
 
 ```yaml
-    domains:
-      secbench:
-        manager:
-          max_iterations: 3
-          allowed_tools: [search_codebase, read_file, get_file_structure, get_symbols_overview, read_symbol]
+      domains:
+        secbench:
+          manager:
+            max_iterations: 3
+            toolsets:
+              recon:
+                allowed_tools:
+                  - search_codebase
+                  - read_file
+                  - get_file_structure
+                  - get_symbols_overview
+                  - read_symbol
 ```
 
 ### Context Management
@@ -160,11 +228,11 @@ Prevents context overflow during tool-calling loops:
 
 ```yaml
 orchestration:
-  limits:
-    max_recon_iterations: 5            # hard cap on tool-calling rounds
-    recon_result_char_limit: 6000      # truncate each tool result
-    recon_condense_after_iteration: 2  # LLM-summarize older exchanges
-    recon_token_budget: 80000          # force-stop if exceeded
+  tool_calling:
+    max_iterations: 5              # hard cap on tool-calling rounds
+    result_char_limit: 6000        # truncate each tool result
+    condense_after_iteration: 2    # LLM-summarize older exchanges
+    token_budget: 80000            # force-stop if exceeded
 ```
 
 ---

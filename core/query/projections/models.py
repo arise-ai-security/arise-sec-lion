@@ -79,6 +79,9 @@ class CostSummary:
     total_tokens: int
     prompt_tokens: int
     completion_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
     cost_by_model: dict[str, float] = field(default_factory=dict)
     cost_by_operation: dict[str, float] = field(default_factory=dict)
     cost_by_agent: dict[str, float] = field(default_factory=dict)
@@ -170,6 +173,9 @@ class CostSummary:
             total_tokens=0,
             prompt_tokens=0,
             completion_tokens=0,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            reasoning_tokens=0,
             cost_by_model={},
             cost_by_operation={},
             cost_by_agent={},

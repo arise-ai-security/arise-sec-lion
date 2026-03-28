@@ -12,6 +12,7 @@ from core.domain.events.events import (
     TokensConsumed,
     WorkCompleted,
     WorkerCostRecorded,
+    WorkerUsageMetrics,
     WorkFailed,
 )
 from core.domain.exceptions import CostInvariantViolation
@@ -206,6 +207,65 @@ class TestSummaryProjectionCosts:
         assert result.cost.llm_cost_usd == 0.0
         assert result.cost.worker_cost_usd == 0.50
         assert result.cost.total_cost_usd == 0.50
+
+    def test_uses_detailed_worker_metrics_for_model_and_token_breakdowns(self) -> None:
+        """Should preserve OpenHands detailed token categories and per-model costs."""
+        events = [
+            AgentCreated(
+                aggregate_id=WORKER_ID,
+                sequence_number=1,
+                role="WORKER",
+                occurred_at=BASE_TIME,
+            ),
+            WorkerCostRecorded(
+                aggregate_id=WORKER_ID,
+                sequence_number=2,
+                tool_name="openhands",
+                model="openai/gpt-4o",
+                tokens=21,
+                prompt_tokens=10,
+                completion_tokens=5,
+                cache_read_tokens=2,
+                cache_write_tokens=1,
+                reasoning_tokens=3,
+                usage_metrics=[
+                    WorkerUsageMetrics(
+                        usage_id="primary",
+                        model="openai/gpt-4o",
+                        accumulated_cost_usd=0.04,
+                        prompt_tokens=6,
+                        completion_tokens=3,
+                    ),
+                    WorkerUsageMetrics(
+                        usage_id="helper",
+                        model="openai/gpt-4o-mini",
+                        accumulated_cost_usd=0.08,
+                        prompt_tokens=4,
+                        completion_tokens=2,
+                        cache_read_tokens=2,
+                        cache_write_tokens=1,
+                        reasoning_tokens=3,
+                    ),
+                ],
+                cost_usd=0.12,
+                duration_seconds=18.0,
+                occurred_at=BASE_TIME + timedelta(seconds=1),
+            ),
+        ]
+
+        projection = SummaryProjection()
+        result = projection.project(events)
+
+        assert result.cost is not None
+        assert result.cost.total_cost_usd == pytest.approx(0.12)
+        assert result.cost.total_tokens == 21
+        assert result.cost.prompt_tokens == 10
+        assert result.cost.completion_tokens == 5
+        assert result.cost.cache_read_tokens == 2
+        assert result.cost.cache_write_tokens == 1
+        assert result.cost.reasoning_tokens == 3
+        assert result.cost.cost_by_model["openai/gpt-4o"] == pytest.approx(0.04)
+        assert result.cost.cost_by_model["openai/gpt-4o-mini"] == pytest.approx(0.08)
 
     def test_aggregates_costs_by_role(self, cost_events_hierarchy) -> None:
         """Should aggregate costs by agent role."""

@@ -5,13 +5,20 @@ import concurrent.futures
 import logging
 import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from core.domain.events.events import DomainEvent
+from core.domain.events.events import (
+    DomainEvent,
+    WorkerCostItem,
+    WorkerResponseLatencyItem,
+    WorkerTokenUsageItem,
+    WorkerUsageMetrics,
+)
 
 from .base import WorkerAdapterBase
-from .shared import ContainerSessionContext, EventSequencer, get_model_pricing
+from .shared import ContainerSessionContext, EventSequencer
 
 
 # Suppress verbose OpenHands logging
@@ -36,6 +43,20 @@ SDK_EVENT_TYPE_MAP: dict[str, str] = {
     "FileWriteAction": "progress",
     "FileEditAction": "progress",
 }
+
+
+@dataclass(slots=True)
+class OpenHandsCostData:
+    """Normalized OpenHands cost data used to build WorkerCostRecorded events."""
+
+    cost_usd: float = 0.0
+    tokens: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    usage_metrics: list[WorkerUsageMetrics] = field(default_factory=list)
 
 
 class OpenHandsAdapter(WorkerAdapterBase):
@@ -130,13 +151,19 @@ class OpenHandsAdapter(WorkerAdapterBase):
                         self._classify_event(event),
                     )
 
-            cost_usd, tokens = self._extract_cost_data(conversation)
+            cost_data = self._extract_cost_data(conversation)
             yield sequencer.cost_recorded(
                 tool_name=self._get_tool_name(),
-                cost_usd=cost_usd,
+                cost_usd=cost_data.cost_usd,
                 duration_seconds=self._get_duration(),
-                model=self.model,
-                tokens=tokens,
+                model=self._resolve_cost_model(cost_data),
+                tokens=cost_data.tokens,
+                prompt_tokens=cost_data.prompt_tokens,
+                completion_tokens=cost_data.completion_tokens,
+                cache_read_tokens=cost_data.cache_read_tokens,
+                cache_write_tokens=cost_data.cache_write_tokens,
+                reasoning_tokens=cost_data.reasoning_tokens,
+                usage_metrics=cost_data.usage_metrics,
             )
 
             yield sequencer.completed(self._extract_result(conversation, working_dir))
@@ -173,36 +200,180 @@ class OpenHandsAdapter(WorkerAdapterBase):
             return []
         return list(state.events)
 
-    def _extract_cost_data(self, conversation: Any) -> tuple[float, int | None]:
-        """Extract cost from conversation_stats API."""
+    def _extract_cost_data(self, conversation: Any) -> OpenHandsCostData:
+        """Extract cost and token detail from conversation_stats."""
         stats = getattr(conversation, "conversation_stats", None)
         if stats is None:
-            return 0.0, None
+            return OpenHandsCostData()
 
-        def get_stat(name: str, default: Any = None) -> Any:
-            if isinstance(stats, dict):
-                return stats.get(name, default)
-            return getattr(stats, name, default)
+        usage_to_metrics = self._get_stat(stats, "usage_to_metrics")
+        return (
+            self._extract_usage_metrics(usage_to_metrics)
+            if usage_to_metrics
+            else OpenHandsCostData()
+        )
 
-        accumulated_cost = get_stat("accumulated_cost")
-        if accumulated_cost is not None:
-            prompt_tokens = get_stat("prompt_tokens", 0) or 0
-            completion_tokens = get_stat("completion_tokens", 0) or 0
-            total_tokens = (
-                prompt_tokens + completion_tokens
-                if (prompt_tokens or completion_tokens)
-                else None
+    def _extract_usage_metrics(self, usage_to_metrics: Any) -> OpenHandsCostData:
+        """Extract detailed metrics from ConversationStats.usage_to_metrics."""
+        items = usage_to_metrics.items() if isinstance(usage_to_metrics, dict) else []
+        usage_metrics: list[WorkerUsageMetrics] = []
+        total_cost = 0.0
+        prompt_tokens = 0
+        completion_tokens = 0
+        cache_read_tokens = 0
+        cache_write_tokens = 0
+        reasoning_tokens = 0
+
+        for usage_id, metrics in items:
+            usage_metric = self._build_usage_metrics(str(usage_id), metrics)
+            usage_metrics.append(usage_metric)
+            total_cost += usage_metric.accumulated_cost_usd
+            prompt_tokens += usage_metric.prompt_tokens
+            completion_tokens += usage_metric.completion_tokens
+            cache_read_tokens += usage_metric.cache_read_tokens
+            cache_write_tokens += usage_metric.cache_write_tokens
+            reasoning_tokens += usage_metric.reasoning_tokens
+
+        if not usage_metrics:
+            return OpenHandsCostData()
+
+        return OpenHandsCostData(
+            cost_usd=total_cost,
+            tokens=self._sum_tokens(
+                prompt_tokens,
+                completion_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                reasoning_tokens,
+            ),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
+            usage_metrics=usage_metrics,
+        )
+
+    def _build_usage_metrics(self, usage_id: str, metrics: Any) -> WorkerUsageMetrics:
+        """Normalize one Metrics or MetricsSnapshot record into event payload data."""
+        model = self._get_stat(metrics, "model_name")
+        accumulated_cost = float(self._get_stat(metrics, "accumulated_cost", 0.0) or 0.0)
+        (
+            prompt_tokens,
+            completion_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
+        ) = self._extract_accumulated_token_usage(metrics)
+
+        return WorkerUsageMetrics(
+            usage_id=usage_id,
+            model=model,
+            accumulated_cost_usd=accumulated_cost,
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            cache_read_tokens=cache_read_tokens or 0,
+            cache_write_tokens=cache_write_tokens or 0,
+            reasoning_tokens=reasoning_tokens or 0,
+            cost_items=[
+                WorkerCostItem(
+                    model=self._get_stat(cost, "model", "") or model or "",
+                    cost_usd=float(
+                        self._get_stat(cost, "cost_usd", self._get_stat(cost, "cost", 0.0))
+                        or 0.0
+                    ),
+                    timestamp=self._maybe_float(self._get_stat(cost, "timestamp")),
+                )
+                for cost in self._get_stat(metrics, "costs", []) or []
+            ],
+            response_latencies=[
+                WorkerResponseLatencyItem(
+                    model=self._get_stat(latency, "model", "") or model or "",
+                    latency_seconds=float(self._get_stat(latency, "latency", 0.0) or 0.0),
+                    response_id=str(self._get_stat(latency, "response_id", "") or ""),
+                )
+                for latency in self._get_stat(metrics, "response_latencies", []) or []
+            ],
+            token_usages=[
+                WorkerTokenUsageItem(
+                    model=self._get_stat(token_usage, "model", "") or model or "",
+                    prompt_tokens=int(self._get_stat(token_usage, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(
+                        self._get_stat(token_usage, "completion_tokens", 0) or 0
+                    ),
+                    cache_read_tokens=int(
+                        self._get_stat(token_usage, "cache_read_tokens", 0) or 0
+                    ),
+                    cache_write_tokens=int(
+                        self._get_stat(token_usage, "cache_write_tokens", 0) or 0
+                    ),
+                    reasoning_tokens=int(
+                        self._get_stat(token_usage, "reasoning_tokens", 0) or 0
+                    ),
+                    context_window=int(self._get_stat(token_usage, "context_window", 0) or 0),
+                    per_turn_token=int(self._get_stat(token_usage, "per_turn_token", 0) or 0),
+                    response_id=str(self._get_stat(token_usage, "response_id", "") or ""),
+                )
+                for token_usage in self._get_stat(metrics, "token_usages", []) or []
+            ],
+        )
+
+    def _extract_accumulated_token_usage(
+        self, stats: Any,
+    ) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+        """Extract aggregate token categories from metrics or legacy dicts."""
+        accumulated = self._get_stat(stats, "accumulated_token_usage")
+        if accumulated is not None:
+            return (
+                self._maybe_int(self._get_stat(accumulated, "prompt_tokens")),
+                self._maybe_int(self._get_stat(accumulated, "completion_tokens")),
+                self._maybe_int(self._get_stat(accumulated, "cache_read_tokens")),
+                self._maybe_int(self._get_stat(accumulated, "cache_write_tokens")),
+                self._maybe_int(self._get_stat(accumulated, "reasoning_tokens")),
             )
-            return float(accumulated_cost), total_tokens
 
-        prompt_tokens = get_stat("prompt_tokens", 0) or 0
-        completion_tokens = get_stat("completion_tokens", 0) or 0
-        if prompt_tokens or completion_tokens:
-            pricing = get_model_pricing(self.model)
-            cost = pricing.calculate_cost(prompt_tokens, completion_tokens)
-            return cost, prompt_tokens + completion_tokens
+        return (
+            self._maybe_int(self._get_stat(stats, "prompt_tokens")),
+            self._maybe_int(self._get_stat(stats, "completion_tokens")),
+            self._maybe_int(self._get_stat(stats, "cache_read_tokens")),
+            self._maybe_int(self._get_stat(stats, "cache_write_tokens")),
+            self._maybe_int(self._get_stat(stats, "reasoning_tokens")),
+        )
 
-        return 0.0, None
+    def _resolve_cost_model(self, cost_data: OpenHandsCostData) -> str | None:
+        """Return a representative model value for the aggregate worker event."""
+        usage_models = {usage.model for usage in cost_data.usage_metrics if usage.model}
+        if len(usage_models) == 1:
+            return next(iter(usage_models))
+        return self.model
+
+    @staticmethod
+    def _get_stat(obj: Any, name: str, default: Any = None) -> Any:
+        """Read an attribute or dict key without assuming an SDK object shape."""
+        if isinstance(obj, dict):
+            return obj.get(name, default)
+        return getattr(obj, name, default)
+
+    @staticmethod
+    def _maybe_int(value: Any) -> int | None:
+        """Normalize optional numeric values to integers."""
+        if value is None:
+            return None
+        return int(value)
+
+    @staticmethod
+    def _maybe_float(value: Any) -> float | None:
+        """Normalize optional numeric values to floats."""
+        if value is None:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _sum_tokens(*parts: int | None) -> int | None:
+        """Sum optional token counts, returning None when no data exists."""
+        if not any(part is not None for part in parts):
+            return None
+        return sum(part or 0 for part in parts)
 
     def _extract_result(self, conversation: Any, working_dir: str) -> str:
         """Extract result from conversation events."""
@@ -249,7 +420,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 self.max_iterations_per_run,
             )
         except Exception:
-            pass
+            logger.debug("OpenHands thread exit wait failed", exc_info=True)
 
     @staticmethod
     def _classify_event(event: Any) -> str:

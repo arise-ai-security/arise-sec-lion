@@ -1,8 +1,9 @@
 """Summary projection: aggregate events into statistics."""
 
+from __future__ import annotations
+
 from collections import Counter, defaultdict
-from collections.abc import Iterable
-from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from core.domain.events.events import (
@@ -24,6 +25,16 @@ from core.query.projections.models import (
     ProjectionSummary,
 )
 from core.query.projections.registry import register_projection
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import datetime
+
+
+def _recorded_worker_tokens(event: WorkerCostRecorded) -> int:
+    """Return the best available total token count for a worker cost event."""
+    return event.total_recorded_tokens or 0
 
 
 class IncrementalSummaryProjection:
@@ -50,6 +61,9 @@ class IncrementalSummaryProjection:
         self._total_tokens = 0
         self._prompt_tokens = 0
         self._completion_tokens = 0
+        self._cache_read_tokens = 0
+        self._cache_write_tokens = 0
+        self._reasoning_tokens = 0
         self._cost_by_model: dict[str, float] = defaultdict(float)
         self._cost_by_operation: dict[str, float] = defaultdict(float)
         self._cost_by_agent: dict[str, float] = defaultdict(float)
@@ -73,7 +87,7 @@ class IncrementalSummaryProjection:
 
         return self._build_summary()
 
-    def _process_event(self, event: DomainEvent) -> None:
+    def _process_event(self, event: DomainEvent) -> None:  # noqa: PLR0915
         """Process a single event incrementally."""
         self._total_events += 1
         self._events_by_type[type(event).__name__] += 1
@@ -109,15 +123,20 @@ class IncrementalSummaryProjection:
         elif isinstance(event, WorkerCostRecorded):
             role = self._role_map.get(agent_id, "UNKNOWN")
             self._worker_cost += event.cost_usd
-            if event.model:
-                self._cost_by_model[event.model] += event.cost_usd
+            for model_name, model_cost in event.model_costs.items():
+                self._cost_by_model[model_name] += model_cost
             operation_key = f"worker:{event.tool_name}"
             self._cost_by_operation[operation_key] += event.cost_usd
             self._cost_by_agent[str(agent_id)] += event.cost_usd
             self._cost_by_role[role] += event.cost_usd
-            if event.tokens:
-                self._total_tokens += event.tokens
-                self._tokens_by_role[role] += event.tokens
+            recorded_tokens = _recorded_worker_tokens(event)
+            self._total_tokens += recorded_tokens
+            self._prompt_tokens += event.prompt_tokens or 0
+            self._completion_tokens += event.completion_tokens or 0
+            self._cache_read_tokens += event.cache_read_tokens or 0
+            self._cache_write_tokens += event.cache_write_tokens or 0
+            self._reasoning_tokens += event.reasoning_tokens or 0
+            self._tokens_by_role[role] += recorded_tokens
 
         elif isinstance(event, StatusChanged):
             old_phase = event.old_status.lower()
@@ -132,13 +151,7 @@ class IncrementalSummaryProjection:
 
             self._agent_phase_start[(agent_id, new_phase)] = event.occurred_at
 
-        elif isinstance(event, WorkFailed):
-            self._errors.append(event)
-
-        elif isinstance(event, VerificationFailed):
-            self._errors.append(event)
-
-        elif isinstance(event, DecisionInfeasible):
+        elif isinstance(event, (WorkFailed, VerificationFailed, DecisionInfeasible)):
             self._errors.append(event)
 
         elif isinstance(event, OperationFinished):
@@ -164,13 +177,18 @@ class IncrementalSummaryProjection:
             total_tokens=self._total_tokens,
             prompt_tokens=self._prompt_tokens,
             completion_tokens=self._completion_tokens,
+            cache_read_tokens=self._cache_read_tokens,
+            cache_write_tokens=self._cache_write_tokens,
+            reasoning_tokens=self._reasoning_tokens,
             cost_by_model={k: round(v, 6) for k, v in self._cost_by_model.items()},
             cost_by_operation={k: round(v, 6) for k, v in self._cost_by_operation.items()},
             cost_by_agent={k: round(v, 6) for k, v in self._cost_by_agent.items()},
             cost_by_role={k: round(v, 6) for k, v in self._cost_by_role.items()},
             tokens_by_role=dict(self._tokens_by_role),
             budget_limit_usd=self._budget_limit,
-            budget_remaining_usd=round(budget_remaining, 6) if budget_remaining is not None else None,
+            budget_remaining_usd=(
+                round(budget_remaining, 6) if budget_remaining is not None else None
+            ),
             budget_exceeded=budget_exceeded,
         )
 
@@ -268,7 +286,7 @@ class SummaryProjection(Projection):
             execution_time=timing,
         )
 
-    def _extract_all_metrics(
+    def _extract_all_metrics(  # noqa: PLR0912, PLR0915
         self, events: list[DomainEvent]
     ) -> tuple[
         dict[UUID, str],           # role_map
@@ -296,6 +314,9 @@ class SummaryProjection(Projection):
         total_tokens = 0
         prompt_tokens = 0
         completion_tokens = 0
+        cache_read_tokens = 0
+        cache_write_tokens = 0
+        reasoning_tokens = 0
         cost_by_model: dict[str, float] = defaultdict(float)
         cost_by_operation: dict[str, float] = defaultdict(float)
         cost_by_agent: dict[str, float] = defaultdict(float)
@@ -339,15 +360,20 @@ class SummaryProjection(Projection):
             elif isinstance(event, WorkerCostRecorded):
                 role = role_map.get(agent_id, "UNKNOWN")
                 worker_cost += event.cost_usd
-                if event.model:
-                    cost_by_model[event.model] += event.cost_usd
+                for model_name, model_cost in event.model_costs.items():
+                    cost_by_model[model_name] += model_cost
                 operation_key = f"worker:{event.tool_name}"
                 cost_by_operation[operation_key] += event.cost_usd
                 cost_by_agent[str(agent_id)] += event.cost_usd
                 cost_by_role[role] += event.cost_usd
-                if event.tokens:
-                    total_tokens += event.tokens
-                    tokens_by_role[role] += event.tokens
+                recorded_tokens = _recorded_worker_tokens(event)
+                total_tokens += recorded_tokens
+                prompt_tokens += event.prompt_tokens or 0
+                completion_tokens += event.completion_tokens or 0
+                cache_read_tokens += event.cache_read_tokens or 0
+                cache_write_tokens += event.cache_write_tokens or 0
+                reasoning_tokens += event.reasoning_tokens or 0
+                tokens_by_role[role] += recorded_tokens
 
             elif isinstance(event, StatusChanged):
                 old_phase = event.old_status.lower()
@@ -360,13 +386,7 @@ class SummaryProjection(Projection):
                     del agent_phase_start[phase_key]
                 agent_phase_start[(agent_id, new_phase)] = event.occurred_at
 
-            elif isinstance(event, WorkFailed):
-                errors.append(event)
-
-            elif isinstance(event, VerificationFailed):
-                errors.append(event)
-
-            elif isinstance(event, DecisionInfeasible):
+            elif isinstance(event, (WorkFailed, VerificationFailed, DecisionInfeasible)):
                 errors.append(event)
 
             elif isinstance(event, OperationFinished):
@@ -387,20 +407,25 @@ class SummaryProjection(Projection):
             total_tokens=total_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
             cost_by_model={k: round(v, 6) for k, v in cost_by_model.items()},
             cost_by_operation={k: round(v, 6) for k, v in cost_by_operation.items()},
             cost_by_agent={k: round(v, 6) for k, v in cost_by_agent.items()},
             cost_by_role={k: round(v, 6) for k, v in cost_by_role.items()},
             tokens_by_role=dict(tokens_by_role),
             budget_limit_usd=self._budget_limit,
-            budget_remaining_usd=round(budget_remaining, 6) if budget_remaining is not None else None,
+            budget_remaining_usd=(
+                round(budget_remaining, 6) if budget_remaining is not None else None
+            ),
             budget_exceeded=budget_exceeded,
         )
 
         # Build timing summary
         per_agent: dict[str, float] = {}
-        for aid in agent_first:
-            per_agent[str(aid)] = (agent_last[aid] - agent_first[aid]).total_seconds()
+        for aid, first_event in agent_first.items():
+            per_agent[str(aid)] = (agent_last[aid] - first_event).total_seconds()
 
         per_role: dict[str, float] = defaultdict(float)
         for agent_id_str, duration in per_agent.items():
@@ -454,6 +479,9 @@ class SummaryProjection(Projection):
         total_tokens = 0
         prompt_tokens = 0
         completion_tokens = 0
+        cache_read_tokens = 0
+        cache_write_tokens = 0
+        reasoning_tokens = 0
 
         cost_by_model: dict[str, float] = defaultdict(float)
         cost_by_operation: dict[str, float] = defaultdict(float)
@@ -484,17 +512,22 @@ class SummaryProjection(Projection):
                 role = role_map.get(agent_id, "UNKNOWN")
 
                 worker_cost += event.cost_usd
-                if event.model:
-                    cost_by_model[event.model] += event.cost_usd
+                for model_name, model_cost in event.model_costs.items():
+                    cost_by_model[model_name] += model_cost
 
                 operation_key = f"worker:{event.tool_name}"
                 cost_by_operation[operation_key] += event.cost_usd
                 cost_by_agent[str(agent_id)] += event.cost_usd
                 cost_by_role[role] += event.cost_usd
 
-                if event.tokens:
-                    total_tokens += event.tokens
-                    tokens_by_role[role] += event.tokens
+                recorded_tokens = _recorded_worker_tokens(event)
+                total_tokens += recorded_tokens
+                prompt_tokens += event.prompt_tokens or 0
+                completion_tokens += event.completion_tokens or 0
+                cache_read_tokens += event.cache_read_tokens or 0
+                cache_write_tokens += event.cache_write_tokens or 0
+                reasoning_tokens += event.reasoning_tokens or 0
+                tokens_by_role[role] += recorded_tokens
 
         total_cost = llm_cost + worker_cost
 
@@ -513,6 +546,9 @@ class SummaryProjection(Projection):
             total_tokens=total_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
             cost_by_model={k: round(v, 6) for k, v in cost_by_model.items()},
             cost_by_operation={k: round(v, 6) for k, v in cost_by_operation.items()},
             cost_by_agent={k: round(v, 6) for k, v in cost_by_agent.items()},
@@ -581,8 +617,7 @@ class SummaryProjection(Projection):
 
         # Calculate per-agent execution times
         per_agent: dict[str, float] = {}
-        for agent_id in agent_first:
-            first = agent_first[agent_id]
+        for agent_id, first in agent_first.items():
             last = agent_last[agent_id]
             per_agent[str(agent_id)] = (last - first).total_seconds()
 

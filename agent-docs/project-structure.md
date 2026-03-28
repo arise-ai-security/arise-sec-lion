@@ -2,12 +2,12 @@
 
 ```
 arise-sec-lion/
-├── core/                    # Domain core (NEVER imports from infrastructure/)
+├── core/                    # Domain core (NEVER imports from infrastructure/ or plugins/)
 │   ├── domain/
 │   │   ├── aggregates/
 │   │   │   └── agent_session.py     # AgentSession — event-sourced aggregate root
 │   │   ├── events/
-│   │   │   └── events.py            # ~30 frozen DomainEvent Pydantic models
+│   │   │   └── events.py            # ~31 frozen DomainEvent Pydantic models
 │   │   ├── services/
 │   │   │   ├── config_resolver.py   # Heuristic config adjustments per operation
 │   │   │   ├── context_update_parser.py  # XML <context-update> extraction
@@ -19,34 +19,45 @@ arise-sec-lion/
 │   │   │   ├── enums.py             # AgentRole, AgentStatus
 │   │   │   ├── agent_config.py      # AgentConfig, HeuristicConfig
 │   │   │   ├── subtask.py           # Subtask (with depends_on for DAG)
-│   │   │   ├── cve_instance.py      # CVEInstance for SEC-bench
-│   │   │   ├── benchmark_result.py  # StageResult, BenchmarkResult
 │   │   │   ├── constraint_failure.py # ConstraintFailure
-│   │   │   ├── llm_response.py      # LLMUsage, LLMResponse
+│   │   │   ├── llm_response.py      # LLMUsage, LLMResponse, LLMToolResponse, ToolCall
 │   │   │   ├── parsed_context.py    # ParsedDecision, ParsedArtifact, ParsedUpdate
+│   │   │   ├── prompt_capabilities.py # PromptToolDescriptor, PromptCapabilities
 │   │   │   ├── prompt_trace.py      # PromptSection, ParsedPrompt, HierarchyTrace
+│   │   │   ├── recon_policy.py      # ReconPolicy (tool-calling loop control)
+│   │   │   ├── json_types.py        # JSON type aliases
 │   │   │   └── context/             # Re-export shim → node_message.py + limits.py
 │   │   ├── shared_context.py        # SharedStore (ArtifactStore + DecisionLog)
 │   │   └── exceptions.py
 │   ├── ports/
 │   │   ├── event_store_port.py      # EventStoreConnectPort, WritePort, ReadPort (+ composite)
-│   │   └── runtime_ports.py         # LLMPort, WorkerToolPort, CostCalculatorPort,
-│   │                                #   RealtimeCallbackPort, SharedContextPort, SiblingViewPort
+│   │   ├── runtime_ports.py         # LLMPort, WorkerToolPort, CostCalculatorPort,
+│   │   │                            #   RealtimeCallbackPort, SharedContextPort, SiblingViewPort,
+│   │   │                            #   SystemLimitsPort, Toolset, ReconToolPort
+│   │   └── domain_plugin_port.py    # DomainPlugin protocol (optional domain extensions)
 │   ├── application/
-│   │   ├── agent_orchestrator.py    # 3 direct methods: evaluate_complexity/task, execute_task
-│   │   ├── execution_service.py     # Main loop, retry, concurrency, HierarchyLimitsRegistry
+│   │   ├── agent_orchestrator.py    # 3 direct methods: assess_task, evaluate_task, execute_task
+│   │   ├── execution_service.py     # Main loop, retry, concurrency
 │   │   ├── dtos.py                  # AgentResultDTO, SystemStatisticsDTO
 │   │   └── services/
-│   │       ├── agent_repository.py  # Load/save agents (event replay + OCC)
-│   │       ├── child_factory.py     # Spawn children from ChildSpawned events
-│   │       ├── parent_notifier.py   # Recursive notification, infeasible re-decomposition
-│   │       ├── query_service.py     # DAG scheduling, sibling view, subtree caching
-│   │       ├── prompt_builder.py    # Jinja2 TemplateChain composition
-│   │       ├── prompt_strategy.py   # PromptStrategy protocol and SEC-bench extensions
-│   │       ├── prompt_parser.py     # XML section extraction with provenance
-│   │       ├── prompt_trace_service.py # Hierarchy trace building
-│   │       ├── event_broadcaster.py # In-memory pub/sub for SSE
-│   │       └── cve_inference.py     # CVEInstance extraction from task text
+│   │       ├── agent_repository.py      # Load/save agents (event replay + OCC)
+│   │       ├── child_factory.py         # Spawn children from ChildSpawned events
+│   │       ├── parent_notifier.py       # Recursive notification, infeasible re-decomposition
+│   │       ├── query_service.py         # DAG scheduling, sibling view, subtree caching
+│   │       ├── prompt_builder.py        # Jinja2 TemplateChain composition
+│   │       ├── prompt_strategy.py       # PromptStrategy protocol
+│   │       ├── prompt_parser.py         # XML section extraction with provenance
+│   │       ├── prompt_trace_service.py  # Hierarchy trace building
+│   │       ├── event_broadcaster.py     # In-memory pub/sub for SSE
+│   │       ├── role_dispatch.py         # Role-based handler dispatch (Pending/Evaluator/Worker)
+│   │       ├── tool_calling_service.py  # Iterative tool-calling with result aggregation
+│   │       ├── toolset_policy_resolver.py # Per-role/per-domain tool access control
+│   │       ├── toolset_context.py       # Active tool context building
+│   │       ├── context_condenser.py     # Context compression for prompts
+│   │       ├── hierarchy_limits_registry.py # Limit tracking registry
+│   │       ├── llm_query_executor.py    # LLM invocation wrapper
+│   │       ├── retry_policy.py          # Retry configuration
+│   │       └── verification_pipeline.py # Multi-stage response verification
 │   └── query/
 │       ├── ports/sink_port.py       # SinkPort protocol
 │       └── projections/             # Pipeline: EventStore → Collector → Filter → Formatter → Sink
@@ -65,6 +76,8 @@ arise-sec-lion/
 │       ├── litellm_adapter.py       # LLMPort → LiteLLM (any provider)
 │       ├── shared_context_adapter.py # SharedContextPort → PostgreSQL
 │       ├── cost_calculator.py       # CostCalculatorPort
+│       ├── recon_tool_adapter.py    # ReconToolPort → tree-sitter + grep + glob
+│       ├── secbench_runtime.py      # DockerSecBenchRuntime (container management)
 │       ├── sinks.py                 # Stdout, Stderr, File, String, Callback, Multi, Stream
 │       └── worker/
 │           ├── base.py              # WorkerAdapterBase (template method)
@@ -72,8 +85,19 @@ arise-sec-lion/
 │           ├── openhands_adapter.py  # OpenHands AI developer
 │           ├── google_adk_adapter.py # Google ADK with Gemini
 │           └── shared/              # EventSequencer, ModelPricing, ToolFormatters, validation
+├── plugins/
+│   └── security/                    # Security domain plugin (optional, fully removable)
+│       ├── plugin.py                # SecurityDomainPlugin (implements DomainPlugin)
+│       ├── prompt_strategy.py       # SecBenchPromptStrategy (implements PromptStrategy)
+│       ├── cve_instance.py          # CVEInstance frozen model
+│       ├── cve_inference.py         # CVEInstanceInferenceService
+│       ├── benchmark_result.py      # BenchmarkResult, StageResult
+│       ├── container_runtime.py     # Container runtime management
+│       ├── image_resolver.py        # Docker image resolution
+│       └── security_tool.py         # Valgrind, KLEE tool interfaces
 ├── bootstrap/
-│   ├── bootstrap.py                 # Composition root, argparse, command dispatch
+│   ├── bootstrap.py                 # Argparse, command dispatch entry point
+│   ├── composition.py               # Domain component builders (sole cross-boundary import)
 │   ├── infrastructure.py            # InfrastructureConfig, adapter factory
 │   ├── application.py               # ApplicationConfig, service wiring
 │   └── realtime_adapter.py          # RealtimeCallbackPort → EventBroadcaster bridge
@@ -94,15 +118,13 @@ arise-sec-lion/
 │   ├── config.dev.yaml              # Dev overrides
 │   ├── config.development.yaml
 │   └── config.production.yaml
-├── prompts/                         # Jinja2 LLM prompt templates
-│   ├── base/coordinator.j2
-│   ├── core/roles/                  # boss, manager, worker, pending
-│   ├── core/strategies/             # complexity, decomposition
-│   ├── core/output/                 # complexity, subtasks format specs
-│   ├── core/context/                # ancestry, artifacts, children, decisions, etc.
-│   ├── core/worker/                 # execution, security_ops
-│   ├── secbench/                    # SEC-bench specialization (boss, manager/*, worker/*)
-│   └── security/                    # Security overlays
+├── prompts/                         # Jinja2 LLM prompt templates (4-tier)
+│   ├── system.j2                    # Tier 1: System identity
+│   ├── roles/                       # Tier 2: Role personas (boss, manager, worker, pending)
+│   ├── operations/                  # Tier 3: Operation instructions (assess, decomposition, execution)
+│   ├── context/                     # Context injection (workspace, sibling, scope)
+│   └── domains/                     # Tier 4: Domain specialization
+│       └── secbench/                # SEC-bench (boss, cve, tools, manager/*, worker/*)
 ├── deployment/                      # Docker, docker-compose (see deployment/README.md)
 └── main.py                          # Entry: bootstrap.bootstrap.main()
 ```
@@ -118,4 +140,4 @@ query/api/     ──┼──► bootstrap/ ──► core/application/ ──�
                  └──────────────► infrastructure/adapters/ ─────┘ (implements)
 ```
 
-`core/` never imports from outer layers.
+`core/` never imports from outer layers. Only `bootstrap/composition.py` imports from `plugins/`.

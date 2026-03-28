@@ -23,7 +23,11 @@ CLI.run_with_task(task)
 
 `AgentExecutionService.run_system_loop()`:
 ```python
+deadline = time.monotonic() + max_run_duration_seconds  # default 1800s
 while True:
+    if time.monotonic() > deadline:
+        cancel_deepest_agents_first()        # graceful timeout
+        break
     active_agents = get_active_agent_ids()   # ANALYZING or WAITING
     if not active_agents: break
     for agent_id in active_agents:           # DAG-aware ordering
@@ -35,8 +39,8 @@ while True:
 
 `run_agent_step(agent_id)`:
 1. Load agent from event store (replay events)
-2. Dispatch based on role/status to `AgentOrchestrator`:
-   - PENDING → `evaluate_complexity(agent)`
+2. Dispatch based on role/status via `RoleDispatch` to `AgentOrchestrator`:
+   - PENDING → `assess_task(agent)` (single LLM call decides execute vs decompose)
    - BOSS/MANAGER (ANALYZING) → `evaluate_task(agent)`
    - WORKER → `execute_task(agent, ...)`
 3. Persist new events with OCC (retry on `ConcurrencyError`)
@@ -44,10 +48,10 @@ while True:
 
 ## Three Orchestrator Operations
 
-### evaluate_complexity (PENDING → WORKER/MANAGER)
+### assess_task (PENDING → WORKER/MANAGER)
 
 ```
-Build complexity prompt (Jinja2) → LLM query → parse simple/complex
+Build assessment prompt (Jinja2) → LLM query → parse execute/decompose
 → agent.apply_complexity_result()
 → Events: TokensConsumed, ComplexityEvaluated
 ```
@@ -83,7 +87,7 @@ WORKER completes
     → recurse up until BOSS completes
 ```
 
-On child failure with "Infeasible:" prefix → triggers re-decomposition instead of failure propagation.
+On child failure with "Infeasible:" prefix → triggers re-decomposition instead of failure propagation (capped at `max_redecompositions` per parent, default 2; exhausted → propagate failure).
 
 ## Auto-Healing Retry
 

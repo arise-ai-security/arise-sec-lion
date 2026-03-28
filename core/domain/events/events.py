@@ -264,6 +264,52 @@ class TokensConsumed(DomainEvent):
     operation: str  # "complexity_evaluation", "task_decomposition", "worker_execution"
 
 
+class WorkerCostItem(BaseModel):
+    """Individual worker-side cost record captured from an SDK."""
+
+    model: str = ""
+    cost_usd: float = 0.0
+    timestamp: float | None = None
+
+
+class WorkerResponseLatencyItem(BaseModel):
+    """Per-response latency captured by a worker SDK."""
+
+    model: str = ""
+    latency_seconds: float = 0.0
+    response_id: str = ""
+
+
+class WorkerTokenUsageItem(BaseModel):
+    """Per-response token usage captured by a worker SDK."""
+
+    model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    context_window: int = 0
+    per_turn_token: int = 0
+    response_id: str = ""
+
+
+class WorkerUsageMetrics(BaseModel):
+    """Aggregated and per-call worker LLM metrics for one SDK usage ID."""
+
+    usage_id: str
+    model: str | None = None
+    accumulated_cost_usd: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_items: list[WorkerCostItem] = Field(default_factory=list)
+    response_latencies: list[WorkerResponseLatencyItem] = Field(default_factory=list)
+    token_usages: list[WorkerTokenUsageItem] = Field(default_factory=list)
+
+
 class WorkerCostRecorded(DomainEvent):
     """Worker tool execution incurred cost.
 
@@ -274,8 +320,48 @@ class WorkerCostRecorded(DomainEvent):
     tool_name: str  # "claude_code", "openhands"
     model: str | None = None  # Underlying model if known
     tokens: int | None = None  # Total tokens if available
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    usage_metrics: list[WorkerUsageMetrics] = Field(default_factory=list)
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
+
+    @property
+    def total_recorded_tokens(self) -> int | None:
+        """Return the best available total token count for this worker event."""
+        if self.tokens is not None:
+            return self.tokens
+
+        token_parts = (
+            self.prompt_tokens,
+            self.completion_tokens,
+            self.cache_read_tokens,
+            self.cache_write_tokens,
+            self.reasoning_tokens,
+        )
+        if not any(part is not None for part in token_parts):
+            return None
+
+        return sum(part or 0 for part in token_parts)
+
+    @property
+    def model_costs(self) -> dict[str, float]:
+        """Return the most accurate per-model cost breakdown available."""
+        if self.usage_metrics:
+            costs: dict[str, float] = {}
+            for usage in self.usage_metrics:
+                if not usage.model:
+                    continue
+                costs[usage.model] = costs.get(usage.model, 0.0) + usage.accumulated_cost_usd
+            if costs:
+                return costs
+
+        if self.model:
+            return {self.model: self.cost_usd}
+        return {}
 
 
 class LimitEnforced(DomainEvent):

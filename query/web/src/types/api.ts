@@ -204,6 +204,12 @@ export interface CostBreakdown {
   prompt_tokens: number;
   /** Output tokens consumed. */
   completion_tokens: number;
+  /** Cache read tokens consumed. */
+  cache_read_tokens: number;
+  /** Cache write tokens consumed. */
+  cache_write_tokens: number;
+  /** Reasoning tokens consumed. */
+  reasoning_tokens: number;
 
   /** Cost breakdown by agent role. */
   cost_by_role: RoleCostBreakdown;

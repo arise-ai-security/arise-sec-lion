@@ -13,6 +13,11 @@ from core.query.projections.models import CostSummary
 from core.query.projections.registry import register_projection
 
 
+def _recorded_worker_tokens(event: WorkerCostRecorded) -> int:
+    """Return the best available total token count for a worker cost event."""
+    return event.total_recorded_tokens or 0
+
+
 @register_projection("cost")
 class CostProjection(Projection):
     """Aggregate cost events into summary statistics.
@@ -48,6 +53,9 @@ class CostProjection(Projection):
         total_tokens = 0
         prompt_tokens = 0
         completion_tokens = 0
+        cache_read_tokens = 0
+        cache_write_tokens = 0
+        reasoning_tokens = 0
         cost_by_model: dict[str, float] = defaultdict(float)
         cost_by_operation: dict[str, float] = defaultdict(float)
         cost_by_agent: dict[str, float] = defaultdict(float)
@@ -65,13 +73,17 @@ class CostProjection(Projection):
 
             elif isinstance(event, WorkerCostRecorded):
                 worker_cost += event.cost_usd
-                if event.model:
-                    cost_by_model[event.model] += event.cost_usd
+                for model_name, model_cost in event.model_costs.items():
+                    cost_by_model[model_name] += model_cost
                 operation_key = f"worker:{event.tool_name}"
                 cost_by_operation[operation_key] += event.cost_usd
                 cost_by_agent[str(event.aggregate_id)] += event.cost_usd
-                if event.tokens:
-                    total_tokens += event.tokens
+                total_tokens += _recorded_worker_tokens(event)
+                prompt_tokens += event.prompt_tokens or 0
+                completion_tokens += event.completion_tokens or 0
+                cache_read_tokens += event.cache_read_tokens or 0
+                cache_write_tokens += event.cache_write_tokens or 0
+                reasoning_tokens += event.reasoning_tokens or 0
 
         total_cost = llm_cost + worker_cost
 
@@ -89,6 +101,9 @@ class CostProjection(Projection):
             total_tokens=total_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
             cost_by_model=dict(cost_by_model),
             cost_by_operation=dict(cost_by_operation),
             cost_by_agent=dict(cost_by_agent),
