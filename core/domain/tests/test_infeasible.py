@@ -2,8 +2,6 @@
 
 from uuid import uuid4
 
-import pytest
-
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     DecisionInfeasible,
@@ -95,6 +93,7 @@ class TestRedecomposition:
         )
 
         assert parent.status == AgentStatus.ANALYZING
+        assert parent.redecomposition_count == 1
 
     def test_redecomposition_clears_children(self) -> None:
         parent = AgentSession.create(
@@ -140,6 +139,22 @@ class TestRedecomposition:
         ]
         assert len(redecomp_events) == 1
         assert redecomp_events[0].reason == "Constraint failure"
+
+    def test_redecomposition_count_replays_correctly(self) -> None:
+        parent = AgentSession.create(
+            agent_id=uuid4(), role=AgentRole.BOSS, config=_config()
+        )
+        parent.assign_task("Task")
+        parent.trigger_redecomposition(
+            trigger_child_id=uuid4(), reason="Constraint failure"
+        )
+
+        all_events = list(parent.events)
+        parent.mark_changes_as_committed()
+        replayed = AgentSession.load_from_history(all_events)
+
+        assert replayed.redecomposition_count == 1
+        assert replayed.status == AgentStatus.ANALYZING
 
 
 class TestProbeEvents:

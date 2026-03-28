@@ -85,6 +85,7 @@ def create_runtime_cli(
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
+            worker_tool_max_iterations=settings.worker.max_iterations_per_run,
         )
     )
 
@@ -100,6 +101,8 @@ def create_runtime_cli(
             tool_calling=settings.orchestration.tool_calling,
             max_retries=settings.orchestration.max_retries,
             poll_interval=settings.orchestration.poll_interval,
+            max_run_duration_seconds=settings.orchestration.max_run_duration_seconds,
+            max_redecompositions=settings.orchestration.max_redecompositions,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

@@ -19,15 +19,18 @@ class ParentNotificationService:
     def __init__(
         self,
         repository: AgentRepository,
+        max_redecompositions: int = 2,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         """Initialize the parent notification service.
 
         Args:
             repository: Agent repository for loading and persisting agents.
+            max_redecompositions: Max infeasibility-driven redecompositions per parent.
             progress_callback: Optional callback for progress notifications.
         """
         self._repository = repository
+        self._max_redecompositions = max_redecompositions
         self._progress_callback = progress_callback
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
@@ -108,14 +111,29 @@ class ParentNotificationService:
         # Check if failure is infeasible → trigger re-decomposition
         error = child.error_message or ""
         if error.startswith("Infeasible:"):
-            parent.trigger_redecomposition(
-                trigger_child_id=child.agent_id,
-                reason=error,
+            if parent.redecomposition_count < self._max_redecompositions:
+                parent.trigger_redecomposition(
+                    trigger_child_id=child.agent_id,
+                    reason=error,
+                )
+                await self._repository.persist_events(
+                    parent, parent_version, self._progress_callback
+                )
+                # Parent is now ANALYZING — system loop will re-decompose it
+                return
+
+            parent.handle_child_failure(
+                child_id=child.agent_id,
+                reason=(
+                    "Redecomposition limit reached "
+                    f"({self._max_redecompositions}): {error}"
+                ),
             )
             await self._repository.persist_events(
                 parent, parent_version, self._progress_callback
             )
-            # Parent is now ANALYZING — system loop will re-decompose it
+            if parent.status == AgentStatus.FAILED:
+                await self.notify_if_failed(parent)
             return
 
         parent.handle_child_failure(

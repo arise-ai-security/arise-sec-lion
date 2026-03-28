@@ -64,6 +64,17 @@ class TestInfrastructureWiring:
         assert infra.llm_adapter is not None
         assert infra.worker_tool is not None
 
+    def test_passes_openhands_iteration_limit_into_adapter(self) -> None:
+        """OpenHands adapter should receive the configured per-run iteration cap."""
+        infra = get_infrastructure(
+            make_infra_config(
+                default_worker_tool="openhands",
+                worker_tool_max_iterations=7,
+            )
+        )
+
+        assert getattr(infra.worker_tool, "max_iterations_per_run", None) == 7
+
     def test_config_requires_all_fields(self) -> None:
         """Test that InfrastructureConfig validates required fields."""
         with pytest.raises(TypeError, match=r"missing.*required"):
