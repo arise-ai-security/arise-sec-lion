@@ -74,6 +74,16 @@ def _with_cve_display(
 class SecBenchPromptStrategy:
     """SEC-bench specific prompt strategy."""
 
+    def extend_assessment_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        cve_instance = _as_cve_instance(context.domain_context)
+        if cve_instance is None:
+            return None
+        return _with_cve_display(chain, cve_instance)
+
     def extend_boss_prompt(
         self,
         chain: "TemplateChain",
@@ -123,6 +133,8 @@ class SecBenchPromptStrategy:
             return None
 
         branch = detect_benchmark_branch(context.briefing)
+        if branch is None:
+            branch = _detect_branch_from_task(context.task_description)
         if branch is None:
             return None
 

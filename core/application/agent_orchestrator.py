@@ -13,7 +13,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from core.application.services.llm_query_executor import LLMQueryExecutor
 from core.application.services.prompt_strategy import SubtaskScope
+from core.application.services.toolset_context import build_prompt_capabilities
+from core.application.services.toolset_policy_resolver import ToolsetPolicyResolver
 from core.application.services.verification_pipeline import (
     VerificationPipeline,
     _head_tail as _verification_head_tail,
@@ -26,18 +29,21 @@ from core.domain.services import (
 )
 from core.domain.services.config_resolver import ConfigResolver
 from core.domain.values.enums import AgentRole, AgentStatus
-from core.domain.values.recon_policy import ReconPolicy
 
 
 if TYPE_CHECKING:
     from core.application.services.child_factory import ChildAgentFactory
     from core.application.services.prompt_builder import PromptBuilder
-    from core.application.services.tool_calling_service import ToolCallingService
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.llm_response import LLMResponse
     from core.domain.values.node_message import Handoff
     from core.domain.values.subtask import Subtask
-    from core.ports.runtime_ports import LLMPort, RealtimeCallbackPort, WorkerToolPort
+    from core.ports.runtime_ports import (
+        LLMPort,
+        RealtimeCallbackPort,
+        WorkerToolPort,
+    )
+    from core.application.services.toolset_context import ActiveToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +70,16 @@ class AgentOrchestrator:
         prompt_builder: "PromptBuilder",
         child_factory: "ChildAgentFactory",
         realtime_callback: "RealtimeCallbackPort | None" = None,
-        tool_calling_service: "ToolCallingService | None" = None,
-        recon_config: dict[str, Any] | None = None,
+        llm_query_executor: LLMQueryExecutor | None = None,
+        toolset_resolver: ToolsetPolicyResolver | None = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
         self._prompt_builder = prompt_builder
         self._child_factory = child_factory
         self._realtime_callback = realtime_callback
-        self._tool_calling_service = tool_calling_service
-        self._recon_config = recon_config or {}
+        self._llm_query_executor = llm_query_executor or LLMQueryExecutor(llm_port)
+        self._toolset_resolver = toolset_resolver or ToolsetPolicyResolver()
         self._verification_pipeline = VerificationPipeline(llm_port)
 
     async def assess_task(self, agent: "AgentSession") -> None:
@@ -89,6 +95,9 @@ class AgentOrchestrator:
         op = "task_assessment"
         with self._timed_operation(agent, op):
             try:
+                domain_context = self._get_domain_context(agent)
+                tool_context = self._toolset_resolver.resolve(agent.role, domain_context)
+
                 # Build prompt
                 scope = self._build_scope(agent)
                 prompt = self._prompt_builder.build_assessment_prompt(
@@ -96,13 +105,19 @@ class AgentOrchestrator:
                     agent_id=agent.agent_id,
                     briefing=agent.briefing,
                     hierarchy_limits=agent.hierarchy_limits,
-                    domain_context=self._get_domain_context(agent),
+                    domain_context=domain_context,
                     scope=scope,
+                    prompt_capabilities=build_prompt_capabilities(tool_context),
                 )
                 agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
                 # Query LLM (with tool calling if available)
-                response = await self._query_with_recon(agent, prompt, op)
+                response = await self._query_llm(
+                    agent,
+                    prompt,
+                    op,
+                    tool_context=tool_context,
+                )
 
                 # Parse assessment
                 result = parse_assessment_response(response.content)
@@ -123,12 +138,15 @@ class AgentOrchestrator:
 
         op = "task_decomposition"
         with self._timed_operation(agent, op):
+            domain_context = self._get_domain_context(agent)
+            tool_context = self._toolset_resolver.resolve(agent.role, domain_context)
+
             # Build role-specific prompt
             if agent.role == AgentRole.BOSS:
                 prompt = self._prompt_builder.build_boss_delegation_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
-                    domain_context=self._get_domain_context(agent),
+                    domain_context=domain_context,
                     hierarchy_limits=agent.hierarchy_limits,
                 )
             else:
@@ -136,7 +154,7 @@ class AgentOrchestrator:
                 prompt = self._prompt_builder.build_manager_decomposition_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
-                    domain_context=self._get_domain_context(agent),
+                    domain_context=domain_context,
                     briefing=agent.briefing,
                     hierarchy_limits=agent.hierarchy_limits,
                     scope=scope,
@@ -144,7 +162,12 @@ class AgentOrchestrator:
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
             # Query LLM (with tool calling if available)
-            response = await self._query_with_recon(agent, prompt, op)
+            response = await self._query_llm(
+                agent,
+                prompt,
+                op,
+                tool_context=tool_context,
+            )
 
             # Parse subtasks
             try:
@@ -196,6 +219,7 @@ class AgentOrchestrator:
             # Build worker prompt
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,
+                agent_id=agent.agent_id,
                 handoff=handoff,
                 workspace_context=workspace_context,
                 domain_context=self._get_domain_context(agent),
@@ -365,41 +389,30 @@ class AgentOrchestrator:
         if failure_msg:
             agent.fail_with_reason(failure_msg)
 
-    async def _query_with_recon(
+    async def _query_llm(
         self,
         agent: "AgentSession",
         prompt: str,
         operation: str,
+        tool_context: "ActiveToolContext | None" = None,
     ) -> "LLMResponse":
-        """Query LLM with optional tool-calling reconnaissance.
+        """Query the LLM with optional tool-calling context.
 
-        Dispatches to ToolCallingService (if available) or raw LLMPort,
-        emits probe events for any tool calls, and emits TokensConsumed.
+        Dispatches through LLMQueryExecutor, emits probe events for tool calls,
+        and records the aggregated token usage on the agent.
 
         Returns:
             The final LLMResponse (aggregated across all tool-calling turns).
         """
         llm_config = ConfigResolver.resolve(agent.config, operation=operation)
         config_dict = llm_config.model_dump()
-
-        if self._tool_calling_service is not None:
-            # Resolve per-call recon policy from role + domain
-            domain = agent.hierarchy_limits.domain_context if agent.hierarchy_limits else None
-            policy = self._resolve_recon_policy(agent.role, domain)
-
-            if not policy.enabled:
-                # Recon disabled for this role/domain — skip tool calling
-                response = await self._llm_port.query_with_usage(prompt, config_dict)
-            else:
-                tc_result = await self._tool_calling_service.run_with_tools(
-                    prompt,
-                    config_dict,
-                    policy=policy,
-                )
-                response = tc_result.response
-                self._emit_probe_events(agent, tc_result.tool_records)
-        else:
-            response = await self._llm_port.query_with_usage(prompt, config_dict)
+        result = await self._llm_query_executor.query(
+            prompt,
+            config_dict,
+            tool_context=tool_context,
+        )
+        response = result.response
+        self._emit_probe_events(agent, result.tool_records)
 
         agent.emit_tokens_consumed(
             model=response.model,
@@ -417,63 +430,6 @@ class AgentOrchestrator:
         """Extract optional domain context from hierarchy limits."""
         if agent.hierarchy_limits:
             return agent.hierarchy_limits.domain_context
-        return None
-
-    def _resolve_recon_policy(
-        self,
-        role: AgentRole,
-        domain: object | None,
-    ) -> ReconPolicy:
-        """Resolve per-call recon policy from config.
-
-        Resolution order: domain-specific override → role default → hardcoded fallback.
-        Config shape (``orchestration.recon``):
-            default:
-              pending: {enabled, max_iterations, result_char_limit}
-              manager: ...
-              boss: {enabled: false}
-            domains:
-              secbench:
-                manager: {max_iterations: 3, allowed_tools: [...]}
-        """
-        role_key = role.value.lower()  # "pending", "manager", "boss", "worker"
-
-        # Start with role-level defaults
-        defaults = self._recon_config.get("default", {})
-        role_cfg: dict[str, Any] = dict(defaults.get(role_key, {}))
-
-        # Layer domain-specific overrides
-        domain_key = self._domain_key(domain)
-        if domain_key:
-            domain_overrides = (
-                self._recon_config.get("domains", {}).get(domain_key, {}).get(role_key, {})
-            )
-            role_cfg.update(domain_overrides)
-
-        if not role_cfg:
-            return ReconPolicy()
-
-        # Build policy from merged config
-        allowed = role_cfg.get("allowed_tools")
-        return ReconPolicy(
-            enabled=role_cfg.get("enabled", True),
-            max_iterations=role_cfg.get("max_iterations", 5),
-            result_char_limit=role_cfg.get("result_char_limit", 6_000),
-            allowed_tools=frozenset(allowed) if allowed is not None else None,
-        )
-
-    @staticmethod
-    def _domain_key(domain: object | None) -> str | None:
-        """Extract a string key from the domain context object."""
-        if domain is None:
-            return None
-        # CVEInstance or similar objects with a known type
-        type_name = type(domain).__name__.lower()
-        if "cve" in type_name or "secbench" in type_name:
-            return "secbench"
-        # Allow plain string domain markers
-        if isinstance(domain, str):
-            return domain
         return None
 
     @staticmethod

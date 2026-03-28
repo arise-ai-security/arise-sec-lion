@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig, ReconConfig
+from config import BossConfig, ManagerConfig, OrchestrationConfig, ToolsetConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -18,10 +18,13 @@ from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
 from core.application.services.context_condenser import ContextCondenser
 from core.application.services.event_broadcaster import EventBroadcaster
+from core.application.services.llm_query_executor import LLMQueryExecutor
 from core.application.services.parent_notifier import ParentNotificationService
 from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.query_service import AgentQueryService
 from core.application.services.tool_calling_service import ToolCallingService
+from core.application.services.toolset_context import LoopPolicy
+from core.application.services.toolset_policy_resolver import ToolsetPolicyResolver
 
 from .realtime_adapter import RealtimeCallbackAdapter
 
@@ -45,7 +48,7 @@ class ApplicationConfig:
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
-    recon_config: ReconConfig = field(default_factory=ReconConfig)
+    toolset_config: ToolsetConfig = field(default_factory=ToolsetConfig)
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
@@ -110,9 +113,20 @@ def get_application(
 
     tool_calling_service = ToolCallingService(
         llm_port=infrastructure.llm_adapter,
-        recon_port=infrastructure.recon_tool,
         max_iterations=config.system_limits.max_recon_iterations,
         condenser=condenser,
+    )
+    llm_query_executor = LLMQueryExecutor(
+        llm_port=infrastructure.llm_adapter,
+        tool_calling_service=tool_calling_service,
+    )
+    toolset_resolver = ToolsetPolicyResolver(
+        toolsets=[infrastructure.recon_tool],
+        config=config.toolset_config.to_raw_dict(),
+        default_loop_policy=LoopPolicy(
+            max_iterations=config.system_limits.max_recon_iterations,
+            result_char_limit=config.system_limits.recon_result_char_limit,
+        ),
     )
 
     orchestrator = AgentOrchestrator(
@@ -121,8 +135,8 @@ def get_application(
         prompt_builder=prompt_builder,
         child_factory=child_factory,
         realtime_callback=realtime_callback,
-        tool_calling_service=tool_calling_service,
-        recon_config=config.recon_config.to_raw_dict(),
+        llm_query_executor=llm_query_executor,
+        toolset_resolver=toolset_resolver,
     )
 
     parent_notifier = ParentNotificationService(

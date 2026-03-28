@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Discriminator, Tag, computed_field
 
+
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
 
@@ -106,13 +107,14 @@ class Handoff(BaseModel):
 
     direction: Literal["lateral"] = "lateral"
     parent_task: str | None = None
+    current_sibling_index: int | None = None
     siblings: tuple[PeerStatus, ...] = ()
     shared_decisions: tuple[SharedDecision, ...] = ()
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_siblings(self) -> int:
-        return len(self.siblings)
+        return len(self.siblings) + (1 if self.current_sibling_index is not None else 0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -123,6 +125,14 @@ class Handoff(BaseModel):
     @property
     def in_progress_count(self) -> int:
         return sum(1 for s in self.siblings if s.status in ("analyzing", "in_progress"))
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_downstream_siblings(self) -> bool:
+        """Whether any peer executes after the current worker."""
+        if self.current_sibling_index is None:
+            return False
+        return any(s.sibling_index > self.current_sibling_index for s in self.siblings)
 
     def to_template_dict(self) -> dict[str, Any]:
         """Convert to dict for Jinja2 template rendering (includes computed fields)."""

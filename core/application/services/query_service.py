@@ -26,6 +26,7 @@ from core.domain.events.events import (
 )
 from core.domain.values.node_message import Handoff, PeerStatus, SharedDecision
 
+
 def _head_tail(text: str, limit: int) -> str:
     """Keep first 2/3 + last 1/3 of text, showing omission count."""
     if len(text) <= limit:
@@ -587,11 +588,13 @@ class AgentQueryService:
     ) -> Handoff:
         """Build complete handoff view for a worker."""
         parent_task = await self._get_parent_task(parent_id)
+        current_sibling_index = await self._get_current_sibling_index(agent_id)
         sibling_statuses = await self._get_sibling_statuses(agent_id, parent_id)
         shared_decisions = await self._get_shared_decisions(root_id)
 
         return Handoff(
             parent_task=parent_task,
+            current_sibling_index=current_sibling_index,
             siblings=tuple(sibling_statuses),
             shared_decisions=tuple(shared_decisions),
         )
@@ -601,6 +604,12 @@ class AgentQueryService:
             return None
         parent = await self._repository.load_if_exists(parent_id)
         return parent.task_description if parent else None
+
+    async def _get_current_sibling_index(self, agent_id: UUID) -> int | None:
+        agent = await self._repository.load_if_exists(agent_id)
+        if agent is None:
+            return None
+        return agent.sibling_index
 
     async def _get_sibling_statuses(
         self, agent_id: UUID, parent_id: UUID | None

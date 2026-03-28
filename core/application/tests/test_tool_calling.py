@@ -1,6 +1,6 @@
 """Integration tests for the manager tool-calling reconnaissance system.
 
-Tests the full loop: ToolCallingService → mock LLMPort → mock ReconToolPort,
+Tests the full loop: ToolCallingService → mock LLMPort → mock toolset,
 verifying that tool calls are dispatched, results accumulated, and probe
 events emitted correctly through the orchestrator.
 """
@@ -8,10 +8,10 @@ events emitted correctly through the orchestrator.
 import json
 import pytest
 
+from core.application.services.toolset_context import ActiveToolContext, LoopPolicy
 from core.application.services.tool_calling_service import (
     ToolCallingService,
     ToolCallingResult,
-    ReconToolRecord,
 )
 from core.domain.values.llm_response import (
     LLMResponse,
@@ -60,6 +60,10 @@ class MockReconToolPort:
     def __init__(self, results: dict[str, str] | None = None) -> None:
         self._results = results or {}
         self.calls: list[tuple[str, dict]] = []
+
+    @property
+    def name(self) -> str:
+        return "recon"
 
     async def read_file(self, path, max_lines=200):
         return self._results.get(f"read_file:{path}", f"contents of {path}")
@@ -113,6 +117,28 @@ def _usage(p=10, c=5) -> LLMUsage:
     return LLMUsage(prompt_tokens=p, completion_tokens=c, total_tokens=p + c)
 
 
+def _tool_context(
+    toolset: MockReconToolPort,
+    *,
+    max_iterations: int = 5,
+    result_char_limit: int = 6_000,
+) -> ActiveToolContext:
+    tool_definitions = tuple(toolset.get_tool_definitions())
+    executors = {
+        tool_def["function"]["name"]: toolset
+        for tool_def in tool_definitions
+        if isinstance(tool_def.get("function", {}).get("name"), str)
+    }
+    return ActiveToolContext(
+        tool_definitions=tool_definitions,
+        loop_policy=LoopPolicy(
+            max_iterations=max_iterations,
+            result_char_limit=result_char_limit,
+        ),
+        executors=executors,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -134,9 +160,13 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, recon, max_iterations=5)
+        service = ToolCallingService(llm, max_iterations=5)
 
-        result = await service.run_with_tools("assess this task", {"model": "gpt-4"})
+        result = await service.run_with_tools(
+            "assess this task",
+            {"model": "gpt-4"},
+            tool_context=_tool_context(recon),
+        )
 
         assert isinstance(result, ToolCallingResult)
         assert result.response.content == '{"action": "execute", "reasoning": "simple task"}'
@@ -166,9 +196,13 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort({"read_file:main.py": "print('hello')"})
-        service = ToolCallingService(llm, recon, max_iterations=5)
+        service = ToolCallingService(llm, max_iterations=5)
 
-        result = await service.run_with_tools("assess task", {"model": "gpt-4"})
+        result = await service.run_with_tools(
+            "assess task",
+            {"model": "gpt-4"},
+            tool_context=_tool_context(recon),
+        )
 
         # Verify final response
         assert "execute" in result.response.content
@@ -218,9 +252,13 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, recon, max_iterations=5)
+        service = ToolCallingService(llm, max_iterations=5)
 
-        result = await service.run_with_tools("assess", {"model": "gpt-4"})
+        result = await service.run_with_tools(
+            "assess",
+            {"model": "gpt-4"},
+            tool_context=_tool_context(recon),
+        )
 
         assert len(result.tool_records) == 2
         assert result.tool_records[0].tool_name == "read_file"
@@ -252,9 +290,13 @@ class TestToolCallingService:
         # 3 tool-calling turns + 1 forced final
         llm = MockLLMPort([tool_response, tool_response, tool_response, final_response])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, recon, max_iterations=3)
+        service = ToolCallingService(llm, max_iterations=3)
 
-        result = await service.run_with_tools("assess", {"model": "gpt-4"})
+        result = await service.run_with_tools(
+            "assess",
+            {"model": "gpt-4"},
+            tool_context=_tool_context(recon, max_iterations=3),
+        )
 
         assert "forced" in result.response.content
         assert len(result.tool_records) == 3
@@ -285,9 +327,13 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, recon)
+        service = ToolCallingService(llm)
 
-        result = await service.run_with_tools("assess", {"model": "gpt-4"})
+        result = await service.run_with_tools(
+            "assess",
+            {"model": "gpt-4"},
+            tool_context=_tool_context(recon),
+        )
 
         assert result.response.usage.prompt_tokens == 300
         assert result.response.usage.completion_tokens == 150
@@ -315,14 +361,58 @@ class TestToolCallingService:
                 cost_usd=0.001,
             ),
         ])
-        service = ToolCallingService(llm, recon)
+        service = ToolCallingService(llm)
 
-        result = await service.run_with_tools("assess", {"model": "gpt-4"})
+        result = await service.run_with_tools(
+            "assess",
+            {"model": "gpt-4"},
+            tool_context=_tool_context(recon),
+        )
 
         assert len(result.tool_records[0].result_summary) == 500
         # But the full result was sent to the LLM
         tool_msg = [m for m in llm.calls[1]["messages"] if m["role"] == "tool"][0]
         assert len(tool_msg["content"]) == 1000
+
+
+class TestToolsetPolicyResolver:
+    """Tests for role/domain toolset resolution."""
+
+    def test_domain_override_filters_tools(self):
+        from core.application.services.toolset_policy_resolver import ToolsetPolicyResolver
+        from core.domain.values.enums import AgentRole
+
+        recon = MockReconToolPort()
+        resolver = ToolsetPolicyResolver(
+            toolsets=[recon],
+            config={
+                "default": {
+                    "manager": {
+                        "max_iterations": 5,
+                        "result_char_limit": 6_000,
+                        "toolsets": {
+                            "recon": {"enabled": True},
+                        },
+                    },
+                },
+                "domains": {
+                    "secbench": {
+                        "manager": {
+                            "max_iterations": 3,
+                            "toolsets": {
+                                "recon": {"allowed_tools": ["read_file"]},
+                            },
+                        },
+                    },
+                },
+            },
+        )
+
+        resolved = resolver.resolve(AgentRole.MANAGER, "secbench")
+
+        assert resolved.loop_policy.max_iterations == 3
+        assert [tool["function"]["name"] for tool in resolved.tool_definitions] == ["read_file"]
+        assert set(resolved.executors) == {"read_file"}
 
 
 class TestReconToolAdapter:

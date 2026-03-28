@@ -106,6 +106,11 @@ class ReconToolAdapter:
     def __init__(self, working_directory: str = ".") -> None:
         self._workdir = Path(working_directory).resolve()
 
+    @property
+    def name(self) -> str:
+        """Stable toolset identifier used in config resolution."""
+        return "recon"
+
     def _resolve_path(self, path: str) -> Path:
         """Resolve a path relative to working directory, preventing escapes.
 

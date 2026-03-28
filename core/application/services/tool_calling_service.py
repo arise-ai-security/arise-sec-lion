@@ -1,8 +1,8 @@
-"""Agentic tool-calling loop for manager reconnaissance.
+"""Agentic tool-calling loop for manager toolsets.
 
 Manages the LLM ↔ tool loop: sends prompt with tool definitions to the LLM,
-dispatches tool calls to ReconToolPort, appends results, and repeats until
-the LLM produces a final text response (the assessment/decomposition JSON).
+dispatches tool calls to the owning toolset, appends results, and repeats
+until the LLM produces a final text response.
 
 Context management (inspired by Claude Code / OpenHands):
   Layer 1 — Per-result truncation: hard-cap each tool output
@@ -17,9 +17,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from core.application.services.toolset_context import ActiveToolContext
 from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage
-from core.domain.values.recon_policy import ReconPolicy
-from core.ports.runtime_ports import LLMPort, ReconToolPort
+from core.ports.runtime_ports import LLMPort
 
 if TYPE_CHECKING:
     from core.application.services.context_condenser import ContextCondenser
@@ -30,7 +30,7 @@ _ZERO_USAGE = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
 
 @dataclass(frozen=True)
-class ReconToolRecord:
+class ToolRecord:
     """Record of a single tool call for event emission."""
 
     tool_name: str
@@ -43,15 +43,15 @@ class ToolCallingResult:
     """Result of the tool-calling loop: final response + tool call history."""
 
     response: LLMResponse
-    tool_records: list[ReconToolRecord] = field(default_factory=list)
+    tool_records: list[ToolRecord] = field(default_factory=list)
 
 
 class ToolCallingService:
-    """Coordinates multi-turn LLM tool calling for reconnaissance.
+    """Coordinates multi-turn LLM tool calling for any active toolset.
 
     The service owns the agentic loop:
     1. Send system+user messages with tool definitions to LLM
-    2. If LLM returns tool_calls → execute via ReconToolPort → append results
+    2. If LLM returns tool_calls → execute via owning toolset → append results
     3. Loop until LLM returns a text response (final answer)
     4. Return final content + aggregated usage/cost + tool call records
 
@@ -64,12 +64,10 @@ class ToolCallingService:
     def __init__(
         self,
         llm_port: LLMPort,
-        recon_port: ReconToolPort,
         max_iterations: int = 10,
         condenser: ContextCondenser | None = None,
     ) -> None:
         self._llm_port = llm_port
-        self._recon_port = recon_port
         self._max_iterations = max_iterations
         self._condenser = condenser
 
@@ -77,34 +75,25 @@ class ToolCallingService:
         self,
         prompt: str,
         config_dict: dict[str, Any],
-        policy: ReconPolicy | None = None,
+        tool_context: ActiveToolContext,
     ) -> ToolCallingResult:
         """Run the agentic tool-calling loop.
 
         Args:
             prompt: The full prompt text (system + context assembled by PromptBuilder).
             config_dict: Model config (model, temperature, max_tokens).
-            policy: Per-call recon policy. When provided, overrides the instance
-                defaults for max_iterations, result_char_limit, and allowed_tools.
+            tool_context: Resolved tool definitions, loop policy, and executor map
+                for this query.
 
         Returns:
             ToolCallingResult with final LLMResponse and tool call records for
             event emission.
         """
-        # Policy overrides instance defaults
-        max_iterations = policy.max_iterations if policy else self._max_iterations
-        result_char_limit = policy.result_char_limit if policy else None
+        max_iterations = max(tool_context.loop_policy.max_iterations, 1)
+        result_char_limit = tool_context.loop_policy.result_char_limit
+        tool_defs = list(tool_context.tool_definitions)
 
-        tool_defs = self._recon_port.get_tool_definitions()
-
-        # Filter tool definitions by policy.allowed_tools
-        if policy and policy.allowed_tools is not None:
-            tool_defs = [
-                td for td in tool_defs
-                if td.get("function", {}).get("name") in policy.allowed_tools
-            ]
-
-        tool_records: list[ReconToolRecord] = []
+        tool_records: list[ToolRecord] = []
 
         # Start with the prompt as a user message
         messages: list[dict[str, Any]] = [
@@ -168,12 +157,16 @@ class ToolCallingService:
             # Execute each tool call and append results
             for tc in response.tool_calls:
                 logger.info(
-                    "Recon tool call [iter=%d]: %s(%s)",
+                    "Tool call [iter=%d]: %s(%s)",
                     iteration,
                     tc.name,
                     _summarize_args(tc.arguments),
                 )
-                result = await self._recon_port.execute_tool(tc.name, tc.arguments)
+                executor = tool_context.executors.get(tc.name)
+                if executor is None:
+                    result = json.dumps({"error": f"Unknown tool: {tc.name}"})
+                else:
+                    result = await executor.execute_tool(tc.name, tc.arguments)
 
                 # Layer 1: truncate result before it enters history
                 if self._condenser is not None:
@@ -183,7 +176,7 @@ class ToolCallingService:
 
                 # Record for event emission
                 summary = result[:500] if len(result) > 500 else result
-                tool_records.append(ReconToolRecord(
+                tool_records.append(ToolRecord(
                     tool_name=tc.name,
                     arguments=tc.arguments,
                     result_summary=summary,

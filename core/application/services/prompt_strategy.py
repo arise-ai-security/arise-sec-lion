@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from core.domain.values.enums import AgentRole
+from core.domain.values.prompt_capabilities import PromptCapabilities
 
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ class PromptContext:
     handoff: Any = None
     workspace_context: str | None = None
     scope: SubtaskScope | None = None
+    prompt_capabilities: PromptCapabilities | None = None
 
 
 class PromptStrategy(Protocol):
@@ -49,6 +51,14 @@ class PromptStrategy(Protocol):
     Implementations may extend the default prompt chain for specific use cases,
     or return None to use the default chain unchanged.
     """
+
+    def extend_assessment_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        """Return an extended assessment prompt chain, or None to use the default chain."""
+        ...
 
     def extend_boss_prompt(
         self,
@@ -73,4 +83,3 @@ class PromptStrategy(Protocol):
     ) -> "TemplateChain | None":
         """Return an extended worker prompt chain, or None to use the default chain."""
         ...
-

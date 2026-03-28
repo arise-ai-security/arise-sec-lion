@@ -19,6 +19,8 @@ from core.application.services.prompt_strategy import (
     SubtaskScope,
 )
 from core.domain.values.enums import AgentRole
+from core.domain.values.prompt_capabilities import PromptCapabilities
+
 
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
@@ -100,6 +102,32 @@ class PromptBuilder:
         self._user_prompt: str = ""
         self._domain_context: object | None = None
 
+    @staticmethod
+    def _normalize_prompt_text(text: str) -> str:
+        """Normalize whitespace for prompt deduplication checks."""
+        return " ".join(text.split())
+
+    def _maybe_user_prompt_block(
+        self,
+        *,
+        task_description: str,
+        agent_role: AgentRole,
+        briefing: "Briefing | None" = None,
+    ) -> str | None:
+        """Render the root prompt only when it adds new information."""
+        if not self._user_prompt:
+            return None
+
+        if self._normalize_prompt_text(self._user_prompt) == self._normalize_prompt_text(
+            task_description
+        ):
+            return None
+
+        if agent_role in (AgentRole.PENDING, AgentRole.MANAGER) and briefing is not None:
+            return None
+
+        return f"<user_prompt>\n{self._user_prompt}\n</user_prompt>"
+
     def set_run_context(
         self,
         user_prompt: str,
@@ -163,14 +191,37 @@ class PromptBuilder:
         hierarchy_limits: "HierarchyLimits | None" = None,
         domain_context: object | None = None,
         scope: SubtaskScope | None = None,
+        prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
         """Build prompt for PENDING agent task assessment."""
         limits = self._limits_context(hierarchy_limits)
-        return (
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=agent_id,
+            agent_role=AgentRole.PENDING,
+            default_tool=self.default_tool,
+            briefing=briefing,
+            hierarchy_limits=hierarchy_limits,
+            domain_context=domain_context,
+            scope=scope,
+            prompt_capabilities=prompt_capabilities,
+        )
+        chain = (
             self.chain()
-            .render("system.j2", default_tool=self.default_tool)
+            .render(
+                "system.j2",
+                default_tool=self.default_tool,
+                agent_role=AgentRole.PENDING.value,
+            )
             .render("roles/pending.j2")
-            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .text_if(
+                user_prompt := self._maybe_user_prompt_block(
+                    task_description=task_description,
+                    agent_role=AgentRole.PENDING,
+                    briefing=briefing,
+                ),
+                user_prompt,
+            )
             .render_if(
                 scope and scope.has_scope,
                 "context/scope.j2",
@@ -181,10 +232,21 @@ class PromptBuilder:
                 task_description=task_description,
                 briefing=briefing,
                 default_tool=self.default_tool,
+                has_tools=(
+                    prompt_capabilities.has_tools if prompt_capabilities is not None else False
+                ),
+                available_tools=(
+                    prompt_capabilities.available_tools if prompt_capabilities is not None else ()
+                ),
                 **limits,
             )
-            .build()
         )
+        extended_chain = (
+            self._strategy.extend_assessment_prompt(chain, prompt_ctx)
+            if self._strategy is not None
+            else None
+        )
+        return (extended_chain or chain).build()
 
     def build_boss_delegation_prompt(
         self,
@@ -207,9 +269,19 @@ class PromptBuilder:
         limits = self._limits_context(hierarchy_limits)
         chain = (
             self.chain()
-            .render("system.j2", default_tool=self.default_tool)
+            .render(
+                "system.j2",
+                default_tool=self.default_tool,
+                agent_role=AgentRole.BOSS.value,
+            )
             .render("roles/boss.j2")
-            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .text_if(
+                user_prompt := self._maybe_user_prompt_block(
+                    task_description=task_description,
+                    agent_role=AgentRole.BOSS,
+                ),
+                user_prompt,
+            )
             .render(
                 "operations/decomposition.j2",
                 task_description=task_description,
@@ -251,9 +323,20 @@ class PromptBuilder:
         limits = self._limits_context(hierarchy_limits)
         chain = (
             self.chain()
-            .render("system.j2", default_tool=self.default_tool)
+            .render(
+                "system.j2",
+                default_tool=self.default_tool,
+                agent_role=agent_role.value,
+            )
             .render("roles/manager.j2")
-            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .text_if(
+                user_prompt := self._maybe_user_prompt_block(
+                    task_description=task_description,
+                    agent_role=agent_role,
+                    briefing=briefing,
+                ),
+                user_prompt,
+            )
             .render_if(
                 scope and scope.has_scope,
                 "context/scope.j2",
@@ -297,6 +380,7 @@ class PromptBuilder:
     def build_worker_prompt(
         self,
         task_description: str,
+        agent_id: UUID | None = None,
         handoff: Any = None,
         workspace_context: str | None = None,
         domain_context: object | None = None,
@@ -305,7 +389,7 @@ class PromptBuilder:
         """Build prompt for WORKER agent task execution."""
         prompt_ctx = PromptContext(
             task_description=task_description,
-            agent_id=UUID("00000000-0000-0000-0000-000000000000"),
+            agent_id=agent_id or UUID("00000000-0000-0000-0000-000000000000"),
             agent_role=AgentRole.WORKER,
             default_tool=self.default_tool,
             domain_context=domain_context,
@@ -316,10 +400,21 @@ class PromptBuilder:
         sibling_ctx = handoff.to_template_dict() if handoff else {}
         chain = (
             self.chain()
-            .render("system.j2", default_tool=self.default_tool)
+            .render(
+                "system.j2",
+                default_tool=self.default_tool,
+                agent_role=AgentRole.WORKER.value,
+            )
             .render("roles/worker.j2")
             .render_if(handoff, "context/sibling.j2", **sibling_ctx)
-            .text_if(self._user_prompt, f"<user_prompt>\n{self._user_prompt}\n</user_prompt>")
+            .text_if(
+                user_prompt := self._maybe_user_prompt_block(
+                    task_description=task_description,
+                    agent_role=AgentRole.WORKER,
+                    briefing=briefing,
+                ),
+                user_prompt,
+            )
             .render(
                 "operations/execution.j2",
                 task_description=task_description,

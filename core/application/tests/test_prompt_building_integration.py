@@ -16,6 +16,10 @@ from core.domain.values.node_message import (
     PeerStatus,
     SharedDecision,
 )
+from core.domain.values.prompt_capabilities import (
+    PromptCapabilities,
+    PromptToolDescriptor,
+)
 from core.domain.values.prompt_trace import SectionProvenance
 
 
@@ -70,6 +74,39 @@ class TestPromptBuilderWithRealTemplates:
         assert "operation" in tags
         assert "task" in tags
         assert "output_format" in tags
+        assert "**Available tools:**" not in prompt
+        assert "Additional tool-calling capabilities are not available for this assessment." in prompt
+
+    def test_assessment_prompt_renders_only_available_recon_tools(
+        self, builder: PromptBuilder
+    ) -> None:
+        """Assessment prompt should only render runtime-available recon tools."""
+        capabilities = PromptCapabilities(
+            available_tools=(
+                PromptToolDescriptor(
+                    name="search_codebase",
+                    description="Search for a regex pattern across source files.",
+                    parameters=("pattern", "path"),
+                    required_parameters=("pattern",),
+                ),
+                PromptToolDescriptor(
+                    name="read_symbol",
+                    description="Read only the requested symbol body.",
+                    parameters=("path", "symbol_name"),
+                    required_parameters=("path", "symbol_name"),
+                ),
+            ),
+        )
+
+        prompt = builder.build_assessment_prompt(
+            task_description="Find the relevant parser code",
+            agent_id=uuid4(),
+            prompt_capabilities=capabilities,
+        )
+
+        assert "`search_codebase(pattern, path?)`" in prompt
+        assert "`read_symbol(path, symbol_name)`" in prompt
+        assert "list_directory" not in prompt
 
     def test_boss_delegation_prompt_uses_real_templates(
         self, builder: PromptBuilder, parser: PromptParser
@@ -139,6 +176,7 @@ class TestPromptBuilderWithRealTemplates:
         # Verify worker role content
         persona_section = next(s for s in sections if s.tag == "persona")
         assert "WORKER" in persona_section.content
+        assert "<config_reference>" not in prompt
 
 class TestProvenanceClassificationWithRealPrompts:
     """Tests that provenance classification works correctly with real prompts."""
@@ -214,6 +252,58 @@ class TestProvenanceClassificationWithRealPrompts:
         sibling_sections = [s for s in sections if s.provenance == SectionProvenance.SIBLING]
         assert len(sibling_sections) >= 1
         assert any(s.tag == "sibling_tasks" for s in sibling_sections)
+
+    def test_sibling_update_instructions_omit_last_worker(
+        self, builder: PromptBuilder
+    ) -> None:
+        """Last worker should not be told to update nonexistent downstream siblings."""
+        handoff = Handoff(
+            parent_task="Parent task",
+            current_sibling_index=1,
+            siblings=(
+                PeerStatus(
+                    agent_id=str(uuid4()),
+                    sibling_index=0,
+                    status="completed",
+                    task_summary="Earlier worker task",
+                    result_summary="Done",
+                ),
+            ),
+            shared_decisions=(),
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="My task",
+            handoff=handoff,
+        )
+
+        assert "<context_update_instructions>" not in prompt
+
+    def test_sibling_update_instructions_render_for_non_last_worker(
+        self, builder: PromptBuilder
+    ) -> None:
+        """Workers with downstream peers should still see the context update instructions."""
+        handoff = Handoff(
+            parent_task="Parent task",
+            current_sibling_index=0,
+            siblings=(
+                PeerStatus(
+                    agent_id=str(uuid4()),
+                    sibling_index=1,
+                    status="pending",
+                    task_summary="Later worker task",
+                    result_summary=None,
+                ),
+            ),
+            shared_decisions=(),
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="My task",
+            handoff=handoff,
+        )
+
+        assert "<context_update_instructions>" in prompt
 
     def test_shared_sections_classified_correctly(
         self, builder: PromptBuilder, parser: PromptParser

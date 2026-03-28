@@ -10,116 +10,117 @@
   symbols → read_symbol for specifics.
 #}
 <operation>
-Assess this task. You have reconnaissance tools available to inspect the
-codebase before deciding.
+    Assess this task.
+    {% if has_tools and available_tools %}
+        You have tool-calling capabilities available to inspect the task context before deciding.
 
-**Available tools:**
-- `search_codebase(pattern, path?)` — grep for a regex pattern across source files
-- `read_file(path, start_line?, end_line?)` — read file contents (use line ranges for precision)
-- `get_symbols_overview(path)` — list function/class signatures without bodies
-- `read_symbol(path, symbol_name)` — read a specific function/class body
-- `list_directory(path)` — list directory entries
-- `find_file(pattern, path?)` — find files matching a glob pattern
-- `get_file_structure(path?, max_depth?)` — tree view of directory structure
+        **Available tools:**
+        {% for tool in available_tools %}
+            - `{{ tool.signature }}` — {{ tool.description }}
+        {% endfor %}
 
-**Recon workflow** (precision-first):
-1. If you have scope hints (target_paths, symbols), start there
-2. `search_codebase` or `get_symbols_overview` to identify relevant symbols
-3. `read_symbol` for the specific functions you need — NOT full files
-4. Decide execute vs decompose based on what you found
+        **Tool use guidance:**
+        1. If you have scope hints (target_paths, symbols, search_hints), start there
+        2. Use the narrowest tool call that answers the next question
+        3. Gather only enough evidence to decide execute vs decompose
+    {% else %}
+        Additional tool-calling capabilities are not available for this assessment. Decide based on the
+        task, inherited context, and any scope hints already provided.
+    {% endif %}
 
-**Execute directly** (default) — unless the task clearly requires decomposition:
-- The task is about a single concern or a small set of related changes
-- You have a reasonable idea of what needs to happen
-- A single focused coding session can complete it
+    **Execute directly** (default) — unless the task clearly requires decomposition:
+    - The task is about a single concern or a small set of related changes
+    - You have a reasonable idea of what needs to happen
+    - A single focused coding session can complete it
 
-**Decompose** — only when the task genuinely requires coordination:
-- The task spans 3+ independent subsystems that cannot share a session
-- The changes are completely unrelated and must be done in parallel
-- You are confident a single worker cannot reasonably handle the full scope
-{% if at_max_depth %}
+    **Decompose** — only when the task genuinely requires coordination:
+    - The task spans 3+ independent subsystems that cannot share a session
+    - The changes are completely unrelated and must be done in parallel
+    - You are confident a single worker cannot reasonably handle the full scope
+    {% if at_max_depth %}
 
-**CONSTRAINT: Maximum depth reached.** You MUST execute directly.
-{% elif depth_remaining is not none and depth_remaining <= 1 %}
+        **CONSTRAINT: Maximum depth reached.** You MUST execute directly.
+    {% elif depth_remaining is not none and depth_remaining <= 1 %}
 
-**Note**: {{ depth_remaining }} level(s) remaining — prefer executing directly.
-{% endif %}
-{% if agents_remaining is not none and agents_remaining <= 0 %}
+        **Note**: {{ depth_remaining }} level(s) remaining — prefer executing directly.
+    {% endif %}
+    {% if agents_remaining is not none and agents_remaining <= 0 %}
 
-**CONSTRAINT: No agents remaining.** You MUST execute directly.
-{% endif %}
+        **CONSTRAINT: No agents remaining.** You MUST execute directly.
+    {% endif %}
 </operation>
 {% if briefing %}
 
-<briefing>
-Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
-{% if briefing.ancestry %}
-Ancestry:
-{% for ancestor in briefing.ancestry %}
-  - [{{ ancestor.role }}] {{ ancestor.task_summary }}
-{% endfor %}
-{% endif %}
-{% if briefing.decisions %}
-Inherited decisions:
-{% for decision in briefing.decisions %}
-  - {{ decision }}
-{% endfor %}
-{% endif %}
-</briefing>
+    <briefing>
+        Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
+        {% if briefing.ancestry %}
+            Ancestry:
+            {% for ancestor in briefing.ancestry %}
+                - [{{ ancestor.role }}] {{ ancestor.task_summary }}
+            {% endfor %}
+        {% endif %}
+        {% if briefing.decisions %}
+            Inherited decisions:
+            {% for decision in briefing.decisions %}
+                - {{ decision }}
+            {% endfor %}
+        {% endif %}
+    </briefing>
 {% endif %}
 
 <task>
-{{ task_description }}
+    {{ task_description }}
 </task>
 
 <output_format>
-Return ONLY valid JSON.
+    Return ONLY valid JSON.
 
-To execute directly:
-```json
-{"action": "execute", "reasoning": "why you're confident (20-500 chars)"}
-```
+    To execute directly:
+    ```json
+    {"action": "execute", "reasoning": "why you're confident (20-500 chars)"}
+    ```
 
-To decompose:
-```json
-{
-  "action": "decompose",
-  "reasoning": "what uncertainty requires decomposition (20-500 chars)",
-  "subtasks": [
+    To decompose:
+    ```json
     {
-      "description": "concrete subtask (10-500 chars)",
-      "justification": {"objective": "what this achieves", "plan": "how to execute"},
-      "config": {
-        "strategy": "heuristic",
-        "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
-        "tool": "{{ default_tool }}"
-      },
-      "depends_on": [],
-      "estimated_complexity": "simple | complex | unknown",
-      "success_criteria": "what constitutes success",
-      "target_paths": ["src/relevant_file.c"],
-      "symbols": ["function_name"],
-      "search_hints": ["CVE-XXXX", "error keyword"]
+    "action": "decompose",
+    "reasoning": "what uncertainty requires decomposition (20-500 chars)",
+    "subtasks": [
+    {
+    "description": "concrete subtask (10-500 chars)",
+    "justification": {"objective": "what this achieves", "plan": "how to execute"},
+    "config": {
+    "strategy": "heuristic",
+    "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
+    "tool": "{{ default_tool }}"
+    },
+    "depends_on": [],
+    "estimated_complexity": "simple | complex | unknown",
+    "success_criteria": "what constitutes success",
+    "target_paths": ["src/relevant_file.c"],
+    "symbols": ["function_name"],
+    "search_hints": ["CVE-XXXX", "error keyword"]
     }
-  ]
-}
-```
+    ]
+    }
+    ```
 
-Rules:
-1. Pure JSON only (no markdown, no commentary)
-2. `action`: exactly `"execute"` or `"decompose"`
-{% if at_max_depth or (agents_remaining is not none and agents_remaining <= 0) %}
-3. **FORCED**: You MUST choose `"execute"` (constraint reached)
-{% else %}
-3. If decomposing: 2-3 subtasks optimal{% if max_subtasks %} (max {{ max_subtasks }}){% endif %}
+    Rules:
+    1. Pure JSON only (no markdown, no commentary)
+    2. `action`: exactly `"execute"` or `"decompose"`
+    {% if at_max_depth or (agents_remaining is not none and agents_remaining <= 0) %}
+        3. **FORCED**: You MUST choose `"execute"` (constraint reached)
+    {% else %}
+        3. If decomposing: 2-3 subtasks optimal{% if max_subtasks %} (max {{ max_subtasks }}){% endif %}
 
-4. Each subtask should pass the "execute directly" confidence test
-{% endif %}
-{% if max_subtasks or (agents_remaining is not none and agents_remaining > 0 and agents_remaining <= 10) %}
+        4. Each subtask should pass the "execute directly" confidence test
+    {% endif %}
+    {% if max_subtasks or (agents_remaining is not none and agents_remaining > 0 and agents_remaining <= 10) %}
 
-If constraints cannot be satisfied:
-```json
-{"status": "constraints_unsatisfiable", "reason": "explanation", "minimum_required": {"subtasks": N, "depth_levels": N}}
-```
-{% endif %}
+        If constraints cannot be satisfied:
+        ```json
+        {"status": "constraints_unsatisfiable", "reason": "explanation", "minimum_required": {"subtasks": N,
+        "depth_levels": N}}
+        ```
+    {% endif %}
 </output_format>

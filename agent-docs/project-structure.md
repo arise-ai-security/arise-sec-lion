@@ -42,7 +42,7 @@ arise-sec-lion/
 │   │       ├── parent_notifier.py   # Recursive notification, infeasible re-decomposition
 │   │       ├── query_service.py     # DAG scheduling, sibling view, subtree caching
 │   │       ├── prompt_builder.py    # Jinja2 TemplateChain composition
-│   │       ├── prompt_strategy.py   # Default vs SecBench prompt strategies
+│   │       ├── prompt_strategy.py   # PromptStrategy protocol and SEC-bench extensions
 │   │       ├── prompt_parser.py     # XML section extraction with provenance
 │   │       ├── prompt_trace_service.py # Hierarchy trace building
 │   │       ├── event_broadcaster.py # In-memory pub/sub for SSE

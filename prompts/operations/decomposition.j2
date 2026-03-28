@@ -1,65 +1,66 @@
 <operation>
-## Task Decomposition
+    ## Task Decomposition
 
-**Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns during recon.
-These fields (`target_paths`, `symbols`, `search_hints`) help children focus their own recon precisely.
-{% if at_max_depth %}
+    **Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns during
+    recon.
+    These fields (`target_paths`, `symbols`, `search_hints`) help children focus their own recon precisely.
+    {% if at_max_depth %}
 
-**CONSTRAINT: Maximum depth reached.** Each subtask MUST be atomic and worker-executable.
-{% elif depth_remaining is not none and depth_remaining <= 2 %}
+        **CONSTRAINT: Maximum depth reached.** Each subtask MUST be atomic and worker-executable.
+    {% elif depth_remaining is not none and depth_remaining <= 2 %}
 
-**Note**: {{ depth_remaining }} level(s) remaining — prefer simpler subtasks.
-{% endif %}
-{% if max_subtasks %}
+        **Note**: {{ depth_remaining }} level(s) remaining — prefer simpler subtasks.
+    {% endif %}
+    {% if max_subtasks %}
 
-**CONSTRAINT: Maximum {{ max_subtasks }} subtasks.**
-{% endif %}
-{% if agents_remaining is not none and agents_remaining >= 0 %}
+        **CONSTRAINT: Maximum {{ max_subtasks }} subtasks.**
+    {% endif %}
+    {% if agents_remaining is not none and agents_remaining >= 0 %}
 
-**CONSTRAINT: {{ agents_remaining }} agents remaining ({{ current_total_agents }}/{{ max_total_agents }}).**
-{% endif %}
+        **CONSTRAINT: {{ agents_remaining }} agents remaining ({{ current_total_agents }}/{{ max_total_agents }}).**
+    {% endif %}
 
-Decompose into 2-3 independent, concrete, testable subtasks.
-Avoid sequential dependencies and over-granularity.
+    Decompose into 2-3 independent, concrete, testable subtasks.
+    Avoid sequential dependencies and over-granularity.
 </operation>
 {% if briefing %}
 
-<briefing>
-Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
-{% if briefing.ancestry %}
-Ancestry:
-{% for ancestor in briefing.ancestry %}
-  - [{{ ancestor.role }}] {{ ancestor.task_summary }}
-{% endfor %}
-{% endif %}
-{% if briefing.decisions %}
-Inherited decisions:
-{% for decision in briefing.decisions %}
-  - {{ decision }}
-{% endfor %}
-{% endif %}
-</briefing>
+    <briefing>
+        Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
+        {% if briefing.ancestry %}
+            Ancestry:
+            {% for ancestor in briefing.ancestry %}
+                - [{{ ancestor.role }}] {{ ancestor.task_summary }}
+            {% endfor %}
+        {% endif %}
+        {% if briefing.decisions %}
+            Inherited decisions:
+            {% for decision in briefing.decisions %}
+                - {{ decision }}
+            {% endfor %}
+        {% endif %}
+    </briefing>
 {% endif %}
 
 <task>
-{{ task_description }}
+    {{ task_description }}
 </task>
 
 <output_format>
-Return ONLY a valid JSON array:
+    Return ONLY a valid JSON array:
 
-```json
-[
-  {
+    ```json
+    [
+    {
     "description": "What the child agent should do (10-500 chars)",
     "justification": {
-      "objective": "what this achieves",
-      "plan": "how to execute"
+    "objective": "what this achieves",
+    "plan": "how to execute"
     },
     "config": {
-      "strategy": "heuristic",
-      "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
-      "tool": "{{ default_tool }}"
+    "strategy": "heuristic",
+    "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
+    "tool": "{{ default_tool }}"
     },
     "depends_on": [],
     "estimated_complexity": "simple | complex | unknown",
@@ -68,32 +69,34 @@ Return ONLY a valid JSON array:
     "target_paths": ["src/relevant_file.c"],
     "symbols": ["function_name"],
     "search_hints": ["CVE-XXXX", "error keyword"]
-  }
-]
-```
+    }
+    ]
+    ```
 
-Rules:
-1. Pure JSON array only (no markdown, no commentary)
-2. 2-3 subtasks optimal
-{% if max_subtasks %}
-3. **HARD LIMIT**: Maximum {{ max_subtasks }} subtasks
-{% endif %}
-{% if agents_remaining is not none and agents_remaining >= 0 %}
-4. **AGENT LIMIT**: Maximum {{ agents_remaining }} subtasks (remaining capacity)
-{% endif %}
-{% if at_max_depth %}
-5. **MAX DEPTH**: Each subtask MUST be atomic and worker-executable
-{% elif depth_remaining is not none and depth_remaining <= 1 %}
-5. **NEAR MAX DEPTH**: Prefer simpler, worker-executable subtasks
-{% endif %}
-6. Required fields: `description`, `justification`, `config`
-7. Optional fields: `depends_on`, `estimated_complexity`, `success_criteria`, `task_type`, `target_paths`, `symbols`, `search_hints`
-8. Temperature: 0.0-2.0 | max_tokens: 1-100000
-{% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
+    Rules:
+    1. Pure JSON array only (no markdown, no commentary)
+    2. 2-3 subtasks optimal
+    {% if max_subtasks %}
+        3. **HARD LIMIT**: Maximum {{ max_subtasks }} subtasks
+    {% endif %}
+    {% if agents_remaining is not none and agents_remaining >= 0 %}
+        4. **AGENT LIMIT**: Maximum {{ agents_remaining }} subtasks (remaining capacity)
+    {% endif %}
+    {% if at_max_depth %}
+        5. **MAX DEPTH**: Each subtask MUST be atomic and worker-executable
+    {% elif depth_remaining is not none and depth_remaining <= 1 %}
+        5. **NEAR MAX DEPTH**: Prefer simpler, worker-executable subtasks
+    {% endif %}
+    6. Required fields: `description`, `justification`, `config`
+    7. Optional fields: `depends_on`, `estimated_complexity`, `success_criteria`, `task_type`, `target_paths`,
+    `symbols`, `search_hints`
+    8. Temperature: 0.0-2.0 | max_tokens: 1-100000
+    {% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
 
-If constraints cannot be satisfied:
-```json
-{"status": "constraints_unsatisfiable", "reason": "explanation", "minimum_required": {"subtasks": N, "depth_levels": N}}
-```
-{% endif %}
+        If constraints cannot be satisfied:
+        ```json
+        {"status": "constraints_unsatisfiable", "reason": "explanation", "minimum_required": {"subtasks": N,
+        "depth_levels": N}}
+        ```
+    {% endif %}
 </output_format>

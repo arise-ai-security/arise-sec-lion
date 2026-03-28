@@ -3,9 +3,9 @@
 import pytest
 
 from core.domain.values.node_message import (
-    SharedDecision,
-    PeerStatus,
     Handoff,
+    PeerStatus,
+    SharedDecision,
 )
 
 
@@ -147,6 +147,7 @@ class TestHandoff:
         assert handoff.total_siblings == 0
         assert handoff.completed_count == 0
         assert handoff.in_progress_count == 0
+        assert handoff.has_downstream_siblings is False
 
     def test_create_handoff_with_siblings(self) -> None:
         """Test creating handoff with sibling tasks."""
@@ -174,13 +175,15 @@ class TestHandoff:
 
         handoff = Handoff(
             parent_task="Build REST API",
+            current_sibling_index=2,
             siblings=(sibling1, sibling2, sibling3),
             shared_decisions=(),
         )
 
-        assert handoff.total_siblings == 3
+        assert handoff.total_siblings == 4
         assert handoff.completed_count == 1
         assert handoff.in_progress_count == 1
+        assert handoff.has_downstream_siblings is True
 
     def test_in_progress_includes_analyzing(self) -> None:
         """Test that in_progress_count includes 'analyzing' status."""
@@ -207,6 +210,45 @@ class TestHandoff:
 
         assert handoff.in_progress_count == 2
 
+    def test_total_siblings_includes_current_worker_when_known(self) -> None:
+        """Test that total_siblings includes the current worker when index is known."""
+        sibling = PeerStatus(
+            agent_id="sibling-1",
+            sibling_index=0,
+            status="completed",
+            task_summary="Task 1",
+            result_summary="Done",
+        )
+
+        handoff = Handoff(
+            parent_task="Build REST API",
+            current_sibling_index=1,
+            siblings=(sibling,),
+            shared_decisions=(),
+        )
+
+        assert handoff.total_siblings == 2
+        assert handoff.has_downstream_siblings is False
+
+    def test_has_downstream_siblings_detects_later_peer(self) -> None:
+        """Test downstream sibling detection for context update instructions."""
+        later_sibling = PeerStatus(
+            agent_id="sibling-2",
+            sibling_index=2,
+            status="pending",
+            task_summary="Task 2",
+            result_summary=None,
+        )
+
+        handoff = Handoff(
+            parent_task="Build REST API",
+            current_sibling_index=1,
+            siblings=(later_sibling,),
+            shared_decisions=(),
+        )
+
+        assert handoff.has_downstream_siblings is True
+
     def test_to_template_dict(self) -> None:
         """Test to_template_dict() for Jinja2 rendering."""
         sibling = PeerStatus(
@@ -225,6 +267,7 @@ class TestHandoff:
 
         handoff = Handoff(
             parent_task="Build REST API",
+            current_sibling_index=1,
             siblings=(sibling,),
             shared_decisions=(decision,),
         )
@@ -234,9 +277,10 @@ class TestHandoff:
         assert template_dict["parent_task"] == "Build REST API"
         assert len(template_dict["siblings"]) == 1
         assert len(template_dict["shared_decisions"]) == 1
-        assert template_dict["total_siblings"] == 1
+        assert template_dict["total_siblings"] == 2
         assert template_dict["completed_count"] == 1
         assert template_dict["in_progress_count"] == 0
+        assert template_dict["has_downstream_siblings"] is False
 
     def test_roundtrip_serialization(self) -> None:
         """Test model_dump() -> model_validate() roundtrip."""

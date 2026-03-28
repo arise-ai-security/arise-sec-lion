@@ -10,7 +10,7 @@ Refer to Task Context above for repository location, base commit hash, and vulne
    - Otherwise: save the provided base commit to `/testcase/base_commit_hash`
    - `/testcase/base_commit_hash` MUST exist before proceeding
 
-2. **Build the project**: `cd <work_dir> && /src/build.sh`
+2. **Build the project**: `cd {{ work_dir }} && /src/build.sh`
 
 3. **Improve `/src/build.sh`**:
    - Make standalone — remove undefined/environment variables not set in script
@@ -23,7 +23,7 @@ Refer to Task Context above for repository location, base commit hash, and vulne
    - Check local script existence before running (e.g., `[ -f ./autogen.sh ] && ./autogen.sh`)
    - Exception: `$SRC` = `/src`, `$WORK` = `/work` are predefined
 
-4. **Rebuild**: `cd <work_dir> && /src/build.sh`
+4. **Rebuild**: `cd {{ work_dir }} && /src/build.sh`
 
 5. **Fix build errors** (if any):
    - Focus on `error` messages only, ignore warnings
@@ -35,7 +35,7 @@ Refer to Task Context above for repository location, base commit hash, and vulne
 
 6. **Record installed packages**: If packages installed via `apt`, write to `/testcase/packages.txt` (one per line)
 
-7. **Save source changes**: `cd <work_dir> && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
+7. **Save source changes**: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
 
 8. **Verify deliverables exist**:
    - `/testcase/base_commit_hash`

@@ -17,14 +17,18 @@ How the core business logic (multi-agent orchestration) is separated from the cy
     |  BOOTSTRAP (Composition Root)        |  The ONLY place that bridges both worlds
     |                                      |
     |  if settings.security.enabled:       |
-    |      from plugins.security import    |  <-- sole cross-boundary import
-    |        SecurityDomainPlugin           |
+    |      from plugins.security import    |  <-- sole cross-boundary imports
+    |        SecurityDomainPlugin,         |
+    |        SecBenchPromptStrategy        |
     |      plugin = SecurityDomainPlugin() |
+    |      strategy = SecBenchPromptStrategy()
     |  else:                               |
-    |      plugin = None  # pure generic   |
+    |      plugin = None                   |
+    |      strategy = None                 |
     |                                      |
     |  ExecutionService(                   |
-    |    domain_plugin=plugin, ...)        |  injected as DomainPlugin protocol
+    |    domain_plugin=plugin,             |
+    |    prompt_strategy=strategy, ...)    |  injected through separate protocols
     |                                      |
     +--------------------------------------+
                     |
@@ -104,17 +108,17 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  |  |                           |  |                                  | | | |
 |  |  | class DomainPlugin:       |  | LLMPort                         | | | |
 |  |  |   infer_context() -> obj  |  | WorkerToolPort                  | | | |
-|  |  |   create_prompt_strategy()|  | CostCalculatorPort              | | | |
-|  |  |   enrich_prompt()         |  | SharedContextPort               | | | |
-|  |  |   get_run_metadata()      |  | SiblingViewPort                 | | | |
-|  |  |   get_tag_mappings()      |  | ReconToolPort                   | | | |
-|  |  |   get_provenance_patterns |  | RealtimeCallbackPort            | | | |
+|  |  |   enrich_prompt()         |  | CostCalculatorPort              | | | |
+|  |  |   get_run_metadata()      |  | SharedContextPort               | | | |
+|  |  |   get_tag_mappings()      |  | SiblingViewPort                 | | | |
+|  |  |   get_provenance_patterns |  | ReconToolPort                   | | | |
+|  |  |   prepare_*()/cleanup_*() |  | RealtimeCallbackPort            | | | |
 |  |  |                           |  |                                  | | | |
 |  |  | class PromptStrategy:     |  | event_store_port.py              | | | |
-|  |  |   build_boss_prompt()     |  | EventStoreConnect/Write/Read    | | | |
-|  |  |   build_manager_prompt()  |  |                                  | | | |
-|  |  |   build_worker_prompt()   |  +----------------------------------+ | | |
-|  |  |   build_assessment_prompt |                                      | | |
+|  |  |   extend_boss_prompt()    |  | EventStoreConnect/Write/Read    | | | |
+|  |  |   extend_manager_prompt() |  |                                  | | | |
+|  |  |   extend_worker_prompt()  |  +----------------------------------+ | | |
+|  |  |   extend_assessment_prompt|                                      | | |
 |  |  +------------+--------------+                                      | | |
 |  |               |                                                      | | |
 |  +---------------------------------------------------------------------+ | |
@@ -133,7 +137,6 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  | SecurityDomainPlugin  (implements DomainPlugin)                      | ||
 |  |                                                                      | ||
 |  | infer_context(task) -> CVEInstanceInferenceService -> CVEInstance ----+-+
-|  | create_prompt_strategy() -> SecBenchPromptStrategy                   |
 |  | enrich_prompt(prompt) -> appends Valgrind/KLEE tool instructions     |
 |  | get_run_metadata()    -> {"instance_id": cve.instance_id}            |
 |  +---------------------------------------------------------------------+
@@ -192,10 +195,10 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  |           (prompts/operations/*.j2)                   | |
 |  |           + Context (sibling.j2, workspace.j2)        | |
 |  +-----------------------------------------------------+ |
-|  |  Tier 4: Domain Override (if plugin active)           | |  <-- SECURITY
+|  |  Tier 4: PromptStrategy Extension (if wired)          | |  <-- SECURITY
 |  |           SecBenchPromptStrategy detects phase         | |
-|  |           Returns specialized prompt OR None           | |
-|  |           (None -> falls back to Tiers 1-3)           | |
+|  |           extends the base chain OR returns None       | |
+|  |           (None -> keeps Tiers 1-3 unchanged)          | |
 |  +-----------------------------------------------------+ |
 |  |  Post-build Enrichment                                | |  <-- SECURITY
 |  |           plugin.enrich_prompt() appends tool          | |
@@ -235,8 +238,8 @@ How the core business logic (multi-agent orchestration) is separated from the cy
                        v
     +-------------------------------------+
     | BOSS                                |
-    |   domain_context = CVEInstance       |--> SecBenchPromptStrategy.build_boss_prompt()
-    |                                     |    renders boss.j2 + cve.j2
+    |   domain_context = CVEInstance       |--> SecBenchPromptStrategy.extend_boss_prompt()
+    |                                     |    appends boss.j2 + cve.j2 onto the base chain
     |   decomposes into 3 phases          |
     +------+----------+----------+--------+
            |          |          |
@@ -266,7 +269,7 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 | Core never imports plugins   | Convention + grep-verified        | All of core/              |
 | Domain context is opaque     | object | None typing              | core/domain/values/       |
 |                              |                                   |   limits.py               |
-| Plugin protocol lives in core| DomainPlugin(Protocol), 6 methods| core/ports/               |
+| Plugin protocol lives in core| DomainPlugin(Protocol), 8 methods| core/ports/               |
 |                              |                                   |   domain_plugin_port.py   |
 | Strategy protocol in core    | PromptStrategy(Protocol),        | core/application/services/|
 |                              | 4 methods                        |   prompt_strategy.py      |
@@ -284,14 +287,14 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 
 1. **Core is security-ignorant** -- Zero imports from `plugins/` anywhere in `core/`. The orchestration engine works for any multi-agent task.
 
-2. **Plugin is optional** -- Setting `security.enabled=false` means no plugin loads. The system runs in pure generic mode with `DefaultPromptStrategy` (returns `None` for everything, falling back to generic templates).
+2. **Plugin is optional** -- Setting `security.enabled=false` means no plugin or prompt strategy is wired. The system runs in pure generic mode because `PromptBuilder` skips Tier 4 extension when `strategy=None`.
 
 3. **Opaque context slot** -- `HierarchyLimits.domain_context: object | None` carries domain data through the entire agent hierarchy without the core ever inspecting or downcasting it. Only the plugin's strategy knows the concrete type.
 
-4. **Strategy pattern for prompts** -- `PromptStrategy` returns `str | None`. Security plugin returns specialized prompts for SEC-bench phases; `None` triggers graceful fallback to generic Tier 1-3 templates.
+4. **Strategy pattern for prompts** -- `PromptStrategy` extends `TemplateChain | None`. The security strategy appends SEC-bench templates for matching phases; `None` leaves the generic Tier 1-3 prompt untouched.
 
-5. **Single bridge point** -- Only `bootstrap/bootstrap.py` crosses the boundary with `from plugins.security import SecurityDomainPlugin`. This is the composition root doing its job.
+5. **Single bridge point** -- Only `bootstrap/bootstrap.py` crosses the boundary with `from plugins.security import ...`. This is the composition root doing its job.
 
 6. **Fully removable** -- Delete `plugins/security/` + `prompts/domains/secbench/` + the config section, and the system continues to function as a generic multi-agent orchestration platform.
 
-The architecture is a textbook **hexagonal / ports-and-adapters** design where the security domain is a **pluggable bounded context** connected through two protocol seams (`DomainPlugin` + `PromptStrategy`) and one opaque data slot (`domain_context`).
+The architecture is a textbook **hexagonal / ports-and-adapters** design where the security domain is a **pluggable bounded context** connected through two separate protocol seams (`DomainPlugin` + `PromptStrategy`) and one opaque data slot (`domain_context`).

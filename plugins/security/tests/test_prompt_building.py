@@ -37,6 +37,24 @@ def make_test_cve_instance() -> CVEInstance:
 
 
 class TestSecurityPromptBuilding:
+    def test_secbench_assessment_prompt_includes_cve_context_without_recon_tools(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        prompt = builder.build_assessment_prompt(
+            task_description="Decide whether to execute or decompose this SEC-bench task",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+        )
+
+        assert "<cve_instance>" in prompt
+        assert "demo.cve-2024-0001" in prompt
+        assert "**Available tools:**" not in prompt
+        assert "Additional tool-calling capabilities are not available for this assessment." in prompt
+
     def test_secbench_manager_prompt_strategy_path_renders(self) -> None:
         parser = PromptParser()
         domain_plugin = SecurityDomainPlugin()
@@ -72,8 +90,8 @@ class TestSecurityPromptBuilding:
         assert any(section.tag == "persona" for section in sections)
         assert "<cve_instance>" in prompt
         assert "Builder Manager" in prompt
-        assert "<user_prompt>\nRoot SEC-bench request\n</user_prompt>" in prompt
-        assert "<task>\n[Builder] Verify the environment setup\n</task>" in prompt
+        assert "<user_prompt>\nRoot SEC-bench request\n</user_prompt>" not in prompt
+        assert "[Builder] Verify the environment setup" in prompt
         assert "[Builder-1]" not in prompt
 
     def test_secbench_worker_prompt_strategy_path_renders(self) -> None:
@@ -112,3 +130,18 @@ class TestSecurityPromptBuilding:
         assert "<cve_instance>" in prompt
         assert "Exploiter Worker" in prompt
 
+    def test_secbench_worker_prompt_falls_back_to_task_description_for_phase(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Produce the minimal patch",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        assert "<cve_instance>" in prompt
+        assert "Fixer Worker" in prompt

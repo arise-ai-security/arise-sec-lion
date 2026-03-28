@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -87,36 +87,77 @@ class WorkerConfig(BaseModel):
     timeout: int = Field(default=300, gt=0)
 
 
-class ReconRoleConfig(BaseModel):
-    """Per-role recon policy defaults."""
+class ToolsetPolicyConfig(BaseModel):
+    """Per-toolset enablement and allowed-tool overrides."""
 
     enabled: bool = True
-    max_iterations: int = 5
-    result_char_limit: int = 6_000
     allowed_tools: list[str] | None = None
 
 
-class ReconConfig(BaseModel):
-    """Per-role + per-domain recon policy config.
+class ToolsetRoleConfig(BaseModel):
+    """Per-role tool-calling policy defaults."""
+
+    max_iterations: int = 5
+    result_char_limit: int = 6_000
+    toolsets: dict[str, ToolsetPolicyConfig] = Field(default_factory=dict)
+
+    # Backward-compatible legacy fields for orchestration.recon.* role configs.
+    enabled: bool | None = Field(default=None, exclude=True)
+    allowed_tools: list[str] | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _normalize_legacy_recon_fields(self) -> "ToolsetRoleConfig":
+        if self.enabled is None and self.allowed_tools is None:
+            return self
+
+        normalized = dict(self.toolsets)
+        normalized.setdefault(
+            "recon",
+            ToolsetPolicyConfig(
+                enabled=self.enabled if self.enabled is not None else True,
+                allowed_tools=self.allowed_tools,
+            ),
+        )
+        self.toolsets = normalized
+        return self
+
+
+class ToolsetConfig(BaseModel):
+    """Per-role + per-domain toolset policy config.
 
     Shape::
 
-        recon:
+        toolsets:
           default:
-            pending: {enabled: true, max_iterations: 5}
-            manager: {enabled: true, max_iterations: 5}
-            boss: {enabled: false}
+            pending:
+              max_iterations: 5
+              toolsets:
+                recon: {enabled: true}
+            manager:
+              max_iterations: 5
+              toolsets:
+                recon: {enabled: true}
+            boss:
+              toolsets:
+                recon: {enabled: false}
           domains:
             secbench:
-              manager: {max_iterations: 3, allowed_tools: [...]}
+              manager:
+                max_iterations: 3
+                toolsets:
+                  recon: {allowed_tools: [...]}
     """
 
-    default: dict[str, ReconRoleConfig] = Field(default_factory=dict)
-    domains: dict[str, dict[str, ReconRoleConfig]] = Field(default_factory=dict)
+    default: dict[str, ToolsetRoleConfig] = Field(default_factory=dict)
+    domains: dict[str, dict[str, ToolsetRoleConfig]] = Field(default_factory=dict)
 
     def to_raw_dict(self) -> dict[str, Any]:
-        """Convert to the raw dict format consumed by AgentOrchestrator."""
+        """Convert to the normalized dict format consumed by the resolver."""
         return self.model_dump(mode="python")
+
+
+ReconRoleConfig = ToolsetRoleConfig
+ReconConfig = ToolsetConfig
 
 
 class OrchestrationConfig(BaseModel):
@@ -192,7 +233,15 @@ class OrchestrationConfig(BaseModel):
 
     limits: LimitsConfig
     retry: RetryConfig = RetryConfig()
-    recon: ReconConfig = ReconConfig()
+    toolsets: ToolsetConfig = Field(
+        default_factory=ToolsetConfig,
+        validation_alias=AliasChoices("toolsets", "recon"),
+    )
+
+    @property
+    def recon(self) -> ToolsetConfig:
+        """Backward-compatible accessor for older call sites."""
+        return self.toolsets
 
 
 class OutputConfig(BaseModel):

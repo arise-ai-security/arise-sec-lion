@@ -13,7 +13,7 @@ Decompose the build setup phase into worker subtasks.
 
 1. **Identify Base Commit**: Read vulnerability description, determine suitable base commit, save to `/testcase/base_commit_hash`. If a different commit is required, reset to that commit before building.
 
-2. **Initial Build**: Run `cd <work_dir> && /src/build.sh`. Capture and analyze build errors while ignoring warnings.
+2. **Initial Build**: Run `cd {{ work_dir }} && /src/build.sh`. Capture and analyze build errors while ignoring warnings.
 
 3. **Improve Build Script**: Make `/src/build.sh` standalone, remove fuzzer commands, add parallel build flags, make directory creation idempotent, place `make clean` before configure or make, preserve sanitizer-related compiler flags, and check local script existence before running helper scripts.
 

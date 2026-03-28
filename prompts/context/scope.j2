@@ -1,20 +1,20 @@
 <scope>
-{% if scope.target_paths %}
-**Target paths** (focus recon here):
-{% for p in scope.target_paths %}
-- {{ p }}
-{% endfor %}
-{% endif %}
-{% if scope.symbols %}
-**Key symbols** (functions, classes, methods):
-{% for s in scope.symbols %}
-- {{ s }}
-{% endfor %}
-{% endif %}
-{% if scope.search_hints %}
-**Search hints** (keywords to grep for):
-{% for h in scope.search_hints %}
-- {{ h }}
-{% endfor %}
-{% endif %}
+    {% if scope.target_paths %}
+        **Target paths** (focus recon here):
+        {% for p in scope.target_paths %}
+            - {{ p }}
+        {% endfor %}
+    {% endif %}
+    {% if scope.symbols %}
+        **Key symbols** (functions, classes, methods):
+        {% for s in scope.symbols %}
+            - {{ s }}
+        {% endfor %}
+    {% endif %}
+    {% if scope.search_hints %}
+        **Search hints** (keywords to grep for):
+        {% for h in scope.search_hints %}
+            - {{ h }}
+        {% endfor %}
+    {% endif %}
 </scope>

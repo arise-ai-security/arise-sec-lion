@@ -131,11 +131,31 @@ class SiblingViewPort(Protocol):
 
 
 # =============================================================================
+# Generic Toolsets
+# =============================================================================
+
+
+class Toolset(Protocol):
+    """Named tool provider that can advertise and execute tools."""
+
+    @property
+    def name(self) -> str: ...
+
+    def get_tool_definitions(self) -> list[dict[str, Any]]:
+        """Return tool definitions in OpenAI function-calling format."""
+        ...
+
+    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        """Dispatch a tool call by name and return the result as a string."""
+        ...
+
+
+# =============================================================================
 # Reconnaissance Tools (for manager/PENDING tool-calling)
 # =============================================================================
 
 
-class ReconToolPort(Protocol):
+class ReconToolPort(Toolset, Protocol):
     """Read-only reconnaissance tools for manager assessment/decomposition.
 
     These allow PENDING/MANAGER agents to inspect the codebase before
@@ -171,12 +191,4 @@ class ReconToolPort(Protocol):
 
     async def read_symbol(self, path: str, symbol_name: str) -> str:
         """Read the body of a specific function/class by name."""
-        ...
-
-    def get_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return tool definitions in OpenAI function-calling format."""
-        ...
-
-    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """Dispatch a tool call by name and return the result as a string."""
         ...
