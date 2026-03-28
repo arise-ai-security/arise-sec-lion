@@ -1,5 +1,7 @@
 """Application Layer - Service Factories."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -14,18 +16,22 @@ from core.application.execution_service import (
 )
 from core.application.services.agent_repository import AgentRepository
 from core.application.services.child_factory import ChildAgentFactory
+from core.application.services.context_condenser import ContextCondenser
 from core.application.services.event_broadcaster import EventBroadcaster
 from core.application.services.parent_notifier import ParentNotificationService
-from core.application.services.query_service import AgentQueryService
 from core.application.services.prompt_builder import PromptBuilder
-from core.application.services.context_condenser import ContextCondenser
+from core.application.services.query_service import AgentQueryService
 from core.application.services.tool_calling_service import ToolCallingService
 
-from .infrastructure import Infrastructure
 from .realtime_adapter import RealtimeCallbackAdapter
 
+
 if TYPE_CHECKING:
+    from core.application.services.prompt_strategy import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
+    from presentation.cli import CLI, CLIConfig
+
+    from .infrastructure import Infrastructure
 
 
 @dataclass
@@ -40,7 +46,8 @@ class ApplicationConfig:
     output_directory: str
     default_worker_tool: str
     recon_config: ReconConfig = field(default_factory=ReconConfig)
-    domain_plugin: "DomainPlugin | None" = None
+    domain_plugin: DomainPlugin | None = None
+    prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
 
 
@@ -69,6 +76,7 @@ def get_application(
     prompt_builder = PromptBuilder(
         "prompts",
         config.default_worker_tool,
+        strategy=config.prompt_strategy,
         domain_plugin=config.domain_plugin,
     )
 
@@ -148,9 +156,9 @@ def get_application(
 
 def get_cli(
     execution_service: AgentExecutionService,
-    config: "CLIConfig | None" = None,
-) -> "CLI":
+    config: CLIConfig | None = None,
+) -> CLI:
     """Create CLI interface."""
-    from presentation.cli import CLI, CLIConfig
+    from presentation.cli import CLI
 
     return CLI(execution_service=execution_service, config=config)

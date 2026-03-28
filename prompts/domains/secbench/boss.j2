@@ -15,43 +15,13 @@ Generate unified patch file. Deliverable: `/testcase/model_patch.diff`.
 
 **ALL THREE PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
 
-## Decomposition
+## Decomposition Requirements
 
-You MUST decompose into exactly 3 subtasks (one per phase):
-
-```json
-[
-  {
-    "description": "[Builder] Set up environment: build repository, create /testcase/base_commit_hash, improve /src/build.sh",
-    "config": {
-      "strategy": "heuristic",
-      "base": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 4000},
-      "tool": "{{ default_tool }}"
-    }
-  },
-  {
-    "description": "[Exploiter] Generate PoC: trigger sanitizer error matching bug report, create /testcase/repro.sh",
-    "config": {
-      "strategy": "heuristic",
-      "base": {"model": "gpt-4o", "temperature": 0.6, "max_tokens": 8000},
-      "tool": "{{ default_tool }}"
-    }
-  },
-  {
-    "description": "[Fixer] Generate patch: analyze candidate fixes, create /testcase/model_patch.diff, validate fix removes sanitizer errors",
-    "config": {
-      "strategy": "heuristic",
-      "base": {"model": "claude-3-5-sonnet-20241022", "temperature": 0.5, "max_tokens": 8000},
-      "tool": "{{ default_tool }}"
-    }
-  }
-]
-```
-
-## Rules
-
-1. **DO NOT execute code yourself** — delegate to child agents
-2. **DO NOT skip any phase** — all three required
-3. **INCLUDE phase prefix** in subtask descriptions (`[Builder]`, `[Exploiter]`, `[Fixer]`)
-4. **Exactly 3 subtasks**, output as pure JSON array
+- Create exactly 3 subtasks, one per phase.
+- Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, and `[Fixer]`.
+- Do not merge phases together or skip validation deliverables for any phase.
+- Ensure each phase subtask explicitly covers its required security outcome:
+  builder = reproducible sanitizer-enabled build,
+  exploiter = PoC reproducing the reported sanitizer error,
+  fixer = minimal patch that removes the sanitizer failure.
 </domain_operation>

@@ -62,11 +62,6 @@ class StubDomainPlugin:
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         return None
 
-    def create_prompt_strategy(self, chain_factory):
-        from core.application.services.prompt_strategy import DefaultPromptStrategy
-
-        return DefaultPromptStrategy()
-
     def enrich_prompt(
         self,
         prompt: str,

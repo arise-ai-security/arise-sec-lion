@@ -1,5 +1,7 @@
 """Security domain plugin implementation."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -8,7 +10,7 @@ from uuid import UUID
 
 from core.domain.values.json_types import JsonObject
 from core.domain.values.prompt_trace import SectionProvenance
-from core.ports.domain_plugin_port import PreparedRunWorkspace, WorkerExecutionContext
+from core.ports.domain_plugin_port import DomainPlugin, PreparedRunWorkspace, WorkerExecutionContext
 from plugins.security.container_runtime import (
     SecBenchContainerSession,
     SecBenchWorkspace,
@@ -19,7 +21,6 @@ from plugins.security.cve_instance import CVEInstance
 from plugins.security.image_resolver import resolve_secbench_image
 from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
 from plugins.security.security_tool import get_tools_for_phase
-
 
 if TYPE_CHECKING:
     from core.application.services.prompt_strategy import PromptStrategy
@@ -32,7 +33,7 @@ def _as_cve_instance(domain_context: object | None) -> CVEInstance | None:
     return domain_context if isinstance(domain_context, CVEInstance) else None
 
 
-class SecurityDomainPlugin:
+class SecurityDomainPlugin(DomainPlugin):
     """SEC-bench plugin mounted via the DomainPlugin bridge."""
 
     def __init__(
@@ -52,18 +53,15 @@ class SecurityDomainPlugin:
         """Attach the runtime after bootstrap creates infrastructure."""
         self._container_runtime = container_runtime
 
+    def get_prompt_strategy(self) -> PromptStrategy | None:
+        return SecBenchPromptStrategy()
+
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("cve_file")
         fail_fast = bool(kwargs.get("fail_fast", False))
         if isinstance(cve_file, (str, Path)):
             return CVEInstance.from_json_file(cve_file)
         return self._inference_service.infer_instance(task_text, fail_fast=fail_fast)
-
-    def create_prompt_strategy(
-        self,
-        chain_factory: Callable[[], object],
-    ) -> "PromptStrategy":
-        return SecBenchPromptStrategy(chain_factory)  # type: ignore[arg-type]
 
     def enrich_prompt(
         self,

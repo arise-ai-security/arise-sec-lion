@@ -14,7 +14,6 @@ from uuid import UUID
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
 from core.application.services.prompt_strategy import (
-    DefaultPromptStrategy,
     PromptContext,
     PromptStrategy,
     SubtaskScope,
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
 class TemplateChain:
     """Fluent builder for chaining template renders."""
 
-    __slots__ = ("_env", "_parts", "_error_context")
+    __slots__ = ("_env", "_error_context", "_parts")
 
     def __init__(
         self,
@@ -97,17 +96,9 @@ class PromptBuilder:
             trim_blocks=True,
             lstrip_blocks=True,
         )
-        self._strategy = strategy or self._create_strategy(domain_plugin)
+        self._strategy: PromptStrategy | None = strategy
         self._user_prompt: str = ""
         self._domain_context: object | None = None
-
-    def _create_strategy(
-        self,
-        domain_plugin: "DomainPlugin | None",
-    ) -> PromptStrategy:
-        if domain_plugin is None:
-            return DefaultPromptStrategy()
-        return domain_plugin.create_prompt_strategy(self.chain)
 
     def set_run_context(
         self,
@@ -121,15 +112,6 @@ class PromptBuilder:
     def chain(self) -> TemplateChain:
         """Create a new template chain builder."""
         return TemplateChain(self.env, "template")
-
-    def set_strategy(self, strategy: PromptStrategy) -> None:
-        """Set the prompt strategy after initialization."""
-        self._strategy = strategy
-
-    def set_domain_plugin(self, domain_plugin: "DomainPlugin | None") -> None:
-        """Replace the active domain plugin and reset the derived strategy."""
-        self._domain_plugin = domain_plugin
-        self._strategy = self._create_strategy(domain_plugin)
 
     def _limits_context(
         self,
@@ -183,22 +165,7 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
     ) -> str:
         """Build prompt for PENDING agent task assessment."""
-        prompt_ctx = PromptContext(
-            task_description=task_description,
-            agent_id=agent_id,
-            agent_role=AgentRole.PENDING,
-            default_tool=self.default_tool,
-            briefing=briefing,
-            hierarchy_limits=hierarchy_limits,
-            domain_context=domain_context,
-            scope=scope,
-        )
-        custom_prompt = self._strategy.build_assessment_prompt(prompt_ctx)
-        if custom_prompt is not None:
-            return custom_prompt
-
         limits = self._limits_context(hierarchy_limits)
-
         return (
             self.chain()
             .render("system.j2", default_tool=self.default_tool)
@@ -237,13 +204,8 @@ class PromptBuilder:
             domain_context=domain_context,
             hierarchy_limits=hierarchy_limits,
         )
-        custom_prompt = self._strategy.build_boss_prompt(prompt_ctx)
-        if custom_prompt is not None:
-            return custom_prompt
-
         limits = self._limits_context(hierarchy_limits)
-
-        return (
+        chain = (
             self.chain()
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/boss.j2")
@@ -255,8 +217,13 @@ class PromptBuilder:
                 default_tool=self.default_tool,
                 **limits,
             )
-            .build()
         )
+        extended_chain = (
+            self._strategy.extend_boss_prompt(chain, prompt_ctx)
+            if self._strategy is not None
+            else None
+        )
+        return (extended_chain or chain).build()
 
     def build_manager_decomposition_prompt(
         self,
@@ -281,13 +248,8 @@ class PromptBuilder:
             domain_context=domain_context,
             scope=scope,
         )
-        custom_prompt = self._strategy.build_manager_prompt(prompt_ctx)
-        if custom_prompt is not None:
-            return custom_prompt
-
         limits = self._limits_context(hierarchy_limits)
-
-        return (
+        chain = (
             self.chain()
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/manager.j2")
@@ -304,8 +266,13 @@ class PromptBuilder:
                 default_tool=self.default_tool,
                 **limits,
             )
-            .build()
         )
+        extended_chain = (
+            self._strategy.extend_manager_prompt(chain, prompt_ctx)
+            if self._strategy is not None
+            else None
+        )
+        return (extended_chain or chain).build()
 
     def _apply_domain_enrichment(
         self,
@@ -317,7 +284,9 @@ class PromptBuilder:
         if self._domain_plugin is None:
             return prompt
 
-        active_domain_context = domain_context if domain_context is not None else self._domain_context
+        active_domain_context = (
+            domain_context if domain_context is not None else self._domain_context
+        )
         return self._domain_plugin.enrich_prompt(
             prompt,
             domain_context=active_domain_context,
@@ -344,16 +313,8 @@ class PromptBuilder:
             handoff=handoff,
             workspace_context=workspace_context,
         )
-        custom_prompt = self._strategy.build_worker_prompt(prompt_ctx)
-        if custom_prompt is not None:
-            return self._apply_domain_enrichment(
-                custom_prompt,
-                domain_context=domain_context,
-                briefing=briefing,
-            )
-
         sibling_ctx = handoff.to_template_dict() if handoff else {}
-        prompt = (
+        chain = (
             self.chain()
             .render("system.j2", default_tool=self.default_tool)
             .render("roles/worker.j2")
@@ -364,8 +325,13 @@ class PromptBuilder:
                 task_description=task_description,
                 workspace_context=workspace_context,
             )
-            .build()
         )
+        extended_chain = (
+            self._strategy.extend_worker_prompt(chain, prompt_ctx)
+            if self._strategy is not None
+            else None
+        )
+        prompt = (extended_chain or chain).build()
 
         return self._apply_domain_enrichment(
             prompt,

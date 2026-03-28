@@ -11,42 +11,19 @@ Decompose the build setup phase into worker subtasks.
 
 ### Subtasks
 
-1. **Identify Base Commit**: Read vulnerability description, determine suitable base commit, save to `/testcase/base_commit_hash`. If different commit needed, `git reset --hard <hash>`.
+1. **Identify Base Commit**: Read vulnerability description, determine suitable base commit, save to `/testcase/base_commit_hash`. If a different commit is required, reset to that commit before building.
 
-2. **Initial Build**: Run `cd <work_dir> && /src/build.sh`. Capture and analyze build errors (ignore warnings).
+2. **Initial Build**: Run `cd <work_dir> && /src/build.sh`. Capture and analyze build errors while ignoring warnings.
 
-3. **Improve Build Script**: Make `/src/build.sh` standalone (remove undefined vars), remove fuzzer commands, add `-j$(nproc)` to make, add `-p` to mkdir, place `make clean` before configure/make, preserve existing compiler flags, check script existence before running local scripts.
+3. **Improve Build Script**: Make `/src/build.sh` standalone, remove fuzzer commands, add parallel build flags, make directory creation idempotent, place `make clean` before configure or make, preserve sanitizer-related compiler flags, and check local script existence before running helper scripts.
 
-4. **Fix Build Errors** (if any): For C++17 errors add `-std=c++14`, for implicit int add type declarations, for overload errors add `-D_GNU_SOURCE`. Make MINIMAL source changes. DO NOT disable sanitizers.
+4. **Fix Build Errors** (if any): Apply build-specific fixes such as `-std=c++14` for C++17 issues, explicit type declarations for implicit int errors, or `-D_GNU_SOURCE` for overload issues. Make minimal source changes and keep sanitizers enabled.
 
-5. **Record Changes**: Save `git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`, record packages in `/testcase/packages.txt`, verify all deliverables exist.
+5. **Record Changes**: Save `git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`, record installed packages in `/testcase/packages.txt`, and verify all deliverables exist.
 
-### Output
+### Decomposition Requirements
 
-```json
-[
-  {
-    "description": "[Builder-1] Identify base commit: analyze vulnerability, save to /testcase/base_commit_hash",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 2000}, "tool": "{{ default_tool }}"}
-  },
-  {
-    "description": "[Builder-2] Run initial build: execute /src/build.sh, capture errors",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 4000}, "tool": "{{ default_tool }}"}
-  },
-  {
-    "description": "[Builder-3] Improve build script: make standalone, add parallel flags, fix script issues",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 4000}, "tool": "{{ default_tool }}"}
-  },
-  {
-    "description": "[Builder-4] Fix build errors: add compiler flags or minimal source fixes, rebuild",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o", "temperature": 0.4, "max_tokens": 6000}, "tool": "{{ default_tool }}"}
-  },
-  {
-    "description": "[Builder-5] Record changes: save repo_changes.diff, packages.txt, verify deliverables",
-    "config": {"strategy": "heuristic", "base": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 2000}, "tool": "{{ default_tool }}"}
-  }
-]
-```
-
-DO NOT execute code yourself. DO NOT disable sanitizer options.
+- Cover every step above with worker subtasks.
+- Preserve sanitizer instrumentation throughout the build phase.
+- Ensure the final worker plan verifies all required deliverables before concluding the phase.
 </domain_operation>

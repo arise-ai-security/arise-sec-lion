@@ -1,5 +1,7 @@
 """Bridge port for optional domain-specific behavior."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,7 +10,6 @@ from uuid import UUID
 
 from core.domain.values.json_types import JsonObject
 from core.domain.values.prompt_trace import SectionProvenance
-
 
 if TYPE_CHECKING:
     from core.application.services.prompt_strategy import PromptStrategy
@@ -34,13 +35,6 @@ class DomainPlugin(Protocol):
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         """Infer or load opaque domain context for a run."""
-        ...
-
-    def create_prompt_strategy(
-        self,
-        chain_factory: Callable[[], object],
-    ) -> "PromptStrategy":
-        """Create the domain's prompt strategy implementation."""
         ...
 
     def enrich_prompt(
@@ -95,4 +89,8 @@ class DomainPlugin(Protocol):
         domain_context: object | None,
     ) -> None:
         """Clean up optional runtime state after worker execution."""
+        ...
+
+    def get_prompt_strategy(self) -> PromptStrategy | None:
+        """Return the prompt strategy paired with this domain plugin, or None."""
         ...

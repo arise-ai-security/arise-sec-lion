@@ -1,4 +1,4 @@
-"""Prompt strategy protocol and generic default implementation."""
+"""Prompt strategy protocol for optional prompt-chain extensions."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -6,7 +6,9 @@ from uuid import UUID
 
 from core.domain.values.enums import AgentRole
 
+
 if TYPE_CHECKING:
+    from core.application.services.prompt_builder import TemplateChain
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
 
@@ -44,38 +46,31 @@ class PromptContext:
 class PromptStrategy(Protocol):
     """Strategy interface for prompt building.
 
-    Implementations return custom prompts for specific use cases,
-    or None to fall back to default prompt building.
+    Implementations may extend the default prompt chain for specific use cases,
+    or return None to use the default chain unchanged.
     """
 
-    def build_boss_prompt(self, context: PromptContext) -> str | None:
-        """Return custom boss prompt, or None to use default."""
+    def extend_boss_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        """Return an extended boss prompt chain, or None to use the default chain."""
         ...
 
-    def build_manager_prompt(self, context: PromptContext) -> str | None:
-        """Return custom manager prompt, or None to use default."""
+    def extend_manager_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        """Return an extended manager prompt chain, or None to use the default chain."""
         ...
 
-    def build_worker_prompt(self, context: PromptContext) -> str | None:
-        """Return custom worker prompt, or None to use default."""
+    def extend_worker_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        """Return an extended worker prompt chain, or None to use the default chain."""
         ...
 
-    def build_assessment_prompt(self, context: PromptContext) -> str | None:
-        """Return custom assessment prompt, or None to use default."""
-        ...
-
-
-class DefaultPromptStrategy:
-    """Default strategy - returns None to use base prompts for all roles."""
-
-    def build_boss_prompt(self, context: PromptContext) -> str | None:
-        return None
-
-    def build_manager_prompt(self, context: PromptContext) -> str | None:
-        return None
-
-    def build_worker_prompt(self, context: PromptContext) -> str | None:
-        return None
-
-    def build_assessment_prompt(self, context: PromptContext) -> str | None:
-        return None

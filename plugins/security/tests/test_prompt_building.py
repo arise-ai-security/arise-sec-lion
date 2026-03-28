@@ -7,7 +7,7 @@ from core.application.services.prompt_builder import PromptBuilder
 from core.application.services.prompt_parser import PromptParser
 from core.domain.aggregates.agent_session import AgentRole
 from core.domain.values.node_message import Ancestor, Briefing
-from plugins.security import CVEInstance, SecurityDomainPlugin
+from plugins.security import CVEInstance, SecBenchPromptStrategy, SecurityDomainPlugin
 
 
 def get_prompts_dir() -> Path:
@@ -39,11 +39,14 @@ def make_test_cve_instance() -> CVEInstance:
 class TestSecurityPromptBuilding:
     def test_secbench_manager_prompt_strategy_path_renders(self) -> None:
         parser = PromptParser()
+        domain_plugin = SecurityDomainPlugin()
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
-            domain_plugin=SecurityDomainPlugin(),
+            strategy=SecBenchPromptStrategy(),
+            domain_plugin=domain_plugin,
         )
+        builder.set_run_context(user_prompt="Root SEC-bench request")
 
         briefing = Briefing(
             parent_task="Top-level SEC-bench task",
@@ -69,16 +72,21 @@ class TestSecurityPromptBuilding:
         assert any(section.tag == "persona" for section in sections)
         assert "<cve_instance>" in prompt
         assert "Builder Manager" in prompt
+        assert "<user_prompt>\nRoot SEC-bench request\n</user_prompt>" in prompt
+        assert "<task>\n[Builder] Verify the environment setup\n</task>" in prompt
+        assert "[Builder-1]" not in prompt
 
     def test_secbench_worker_prompt_strategy_path_renders(self) -> None:
+        domain_plugin = SecurityDomainPlugin()
         parser = PromptParser(
-            extra_tag_mappings=SecurityDomainPlugin().get_tag_mappings(),
-            extra_provenance_patterns=SecurityDomainPlugin().get_provenance_patterns(),
+            extra_tag_mappings=domain_plugin.get_tag_mappings(),
+            extra_provenance_patterns=domain_plugin.get_provenance_patterns(),
         )
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
-            domain_plugin=SecurityDomainPlugin(),
+            strategy=SecBenchPromptStrategy(),
+            domain_plugin=domain_plugin,
         )
 
         briefing = Briefing(
@@ -103,3 +111,4 @@ class TestSecurityPromptBuilding:
         assert any(section.tag == "persona" for section in sections)
         assert "<cve_instance>" in prompt
         assert "Exploiter Worker" in prompt
+

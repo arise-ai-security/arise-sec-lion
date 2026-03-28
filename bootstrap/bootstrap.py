@@ -1,6 +1,6 @@
 """Bootstrap - Composition Root: argument parsing, dependency wiring, command dispatch."""
 
-
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -8,14 +8,23 @@ import json
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from config import Settings
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
-from presentation.cli import CLI, CLIConfig
 
-from .application import ApplicationConfig, get_application
-from .infrastructure import InfrastructureConfig, get_infrastructure
+from .composition import (
+    create_runtime_cli,
+    get_first_enabled_domain_components,
+    get_run_domain_components,
+)
+
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from core.ports.domain_plugin_port import DomainPlugin
 
 
 def main(args: list[str] | None = None) -> None:
@@ -42,10 +51,18 @@ def main(args: list[str] | None = None) -> None:
         sys.exit(0)
 
 
+def _load_settings(config_path: Path | None) -> Settings:
+    """Load settings from a provided config path or the default location."""
+    return Settings.from_yaml(config_path) if config_path else Settings.load()
+
+
 def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arise",
-        description="Arise Sec Lion - A recursive, self-healing multi-agent orchestration platform.",
+        description=(
+            "Arise Sec Lion - A recursive, self-healing multi-agent orchestration "
+            "platform."
+        ),
     )
     parser.add_argument("-c", "--config", type=Path, help="Path to YAML configuration file")
     sub = parser.add_subparsers(dest="command", help="Available commands")
@@ -82,7 +99,15 @@ def _create_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--agent-id", type=UUID, help="Agent UUID (default: last run)")
         p.add_argument("-o", "--output", type=Path, help="Output file path")
-        p.add_argument("--format", choices=["json", "text"] if name == "summary" else ["json", "jsonl", "text", "compact"], default="json")
+        p.add_argument(
+            "--format",
+            choices=(
+                ["json", "text"]
+                if name == "summary"
+                else ["json", "jsonl", "text", "compact"]
+            ),
+            default="json",
+        )
         for arg_name, arg_opts in extra_args:
             p.add_argument(arg_name, **arg_opts)
 
@@ -99,7 +124,7 @@ def _create_parser() -> argparse.ArgumentParser:
 
 
 @asynccontextmanager
-async def _event_store(settings: Settings):
+async def _event_store(settings: Settings) -> AsyncIterator[PostgresEventStore]:
     """Create and manage event store lifecycle."""
     store = PostgresEventStore(settings.database.connection_string)
     await store.connect()
@@ -112,32 +137,63 @@ async def _event_store(settings: Settings):
 async def _run_task(args: argparse.Namespace) -> None:
     from presentation.formatters import ProgressDisplayFormatter
 
-    settings = Settings.from_yaml(args.config) if args.config else Settings.load()
-
-    # Apply CLI overrides for worker configuration
-    settings = _apply_worker_overrides(settings, args)
-
+    settings = _apply_worker_overrides(_load_settings(args.config), args)
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
 
-    domain_plugin = _get_run_domain_plugin(settings, args)
-    domain_context = None
-    if domain_plugin is not None:
-        domain_context = domain_plugin.infer_context(
-            args.task,
-            cve_file=getattr(args, "cve_file", None),
-            fail_fast=True,
-        )
-        if settings.output.verbose:
-            metadata = domain_plugin.get_run_metadata(domain_context) if domain_context else {}
-            instance_id = metadata.get("instance_id")
-            if isinstance(instance_id, str):
-                print(f"[Inferred] SEC-bench CVE: {instance_id}")
-
-    await _create_cli(
+    domain_components = get_run_domain_components(
         settings,
-        callback,
-        domain_plugin=domain_plugin,
+        requested_domain=getattr(args, "domain", None),
+        cve_file=getattr(args, "cve_file", None),
+    )
+    domain_context = _infer_domain_context(
+        plugin=domain_components.plugin,
+        task_text=args.task,
+        cve_file=getattr(args, "cve_file", None),
+    )
+    _print_inferred_domain_context(
+        plugin=domain_components.plugin,
+        domain_context=domain_context,
+        verbose=settings.output.verbose,
+    )
+
+    await create_runtime_cli(
+        settings,
+        progress_callback=callback,
+        domain_components=domain_components,
     ).run_task(args.task, domain_context=domain_context)
+
+
+def _infer_domain_context(
+    *,
+    plugin: DomainPlugin | None,
+    task_text: str,
+    cve_file: object | None,
+) -> object | None:
+    """Infer optional domain context for a run."""
+    if plugin is None:
+        return None
+
+    return plugin.infer_context(
+        task_text,
+        cve_file=cve_file,
+        fail_fast=True,
+    )
+
+
+def _print_inferred_domain_context(
+    *,
+    plugin: DomainPlugin | None,
+    domain_context: object | None,
+    verbose: bool,
+) -> None:
+    """Print inferred domain metadata when verbose output is enabled."""
+    if plugin is None or domain_context is None or not verbose:
+        return
+
+    metadata = plugin.get_run_metadata(domain_context)
+    instance_id = metadata.get("instance_id")
+    if isinstance(instance_id, str):
+        print(f"[Inferred] SEC-bench CVE: {instance_id}")
 
 
 def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
@@ -168,13 +224,10 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
 
 async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
     from core.query.projections import ProjectionPipelineBuilder
-    from presentation.persistence import RunPersistence
 
-    settings = Settings.from_yaml(args.config) if args.config else Settings.load()
-    agent_id = args.agent_id or RunPersistence(Path(settings.output.directory)).get_last_run_id()
-
-    if not agent_id:
-        print("Error: No agent-id specified and no last run found.")
+    settings = _load_settings(args.config)
+    agent_id = _resolve_agent_id(settings, args.agent_id)
+    if agent_id is None:
         return
 
     async with _event_store(settings) as store:
@@ -193,28 +246,40 @@ async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
 
 
 async def _list_runs(args: argparse.Namespace) -> None:
-    from core.domain.events.events import AgentCreated
     from core.domain.aggregates.agent_session import AgentRole
+    from core.domain.events.events import AgentCreated
     from presentation.rendering import OutputRenderer
 
-    settings = Settings.from_yaml(args.config) if args.config else Settings.load()
+    settings = _load_settings(args.config)
 
     async with _event_store(settings) as store:
         grouped = await store.get_all_events_grouped()
-        runs = [
-            {
-                "boss_id": str(aid),
-                "task": (t := next((e.task_description for e in evts if hasattr(e, "task_description")), "N/A"))[:50] + ("..." if len(t) > 50 else ""),
-                "started_at": evts[0].occurred_at.isoformat(),
-                "event_count": len(evts),
-                "status": type(evts[-1]).__name__,
-            }
-            for aid, evts in grouped.items()
-            if evts and isinstance(evts[0], AgentCreated) and evts[0].role == AgentRole.BOSS.value
-        ]
+        runs = []
+        for aid, evts in grouped.items():
+            if not evts or not isinstance(evts[0], AgentCreated):
+                continue
+            if evts[0].role != AgentRole.BOSS.value:
+                continue
+
+            task = next(
+                (e.task_description for e in evts if hasattr(e, "task_description")),
+                "N/A",
+            )
+            runs.append(
+                {
+                    "boss_id": str(aid),
+                    "task": task[:50] + ("..." if len(task) > 50 else ""),
+                    "started_at": evts[0].occurred_at.isoformat(),
+                    "event_count": len(evts),
+                    "status": type(evts[-1]).__name__,
+                }
+            )
         runs = sorted(runs, key=lambda x: x["started_at"], reverse=True)[:args.limit]
 
-        print(json.dumps(runs, indent=2)) if args.format == "json" else OutputRenderer.print_runs_table(runs)
+        if args.format == "json":
+            print(json.dumps(runs, indent=2))
+        else:
+            OutputRenderer.print_runs_table(runs)
 
 
 async def _trace_prompts(args: argparse.Namespace) -> None:
@@ -223,18 +288,14 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
     from core.application.services.prompt_trace_service import PromptTraceService
     from core.domain.values.prompt_trace import RenderOptions
     from presentation.formatters.prompt_trace_formatter import get_renderer
-    from presentation.persistence import RunPersistence
 
-    settings = Settings.from_yaml(args.config) if args.config else Settings.load()
-    agent_id = args.agent_id or RunPersistence(Path(settings.output.directory)).get_last_run_id()
-
-    if not agent_id:
-        print("Error: No agent-id specified and no last run found.")
+    settings = _load_settings(args.config)
+    agent_id = _resolve_agent_id(settings, args.agent_id)
+    if agent_id is None:
         return
 
     async with _event_store(settings) as store:
-        # Build service and trace
-        domain_plugin = _get_available_domain_plugin(settings)
+        domain_plugin = get_first_enabled_domain_components(settings).plugin
         parser = PromptParser(
             extra_tag_mappings=domain_plugin.get_tag_mappings() if domain_plugin else None,
             extra_provenance_patterns=(
@@ -250,53 +311,17 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
         print(output)
 
 
-def _get_available_domain_plugin(settings: Settings):
-    """Build the configured domain plugin, if one is available."""
-    if not settings.security.enabled:
-        return None
+def _resolve_agent_id(
+    settings: Settings,
+    requested_agent_id: UUID | None,
+) -> UUID | None:
+    """Resolve an explicit agent id or fall back to the last persisted run."""
+    from presentation.persistence import RunPersistence
 
-    from plugins.security import SecurityDomainPlugin
-
-    return SecurityDomainPlugin(enabled_tools=settings.security.tools)
-
-
-def _get_run_domain_plugin(settings: Settings, args: argparse.Namespace):
-    """Build the domain plugin for a specific run when explicitly requested."""
-    requested_domain = getattr(args, "domain", None)
-    cve_file = getattr(args, "cve_file", None)
-    if requested_domain != "security" and cve_file is None:
-        return None
-    return _get_available_domain_plugin(settings)
-
-
-def _create_cli(settings: Settings, progress_callback=None, domain_plugin=None):
-    infra = get_infrastructure(InfrastructureConfig(
-        postgres_connection_string=settings.database.connection_string,
-        default_worker_tool=settings.worker.tool,
-        worker_tool_model=settings.worker.model,
-        worker_tool_timeout=settings.worker.timeout,
-    ))
-    if domain_plugin is not None and hasattr(domain_plugin, "set_container_runtime"):
-        domain_plugin.set_container_runtime(infra.secbench_runtime)
-
-    app = get_application(infra, ApplicationConfig(
-        system_limits=settings.orchestration.limits,
-        max_retries=settings.orchestration.max_retries,
-        poll_interval=settings.orchestration.poll_interval,
-        boss_config=settings.boss,
-        manager_config=settings.manager,
-        output_directory=settings.output.directory,
-        default_worker_tool=settings.worker.tool,
-        recon_config=settings.orchestration.recon,
-        domain_plugin=domain_plugin,
-        progress_callback=progress_callback,
-    ))
-
-    return CLI(
-        execution_service=app.execution_service,
-        config=CLIConfig(
-            verbose=settings.output.verbose,
-            output_directory=settings.output.directory,
-            default_worker_tool=settings.worker.tool,
-        ),
+    agent_id = (
+        requested_agent_id
+        or RunPersistence(Path(settings.output.directory)).get_last_run_id()
     )
+    if agent_id is None:
+        print("Error: No agent-id specified and no last run found.")
+    return agent_id

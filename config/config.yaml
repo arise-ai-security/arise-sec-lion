@@ -64,6 +64,8 @@ orchestration:
         enabled: false   # BOSS recon deferred — separate concern
     domains:
       secbench:
+        pending:
+          enabled: false   # No recon for SEC-bench assessment — prevents context overflow
         manager:
           max_iterations: 3
           allowed_tools:
