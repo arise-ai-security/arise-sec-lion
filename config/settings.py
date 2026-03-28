@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -101,26 +101,6 @@ class ToolsetRoleConfig(BaseModel):
     result_char_limit: int = 6_000
     toolsets: dict[str, ToolsetPolicyConfig] = Field(default_factory=dict)
 
-    # Backward-compatible legacy fields for orchestration.recon.* role configs.
-    enabled: bool | None = Field(default=None, exclude=True)
-    allowed_tools: list[str] | None = Field(default=None, exclude=True)
-
-    @model_validator(mode="after")
-    def _normalize_legacy_recon_fields(self) -> "ToolsetRoleConfig":
-        if self.enabled is None and self.allowed_tools is None:
-            return self
-
-        normalized = dict(self.toolsets)
-        normalized.setdefault(
-            "recon",
-            ToolsetPolicyConfig(
-                enabled=self.enabled if self.enabled is not None else True,
-                allowed_tools=self.allowed_tools,
-            ),
-        )
-        self.toolsets = normalized
-        return self
-
 
 class ToolsetConfig(BaseModel):
     """Per-role + per-domain toolset policy config.
@@ -156,68 +136,74 @@ class ToolsetConfig(BaseModel):
         return self.model_dump(mode="python")
 
 
-ReconRoleConfig = ToolsetRoleConfig
-ReconConfig = ToolsetConfig
+class TopologyConfig(BaseModel):
+    """Agent hierarchy shape limits."""
+
+    max_depth: int
+    max_children_per_node: int
+    max_total_agents: int
+
+    def is_depth_limited(self) -> bool:
+        return self.max_depth > 0
+
+    def is_children_limited(self) -> bool:
+        return self.max_children_per_node > 0
+
+    def is_agents_limited(self) -> bool:
+        return self.max_total_agents > 0
+
+
+class ConcurrencyConfig(BaseModel):
+    """Parallelism and rate-limiting settings."""
+
+    max_concurrent_workers: int
+    max_concurrent_llm_calls: int = 5
+    llm_jitter_max_ms: int = 500
+
+    def is_workers_limited(self) -> bool:
+        return self.max_concurrent_workers > 0
+
+    def is_llm_limited(self) -> bool:
+        return self.max_concurrent_llm_calls > 0
+
+
+class ToolCallingConfig(BaseModel):
+    """Tool-calling loop defaults and per-role policies."""
+
+    max_iterations: int = 10
+    result_char_limit: int = 6_000
+    condense_after_iteration: int = 2
+    token_budget: int = 80_000
+    policies: ToolsetConfig = Field(default_factory=ToolsetConfig)
+
+
+class RetryConfig(BaseModel):
+    """Retry and auto-healing settings."""
+
+    model_escalation_chain: list[str] = Field(
+        default_factory=list,
+        description="Models to try on failure, in order",
+    )
+    retry_budget_fraction: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of remaining budget available for retries",
+    )
+    circuit_breaker_threshold: int = Field(
+        default=3,
+        ge=1,
+        description="Consecutive failures before tripping circuit breaker",
+    )
+    circuit_breaker_reset_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="Seconds before circuit breaker resets",
+    )
 
 
 class OrchestrationConfig(BaseModel):
     """Execution behavior settings."""
-
-    class LimitsConfig(BaseModel):
-        """Agent hierarchy and concurrency limits."""
-
-        max_depth: int
-        max_children_per_node: int
-        max_total_agents: int
-        max_concurrent_workers: int
-        llm_rate_limit_rpm: int
-        max_concurrent_llm_calls: int = 5
-        llm_jitter_max_ms: int = 500
-        max_recon_iterations: int = 10
-
-        # Context condensation for recon tool-calling loop
-        recon_result_char_limit: int = 6_000
-        recon_condense_after_iteration: int = 2
-        recon_token_budget: int = 80_000
-
-        def is_depth_limited(self) -> bool:
-            return self.max_depth > 0
-
-        def is_children_limited(self) -> bool:
-            return self.max_children_per_node > 0
-
-        def is_agents_limited(self) -> bool:
-            return self.max_total_agents > 0
-
-        def is_workers_limited(self) -> bool:
-            return self.max_concurrent_workers > 0
-
-        def is_llm_limited(self) -> bool:
-            return self.max_concurrent_llm_calls > 0
-
-    class RetryConfig(BaseModel):
-        """Retry and auto-healing settings (Phase 4)."""
-
-        model_escalation_chain: list[str] = Field(
-            default_factory=list,
-            description="Models to try on failure, in order",
-        )
-        retry_budget_fraction: float = Field(
-            default=0.3,
-            ge=0.0,
-            le=1.0,
-            description="Fraction of remaining budget available for retries",
-        )
-        circuit_breaker_threshold: int = Field(
-            default=3,
-            ge=1,
-            description="Consecutive failures before tripping circuit breaker",
-        )
-        circuit_breaker_reset_seconds: int = Field(
-            default=300,
-            ge=0,
-            description="Seconds before circuit breaker resets",
-        )
 
     max_retries: int = Field(ge=0, le=10)
     poll_interval: float = Field(ge=0.01)
@@ -231,17 +217,10 @@ class OrchestrationConfig(BaseModel):
         description="Global budget limit in USD (0 = unlimited)",
     )
 
-    limits: LimitsConfig
-    retry: RetryConfig = RetryConfig()
-    toolsets: ToolsetConfig = Field(
-        default_factory=ToolsetConfig,
-        validation_alias=AliasChoices("toolsets", "recon"),
-    )
-
-    @property
-    def recon(self) -> ToolsetConfig:
-        """Backward-compatible accessor for older call sites."""
-        return self.toolsets
+    topology: TopologyConfig
+    concurrency: ConcurrencyConfig
+    tool_calling: ToolCallingConfig = Field(default_factory=ToolCallingConfig)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
 
 
 class OutputConfig(BaseModel):

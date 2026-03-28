@@ -22,7 +22,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig
+from bootstrap.application import ExecutionLimitsBridge
+from config import BossConfig, ManagerConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -418,13 +419,12 @@ class FakeRealtimeCallback:
 # =============================================================================
 
 
-def _make_system_limits() -> OrchestrationConfig.LimitsConfig:
-    return OrchestrationConfig.LimitsConfig(
+def _make_system_limits() -> ExecutionLimitsBridge:
+    return ExecutionLimitsBridge(
         max_depth=-1,
         max_children_per_node=-1,
         max_total_agents=-1,
         max_concurrent_workers=-1,
-        llm_rate_limit_rpm=-1,
     )
 
 

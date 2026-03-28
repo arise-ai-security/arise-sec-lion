@@ -22,7 +22,7 @@ from bootstrap import (
     get_application,
     get_infrastructure,
 )
-from config import BossConfig, ManagerConfig, OrchestrationConfig
+from config import BossConfig, ConcurrencyConfig, ManagerConfig, ToolCallingConfig, TopologyConfig
 from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
@@ -46,13 +46,13 @@ def _create_test_cli(
     manager_config = ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000)
 
     app_config = ApplicationConfig(
-        system_limits=OrchestrationConfig.LimitsConfig(
+        topology=TopologyConfig(
             max_depth=5,
             max_children_per_node=10,
             max_total_agents=100,
-            max_concurrent_workers=5,
-            llm_rate_limit_rpm=60,
         ),
+        concurrency=ConcurrencyConfig(max_concurrent_workers=5),
+        tool_calling=ToolCallingConfig(),
         max_retries=3,
         poll_interval=0.5,
         boss_config=boss_config,

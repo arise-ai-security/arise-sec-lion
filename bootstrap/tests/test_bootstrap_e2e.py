@@ -15,22 +15,11 @@ from bootstrap import (
     get_cli,
     get_infrastructure,
 )
-from config import OrchestrationConfig
+from config import ConcurrencyConfig, ToolCallingConfig, TopologyConfig
 from presentation.cli import CLI, CLIConfig
 
 
 pytestmark = pytest.mark.e2e
-
-
-def make_test_limits() -> OrchestrationConfig.LimitsConfig:
-    """Create test system limits (all unlimited)."""
-    return OrchestrationConfig.LimitsConfig(
-        max_depth=-1,
-        max_children_per_node=-1,
-        max_total_agents=-1,
-        max_concurrent_workers=-1,
-        llm_rate_limit_rpm=-1,
-    )
 
 
 def make_infra_config(**overrides) -> InfrastructureConfig:
@@ -49,7 +38,11 @@ def make_app_config(**overrides) -> ApplicationConfig:
     from config import BossConfig, ManagerConfig
 
     defaults = {
-        "system_limits": make_test_limits(),
+        "topology": TopologyConfig(
+            max_depth=-1, max_children_per_node=-1, max_total_agents=-1,
+        ),
+        "concurrency": ConcurrencyConfig(max_concurrent_workers=-1),
+        "tool_calling": ToolCallingConfig(),
         "max_retries": 3,
         "poll_interval": 0.5,
         "boss_config": BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),

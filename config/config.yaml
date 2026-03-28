@@ -23,57 +23,69 @@ orchestration:
   max_retries: 3
   poll_interval: 0.5  # seconds between orchestration loop iterations
 
-  limits:
+  topology:
     max_depth: 3               # BOSS(0) → children(1) → grandchildren(2) → forced-workers(3)
     max_children_per_node: 5   # SEC-bench manager templates instruct LLM to produce 4-5 subtasks
     max_total_agents: 25       # Safety cap for demo run (accommodates deeper trees)
+
+  concurrency:
     max_concurrent_workers: 1  # Sequential execution so sibling context is populated
-    llm_rate_limit_rpm: -1     # -1 = unlimited
     max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
-    # Recon iterations control how many tool-calling rounds a PENDING agent
-    # gets before deciding execute vs decompose.  Context management layers
-    # (truncation, condensation, budget gate) now prevent overflow, so the
-    # iteration cap can be raised from the previous defensive value of 2.
-    max_recon_iterations: 5
 
-    # Context condensation for recon tool-calling loop.
+  tool_calling:
+    # Iterations control how many tool-calling rounds an agent gets.
+    # Context management layers (truncation, condensation, budget gate)
+    # prevent overflow, so the cap can be raised safely.
+    max_iterations: 5
+
+    # Context condensation for tool-calling loop.
     # Layer 1: hard-cap each tool result (chars). Prevents single results
     #   from dominating the context window.
-    recon_result_char_limit: 6000
+    result_char_limit: 6000
     # Layer 2: after this many iterations, older tool exchanges are
     #   LLM-summarized into a compact digest (keeps recent results verbatim).
-    recon_condense_after_iteration: 2
+    condense_after_iteration: 2
     # Layer 3: estimated token ceiling. If exceeded, force-stop the loop
     #   and produce a final answer with whatever info has been gathered.
-    recon_token_budget: 80000
+    token_budget: 80000
 
-  # Per-role and per-domain recon policy overrides.
-  # Merged: domain-specific > role default > hardcoded fallback.
-  recon:
-    default:
-      pending:
-        enabled: true
-        max_iterations: 5
-        result_char_limit: 6000
-      manager:
-        enabled: true
-        max_iterations: 5
-        result_char_limit: 6000
-      boss:
-        enabled: false   # BOSS recon deferred — separate concern
-    domains:
-      secbench:
+    # Per-role and per-domain tool-calling policy overrides.
+    # Merged: domain-specific > role default > hardcoded fallback.
+    policies:
+      default:
         pending:
-          enabled: false   # No recon for SEC-bench assessment — prevents context overflow
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
         manager:
-          max_iterations: 3
-          allowed_tools:
-            - search_codebase
-            - read_file
-            - get_file_structure
-            - get_symbols_overview
-            - read_symbol
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        boss:
+          toolsets:
+            recon:
+              enabled: false   # BOSS recon deferred — separate concern
+      domains:
+        secbench:
+          pending:
+            toolsets:
+              recon:
+                enabled: false   # No recon for SEC-bench assessment
+          manager:
+            max_iterations: 3
+            toolsets:
+              recon:
+                allowed_tools:
+                  - search_codebase
+                  - read_file
+                  - get_file_structure
+                  - get_symbols_overview
+                  - read_symbol
 
 output:
   verbose: true

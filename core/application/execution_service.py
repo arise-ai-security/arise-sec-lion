@@ -41,13 +41,10 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from config import BossConfig, ManagerConfig, OrchestrationConfig
     from core.application.services.prompt_builder import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStorePort
     from core.ports.runtime_ports import SharedContextPort, SiblingViewPort
-
-    SystemLimitsConfig = OrchestrationConfig.LimitsConfig
 
 @dataclass(frozen=True)
 class ServiceConfig:
@@ -90,7 +87,7 @@ class AgentExecutionService:
         event_store: "EventStorePort",
         dependencies: ExecutionServiceDependencies,
         config: ServiceConfig,
-        system_limits: "SystemLimitsConfig",
+        system_limits: object,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         # Core ports

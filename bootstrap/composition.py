@@ -95,14 +95,15 @@ def create_runtime_cli(
     app = get_application(
         infra,
         ApplicationConfig(
-            system_limits=settings.orchestration.limits,
+            topology=settings.orchestration.topology,
+            concurrency=settings.orchestration.concurrency,
+            tool_calling=settings.orchestration.tool_calling,
             max_retries=settings.orchestration.max_retries,
             poll_interval=settings.orchestration.poll_interval,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,
             default_worker_tool=settings.worker.tool,
-            toolset_config=settings.orchestration.toolsets,
             domain_plugin=plugin,
             prompt_strategy=active_domain_components.prompt_strategy,
             progress_callback=progress_callback,

@@ -64,11 +64,9 @@ class ToolCallingService:
     def __init__(
         self,
         llm_port: LLMPort,
-        max_iterations: int = 10,
         condenser: ContextCondenser | None = None,
     ) -> None:
         self._llm_port = llm_port
-        self._max_iterations = max_iterations
         self._condenser = condenser
 
     async def run_with_tools(

@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig, ToolsetConfig
+from config import (
+    BossConfig,
+    ConcurrencyConfig,
+    ManagerConfig,
+    ToolCallingConfig,
+    TopologyConfig,
+)
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -37,18 +43,41 @@ if TYPE_CHECKING:
     from .infrastructure import Infrastructure
 
 
+@dataclass(frozen=True)
+class ExecutionLimitsBridge:
+    """Combines topology + concurrency for AgentExecutionService.
+
+    Temporary bridge until Change B destructures these into the service
+    constructor directly.
+    """
+
+    max_depth: int
+    max_children_per_node: int
+    max_total_agents: int
+    max_concurrent_workers: int
+    max_concurrent_llm_calls: int = 5
+    llm_jitter_max_ms: int = 500
+
+    def is_workers_limited(self) -> bool:
+        return self.max_concurrent_workers > 0
+
+    def is_llm_limited(self) -> bool:
+        return self.max_concurrent_llm_calls > 0
+
+
 @dataclass
 class ApplicationConfig:
     """Configuration for application services."""
 
-    system_limits: OrchestrationConfig.LimitsConfig
+    topology: TopologyConfig
+    concurrency: ConcurrencyConfig
+    tool_calling: ToolCallingConfig
     max_retries: int
     poll_interval: float
     boss_config: BossConfig
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
-    toolset_config: ToolsetConfig = field(default_factory=ToolsetConfig)
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
@@ -96,7 +125,7 @@ def get_application(
     child_factory = ChildAgentFactory(
         repository=repository,
         limits_registry=limits_registry,
-        max_total_agents=config.system_limits.max_total_agents,
+        max_total_agents=config.topology.max_total_agents,
         manager_config=config.manager_config,
     )
 
@@ -106,14 +135,13 @@ def get_application(
 
     condenser = ContextCondenser(
         llm_port=infrastructure.llm_adapter,
-        result_char_limit=config.system_limits.recon_result_char_limit,
-        condense_after_iteration=config.system_limits.recon_condense_after_iteration,
-        token_budget=config.system_limits.recon_token_budget,
+        result_char_limit=config.tool_calling.result_char_limit,
+        condense_after_iteration=config.tool_calling.condense_after_iteration,
+        token_budget=config.tool_calling.token_budget,
     )
 
     tool_calling_service = ToolCallingService(
         llm_port=infrastructure.llm_adapter,
-        max_iterations=config.system_limits.max_recon_iterations,
         condenser=condenser,
     )
     llm_query_executor = LLMQueryExecutor(
@@ -122,10 +150,10 @@ def get_application(
     )
     toolset_resolver = ToolsetPolicyResolver(
         toolsets=[infrastructure.recon_tool],
-        config=config.toolset_config.to_raw_dict(),
+        config=config.tool_calling.policies.to_raw_dict(),
         default_loop_policy=LoopPolicy(
-            max_iterations=config.system_limits.max_recon_iterations,
-            result_char_limit=config.system_limits.recon_result_char_limit,
+            max_iterations=config.tool_calling.max_iterations,
+            result_char_limit=config.tool_calling.result_char_limit,
         ),
     )
 
@@ -157,11 +185,20 @@ def get_application(
         domain_plugin=config.domain_plugin,
     )
 
+    system_limits = ExecutionLimitsBridge(
+        max_depth=config.topology.max_depth,
+        max_children_per_node=config.topology.max_children_per_node,
+        max_total_agents=config.topology.max_total_agents,
+        max_concurrent_workers=config.concurrency.max_concurrent_workers,
+        max_concurrent_llm_calls=config.concurrency.max_concurrent_llm_calls,
+        llm_jitter_max_ms=config.concurrency.llm_jitter_max_ms,
+    )
+
     execution_service = AgentExecutionService(
         event_store=infrastructure.event_store,
         dependencies=dependencies,
         config=service_config,
-        system_limits=config.system_limits,
+        system_limits=system_limits,
         progress_callback=config.progress_callback,
     )
 

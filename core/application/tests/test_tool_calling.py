@@ -160,7 +160,7 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, max_iterations=5)
+        service = ToolCallingService(llm)
 
         result = await service.run_with_tools(
             "assess this task",
@@ -196,7 +196,7 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort({"read_file:main.py": "print('hello')"})
-        service = ToolCallingService(llm, max_iterations=5)
+        service = ToolCallingService(llm)
 
         result = await service.run_with_tools(
             "assess task",
@@ -252,7 +252,7 @@ class TestToolCallingService:
             ),
         ])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, max_iterations=5)
+        service = ToolCallingService(llm)
 
         result = await service.run_with_tools(
             "assess",
@@ -290,7 +290,7 @@ class TestToolCallingService:
         # 3 tool-calling turns + 1 forced final
         llm = MockLLMPort([tool_response, tool_response, tool_response, final_response])
         recon = MockReconToolPort()
-        service = ToolCallingService(llm, max_iterations=3)
+        service = ToolCallingService(llm)
 
         result = await service.run_with_tools(
             "assess",

@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from config import BossConfig, ManagerConfig, OrchestrationConfig
+from bootstrap.application import ExecutionLimitsBridge
+from config import BossConfig, ManagerConfig, RetryConfig
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -44,18 +45,17 @@ from bootstrap.tests.test_characterization import (
 )
 
 
-def _make_limits(escalation_chain: list[str] | None = None) -> OrchestrationConfig.LimitsConfig:
-    return OrchestrationConfig.LimitsConfig(
+def _make_limits() -> ExecutionLimitsBridge:
+    return ExecutionLimitsBridge(
         max_depth=-1,
         max_children_per_node=-1,
         max_total_agents=-1,
         max_concurrent_workers=-1,
-        llm_rate_limit_rpm=-1,
     )
 
 
 class _LimitsWithRetry:
-    """Wrapper that adds retry config to LimitsConfig for testing.
+    """Wrapper that adds retry config to ExecutionLimitsBridge for testing.
 
     The real OrchestrationConfig has retry on the parent, but ExecutionService
     reads it via getattr(system_limits, 'retry', None).
@@ -63,12 +63,12 @@ class _LimitsWithRetry:
 
     def __init__(
         self,
-        limits: OrchestrationConfig.LimitsConfig,
+        limits: ExecutionLimitsBridge,
         escalation_chain: list[str] | None = None,
         circuit_breaker_threshold: int = 3,
     ) -> None:
         self._limits = limits
-        self.retry = OrchestrationConfig.RetryConfig(
+        self.retry = RetryConfig(
             model_escalation_chain=escalation_chain or [],
             circuit_breaker_threshold=circuit_breaker_threshold,
         )
@@ -134,7 +134,7 @@ def _wire_service(
     event_store: InMemoryEventStore,
     llm: FakeLLM,
     worker: Any,
-    system_limits: OrchestrationConfig.LimitsConfig | None = None,
+    system_limits: ExecutionLimitsBridge | None = None,
 ) -> AgentExecutionService:
     """Wire execution service with retry-aware configuration."""
     config = ServiceConfig(
