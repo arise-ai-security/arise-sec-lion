@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from config import (
@@ -57,6 +57,7 @@ class ExecutionLimitsBridge:
     max_concurrent_workers: int
     max_concurrent_llm_calls: int = 5
     llm_jitter_max_ms: int = 500
+    max_run_duration_seconds: float = 1800
 
     def is_workers_limited(self) -> bool:
         return self.max_concurrent_workers > 0
@@ -78,6 +79,8 @@ class ApplicationConfig:
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
+    max_run_duration_seconds: float = 1800
+    max_redecompositions: int = 2
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
@@ -169,6 +172,7 @@ def get_application(
 
     parent_notifier = ParentNotificationService(
         repository=repository,
+        max_redecompositions=config.max_redecompositions,
         progress_callback=config.progress_callback,
     )
 
@@ -192,6 +196,7 @@ def get_application(
         max_concurrent_workers=config.concurrency.max_concurrent_workers,
         max_concurrent_llm_calls=config.concurrency.max_concurrent_llm_calls,
         llm_jitter_max_ms=config.concurrency.llm_jitter_max_ms,
+        max_run_duration_seconds=config.max_run_duration_seconds,
     )
 
     execution_service = AgentExecutionService(

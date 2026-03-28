@@ -85,6 +85,11 @@ class WorkerConfig(BaseModel):
     model: str
     tool: Literal["claude_code", "openhands", "google_adk"]
     timeout: int = Field(default=300, gt=0)
+    max_iterations_per_run: int = Field(
+        default=20,
+        gt=0,
+        description="Per-run iteration cap for worker tools that support it.",
+    )
 
 
 class ToolsetPolicyConfig(BaseModel):
@@ -207,6 +212,16 @@ class OrchestrationConfig(BaseModel):
 
     max_retries: int = Field(ge=0, le=10)
     poll_interval: float = Field(ge=0.01)
+    max_run_duration_seconds: float = Field(
+        default=1800,
+        gt=0,
+        description="Hard cap for the overall system loop runtime.",
+    )
+    max_redecompositions: int = Field(
+        default=2,
+        ge=0,
+        description="Maximum infeasibility-driven redecompositions per parent.",
+    )
     decomposition_strategy: str = Field(
         default="recursive",
         description="How tasks are decomposed: recursive (default) or flat",
