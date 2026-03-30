@@ -139,6 +139,10 @@ class DockerSecBenchRuntime:
             )
         finally:
             await self._run_best_effort(["docker", "rm", "-f", seed_container])
+        # Ensure build.sh is executable after copy (docker cp may not preserve mode).
+        build_sh = source_dir / "build.sh"
+        if build_sh.exists():
+            build_sh.chmod(build_sh.stat().st_mode | 0o755)
 
     def _map_host_work_dir(self, source_dir: Path, container_work_dir: str) -> Path:
         if container_work_dir == "/src":
