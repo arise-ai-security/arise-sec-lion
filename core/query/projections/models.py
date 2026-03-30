@@ -226,6 +226,7 @@ class SubtaskSummary:
     description: str
     child_id: UUID | None = None
     child_status: str | None = None
+    justification: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,13 @@ class AgentSummary:
 
     # For MANAGER agents (from SubtasksDefined event)
     subtasks: tuple[SubtaskSummary, ...] = field(default_factory=tuple)
+
+    # Briefing context (from AgentCreated event)
+    parent_task: str | None = None
+    parent_role: str | None = None
+    subtask_justification: dict[str, str] = field(default_factory=dict)
+    ancestry: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    decisions: tuple[str, ...] = field(default_factory=tuple)
 
     # Configuration
     config_strategy: str | None = None

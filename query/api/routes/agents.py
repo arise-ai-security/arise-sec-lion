@@ -19,6 +19,8 @@ from query.api.schemas import (
     AgentListItemSchema,
     AgentNodeSchema,
     AgentSummarySchema,
+    AncestorSchema,
+    BriefingSummarySchema,
     CostBreakdownSchema,
     ExecutionSummarySchema,
     ExecutionTimingSchema,
@@ -79,6 +81,23 @@ def _agent_node_to_schema(
 
 def _agent_summary_to_schema(summary: AgentSummary) -> AgentSummarySchema:
     """Convert AgentSummary read model to API schema."""
+    # Build briefing schema if parent context exists
+    briefing_schema = None
+    if summary.parent_task and summary.parent_role:
+        briefing_schema = BriefingSummarySchema(
+            parent_task=summary.parent_task,
+            parent_role=summary.parent_role,
+            subtask_justification=dict(summary.subtask_justification),
+            ancestry=[
+                AncestorSchema(
+                    role=a.get("role", ""),
+                    task_summary=a.get("task_summary", ""),
+                )
+                for a in summary.ancestry
+            ],
+            decisions=list(summary.decisions),
+        )
+
     return AgentSummarySchema(
         id=str(summary.agent_id),
         role=summary.role,
@@ -92,9 +111,11 @@ def _agent_summary_to_schema(summary: AgentSummary) -> AgentSummarySchema:
                 description=s.description,
                 child_id=str(s.child_id) if s.child_id else None,
                 child_status=s.child_status,
+                justification=dict(s.justification),
             )
             for s in summary.subtasks
         ],
+        briefing=briefing_schema,
         config_strategy=summary.config_strategy,
         config_details=summary.config_details,
         result=summary.result,

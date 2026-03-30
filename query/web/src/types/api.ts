@@ -101,6 +101,22 @@ export interface SubtaskSummary {
   description: string;
   child_id: string | null;
   child_status: string | null;
+  justification: Record<string, string>;
+}
+
+/** Ancestor in briefing lineage chain. */
+export interface Ancestor {
+  role: string;
+  task_summary: string;
+}
+
+/** Context passed from parent agent to child. */
+export interface BriefingSummary {
+  parent_task: string;
+  parent_role: string;
+  subtask_justification: Record<string, string>;
+  ancestry: Ancestor[];
+  decisions: string[];
 }
 
 export interface AgentSummary {
@@ -118,6 +134,9 @@ export interface AgentSummary {
 
   // For MANAGER agents
   subtasks: SubtaskSummary[];
+
+  // Briefing from parent (null for BOSS)
+  briefing: BriefingSummary | null;
 
   // Configuration
   config_strategy: string | null;

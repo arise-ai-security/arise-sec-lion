@@ -141,6 +141,34 @@ class SubtaskSummarySchema(BaseModel):
     description: str = Field(..., description="Subtask description")
     child_id: str | None = Field(None, description="Child agent UUID assigned to this subtask")
     child_status: str | None = Field(None, description="Child agent status")
+    justification: dict[str, str] = Field(
+        default_factory=dict,
+        description="Parent's reasoning: objective, plan, security_insights",
+    )
+
+
+class AncestorSchema(BaseModel):
+    """Schema for an ancestor in the agent briefing lineage."""
+
+    role: str = Field(..., description="Ancestor agent role")
+    task_summary: str = Field(..., description="Ancestor task summary")
+
+
+class BriefingSummarySchema(BaseModel):
+    """Schema for agent briefing context from parent."""
+
+    parent_task: str = Field(..., description="Parent agent's task description")
+    parent_role: str = Field(..., description="Parent agent's role")
+    subtask_justification: dict[str, str] = Field(
+        default_factory=dict,
+        description="Why this task was assigned: objective, plan, security_insights",
+    )
+    ancestry: list[AncestorSchema] = Field(
+        default_factory=list, description="Lineage chain from root to parent"
+    )
+    decisions: list[str] = Field(
+        default_factory=list, description="Inherited decisions from ancestors"
+    )
 
 
 class AgentSummarySchema(BaseModel):
@@ -165,6 +193,11 @@ class AgentSummarySchema(BaseModel):
     # For MANAGER agents (from SubtasksDefined event)
     subtasks: list[SubtaskSummarySchema] = Field(
         default_factory=list, description="Subtasks defined by this manager"
+    )
+
+    # Briefing context from parent (from AgentCreated event)
+    briefing: BriefingSummarySchema | None = Field(
+        None, description="Context passed from parent agent (null for BOSS)"
     )
 
     # Configuration (from AgentConfig)
