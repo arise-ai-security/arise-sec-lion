@@ -166,6 +166,8 @@ chmod +x /usr/local/bin/secb
 
     def _write_exec_helper(self, session: SecBenchContainerSession) -> None:
         helper = session.workspace.helper_script
+        work_dir = session.workspace.container_working_directory
+        container = session.container_id
         helper.write_text(
             "\n".join(
                 [
@@ -177,10 +179,15 @@ chmod +x /usr/local/bin/secb
                     "  exit 2",
                     "fi",
                     "",
-                    "docker exec -i "
-                    f"-w {shlex.quote(session.workspace.container_working_directory)} "
-                    f"{shlex.quote(session.container_id)} "
-                    'bash -lc "$*"',
+                    f"WORKDIR={shlex.quote(work_dir)}",
+                    f"CONTAINER={shlex.quote(container)}",
+                    '# Try the project workdir first; fall back to /src, then /',
+                    '# so that commands survive directory deletion/re-creation.',
+                    'if docker exec "$CONTAINER" test -d "$WORKDIR" 2>/dev/null; then',
+                    '  docker exec -i -w "$WORKDIR" "$CONTAINER" bash -lc "$*"',
+                    'else',
+                    '  docker exec -i -w /src "$CONTAINER" bash -lc "$*"',
+                    "fi",
                     "",
                 ]
             ),

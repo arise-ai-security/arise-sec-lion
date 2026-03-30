@@ -54,21 +54,27 @@ class ContainerSessionContext:
             )
         else:
             shell_line = (
-                '- Run build/test/runtime shell commands with `./secb-exec "<command>"`.\n'
-                "- Do not run SEC-bench shell commands directly on the host.\n"
+                '- **ALL build/test/runtime shell commands** MUST use '
+                '`./secb-exec "<command>"`.  '
+                "Do NOT run them directly — they will fail because "
+                "container paths do not exist on this host.\n"
+                '- Example: `./secb-exec "cd /src/imagemagick && make"` '
+                "(NOT `cd /src/imagemagick && make`)\n"
             )
-        helper_line = (
-            f'- Helper script: `./{self.helper_script.name} "<command>"` '
-            "runs a shell command inside the container.\n"
-        )
         prefix = (
-            "Container-backed SEC-bench workspace:\n"
-            "- Container `/src` is mirrored at `./src`.\n"
-            "- Container `/testcase` is mirrored at `./testcase`.\n"
-            f"- Container working directory `{self.container_working_directory}` "
-            f"is mirrored at `{work_dir}`.\n"
-            "- For direct file edits, use paths under `./src` and `./testcase`.\n"
-            f"{helper_line}"
+            "## Container-backed SEC-bench workspace\n\n"
+            "**CRITICAL — path mapping (file reads/edits use HOST paths):**\n"
+            f"- Container `/src` → host `./src` (absolute: `{self.host_source_dir}`)\n"
+            f"- Container `/testcase` → host `./testcase` "
+            f"(absolute: `{self.host_testcase_dir}`)\n"
+            f"- Container `{self.container_working_directory}` → host `{work_dir}` "
+            f"(absolute: `{self.host_work_dir}`)\n"
+            "- NEVER use `/src/...` or `/testcase/...` for file read/edit/view — "
+            "use `./src/...` or `./testcase/...` instead.\n\n"
+            "**Source code is already cloned** at `./src/` with the correct commit "
+            "checked out. Do NOT re-clone the repository.\n\n"
+            f'**Helper**: `./{self.helper_script.name} "<command>"` '
+            "runs a shell command inside the container.\n"
             f"{shell_line}\n"
         )
         return f"{prefix}\n{task_description}"
@@ -104,7 +110,11 @@ class ContainerSessionContext:
         return path
 
     def wrap_shell_command(self, command: str) -> str:
-        """Run a shell command inside the active container."""
+        """Run a shell command inside the active container.
+
+        Uses ``cd`` instead of ``-w`` so that commands survive if the
+        working directory is temporarily deleted (e.g. during re-clone).
+        """
         stripped = command.strip()
         if not stripped:
             return command
@@ -112,11 +122,16 @@ class ContainerSessionContext:
             return command
         if stripped.startswith(("./secb-exec ", "secb-exec ")):
             return command
+        cd_prefix = (
+            f"cd {shlex.quote(self.container_working_directory)} 2>/dev/null "
+            f"|| cd {shlex.quote(self.container_source_dir)} 2>/dev/null "
+            "|| cd /; "
+        )
+        inner = cd_prefix + command
         return (
             "docker exec -i "
-            f"-w {shlex.quote(self.container_working_directory)} "
             f"{shlex.quote(self.container_id)} "
-            f"bash -lc {shlex.quote(command)}"
+            f"bash -lc {shlex.quote(inner)}"
         )
 
     def relative_host_work_dir(self) -> str:
