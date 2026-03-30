@@ -31,15 +31,18 @@ from core.application.services import (
     ChildAgentFactory,
     ParentNotificationService,
     PromptBuilder,
+    RetryPolicy,
 )
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
+    PromptSent,
     RetryScheduled,
     WorkCompleted,
     WorkFailed,
 )
+from core.domain.values.limits import HierarchyLimits
 
 
 def _make_limits() -> ExecutionLimitsBridge:
@@ -51,40 +54,22 @@ def _make_limits() -> ExecutionLimitsBridge:
     )
 
 
-class _LimitsWithRetry:
-    """Wrapper that adds retry config to ExecutionLimitsBridge for testing.
-
-    The real OrchestrationConfig has retry on the parent, but ExecutionService
-    reads it via getattr(system_limits, 'retry', None).
-    """
-
-    def __init__(
-        self,
-        limits: ExecutionLimitsBridge,
-        escalation_chain: list[str] | None = None,
-        circuit_breaker_threshold: int = 3,
-    ) -> None:
-        self._limits = limits
-        self.retry = RetryConfig(
-            model_escalation_chain=escalation_chain or [],
-            circuit_breaker_threshold=circuit_breaker_threshold,
-        )
-
-    def __getattr__(self, name: str) -> Any:
-        if name == "retry":
-            return self.retry
-        return getattr(self._limits, name)
-
-
 def _make_system_limits_with_retry(
     escalation_chain: list[str] | None = None,
     circuit_breaker_threshold: int = 3,
+    circuit_breaker_reset_seconds: int = 300,
 ) -> Any:
     """Create limits config with retry settings."""
-    limits = _make_limits()
-    return _LimitsWithRetry(
-        limits, escalation_chain=escalation_chain,
-        circuit_breaker_threshold=circuit_breaker_threshold,
+    return ExecutionLimitsBridge(
+        max_depth=-1,
+        max_children_per_node=-1,
+        max_total_agents=-1,
+        max_concurrent_workers=-1,
+        retry=RetryConfig(
+            model_escalation_chain=escalation_chain or [],
+            circuit_breaker_threshold=circuit_breaker_threshold,
+            circuit_breaker_reset_seconds=circuit_breaker_reset_seconds,
+        ),
     )
 
 
@@ -124,6 +109,23 @@ class AlwaysFailWorker:
         )
         yield WorkFailed(
             aggregate_id=agent_id, sequence_number=0, reason="Permanent error"
+        )
+
+
+class RecordingWorker:
+    """Worker that records prompts and completes immediately."""
+
+    def __init__(self) -> None:
+        self.task_contexts: list[dict[str, Any]] = []
+
+    async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
+        self.task_contexts.append(task_context)
+        agent_id = task_context["agent_id"]
+        yield CodeGenerationStarted(
+            aggregate_id=agent_id, sequence_number=0, tool_name="fake"
+        )
+        yield WorkCompleted(
+            aggregate_id=agent_id, sequence_number=0, result="Done"
         )
 
 
@@ -313,3 +315,98 @@ class TestRetryScheduledEvent:
         agent.schedule_retry(reason="error", escalated_model="gpt-4o-mini")
 
         assert agent.config.base.model == "gpt-4o-mini"
+
+    def test_retry_tracks_last_retry_reason(self) -> None:
+        agent = AgentSession.create(
+            agent_id=uuid4(),
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("task")
+        agent.fail_with_reason("verification feedback")
+        agent.schedule_retry(reason="verification feedback", escalated_model=None)
+
+        assert agent.last_retry_reason == "verification feedback"
+
+
+class TestRetryPromptFeedback:
+    """Retry prompts include prior-attempt failure context."""
+
+    @pytest.mark.asyncio
+    async def test_retry_prompt_includes_previous_attempt_feedback(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = RecordingWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        agent = AgentSession.create(
+            agent_id=uuid4(),
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("Investigate failing test")
+        agent.fail_with_reason("Unit tests still fail on edge case")
+        agent.schedule_retry(
+            reason="Unit tests still fail on edge case",
+            escalated_model="gpt-4o-mini",
+        )
+        await event_store.append_batch(agent.events, expected_version=0)
+        agent.mark_changes_as_committed()
+        svc._limits_registry.set(
+            agent.agent_id,
+            HierarchyLimits(
+                current_depth=0,
+                max_depth=-1,
+                max_children_per_node=-1,
+                max_retries=3,
+                root_id=agent.agent_id,
+                max_total_agents=-1,
+                current_total_agents=1,
+            ),
+        )
+
+        await svc.run_agent_step(agent.agent_id)
+
+        prompt = worker.task_contexts[-1]["task_description"]
+        assert "<previous_attempt_feedback>" in prompt
+        assert "Unit tests still fail on edge case" in prompt
+
+        prompt_events = [
+            event for event in event_store.events_for(agent.agent_id)
+            if isinstance(event, PromptSent)
+        ]
+        assert prompt_events
+        assert "<previous_attempt_feedback>" in prompt_events[-1].prompt
+
+
+class TestCircuitBreakerReset:
+    """Circuit-breaker state resets after the configured cooldown window."""
+
+    def test_circuit_breaker_resets_after_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        repository = AgentRepository(event_store=InMemoryEventStore(), max_retries=3)
+        policy = RetryPolicy(
+            repository=repository,
+            retry_config=RetryConfig(
+                model_escalation_chain=["gpt-4o"],
+                circuit_breaker_threshold=1,
+                circuit_breaker_reset_seconds=10,
+            ),
+        )
+        policy._model_failures["gpt-4o"] = 1
+        policy._model_last_failure_time["gpt-4o"] = 0.0
+
+        monkeypatch.setattr(
+            "core.application.services.orchestration.retry_policy.time.monotonic",
+            lambda: 11.0,
+        )
+
+        assert policy._is_circuit_broken("gpt-4o") is False
+        assert "gpt-4o" not in policy._model_failures

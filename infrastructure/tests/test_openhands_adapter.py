@@ -124,7 +124,7 @@ class TestOpenHandsAdapter:
         monkeypatch.setattr(
             adapter,
             "_build_conversation",
-            lambda *_args: conversation,
+            lambda *_args, **_kwargs: conversation,
         )
 
         events = []
@@ -164,7 +164,7 @@ class TestOpenHandsAdapter:
         monkeypatch.setattr(
             adapter,
             "_build_conversation",
-            lambda *_args: conversation,
+            lambda *_args, **_kwargs: conversation,
         )
 
         events = []
@@ -193,7 +193,7 @@ class TestOpenHandsAdapter:
         adapter = OpenHandsAdapter(timeout_seconds=0.01)
         conversation = _StuckConversation()
         monkeypatch.setattr(
-            adapter, "_build_conversation", lambda *_args: conversation,
+            adapter, "_build_conversation", lambda *_args, **_kwargs: conversation,
         )
 
         events = []
@@ -211,3 +211,35 @@ class TestOpenHandsAdapter:
         assert any("did not exit" in record.message for record in caplog.records)
 
         conversation.release()
+
+    @pytest.mark.asyncio
+    async def test_run_session_prefers_task_context_model(
+        self, monkeypatch, tmp_path: Path,
+    ) -> None:
+        adapter = OpenHandsAdapter(model="openai/gpt-4o", timeout_seconds=1)
+        conversation = _FakeConversation()
+        seen: dict[str, str | None] = {}
+
+        def _fake_build_conversation(
+            _working_dir: str,
+            *,
+            model: str,
+            api_key: str | None,
+        ):
+            seen["model"] = model
+            seen["api_key"] = api_key
+            return conversation
+
+        monkeypatch.setattr(adapter, "_build_conversation", _fake_build_conversation)
+
+        async for _event in adapter.run_session(
+            {
+                "task_description": "Implement feature",
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+                "config": {"base": {"model": "openai/gpt-4-turbo"}},
+            }
+        ):
+            pass
+
+        assert seen["model"] == "openai/gpt-4-turbo"

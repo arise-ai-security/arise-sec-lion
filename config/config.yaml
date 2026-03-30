@@ -36,6 +36,12 @@ orchestration:
     max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
 
+  retry:
+    model_escalation_chain:
+      - openai/gpt-4-turbo
+    circuit_breaker_threshold: 3
+    circuit_breaker_reset_seconds: 300
+
   tool_calling:
     # Iterations control how many tool-calling rounds an agent gets.
     # Context management layers (truncation, condensation, budget gate)

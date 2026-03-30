@@ -189,12 +189,6 @@ class RetryConfig(BaseModel):
         default_factory=list,
         description="Models to try on failure, in order",
     )
-    retry_budget_fraction: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Fraction of remaining budget available for retries",
-    )
     circuit_breaker_threshold: int = Field(
         default=3,
         ge=1,

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from core.application.execution_service import ProgressCallback
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
+    from .infrastructure import Infrastructure
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,10 +77,11 @@ def create_runtime_cli(
     *,
     progress_callback: ProgressCallback | None = None,
     domain_components: DomainComponents | None = None,
+    infrastructure: Infrastructure | None = None,
 ) -> CLI:
     """Create a CLI with fully wired infrastructure and optional domain pieces."""
     active_domain_components = domain_components or DomainComponents()
-    infra = get_infrastructure(
+    infra = infrastructure or get_infrastructure(
         InfrastructureConfig(
             postgres_connection_string=settings.database.connection_string,
             default_worker_tool=settings.worker.tool,
@@ -101,6 +103,7 @@ def create_runtime_cli(
             tool_calling=settings.orchestration.tool_calling,
             max_retries=settings.orchestration.max_retries,
             poll_interval=settings.orchestration.poll_interval,
+            retry=settings.orchestration.retry,
             max_run_duration_seconds=settings.orchestration.max_run_duration_seconds,
             max_redecompositions=settings.orchestration.max_redecompositions,
             boss_config=settings.boss,

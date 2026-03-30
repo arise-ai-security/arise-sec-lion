@@ -130,6 +130,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
         Uses MCP filesystem tools and custom shell execution.
         """
         self._start_timing()
+        runtime_model = self._resolve_runtime_model(task_context, self.config.model)
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -152,7 +153,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
 
             # Create agent with MCP filesystem + shell tools
             agent = LlmAgent(
-                model=self.config.model,
+                model=runtime_model,
                 name="worker_agent",
                 instruction=self._build_instruction(),
                 tools=[
@@ -257,13 +258,13 @@ class GoogleADKAdapter(WorkerAdapterBase):
             # Emit cost event if we have token data
             total_tokens = total_input_tokens + total_output_tokens
             if total_tokens > 0:
-                pricing = get_model_pricing(self.config.model)
+                pricing = get_model_pricing(runtime_model or self.config.model)
                 cost_usd = pricing.calculate_cost(total_input_tokens, total_output_tokens)
                 yield sequencer.cost_recorded(
                     tool_name=self._get_tool_name(),
                     cost_usd=cost_usd,
                     duration_seconds=self._get_duration(),
-                    model=self.config.model,
+                    model=runtime_model,
                     tokens=total_tokens,
                 )
 

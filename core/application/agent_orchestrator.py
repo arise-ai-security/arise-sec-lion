@@ -241,6 +241,7 @@ class AgentOrchestrator:
                 domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
             )
+            prompt = self._append_previous_attempt_feedback(prompt, agent)
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
             # Run worker session
@@ -471,3 +472,23 @@ class AgentOrchestrator:
                 probe_type=record.tool_name,
                 result_summary=record.result_summary,
             )
+
+    @staticmethod
+    def _append_previous_attempt_feedback(
+            prompt: str,
+            agent: "AgentSession",
+    ) -> str:
+        """Append prior failure context so retries can self-correct."""
+        if agent.retry_count <= 0 or not agent.last_retry_reason:
+            return prompt
+
+        feedback = agent.last_retry_reason.strip()
+        if not feedback:
+            return prompt
+
+        return (
+            f"{prompt}\n\n"
+            "<previous_attempt_feedback>\n"
+            f"{feedback}\n"
+            "</previous_attempt_feedback>"
+        )
