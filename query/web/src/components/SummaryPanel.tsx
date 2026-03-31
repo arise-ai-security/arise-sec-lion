@@ -52,7 +52,6 @@ function getThoughtContent(event: DomainEvent): string | null {
 const justificationLabels: Record<string, string> = {
   objective: 'Objective',
   plan: 'Suggested Approach',
-  security_insights: 'Security Insights',
 };
 
 /** Briefing context from parent agent */

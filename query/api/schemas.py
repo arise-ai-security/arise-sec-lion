@@ -143,7 +143,7 @@ class SubtaskSummarySchema(BaseModel):
     child_status: str | None = Field(None, description="Child agent status")
     justification: dict[str, str] = Field(
         default_factory=dict,
-        description="Parent's reasoning: objective, plan, security_insights",
+        description="Parent's reasoning for this subtask (e.g. objective, plan)",
     )
 
 
@@ -161,7 +161,7 @@ class BriefingSummarySchema(BaseModel):
     parent_role: str = Field(..., description="Parent agent's role")
     subtask_justification: dict[str, str] = Field(
         default_factory=dict,
-        description="Why this task was assigned: objective, plan, security_insights",
+        description="Why this task was assigned (e.g. objective, plan, domain context)",
     )
     ancestry: list[AncestorSchema] = Field(
         default_factory=list, description="Lineage chain from root to parent"

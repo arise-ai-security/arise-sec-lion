@@ -52,7 +52,7 @@ class Subtask(BaseModel):
     # Captured from LLM decomposition output and passed to child via Briefing.
     justification: dict[str, str] = Field(
         default_factory=dict,
-        description="Parent's reasoning: objective, plan, and security insights",
+        description="Parent's reasoning for this subtask (e.g. objective, plan, domain context)",
     )
 
     # Structured child scoping — machine-readable context for targeted recon.
