@@ -143,6 +143,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 )
                 return
 
+            finish_message: str | None = None
             for event in self._iter_conversation_events(conversation):
                 content = self._extract_event_content(event)
                 if content and content.strip():
@@ -150,6 +151,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
                         content.strip(),
                         self._classify_event(event),
                     )
+                # Capture finish message during iteration
+                if finish_message is None:
+                    finish_message = self._try_extract_finish(event)
 
             cost_data = self._extract_cost_data(conversation)
             yield sequencer.cost_recorded(
@@ -166,7 +170,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 usage_metrics=cost_data.usage_metrics,
             )
 
-            yield sequencer.completed(self._extract_result(conversation, working_dir))
+            yield sequencer.completed(
+                self._extract_result(conversation, working_dir, finish_message)
+            )
         except Exception as error:
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
         finally:
@@ -375,17 +381,95 @@ class OpenHandsAdapter(WorkerAdapterBase):
             return None
         return sum(part or 0 for part in parts)
 
-    def _extract_result(self, conversation: Any, working_dir: str) -> str:
-        """Extract result from conversation events."""
-        output_events = [
-            self._extract_event_content(event)
-            for event in self._iter_conversation_events(conversation)
-            if self._classify_event(event) == "output"
-        ]
-        output_events = [event for event in output_events if event]
-        if output_events:
-            return "\n".join(output_events[-5:])
-        return f"Task completed successfully in workspace: {working_dir}"
+    _EVENT_TEXT_LIMIT = 600
+
+    def _extract_result(
+        self, conversation: Any, working_dir: str, finish_message: str | None = None,
+    ) -> str:
+        """Build a compact command log from ALL conversation events.
+
+        Instead of dumping raw SDK repr for a few events, this creates a
+        structured ``$ command (exit N)`` + truncated output summary for
+        every output event. The verification judge can then see the full
+        execution timeline at a glance.
+        """
+        entries: list[str] = []
+        for event in self._iter_conversation_events(conversation):
+            if self._classify_event(event) != "output":
+                continue
+            summary = self._compact_observation(event)
+            if summary:
+                entries.append(summary)
+
+        parts: list[str] = []
+        if entries:
+            parts.extend(entries)
+        if finish_message:
+            parts.append(f"--- Agent Conclusion ---\n{finish_message}")
+        if parts:
+            return "\n".join(parts)
+        return f"Task completed in workspace: {working_dir}"
+
+    @classmethod
+    def _compact_observation(cls, event: Any) -> str | None:
+        """Extract command, exit code, and truncated text from an SDK event."""
+        obs = getattr(event, "observation", None)
+        if obs is None:
+            raw = cls._extract_event_content(event)
+            if not raw:
+                return None
+            return cls._truncate_text(raw, cls._EVENT_TEXT_LIMIT)
+
+        cmd = getattr(obs, "command", "") or ""
+        metadata = getattr(obs, "metadata", None)
+        exit_code = getattr(metadata, "exit_code", None) if metadata else None
+        text = cls._observation_text(obs)
+
+        header = f"$ {cmd} (exit {exit_code})" if cmd else ""
+        if text:
+            text = cls._truncate_text(text, cls._EVENT_TEXT_LIMIT)
+
+        if header and text:
+            return f"{header}\n{text}"
+        return header or text or None
+
+    @staticmethod
+    def _observation_text(obs: Any) -> str:
+        """Extract the plain text payload from an observation object."""
+        content = getattr(obs, "content", None)
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            for item in content:
+                text = getattr(item, "text", None)
+                if text:
+                    return str(text)
+        return str(content)
+
+    @staticmethod
+    def _truncate_text(text: str, limit: int) -> str:
+        """Head+tail truncation of a single text block."""
+        if len(text) <= limit:
+            return text
+        half = limit // 2
+        return (
+            f"{text[:half]}\n"
+            f"[...{len(text) - limit} chars truncated...]\n"
+            f"{text[-half:]}"
+        )
+
+    @staticmethod
+    def _try_extract_finish(event: Any) -> str | None:
+        """Try to extract a FinishAction message from an SDK event."""
+        action = getattr(event, "action", None)
+        if action is None:
+            return None
+        if type(action).__name__ != "FinishAction":
+            return None
+        msg = getattr(action, "message", None)
+        return str(msg).strip() if msg and str(msg).strip() else None
 
     def _request_shutdown(self, conversation: Any) -> None:
         """Best-effort SDK-native cleanup for the conversation."""

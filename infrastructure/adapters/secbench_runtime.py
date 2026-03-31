@@ -112,6 +112,10 @@ class DockerSecBenchRuntime:
             await self._install_secb(container_id, cve.secb_sh)
 
         await self._add_git_safe_directory(container_id, cve.work_dir)
+        # Ensure build.sh is executable inside the container (DooD uid mismatch)
+        await self._run_best_effort(
+            ["docker", "exec", container_id, "chmod", "+x", "/src/build.sh"]
+        )
 
         session = SecBenchContainerSession(
             workspace=workspace,

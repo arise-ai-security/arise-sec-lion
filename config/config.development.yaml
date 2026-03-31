@@ -1,5 +1,5 @@
 llm:
-  model_boss: gpt-4o-mini
+  model_boss: o3
 
 output:
   verbose: true

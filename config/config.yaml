@@ -5,17 +5,15 @@ database:
   name: arise_events
 
 boss:
-  model: gpt-4o-mini
-  temperature: 0.5
+  model: o3
   max_tokens: 4000  # Needs enough tokens for subtask JSON arrays
 
 manager:
-  model: gpt-4o-mini
-  temperature: 0.5
+  model: o3
   max_tokens: 4000  # Needs enough tokens for subtask JSON arrays
 
 worker:
-  model: openai/gpt-4o
+  model: openai/o3
   tool: openhands
   timeout: 600
   max_iterations_per_run: 20

@@ -2,12 +2,14 @@
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from core.domain.services import strip_markdown_code_block
 from core.domain.services.config_resolver import ConfigResolver
+from core.domain.services.context_update_parser import parse_context_update
 
 
 if TYPE_CHECKING:
@@ -25,6 +27,44 @@ def _head_tail(text: str, limit: int) -> str:
     tail = limit - head
     omitted = len(text) - limit
     return f"{text[:head]}\n\n[...{omitted} chars omitted...]\n\n{text[-tail:]}"
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9]*[hlm]")
+
+
+_CMD_RE = re.compile(r"command='(?P<cmd>[^']*)'")
+_EXIT_RE = re.compile(r"CmdOutputMetadata\([^)]*exit_code=(?P<exit>\d+)")
+_TEXT_SINGLE_RE = re.compile(r"text='(?P<t>[^']*)'")
+_TEXT_DOUBLE_RE = re.compile(r'text="(?P<t>[^"]*)"')
+_OBS_LINE_RE = re.compile(r"^Observation: kind='[^']*'.*", re.MULTILINE)
+
+
+def _clean_worker_output(raw: str) -> str:
+    """Strip SDK wrapper noise and ANSI escapes for cleaner judge input.
+
+    Rewrites ``Observation: kind=...`` lines into a compact
+    ``$ command (exit N)`` + output format that the judge can read easily.
+    """
+    cleaned = _ANSI_ESCAPE.sub("", raw)
+
+    def _rewrite_obs(m: re.Match) -> str:
+        line = m.group(0)
+        cmd_m = _CMD_RE.search(line)
+        exit_m = _EXIT_RE.search(line)
+        text_m = _TEXT_SINGLE_RE.search(line) or _TEXT_DOUBLE_RE.search(line)
+        text = (text_m.group("t").strip() if text_m else "").replace("\\n", "\n")
+
+        parts: list[str] = []
+        if cmd_m:
+            cmd = cmd_m.group("cmd")
+            exit_code = exit_m.group("exit") if exit_m else "?"
+            parts.append(f"$ {cmd} (exit {exit_code})")
+        if text:
+            parts.append(text)
+        return "\n".join(parts) if parts else ""
+
+    cleaned = _OBS_LINE_RE.sub(_rewrite_obs, cleaned)
+    return cleaned
 
 
 @dataclass(frozen=True)
@@ -77,10 +117,13 @@ class VerificationPipeline:
         if not agent.success_criteria:
             return
 
+        report_context = self._build_report_context(agent)
+
         judge_passed, feedback = await self._verify_with_judge(
             result=result,
             success_criteria=agent.success_criteria,
             config=agent.config,
+            report_context=report_context,
         )
         if not judge_passed:
             agent.mark_verification_failed(
@@ -104,19 +147,69 @@ class VerificationPipeline:
         """Stage 3: Execution checks (placeholder — always passes)."""
         return True
 
+    @staticmethod
+    def _build_report_context(agent: "AgentSession") -> str:
+        """Build structured report context from worker's result and context updates.
+
+        Combines the agent's structured Report (task, artifacts, decisions) with
+        any <context-update> blocks parsed from the raw result. This gives the
+        verification judge structured evidence beyond the truncated raw output.
+        """
+        lines: list[str] = []
+
+        # Structured report from agent
+        report = agent.build_report()
+        if report.task:
+            lines.append(f"Task assigned: {report.task[:500]}")
+        if report.artifacts:
+            lines.append(f"Artifacts produced: {', '.join(report.artifacts)}")
+        if report.decisions:
+            lines.append(f"Decisions made: {', '.join(report.decisions)}")
+        if report.execution_summary:
+            lines.append(f"Execution summary: {report.execution_summary}")
+
+        # Briefing context from parent
+        if agent.briefing:
+            if agent.briefing.subtask_justification:
+                for k, v in agent.briefing.subtask_justification.items():
+                    lines.append(f"Parent guidance [{k}]: {v[:200]}")
+
+        # Parse structured context updates from worker output
+        if agent.result:
+            parsed = parse_context_update(agent.result)
+            if parsed:
+                for d in parsed.decisions:
+                    lines.append(f"Decision [{d.key}]: {d.value} (rationale: {d.rationale})")
+                for a in parsed.artifacts:
+                    lines.append(f"Output [{a.key}]: {a.description}")
+
+        return "\n".join(lines)
+
     async def _verify_with_judge(
         self,
         *,
         result: str,
         success_criteria: str,
         config: Any,
+        report_context: str = "",
     ) -> tuple[bool, str]:
         """Stage 4: LLM judge evaluates output against success criteria."""
+        report_section = ""
+        if report_context:
+            report_section = (
+                f"## Worker Report (structured summary)\n{report_context}\n\n"
+            )
+
         prompt = (
-            "You are a quality judge. Evaluate whether the following work output "
-            "satisfies the given success criteria.\n\n"
+            "You are a quality judge. Evaluate whether the worker's output "
+            "satisfies the success criteria. The worker executed inside a "
+            "container and the raw output contains terminal observations "
+            "which may be truncated. Focus on evidence of task completion "
+            "rather than requiring every intermediate step to be visible.\n\n"
             f"## Success Criteria\n{success_criteria}\n\n"
-            f"## Work Output\n{_head_tail(result, 12000)}\n\n"
+            f"{report_section}"
+            f"## Work Output (command log, may be truncated)\n"
+            f"{_head_tail(_clean_worker_output(result), 30000)}\n\n"
             "Respond with ONLY valid JSON:\n"
             '{"passed": true/false, "feedback": "brief explanation"}'
         )
