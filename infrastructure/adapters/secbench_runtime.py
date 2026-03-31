@@ -212,8 +212,10 @@ chmod +x /usr/local/bin/secb
                     '# so that commands survive directory deletion/re-creation.',
                     'if docker exec "$CONTAINER" test -d "$WORKDIR" 2>/dev/null; then',
                     '  docker exec -i -w "$WORKDIR" "$CONTAINER" bash -lc "$*"',
-                    'else',
+                    'elif docker exec "$CONTAINER" test -d /src 2>/dev/null; then',
                     '  docker exec -i -w /src "$CONTAINER" bash -lc "$*"',
+                    'else',
+                    '  docker exec -i -w / "$CONTAINER" bash -lc "$*"',
                     "fi",
                     "",
                 ]

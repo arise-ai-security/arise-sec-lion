@@ -32,39 +32,9 @@ def _head_tail(text: str, limit: int) -> str:
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9]*[hlm]")
 
 
-_CMD_RE = re.compile(r"command='(?P<cmd>[^']*)'")
-_EXIT_RE = re.compile(r"CmdOutputMetadata\([^)]*exit_code=(?P<exit>\d+)")
-_TEXT_SINGLE_RE = re.compile(r"text='(?P<t>[^']*)'")
-_TEXT_DOUBLE_RE = re.compile(r'text="(?P<t>[^"]*)"')
-_OBS_LINE_RE = re.compile(r"^Observation: kind='[^']*'.*", re.MULTILINE)
-
-
-def _clean_worker_output(raw: str) -> str:
-    """Strip SDK wrapper noise and ANSI escapes for cleaner judge input.
-
-    Rewrites ``Observation: kind=...`` lines into a compact
-    ``$ command (exit N)`` + output format that the judge can read easily.
-    """
-    cleaned = _ANSI_ESCAPE.sub("", raw)
-
-    def _rewrite_obs(m: re.Match) -> str:
-        line = m.group(0)
-        cmd_m = _CMD_RE.search(line)
-        exit_m = _EXIT_RE.search(line)
-        text_m = _TEXT_SINGLE_RE.search(line) or _TEXT_DOUBLE_RE.search(line)
-        text = (text_m.group("t").strip() if text_m else "").replace("\\n", "\n")
-
-        parts: list[str] = []
-        if cmd_m:
-            cmd = cmd_m.group("cmd")
-            exit_code = exit_m.group("exit") if exit_m else "?"
-            parts.append(f"$ {cmd} (exit {exit_code})")
-        if text:
-            parts.append(text)
-        return "\n".join(parts) if parts else ""
-
-    cleaned = _OBS_LINE_RE.sub(_rewrite_obs, cleaned)
-    return cleaned
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from worker output."""
+    return _ANSI_ESCAPE.sub("", text)
 
 
 @dataclass(frozen=True)
@@ -209,7 +179,7 @@ class VerificationPipeline:
             f"## Success Criteria\n{success_criteria}\n\n"
             f"{report_section}"
             f"## Work Output (command log, may be truncated)\n"
-            f"{_head_tail(_clean_worker_output(result), 30000)}\n\n"
+            f"{_head_tail(_strip_ansi(result), 30000)}\n\n"
             "Respond with ONLY valid JSON:\n"
             '{"passed": true/false, "feedback": "brief explanation"}'
         )

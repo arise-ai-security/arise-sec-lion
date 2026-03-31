@@ -112,4 +112,4 @@ cors:
 # SEC-bench container settings
 security:
   enabled: true  # Uses worker.timeout for secb commands
-  tools: []  # Disabled: valgrind/klee not available in eval images
+  tools: [valgrind]  # KLEE unavailable in Ubuntu Focal base images

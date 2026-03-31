@@ -2,6 +2,14 @@
 # See https://pre-commit.com for more information
 
 repos:
+  - repo: local
+    hooks:
+      - id: check-architecture-boundaries
+        name: check architecture boundaries
+        entry: python3 scripts/check_architecture_boundaries.py
+        language: system
+        pass_filenames: false
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.5
     hooks:
