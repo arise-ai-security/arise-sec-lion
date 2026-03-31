@@ -119,6 +119,16 @@ def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
             )
             cfg["tool"] = DEFAULT_WORKER_TOOL
 
+    justification = item.get("justification")
+    if isinstance(justification, dict):
+        coerced = False
+        for k, v in justification.items():
+            if not isinstance(v, str):
+                justification[k] = json.dumps(v)
+                coerced = True
+        if coerced:
+            logger.warning("Subtask %d: coerced non-string justification values to JSON", idx)
+
     if "depends_on" in item:
         raw = item["depends_on"]
         clean: list[int] = []

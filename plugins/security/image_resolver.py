@@ -23,13 +23,20 @@ def resolve_secbench_image(
     if not security_tools_enabled:
         return base_image
 
+    # Separate any Docker tag (e.g. ":patch") from the image name
+    if ":" in base_image:
+        name, docker_tag = base_image.rsplit(":", 1)
+    else:
+        name, docker_tag = base_image, ""
+
     # Extract the tag portion after the last registry/repo prefix
     # hwiwonlee/secb.eval.x86_64.gpac.cve-2023-2838 → secb-tools:gpac.cve-2023-2838
-    parts = base_image.split(".")
+    parts = name.split(".")
     if len(parts) >= 5:
         # secb.eval.x86_64.<project>.<cve> → <project>.<cve>
-        tag = ".".join(parts[3:])
+        suffix = ".".join(parts[3:])
     else:
-        tag = base_image.replace("/", "-")
+        suffix = name.replace("/", "-")
 
+    tag = f"{suffix}-{docker_tag}" if docker_tag else suffix
     return f"{image_prefix}:{tag}"

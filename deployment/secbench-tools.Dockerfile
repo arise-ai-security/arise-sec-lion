@@ -24,14 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     valgrind \
     && rm -rf /var/lib/apt/lists/*
 
-# KLEE — symbolic execution engine
+# KLEE — symbolic execution engine (optional, not packaged in all base images)
 # Requires LLVM/Clang for bitcode compilation + KLEE runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     klee \
     klee-runtime \
     llvm \
     clang \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    || { echo "KLEE not available in base image repos — skipping"; rm -rf /var/lib/apt/lists/*; }
 
 # Verify installations
-RUN valgrind --version && klee --version || true
+RUN valgrind --version && { klee --version 2>/dev/null || echo "KLEE not installed"; }
