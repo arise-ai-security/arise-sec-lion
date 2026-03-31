@@ -54,6 +54,8 @@ class DockerSecBenchRuntime:
         await self._ensure_image_exists(image)
         if not any(source_dir.iterdir()):
             await self._copy_source_tree(image, source_dir)
+        if not any(testcase_dir.iterdir()):
+            await self._copy_testcase_tree(image, testcase_dir)
 
         host_work_dir = self._map_host_work_dir(source_dir, cve.work_dir)
         host_work_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +111,8 @@ class DockerSecBenchRuntime:
         if cve.secb_sh:
             await self._install_secb(container_id, cve.secb_sh)
 
+        await self._add_git_safe_directory(container_id, cve.work_dir)
+
         session = SecBenchContainerSession(
             workspace=workspace,
             container_id=container_id,
@@ -129,6 +133,25 @@ class DockerSecBenchRuntime:
         raise RuntimeError(
             "Missing SEC-bench image "
             f"{image}. Build it first with deployment/build-secbench-tools.sh."
+        )
+
+    async def _copy_testcase_tree(self, image: str, testcase_dir: Path) -> None:
+        """Copy /testcase/ from the image so the host mount doesn't shadow it."""
+        seed_container = (await self._run_checked(["docker", "create", image])).strip()
+        try:
+            await self._run_checked(
+                ["docker", "cp", f"{seed_container}:/testcase/.", str(testcase_dir)]
+            )
+        finally:
+            await self._run_best_effort(["docker", "rm", "-f", seed_container])
+
+    async def _add_git_safe_directory(self, container_id: str, work_dir: str) -> None:
+        """Mark the work directory as safe to avoid git ownership errors."""
+        await self._run_best_effort(
+            [
+                "docker", "exec", container_id, "git", "config",
+                "--global", "--add", "safe.directory", work_dir,
+            ]
         )
 
     async def _copy_source_tree(self, image: str, source_dir: Path) -> None:
