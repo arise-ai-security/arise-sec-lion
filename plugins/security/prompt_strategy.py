@@ -48,11 +48,21 @@ def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
 
 def _detect_branch_from_task(task_description: str) -> str | None:
     task_lower = task_description.lower()
-    if any(kw in task_lower for kw in ("[builder]", "builder", "environment", "setup")):
+    # Explicit bracket prefixes are authoritative — check these first to
+    # avoid false positives from generic words like "poc" or "fix" that
+    # can appear in any branch's task description.
+    if "[builder]" in task_lower:
         return "builder"
-    if any(kw in task_lower for kw in ("[exploiter]", "exploiter", "poc", "exploit")):
+    if "[exploiter]" in task_lower:
         return "exploiter"
-    if any(kw in task_lower for kw in ("[fixer]", "fixer", "patch", "fix")):
+    if "[fixer]" in task_lower:
+        return "fixer"
+    # Fall back to loose keyword matching.
+    if any(kw in task_lower for kw in ("builder", "environment", "setup")):
+        return "builder"
+    if any(kw in task_lower for kw in ("exploiter", "exploit")):
+        return "exploiter"
+    if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
         return "fixer"
     return None
 
