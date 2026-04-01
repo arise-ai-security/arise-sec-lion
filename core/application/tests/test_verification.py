@@ -201,6 +201,20 @@ class TestVerificationJudge:
         # Should still pass (parse failure = pass)
         assert agent.status == AgentStatus.COMPLETED
 
+    @pytest.mark.asyncio
+    async def test_judge_prompt_strips_ansi_sequences(self) -> None:
+        llm = FakeLLM(judge_response={"passed": True, "feedback": "clean output"})
+        worker = FakeWorkerTool(result="\x1b[31mExploit confirmed\x1b[0m\nnext line")
+        orchestrator = _make_orchestrator(llm=llm, worker=worker)
+        agent = _make_worker_agent(success_criteria="Must report exploit confirmation")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED
+        assert llm.calls
+        assert "\x1b[" not in llm.calls[-1]
+        assert "Exploit confirmed" in llm.calls[-1]
+
 
 class TestVerificationSkipsOnWorkerFailure:
     """Verification only runs on successful worker completion."""

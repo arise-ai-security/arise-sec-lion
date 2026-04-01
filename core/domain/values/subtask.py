@@ -48,6 +48,13 @@ class Subtask(BaseModel):
         description="Category: general, research, implementation, testing, analysis, etc.",
     )
 
+    # Parent's reasoning for assigning this subtask (Design Choice 4).
+    # Captured from LLM decomposition output and passed to child via Briefing.
+    justification: dict[str, str] = Field(
+        default_factory=dict,
+        description="Parent's reasoning for this subtask (e.g. objective, plan, domain context)",
+    )
+
     # Structured child scoping — machine-readable context for targeted recon.
     # All optional with empty defaults so old-style prose-only subtasks work.
     target_paths: tuple[str, ...] = Field(

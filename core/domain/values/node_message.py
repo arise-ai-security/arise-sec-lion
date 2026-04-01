@@ -77,6 +77,9 @@ class Briefing(BaseModel):
     parent_role: str
     ancestry: tuple[Ancestor, ...] = ()
     decisions: tuple[str, ...] = ()
+    # Per-child justification from parent's decomposition (Design Choice 4).
+    # Contains keys like "objective", "plan", and domain-specific insights.
+    subtask_justification: dict[str, str] = {}
 
     @classmethod
     def simple(cls, parent_task: str, parent_role: str = "boss") -> Self:

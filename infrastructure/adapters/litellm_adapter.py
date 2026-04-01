@@ -33,6 +33,12 @@ class LiteLLMAdapter(LLMPort):
         self.default_config = default_config or {}
         self._cost_calculator = cost_calculator
 
+    @staticmethod
+    def _is_o_series(model: str) -> bool:
+        """Return True for OpenAI O-series models that reject temperature."""
+        base = model.split("/")[-1].lower()
+        return base.startswith(("o1", "o3", "o4"))
+
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.
 
@@ -122,13 +128,15 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
 
-        response = await self._call_litellm(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=merged_config.get("temperature", 0.7),
-            max_tokens=merged_config.get("max_tokens", 1000),
-            top_p=merged_config.get("top_p"),
-        )
+        call_kwargs: dict[str, Any] = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": merged_config.get("max_tokens", 1000),
+            "top_p": merged_config.get("top_p"),
+        }
+        if not self._is_o_series(model):
+            call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+
+        response = await self._call_litellm(model=model, **call_kwargs)
 
         content = response.choices[0].message.content
         if content is None:
@@ -151,13 +159,15 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
 
-        response = await self._call_litellm(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=merged_config.get("temperature", 0.7),
-            max_tokens=merged_config.get("max_tokens", 1000),
-            top_p=merged_config.get("top_p"),
-        )
+        call_kwargs: dict[str, Any] = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": merged_config.get("max_tokens", 1000),
+            "top_p": merged_config.get("top_p"),
+        }
+        if not self._is_o_series(model):
+            call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+
+        response = await self._call_litellm(model=model, **call_kwargs)
 
         content = response.choices[0].message.content
         if content is None:
@@ -186,14 +196,16 @@ class LiteLLMAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = merged_config.get("model", "gpt-4")
 
-        response = await self._call_litellm(
-            model=model,
-            messages=messages,
-            tools=tools,
-            temperature=merged_config.get("temperature", 0.7),
-            max_tokens=merged_config.get("max_tokens", 4000),
-            top_p=merged_config.get("top_p"),
-        )
+        call_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "tools": tools,
+            "max_tokens": merged_config.get("max_tokens", 4000),
+            "top_p": merged_config.get("top_p"),
+        }
+        if not self._is_o_series(model):
+            call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+
+        response = await self._call_litellm(model=model, **call_kwargs)
 
         message = response.choices[0].message
 

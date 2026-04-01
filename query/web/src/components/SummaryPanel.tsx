@@ -5,7 +5,7 @@
  */
 
 import { useRef, useEffect, useState } from 'react';
-import type { AgentSummary, DomainEvent, ThoughtCapturedData } from '../types/api';
+import type { AgentSummary, BriefingSummary, DomainEvent, ThoughtCapturedData } from '../types/api';
 
 interface SummaryPanelProps {
   summary: AgentSummary | null;
@@ -47,6 +47,108 @@ function getThoughtContent(event: DomainEvent): string | null {
   if (event.event_type !== 'ThoughtCaptured') return null;
   const data = event.data as Partial<ThoughtCapturedData>;
   return data.content || null;
+}
+
+const justificationLabels: Record<string, string> = {
+  objective: 'Objective',
+  plan: 'Suggested Approach',
+};
+
+/** Briefing context from parent agent */
+function BriefingContextSection({ briefing }: { briefing: BriefingSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasJustification = Object.keys(briefing.subtask_justification).length > 0;
+  const hasAncestry = briefing.ancestry.length > 0;
+  const hasDecisions = briefing.decisions.length > 0;
+
+  return (
+    <Section title="Supervisor Context">
+      <div className="bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded border-l-2 border-indigo-400 space-y-2">
+        {/* Parent info */}
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-medium text-indigo-600 dark:text-indigo-300">
+            Assigned by:
+          </span>
+          <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-800/40 text-indigo-700 dark:text-indigo-300 uppercase text-[10px] font-semibold">
+            {briefing.parent_role}
+          </span>
+        </div>
+        <p className="text-xs text-gray-600 dark:text-gray-400 italic">
+          "{briefing.parent_task}"
+        </p>
+
+        {/* Justification fields */}
+        {hasJustification && (
+          <div className="pt-1 space-y-1.5">
+            {Object.entries(briefing.subtask_justification).map(([key, value]) => (
+              <div key={key}>
+                <span className="text-[10px] font-semibold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider">
+                  {justificationLabels[key] || key.replace(/_/g, ' ')}
+                </span>
+                <p className="text-xs text-gray-700 dark:text-gray-300 mt-0.5">
+                  {value}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Expandable ancestry & decisions */}
+        {(hasAncestry || hasDecisions) && (
+          <div className="pt-1">
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 transition-colors"
+            >
+              {expanded ? '▾ Hide lineage' : '▸ Show lineage'}
+              {hasAncestry && ` (${briefing.ancestry.length} ancestors)`}
+            </button>
+            {expanded && (
+              <div className="mt-2 space-y-2">
+                {hasAncestry && (
+                  <div>
+                    <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      Ancestry
+                    </span>
+                    <div className="mt-1 space-y-1">
+                      {briefing.ancestry.map((ancestor, idx) => (
+                        <div key={idx} className="flex items-start gap-1.5 text-xs">
+                          <span className="text-gray-400 dark:text-gray-500 shrink-0">
+                            {'  '.repeat(idx)}→
+                          </span>
+                          <span className="px-1 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-[10px] font-semibold uppercase shrink-0">
+                            {ancestor.role}
+                          </span>
+                          <span className="text-gray-600 dark:text-gray-400 truncate">
+                            {ancestor.task_summary}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hasDecisions && (
+                  <div>
+                    <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      Inherited Decisions
+                    </span>
+                    <ul className="mt-1 space-y-0.5">
+                      {briefing.decisions.map((decision, idx) => (
+                        <li key={idx} className="text-xs text-gray-600 dark:text-gray-400 flex items-start gap-1">
+                          <span className="text-indigo-400 shrink-0">•</span>
+                          {decision}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
 }
 
 /** CLI-like output display for worker agents */
@@ -147,6 +249,9 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
         </p>
       </Section>
 
+      {/* Supervisor Context (briefing from parent — not shown for BOSS) */}
+      {summary.briefing && <BriefingContextSection briefing={summary.briefing} />}
+
       {/* Complexity Evaluation (for non-BOSS agents) */}
       {summary.complexity && (
         <Section title="Complexity Evaluation">
@@ -194,25 +299,40 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
       {summary.subtasks.length > 0 && (
         <Section title={`Subtasks (${summary.subtasks.length})`}>
           <div className="space-y-2">
-            {summary.subtasks.map((subtask, idx) => (
-              <div
-                key={idx}
-                className="bg-gray-50 dark:bg-gray-800 p-2 rounded border-l-2 border-blue-400"
-              >
-                <p className="text-sm text-gray-700 dark:text-gray-300">
-                  {subtask.description}
-                </p>
-                {subtask.child_status && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className={`px-1.5 py-0.5 text-xs rounded ${
-                      statusColors[subtask.child_status] || statusColors.pending
-                    }`}>
-                      {subtask.child_status}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
+            {summary.subtasks.map((subtask, idx) => {
+              const hasJustification = Object.keys(subtask.justification).length > 0;
+              return (
+                <div
+                  key={idx}
+                  className="bg-gray-50 dark:bg-gray-800 p-2 rounded border-l-2 border-blue-400"
+                >
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    {subtask.description}
+                  </p>
+                  {subtask.child_status && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className={`px-1.5 py-0.5 text-xs rounded ${
+                        statusColors[subtask.child_status] || statusColors.pending
+                      }`}>
+                        {subtask.child_status}
+                      </span>
+                    </div>
+                  )}
+                  {hasJustification && (
+                    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
+                      {Object.entries(subtask.justification).map(([key, value]) => (
+                        <div key={key} className="text-xs">
+                          <span className="font-medium text-blue-500 dark:text-blue-400">
+                            {justificationLabels[key] || key.replace(/_/g, ' ')}:
+                          </span>{' '}
+                          <span className="text-gray-600 dark:text-gray-400">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}
