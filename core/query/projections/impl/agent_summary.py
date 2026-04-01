@@ -7,6 +7,7 @@ from uuid import UUID
 
 from core.domain.aggregates.agent_session import AgentSession
 from core.domain.events.events import (
+    AgentCreated,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -58,12 +59,21 @@ class AgentSummaryService:
         # Build subtasks with child statuses (single batch query)
         subtasks = await self._build_subtasks(
             summary_data["subtask_descriptions"],
+            summary_data["subtask_justifications"],
             summary_data["child_ids"],
             agent_id,  # Pass parent_id for batch query
         )
 
         # Extract config details
         config_strategy, config_details = self._extract_config(agent)
+
+        # Extract briefing context
+        briefing = summary_data.get("briefing") or {}
+        ancestry_raw = briefing.get("ancestry", ())
+        ancestry = tuple(
+            {"role": a.get("role", ""), "task_summary": a.get("task_summary", "")}
+            for a in ancestry_raw
+        )
 
         return AgentSummary(
             agent_id=agent.agent_id,
@@ -74,6 +84,11 @@ class AgentSummaryService:
             complexity_reasoning=summary_data["complexity_reasoning"],
             worker_tool=summary_data["worker_tool"],
             subtasks=subtasks,
+            parent_task=briefing.get("parent_task"),
+            parent_role=briefing.get("parent_role"),
+            subtask_justification=briefing.get("subtask_justification", {}),
+            ancestry=ancestry,
+            decisions=tuple(briefing.get("decisions", ())),
             config_strategy=config_strategy,
             config_details=config_details,
             result=agent.result,
@@ -93,10 +108,15 @@ class AgentSummaryService:
         complexity_reasoning: str | None = None
         worker_tool: str | None = None
         subtask_descriptions: list[str] = []
+        subtask_justifications: list[dict[str, str]] = []
         child_ids: list[UUID] = []
+        briefing: dict | None = None
 
         for event in events:
-            if isinstance(event, ComplexityEvaluated):
+            if isinstance(event, AgentCreated):
+                briefing = event.briefing
+
+            elif isinstance(event, ComplexityEvaluated):
                 complexity = event.complexity
                 complexity_reasoning = event.reasoning
 
@@ -105,6 +125,9 @@ class AgentSummaryService:
 
             elif isinstance(event, SubtasksDefined):
                 subtask_descriptions = [s.description for s in event.subtasks]
+                subtask_justifications = [
+                    dict(s.justification) if s.justification else {} for s in event.subtasks
+                ]
 
             elif isinstance(event, ChildSpawned):
                 child_ids.append(event.child_id)
@@ -114,12 +137,15 @@ class AgentSummaryService:
             "complexity_reasoning": complexity_reasoning,
             "worker_tool": worker_tool,
             "subtask_descriptions": subtask_descriptions,
+            "subtask_justifications": subtask_justifications,
             "child_ids": child_ids,
+            "briefing": briefing,
         }
 
     async def _build_subtasks(
         self,
         descriptions: list[str],
+        justifications: list[dict[str, str]],
         child_ids: list[UUID],
         parent_id: UUID,
     ) -> tuple[SubtaskSummary, ...]:
@@ -129,6 +155,7 @@ class AgentSummaryService:
 
         Args:
             descriptions: List of subtask descriptions.
+            justifications: List of justification dicts per subtask.
             child_ids: List of child agent UUIDs (in subtask order).
             parent_id: Parent agent UUID for batch query.
 
@@ -146,12 +173,14 @@ class AgentSummaryService:
         for idx, description in enumerate(descriptions):
             child_id = child_ids[idx] if idx < len(child_ids) else None
             child_status = child_statuses.get(child_id) if child_id else None
+            justification = justifications[idx] if idx < len(justifications) else {}
 
             subtasks.append(
                 SubtaskSummary(
                     description=description,
                     child_id=child_id,
                     child_status=child_status,
+                    justification=justification,
                 )
             )
 

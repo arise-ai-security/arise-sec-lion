@@ -115,6 +115,20 @@ class _StuckConversation(_FakeConversation):
 
 
 class TestOpenHandsAdapter:
+    def test_extract_result_compacts_observations_before_core(self) -> None:
+        adapter = OpenHandsAdapter()
+        observation = SimpleNamespace(
+            command="make test",
+            metadata=SimpleNamespace(exit_code=1),
+            content=[SimpleNamespace(text="failure output\nstack trace")],
+        )
+        event = SimpleNamespace(observation=observation)
+        conversation = SimpleNamespace(state=SimpleNamespace(events=[event]))
+
+        result = adapter._extract_result(conversation, "/tmp/workspace")
+
+        assert result == "$ make test (exit 1)\nfailure output\nstack trace"
+
     @pytest.mark.asyncio
     async def test_successful_execution_uses_conversation_output(
         self, monkeypatch, tmp_path: Path,

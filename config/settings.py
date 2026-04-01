@@ -225,6 +225,10 @@ class OrchestrationConfig(BaseModel):
         ge=0.0,
         description="Global budget limit in USD (0 = unlimited)",
     )
+    skip_judge: bool = Field(
+        default=False,
+        description="Skip the LLM judge stage of verification (stages 1-3 still run).",
+    )
 
     topology: TopologyConfig
     concurrency: ConcurrencyConfig

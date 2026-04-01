@@ -664,6 +664,14 @@ class AgentSession:
 
         for sibling_index, subtask in enumerate(subtasks):
             child_id = uuid4()
+            # Augment briefing with per-subtask justification (Design Choice 4).
+            child_briefing = (
+                briefing.model_copy(
+                    update={"subtask_justification": subtask.justification}
+                )
+                if subtask.justification
+                else briefing
+            )
             child_event = ChildSpawned(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
@@ -671,7 +679,7 @@ class AgentSession:
                 child_role=child_role,
                 subtask=subtask,
                 child_config=subtask.config,
-                briefing=briefing.model_dump(),
+                briefing=child_briefing.model_dump(),
                 sibling_index=sibling_index,
             )
             self._emit(child_event)

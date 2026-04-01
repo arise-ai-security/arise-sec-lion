@@ -86,6 +86,7 @@ class ApplicationConfig:
     retry: RetryConfig | None = None
     max_run_duration_seconds: float = 1800
     max_redecompositions: int = 2
+    skip_judge: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
@@ -173,6 +174,7 @@ def get_application(
         realtime_callback=realtime_callback,
         llm_query_executor=llm_query_executor,
         toolset_resolver=toolset_resolver,
+        skip_judge=config.skip_judge,
     )
 
     parent_notifier = ParentNotificationService(

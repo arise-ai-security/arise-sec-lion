@@ -27,7 +27,7 @@ Refer to Task Context above for repository location, base commit hash, and vulne
 
 5. **Fix build errors** (if any):
    - Focus on `error` messages only, ignore warnings
-   - C++17 errors: add `-std=c++14` to CFLAGS/CXXFLAGS
+   - C++17 errors: add `-std=c++14` to CXXFLAGS only (NEVER add it to CFLAGS — it breaks the C compiler)
    - Implicit int: add explicit type declarations
    - Function overload: add `-D_GNU_SOURCE`
    - Define suppression flags before `./configure` or `cmake`

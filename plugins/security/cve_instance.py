@@ -38,7 +38,7 @@ class CVEInstance(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def docker_image(self) -> str:
-        return f"hwiwonlee/secb.eval.x86_64.{self.project_name}.{self.cve_id}"
+        return f"hwiwonlee/secb.eval.x86_64.{self.project_name}.{self.cve_id}:patch"
 
     @computed_field  # type: ignore[prop-decorator]
     @property

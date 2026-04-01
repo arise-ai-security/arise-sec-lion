@@ -419,6 +419,7 @@ class PromptBuilder:
                 "operations/execution.j2",
                 task_description=task_description,
                 workspace_context=workspace_context,
+                briefing=briefing,
             )
         )
         extended_chain = (

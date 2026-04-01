@@ -69,6 +69,7 @@ class AgentOrchestrator:
             realtime_callback: "RealtimeCallbackPort | None" = None,
             llm_query_executor: LLMQueryExecutor | None = None,
             toolset_resolver: ToolsetPolicyResolver | None = None,
+            skip_judge: bool = False,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -77,7 +78,7 @@ class AgentOrchestrator:
         self._realtime_callback = realtime_callback
         self._llm_query_executor = llm_query_executor or LLMQueryExecutor(llm_port)
         self._toolset_resolver = toolset_resolver or ToolsetPolicyResolver()
-        self._verification_pipeline = VerificationPipeline(llm_port)
+        self._verification_pipeline = VerificationPipeline(llm_port, skip_judge=skip_judge)
 
     async def assess_task(self, agent: "AgentSession") -> None:
         """Assess a PENDING agent: execute directly or decompose.

@@ -54,6 +54,8 @@ class DockerSecBenchRuntime:
         await self._ensure_image_exists(image)
         if not any(source_dir.iterdir()):
             await self._copy_source_tree(image, source_dir)
+        if not any(testcase_dir.iterdir()):
+            await self._copy_testcase_tree(image, testcase_dir)
 
         host_work_dir = self._map_host_work_dir(source_dir, cve.work_dir)
         host_work_dir.mkdir(parents=True, exist_ok=True)
@@ -85,8 +87,6 @@ class DockerSecBenchRuntime:
             "docker",
             "run",
             "-d",
-            "--platform",
-            "linux/amd64",
             "--name",
             container_name,
             "--label",
@@ -108,6 +108,12 @@ class DockerSecBenchRuntime:
 
         if cve.secb_sh:
             await self._install_secb(container_id, cve.secb_sh)
+
+        await self._add_git_safe_directory(container_id, cve.work_dir)
+        # Ensure build.sh is executable inside the container (DooD uid mismatch)
+        await self._run_best_effort(
+            ["docker", "exec", container_id, "chmod", "+x", "/src/build.sh"]
+        )
 
         session = SecBenchContainerSession(
             workspace=workspace,
@@ -131,6 +137,25 @@ class DockerSecBenchRuntime:
             f"{image}. Build it first with deployment/build-secbench-tools.sh."
         )
 
+    async def _copy_testcase_tree(self, image: str, testcase_dir: Path) -> None:
+        """Copy /testcase/ from the image so the host mount doesn't shadow it."""
+        seed_container = (await self._run_checked(["docker", "create", image])).strip()
+        try:
+            await self._run_checked(
+                ["docker", "cp", f"{seed_container}:/testcase/.", str(testcase_dir)]
+            )
+        finally:
+            await self._run_best_effort(["docker", "rm", "-f", seed_container])
+
+    async def _add_git_safe_directory(self, container_id: str, work_dir: str) -> None:
+        """Mark the work directory as safe to avoid git ownership errors."""
+        await self._run_best_effort(
+            [
+                "docker", "exec", container_id, "git", "config",
+                "--global", "--add", "safe.directory", work_dir,
+            ]
+        )
+
     async def _copy_source_tree(self, image: str, source_dir: Path) -> None:
         seed_container = (await self._run_checked(["docker", "create", image])).strip()
         try:
@@ -139,6 +164,10 @@ class DockerSecBenchRuntime:
             )
         finally:
             await self._run_best_effort(["docker", "rm", "-f", seed_container])
+        # Ensure build.sh is executable after copy (docker cp may not preserve mode).
+        build_sh = source_dir / "build.sh"
+        if build_sh.exists():
+            build_sh.chmod(build_sh.stat().st_mode | 0o755)
 
     def _map_host_work_dir(self, source_dir: Path, container_work_dir: str) -> Path:
         if container_work_dir == "/src":
@@ -162,6 +191,8 @@ chmod +x /usr/local/bin/secb
 
     def _write_exec_helper(self, session: SecBenchContainerSession) -> None:
         helper = session.workspace.helper_script
+        work_dir = session.workspace.container_working_directory
+        container = session.container_id
         helper.write_text(
             "\n".join(
                 [
@@ -173,10 +204,17 @@ chmod +x /usr/local/bin/secb
                     "  exit 2",
                     "fi",
                     "",
-                    "docker exec -i "
-                    f"-w {shlex.quote(session.workspace.container_working_directory)} "
-                    f"{shlex.quote(session.container_id)} "
-                    'bash -lc "$*"',
+                    f"WORKDIR={shlex.quote(work_dir)}",
+                    f"CONTAINER={shlex.quote(container)}",
+                    '# Try the project workdir first; fall back to /src, then /',
+                    '# so that commands survive directory deletion/re-creation.',
+                    'if docker exec "$CONTAINER" test -d "$WORKDIR" 2>/dev/null; then',
+                    '  docker exec -i -w "$WORKDIR" "$CONTAINER" bash -lc "$*"',
+                    'elif docker exec "$CONTAINER" test -d /src 2>/dev/null; then',
+                    '  docker exec -i -w /src "$CONTAINER" bash -lc "$*"',
+                    'else',
+                    '  docker exec -i -w / "$CONTAINER" bash -lc "$*"',
+                    "fi",
                     "",
                 ]
             ),
