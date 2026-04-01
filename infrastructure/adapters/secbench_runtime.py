@@ -87,8 +87,6 @@ class DockerSecBenchRuntime:
             "docker",
             "run",
             "-d",
-            "--platform",
-            "linux/amd64",
             "--name",
             container_name,
             "--label",

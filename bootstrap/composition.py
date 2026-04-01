@@ -103,6 +103,7 @@ def create_runtime_cli(
             poll_interval=settings.orchestration.poll_interval,
             max_run_duration_seconds=settings.orchestration.max_run_duration_seconds,
             max_redecompositions=settings.orchestration.max_redecompositions,
+            skip_judge=settings.orchestration.skip_judge,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

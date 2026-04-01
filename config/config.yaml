@@ -23,6 +23,7 @@ orchestration:
   poll_interval: 0.5  # seconds between orchestration loop iterations
   max_run_duration_seconds: 1800  # hard stop for the full orchestration run
   max_redecompositions: 2  # per-parent limit for infeasibility-driven re-planning
+  # skip_judge: false  # set true to skip LLM judge verification (stages 1-3 still run)
 
   topology:
     max_depth: 3               # BOSS(0) → children(1) → grandchildren(2) → forced-workers(3)

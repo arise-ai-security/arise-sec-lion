@@ -49,8 +49,9 @@ class VerificationStage:
 class VerificationPipeline:
     """Run deterministic and judge-based verification for worker output."""
 
-    def __init__(self, llm_port: "LLMPort") -> None:
+    def __init__(self, llm_port: "LLMPort", *, skip_judge: bool = False) -> None:
         self._llm_port = llm_port
+        self._skip_judge = skip_judge
         self._stages: tuple[VerificationStage, ...] = (
             VerificationStage(
                 name="structural",
@@ -84,7 +85,7 @@ class VerificationPipeline:
                 return
             stages_passed.append(stage.name)
 
-        if not agent.success_criteria:
+        if not agent.success_criteria or self._skip_judge:
             return
 
         report_context = self._build_report_context(agent)
