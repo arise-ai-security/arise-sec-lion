@@ -26,11 +26,15 @@ _CVE_DISPLAY_FIELDS = (
 
 
 def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
-    """Detect which SEC-bench branch an agent belongs to."""
+    """Detect which SEC-bench branch an agent belongs to.
+
+    Ancestry is root-first, so iterate in reverse (direct parent first)
+    to prefer the most specific ancestor over generic BOSS-level tasks.
+    """
     if briefing is None:
         return None
 
-    for ancestor in briefing.ancestry:
+    for ancestor in reversed(briefing.ancestry):
         task_lower = ancestor.task_summary.lower()
         if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
             return "builder"
@@ -105,9 +109,9 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
-        branch = detect_benchmark_branch(context.briefing)
+        branch = _detect_branch_from_task(context.task_description)
         if branch is None:
-            branch = _detect_branch_from_task(context.task_description)
+            branch = detect_benchmark_branch(context.briefing)
         if branch is None:
             return None
 
@@ -132,9 +136,9 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
-        branch = detect_benchmark_branch(context.briefing)
+        branch = _detect_branch_from_task(context.task_description)
         if branch is None:
-            branch = _detect_branch_from_task(context.task_description)
+            branch = detect_benchmark_branch(context.briefing)
         if branch is None:
             return None
 
