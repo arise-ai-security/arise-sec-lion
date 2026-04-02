@@ -82,7 +82,10 @@ class SecBenchPromptStrategy:
         cve_instance = _as_cve_instance(context.domain_context)
         if cve_instance is None:
             return None
-        return _with_cve_display(chain, cve_instance)
+        cve_ctx = cve_instance.to_template_context()
+        return _with_cve_display(chain, cve_instance).render_optional(
+            "domains/secbench/assess.j2", **cve_ctx
+        )
 
     def extend_boss_prompt(
         self,
