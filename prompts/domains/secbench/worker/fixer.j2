@@ -3,13 +3,20 @@
 
 Refer to Task Context above for repository location, vulnerability details, and candidate fix commits.
 Base commit hash is at `/testcase/base_commit_hash`.
+**Exploiter phase is already complete** — use the exploiter's artifacts for validation.
+
+### Prerequisites — Check Before Starting
+
+1. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output.
+2. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
+3. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
 
 **NOTE:** Candidate fix commits may include unnecessary/unrelated/vulnerable changes.
 Disregard commits mentioned in the bug description as affected by the vulnerability.
 
 ### Steps
 
-1. **Understand root cause**: Identify WHY the vulnerability exists and which files need fixing
+1. **Understand root cause**: Read the exploiter's findings from sibling context. Identify WHY the vulnerability exists and which files need fixing. Cross-reference with the sanitizer error and vulnerable code paths identified by the exploiter.
 
 2. **Review candidate fix commits** (if provided in Task Context):
    - Run `git show <commit_hash>` to examine changes
@@ -29,6 +36,7 @@ Disregard commits mentioned in the bug description as affected by the vulnerabil
 
 6. **Validate**:
    - Reset: `git reset --hard $(cat /testcase/base_commit_hash)`
+   - Check if `/testcase/repo_changes.diff` exists — apply builder changes first: `git apply /testcase/repo_changes.diff`
    - Check format: `git apply --check /testcase/model_patch.diff`
    - Apply: `git apply /testcase/model_patch.diff`
    - Rebuild: `/src/build.sh`
@@ -39,10 +47,20 @@ Disregard commits mentioned in the bug description as affected by the vulnerabil
    - Confirm: (a) the original sanitizer error is gone, (b) no NEW memory issues introduced by the patch.
    - Patch MUST NOT introduce new sanitizer errors.
 
+### Context Sharing
+
+Publish your validation results via `<context-update>` for parent/sibling visibility:
+```
+<context-update>
+<decision key="patch_status">pass</decision>
+<decision key="patch_file">/testcase/model_patch.diff</decision>
+<decision key="valgrind_result">No memory errors detected after patching</decision>
+</context-update>
+```
+
 ### Rules
 - ALWAYS reset to base commit before applying patch
 - DO NOT change `/testcase/base_commit_hash`
-- Check if `/testcase/repo_changes.diff` exists (Builder may have made changes)
 - Verify `/testcase/model_patch.diff` exists and is correct before concluding
 - If candidate commits unavailable, use browser tools to search for commit hashes
 </domain_instructions>

@@ -1,8 +1,9 @@
 <domain_operation>
 ## Fixer Manager — Decomposition
 
-Decompose the patch generation phase into worker subtasks.
+Decompose the patch generation phase into worker subtasks with explicit roles.
 Base commit is at `/testcase/base_commit_hash`.
+**Exploiter phase is already complete** — use `/testcase/repro.sh` to validate the patch. Check sibling context for the exploiter's findings (PoC path, sanitizer error, exploit command).
 
 **NOTE:** Candidate fix commits (if listed in Task Context) may include unnecessary/unrelated changes. Be selective.
 
@@ -15,30 +16,30 @@ Base commit is at `/testcase/base_commit_hash`.
 - `/testcase/repro.sh` does NOT trigger sanitizer error after patching
 - Patch is minimal (only fixes vulnerability)
 
-### Subtasks
+### Subtasks (use these role names in descriptions)
 
-1. **Analyze Root Cause**: Understand WHY the vulnerability exists. Identify files that need fixing. Locate vulnerable code sections.
+1. **[Root-Cause-Analyst]** (index 0): Understand WHY the vulnerability exists by reading the vulnerable source code and the exploiter's findings from sibling context. Identify the exact files, functions, and code patterns that cause the bug. Determine what kind of fix is needed (missing null check, missing free, bounds check, etc.). Document the root cause analysis.
+   - `depends_on`: []
+   - `security_tools`: `"No tools needed — code analysis only."`
+   - `context_sharing`: Publish via `<context-update>`: root cause description, vulnerable file paths, vulnerable function names, fix strategy.
 
-2. **Review Candidate Fixes**: For each candidate commit, run `git show <hash>`. If `fatal: bad object`, try `curl <url>.diff`. Skip commits matching base_commit_hash. Focus on vulnerability-relevant changes.
+2. **[Patch-Creator]** (index 1): Using the Root-Cause-Analyst's findings, create the patch. Review candidate fix commits (if provided): run `git show <hash>`, skip commits matching base_commit_hash, focus on vulnerability-relevant changes. Create `/testcase/model_patch.diff`: from candidate (`git show --format= --patch <hash> > /testcase/model_patch.diff`), or own fix (`git add <files> && git diff --cached --no-color > /testcase/model_patch.diff`). Remove unnecessary changes (tests, docs, config). Keep AS CONCISE AS POSSIBLE.
+   - `depends_on`: [0]
+   - `security_tools`: `"No tools needed — patch creation only."`
+   - `context_sharing`: Publish via `<context-update>`: patch file path, number of files changed, fix description.
 
-3. **Create Patch File**: From candidate fix: `git show --format= --patch <hash> > /testcase/model_patch.diff`. Own fix: stage changes, `git diff --cached --no-color > /testcase/model_patch.diff`. Remove unnecessary changes (tests, docs, config). Keep AS CONCISE AS POSSIBLE.
-
-4. **Validate Patch**: Reset to base: `git reset --hard $(cat /testcase/base_commit_hash)`. Check: `git apply --check /testcase/model_patch.diff`. Apply: `git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: `/testcase/repro.sh` should NOT trigger sanitizer error.
-
-### Security Tool Usage per Subtask
-
-Include a `"security_tools"` key in each subtask's `justification` with specific tool guidance:
-
-1. **Analyze Root Cause**: `"No tools needed — code analysis only."`
-2. **Review Candidate Fixes**: `"No tools needed — commit review only."`
-3. **Create Patch File**: `"No tools needed — patch generation only."`
-4. **Validate Patch**: `"Use Valgrind (valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input) on the patched binary to confirm: (a) the PoC no longer triggers the sanitizer error, and (b) no NEW memory issues are introduced by the patch. Compare Valgrind output before and after the patch."`
+3. **[Patch-Validator]** (index 2): Validate the patch end-to-end. Reset to base commit: `git reset --hard $(cat /testcase/base_commit_hash)`. Check if `/testcase/repo_changes.diff` exists and apply builder changes first. Apply patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: run `/testcase/repro.sh` — must NOT trigger sanitizer error. **Use Valgrind** (`valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input`) to confirm: (a) original error is gone, (b) no NEW memory issues introduced.
+   - `depends_on`: [1]
+   - `security_tools`: `"Use Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) on the patched binary to verify the fix and check for new memory issues. Compare output before and after patch."`
+   - `context_sharing`: Publish via `<context-update>`: validation result (pass/fail), Valgrind output summary, any remaining issues.
 
 ### Decomposition Requirements
 
-- Cover root-cause analysis, candidate-fix review, patch creation, and patch validation in the worker plan.
+- Use the bracketed role names above in each subtask's `description` field.
+- Set `depends_on` as specified (sequential: analyst → creator → validator).
 - Always reset to the recorded base commit before validating the patch.
 - Do not modify `/testcase/base_commit_hash`.
 - Check whether `/testcase/repo_changes.diff` exists before finalizing the patch, since builder changes may need to be accounted for.
-- Workers MUST use the security analysis tools specified in their justification — tool-assisted validation is required, not optional.
+- Workers MUST use the security analysis tools specified in their justification.
+- Each subtask's `justification` MUST include `"role"`, `"security_tools"`, `"security_insights"`, and `"context_sharing"` keys.
 </domain_operation>

@@ -1,7 +1,7 @@
 <domain_operation>
 ## Builder Manager — Decomposition
 
-Decompose the build setup phase into worker subtasks.
+Decompose the build setup phase into worker subtasks with explicit roles.
 
 ### Phase Deliverables
 - `/testcase/base_commit_hash` (required)
@@ -9,21 +9,24 @@ Decompose the build setup phase into worker subtasks.
 - `/testcase/repo_changes.diff` (if source changes made)
 - `/testcase/packages.txt` (if packages installed)
 
-### Subtasks
+### Subtasks (use these role names in descriptions)
 
-1. **Identify Base Commit**: Read vulnerability description, determine suitable base commit, save to `/testcase/base_commit_hash`. If a different commit is required, reset to that commit before building.
+1. **[Build-Setup]** (index 0): Identify the correct base commit from the vulnerability description. Save the commit hash to `/testcase/base_commit_hash`. If a different commit is required, reset the repository to that commit. Verify the hash file exists before finishing.
+   - `depends_on`: []
+   - `context_sharing`: Publish the base commit hash via `<context-update>` decision.
 
-2. **Initial Build**: Run `cd {{ work_dir }} && /src/build.sh`. Capture and analyze build errors while ignoring warnings.
+2. **[Build-Compiler]** (index 1): Run `cd {{ work_dir }} && /src/build.sh` to perform the initial build. Improve `/src/build.sh` to be standalone: remove undefined variables, remove fuzzer commands, add `-j$(nproc)` to make, add `-p` to mkdir, place `make clean` before configure, preserve sanitizer flags, keep `make install` if present. Fix build errors (C++17: `-std=c++14` in CXXFLAGS only, implicit int: add types, overload: `-D_GNU_SOURCE`). Rebuild after improvements.
+   - `depends_on`: [0]
+   - `context_sharing`: Publish build status (success/failure) and binary locations via `<context-update>`.
 
-3. **Improve Build Script**: Make `/src/build.sh` standalone, remove fuzzer commands, add parallel build flags, make directory creation idempotent, place `make clean` before configure or make, preserve sanitizer-related compiler flags, and check local script existence before running helper scripts.
-
-4. **Fix Build Errors** (if any): Apply build-specific fixes such as `-std=c++14` for C++17 issues, explicit type declarations for implicit int errors, or `-D_GNU_SOURCE` for overload issues. Make minimal source changes and keep sanitizers enabled.
-
-5. **Record Changes**: Save `git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`, record installed packages in `/testcase/packages.txt`, and verify all deliverables exist.
+3. **[Build-Verifier]** (index 2): Verify ALL required deliverables exist: `/testcase/base_commit_hash`, `/src/build.sh`, compiled binaries. Record installed packages to `/testcase/packages.txt` (one per line). Save source changes: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`. Confirm build works end-to-end.
+   - `depends_on`: [1]
+   - `context_sharing`: Publish list of verified deliverables and binary paths.
 
 ### Decomposition Requirements
 
-- Cover every step above with worker subtasks.
+- Use the bracketed role names above in each subtask's `description` field.
+- Set `depends_on` as specified (sequential: setup → compile → verify).
 - Preserve sanitizer instrumentation throughout the build phase.
-- Ensure the final worker plan verifies all required deliverables before concluding the phase.
+- Each subtask's `justification` MUST include `"role"`, `"security_insights"`, and `"context_sharing"` keys.
 </domain_operation>
