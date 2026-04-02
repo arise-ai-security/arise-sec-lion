@@ -97,7 +97,7 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
         cve_ctx = cve_instance.to_template_context()
-        return _with_cve_display(chain, cve_instance).render(
+        return _with_cve_display(chain, cve_instance).render_optional(
             "domains/secbench/assess.j2", **cve_ctx
         )
 
