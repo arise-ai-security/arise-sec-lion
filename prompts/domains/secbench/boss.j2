@@ -24,4 +24,12 @@ Generate unified patch file. Deliverable: `/testcase/model_patch.diff`.
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,
   fixer = minimal patch that removes the sanitizer failure.
+
+## Tool Usage in Justifications
+
+Each subtask's `justification` MUST include a `"security_tools"` key specifying which
+preinstalled analysis tools the child should use:
+- **[Builder]**: `"No security analysis tools required for build phase — focus on sanitizer-enabled compilation."`
+- **[Exploiter]**: `"Use Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) to confirm the PoC triggers the exact memory error from the bug report. Use KLEE for symbolic execution to discover trigger inputs if no PoC is provided in the bug description."`
+- **[Fixer]**: `"Use Valgrind (--tool=memcheck --error-exitcode=1) on the patched binary with the PoC to verify the vulnerability is fixed and no new memory issues are introduced."`
 </domain_operation>

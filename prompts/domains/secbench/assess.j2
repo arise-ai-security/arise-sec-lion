@@ -1,0 +1,28 @@
+{# SEC-bench assessment bias — encourages DECOMPOSE for security tasks #}
+<domain_assessment>
+## Security Task Assessment
+
+This is a security vulnerability reproduction task. Security tasks involve coordinated
+multi-step analysis (build, exploit, fix) where each step benefits from dedicated focus.
+
+**Prefer DECOMPOSE** for security tasks because:
+- Each subtask can target a specific security objective with focused tool usage
+- Security analysis tools (**Valgrind** for memory error detection, **KLEE** for symbolic
+  execution) produce best results when workers have narrow, well-defined scope
+- Decomposition enables parallel independent analysis and reduces error propagation
+- Complex vulnerability reproduction rarely succeeds as a single monolithic execution
+
+Only choose **EXECUTE** if:
+- The task is already a single, narrowly-scoped step (e.g., "save base commit hash")
+- No further meaningful decomposition would improve tool utilization or success rate
+
+### Justification Requirements for Decomposition
+
+When decomposing, include the following keys in each subtask's `justification`:
+- `security_tools`: Which analysis tools the child worker should use and how.
+  Examples:
+  - `"Use Valgrind (--tool=memcheck --leak-check=full) to confirm the memory error matches the bug report"`
+  - `"Use Valgrind (--error-exitcode=1) on the patched binary to verify the fix eliminates the sanitizer error"`
+  - `"Use KLEE for symbolic execution to systematically discover trigger inputs if no PoC is provided"`
+- `security_insights`: Relevant CVE details, sanitizer type, and vulnerable component for this subtask.
+</domain_assessment>

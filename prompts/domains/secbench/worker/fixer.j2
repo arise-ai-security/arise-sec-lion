@@ -33,7 +33,11 @@ Disregard commits mentioned in the bug description as affected by the vulnerabil
    - Apply: `git apply /testcase/model_patch.diff`
    - Rebuild: `/src/build.sh`
 
-7. **Test fix**: Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability). Patch MUST NOT introduce new sanitizer errors.
+7. **Test fix**:
+   - Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
+   - **Use Valgrind** to verify the fix: `valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input`
+   - Confirm: (a) the original sanitizer error is gone, (b) no NEW memory issues introduced by the patch.
+   - Patch MUST NOT introduce new sanitizer errors.
 
 ### Rules
 - ALWAYS reset to base commit before applying patch

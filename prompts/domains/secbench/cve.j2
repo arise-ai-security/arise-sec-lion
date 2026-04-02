@@ -42,6 +42,8 @@
 
     **Rules**: DO NOT disable sanitizer options.
 
-    **Decomposition**: When producing subtasks, include a `"security_insights"` key in each subtask's `justification` with the relevant CVE details, sanitizer type, and vulnerable component.
+    **Decomposition**: When producing subtasks, include in each subtask's `justification`:
+    - `"security_insights"`: relevant CVE details, sanitizer type, and vulnerable component
+    - `"security_tools"`: which preinstalled analysis tools (Valgrind, KLEE) the child worker should use and specific commands to run
 </domain>
 {% endif %}

@@ -25,10 +25,20 @@ Base commit is at `/testcase/base_commit_hash`.
 
 4. **Validate Patch**: Reset to base: `git reset --hard $(cat /testcase/base_commit_hash)`. Check: `git apply --check /testcase/model_patch.diff`. Apply: `git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: `/testcase/repro.sh` should NOT trigger sanitizer error.
 
+### Security Tool Usage per Subtask
+
+Include a `"security_tools"` key in each subtask's `justification` with specific tool guidance:
+
+1. **Analyze Root Cause**: `"No tools needed — code analysis only."`
+2. **Review Candidate Fixes**: `"No tools needed — commit review only."`
+3. **Create Patch File**: `"No tools needed — patch generation only."`
+4. **Validate Patch**: `"Use Valgrind (valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input) on the patched binary to confirm: (a) the PoC no longer triggers the sanitizer error, and (b) no NEW memory issues are introduced by the patch. Compare Valgrind output before and after the patch."`
+
 ### Decomposition Requirements
 
 - Cover root-cause analysis, candidate-fix review, patch creation, and patch validation in the worker plan.
 - Always reset to the recorded base commit before validating the patch.
 - Do not modify `/testcase/base_commit_hash`.
 - Check whether `/testcase/repo_changes.diff` exists before finalizing the patch, since builder changes may need to be accounted for.
+- Workers MUST use the security analysis tools specified in their justification — tool-assisted validation is required, not optional.
 </domain_operation>
