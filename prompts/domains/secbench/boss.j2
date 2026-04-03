@@ -4,14 +4,17 @@
 The repository is already cloned in the working directory. DO NOT clone again.
 All work MUST be done in the working directory specified in Task Context.
 
-### Phase 1: Build
-Build the repository. Deliverables: `/testcase/base_commit_hash`, `/src/build.sh` (improved), `/testcase/repo_changes.diff` (if changes), `/testcase/packages.txt` (if packages installed).
+### Phase 1: Build (index 0)
+Build the repository with sanitizer instrumentation.
+Deliverables: `/testcase/base_commit_hash`, `/src/build.sh` (improved), `/testcase/repo_changes.diff` (if changes), `/testcase/packages.txt` (if packages installed).
 
-### Phase 2: Exploit
-Create proof-of-concept with triggerable exploit command. Deliverables: PoC artifacts under `/testcase`, `/testcase/repro.sh`.
+### Phase 2: Exploit (index 1, depends_on: [0])
+Create proof-of-concept that triggers the reported sanitizer error. **Runs AFTER builder finishes** — compiled binaries are already available at `/work/bin/`, do NOT rebuild from scratch.
+Deliverables: PoC artifacts under `/testcase`, `/testcase/repro.sh`.
 
-### Phase 3: Fix
-Generate unified patch file. Deliverable: `/testcase/model_patch.diff`.
+### Phase 3: Fix (index 2, depends_on: [1])
+Generate unified patch file. **Runs AFTER exploiter finishes** — use the exploiter's `/testcase/repro.sh` to validate the patch.
+Deliverable: `/testcase/model_patch.diff`.
 
 **ALL THREE PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
 
@@ -19,9 +22,26 @@ Generate unified patch file. Deliverable: `/testcase/model_patch.diff`.
 
 - Create exactly 3 subtasks, one per phase.
 - Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, and `[Fixer]`.
+- **Sequential dependencies are REQUIRED**: set `"depends_on": []` for Builder (index 0), `"depends_on": [0]` for Exploiter (index 1), `"depends_on": [1]` for Fixer (index 2).
 - Do not merge phases together or skip validation deliverables for any phase.
+- Mark ALL three subtasks as `"estimated_complexity": "complex"` — each phase involves multiple coordinated steps that benefit from further decomposition into specialized workers.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,
   fixer = minimal patch that removes the sanitizer failure.
+
+## Cross-Phase Context Sharing
+
+The shared workspace (`/testcase/`, `/src/`, `/work/`) persists across all phases.
+- **Builder → Exploiter**: Compiled binaries at `/work/bin/`, improved `/src/build.sh`, base commit at `/testcase/base_commit_hash`.
+- **Exploiter → Fixer**: PoC artifacts at `/testcase/`, reproduction script at `/testcase/repro.sh`. Exploiter workers MUST publish key findings via `<context-update>` decisions: PoC file path, repro.sh command, and the exact sanitizer error observed.
+- **Fixer reads Exploiter results**: Fixer workers will see exploiter's shared decisions and result summary through sibling context. Instruct the fixer to CHECK `/testcase/repro.sh` exists and use it for patch validation.
+
+## Tool Usage in Justifications
+
+Each subtask's `justification` MUST include a `"security_tools"` key specifying which
+preinstalled analysis tools the child should use:
+- **[Builder]**: `"No security analysis tools required for build phase — focus on sanitizer-enabled compilation."`
+- **[Exploiter]**: `"Use Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) to confirm the PoC triggers the exact memory error from the bug report. Use KLEE for symbolic execution to discover trigger inputs if no PoC is provided in the bug description."`
+- **[Fixer]**: `"Use Valgrind (--tool=memcheck --error-exitcode=1) on the patched binary with the PoC to verify the vulnerability is fixed and no new memory issues are introduced."`
 </domain_operation>

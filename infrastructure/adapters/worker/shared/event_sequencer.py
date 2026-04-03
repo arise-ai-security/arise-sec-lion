@@ -14,6 +14,16 @@ from core.domain.events.events import (
 )
 
 
+def _sanitize_for_jsonb(text: str) -> str:
+    """Remove characters that PostgreSQL JSONB cannot store.
+
+    PostgreSQL rejects null bytes (\\x00 / \\u0000) inside JSONB strings.
+    Worker terminal output (e.g. sanitizer reports, binary tool output)
+    can contain these bytes, causing UntranslatableCharacterError on insert.
+    """
+    return text.replace("\x00", "")
+
+
 class EventSequencer:
     """Tracks sequence numbers and creates domain events.
 
@@ -58,7 +68,7 @@ class EventSequencer:
         event = ThoughtCaptured(
             aggregate_id=self._agent_id,
             sequence_number=self._sequence,
-            content=content,
+            content=_sanitize_for_jsonb(content),
             stream=self._stream,
             output_type=output_type,
         )
@@ -77,7 +87,7 @@ class EventSequencer:
         return WorkCompleted(
             aggregate_id=self._agent_id,
             sequence_number=self._sequence,
-            result=result,
+            result=_sanitize_for_jsonb(result),
         )
 
     def failed(self, reason: str) -> WorkFailed:
@@ -92,7 +102,7 @@ class EventSequencer:
         return WorkFailed(
             aggregate_id=self._agent_id,
             sequence_number=self._sequence,
-            reason=reason,
+            reason=_sanitize_for_jsonb(reason),
         )
 
     def cost_recorded(
