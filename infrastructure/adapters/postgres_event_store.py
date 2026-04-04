@@ -110,11 +110,21 @@ class PostgresEventStore(EventStorePort):
         payload_dict = orjson.loads(payload) if isinstance(payload, str) else payload
         return event_class(**payload_dict)
 
+    @staticmethod
+    def _encode_jsonb(v: object) -> str:
+        """Encode a value to JSONB-safe JSON string.
+
+        PostgreSQL JSONB rejects null bytes (\\u0000) inside strings.
+        Worker terminal output (sanitizer reports, binary tool output)
+        can contain these, so strip them before encoding.
+        """
+        return orjson.dumps(v).decode("utf-8").replace("\\u0000", "")
+
     async def connect(self) -> None:
         async def init_connection(conn: asyncpg.Connection) -> None:
             await conn.set_type_codec(
                 "jsonb",
-                encoder=lambda v: orjson.dumps(v).decode("utf-8"),
+                encoder=self._encode_jsonb,
                 decoder=orjson.loads,
                 schema="pg_catalog",
             )

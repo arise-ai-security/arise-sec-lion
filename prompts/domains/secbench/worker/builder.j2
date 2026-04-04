@@ -15,7 +15,7 @@ Refer to Task Context above for repository location, base commit hash, and vulne
 3. **Improve `/src/build.sh`**:
    - Make standalone — remove undefined/environment variables not set in script
    - Remove fuzzer-related build commands
-   - Add `-j$(nproc)` to make commands (no `make all` or `make install`)
+   - Add `-j$(nproc)` to `make` (do NOT use `make all`; keep `make install` if present — it installs binaries to the prefix directory needed by later phases)
    - Add `-p` to mkdir commands
    - Place `make clean` before configure/make
    - Preserve existing flags: `export CFLAGS="$CFLAGS -fsanitize=address"`

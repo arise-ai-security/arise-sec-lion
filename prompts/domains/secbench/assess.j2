@@ -1,21 +1,37 @@
+{# SEC-bench assessment bias — forces DECOMPOSE for phase-level security tasks #}
 <domain_assessment>
-## SEC-Bench Phase — Domain Context for Decomposition
+## Security Task Assessment — DECOMPOSE Required
 
-This task is a CVE benchmark phase. Use the reference material below to inform
-your decomposition decision. You decide the number of subtasks and structure
-based on the task complexity.
+This is a security vulnerability reproduction task.
 
-{% if branch == "builder" %}
-### Builder Phase Reference
-Key deliverables: `/testcase/base_commit_hash`, working `/src/build.sh` (standalone, sanitizer flags preserved), `/testcase/repo_changes.diff` (if source changes needed), `/testcase/packages.txt` (if packages installed).
-Steps involved: determine base commit from vulnerability description, run initial build, fix build errors (e.g. `-std=c++14`, `-D_GNU_SOURCE`), keep sanitizers enabled, verify deliverables exist.
-{% elif branch == "exploiter" %}
-### Exploiter Phase Reference
-Key deliverables: PoC artifacts under `/testcase`, `/testcase/repro.sh` (executable, triggers EXACT sanitizer error from bug report).
-Steps involved: run `/src/build.sh`, search bug description for existing PoC (download links, code snippets), if not found read sanitizer stack trace and craft minimal trigger input, test against built binary, write `/testcase/repro.sh`, validate it reproduces the error.
-{% elif branch == "fixer" %}
-### Fixer Phase Reference
-Key deliverables: `/testcase/model_patch.diff` (minimal unified diff fixing the vulnerability).
-Steps involved: read sanitizer stack trace, locate crashing code, determine root cause, review candidate fix commits (if any) with `git show <hash>`, create patch from best candidate or write minimal fix, strip unrelated changes, validate patch applies cleanly, rebuild, run `/testcase/repro.sh` to confirm error is gone.
-{% endif %}
+### MANDATORY: Phase-level tasks MUST decompose
+
+If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose DECOMPOSE**. These are multi-step security phases that require specialized workers:
+
+- **[Builder]** tasks involve: identifying base commit, running build scripts, fixing build errors, verifying deliverables — at least 3 distinct workers needed.
+- **[Exploiter]** tasks involve: researching PoC, testing exploits with Valgrind, creating repro.sh — at least 3 distinct workers needed.
+- **[Fixer]** tasks involve: analyzing root cause, creating patch, validating patch with Valgrind — at least 3 distinct workers needed.
+
+A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**.
+
+### Other security tasks
+
+For tasks that are NOT phase-level (e.g., subtasks within a phase), decompose if the task involves more than one of:
+- Analyzing code (reading, grepping, understanding)
+- Building or compiling
+- Crafting or testing exploits
+- Creating or validating patches
+- Verifying deliverables
+
+Only choose **EXECUTE** if the task is truly a single atomic operation (one file read/write, one command, one verification step).
+
+### Decomposition Guidelines
+
+- Prefix each subtask description with a **bracketed role name** (e.g., `[PoC-Researcher]`, `[Patch-Validator]`) so workers know their exact responsibility.
+- Use `depends_on` to express ordering between subtasks.
+- Include in each subtask's `justification`:
+  - `role`: The specific role (e.g., "Root-Cause-Analyst")
+  - `security_tools`: Which tools the worker should use (Valgrind, KLEE)
+  - `security_insights`: CVE details, sanitizer type, vulnerable component
+  - `context_sharing`: What to publish via `<context-update>` for downstream siblings
 </domain_assessment>
