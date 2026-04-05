@@ -1,9 +1,14 @@
 <operation>
     ## Task Decomposition
 
-    **Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns during
-    recon.
-    These fields (`target_paths`, `symbols`, `search_hints`) help children focus their own recon precisely.
+    **Analyze deeply before decomposing.** Understand the technical landscape, identify the right tool combinations,
+    and create subtasks with comprehensive, self-directed guidance.
+
+    Children operate fully autonomously — they cannot ask for clarification. Your task descriptions and
+    justifications are their primary source of guidance.
+
+    **Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns.
+    These fields (`target_paths`, `symbols`, `search_hints`) help children focus their reconnaissance precisely.
     {% if at_max_depth %}
 
         **CONSTRAINT: Maximum depth reached.** Each subtask MUST be atomic and worker-executable.
@@ -20,8 +25,85 @@
         **CONSTRAINT: {{ agents_remaining }} agents remaining ({{ current_total_agents }}/{{ max_total_agents }}).**
     {% endif %}
 
-    Decompose into 2-3 independent, concrete, testable subtasks.
-    Avoid sequential dependencies and over-granularity.
+    {% if depth_remaining is not none and depth_remaining <= 1 %}
+    Decompose into 3-5 concrete, **highly specific** subtasks — each targeting a precise code location or verification step.
+    Finer analysis demands more workers with narrower, well-defined deliverables.
+    {% elif depth_remaining is not none and depth_remaining == 2 %}
+    Decompose into 3-4 concrete, testable subtasks — each targeting specific files and functions.
+    {% else %}
+    Decompose into 2-3 concrete, testable subtasks at major phase boundaries.
+    {% endif %}
+    {% if has_tools and available_tools %}
+
+    ### Research Before Decomposition
+
+    You have tool-calling capabilities to inspect the codebase before decomposing.
+    **Use these tools to make informed decomposition decisions** — do not decompose blindly.
+
+    **Available tools:**
+    {% for tool in available_tools %}
+        - `{{ tool.signature }}` — {{ tool.description }}
+    {% endfor %}
+
+    **Research workflow** (precision-first):
+    1. Start with scope hints (target_paths, symbols, search_hints) if provided
+    2. Use `get_file_structure` to understand the codebase layout
+    3. Use `search_codebase` to find relevant code patterns
+    4. Use `get_symbols_overview` to identify key functions and classes
+    5. Use `read_symbol` or `read_file` for targeted deep reads of critical code
+    6. Use your findings to create informed, specific subtask descriptions with:
+       - Exact file paths and function names you discovered
+       - Specific code patterns or vulnerabilities you identified
+       - Tool combinations that would help workers analyze the code
+    {% endif %}
+    {% if depth_remaining is not none %}
+
+    ### Analysis Depth Guidance — Progressive Scope Narrowing
+    {% if depth_remaining >= 3 %}
+    **Level: Module/Subsystem** — broad decomposition into major phases.
+    - Identify major components, their responsibilities, and dependencies
+    - Determine which subsystems need changes and their natural boundaries
+    - **2-3 subtasks** at phase boundaries (e.g., "build", "exploit", "fix")
+    - **Deliverables**: Phase-level outcomes (compiled binary, PoC script, patch file)
+    - **Scope for children**: Pass file-level `target_paths` and component-level `symbols` to narrow their focus
+    {% elif depth_remaining == 2 %}
+    **Level: File/Function** — targeted decomposition into specific code areas.
+    - Identify specific files and key functions that need work
+    - Understand function signatures, data flow, and interactions between components
+    - **3-4 subtasks** targeting specific files and functions (e.g., "analyze ReadRLAImage() in coders/rla.c")
+    - **Deliverables**: Function-level outcomes (analysis report, specific tool output, validated finding)
+    - **Scope for children**: Pass function-level `symbols` and code-pattern `search_hints` so children focus on exact functions
+    {% elif depth_remaining <= 1 %}
+    **Level: Code Block/Variable** — fine-grained decomposition into precise actions.
+    - Identify exact code blocks, conditions, memory operations, and variables involved
+    - Understand buffer sizes, control flow paths, and edge cases
+    - **3-5 subtasks** each targeting a precise code location or verification step (e.g., "add bounds check at line 271 before pointer dereference", "validate memory allocation in loop at line 285")
+    - **Deliverables**: Precise, verifiable outcomes per worker (specific file edit, specific tool validation output, specific test result)
+    - Each worker should produce a concrete artifact or verified finding — not vague analysis
+    - **Scope for children**: Pass precise line ranges, variable names, and exact error patterns as `search_hints`
+    {% endif %}
+    {% endif %}
+
+    ### Task Description Quality
+    Each subtask description must be **self-contained** — a child reading only the description and justification
+    must be able to execute autonomously. Workers use smaller models with limited context, so be **precise and compact**:
+    - Specific actions (not vague goals) — say exactly what to do
+    - Exact file paths, function names, line ranges — the finer the scope, the less the worker needs to search
+    - Tools to install and use (exact `apt-get` and run commands)
+    - Expected deliverable (file path, format)
+    - Success criteria (specific, verifiable)
+    Finer instructions compress context: a worker told "fix bounds check at rla.c:271" needs far less context than "find and fix the vulnerability".
+
+    ### Justification Quality
+    The `justification` object is how you transfer reasoning, methodology, and domain knowledge to children:
+    - `"objective"`: What this achieves in the context of the overall goal
+    - `"plan"`: Step-by-step methodology — specific commands, tools, analysis sequences, fallback approaches
+    - Domain-specific keys as instructed (e.g., `security_insights`, `security_tools`, `context_sharing`)
+    Invest in rich justifications — they are the primary guidance for autonomous workers.
+
+    ### Peer Coordination
+    For sequential subtasks, instruct each worker what to publish via `<context-update>` and what to validate
+    from upstream siblings. Workers should scrutinize peer outcomes, not blindly trust them.
 </operation>
 {% if briefing %}
 

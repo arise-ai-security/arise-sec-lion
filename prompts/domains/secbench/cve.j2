@@ -42,8 +42,15 @@
 
     **Rules**: DO NOT disable sanitizer options.
 
+    **Security Tooling**: Workers should install and use analysis tools beyond the preinstalled set. Recommended combinations:
+    - **Static analysis**: `cppcheck`, `flawfinder` (vulnerability pattern scanning), `cflow` (call graph / data flow)
+    - **Dynamic analysis**: Valgrind (memcheck, helgrind), KLEE (symbolic execution), enhanced ASan options
+    - **Memory debugging**: `gdb` (stack traces, memory inspection), `addr2line` (crash address → source mapping)
+    - **Runtime tracing**: `strace` (syscall tracing), `ltrace` (library call tracing)
+    Install with `apt-get install -y <tool>` as needed.
+
     **Decomposition**: When producing subtasks, include in each subtask's `justification`:
-    - `"security_insights"`: relevant CVE details, sanitizer type, and vulnerable component
-    - `"security_tools"`: which preinstalled analysis tools (Valgrind, KLEE) the child worker should use and specific commands to run
+    - `"security_insights"`: relevant CVE details, sanitizer type, vulnerable component, and root cause analysis
+    - `"security_tools"`: specific analysis tools to install and use — prescribe exact commands, not just tool names. Recommend complementary tool combinations for cross-validation
 </domain>
 {% endif %}

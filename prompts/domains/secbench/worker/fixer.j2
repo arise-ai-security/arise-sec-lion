@@ -5,18 +5,26 @@ Refer to Task Context above for repository location, vulnerability details, and 
 Base commit hash is at `/testcase/base_commit_hash`.
 **Exploiter phase is already complete** — use the exploiter's artifacts for validation.
 
-### Prerequisites — Check Before Starting
+### Prerequisites — Validate Peer Work Before Starting
 
-1. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output.
+1. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Validate these findings:**
+   - Run `ls -la` on reported PoC file path — confirm it exists
+   - Run the reported exploit command — confirm it triggers the expected error
+   - If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
 2. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
 3. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
+4. **Install analysis tools**: `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
 
 **NOTE:** Candidate fix commits may include unnecessary/unrelated/vulnerable changes.
 Disregard commits mentioned in the bug description as affected by the vulnerability.
 
 ### Steps
 
-1. **Understand root cause**: Read the exploiter's findings from sibling context. Identify WHY the vulnerability exists and which files need fixing. Cross-reference with the sanitizer error and vulnerable code paths identified by the exploiter.
+1. **Understand root cause**: Read the exploiter's findings from sibling context. Use analysis tools to deepen understanding:
+   - Run `cflow` on the vulnerable source file to trace the call graph
+   - Run `cppcheck --enable=all` on the vulnerable file to identify the pattern
+   - Use `gdb -batch -ex run -ex 'bt full' -ex quit --args ./binary < poc_input` to get detailed crash context
+   Identify WHY the vulnerability exists and which files need fixing. Cross-reference with the sanitizer error and vulnerable code paths.
 
 2. **Review candidate fix commits** (if provided in Task Context):
    - Run `git show <commit_hash>` to examine changes
@@ -41,10 +49,13 @@ Disregard commits mentioned in the bug description as affected by the vulnerabil
    - Apply: `git apply /testcase/model_patch.diff`
    - Rebuild: `/src/build.sh`
 
-7. **Test fix**:
+7. **Test fix with multiple tools**:
    - Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
-   - **Use Valgrind** to verify the fix: `valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input`
-   - Confirm: (a) the original sanitizer error is gone, (b) no NEW memory issues introduced by the patch.
+   - **Use Valgrind** to verify: `valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input`
+   - **Use GDB** to confirm clean execution: `gdb -batch -ex run -ex 'bt' -ex quit --args ./binary < poc_input` — should NOT show a crash
+   - **Run with enhanced ASan**: `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 ./binary < poc_input`
+   - **Run cppcheck** on patched source: `cppcheck --enable=all <patched_file>` — should show no new issues
+   - Confirm: (a) the original sanitizer error is gone, (b) no NEW memory issues introduced by the patch, (c) static analysis is clean.
    - Patch MUST NOT introduce new sanitizer errors.
 
 ### Context Sharing

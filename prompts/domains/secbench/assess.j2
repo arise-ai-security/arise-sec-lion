@@ -8,11 +8,11 @@ This is a security vulnerability reproduction task.
 
 If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose DECOMPOSE**. These are multi-step security phases that require specialized workers:
 
-- **[Builder]** tasks involve: identifying base commit, running build scripts, fixing build errors, verifying deliverables — at least 3 distinct workers needed.
-- **[Exploiter]** tasks involve: researching PoC, testing exploits with Valgrind, creating repro.sh — at least 3 distinct workers needed.
-- **[Fixer]** tasks involve: analyzing root cause, creating patch, validating patch with Valgrind — at least 3 distinct workers needed.
+- **[Builder]** tasks involve: identifying base commit, running build scripts, fixing build errors, verifying deliverables — **exactly 3 workers** (setup → compile → verify). Builder is infrastructure work, not code analysis — keep it concise.
+- **[Exploiter]** tasks involve: static analysis, PoC research, exploit crafting, testing with multiple tools, reproduction validation — **4-5 specialized workers** needed. Finer analysis of vulnerable code paths requires more targeted workers with specific tool assignments.
+- **[Fixer]** tasks involve: root cause analysis at code-block level, candidate review, patch creation, multi-tool validation — **4-5 specialized workers** needed. Precise patching requires workers focused on specific aspects (data flow analysis, patch creation, validation with different tools).
 
-A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**.
+A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**. Exploiter and Fixer phases benefit from **more workers with narrower, more specific deliverables** because they require code-level analysis.
 
 ### Other security tasks
 
@@ -29,9 +29,11 @@ Only choose **EXECUTE** if the task is truly a single atomic operation (one file
 
 - Prefix each subtask description with a **bracketed role name** (e.g., `[PoC-Researcher]`, `[Patch-Validator]`) so workers know their exact responsibility.
 - Use `depends_on` to express ordering between subtasks.
+- Workers operate fully autonomously — justifications must be comprehensive enough for self-directed execution.
 - Include in each subtask's `justification`:
   - `role`: The specific role (e.g., "Root-Cause-Analyst")
-  - `security_tools`: Which tools the worker should use (Valgrind, KLEE)
-  - `security_insights`: CVE details, sanitizer type, vulnerable component
+  - `security_tools`: Specific tools to **install and use** — include `apt-get install` commands. Prescribe tool combinations beyond Valgrind/KLEE: cppcheck, cflow, gdb, strace, ltrace, addr2line, flawfinder
+  - `security_insights`: CVE details, sanitizer type, vulnerable component, analysis strategy
   - `context_sharing`: What to publish via `<context-update>` for downstream siblings
+  - `peer_validation`: What each downstream worker should verify from upstream findings before proceeding
 </domain_assessment>

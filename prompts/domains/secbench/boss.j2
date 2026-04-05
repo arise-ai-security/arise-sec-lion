@@ -24,7 +24,10 @@ Deliverable: `/testcase/model_patch.diff`.
 - Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, and `[Fixer]`.
 - **Sequential dependencies are REQUIRED**: set `"depends_on": []` for Builder (index 0), `"depends_on": [0]` for Exploiter (index 1), `"depends_on": [1]` for Fixer (index 2).
 - Do not merge phases together or skip validation deliverables for any phase.
-- Mark ALL three subtasks as `"estimated_complexity": "complex"` — each phase involves multiple coordinated steps that benefit from further decomposition into specialized workers.
+- Mark ALL three subtasks as `"estimated_complexity": "complex"` — each phase benefits from further decomposition into specialized workers.
+- **Builder** decomposes into exactly 3 workers (infrastructure, not code analysis — no deeper granularity needed).
+- **Exploiter** decomposes into 4-5 workers with progressively finer code analysis (static analysis → data flow → PoC crafting → reproduction → validation). Finer analysis demands more targeted workers.
+- **Fixer** decomposes into 4-5 workers (root cause analysis → candidate review → patch creation → validation → aggregated verification). Include a final validation worker that checks the big picture — finer workers can lose overall coherence.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,
@@ -37,11 +40,12 @@ The shared workspace (`/testcase/`, `/src/`, `/work/`) persists across all phase
 - **Exploiter → Fixer**: PoC artifacts at `/testcase/`, reproduction script at `/testcase/repro.sh`. Exploiter workers MUST publish key findings via `<context-update>` decisions: PoC file path, repro.sh command, and the exact sanitizer error observed.
 - **Fixer reads Exploiter results**: Fixer workers will see exploiter's shared decisions and result summary through sibling context. Instruct the fixer to CHECK `/testcase/repro.sh` exists and use it for patch validation.
 
-## Tool Usage in Justifications
+## Security Tool Prescriptions in Justifications
 
-Each subtask's `justification` MUST include a `"security_tools"` key specifying which
-preinstalled analysis tools the child should use:
-- **[Builder]**: `"No security analysis tools required for build phase — focus on sanitizer-enabled compilation."`
-- **[Exploiter]**: `"Use Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) to confirm the PoC triggers the exact memory error from the bug report. Use KLEE for symbolic execution to discover trigger inputs if no PoC is provided in the bug description."`
-- **[Fixer]**: `"Use Valgrind (--tool=memcheck --error-exitcode=1) on the patched binary with the PoC to verify the vulnerability is fixed and no new memory issues are introduced."`
+Each subtask's `justification` MUST include a `"security_tools"` key prescribing specific analysis tools
+to install and use. Go beyond the preinstalled tools — recommend complementary tool combinations:
+
+- **[Builder]**: `"Install cppcheck (apt-get install -y cppcheck) to scan source for vulnerability patterns before building. Ensure sanitizer flags are preserved. Use ASAN_OPTIONS=detect_leaks=1 during test builds to catch early issues."`
+- **[Exploiter]**: `"Install and use multiple analysis tools for cross-validation: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) to confirm the PoC triggers the exact memory error. (2) Install gdb (apt-get install -y gdb) for detailed stack traces: run 'gdb -batch -ex run -ex bt -ex quit --args ./binary < poc_input'. (3) Use addr2line -e binary -a <address> to map crash addresses to source lines. (4) Install cflow (apt-get install -y cflow) to trace call graphs of vulnerable functions. (5) Use strace/ltrace for runtime behavior analysis. (6) Use KLEE for symbolic execution if no PoC is available."`
+- **[Fixer]**: `"Validate the patch with multiple complementary tools: (1) Valgrind (--tool=memcheck --error-exitcode=1) on patched binary — verify original error gone AND no new issues. (2) Install cppcheck for static analysis of the patched code. (3) Use gdb to confirm stack traces are clean post-patch. (4) Run with enhanced ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 for thorough validation. (5) Compare Valgrind output before vs after patch."`
 </domain_operation>

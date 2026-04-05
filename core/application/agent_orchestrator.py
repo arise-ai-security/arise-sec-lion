@@ -158,13 +158,15 @@ class AgentOrchestrator:
             domain_context = self._get_domain_context(agent)
             tool_context = self._toolset_resolver.resolve(agent.role, domain_context)
 
-            # Build role-specific prompt
+            # Build role-specific prompt (with recon tool capabilities if available)
+            capabilities = build_prompt_capabilities(tool_context)
             if agent.role == AgentRole.BOSS:
                 prompt = self._prompt_builder.build_boss_delegation_prompt(
                     task_description=agent.task_description,
                     agent_id=agent.agent_id,
                     domain_context=domain_context,
                     hierarchy_limits=agent.hierarchy_limits,
+                    prompt_capabilities=capabilities,
                 )
             else:
                 scope = self._build_scope(agent)
@@ -175,6 +177,7 @@ class AgentOrchestrator:
                     briefing=agent.briefing,
                     hierarchy_limits=agent.hierarchy_limits,
                     scope=scope,
+                    prompt_capabilities=capabilities,
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
