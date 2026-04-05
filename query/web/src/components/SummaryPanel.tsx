@@ -12,6 +12,8 @@ interface SummaryPanelProps {
   loading: boolean;
   /** ThoughtCaptured events for worker output display */
   workerOutput?: DomainEvent[];
+  /** Produced events (includes VerificationPassed/Failed, RetryScheduled) */
+  producedEvents?: DomainEvent[];
 }
 
 const statusColors: Record<string, string> = {
@@ -206,7 +208,7 @@ function WorkerOutputSection({ events }: { events: DomainEvent[] }) {
   );
 }
 
-export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPanelProps) {
+export function SummaryPanel({ summary, loading, workerOutput = [], producedEvents = [] }: SummaryPanelProps) {
   if (loading) {
     return (
       <div className="p-4 text-gray-500">
@@ -355,6 +357,75 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
           </div>
         </Section>
       )}
+
+      {/* Verification Status */}
+      {(() => {
+        const verificationEvents = producedEvents.filter(
+          e => e.event_type === 'VerificationPassed' || e.event_type === 'VerificationFailed'
+        );
+        const retryEvents = producedEvents.filter(e => e.event_type === 'RetryScheduled');
+        if (verificationEvents.length === 0) return null;
+
+        const lastVerification = verificationEvents[verificationEvents.length - 1];
+        const passed = lastVerification.event_type === 'VerificationPassed';
+        const feedback = (lastVerification.data as Record<string, unknown>)?.feedback as string || '';
+        const failedStage = (lastVerification.data as Record<string, unknown>)?.failed_stage as string || '';
+        const stagesPassed = (lastVerification.data as Record<string, unknown>)?.stages_passed as string[] || [];
+
+        return (
+          <Section title={`Verification ${passed ? 'Passed' : 'Failed'}${retryEvents.length > 0 ? ` (${retryEvents.length} retry)` : ''}`}>
+            <div className={`p-3 rounded border-l-2 ${passed ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500' : 'bg-red-50 dark:bg-red-900/20 border-red-500'}`}>
+              {/* Status badge */}
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-lg ${passed ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {passed ? '✅' : '❌'}
+                </span>
+                <span className={`text-sm font-medium ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                  {passed ? 'Verification Passed' : `Failed at stage: ${failedStage}`}
+                </span>
+              </div>
+
+              {/* Stages passed (for failures) */}
+              {!passed && stagesPassed.length > 0 && (
+                <div className="mb-2">
+                  <span className="text-xs text-gray-500">Stages passed: </span>
+                  {stagesPassed.map((stage: string) => (
+                    <span key={stage} className="inline-block text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1.5 py-0.5 mr-1">
+                      {stage}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Feedback / reasoning */}
+              {feedback && (
+                <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                  <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
+                  <span className="whitespace-pre-wrap">{feedback}</span>
+                </div>
+              )}
+
+              {/* Retry history */}
+              {verificationEvents.length > 1 && (
+                <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <span className="text-xs font-medium text-gray-500">Verification History:</span>
+                  {verificationEvents.map((evt, i) => {
+                    const evtPassed = evt.event_type === 'VerificationPassed';
+                    const evtFeedback = (evt.data as Record<string, unknown>)?.feedback as string || '';
+                    const evtStage = (evt.data as Record<string, unknown>)?.failed_stage as string || '';
+                    return (
+                      <div key={i} className={`mt-1 text-xs ${evtPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                        <span>{evtPassed ? '✓' : '✗'} Attempt {i + 1}: </span>
+                        {evtPassed ? (evtFeedback || 'Passed') : `Failed (${evtStage}): ${evtFeedback.slice(0, 120)}`}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* Result (if completed) */}
       {summary.result && (

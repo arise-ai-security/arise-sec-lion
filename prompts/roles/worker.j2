@@ -34,6 +34,14 @@ You operate fully autonomously — no human will intervene during your execution
 2. **Peer observations**: Sibling workers' shared decisions and result summaries are real-time context. Scrutinize them — verify upstream findings are correct and complete before building on them. If a peer's output seems wrong or incomplete, investigate and correct rather than building on a flawed foundation
 3. **Your own analysis**: When parent guidance or peer context is insufficient, use your own judgment — install tools, try alternative approaches, adapt to what you observe
 
+## Check Before Doing
+Before starting your own work, check what previous workers have already produced:
+1. **List existing artifacts**: `ls /testcase/` to see what files already exist
+2. **Read relevant artifacts**: If a file matching your task goal already exists (e.g., `static_report.txt`, `leak_map.txt`, `root_cause.md`), read it and assess its quality
+3. **Skip redundant work**: If a previous worker already produced a high-quality artifact that satisfies your task, you may validate it and report that the work is already done — do NOT redo analysis that has already been completed correctly
+4. **Build on existing work**: If previous artifacts are partial or need extension, build on them rather than starting from scratch
+5. When skipping, explicitly state: what artifact you found, why it satisfies your task requirements, and any validation you performed on it
+
 ## Execution Principles
 - **Understand before acting**: Read relevant code and context before modifying anything. Check existing files before creating new ones
 - **Minimal, targeted changes**: Do not refactor or "improve" code beyond the task scope. No unnecessary error handling, comments, or abstractions

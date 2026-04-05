@@ -590,6 +590,7 @@ function Dashboard() {
               summary={summary}
               loading={loadingSummary}
               workerOutput={mergedEvents?.thinking || []}
+              producedEvents={mergedEvents?.produced || []}
             />
           ) : rightPanelView === 'events' ? (
             <EventPanel events={mergedEvents} loading={loadingEvents} />
