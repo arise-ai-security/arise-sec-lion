@@ -217,7 +217,7 @@ function Dashboard() {
       const producedTypes = ['StatusChanged', 'ComplexityEvaluated', 'SubtasksDefined', 'ChildSpawned',
                             'WorkCompleted', 'WorkFailed', 'CodeGenerationStarted', 'PromptSent',
                             'TokensConsumed', 'WorkerCostRecorded', 'OperationStarted', 'OperationFinished',
-                            'VerificationFailed', 'DecisionInfeasible', 'RetryScheduled',
+                            'VerificationFailed', 'VerificationPassed', 'DecisionInfeasible', 'RetryScheduled',
                             'RedecompositionTriggered', 'ProbeStarted', 'ProbeCompleted'];
       if (producedTypes.includes(event.event_type)) return 'produced';
       // Default to 'passed' for other events

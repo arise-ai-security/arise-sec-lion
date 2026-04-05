@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 from core.domain.events.events import (
     AgentCreated,
     ChildCompleted,
+    ChildFailed,
     ChildSpawned,
     CodeGenerationStarted,
     ComplexityEvaluated,
@@ -38,6 +39,7 @@ from core.domain.events.events import (
     TaskAssigned,
     ThoughtCaptured,
     VerificationFailed,
+    VerificationPassed,
     WorkCompleted,
     WorkFailed,
 )
@@ -69,13 +71,14 @@ PRODUCED_EVENTS = {
     WorkCompleted,
     WorkFailed,
     VerificationFailed,
+    VerificationPassed,
     DecisionInfeasible,
     RetryScheduled,
     RedecompositionTriggered,
     ProbeStarted,
     ProbeCompleted,
 }
-PASSED_EVENTS = {ChildSpawned, ChildCompleted}
+PASSED_EVENTS = {ChildSpawned, ChildCompleted, ChildFailed}
 THINKING_EVENTS = {ThoughtCaptured}
 
 

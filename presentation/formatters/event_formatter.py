@@ -129,6 +129,16 @@ class ChildCompletedFormatter(EventFormatterStrategy):
         return f"   ✓ [{agent_id}] Child {child_id}... completed"
 
 
+class ChildFailedFormatter(EventFormatterStrategy):
+    """Format ChildFailed events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        child_id = str(getattr(event, "child_id", "?"))[:8]
+        reason = getattr(event, "reason", "")[:80]
+        return f"   ✗ [{agent_id}] Child {child_id}... failed: {reason}"
+
+
 class VerificationFailedFormatter(EventFormatterStrategy):
     """Format VerificationFailed events."""
 
@@ -212,6 +222,7 @@ EventFormatter.register("ThoughtCaptured", ThoughtCapturedFormatter())
 EventFormatter.register("WorkCompleted", WorkCompletedFormatter())
 EventFormatter.register("WorkFailed", WorkFailedFormatter())
 EventFormatter.register("ChildCompleted", ChildCompletedFormatter())
+EventFormatter.register("ChildFailed", ChildFailedFormatter())
 EventFormatter.register("VerificationFailed", VerificationFailedFormatter())
 EventFormatter.register("VerificationPassed", VerificationPassedFormatter())
 EventFormatter.register("RetryScheduled", RetryScheduledFormatter())

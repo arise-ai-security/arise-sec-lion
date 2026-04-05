@@ -42,6 +42,8 @@ def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
             return "exploiter"
         if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
             return "fixer"
+        if any(kw in task_lower for kw in ("reporter", "report", "security report")):
+            return "reporter"
 
     return None
 
@@ -57,6 +59,8 @@ def _detect_branch_from_task(task_description: str) -> str | None:
         return "exploiter"
     if "[fixer]" in task_lower:
         return "fixer"
+    if "[reporter]" in task_lower:
+        return "reporter"
     # Fall back to loose keyword matching.
     if any(kw in task_lower for kw in ("builder", "environment", "setup")):
         return "builder"
@@ -64,6 +68,8 @@ def _detect_branch_from_task(task_description: str) -> str | None:
         return "exploiter"
     if any(kw in task_lower for kw in ("fixer", "patch", "fix")):
         return "fixer"
+    if any(kw in task_lower for kw in ("reporter", "security report")):
+        return "reporter"
     return None
 
 
@@ -162,4 +168,5 @@ class SecBenchPromptStrategy:
             .render_if(branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx)
             .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
             .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
+            .render_if(branch == "reporter", "domains/secbench/worker/reporter.j2", **cve_ctx)
         )

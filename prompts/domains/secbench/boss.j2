@@ -1,5 +1,5 @@
 <domain_operation>
-## Vulnerability Reproduction — 3-Phase Process
+## Vulnerability Reproduction — 4-Phase Process
 
 The repository is already cloned in the working directory. DO NOT clone again.
 All work MUST be done in the working directory specified in Task Context.
@@ -16,22 +16,28 @@ Deliverables: PoC artifacts under `/testcase`, `/testcase/repro.sh`.
 Generate unified patch file. **Runs AFTER exploiter finishes** — use the exploiter's `/testcase/repro.sh` to validate the patch.
 Deliverable: `/testcase/model_patch.diff`.
 
-**ALL THREE PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
+### Phase 4: Report (index 3, depends_on: [0, 1, 2])
+Synthesize ALL findings from Builder, Exploiter, and Fixer into a comprehensive security analysis report. **Runs AFTER all other phases finish.**
+Deliverable: `/testcase/security_report.md`.
+
+**ALL FOUR PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
 
 ## Decomposition Requirements
 
-- Create exactly 3 subtasks, one per phase.
-- Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, and `[Fixer]`.
-- **Sequential dependencies are REQUIRED**: set `"depends_on": []` for Builder (index 0), `"depends_on": [0]` for Exploiter (index 1), `"depends_on": [1]` for Fixer (index 2).
+- Create exactly 4 subtasks, one per phase.
+- Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, `[Fixer]`, and `[Reporter]`.
+- **Sequential dependencies are REQUIRED**: set `"depends_on": []` for Builder (index 0), `"depends_on": [0]` for Exploiter (index 1), `"depends_on": [1]` for Fixer (index 2), `"depends_on": [0, 1, 2]` for Reporter (index 3).
 - Do not merge phases together or skip validation deliverables for any phase.
-- Mark ALL three subtasks as `"estimated_complexity": "complex"` — each phase benefits from further decomposition into specialized workers.
+- Mark Builder, Exploiter, and Fixer as `"estimated_complexity": "complex"` — each phase benefits from further decomposition into specialized workers.
+- Mark Reporter as `"estimated_complexity": "simple"` — it is a single worker that reads and synthesizes findings, not a decomposition target.
 - **Builder** decomposes into exactly 3 workers (infrastructure, not code analysis — no deeper granularity needed).
 - **Exploiter** decomposes into 4-5 workers with progressively finer code analysis (static analysis → data flow → PoC crafting → reproduction → validation). Finer analysis demands more targeted workers.
 - **Fixer** decomposes into 4-5 workers (root cause analysis → candidate review → patch creation → validation → aggregated verification). Include a final validation worker that checks the big picture — finer workers can lose overall coherence.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,
-  fixer = minimal patch that removes the sanitizer failure.
+  fixer = minimal patch that removes the sanitizer failure,
+  reporter = comprehensive security analysis report.
 
 ## Cross-Phase Context Sharing
 
@@ -39,13 +45,15 @@ The shared workspace (`/testcase/`, `/src/`, `/work/`) persists across all phase
 - **Builder → Exploiter**: Compiled binaries at `/work/bin/`, improved `/src/build.sh`, base commit at `/testcase/base_commit_hash`.
 - **Exploiter → Fixer**: PoC artifacts at `/testcase/`, reproduction script at `/testcase/repro.sh`. Exploiter workers MUST publish key findings via `<context-update>` decisions: PoC file path, repro.sh command, and the exact sanitizer error observed.
 - **Fixer reads Exploiter results**: Fixer workers will see exploiter's shared decisions and result summary through sibling context. Instruct the fixer to CHECK `/testcase/repro.sh` exists and use it for patch validation.
+- **Reporter reads ALL phases**: Reporter reads all sibling context and `/testcase/` artifacts to synthesize the final security report.
 
 ## Security Tool Prescriptions in Justifications
 
 Each subtask's `justification` MUST include a `"security_tools"` key prescribing specific analysis tools
 to install and use. Go beyond the preinstalled tools — recommend complementary tool combinations:
 
-- **[Builder]**: `"Install cppcheck (apt-get install -y cppcheck) to scan source for vulnerability patterns before building. Ensure sanitizer flags are preserved. Use ASAN_OPTIONS=detect_leaks=1 during test builds to catch early issues."`
+- **[Builder]**: `"Install cppcheck (apt-get install -y cppcheck) to scan the SPECIFIC vulnerable file(s) (NOT the entire codebase — full-project scans waste time). Ensure sanitizer flags are preserved. Use ASAN_OPTIONS=detect_leaks=1 during test builds to catch early issues."`
 - **[Exploiter]**: `"Install and use multiple analysis tools for cross-validation: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) to confirm the PoC triggers the exact memory error. (2) Install gdb (apt-get install -y gdb) for detailed stack traces: run 'gdb -batch -ex run -ex bt -ex quit --args ./binary < poc_input'. (3) Use addr2line -e binary -a <address> to map crash addresses to source lines. (4) Install cflow (apt-get install -y cflow) to trace call graphs of vulnerable functions. (5) Use strace/ltrace for runtime behavior analysis. (6) Use KLEE for symbolic execution if no PoC is available."`
 - **[Fixer]**: `"Validate the patch with multiple complementary tools: (1) Valgrind (--tool=memcheck --error-exitcode=1) on patched binary — verify original error gone AND no new issues. (2) Install cppcheck for static analysis of the patched code. (3) Use gdb to confirm stack traces are clean post-patch. (4) Run with enhanced ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 for thorough validation. (5) Compare Valgrind output before vs after patch."`
+- **[Reporter]**: `"Read all artifacts in /testcase/ and sibling context from Builder, Exploiter, and Fixer. Synthesize a comprehensive security_report.md covering: executive summary, vulnerability details with root cause, PoC evidence, fix implementation, validation results, and tool usage summary. Reference specific file paths, line numbers, and command outputs as evidence."`
 </domain_operation>

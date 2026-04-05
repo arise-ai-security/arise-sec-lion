@@ -51,7 +51,7 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - `/src/build.sh`
 
 9. **Run quick static analysis** (optional but recommended):
-   - `cppcheck --enable=all {{ work_dir }}/` — scan for potential issues that downstream phases should be aware of
+   - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
    - Note any findings in context-update for exploiter/fixer workers
 
 ### Peer Validation
