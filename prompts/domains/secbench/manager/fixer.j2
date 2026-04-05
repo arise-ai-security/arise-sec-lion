@@ -5,6 +5,8 @@ Decompose the patch generation phase into worker subtasks with explicit roles.
 Base commit is at `/testcase/base_commit_hash`.
 **Exploiter phase is already complete** — use `/testcase/repro.sh` to validate the patch. Check sibling context for the exploiter's findings (PoC path, sanitizer error, exploit command).
 
+⚠️ **DO NOT CREATE STANDALONE BUILD WORKERS.** Building is already handled — ASan-instrumented binaries exist at `/work/bin/`. When a worker needs to rebuild after applying a patch, it runs `./secb-exec "/src/build.sh"` as a step within its validation task. Do not decompose "build" into its own subtask.
+
 **NOTE:** Candidate fix commits (if listed in Task Context) may include unnecessary/unrelated changes. Be selective.
 
 ### Phase Deliverable
@@ -45,7 +47,7 @@ Base commit is at `/testcase/base_commit_hash`.
 
 ### Decomposition Requirements
 
-- Use the bracketed role names above in each subtask's `description` field.
+- **Use ONLY the 5 bracketed role names above** — do NOT invent new roles. Never create [Builder], [Build-Setup], [Build-Compiler], or any build-only worker. Rebuilding is a step within Patch-Validator's task, not a separate subtask.
 - Set `depends_on` as specified (analyst → reviewer → creator → validator → aggregator).
 - Always reset to the recorded base commit before validating the patch.
 - Do not modify `/testcase/base_commit_hash`.

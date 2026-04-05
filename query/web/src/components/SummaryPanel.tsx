@@ -373,50 +373,74 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
         const stagesPassed = (lastVerification.data as Record<string, unknown>)?.stages_passed as string[] || [];
 
         return (
-          <Section title={`Verification ${passed ? 'Passed' : 'Failed'}${retryEvents.length > 0 ? ` (${retryEvents.length} retry)` : ''}`}>
-            <div className={`p-3 rounded border-l-2 ${passed ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500' : 'bg-red-50 dark:bg-red-900/20 border-red-500'}`}>
-              {/* Status badge */}
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`text-lg ${passed ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {passed ? '✅' : '❌'}
-                </span>
-                <span className={`text-sm font-medium ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                  {passed ? 'Verification Passed' : `Failed at stage: ${failedStage}`}
-                </span>
+          <Section title={`Verification ${passed ? 'Passed' : 'Failed'}${retryEvents.length > 0 ? ` (${retryEvents.length} retries)` : ''}`}>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {/* Current status */}
+              <div className={`p-3 rounded border-l-2 ${passed ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500' : 'bg-red-50 dark:bg-red-900/20 border-red-500'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`text-lg ${passed ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {passed ? '✅' : '❌'}
+                  </span>
+                  <span className={`text-sm font-medium ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                    {passed ? 'Verification Passed' : `Failed at stage: ${failedStage}`}
+                  </span>
+                </div>
+
+                {!passed && stagesPassed.length > 0 && (
+                  <div className="mb-2">
+                    <span className="text-xs text-gray-500">Stages passed: </span>
+                    {stagesPassed.map((stage: string) => (
+                      <span key={stage} className="inline-block text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1.5 py-0.5 mr-1">
+                        {stage}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {feedback && (
+                  <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                    <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
+                    <span className="whitespace-pre-wrap">{feedback}</span>
+                  </div>
+                )}
               </div>
 
-              {/* Stages passed (for failures) */}
-              {!passed && stagesPassed.length > 0 && (
-                <div className="mb-2">
-                  <span className="text-xs text-gray-500">Stages passed: </span>
-                  {stagesPassed.map((stage: string) => (
-                    <span key={stage} className="inline-block text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1.5 py-0.5 mr-1">
-                      {stage}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Feedback / reasoning */}
-              {feedback && (
-                <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                  <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
-                  <span className="whitespace-pre-wrap">{feedback}</span>
-                </div>
-              )}
-
-              {/* Retry history */}
+              {/* Full history — all attempts with complete feedback */}
               {verificationEvents.length > 1 && (
-                <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                  <span className="text-xs font-medium text-gray-500">Verification History:</span>
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-gray-500">All Attempts:</span>
                   {verificationEvents.map((evt, i) => {
                     const evtPassed = evt.event_type === 'VerificationPassed';
                     const evtFeedback = (evt.data as Record<string, unknown>)?.feedback as string || '';
                     const evtStage = (evt.data as Record<string, unknown>)?.failed_stage as string || '';
+                    const evtStagesPassed = (evt.data as Record<string, unknown>)?.stages_passed as string[] || [];
+                    // Find matching retry event for this attempt
+                    const retryEvt = i < retryEvents.length ? retryEvents[i] : null;
+                    const retryReason = retryEvt ? (retryEvt.data as Record<string, unknown>)?.reason as string || '' : '';
+
                     return (
-                      <div key={i} className={`mt-1 text-xs ${evtPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                        <span>{evtPassed ? '✓' : '✗'} Attempt {i + 1}: </span>
-                        {evtPassed ? (evtFeedback || 'Passed') : `Failed (${evtStage}): ${evtFeedback.slice(0, 120)}`}
+                      <div key={i} className={`p-2 rounded border-l-2 text-xs ${evtPassed ? 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-400' : 'bg-red-50/50 dark:bg-red-900/10 border-red-400'}`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span>{evtPassed ? '✓' : '✗'}</span>
+                          <span className="font-medium">Attempt {i + 1}</span>
+                          {!evtPassed && evtStage && <span className="text-red-500">({evtStage})</span>}
+                          <span className="text-gray-400 ml-auto">{new Date(evt.occurred_at).toLocaleTimeString()}</span>
+                        </div>
+                        {!evtPassed && evtStagesPassed.length > 0 && (
+                          <div className="mb-1">
+                            {evtStagesPassed.map((s: string) => (
+                              <span key={s} className="inline-block text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1 mr-0.5">{s}</span>
+                            ))}
+                          </div>
+                        )}
+                        {evtFeedback && (
+                          <p className={`whitespace-pre-wrap ${evtPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {evtFeedback}
+                          </p>
+                        )}
+                        {retryReason && (
+                          <p className="text-amber-600 dark:text-amber-400 mt-1">Retry: {retryReason}</p>
+                        )}
                       </div>
                     );
                   })}
@@ -427,11 +451,11 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
         );
       })()}
 
-      {/* Result (if completed) */}
+      {/* Result (if completed) — scrollable */}
       {summary.result && (
         <Section title="Result">
-          <div className="bg-green-50 dark:bg-green-900/20 p-2 rounded border-l-2 border-green-500">
-            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+          <div className="bg-green-50 dark:bg-green-900/20 rounded border-l-2 border-green-500 max-h-60 overflow-y-auto">
+            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap p-2 font-mono">
               {summary.result}
             </p>
           </div>
