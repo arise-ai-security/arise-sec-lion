@@ -27,10 +27,13 @@ Base commit hash is at `/testcase/base_commit_hash`.
 2. **Develop the fix from first principles**: Based on your root cause analysis, design and implement a minimal fix. Do NOT search for external fix commits or patches. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
 
 3. **Create `/testcase/model_patch.diff`**:
-   - After editing: `cd /src && git diff --no-color $(cat /testcase/base_commit_hash) > /testcase/model_patch.diff`
-   - Verify: `ls -la /testcase/model_patch.diff && head /testcase/model_patch.diff`
+   - After editing, generate diff for ONLY the files you changed (not the entire repo):
+     `cd {{ work_dir }} && git diff --no-color -- <file(s)-you-edited> > /testcase/model_patch.diff`
+   - Example: `git diff --no-color -- coders/rla.c > /testcase/model_patch.diff`
+   - **NEVER** use bare `git diff` or `git diff BASE` — those include unrelated builder changes
+   - Verify: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix
 
-4. **Review patch**: Remove unnecessary changes (tests, docs, config). FOCUS ON CORE CODE. Keep AS CONCISE AS POSSIBLE.
+4. **Review patch**: The diff MUST contain only your security fix. If `wc -l` shows >50 lines, you included builder changes — regenerate with file-specific `git diff -- <file>`.
 
 5. **Validate**:
    - Reset: `git reset --hard $(cat /testcase/base_commit_hash)`

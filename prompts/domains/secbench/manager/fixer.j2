@@ -37,22 +37,12 @@ Base commit is at `/testcase/base_commit_hash`.
    - `security_tools`: `"Read source code at the vulnerable location. Use cppcheck to verify the proposed fix strategy addresses all vulnerable paths. Cross-reference with Root-Cause-Analyst's data flow analysis to ensure completeness."`
    - `context_sharing`: Publish via `<context-update>`: fix strategy (which lines to change, what to add/remove), rationale for fix approach, all error paths that need fixing.
 
-3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish. Implement the fix designed by Candidate-Reviewer: edit the vulnerable source file(s) directly, then **derive model_patch.diff (security-fix-only)** from the full changes using this procedure:
+3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish. Implement the fix designed by Candidate-Reviewer: edit the vulnerable source file(s) directly, then generate model_patch.diff containing **ONLY the security fix files** — NOT builder changes:
    ```bash
-   BASE=$(cat /testcase/base_commit_hash)
-   cd /src
-   # Save the full state (builder + fixer changes)
-   git diff --no-color $BASE > /tmp/full_changes.diff
-   # Reset and apply only builder changes to get builder state
-   git reset --hard $BASE
-   [ -f /testcase/repo_changes.diff ] && git apply /testcase/repo_changes.diff
-   git add -A && git commit --allow-empty -m "builder-state" --no-gpg-sign
-   # Now apply full changes on top of base, then diff from builder state
-   git reset --hard $BASE
-   git apply /tmp/full_changes.diff
-   git diff HEAD > /testcase/model_patch.diff  # HEAD is builder-state
+   cd {{ work_dir }} && git diff --no-color -- coders/rla.c > /testcase/model_patch.diff
    ```
-   This ensures model_patch.diff contains ONLY the security fix, not builder changes. Strip unnecessary changes. Keep AS CONCISE AS POSSIBLE. VERIFY: `ls -la /testcase/model_patch.diff && head /testcase/model_patch.diff`.
+   **IMPORTANT**: Use `git diff -- <specific-file(s)>` to include ONLY the file(s) you edited for the fix. NEVER use bare `git diff` or `git diff BASE` — those include builder changes (PerlMagick, man pages, etc.) that bloat the patch from 7 lines to 340. The model_patch.diff must be minimal: only the vulnerability fix.
+   VERIFY: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix. If over 50, you included builder changes — regenerate with file-specific diff.
    - `depends_on`: [0, 1]
    - `security_tools`: `"Install cppcheck (apt-get install -y cppcheck). Run cppcheck on patched files to verify the vulnerability pattern is eliminated. Use 'git diff --stat' to confirm the patch is minimal."`
    - `context_sharing`: Publish via `<context-update>`: patch file path, files changed, fix description, static analysis result.
@@ -62,7 +52,7 @@ Base commit is at `/testcase/base_commit_hash`.
    - `security_tools`: `"Use multiple tools: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) — verify original error gone AND no new issues. (2) gdb: run PoC to confirm clean execution. (3) ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1. (4) cppcheck on patched source."`
    - `context_sharing`: Publish via `<context-update>`: validation result (pass/fail), Valgrind before vs after, gdb result, remaining issues.
 
-5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and contains ONLY the security fix (not builder changes). If it does NOT exist, derive it: reset to base+repo_changes.diff (builder state), then diff current state against it. This is the REQUIRED phase deliverable — the run fails without it. THEN review ALL upstream workers' findings holistically: (a) the patch in model_patch.diff addresses the root cause identified by the analyst (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities were introduced. If the patch only suppresses the error without fixing the root cause, flag it. If validation failed, investigate why and attempt to fix.
+5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and is MINIMAL. Run `wc -l /testcase/model_patch.diff` — if over 50 lines, it contains builder changes and must be regenerated: `cd {{ work_dir }} && git diff --no-color -- coders/rla.c > /testcase/model_patch.diff` (use only the security-fix file). If model_patch.diff does NOT exist, create it the same way. THEN review holistically: (a) the patch addresses the root cause (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities introduced.
    - `depends_on`: [3]
    - `security_tools`: `"Independently verify: (1) Read the patch and cross-reference with Root-Cause-Analyst's findings — does it fix the actual root cause? (2) Run repro.sh 3 times to confirm deterministic fix. (3) Run Valgrind to independently verify no memory issues. (4) Run cppcheck on the entire vulnerable file (not just patched lines) to check for related issues."`
    - `context_sharing`: Publish via `<context-update>`: aggregated_status (pass/fail), root_cause_addressed (yes/no), any corrections made, final confidence assessment.
