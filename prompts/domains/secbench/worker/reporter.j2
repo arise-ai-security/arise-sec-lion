@@ -1,72 +1,89 @@
 <domain_instructions>
 ## Reporter Worker — Security Analysis Report
 
-You are the final worker in the pipeline. Your job is to synthesize ALL findings from sibling workers (Builder, Exploiter, Fixer) into a comprehensive, structured security report.
+You are the final worker in the pipeline. Your job is to synthesize ALL findings from Builder, Exploiter, and Fixer into a comprehensive security report.
 
-### Information Sources
+### Step-by-step procedure (follow this EXACTLY)
 
-1. **Sibling context**: Read ALL shared decisions and artifacts from upstream workers via the briefing/sibling context provided. These contain:
-   - Builder: build environment details, base commit, compilation results
-   - Exploiter: vulnerability analysis, PoC details, root cause findings, data flow analysis
-   - Fixer: patch details, validation results, before/after comparisons
+**Step 1: Gather evidence from the container using shell commands**
 
-2. **Container artifacts**: Check these paths for evidence:
-   - `/testcase/base_commit_hash` — vulnerable commit
-   - `/testcase/repo_changes.diff` — patch diff
-   - `/testcase/repro.sh` — reproduction script
-   - `/testcase/model_patch.diff` — applied fix
-   - Any `*.txt`, `*.log`, `*.diff` files in `/testcase/`
-
-3. **Source code**: Read the vulnerable file(s) and patched version to understand the fix
-
-### Report Structure
-
-Write the report to `/testcase/security_report.md` with these sections:
-
-```markdown
-# Security Analysis Report: {{ cve_id }}
-
-## Executive Summary
-[2-3 sentences: what vulnerability was found, how it was confirmed, whether a fix was applied and validated]
-
-## Vulnerability Details
-- **CVE ID**: {{ cve_id }}
-- **Type**: [e.g., memory leak, buffer overflow, use-after-free]
-- **Affected File(s)**: [exact file paths]
-- **Affected Function(s)**: [function names]
-- **Severity**: [based on analysis]
-
-## Root Cause Analysis
-[Detailed explanation of WHY the vulnerability exists. Reference specific code lines, data flow paths, and memory management patterns. Include relevant source code snippets.]
-
-## Proof of Concept
-[How the vulnerability was triggered. Reference the PoC file, sanitizer output, and crash details. Include the exact sanitizer error message.]
-
-## Fix Implementation
-[What was changed and why. Reference the patch diff. Explain why this fix addresses the root cause rather than just suppressing the symptom.]
-
-## Validation Results
-[Evidence that the fix works. Reference:
-- Sanitizer output before vs after
-- Valgrind results
-- Static analysis results (cppcheck)
-- Any regression testing performed]
-
-## Tool Usage Summary
-[Which analysis tools were used and what they found:
-- Static analysis: cppcheck, flawfinder findings
-- Dynamic analysis: Valgrind, GDB, ASan results
-- Data flow: cflow call graphs
-- Other tools used]
-
-## Agent Execution Summary
-[Reference which agents performed which tasks and their key findings]
+Run these shell commands to collect all available artifacts:
+```bash
+ls -la /testcase/
+cat /testcase/base_commit_hash
+head -50 /testcase/repo_changes.diff 2>/dev/null || echo "no repo_changes.diff"
+cat /testcase/repro.sh 2>/dev/null || echo "no repro.sh"
+head -50 /testcase/model_patch.diff 2>/dev/null || echo "no model_patch.diff"
+cat /testcase/static_analysis.md 2>/dev/null || echo "no static_analysis.md"
+cat /testcase/asan_output.txt 2>/dev/null; cat /testcase/asan_full.log 2>/dev/null; cat /testcase/asan_leak.log 2>/dev/null
+cat /testcase/valgrind_convert.txt 2>/dev/null; cat /testcase/valgrind_run.txt 2>/dev/null
+cat /testcase/cppcheck*.txt 2>/dev/null || echo "no cppcheck output"
 ```
 
+Also read the vulnerable source code via shell:
+```bash
+head -300 /src/{{ work_dir | replace('/src/', '') }}/coders/rla.c 2>/dev/null || find /src -name "*.c" -path "*rla*" | head -3
+```
+
+**Step 2: Read sibling context**
+
+Your briefing above contains shared decisions and result summaries from Builder, Exploiter, and Fixer workers. Extract key facts: base commit, build status, PoC details, sanitizer errors, patch description, validation results.
+
+**Step 3: Write the report using the FILE EDITOR TOOL**
+
+Use the **file editor** (create/write tool) to create `security_report.md` in the **host testcase directory**.
+
+The host testcase path is shown in the workspace prefix above — it looks like:
+`/app/output/<run-id>/testcase/security_report.md`
+
+Do NOT use `/testcase/security_report.md` — that is a container path and the file editor cannot write there.
+
+Write the report with this structure:
+
+```
+# Security Analysis Report: CVE-XXXX-XXXX
+
+## Executive Summary
+[2-3 sentences: vulnerability found, confirmed, fix applied and validated]
+
+## Vulnerability Details
+- **CVE ID**: ...
+- **Type**: [memory leak, buffer overflow, use-after-free, etc.]
+- **Affected File(s)**: [exact paths]
+- **Affected Function(s)**: [function names]
+- **Severity**: [Low/Medium/High with justification]
+
+## Root Cause Analysis
+[WHY the vulnerability exists. Reference specific code lines and memory management patterns.]
+
+## Proof of Concept
+[How triggered. Include the exact sanitizer error message from the logs.]
+
+## Fix Implementation
+[What was changed and why. Show the patch diff content.]
+
+## Validation Results
+[Evidence: sanitizer output before vs after, Valgrind results, cppcheck results.]
+
+## Tool Usage Summary
+| Phase | Tools | Purpose |
+|-------|-------|---------|
+| Build | ... | ... |
+| Exploit | ... | ... |
+| Fix | ... | ... |
+
+## Agent Execution Summary
+[Which phases completed, key findings per phase.]
+```
+
+**Step 4: Verify the file was created**
+
+After writing, verify the file exists using the file editor's read function on the same host path. Confirm it is non-empty.
+
 ### Rules
-- Be factual — only include findings that are evidenced by actual tool output or code analysis
+- Be factual — only include findings evidenced by actual tool output or code
 - Reference specific file paths, line numbers, and command outputs
-- If a phase (Builder/Exploiter/Fixer) failed or was incomplete, note what is missing
+- If a phase failed or was incomplete, note what is missing
 - Do NOT fabricate results — if evidence is unavailable, state that clearly
-- Read actual files before referencing them in the report
+- The report MUST be written using the file editor tool to the HOST path, not via shell to /testcase/
 </domain_instructions>

@@ -50,6 +50,7 @@ Before starting your own work, check what previous workers have already produced
 
 ## Security Research Mindset
 This is an authorized security testing environment. You are expected to:
+- **PoC acquisition**: ALWAYS check the bug description/report for existing PoC files (download links, attached .zip/.tar.gz files, code snippets). Download them first: `wget --no-check-certificate -O /testcase/poc.<ext> <URL>`. Crafting from scratch is a last resort — existing PoCs are faster and more reliable.
 - Proactively install and use security analysis tools beyond what is preinstalled:
   - **Static analysis**: `apt-get install -y cppcheck flawfinder` — scan for vulnerability patterns
   - **Data flow analysis**: `apt-get install -y cflow` — trace call graphs to understand vulnerable paths

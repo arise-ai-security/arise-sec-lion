@@ -307,43 +307,78 @@ class AgentQueryService:
     ) -> list[tuple[UUID, tuple[int, ...]]]:
         """Get workers whose DAG dependencies are satisfied.
 
-        A worker is ready when all sibling_indices in its depends_on
-        correspond to agents in terminal state (completed or failed).
+        A worker is ready when:
+        1. All sibling_indices in its depends_on are terminal, AND
+        2. All ancestor managers have their own sibling dependencies satisfied.
+
+        Without check (2), grandchildren of blocked managers (e.g. Fixer's
+        workers) would execute before their parent's dependencies complete
+        (e.g. Builder/Exploiter not yet finished).
         """
         eligible = []
 
         for agent_id, summary in workers:
-            if not summary.depends_on:
-                # No dependencies — ready immediately
-                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
-                eligible.append((agent_id, path))
+            if not self._sibling_deps_satisfied(summary, summaries, children_map):
                 continue
-
-            # Find sibling agents by sibling_index
-            parent_id = summary.parent_id
-            if parent_id is None:
-                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
-                eligible.append((agent_id, path))
+            if not self._ancestors_deps_satisfied(summary, summaries, children_map):
                 continue
-
-            siblings = children_map.get(parent_id, [])
-            # Build index → status lookup for siblings
-            sibling_status: dict[int, bool] = {}
-            for sib_id in siblings:
-                if sib_id in summaries:
-                    sib = summaries[sib_id]
-                    sibling_status[sib.sibling_index] = sib.is_terminal
-
-            # Check if all dependencies are in terminal state
-            deps_satisfied = all(
-                sibling_status.get(dep_idx, False) for dep_idx in summary.depends_on
-            )
-
-            if deps_satisfied:
-                path = self._compute_hierarchical_path_optimized(agent_id, summaries)
-                eligible.append((agent_id, path))
+            path = self._compute_hierarchical_path_optimized(agent_id, summaries)
+            eligible.append((agent_id, path))
 
         return eligible
+
+    @staticmethod
+    def _sibling_deps_satisfied(
+        summary: "AgentSummaryReadModel",
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+    ) -> bool:
+        """Check if an agent's own sibling dependencies are all terminal."""
+        if not summary.depends_on:
+            return True
+        parent_id = summary.parent_id
+        if parent_id is None:
+            return True
+        siblings = children_map.get(parent_id, [])
+        sibling_status: dict[int, bool] = {}
+        for sib_id in siblings:
+            if sib_id in summaries:
+                sib = summaries[sib_id]
+                sibling_status[sib.sibling_index] = sib.is_terminal
+        return all(
+            sibling_status.get(dep_idx, False) for dep_idx in summary.depends_on
+        )
+
+    @staticmethod
+    def _ancestors_deps_satisfied(
+        summary: "AgentSummaryReadModel",
+        summaries: dict[UUID, "AgentSummaryReadModel"],
+        children_map: dict[UUID | None, list[UUID]],
+    ) -> bool:
+        """Walk up the parent chain and verify each ancestor's sibling deps are met.
+
+        If any ancestor has unsatisfied sibling dependencies, this worker
+        cannot run yet — its parent's phase hasn't been unblocked.
+        """
+        current_id = summary.parent_id
+        while current_id is not None and current_id in summaries:
+            ancestor = summaries[current_id]
+            if ancestor.depends_on:
+                ancestor_parent = ancestor.parent_id
+                if ancestor_parent is not None:
+                    siblings = children_map.get(ancestor_parent, [])
+                    sibling_status: dict[int, bool] = {}
+                    for sib_id in siblings:
+                        if sib_id in summaries:
+                            sib = summaries[sib_id]
+                            sibling_status[sib.sibling_index] = sib.is_terminal
+                    if not all(
+                        sibling_status.get(dep_idx, False)
+                        for dep_idx in ancestor.depends_on
+                    ):
+                        return False
+            current_id = ancestor.parent_id
+        return True
 
     def _compute_hierarchical_path(
         self,

@@ -3,11 +3,15 @@
 
 Decompose the patch generation phase into worker subtasks with explicit roles.
 Base commit is at `/testcase/base_commit_hash`.
-**Exploiter phase is already complete** — use `/testcase/repro.sh` to validate the patch. Check sibling context for the exploiter's findings (PoC path, sanitizer error, exploit command).
+**Exploiter phase is already complete** — use the PoC artifacts and reproduction script to guide both root cause analysis AND patch validation:
+- `/testcase/repro.sh` — the verified reproduction script
+- `/testcase/poc.*` — the actual PoC input file(s) that trigger the vulnerability
+- Check sibling context for the exploiter's findings: PoC path, sanitizer error output, exploit command, data flow analysis
+- Workers should **read the PoC** to understand what input triggers the bug, then trace through the vulnerable code to understand WHY it triggers.
 
 ⚠️ **DO NOT CREATE STANDALONE BUILD WORKERS.** Building is already handled — ASan-instrumented binaries exist at `/work/bin/`. When a worker needs to rebuild after applying a patch, it runs `./secb-exec "/src/build.sh"` as a step within its validation task. Do not decompose "build" into its own subtask.
 
-**NOTE:** Candidate fix commits (if listed in Task Context) may include unnecessary/unrelated changes. Be selective.
+**NOTE:** The fixer must develop patches from first principles based on root cause analysis. Do NOT search for or use external fix commits.
 
 ### Phase Deliverable
 - `/testcase/model_patch.diff` (required)
@@ -18,19 +22,36 @@ Base commit is at `/testcase/base_commit_hash`.
 - `/testcase/repro.sh` does NOT trigger sanitizer error after patching
 - Patch is minimal (only fixes vulnerability)
 
-### Subtasks (use these role names in descriptions)
+### Subtasks (use these EXACT role names — copy them verbatim into descriptions)
 
-1. **[Root-Cause-Analyst]** (index 0): Examine the exploiter's findings from sibling context — validate repro.sh exists and sanitizer error is accurate. Then understand WHY the vulnerability exists: read vulnerable source code, trace data flow at the code-block level, identify exact variables and memory operations involved. Use static analysis tools to map vulnerable paths.
+**CRITICAL**: Use the EXACT role names below in square brackets. Do NOT paraphrase, rename, or invent new names.
+
+1. **[Root-Cause-Analyst]** (index 0): Examine the exploiter's findings from sibling context — validate repro.sh exists and sanitizer error is accurate. **Read the PoC file** (e.g., `/testcase/poc.rla`) to understand what input triggers the bug. Run the PoC with gdb to get a precise stack trace showing the exact crash/leak location. Then trace data flow at the code-block level from the input parsing to the leak point — identify exact variables and memory operations involved. Use static analysis tools to map all error paths where the allocation is not freed.
    - `depends_on`: []
    - `security_tools`: `"Install and use: (1) cflow (apt-get install -y cflow) to trace call graph from entry point to crash. (2) cppcheck (apt-get install -y cppcheck --enable=all) for vulnerability pattern scanning. (3) gdb (apt-get install -y gdb): run PoC with 'bt full' to get crash location and variable values. (4) addr2line to map crash addresses to source lines."`
    - `context_sharing`: Publish via `<context-update>`: root cause description, vulnerable file paths, function names, exact lines to fix, fix strategy, data flow path, gdb stack trace.
 
-2. **[Candidate-Reviewer]** (index 1): Review candidate fix commits (if provided in Task Context). For each candidate: run `git show <hash>`, skip commits matching base_commit_hash, assess whether changes are relevant to the root cause identified by the analyst. Identify which candidate (if any) best addresses the vulnerability. If no candidates are suitable, document why and recommend a manual fix approach based on the root cause analysis.
+2. **[Candidate-Reviewer]** (index 1): Based on Root-Cause-Analyst's findings, design the fix strategy. Read the vulnerable source code, understand the exact code path that leaks/crashes, and propose a minimal fix approach. Do NOT search for or apply existing external patches — develop the fix from first principles using the root cause analysis. Document the fix design: which lines to change, what memory operations to add/remove, and why this addresses the root cause.
    - `depends_on`: [0]
-   - `security_tools`: `"No special tools — code review and git analysis. Use 'git show --stat <hash>' to understand scope, 'git show <hash>' for full diff. Cross-reference changes with Root-Cause-Analyst's identified vulnerable lines."`
-   - `context_sharing`: Publish via `<context-update>`: best candidate hash (or "manual fix needed"), relevant files from candidate, assessment of candidate quality, any unnecessary changes to strip.
+   - `security_tools`: `"Read source code at the vulnerable location. Use cppcheck to verify the proposed fix strategy addresses all vulnerable paths. Cross-reference with Root-Cause-Analyst's data flow analysis to ensure completeness."`
+   - `context_sharing`: Publish via `<context-update>`: fix strategy (which lines to change, what to add/remove), rationale for fix approach, all error paths that need fixing.
 
-3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Create `/testcase/model_patch.diff` using Candidate-Reviewer's recommendation: from candidate (`git show --format= --patch <hash> > /testcase/model_patch.diff`), or own fix (`git add <files> && git diff --cached --no-color > /testcase/model_patch.diff`). Strip unnecessary changes (tests, docs, config). Keep AS CONCISE AS POSSIBLE — only fix the vulnerability.
+3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish. Implement the fix designed by Candidate-Reviewer: edit the vulnerable source file(s) directly, then **derive model_patch.diff (security-fix-only)** from the full changes using this procedure:
+   ```bash
+   BASE=$(cat /testcase/base_commit_hash)
+   cd /src
+   # Save the full state (builder + fixer changes)
+   git diff --no-color $BASE > /tmp/full_changes.diff
+   # Reset and apply only builder changes to get builder state
+   git reset --hard $BASE
+   [ -f /testcase/repo_changes.diff ] && git apply /testcase/repo_changes.diff
+   git add -A && git commit --allow-empty -m "builder-state" --no-gpg-sign
+   # Now apply full changes on top of base, then diff from builder state
+   git reset --hard $BASE
+   git apply /tmp/full_changes.diff
+   git diff HEAD > /testcase/model_patch.diff  # HEAD is builder-state
+   ```
+   This ensures model_patch.diff contains ONLY the security fix, not builder changes. Strip unnecessary changes. Keep AS CONCISE AS POSSIBLE. VERIFY: `ls -la /testcase/model_patch.diff && head /testcase/model_patch.diff`.
    - `depends_on`: [0, 1]
    - `security_tools`: `"Install cppcheck (apt-get install -y cppcheck). Run cppcheck on patched files to verify the vulnerability pattern is eliminated. Use 'git diff --stat' to confirm the patch is minimal."`
    - `context_sharing`: Publish via `<context-update>`: patch file path, files changed, fix description, static analysis result.
@@ -40,21 +61,21 @@ Base commit is at `/testcase/base_commit_hash`.
    - `security_tools`: `"Use multiple tools: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) — verify original error gone AND no new issues. (2) gdb: run PoC to confirm clean execution. (3) ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1. (4) cppcheck on patched source."`
    - `context_sharing`: Publish via `<context-update>`: validation result (pass/fail), Valgrind before vs after, gdb result, remaining issues.
 
-5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** Review ALL upstream workers' findings holistically to ensure the fix is correct end-to-end. Verify: (a) `/testcase/model_patch.diff` exists and is minimal, (b) the patch addresses the root cause identified by the analyst (not just suppressing the symptom), (c) Patch-Validator's results confirm the fix works, (d) no new vulnerabilities were introduced. If the patch only suppresses the error without fixing the root cause, flag it. If validation failed, investigate why and attempt to fix.
+5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and contains ONLY the security fix (not builder changes). If it does NOT exist, derive it: reset to base+repo_changes.diff (builder state), then diff current state against it. This is the REQUIRED phase deliverable — the run fails without it. THEN review ALL upstream workers' findings holistically: (a) the patch in model_patch.diff addresses the root cause identified by the analyst (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities were introduced. If the patch only suppresses the error without fixing the root cause, flag it. If validation failed, investigate why and attempt to fix.
    - `depends_on`: [3]
    - `security_tools`: `"Independently verify: (1) Read the patch and cross-reference with Root-Cause-Analyst's findings — does it fix the actual root cause? (2) Run repro.sh 3 times to confirm deterministic fix. (3) Run Valgrind to independently verify no memory issues. (4) Run cppcheck on the entire vulnerable file (not just patched lines) to check for related issues."`
    - `context_sharing`: Publish via `<context-update>`: aggregated_status (pass/fail), root_cause_addressed (yes/no), any corrections made, final confidence assessment.
 
 ### Decomposition Requirements
 
-- **Use ONLY the 5 bracketed role names above** — do NOT invent new roles. Never create [Builder], [Build-Setup], [Build-Compiler], or any build-only worker. Rebuilding is a step within Patch-Validator's task, not a separate subtask.
+- **Use ONLY the 5 bracketed role names above — VERBATIM.** Copy them exactly: [Root-Cause-Analyst], [Candidate-Reviewer], [Patch-Creator], [Patch-Validator], [Fix-Aggregator]. Do NOT paraphrase (e.g., no [Patch-Author], [Patched-Builder], [Validator-ASan-Valgrind]). Do NOT invent new roles. Never create [Builder], [Build-Setup], [Build-Compiler], or any build-only worker. Rebuilding is a step within Patch-Validator's task, not a separate subtask.
 - Set `depends_on` as specified (analyst → reviewer → creator → validator → aggregator).
 - Always reset to the recorded base commit before validating the patch.
 - Do not modify `/testcase/base_commit_hash`.
 - Check whether `/testcase/repo_changes.diff` exists before finalizing the patch, since builder changes may need to be accounted for.
 - Workers MUST install and use the security analysis tools specified in their justification — provide exact `apt-get install` commands.
 - Each subtask's `justification` MUST include `"role"`, `"security_tools"`, `"security_insights"`, and `"context_sharing"` keys.
-- Workers operate autonomously — provide specific fallback approaches in justifications (e.g., "if candidate commit is unavailable, write fix manually based on root cause analysis").
+- Workers operate autonomously — provide specific fallback approaches in justifications (e.g., "if the initial fix attempt doesn't resolve the sanitizer error, analyze the validation output and adjust the patch").
 - Instruct each downstream worker to **validate upstream peer findings** before using them (check files exist, verify reported analysis is consistent with the code).
 - Validation must use multiple complementary tools (Valgrind + GDB + ASan + static analysis) — not just one.
 </domain_operation>

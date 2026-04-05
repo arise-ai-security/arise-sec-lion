@@ -10,7 +10,7 @@ If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, y
 
 - **[Builder]** tasks involve: identifying base commit, running build scripts, fixing build errors, verifying deliverables — **exactly 3 workers** (setup → compile → verify). Builder is infrastructure work, not code analysis — keep it concise.
 - **[Exploiter]** tasks involve: static analysis, PoC research, exploit crafting, testing with multiple tools, reproduction validation — **4-5 specialized workers** needed. Finer analysis of vulnerable code paths requires more targeted workers with specific tool assignments.
-- **[Fixer]** tasks involve: root cause analysis at code-block level, candidate review, patch creation, multi-tool validation — **4-5 specialized workers** needed. Precise patching requires workers focused on specific aspects (data flow analysis, patch creation, validation with different tools).
+- **[Fixer]** tasks involve: root cause analysis at code-block level, fix design, patch creation, multi-tool validation — **4-5 specialized workers** needed. Patches are developed from first principles (no external fix commits). Precise patching requires workers focused on specific aspects (data flow analysis, patch creation, validation with different tools).
 
 A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**. Exploiter and Fixer phases benefit from **more workers with narrower, more specific deliverables** because they require code-level analysis.
 

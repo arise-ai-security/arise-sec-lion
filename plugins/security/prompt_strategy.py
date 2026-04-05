@@ -21,7 +21,6 @@ _CVE_DISPLAY_FIELDS = (
     "base_commit",
     "work_dir",
     "bug_description",
-    "candidate_fixes",
 )
 
 

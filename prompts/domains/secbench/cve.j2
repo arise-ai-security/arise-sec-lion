@@ -35,6 +35,12 @@
             - Patch applies cleanly and builds correctly
             - PoC no longer triggers sanitizer error after patching
         {% endif %}
+        {% if phase == 'reporter' or not phase %}
+            ### Reporter
+            - `/testcase/security_report.md` exists and is non-empty
+            - Report covers: executive summary, vulnerability details, root cause, PoC evidence, fix implementation, validation results
+            - References specific file paths, command outputs, and tool results as evidence
+        {% endif %}
         {% if has_gold_patch %}
             Gold patch reference available for validation comparison.
         {% endif %}
