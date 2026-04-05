@@ -201,21 +201,32 @@ class VerificationPipeline:
             f"{report_section}"
             f"## Work Output (command log, may be truncated)\n"
             f"{_head_tail(_strip_ansi(result), 30000)}\n\n"
-            "Respond with ONLY valid JSON:\n"
-            '{"passed": true/false, "feedback": "brief explanation — '
-            'if passed, mention where key deliverables/evidence were found '
-            '(file paths, command outputs); if failed, explain what is missing"}'
+            "YOUR RESPONSE MUST BE EXACTLY ONE LINE OF VALID JSON, nothing else. "
+            "No markdown, no explanation before or after, just the JSON object:\n"
+            '{"passed": true, "feedback": "explanation of where deliverables were found"}\n'
+            "or\n"
+            '{"passed": false, "feedback": "explanation of what is missing"}'
         )
 
+        raw = ""
         try:
             llm_config = ConfigResolver.resolve(config, operation="complexity_evaluation")
             response = await self._llm_port.query_with_usage(prompt, llm_config.model_dump())
+            raw = response.content
 
-            clean = strip_markdown_code_block(response.content)
+            clean = strip_markdown_code_block(raw)
             data = json.loads(clean)
             if not isinstance(data, dict):
                 raise ValueError(f"Expected dict, got {type(data).__name__}")
             return bool(data.get("passed", False)), data.get("feedback", "")
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
-            logger.warning("Judge response parse failed: %s", e)
+            logger.warning("Judge JSON parse failed (%s), trying regex fallback. Raw: %.500s", e, raw)
+            # Regex fallback: extract passed/feedback from malformed JSON
+            passed_match = re.search(r'"passed"\s*:\s*(true|false)', raw, re.IGNORECASE)
+            feedback_match = re.search(r'"feedback"\s*:\s*"([^"]*)"', raw)
+            if passed_match:
+                passed = passed_match.group(1).lower() == "true"
+                feedback = feedback_match.group(1) if feedback_match else ""
+                return passed, feedback or ("Judge passed (extracted from malformed response)" if passed else "Judge failed (extracted from malformed response)")
+            logger.warning("Regex fallback also failed, defaulting to pass")
             return True, "Passed (judge response could not be parsed)"

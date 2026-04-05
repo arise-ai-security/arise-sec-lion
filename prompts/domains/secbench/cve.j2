@@ -48,6 +48,14 @@
 
     **Rules**: DO NOT disable sanitizer options.
 
+    **CWE Classification**: Infer the CWE type from the sanitizer report and bug description to guide your analysis approach:
+    - LeakSanitizer / memory leak → **CWE-401** (Missing Release of Memory): Look for missing `free()`/dealloc on error paths, early returns, exception handlers
+    - AddressSanitizer heap-buffer-overflow → **CWE-122** (Heap-based Buffer Overflow): Check buffer sizes, loop bounds, off-by-one
+    - AddressSanitizer stack-buffer-overflow → **CWE-121** (Stack-based Buffer Overflow): Check local array sizes, unchecked input lengths
+    - AddressSanitizer heap-use-after-free → **CWE-416** (Use After Free): Track object lifecycle, dangling pointers after free
+    - UndefinedBehaviorSanitizer → **CWE-758** (Undefined Behavior): Check integer overflow, null deref, shift amounts
+    Use the CWE classification to focus your static analysis, choose appropriate tools, and validate that your fix addresses the root cause pattern.
+
     **Security Tooling**: Workers should install and use analysis tools beyond the preinstalled set. Recommended combinations:
     - **Static analysis**: `cppcheck`, `flawfinder` (vulnerability pattern scanning), `cflow` (call graph / data flow)
     - **Dynamic analysis**: Valgrind (memcheck, helgrind), KLEE (symbolic execution), enhanced ASan options
