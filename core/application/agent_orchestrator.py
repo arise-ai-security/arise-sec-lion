@@ -94,7 +94,7 @@ class AgentOrchestrator:
         with self._timed_operation(agent, op):
             try:
                 domain_context = self._get_domain_context(agent)
-                tool_context = self._toolset_resolver.resolve(agent.role, domain_context)
+                tool_context = self._toolset_resolver.resolve(agent.role)
 
                 # Build prompt
                 scope = self._build_scope(agent)
@@ -156,7 +156,7 @@ class AgentOrchestrator:
         op = "task_decomposition"
         with self._timed_operation(agent, op):
             domain_context = self._get_domain_context(agent)
-            tool_context = self._toolset_resolver.resolve(agent.role, domain_context)
+            tool_context = self._toolset_resolver.resolve(agent.role)
 
             # Build role-specific prompt (with recon tool capabilities if available)
             capabilities = build_prompt_capabilities(tool_context)

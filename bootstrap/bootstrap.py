@@ -70,9 +70,9 @@ def _create_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("run", help="Run a task with the multi-agent system")
     p.add_argument("task", help="The task description to execute")
     p.add_argument(
-        "--cve-file",
+        "--domain-context-file",
         type=Path,
-        help="Path to SEC-bench CVE instance JSON file for benchmark runs",
+        help="Path to domain context JSON file for plugin-specific runs",
     )
     p.add_argument(
         "--domain",
@@ -140,15 +140,16 @@ async def _run_task(args: argparse.Namespace) -> None:
     settings = _apply_worker_overrides(_load_settings(args.config), args)
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
 
+    context_file = getattr(args, "domain_context_file", None)
     domain_components = get_run_domain_components(
         settings,
         requested_domain=getattr(args, "domain", None),
-        cve_file=getattr(args, "cve_file", None),
+        context_file=context_file,
     )
     domain_context = _infer_domain_context(
         plugin=domain_components.plugin,
         task_text=args.task,
-        cve_file=getattr(args, "cve_file", None),
+        context_file=context_file,
     )
     _print_inferred_domain_context(
         plugin=domain_components.plugin,
@@ -167,7 +168,7 @@ def _infer_domain_context(
     *,
     plugin: DomainPlugin | None,
     task_text: str,
-    cve_file: object | None,
+    context_file: object | None,
 ) -> object | None:
     """Infer optional domain context for a run."""
     if plugin is None:
@@ -175,7 +176,7 @@ def _infer_domain_context(
 
     return plugin.infer_context(
         task_text,
-        cve_file=cve_file,
+        context_file=context_file,
         fail_fast=True,
     )
 
@@ -193,7 +194,7 @@ def _print_inferred_domain_context(
     metadata = plugin.get_run_metadata(domain_context)
     instance_id = metadata.get("instance_id")
     if isinstance(instance_id, str):
-        print(f"[Inferred] SEC-bench CVE: {instance_id}")
+        print(f"[Inferred] Domain context: {instance_id}")
 
 
 def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:

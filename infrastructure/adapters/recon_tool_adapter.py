@@ -124,7 +124,7 @@ class ReconToolAdapter:
         """Resolve a path relative to working directory, preventing escapes.
 
         Absolute paths are resolved as-is (the LLM may reference paths
-        from the CVE context like /src/project). Relative paths are
+        from the domain context like /src/project). Relative paths are
         resolved against the working directory.
         """
         if Path(path).is_absolute():

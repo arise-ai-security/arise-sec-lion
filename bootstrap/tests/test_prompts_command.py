@@ -78,10 +78,10 @@ class TestPromptsCommandIntegration:
         from bootstrap.bootstrap import _trace_prompts
 
         boss_id = uuid4()
-        prompt = "<ROLE>You are a BOSS agent.</ROLE><TASK>Fix CVE</TASK>"
+        prompt = "<ROLE>You are a BOSS agent.</ROLE><TASK>Fix the issue</TASK>"
 
         mock_event_store.get_hierarchy_events_grouped.return_value = {
-            boss_id: create_test_events(boss_id, "boss", "Fix the CVE", prompt)
+            boss_id: create_test_events(boss_id, "boss", "Fix the issue", prompt)
         }
 
         args = argparse.Namespace(
@@ -106,7 +106,7 @@ class TestPromptsCommandIntegration:
         output = "\n".join(output_lines)
         assert "PROMPT TRACE:" in output
         assert "[BOSS]" in output
-        assert "Fix the CVE" in output
+        assert "Fix the issue" in output
 
     @pytest.mark.asyncio
     async def test_trace_prompts_outputs_json_format(

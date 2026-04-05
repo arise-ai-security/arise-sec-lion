@@ -71,8 +71,8 @@ class TestAncestor:
         assert len(info.task_summary) == 300
         assert info.task_summary == "A" * 300
 
-    def test_secbench_task_preserves_critical_details(self) -> None:
-        """A realistic SEC-bench task must preserve CVE ID, file path, and function name.
+    def test_detailed_task_preserves_critical_details(self) -> None:
+        """A detailed task must preserve key identifiers, file paths, and function names.
 
         A15 fix: raised from 100 to 300 chars so child agents receive
         enough ancestry context for proper alignment.
@@ -88,21 +88,22 @@ class TestAncestor:
             role=AgentRole.MANAGER,
             config=config,
         )
-        # Realistic SEC-bench task (typical length ~200 chars)
+        # Realistic multi-part task (typical length ~200 chars)
         task = (
-            "Analyze CVE-2020-36048 heap-use-after-free in njs "
-            "njs_json_parse_iterator_call() at src/njs_json.c and develop "
-            "a targeted exploit PoC that triggers the AddressSanitizer "
-            "detection within the container environment"
+            "Analyze issue PROJ-4820: null-pointer dereference in njs "
+            "module ngx_stream_js_body_filter at stream.c:388. "
+            "Reproduce the crash, develop a targeted fix that guards "
+            "the null access path, and verify the fix eliminates "
+            "the crash under test."
         )
         agent.assign_task(task)
         info = Ancestor.from_agent(agent)
 
         # All critical details must survive truncation
-        assert "CVE-2020-36048" in info.task_summary
-        assert "njs_json_parse_iterator_call" in info.task_summary
-        assert "src/njs_json.c" in info.task_summary
-        assert "AddressSanitizer" in info.task_summary
+        assert "PROJ-4820" in info.task_summary
+        assert "ngx_stream_js_body_filter" in info.task_summary
+        assert "stream.c:388" in info.task_summary
+        assert "null-pointer" in info.task_summary
 
     def test_serialization_roundtrip(self) -> None:
         """Test model_dump and model_validate roundtrip."""
