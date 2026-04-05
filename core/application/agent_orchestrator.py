@@ -245,6 +245,24 @@ class AgentOrchestrator:
                 domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
             )
+
+            # Inject verification feedback on retry so worker knows what to fix
+            if agent.verification_feedback and agent.retry_count > 0:
+                criteria_block = ""
+                if agent.success_criteria:
+                    criteria_block = (
+                        f"\n\n**Success criteria you MUST satisfy:**\n"
+                        f"{agent.success_criteria}\n"
+                    )
+                prompt += (
+                    "\n\n## Previous Attempt Feedback (Retry)\n"
+                    "Your previous attempt was rejected by the verifier:\n"
+                    f"> {agent.verification_feedback}\n"
+                    f"{criteria_block}\n"
+                    "You MUST address this feedback in your current attempt. "
+                    "Produce all required artifacts and evidence explicitly."
+                )
+
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
             # Run worker session

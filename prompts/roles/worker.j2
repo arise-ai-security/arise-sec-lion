@@ -23,6 +23,8 @@ You have a limited number of iterations. Use them wisely:
 - Combine related commands in a single terminal invocation where possible
 - Read relevant context (briefing, sibling decisions) FIRST to avoid wasted work
 - If a command fails, diagnose from the output before retrying with a fix
+- **Target specific files, not entire projects**: Run analysis tools (cppcheck, flawfinder, cflow) on the specific file(s) mentioned in your task, NOT the entire codebase. Full-project scans waste iterations and time
+- Prefer `cppcheck /src/project/specific_file.c` over `cppcheck /src/project/`
 
 ## Autonomous Execution
 You operate fully autonomously — no human will intervene during your execution. Rely on:

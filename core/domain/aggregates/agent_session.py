@@ -35,6 +35,7 @@ from core.domain.events.events import (
     ThoughtCaptured,
     TokensConsumed,
     VerificationFailed,
+    VerificationPassed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -248,7 +249,12 @@ class AgentSession:
     def _(self, event: VerificationFailed) -> None:
         self.status = AgentStatus.FAILED
         self.error_message = f"Verification failed ({event.failed_stage}): {event.feedback}"
+        self.verification_feedback = event.feedback
         self.version += 1
+
+    @_apply.register
+    def _(self, event: VerificationPassed) -> None:
+        self.version += 1  # Observability only — status stays COMPLETED
 
     @_apply.register
     def _(self, event: DecisionInfeasible) -> None:
@@ -401,6 +407,8 @@ class AgentSession:
         # Retry tracking
         self.retry_count: int = 0
         self.redecomposition_count: int = 0
+        # Verification feedback for retry (populated on VerificationFailed)
+        self.verification_feedback: str | None = None
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
@@ -726,6 +734,15 @@ class AgentSession:
             failed_stage=failed_stage,
             feedback=feedback,
             stages_passed=stages_passed,
+        )
+        self._emit(event)
+
+    def mark_verification_passed(self, feedback: str = "") -> None:
+        """Record that verification passed (observability event)."""
+        event = VerificationPassed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            feedback=feedback,
         )
         self._emit(event)
 

@@ -191,6 +191,7 @@ def get_application(
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
         domain_plugin=config.domain_plugin,
+        recon_tool=infrastructure.recon_tool,
     )
 
     system_limits = ExecutionLimitsBridge(

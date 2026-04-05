@@ -36,6 +36,7 @@ from core.domain.events.events import (
     ThoughtCaptured,
     TokensConsumed,
     VerificationFailed,
+    VerificationPassed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -78,6 +79,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "DecisionRecorded": DecisionRecorded,
     # New lifecycle events (refac/simplify-with-new-features)
     "VerificationFailed": VerificationFailed,
+    "VerificationPassed": VerificationPassed,
     "DecisionInfeasible": DecisionInfeasible,
     "RetryScheduled": RetryScheduled,
     "RedecompositionTriggered": RedecompositionTriggered,

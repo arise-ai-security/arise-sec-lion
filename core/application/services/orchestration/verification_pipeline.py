@@ -86,6 +86,7 @@ class VerificationPipeline:
             stages_passed.append(stage.name)
 
         if not agent.success_criteria or self._skip_judge:
+            agent.mark_verification_passed()
             return
 
         report_context = self._build_report_context(agent)
@@ -96,6 +97,10 @@ class VerificationPipeline:
             config=agent.config,
             report_context=report_context,
         )
+        if judge_passed:
+            agent.mark_verification_passed(feedback)
+            return
+
         if not judge_passed:
             agent.mark_verification_failed(
                 failed_stage="judge",
@@ -177,12 +182,18 @@ class VerificationPipeline:
             "container and the raw output contains terminal observations "
             "which may be truncated. Focus on evidence of task completion "
             "rather than requiring every intermediate step to be visible.\n\n"
+            "IMPORTANT: Judge based on the ACTUAL WORK DONE, not output format. "
+            "If the worker accomplished the security analysis goal (found the bug, "
+            "built the code, created the patch, etc.) but didn't produce a "
+            "specific artifact file, that should still PASS.\n\n"
             f"## Success Criteria\n{success_criteria}\n\n"
             f"{report_section}"
             f"## Work Output (command log, may be truncated)\n"
             f"{_head_tail(_strip_ansi(result), 30000)}\n\n"
             "Respond with ONLY valid JSON:\n"
-            '{"passed": true/false, "feedback": "brief explanation"}'
+            '{"passed": true/false, "feedback": "brief explanation — '
+            'if passed, mention where key deliverables/evidence were found '
+            '(file paths, command outputs); if failed, explain what is missing"}'
         )
 
         try:

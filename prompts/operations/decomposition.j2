@@ -153,7 +153,7 @@
     "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
     "tool": "{{ default_tool }}"
     },
-    "depends_on": [],
+    "depends_on": [],  // 0-indexed INTEGER positions of sibling subtasks this depends on (e.g. [0, 1]), NOT string names
     "estimated_complexity": "simple | complex | unknown",
     "success_criteria": "what constitutes success",
     "task_type": "general | research | implementation | testing | analysis",
