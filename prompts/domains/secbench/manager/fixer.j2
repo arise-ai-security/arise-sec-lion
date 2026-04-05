@@ -13,8 +13,9 @@ Base commit is at `/testcase/base_commit_hash`.
 
 **NOTE:** The fixer must develop patches from first principles based on root cause analysis. Do NOT search for or use external fix commits.
 
-### Phase Deliverable
-- `/testcase/model_patch.diff` (required)
+### Phase Deliverable (use EXACT name)
+- `/testcase/model_patch.diff` (required, exact name — do NOT rename to patch.diff, fix.diff, etc.)
+- Validation artifacts with descriptive names: e.g., `valgrind_patched_memcheck.txt`, `asan_patched_validation.log`, `cppcheck_rla_patched.txt`
 
 ### Success
 - Patch applies cleanly to base commit

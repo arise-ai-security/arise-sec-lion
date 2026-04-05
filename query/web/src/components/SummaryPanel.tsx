@@ -397,12 +397,10 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                   </div>
                 )}
 
-                {feedback && (
-                  <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                    <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
-                    <span className="whitespace-pre-wrap">{feedback}</span>
-                  </div>
-                )}
+                <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                  <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
+                  <span className="whitespace-pre-wrap">{feedback || (passed ? 'All verification stages passed' : 'No details available')}</span>
+                </div>
               </div>
 
               {/* Full history — all attempts with complete feedback */}
@@ -433,11 +431,9 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                             ))}
                           </div>
                         )}
-                        {evtFeedback && (
-                          <p className={`whitespace-pre-wrap ${evtPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                            {evtFeedback}
-                          </p>
-                        )}
+                        <p className={`whitespace-pre-wrap ${evtPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {evtFeedback || (evtPassed ? 'All verification stages passed' : 'No details available')}
+                        </p>
                         {retryReason && (
                           <p className="text-amber-600 dark:text-amber-400 mt-1">Retry: {retryReason}</p>
                         )}

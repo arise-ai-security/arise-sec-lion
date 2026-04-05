@@ -86,7 +86,9 @@ class VerificationPipeline:
             stages_passed.append(stage.name)
 
         if not agent.success_criteria or self._skip_judge:
-            agent.mark_verification_passed()
+            agent.mark_verification_passed(
+                "Passed structural checks (no success criteria defined for judge evaluation)"
+            )
             return
 
         report_context = self._build_report_context(agent)
@@ -216,4 +218,4 @@ class VerificationPipeline:
             return bool(data.get("passed", False)), data.get("feedback", "")
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
             logger.warning("Judge response parse failed: %s", e)
-            return True, ""
+            return True, "Passed (judge response could not be parsed)"
