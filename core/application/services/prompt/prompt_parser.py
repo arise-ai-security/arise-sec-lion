@@ -73,12 +73,8 @@ class PromptParser:
         (r"sibling|coworker|peer", SectionProvenance.SIBLING),
         (r"child|outcome", SectionProvenance.CHILDREN),
         (r"shared|global|context-update|decision|artifact", SectionProvenance.SHARED),
-        (r"workspace|user_prompt", SectionProvenance.SYSTEM),
+        (r"workspace|user_prompt|bug_report", SectionProvenance.SYSTEM),
     ]
-    HISTORICAL_DOMAIN_PATTERNS: list[tuple[str, SectionProvenance]] = [
-        (r"cve|security|sanitizer|bug_report|exploit", SectionProvenance.SYSTEM),
-    ]
-
     def __init__(
         self,
         extra_tag_mappings: dict[str, SectionProvenance] | None = None,
@@ -96,7 +92,6 @@ class PromptParser:
         self._provenance_patterns = list(self.BASE_PROVENANCE_PATTERNS)
         if extra_provenance_patterns:
             self._provenance_patterns.extend(extra_provenance_patterns)
-        self._provenance_patterns.extend(self.HISTORICAL_DOMAIN_PATTERNS)
 
     def parse(self, raw_prompt: str) -> tuple[PromptSection, ...]:
         """Extract all tagged sections ordered by appearance."""

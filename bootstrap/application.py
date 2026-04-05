@@ -87,6 +87,7 @@ class ApplicationConfig:
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
+    domain_key: str | None = None
 
 
 @dataclass
@@ -161,6 +162,7 @@ def get_application(
             max_iterations=config.tool_calling.max_iterations,
             result_char_limit=config.tool_calling.result_char_limit,
         ),
+        domain_key=config.domain_key,
     )
 
     orchestrator = AgentOrchestrator(

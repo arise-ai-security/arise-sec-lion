@@ -9,8 +9,13 @@ Usage:
 
 from fastapi import FastAPI
 
+from bootstrap.composition import build_domain_plugin
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
-from query.api.app import create_app as _create_app, set_event_store_factory
+from query.api.app import (
+    create_app as _create_app,
+    set_domain_plugin_factory,
+    set_event_store_factory,
+)
 
 
 def create_app() -> FastAPI:
@@ -18,9 +23,11 @@ def create_app() -> FastAPI:
 
     This is the proper entry point for uvicorn. It:
     1. Injects the event store factory
-    2. Returns the configured FastAPI app
+    2. Injects the domain plugin factory
+    3. Returns the configured FastAPI app
     """
-    # Inject factory (bootstrap → query, not query → infrastructure)
+    # Inject factories (bootstrap → query, not query → infrastructure/plugins)
     set_event_store_factory(PostgresEventStore)
+    set_domain_plugin_factory(build_domain_plugin)
 
     return _create_app()

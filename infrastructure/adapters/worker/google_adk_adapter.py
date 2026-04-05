@@ -51,7 +51,7 @@ def execute_command(
     for implementation, debugging, and verification tasks.
 
     Args:
-        command: Shell command to execute (e.g., 'gcc -o poc poc.c', 'make', './poc')
+        command: Shell command to execute (e.g., 'python solve.py', 'make', './run_analysis.sh')
         working_dir: Working directory for command execution
         timeout: Timeout in seconds (default 300 for long builds)
 

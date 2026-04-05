@@ -7,8 +7,8 @@ def _session() -> ContainerSessionContext:
     workspace_root = Path("/workspace/run")
     return ContainerSessionContext(
         container_id="abc123def456",
-        container_name="secbench-worker",
-        image="secb-tools:demo.cve-2024-0001",
+        container_name="domain-worker",
+        image="tools:demo.issue-2024-0001",
         workspace_root=workspace_root,
         host_source_dir=workspace_root / "src",
         host_testcase_dir=workspace_root / "testcase",

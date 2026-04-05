@@ -18,7 +18,7 @@ def _sanitize_for_jsonb(text: str) -> str:
     """Remove characters that PostgreSQL JSONB cannot store.
 
     PostgreSQL rejects null bytes (\\x00 / \\u0000) inside JSONB strings.
-    Worker terminal output (e.g. sanitizer reports, binary tool output)
+    Worker terminal output (e.g. large tool output, binary data)
     can contain these bytes, causing UntranslatableCharacterError on insert.
     """
     return text.replace("\x00", "")

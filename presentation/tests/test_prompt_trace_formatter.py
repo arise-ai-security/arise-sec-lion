@@ -82,7 +82,7 @@ class TestTreeRenderer:
 
     def test_render_single_agent(self, renderer, default_options) -> None:
         """Test rendering a single agent without children."""
-        node = create_node(role="boss", task="Fix the CVE")
+        node = create_node(role="boss", task="Fix the reported issue")
         trace = HierarchyTrace(root=node, total_agents=1, max_depth=0)
 
         output = renderer.render(trace, default_options)
@@ -91,13 +91,13 @@ class TestTreeRenderer:
         assert "1 agents" in output
         assert "max_depth=0" in output
         assert "[BOSS]" in output
-        assert "Fix the CVE" in output
+        assert "Fix the reported issue" in output
 
     def test_render_with_prompts(self, renderer, default_options) -> None:
         """Test rendering agent with prompts."""
         sections = (
             create_section("ROLE", "You are a BOSS agent.", SectionProvenance.TEMPLATE),
-            create_section("cve_instance", "CVE-2023-1234", SectionProvenance.SYSTEM),
+            create_section("domain_context", "ISSUE-2023-1234", SectionProvenance.SYSTEM),
         )
         prompt = create_prompt(sections)
         node = create_node(prompts=(prompt,))
@@ -108,7 +108,7 @@ class TestTreeRenderer:
         assert "BASE TEMPLATE" in output
         assert "SYSTEM" in output
         assert "<ROLE>" in output
-        assert "<cve_instance>" in output
+        assert "<domain_context>" in output
 
     def test_render_hierarchy_with_children(self, renderer, default_options) -> None:
         """Test rendering hierarchy with children."""
@@ -177,7 +177,7 @@ class TestTreeRenderer:
             create_section("parent-context", "parent", SectionProvenance.PARENT),
             create_section("sibling-tasks", "sibling", SectionProvenance.SIBLING),
             create_section("decisions", "shared", SectionProvenance.SHARED),
-            create_section("cve_instance", "system", SectionProvenance.SYSTEM),
+            create_section("domain_context", "system", SectionProvenance.SYSTEM),
         )
         prompt = create_prompt(sections)
         node = create_node(prompts=(prompt,))
@@ -259,7 +259,7 @@ class TestJsonRenderer:
         sections = (
             create_section("ROLE", "Boss", SectionProvenance.TEMPLATE),
             create_section("TASK", "Task", SectionProvenance.TEMPLATE),
-            create_section("cve_instance", "CVE", SectionProvenance.SYSTEM),
+            create_section("domain_context", "Context data", SectionProvenance.SYSTEM),
         )
         prompt = create_prompt(sections)
         node = create_node(prompts=(prompt,))

@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from infrastructure.adapters.secbench_runtime import DockerSecBenchRuntime
+from plugins.security.docker_runtime import DockerSecBenchRuntime
 from plugins.security.container_runtime import (
     SecBenchContainerSession,
     SecBenchWorkspace,
