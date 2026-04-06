@@ -680,6 +680,9 @@ FodyWeavers.xsd
 .claude
 !.claude/docs/
 
+# Worktrees
+.worktrees/
+
 # Markdown files
 # Ignore all markdown files except specific docs
 *.md
