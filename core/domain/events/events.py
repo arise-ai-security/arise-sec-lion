@@ -138,6 +138,15 @@ class VerificationFailed(DomainEvent):
     stages_passed: list[str] = Field(default_factory=list)  # Stages that passed before failure
 
 
+class VerificationPassed(DomainEvent):
+    """Worker output passed all verification checks.
+
+    Observability event — does not change agent state (already COMPLETED).
+    """
+
+    feedback: str = ""  # Judge feedback when passed
+
+
 class DecisionInfeasible(DomainEvent):
     """Agent determined task is infeasible within given constraints.
 

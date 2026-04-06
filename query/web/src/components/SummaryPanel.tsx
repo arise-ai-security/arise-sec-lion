@@ -12,6 +12,8 @@ interface SummaryPanelProps {
   loading: boolean;
   /** ThoughtCaptured events for worker output display */
   workerOutput?: DomainEvent[];
+  /** Produced events (includes VerificationPassed/Failed, RetryScheduled) */
+  producedEvents?: DomainEvent[];
 }
 
 const statusColors: Record<string, string> = {
@@ -206,7 +208,7 @@ function WorkerOutputSection({ events }: { events: DomainEvent[] }) {
   );
 }
 
-export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPanelProps) {
+export function SummaryPanel({ summary, loading, workerOutput = [], producedEvents = [] }: SummaryPanelProps) {
   if (loading) {
     return (
       <div className="p-4 text-gray-500">
@@ -356,11 +358,107 @@ export function SummaryPanel({ summary, loading, workerOutput = [] }: SummaryPan
         </Section>
       )}
 
-      {/* Result (if completed) */}
+      {/* Verification Status */}
+      {(() => {
+        const verificationEvents = producedEvents.filter(
+          e => e.event_type === 'VerificationPassed' || e.event_type === 'VerificationFailed'
+        );
+        const retryEvents = producedEvents.filter(e => e.event_type === 'RetryScheduled');
+        if (verificationEvents.length === 0) return null;
+
+        const lastVerification = verificationEvents[verificationEvents.length - 1];
+        const passed = lastVerification.event_type === 'VerificationPassed';
+        const feedback = (lastVerification.data as Record<string, unknown>)?.feedback as string || '';
+        const failedStage = (lastVerification.data as Record<string, unknown>)?.failed_stage as string || '';
+        const stagesPassed = (lastVerification.data as Record<string, unknown>)?.stages_passed as string[] || [];
+
+        return (
+          <Section title={`Verification ${passed ? 'Passed' : 'Failed'}${retryEvents.length > 0 ? ` (${retryEvents.length} retries)` : ''}`}>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {/* Current status */}
+              <div className={`p-3 rounded border-l-2 ${passed ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500' : 'bg-red-50 dark:bg-red-900/20 border-red-500'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`text-lg ${passed ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {passed ? '✅' : '❌'}
+                  </span>
+                  <span className={`text-sm font-medium ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                    {passed ? 'Verification Passed' : `Failed at stage: ${failedStage}`}
+                  </span>
+                </div>
+
+                {!passed && stagesPassed.length > 0 && (
+                  <div className="mb-2">
+                    <span className="text-xs text-gray-500">Stages passed: </span>
+                    {stagesPassed.map((stage: string) => (
+                      <span key={stage} className="inline-block text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1.5 py-0.5 mr-1">
+                        {stage}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                  <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
+                  <span className="whitespace-pre-wrap">{feedback || (passed ? 'All verification stages passed' : 'No details available')}</span>
+                </div>
+              </div>
+
+              {/* Full history — all attempts with complete feedback */}
+              {verificationEvents.length > 1 && (
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-gray-500">All Attempts:</span>
+                  {verificationEvents.map((evt, i) => {
+                    const evtPassed = evt.event_type === 'VerificationPassed';
+                    const evtFeedback = (evt.data as Record<string, unknown>)?.feedback as string || '';
+                    const evtStage = (evt.data as Record<string, unknown>)?.failed_stage as string || '';
+                    const evtStagesPassed = (evt.data as Record<string, unknown>)?.stages_passed as string[] || [];
+                    // Find the first RetryScheduled that occurred after this verification event
+                    const evtTime = new Date(evt.occurred_at).getTime();
+                    const nextVerificationTime = i + 1 < verificationEvents.length
+                      ? new Date(verificationEvents[i + 1].occurred_at).getTime()
+                      : Infinity;
+                    const retryEvt = retryEvents.find(r => {
+                      const rTime = new Date(r.occurred_at).getTime();
+                      return rTime >= evtTime && rTime < nextVerificationTime;
+                    }) || null;
+                    const retryReason = retryEvt ? (retryEvt.data as Record<string, unknown>)?.reason as string || '' : '';
+
+                    return (
+                      <div key={i} className={`p-2 rounded border-l-2 text-xs ${evtPassed ? 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-400' : 'bg-red-50/50 dark:bg-red-900/10 border-red-400'}`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span>{evtPassed ? '✓' : '✗'}</span>
+                          <span className="font-medium">Attempt {i + 1}</span>
+                          {!evtPassed && evtStage && <span className="text-red-500">({evtStage})</span>}
+                          <span className="text-gray-400 ml-auto">{new Date(evt.occurred_at).toLocaleTimeString()}</span>
+                        </div>
+                        {!evtPassed && evtStagesPassed.length > 0 && (
+                          <div className="mb-1">
+                            {evtStagesPassed.map((s: string) => (
+                              <span key={s} className="inline-block text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1 mr-0.5">{s}</span>
+                            ))}
+                          </div>
+                        )}
+                        <p className={`whitespace-pre-wrap ${evtPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {evtFeedback || (evtPassed ? 'All verification stages passed' : 'No details available')}
+                        </p>
+                        {retryReason && (
+                          <p className="text-amber-600 dark:text-amber-400 mt-1">Retry: {retryReason}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* Result (if completed) — scrollable */}
       {summary.result && (
         <Section title="Result">
-          <div className="bg-green-50 dark:bg-green-900/20 p-2 rounded border-l-2 border-green-500">
-            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+          <div className="bg-green-50 dark:bg-green-900/20 rounded border-l-2 border-green-500 max-h-60 overflow-y-auto">
+            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap p-2 font-mono">
               {summary.result}
             </p>
           </div>

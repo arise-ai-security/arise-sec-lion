@@ -134,6 +134,8 @@ class ParentNotificationService:
             )
             if parent.status == AgentStatus.FAILED:
                 await self.notify_if_failed(parent)
+            elif parent.status == AgentStatus.COMPLETED:
+                await self.notify_if_complete(parent)
             return
 
         parent.handle_child_failure(
@@ -149,3 +151,7 @@ class ParentNotificationService:
 
         if parent.status == AgentStatus.FAILED:
             await self.notify_if_failed(parent)
+        elif parent.status == AgentStatus.COMPLETED:
+            # Partial success: some children succeeded, parent completed with
+            # aggregated results. Notify grandparent of completion.
+            await self.notify_if_complete(parent)

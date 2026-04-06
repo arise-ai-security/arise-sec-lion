@@ -17,7 +17,7 @@ class OutputRenderer:
     def print_banner(cls) -> None:
         """Print application banner."""
         click.echo("╔═══════════════════════════════════════════════════════════════════╗")
-        click.echo("║  Recursive Multi-Agent System - Powered by Event Sourcing       ║")
+        click.echo("║  Recursive Multi-Agent System - Powered by Event Sourcing         ║")
         click.echo("╚═══════════════════════════════════════════════════════════════════╝")
         click.echo()
 

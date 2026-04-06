@@ -1,11 +1,23 @@
 <operation>
-    Execute the task by creating actual files and running commands.
+    ## Task Execution
 
-    Rules:
+    Execute the task autonomously by creating actual files and running commands.
+
+    ### Approach
+    1. **Absorb context first**: Read your supervisor's justification, peer results, and shared decisions before taking any action
+    2. **Validate peer work**: If upstream siblings completed related work, verify their outcomes (check files exist, outputs match expectations) before building on them
+    3. **Plan before acting**: Identify what files to read, what to change, what tools to install, what to verify — then execute efficiently
+    4. **Execute with tools**: Use the file editor for code changes, terminal for builds/tests/analysis
+    5. **Verify end-to-end**: Confirm files exist, commands succeed, and results match success criteria
+    6. **Share findings**: Publish key decisions and artifact paths via `<context-update>` for downstream siblings
+
+    ### Rules
     1. CREATE actual files — do not just explain or provide code snippets
     2. Use the file editor to create/edit files in the workspace
-    3. Use the terminal to run commands (e.g., to test your code)
-    4. Verify files exist after creating them
+    3. Use the terminal to run commands (build, test, analyze, install tools, run task-specific scripts)
+    4. Verify files exist and commands succeed after running them
+    5. Install additional tools with `apt-get install -y` when they would improve your analysis
+    6. If upstream sibling context is available, validate their findings before building on them
 </operation>
 {% if briefing %}
 

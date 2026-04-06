@@ -29,11 +29,13 @@ const eventTypeColors: Record<string, string> = {
   SubtasksDefined: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
   ChildSpawned: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300',
   ChildCompleted: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+  ChildFailed: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   CodeGenerationStarted: 'bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300',
   WorkCompleted: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
   WorkFailed: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   ThoughtCaptured: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
   VerificationFailed: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  VerificationPassed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
   DecisionInfeasible: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   RetryScheduled: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
   RedecompositionTriggered: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
@@ -108,6 +110,75 @@ function EventCard({ event, outputTypeFilter }: { event: DomainEvent; outputType
           <p className="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap font-mono">
             {thoughtData.content}
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Special rendering for verification events
+  if (event.event_type === 'VerificationPassed' || event.event_type === 'VerificationFailed') {
+    const passed = event.event_type === 'VerificationPassed';
+    const data = event.data as Record<string, unknown>;
+    const feedback = (data?.feedback as string) || '';
+    const failedStage = (data?.failed_stage as string) || '';
+    const stagesPassed = (data?.stages_passed as string[]) || [];
+
+    return (
+      <div className={`rounded-lg mb-2 overflow-hidden border-l-4 ${passed ? 'border-l-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/20' : 'border-l-red-500 bg-red-50/50 dark:bg-red-900/20'}`}>
+        <div className="px-3 py-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 text-xs rounded ${colorClass}`}>
+                {passed ? '✅ Verification Passed' : `❌ Verification Failed${failedStage ? ` (${failedStage})` : ''}`}
+              </span>
+            </div>
+            <span className="text-xs text-gray-400">
+              {new Date(event.occurred_at).toLocaleTimeString()}
+            </span>
+          </div>
+          {!passed && stagesPassed.length > 0 && (
+            <div className="mb-1">
+              <span className="text-xs text-gray-500">Stages passed: </span>
+              {stagesPassed.map((s: string) => (
+                <span key={s} className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 rounded px-1 mr-1">{s}</span>
+              ))}
+            </div>
+          )}
+          {feedback && (
+            <p className={`text-sm whitespace-pre-wrap ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+              {feedback}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Special rendering for RetryScheduled events
+  if (event.event_type === 'RetryScheduled') {
+    const data = event.data as Record<string, unknown>;
+    const attempt = data?.attempt as number || 0;
+    const reason = (data?.reason as string) || '';
+    const escalatedModel = data?.escalated_model as string || '';
+
+    return (
+      <div className="rounded-lg mb-2 overflow-hidden border-l-4 border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/20">
+        <div className="px-3 py-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 text-xs rounded ${colorClass}`}>
+                🔄 Retry #{attempt}{escalatedModel ? ` → ${escalatedModel}` : ''}
+              </span>
+            </div>
+            <span className="text-xs text-gray-400">
+              {new Date(event.occurred_at).toLocaleTimeString()}
+            </span>
+          </div>
+          {reason && (
+            <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap">
+              {reason}
+            </p>
+          )}
         </div>
       </div>
     );

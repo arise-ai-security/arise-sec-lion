@@ -2,6 +2,8 @@
 ## Builder Manager — Decomposition
 
 Decompose the build setup phase into worker subtasks with explicit roles.
+**Builder is infrastructure work, not code-level analysis** — keep exactly 3 workers (setup → compile → verify).
+Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Exploiter and Fixer phases.
 
 ### Phase Deliverables
 - `/testcase/base_commit_hash` (required)
@@ -28,5 +30,8 @@ Decompose the build setup phase into worker subtasks with explicit roles.
 - Use the bracketed role names above in each subtask's `description` field.
 - Set `depends_on` as specified (sequential: setup → compile → verify).
 - Preserve sanitizer instrumentation throughout the build phase.
-- Each subtask's `justification` MUST include `"role"`, `"security_insights"`, and `"context_sharing"` keys.
+- Each subtask's `justification` MUST include `"role"`, `"security_insights"`, `"security_tools"`, and `"context_sharing"` keys.
+- Instruct workers to install analysis tools: `apt-get install -y cppcheck gdb 2>/dev/null || true`
+- Workers operate autonomously — provide fallback approaches for common build failures in the justification.
+- Instruct each worker to validate upstream peer outcomes before building on them.
 </domain_operation>

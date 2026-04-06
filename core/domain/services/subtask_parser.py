@@ -132,29 +132,82 @@ def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
     if "depends_on" in item:
         raw = item["depends_on"]
         clean: list[int] = []
-        dropped: list[Any] = []
+        deferred_strings: list[str] = []
         for v in raw:
             if isinstance(v, int):
                 clean.append(v)
             elif isinstance(v, str) and v.isdigit():
                 clean.append(int(v))
+            elif isinstance(v, str):
+                deferred_strings.append(v)
             else:
-                dropped.append(v)
-        if dropped:
-            logger.warning(
-                "Subtask %d: dropped non-integer depends_on values: %r",
-                idx,
-                dropped,
-            )
+                logger.warning("Subtask %d: dropped non-string/int depends_on: %r", idx, v)
+        # Store string references for cross-subtask resolution in _resolve_depends_on
         item["depends_on"] = clean
+        if deferred_strings:
+            item["_deferred_depends_on"] = deferred_strings
 
     return item
+
+
+# Pattern to extract bracketed prefix from description, e.g. "[Build-Setup]"
+_BRACKET_PREFIX = re.compile(r"^\[([^\]]+)\]")
+
+
+def _resolve_depends_on(items: list[dict[str, Any]]) -> None:
+    """Resolve string task-name references in depends_on to integer indices.
+
+    LLMs sometimes produce depends_on: ["Build-Setup"] instead of [0].
+    Build a name→index map from description prefixes and resolve them.
+    """
+    # Build name→index map from description bracketed prefixes
+    name_to_idx: dict[str, int] = {}
+    for idx, item in enumerate(items):
+        desc = item.get("description", "")
+        m = _BRACKET_PREFIX.match(desc)
+        if m:
+            name_to_idx[m.group(1)] = idx
+
+    # Resolve deferred string references
+    for idx, item in enumerate(items):
+        deferred = item.pop("_deferred_depends_on", None)
+        if not deferred:
+            continue
+
+        clean = list(item.get("depends_on", []))
+        dropped: list[str] = []
+        for name in deferred:
+            # Try exact match, then strip brackets (LLM may include them)
+            stripped = name.strip("[]")
+            resolved_idx = name_to_idx.get(name) or name_to_idx.get(stripped)
+            if resolved_idx is not None:
+                clean.append(resolved_idx)
+                logger.info(
+                    "Subtask %d: resolved depends_on %r → index %d",
+                    idx, name, resolved_idx,
+                )
+            else:
+                dropped.append(name)
+        if dropped:
+            logger.warning(
+                "Subtask %d: dropped unresolvable depends_on names: %r",
+                idx, dropped,
+            )
+        item["depends_on"] = clean
 
 
 def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
     """Validate and create Subtask objects from dicts."""
     if not items:
         raise ValueError("Empty subtask list")
+
+    # Pre-sanitize all items so name→index map is complete
+    for idx, item in enumerate(items):
+        if isinstance(item, dict):
+            _sanitize_llm_subtask(item, idx)
+
+    # Resolve string depends_on references across all subtasks
+    _resolve_depends_on(items)
 
     config_adapter = TypeAdapter(AgentConfig)
     subtasks: list[Subtask] = []
@@ -166,7 +219,7 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
         if "config" not in item:
             raise ValueError(f"Subtask {idx}: missing 'config' field")
 
-        sanitized_item = _sanitize_llm_subtask(item, idx)
+        sanitized_item = item  # Already sanitized above
 
         try:
             config_adapter.validate_python(sanitized_item["config"])
