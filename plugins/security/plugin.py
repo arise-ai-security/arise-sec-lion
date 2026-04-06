@@ -58,7 +58,7 @@ class SecurityDomainPlugin(DomainPlugin):
         return SecBenchPromptStrategy()
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
-        cve_file = kwargs.get("cve_file")
+        cve_file = kwargs.get("context_file") or kwargs.get("cve_file")
         fail_fast = bool(kwargs.get("fail_fast", False))
         if isinstance(cve_file, (str, Path)):
             return CVEInstance.from_json_file(cve_file)

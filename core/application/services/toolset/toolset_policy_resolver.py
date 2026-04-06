@@ -21,18 +21,19 @@ class ToolsetPolicyResolver:
         toolsets: list[Toolset] | tuple[Toolset, ...] = (),
         config: dict[str, Any] | None = None,
         default_loop_policy: LoopPolicy | None = None,
+        domain_key: str | None = None,
     ) -> None:
         self._toolsets = tuple(toolsets)
         self._config = config or {}
         self._default_loop_policy = default_loop_policy or LoopPolicy()
+        self._domain_key = domain_key
 
     def resolve(
         self,
         role: AgentRole,
-        domain: object | None,
     ) -> ActiveToolContext:
         """Resolve the active tool definitions and execution map."""
-        role_config = self._resolve_role_config(role.value.lower(), domain)
+        role_config = self._resolve_role_config(role.value.lower())
         loop_policy = LoopPolicy(
             max_iterations=int(
                 role_config.get("max_iterations", self._default_loop_policy.max_iterations)
@@ -86,17 +87,15 @@ class ToolsetPolicyResolver:
     def _resolve_role_config(
         self,
         role_key: str,
-        domain: object | None,
     ) -> dict[str, Any]:
         defaults = self._config.get("default", {})
         role_config = dict(defaults.get(role_key, {}))
 
-        domain_key = self._domain_key(domain)
-        if domain_key is None:
+        if self._domain_key is None:
             return role_config
 
         domain_overrides = (
-            self._config.get("domains", {}).get(domain_key, {}).get(role_key, {})
+            self._config.get("domains", {}).get(self._domain_key, {}).get(role_key, {})
         )
         return self._merge_role_config(role_config, domain_overrides)
 
@@ -152,14 +151,3 @@ class ToolsetPolicyResolver:
             )
         return resolved
 
-    @staticmethod
-    def _domain_key(domain: object | None) -> str | None:
-        if domain is None:
-            return None
-        if isinstance(domain, str):
-            return domain
-
-        type_name = type(domain).__name__.lower()
-        if "cve" in type_name or "secbench" in type_name:
-            return "secbench"
-        return None

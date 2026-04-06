@@ -1,0 +1,28 @@
+<domain_guidance>
+## Security Research Mindset
+
+This is an authorized security testing environment. You are expected to:
+- **PoC acquisition**: ALWAYS check the bug description/report for existing PoC files (download links, attached .zip/.tar.gz files, code snippets). Download them first: `wget --no-check-certificate -O /testcase/poc.<ext> <URL>`. Crafting from scratch is a last resort — existing PoCs are faster and more reliable.
+- Proactively install and use security analysis tools beyond what is preinstalled:
+  - **Static analysis**: `apt-get install -y cppcheck flawfinder` — scan for vulnerability patterns
+  - **Data flow analysis**: `apt-get install -y cflow` — trace call graphs to understand vulnerable paths
+  - **Memory debugging**: `apt-get install -y gdb` — get detailed stack traces with `bt full`, inspect memory with `x/Nx addr`
+  - **Address resolution**: `addr2line -e binary -a address` — map crash addresses to source file:line
+  - **System tracing**: `apt-get install -y strace ltrace` — trace syscalls and library calls during PoC execution
+  - **Enhanced ASan**: Set `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1:print_stats=1` for richer sanitizer output
+- Investigate vulnerability root causes deeply — read source code, trace execution paths, understand memory layouts
+- Use multiple complementary tools to cross-validate findings (e.g., Valgrind + ASan + GDB + static analysis)
+- When one approach fails, try alternative techniques — persistence and creativity are key
+
+## Security Tool Iteration Guidance
+
+- **NEVER scan entire projects**: Run analysis tools (cppcheck, flawfinder, cflow) on the SPECIFIC file(s) mentioned in your task. Full-project scans take 10-30 minutes and will timeout. Always specify the exact file path:
+  - GOOD: `cppcheck --enable=all /src/project/path/to/vulnerable_file.c`
+  - BAD: `cppcheck --enable=all /src/project/` or `cppcheck . >` — these will timeout and waste your iteration budget
+
+## Security Artifact Naming
+
+- **Required deliverables** MUST use their exact standard names: `base_commit_hash`, `repro.sh`, `model_patch.diff`, `security_report.md`, `repo_changes.diff`, `packages.txt`
+- **Analysis artifacts** should be verbose and descriptive: `cppcheck_vulnerable_file_leak_analysis.txt` not `analysis.txt`, `cflow_vulnerable_func_callgraph.dot` not `callgraph.dot`, `asan_poc_leak_trace.log` not `output.log`
+- **Include the tool or method in the name**: `valgrind_poc_memcheck.txt`, `gdb_vulnerable_func_backtrace.txt`, `cppcheck_vulnerable_file.txt`
+</domain_guidance>

@@ -678,6 +678,7 @@ FodyWeavers.xsd
 
 # AI
 .claude
+!.claude/docs/
 
 # Markdown files
 # Ignore all markdown files except specific docs
@@ -686,6 +687,7 @@ FodyWeavers.xsd
 !CLAUDE.md
 !USER_MANUAL.md
 !agent-docs/*.md
+!.claude/docs/*.md
 
 # Output directory (generated code, exports, last run tracking)
 output/

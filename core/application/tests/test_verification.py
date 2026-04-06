@@ -204,16 +204,16 @@ class TestVerificationJudge:
     @pytest.mark.asyncio
     async def test_judge_prompt_strips_ansi_sequences(self) -> None:
         llm = FakeLLM(judge_response={"passed": True, "feedback": "clean output"})
-        worker = FakeWorkerTool(result="\x1b[31mExploit confirmed\x1b[0m\nnext line")
+        worker = FakeWorkerTool(result="\x1b[31mTask completed successfully\x1b[0m\nnext line")
         orchestrator = _make_orchestrator(llm=llm, worker=worker)
-        agent = _make_worker_agent(success_criteria="Must report exploit confirmation")
+        agent = _make_worker_agent(success_criteria="Must report task completion")
 
         await orchestrator.execute_task(agent)
 
         assert agent.status == AgentStatus.COMPLETED
         assert llm.calls
         assert "\x1b[" not in llm.calls[-1]
-        assert "Exploit confirmed" in llm.calls[-1]
+        assert "Task completed successfully" in llm.calls[-1]
 
 
 class TestVerificationSkipsOnWorkerFailure:
@@ -245,7 +245,7 @@ class TestJudgeLargeOutput:
         """
         # Build a large output where the proof of success is at the very end
         padding = "Analyzing source code...\n" * 500  # ~12K chars of filler
-        evidence = "\n[SUCCESS] Exploit triggered: AddressSanitizer: heap-use-after-free confirmed"
+        evidence = "\n[SUCCESS] Output validation: expected pattern confirmed"
         large_output = padding + evidence
 
         # Judge checks for the evidence keyword in the output
@@ -253,10 +253,10 @@ class TestJudgeLargeOutput:
             async def query_with_usage(self, prompt: str, config_dict: dict) -> LLMResponse:
                 self.calls.append(prompt)
                 # If judge can see the evidence, it passes
-                if "heap-use-after-free confirmed" in prompt:
-                    verdict = {"passed": True, "feedback": "Exploit confirmed"}
+                if "expected pattern confirmed" in prompt:
+                    verdict = {"passed": True, "feedback": "Task completed"}
                 else:
-                    verdict = {"passed": False, "feedback": "No evidence of exploit"}
+                    verdict = {"passed": False, "feedback": "No evidence of completion"}
                 return LLMResponse(
                     content=json.dumps(verdict),
                     usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
@@ -267,7 +267,7 @@ class TestJudgeLargeOutput:
         llm = EvidenceCheckingLLM()
         worker = FakeWorkerTool(result=large_output)
         orchestrator = _make_orchestrator(llm=llm, worker=worker)
-        agent = _make_worker_agent(success_criteria="Must trigger heap-use-after-free")
+        agent = _make_worker_agent(success_criteria="Must produce expected output pattern")
 
         await orchestrator.execute_task(agent)
 
@@ -278,14 +278,14 @@ class TestJudgeLargeOutput:
     @pytest.mark.asyncio
     async def test_judge_sees_head_of_large_output(self) -> None:
         """Key evidence at the start of a large output must also reach the judge."""
-        evidence = "[PATCH APPLIED] Fixed buffer overflow in parse_header()\n"
+        evidence = "[PATCH APPLIED] Fixed parsing error in process_request()\n"
         padding = "Running verification tests...\n" * 500
         large_output = evidence + padding
 
         class EvidenceCheckingLLM(FakeLLM):
             async def query_with_usage(self, prompt: str, config_dict: dict) -> LLMResponse:
                 self.calls.append(prompt)
-                if "Fixed buffer overflow" in prompt:
+                if "Fixed parsing error" in prompt:
                     verdict = {"passed": True, "feedback": "Patch applied"}
                 else:
                     verdict = {"passed": False, "feedback": "No patch found"}

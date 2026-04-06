@@ -67,5 +67,5 @@ class Subtask(BaseModel):
     )
     search_hints: tuple[str, ...] = Field(
         default=(),
-        description="Keywords or patterns to search for (CVE IDs, error strings, etc.)",
+        description="Keywords or patterns to search for (issue IDs, error strings, etc.)",
     )

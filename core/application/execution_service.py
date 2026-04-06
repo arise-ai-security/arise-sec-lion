@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from core.application.services import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStorePort
-    from core.ports.runtime_ports import SharedContextPort, SiblingViewPort, SystemLimitsPort
+    from core.ports.runtime_ports import SharedContextPort, SiblingViewPort, SystemLimitsPort, Toolset
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ class ExecutionServiceDependencies:
     parent_notifier: ParentNotificationService
     prompt_builder: "PromptBuilder"
     domain_plugin: "DomainPlugin | None" = None
+    recon_tool: "Toolset | None" = None
 
 
 # =============================================================================
@@ -108,6 +109,7 @@ class AgentExecutionService:
         self._parent_notifier = dependencies.parent_notifier
         self._prompt_builder = dependencies.prompt_builder
         self._domain_plugin = dependencies.domain_plugin
+        self._recon_tool = dependencies.recon_tool
 
         # Workspace state (inlined from WorkspaceContextProvider)
         self._working_directory: Path | None = None
@@ -512,6 +514,13 @@ class AgentExecutionService:
         if prepared is not None and prepared.working_directory:
             self._working_directory = Path(prepared.working_directory)
 
+        # Point recon tools at the workspace so thinker agents can read target code
+        if self._recon_tool is not None and self._working_directory is not None:
+            set_wd = getattr(self._recon_tool, "set_working_directory", None)
+            if callable(set_wd):
+                set_wd(str(self._working_directory))
+                logger.info("Recon tools targeting: %s", self._working_directory)
+
     def _get_workspace_context(self) -> str | None:
         """Return fresh file listing for workspace.
 
@@ -619,11 +628,46 @@ class AgentExecutionService:
             return
 
         if agent.status == AgentStatus.FAILED:
+            # Verification-specific retry: up to 2 retries with judge feedback
+            if await self._maybe_retry_verification(agent):
+                return
+
             retried = await self._retry_policy.maybe_schedule_retry(agent)
             if retried:
                 return  # Agent re-queued for execution, don't notify parent
 
             await self._parent_notifier.notify_if_failed(agent)
+
+    _MAX_VERIFICATION_RETRIES = 2
+
+    async def _maybe_retry_verification(self, agent: AgentSession) -> bool:
+        """Retry a worker that failed verification, up to _MAX_VERIFICATION_RETRIES.
+
+        Returns True if a retry was scheduled (caller should not notify parent).
+        """
+        if agent.role != AgentRole.WORKER:
+            return False
+
+        if not agent.verification_feedback:
+            return False
+
+        if agent.retry_count >= self._MAX_VERIFICATION_RETRIES:
+            return False
+
+        reason = agent.error_message or "Verification failed"
+        agent.schedule_retry(reason=reason, escalated_model=None)
+
+        await self._repository.persist_events(
+            agent, agent.version - 1, self._progress_callback
+        )
+        logger.info(
+            "Verification retry %d/%d for agent %s: %s",
+            agent.retry_count,
+            self._MAX_VERIFICATION_RETRIES,
+            agent.agent_id,
+            agent.verification_feedback,
+        )
+        return True
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
         """Extract and store context updates from worker result."""

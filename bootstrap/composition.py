@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from plugins.security import SecurityDomainPlugin
+from plugins.security.docker_runtime import DockerSecBenchRuntime
 from presentation.cli import CLI, CLIConfig
 
 from .application import ApplicationConfig, get_application
@@ -28,16 +29,20 @@ class DomainComponents:
 
     plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
+    domain_key: str | None = None
 
 
 def _build_security_components(settings: Settings) -> DomainComponents:
     if not settings.security.enabled:
         return DomainComponents()
 
+    runtime = DockerSecBenchRuntime()
     plugin = SecurityDomainPlugin(enabled_tools=settings.security.tools)
+    plugin.set_container_runtime(runtime)
     return DomainComponents(
         plugin=plugin,
         prompt_strategy=plugin.get_prompt_strategy(),
+        domain_key="secbench",
     )
 
 
@@ -46,6 +51,15 @@ _DOMAIN_COMPONENT_BUILDERS: dict[str, Callable[[Settings], DomainComponents]] = 
 }
 
 _DOMAIN_COMPONENT_ORDER: tuple[str, ...] = tuple(_DOMAIN_COMPONENT_BUILDERS)
+
+
+def build_domain_plugin(settings: Settings) -> DomainPlugin | None:
+    """Return the first enabled domain plugin, or None.
+
+    Intended for query API bootstrap where only the plugin (not full
+    DomainComponents) is needed.
+    """
+    return get_first_enabled_domain_components(settings).plugin
 
 
 def get_first_enabled_domain_components(settings: Settings) -> DomainComponents:
@@ -61,10 +75,10 @@ def get_run_domain_components(
     settings: Settings,
     *,
     requested_domain: str | None,
-    cve_file: object | None,
+    context_file: object | None,
 ) -> DomainComponents:
     """Return the domain bundle for a run when explicitly requested."""
-    if requested_domain is None and cve_file is None:
+    if requested_domain is None and context_file is None:
         return DomainComponents()
 
     domain_name = requested_domain or "security"
@@ -92,8 +106,6 @@ def create_runtime_cli(
     )
 
     plugin = active_domain_components.plugin
-    if plugin is not None and hasattr(plugin, "set_container_runtime"):
-        plugin.set_container_runtime(infra.secbench_runtime)
 
     app = get_application(
         infra,
@@ -114,6 +126,7 @@ def create_runtime_cli(
             domain_plugin=plugin,
             prompt_strategy=active_domain_components.prompt_strategy,
             progress_callback=progress_callback,
+            domain_key=active_domain_components.domain_key,
         ),
     )
 

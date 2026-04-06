@@ -36,6 +36,7 @@ from core.domain.events.events import (
     ThoughtCaptured,
     TokensConsumed,
     VerificationFailed,
+    VerificationPassed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -78,6 +79,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "DecisionRecorded": DecisionRecorded,
     # New lifecycle events (refac/simplify-with-new-features)
     "VerificationFailed": VerificationFailed,
+    "VerificationPassed": VerificationPassed,
     "DecisionInfeasible": DecisionInfeasible,
     "RetryScheduled": RetryScheduled,
     "RedecompositionTriggered": RedecompositionTriggered,
@@ -115,7 +117,7 @@ class PostgresEventStore(EventStorePort):
         """Encode a value to JSONB-safe JSON string.
 
         PostgreSQL JSONB rejects null bytes (\\u0000) inside strings.
-        Worker terminal output (sanitizer reports, binary tool output)
+        Worker terminal output (large tool output, binary data)
         can contain these, so strip them before encoding.
         """
         return orjson.dumps(v).decode("utf-8").replace("\\u0000", "")

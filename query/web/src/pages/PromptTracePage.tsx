@@ -152,7 +152,7 @@ export function PromptTracePage() {
           <span className="text-xs font-medium text-yellow-700" title="Context shared between sibling agents">Sibling</span>
           <span className="text-xs font-medium text-purple-700" title="Results and outcomes from child agents">Children</span>
           <span className="text-xs font-medium text-orange-600" title="Global shared decisions and artifacts">Shared</span>
-          <span className="text-xs font-medium text-gray-600" title="System-injected context (CVE, workspace, user prompt)">System</span>
+          <span className="text-xs font-medium text-gray-600" title="System-injected context (domain context, workspace, user prompt)">System</span>
         </div>
       </div>
 

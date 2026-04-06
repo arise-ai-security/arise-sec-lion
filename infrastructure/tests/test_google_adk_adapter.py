@@ -299,7 +299,7 @@ class TestEventProcessing:
         # Create mock function call - part without text attribute
         class MockFunctionCall:
             name = "execute_command"
-            args = {"command": "gcc -o poc poc.c"}
+            args = {"command": "gcc -o main main.c"}
 
         class MockPart:
             function_call = MockFunctionCall()

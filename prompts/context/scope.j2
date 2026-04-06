@@ -1,4 +1,7 @@
 <scope>
+    Your parent has narrowed your focus to the following areas. Start your analysis here
+    and go deeper — your scope should be **more specific** than your parent's.
+
     {% if scope.target_paths %}
         **Target paths** (focus recon here):
         {% for p in scope.target_paths %}
@@ -6,7 +9,7 @@
         {% endfor %}
     {% endif %}
     {% if scope.symbols %}
-        **Key symbols** (functions, classes, methods):
+        **Key symbols** (functions, classes, methods to examine):
         {% for s in scope.symbols %}
             - {{ s }}
         {% endfor %}
@@ -17,4 +20,9 @@
             - {{ h }}
         {% endfor %}
     {% endif %}
+
+    When decomposing subtasks, pass **even narrower** scope to your children:
+    - If your scope is at the file level, narrow children to specific functions
+    - If your scope is at the function level, narrow children to specific code blocks, variables, or conditions
+    - Use your recon findings to populate `target_paths`, `symbols`, and `search_hints` with precise, discovered values
 </scope>

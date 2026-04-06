@@ -62,7 +62,7 @@ class TestPromptBuilderWithRealTemplates:
     ) -> None:
         """Test that assessment prompt renders from real templates."""
         prompt = builder.build_assessment_prompt(
-            task_description="Fix the buffer overflow vulnerability",
+            task_description="Fix the parsing error in the request handler",
             agent_id=uuid4(),
         )
 

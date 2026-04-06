@@ -129,6 +129,55 @@ class ChildCompletedFormatter(EventFormatterStrategy):
         return f"   ✓ [{agent_id}] Child {child_id}... completed"
 
 
+class ChildFailedFormatter(EventFormatterStrategy):
+    """Format ChildFailed events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        child_id = str(getattr(event, "child_id", "?"))[:8]
+        reason = getattr(event, "reason", "")[:80]
+        return f"   ✗ [{agent_id}] Child {child_id}... failed: {reason}"
+
+
+class VerificationFailedFormatter(EventFormatterStrategy):
+    """Format VerificationFailed events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        stage = getattr(event, "failed_stage", "?")
+        feedback = getattr(event, "feedback", "")[:100]
+        return f"   ❌ [{agent_id}] Verification failed ({stage}): {feedback}"
+
+
+class VerificationPassedFormatter(EventFormatterStrategy):
+    """Format VerificationPassed events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        feedback = getattr(event, "feedback", "")
+        detail = f": {feedback[:100]}" if feedback else ""
+        return f"   ✅ [{agent_id}] Verification passed{detail}"
+
+
+class RetryScheduledFormatter(EventFormatterStrategy):
+    """Format RetryScheduled events."""
+
+    def format(self, event: object) -> str:
+        agent_id = str(getattr(event, "aggregate_id", "?"))[:8]
+        attempt = getattr(event, "attempt", "?")
+        reason = getattr(event, "reason", "")
+        escalated = getattr(event, "escalated_model", None)
+        model_info = f" → {escalated}" if escalated else ""
+        # Show verification feedback context for retry
+        feedback_line = ""
+        if reason and "Verification failed" in reason:
+            # Extract the feedback portion after the stage label
+            parts = reason.split(": ", 1)
+            if len(parts) > 1:
+                feedback_line = f"\n      └─ Retrying with feedback: {parts[1][:120]}"
+        return f"   🔄 [{agent_id}] Retry scheduled (attempt {attempt}){model_info}{feedback_line}"
+
+
 class DefaultFormatter(EventFormatterStrategy):
     """Default formatter for unknown event types."""
 
@@ -173,6 +222,10 @@ EventFormatter.register("ThoughtCaptured", ThoughtCapturedFormatter())
 EventFormatter.register("WorkCompleted", WorkCompletedFormatter())
 EventFormatter.register("WorkFailed", WorkFailedFormatter())
 EventFormatter.register("ChildCompleted", ChildCompletedFormatter())
+EventFormatter.register("ChildFailed", ChildFailedFormatter())
+EventFormatter.register("VerificationFailed", VerificationFailedFormatter())
+EventFormatter.register("VerificationPassed", VerificationPassedFormatter())
+EventFormatter.register("RetryScheduled", RetryScheduledFormatter())
 
 
 class ProgressDisplayFormatter:

@@ -107,6 +107,14 @@ class ReconToolAdapter:
     def __init__(self, working_directory: str = ".") -> None:
         self._workdir = Path(working_directory).resolve()
 
+    def set_working_directory(self, path: str) -> None:
+        """Update the working directory for this adapter.
+
+        Called at run start to point recon tools at the SEC-bench workspace
+        so thinker agents can read target code instead of the orchestrator project.
+        """
+        self._workdir = Path(path).resolve()
+
     @property
     def name(self) -> str:
         """Stable toolset identifier used in config resolution."""
@@ -116,7 +124,7 @@ class ReconToolAdapter:
         """Resolve a path relative to working directory, preventing escapes.
 
         Absolute paths are resolved as-is (the LLM may reference paths
-        from the CVE context like /src/project). Relative paths are
+        from the domain context like /src/project). Relative paths are
         resolved against the working directory.
         """
         if Path(path).is_absolute():

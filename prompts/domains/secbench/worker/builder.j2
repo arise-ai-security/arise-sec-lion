@@ -3,6 +3,13 @@
 
 Refer to Task Context above for repository location, base commit hash, and vulnerability details.
 
+### Setup
+
+Install analysis tools that will be useful for build validation:
+```bash
+apt-get install -y cppcheck gdb 2>/dev/null || true
+```
+
 ### Steps
 
 1. **Determine base commit** from vulnerability description (Task Context):
@@ -42,6 +49,16 @@ Refer to Task Context above for repository location, base commit hash, and vulne
    - `/testcase/repo_changes.diff`
    - `/testcase/packages.txt` (if applicable)
    - `/src/build.sh`
+
+9. **Run quick static analysis** (optional but recommended):
+   - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
+   - Note any findings in context-update for exploiter/fixer workers
+
+### Peer Validation
+If upstream siblings (e.g., Build-Setup) shared decisions, verify them:
+- Check that `/testcase/base_commit_hash` actually contains a valid commit hash
+- Verify the repo is at the correct commit: `git log -1 --format=%H`
+- If findings are inconsistent, investigate and correct
 
 ### Rules
 - DO NOT disable sanitizer options — they are essential for bug detection

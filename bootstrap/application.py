@@ -90,6 +90,7 @@ class ApplicationConfig:
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
+    domain_key: str | None = None
 
 
 @dataclass
@@ -164,6 +165,7 @@ def get_application(
             max_iterations=config.tool_calling.max_iterations,
             result_char_limit=config.tool_calling.result_char_limit,
         ),
+        domain_key=config.domain_key,
     )
 
     orchestrator = AgentOrchestrator(
@@ -194,6 +196,7 @@ def get_application(
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
         domain_plugin=config.domain_plugin,
+        recon_tool=infrastructure.recon_tool,
     )
 
     system_limits = ExecutionLimitsBridge(
