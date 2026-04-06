@@ -6,11 +6,11 @@ database:
 
 boss:
   model: o3
-  max_tokens: 4000  # Needs enough tokens for subtask JSON arrays
+  max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 manager:
   model: o3
-  max_tokens: 4000  # Needs enough tokens for subtask JSON arrays
+  max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 worker:
   model: openai/o3

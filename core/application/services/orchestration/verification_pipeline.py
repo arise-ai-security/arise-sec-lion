@@ -211,8 +211,23 @@ class VerificationPipeline:
         raw = ""
         try:
             llm_config = ConfigResolver.resolve(config, operation="complexity_evaluation")
-            response = await self._llm_port.query_with_usage(prompt, llm_config.model_dump())
+            # Judge needs enough tokens for a JSON line — ensure at least 200
+            config_dict = llm_config.model_dump()
+            if config_dict.get("max_tokens", 0) < 200:
+                config_dict["max_tokens"] = 200
+            response = await self._llm_port.query_with_usage(prompt, config_dict)
             raw = response.content
+
+            if not raw or not raw.strip():
+                logger.warning("Judge returned empty response (model=%s), retrying once", response.model)
+                # Retry once with higher token limit
+                retry_config = dict(config_dict)
+                retry_config["max_tokens"] = 1000
+                retry_response = await self._llm_port.query_with_usage(prompt, retry_config)
+                raw = retry_response.content
+                if not raw or not raw.strip():
+                    logger.warning("Judge retry also empty — failing verification")
+                    return False, "Judge could not evaluate (empty response after retry)"
 
             clean = strip_markdown_code_block(raw)
             data = json.loads(clean)
@@ -228,5 +243,5 @@ class VerificationPipeline:
                 passed = passed_match.group(1).lower() == "true"
                 feedback = feedback_match.group(1) if feedback_match else ""
                 return passed, feedback or ("Judge passed (extracted from malformed response)" if passed else "Judge failed (extracted from malformed response)")
-            logger.warning("Regex fallback also failed, defaulting to pass")
-            return True, "Passed (judge response could not be parsed)"
+            logger.warning("Regex fallback also failed, failing verification. Raw length=%d", len(raw))
+            return False, "Judge response could not be parsed — verification failed"

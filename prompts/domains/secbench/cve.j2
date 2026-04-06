@@ -56,11 +56,52 @@
     - UndefinedBehaviorSanitizer → **CWE-758** (Undefined Behavior): Check integer overflow, null deref, shift amounts
     Use the CWE classification to focus your static analysis, choose appropriate tools, and validate that your fix addresses the root cause pattern.
 
-    **Security Tooling**: Workers should install and use analysis tools beyond the preinstalled set. Recommended combinations:
-    - **Static analysis**: `cppcheck`, `flawfinder` (vulnerability pattern scanning), `cflow` (call graph / data flow)
-    - **Dynamic analysis**: Valgrind (memcheck, helgrind), KLEE (symbolic execution), enhanced ASan options
-    - **Memory debugging**: `gdb` (stack traces, memory inspection), `addr2line` (crash address → source mapping)
-    - **Runtime tracing**: `strace` (syscall tracing), `ltrace` (library call tracing)
+    **Security Tooling — Use Structured Output, Not Raw Dumps**:
+    Workers MUST use tools effectively: parse structured output to extract actionable findings, don't just dump raw terminal output.
+
+    **CWE-Conditional Tool Prescriptions** (aligned with MITRE CWE detection guidance):
+
+    **Baseline for ALL memory-safety CWEs**: Fuzzing is universally effective (MITRE rates it High for CWE-401/122/121/416). Check `/src/` for existing AFL++/libFuzzer/honggfuzz infrastructure and corpus — reuse it before crafting PoC from scratch.
+
+    - **CWE-401 (Memory Leak)**: Focus on allocation tracking (MITRE: Valgrind + SAST)
+      - `valgrind --leak-check=full --show-leak-kinds=all --error-exitcode=1` (primary — MITRE recommended)
+      - `cppcheck --enable=all --xml 2>cppcheck.xml` → parse XML for `<error id="memleak">` entries (SAST — High effectiveness)
+      - `cflow -r <function>` → reverse call graph to find all callers that might leak
+      - GDB: set breakpoints at malloc/free to track allocation lifecycle
+
+    - **CWE-122/121 (Buffer Overflow)**: Focus on bounds and sizes (MITRE: ASan + Fuzzing + SAST)
+      - `ASAN_OPTIONS=detect_stack_use_after_return=1` — ASan is explicitly recommended by MITRE
+      - `cppcheck --enable=all --xml 2>cppcheck.xml` → parse for `<error id="bufferAccessOutOfBounds">`
+      - `valgrind --tool=memcheck` → identify exact read/write beyond allocation
+      - GDB: `x/Nx addr` to inspect buffer contents and sizes at crash point
+      - Fuzzing: check `/src/` for AFL++/libFuzzer corpus, use existing harness if available
+
+    - **CWE-416 (Use After Free)**: Focus on object lifecycle (MITRE: ASan + SAST + Fuzzing)
+      - `ASAN_OPTIONS=detect_stack_use_after_return=1:detect_container_overflow=1` (MITRE recommended)
+      - `cppcheck --enable=all --xml 2>cppcheck.xml` → parse for use-after-free patterns (SAST — High effectiveness)
+      - GDB: `watch` on pointer variable to catch when it's freed then used
+      - `cflow <function>` → trace all paths to identify premature free
+      - After fixing, set freed pointers to NULL (MITRE mitigation)
+
+    - **CWE-476 (NULL Pointer Dereference) / CWE-758 (Undefined Behavior)**: Focus on crash reproduction (MITRE: SAST + ASan + manual dynamic analysis)
+      - `cppcheck --enable=all --xml 2>cppcheck.xml` → parse for `<error id="nullPointer">` (SAST — High effectiveness)
+      - ASan: `ASAN_OPTIONS=detect_leaks=0` — ASan catches NULL deref as SEGV (MITRE recommended)
+      - GDB: `run`, `bt full`, `info locals` to identify the NULL pointer and why it's NULL
+      - Manual fault injection: trigger error conditions (low memory, missing files, interrupted operations) to expose NULL paths
+      - `addr2line -e binary -a <crash_address>` → map crash to source
+      - Existing fuzzing corpus in `/src/` may already contain triggering inputs
+
+    **Tool Output Discipline**: After running any analysis tool, write a summary to `/testcase/`:
+    ```bash
+    # GOOD: Parse cppcheck XML for specific errors
+    cppcheck --enable=all --xml src/file.c 2>cppcheck_raw.xml
+    grep -A2 'error id=' cppcheck_raw.xml > /testcase/cppcheck_findings.txt
+    cat /testcase/cppcheck_findings.txt  # Show contents for judge
+
+    # BAD: Just dump raw output to terminal
+    cppcheck --enable=all src/file.c  # Output disappears after terminal scrolls
+    ```
+
     Install with `apt-get install -y <tool>` as needed.
 
     **Decomposition**: When producing subtasks, include in each subtask's `justification`:
