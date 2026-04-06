@@ -24,14 +24,34 @@ Then validate what you're building on:
 
 ### Steps
 
-1. **Understand root cause — START FROM THE POC**:
+1. **Understand root cause — START FROM THE POC, CLASSIFY THE CWE**:
    - **First**: Read the existing PoC file (`cat /testcase/poc*`, `cat /testcase/repro.sh`) to understand WHAT INPUT triggers the bug
-   - **Second**: Trace that specific input through the vulnerable code path. Read the vulnerable source file and follow the execution flow for the PoC input
-   - **Third**: Cross-reference with the CVE description — your analysis must explain why the PoC input causes the EXACT error described (e.g., heap-buffer-overflow at specific function/line), not a different error
-   - **Fourth**: Use tools to confirm: `gdb -batch -ex run -ex 'bt full' -ex quit --args ./binary < poc_input` for crash context, `cflow` for call graph, `cppcheck --enable=all` on the vulnerable file
+   - **Second**: Classify the CWE from the sanitizer error. Match the signature:
+     - `heap/stack-buffer-overflow`, `out-of-bounds` → **Memory Safety** (bounds check needed)
+     - `LeakSanitizer`, `double-free`, `use-after-free` → **Memory Lifecycle** (cleanup/lifecycle fix needed)
+     - `SEGV`, `null-dereference` → **Pointer Errors** (null check needed)
+     - Integer overflow indicators, UBSan → **Integer/Numeric** (range check needed)
+     - Format string, type confusion → **Logic/Type** (logic correction needed)
+   - **Third**: Trace the PoC input through the vulnerable code path using CWE-specific analysis:
+     - **Memory Safety**: Find where buffer is allocated (size?) and where it's accessed (with what offset/index?). The gap between allocation and access IS the bug.
+     - **Memory Lifecycle**: Find where memory is allocated, then find ALL paths to function exit. The path that skips `free()` IS the bug. Check for early returns, exception macros, goto labels.
+     - **Pointer Errors**: Find what returns the pointer (which function?), what makes it return NULL (what input condition?), and where it's dereferenced without a check.
+     - **Integer/Numeric**: Find the arithmetic operation, trace the input values, identify where overflow/truncation occurs.
+   - **Fourth**: Use CWE-appropriate tools to confirm:
+     - Memory Lifecycle: `valgrind --leak-check=full --track-origins=yes ./binary < poc` (shows exact allocation point of leaked memory)
+     - Memory Safety: `gdb -batch -ex run -ex 'bt full'` + `cppcheck --enable=all <vulnerable_file>`
+     - Pointer: `gdb -batch -ex run -ex 'bt full' -ex 'info locals'` (shows NULL pointer value)
+     - Integer: `cppcheck --enable=all` + GDB to print variable values at the overflow point
    - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises, not a different vulnerability in the same file.
 
-2. **Develop the fix from first principles**: Based on your PoC-grounded root cause analysis, design and implement a minimal fix. Do NOT search for external fix commits or patches. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
+2. **Develop the fix using the CWE-appropriate pattern**: Based on your CWE classification and root cause analysis, apply the correct fix pattern. Do NOT search for external fix commits or patches.
+   - **Memory Safety**: Add bounds check — `if (offset + len > buf_size) { return ERROR; }` — BEFORE the out-of-bounds access. Use the project's existing error-handling idiom (check how other functions handle similar bounds violations).
+   - **Memory Lifecycle (CWE-401 leak)**: Add `free(ptr)` (or the project's release function) on the error path BEFORE the early return/exception macro. Search for how other error paths in the same function handle cleanup — follow the same pattern.
+   - **Memory Lifecycle (CWE-416 UAF)**: Ensure the pointer is not used after free — restructure the code to copy needed data before free, or null the pointer after free.
+   - **Pointer Errors**: Add `if (ptr == NULL) { cleanup(); return ERROR; }` after the function call that can return NULL. Check what other callers of the same function do on NULL — follow the same pattern.
+   - **Integer/Numeric**: Add range check before the arithmetic: `if (val > MAX_SAFE) { return ERROR; }`, or use safe arithmetic functions if available.
+   - **Logic/Type**: Fix the specific logic error (add braces, add break, fix format string, correct the type cast).
+   Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
 
 3. **Create `/testcase/model_patch.diff`**:
    - After editing, generate diff for ONLY the files you changed (not the entire repo):
@@ -49,12 +69,20 @@ Then validate what you're building on:
    - Apply: `git apply /testcase/model_patch.diff`
    - Rebuild: `/src/build.sh`
 
-6. **Test fix with multiple tools**:
+6. **Test fix with CWE-appropriate validation** (use ALL tools, but prioritize based on CWE):
    - Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
-   - **Use Valgrind** to verify: `valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input`
-   - **Use GDB** to confirm clean execution: `gdb -batch -ex run -ex 'bt' -ex quit --args ./binary < poc_input` — should NOT show a crash
-   - **Run with enhanced ASan**: `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 ./binary < poc_input`
-   - **Run cppcheck** on patched source: `cppcheck --enable=all <patched_file>` — should show no new issues
+   - **Memory Lifecycle (leaks)** — Valgrind is the PRIMARY validator:
+     `valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./binary < poc_input`
+     MUST show `All heap blocks were freed -- no leaks are possible` or `0 bytes in 0 blocks` for the previously-leaked allocation.
+   - **Memory Safety (buffer overflow)** — ASan is PRIMARY:
+     Run with ASan and verify NO `*-buffer-overflow` errors. Also test with Valgrind memcheck for double confirmation.
+   - **Pointer Errors (SEGV)** — GDB is PRIMARY:
+     `gdb -batch -ex run -ex 'bt' -ex quit --args ./binary < poc_input` — should NOT crash. Verify the previously-null pointer now has a valid value or the null path is handled.
+   - **Integer/Numeric** — boundary testing is PRIMARY:
+     Test with the original PoC AND with boundary values (0, MAX, -1) to ensure the range check works.
+   - **All CWE classes** — also run these general checks:
+     - `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 ./binary < poc_input`
+     - `cppcheck --enable=all <patched_file>` — should show no new issues
    - Confirm: (a) the original sanitizer error is gone, (b) no NEW memory issues introduced by the patch, (c) static analysis is clean.
    - Patch MUST NOT introduce new sanitizer errors.
 
