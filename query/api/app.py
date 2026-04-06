@@ -7,6 +7,7 @@ It properly initializes the event store using the lifespan context manager.
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,9 +19,13 @@ from core.ports.event_store_port import EventStorePort
 from query.api.routes import agents, config, events, prompt_trace, prompts
 
 
+if TYPE_CHECKING:
+    from core.ports.domain_plugin_port import DomainPlugin
+
+
 # Factory functions injected by bootstrap layer (avoids query→plugins/infrastructure dependency)
 _event_store_factory: Callable[[str], EventStorePort] | None = None
-_domain_plugin_factory: Callable[[Settings], object | None] | None = None
+_domain_plugin_factory: Callable[["Settings"], "DomainPlugin | None"] | None = None
 
 
 def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
@@ -33,7 +38,7 @@ def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
     _event_store_factory = factory
 
 
-def set_domain_plugin_factory(factory: Callable[[Settings], object | None]) -> None:
+def set_domain_plugin_factory(factory: Callable[["Settings"], "DomainPlugin | None"]) -> None:
     """Set the domain plugin factory function.
 
     Called by bootstrap layer to inject the concrete domain plugin builder.

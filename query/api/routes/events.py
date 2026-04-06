@@ -202,7 +202,7 @@ async def get_agent_events(agent_id: UUID, event_store: EventStoreDep) -> Catego
     Categories:
     - received: Events received by the agent (TaskAssigned)
     - produced: Events the agent produced (StatusChanged, ComplexityEvaluated, etc.)
-    - passed: Events involving parent/child communication (ChildSpawned, ChildCompleted)
+    - passed: Parent/child communication (ChildSpawned, ChildCompleted, ChildFailed)
     - thinking: Agent's internal reasoning (ThoughtCaptured)
     """
     events = await event_store.get_events(agent_id)

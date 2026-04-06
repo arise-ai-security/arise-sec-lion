@@ -129,7 +129,7 @@ function EventCard({ event, outputTypeFilter }: { event: DomainEvent; outputType
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
               <span className={`px-2 py-0.5 text-xs rounded ${colorClass}`}>
-                {passed ? '✅ Verification Passed' : `❌ Verification Failed (${failedStage})`}
+                {passed ? '✅ Verification Passed' : `❌ Verification Failed${failedStage ? ` (${failedStage})` : ''}`}
               </span>
             </div>
             <span className="text-xs text-gray-400">

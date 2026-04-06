@@ -210,18 +210,21 @@ function Dashboard() {
     const categorizeEvent = (event: DomainEvent): keyof CategorizedEvents => {
       // ThoughtCaptured events go to 'thinking'
       if (event.event_type === 'ThoughtCaptured') return 'thinking';
-      // Most events are 'received' by the agent (incoming state changes)
-      const receivedTypes = ['AgentCreated', 'TaskAssigned', 'ChildCompleted', 'ChildFailed'];
+      // Events received by the agent
+      const receivedTypes = ['TaskAssigned'];
       if (receivedTypes.includes(event.event_type)) return 'received';
       // Events the agent produces
-      const producedTypes = ['StatusChanged', 'ComplexityEvaluated', 'SubtasksDefined', 'ChildSpawned',
-                            'WorkCompleted', 'WorkFailed', 'CodeGenerationStarted', 'PromptSent',
+      const producedTypes = ['AgentCreated', 'StatusChanged', 'ComplexityEvaluated', 'SubtasksDefined',
+                            'CodeGenerationStarted', 'WorkCompleted', 'WorkFailed', 'PromptSent',
                             'TokensConsumed', 'WorkerCostRecorded', 'OperationStarted', 'OperationFinished',
                             'VerificationFailed', 'VerificationPassed', 'DecisionInfeasible', 'RetryScheduled',
                             'RedecompositionTriggered', 'ProbeStarted', 'ProbeCompleted'];
       if (producedTypes.includes(event.event_type)) return 'produced';
-      // Default to 'passed' for other events
-      return 'passed';
+      // Parent/child communication events (ChildSpawned, ChildCompleted, ChildFailed)
+      const passedTypes = ['ChildSpawned', 'ChildCompleted', 'ChildFailed'];
+      if (passedTypes.includes(event.event_type)) return 'passed';
+      // Default to 'produced' for unknown events
+      return 'produced';
     };
 
     // Create merged result with new SSE events

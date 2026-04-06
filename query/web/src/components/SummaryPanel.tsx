@@ -412,8 +412,15 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                     const evtFeedback = (evt.data as Record<string, unknown>)?.feedback as string || '';
                     const evtStage = (evt.data as Record<string, unknown>)?.failed_stage as string || '';
                     const evtStagesPassed = (evt.data as Record<string, unknown>)?.stages_passed as string[] || [];
-                    // Find matching retry event for this attempt
-                    const retryEvt = i < retryEvents.length ? retryEvents[i] : null;
+                    // Find the first RetryScheduled that occurred after this verification event
+                    const evtTime = new Date(evt.occurred_at).getTime();
+                    const nextVerificationTime = i + 1 < verificationEvents.length
+                      ? new Date(verificationEvents[i + 1].occurred_at).getTime()
+                      : Infinity;
+                    const retryEvt = retryEvents.find(r => {
+                      const rTime = new Date(r.occurred_at).getTime();
+                      return rTime >= evtTime && rTime < nextVerificationTime;
+                    }) || null;
                     const retryReason = retryEvt ? (retryEvt.data as Record<string, unknown>)?.reason as string || '' : '';
 
                     return (
