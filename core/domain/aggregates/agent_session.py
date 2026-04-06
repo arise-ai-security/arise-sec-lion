@@ -35,6 +35,7 @@ from core.domain.events.events import (
     ThoughtCaptured,
     TokensConsumed,
     VerificationFailed,
+    VerificationPassed,
     WorkCompleted,
     WorkerCostRecorded,
     WorkFailed,
@@ -135,8 +136,17 @@ class AgentSession:
         )
         self._emit(child_completed_event)
 
-        if len(self.child_reports) == len(self.child_ids):
+        reported = len(self.child_reports) + len(self.failed_children)
+        if reported == len(self.child_ids):
             aggregated_result = self._aggregate_child_results()
+            if self.failed_children:
+                failed_summary = ", ".join(
+                    str(cid)[:8] for cid in self.failed_children
+                )
+                aggregated_result += (
+                    f"\n\nNote: {len(self.failed_children)} child(ren) failed "
+                    f"({failed_summary}). Results are partial."
+                )
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
@@ -146,7 +156,7 @@ class AgentSession:
 
     def _aggregate_child_results(self) -> str:
         """Combine results from all completed children using structured Reports."""
-        lines = ["All subtasks completed successfully:", ""]
+        lines = ["Subtask results:", ""]
         for child_id in self.child_ids:
             report = self.child_reports.get(child_id)
             if report is None:
@@ -161,10 +171,12 @@ class AgentSession:
         return "\n".join(lines)
 
     def handle_child_failure(self, child_id: UUID, reason: str) -> None:
-        """For BOSS/MANAGER: record child failure and propagate failure up.
+        """For BOSS/MANAGER: record child failure, defer parent decision.
 
-        When any child fails, the parent also fails. This ensures failures
-        bubble up to the BOSS so the execution doesn't hang in WAITING state.
+        Records the failure but waits until all children have reported
+        (completed or failed) before deciding the parent's fate. If at least
+        one child succeeded, the parent aggregates partial results. If ALL
+        children failed, the parent fails.
 
         Args:
             child_id: ID of failed child
@@ -181,13 +193,37 @@ class AgentSession:
         )
         self._emit(child_failed_event)
 
-        # Parent also fails when any child fails
-        work_failed_event = WorkFailed(
-            aggregate_id=self.agent_id,
-            sequence_number=self._next_sequence(),
-            reason=f"Child agent {child_id} failed: {reason}",
-        )
-        self._emit(work_failed_event)
+        # Check if all children have now reported (completed or failed)
+        reported = len(self.child_reports) + len(self.failed_children)
+        if reported < len(self.child_ids):
+            return  # Still waiting for other children
+
+        # All children reported — decide parent outcome
+        if self.child_reports:
+            # At least one child succeeded — aggregate partial results
+            aggregated = self._aggregate_child_results()
+            failed_summary = ", ".join(
+                str(cid)[:8] for cid in self.failed_children
+            )
+            result = (
+                f"{aggregated}\n\n"
+                f"Note: {len(self.failed_children)} child(ren) failed "
+                f"({failed_summary}). Results are partial."
+            )
+            work_completed_event = WorkCompleted(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                result=result,
+            )
+            self._emit(work_completed_event)
+        else:
+            # ALL children failed — parent fails
+            work_failed_event = WorkFailed(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                reason=f"All children failed. Last: {reason}",
+            )
+            self._emit(work_failed_event)
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
@@ -248,7 +284,12 @@ class AgentSession:
     def _(self, event: VerificationFailed) -> None:
         self.status = AgentStatus.FAILED
         self.error_message = f"Verification failed ({event.failed_stage}): {event.feedback}"
+        self.verification_feedback = event.feedback
         self.version += 1
+
+    @_apply.register
+    def _(self, event: VerificationPassed) -> None:
+        self.version += 1  # Observability only — status stays COMPLETED
 
     @_apply.register
     def _(self, event: DecisionInfeasible) -> None:
@@ -262,6 +303,7 @@ class AgentSession:
         self.redecomposition_count += 1
         self.child_ids.clear()
         self.child_reports.clear()
+        self.failed_children.clear()
         self.version += 1
 
     @_apply.register
@@ -312,7 +354,7 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ChildFailed) -> None:
-        # Track failed children (could extend to store failure reasons if needed)
+        self.failed_children.add(event.child_id)
         self.version += 1
 
     @_apply.register
@@ -401,6 +443,10 @@ class AgentSession:
         # Retry tracking
         self.retry_count: int = 0
         self.redecomposition_count: int = 0
+        # Verification feedback for retry (populated on VerificationFailed)
+        self.verification_feedback: str | None = None
+        # Track failed children for partial-success aggregation
+        self.failed_children: set[UUID] = set()
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""
@@ -726,6 +772,15 @@ class AgentSession:
             failed_stage=failed_stage,
             feedback=feedback,
             stages_passed=stages_passed,
+        )
+        self._emit(event)
+
+    def mark_verification_passed(self, feedback: str = "") -> None:
+        """Record that verification passed (observability event)."""
+        event = VerificationPassed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            feedback=feedback,
         )
         self._emit(event)
 

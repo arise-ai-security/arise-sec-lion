@@ -1,0 +1,93 @@
+database:
+  host: localhost
+  port: 5432
+  user: arise
+  name: arise_events
+
+boss:
+  model: gpt-4o
+  temperature: 0.5
+  max_tokens: 4000
+
+manager:
+  model: gpt-4o
+  max_tokens: 4000
+
+worker:
+  model: openai/gpt-4o
+  tool: openhands
+  timeout: 600
+  max_iterations_per_run: 20
+
+orchestration:
+  max_retries: 3
+  poll_interval: 0.5
+  max_run_duration_seconds: 1800
+  max_redecompositions: 2
+  skip_judge: true
+
+  topology:
+    max_depth: 2
+    max_children_per_node: 5
+    max_total_agents: 25
+
+  concurrency:
+    max_concurrent_workers: 1
+    max_concurrent_llm_calls: 1
+    llm_jitter_max_ms: 0
+
+  retry:
+    model_escalation_chain:
+      - openai/gpt-4-turbo
+    circuit_breaker_threshold: 3
+    circuit_breaker_reset_seconds: 300
+
+  tool_calling:
+    max_iterations: 5
+    result_char_limit: 6000
+    condense_after_iteration: 2
+    token_budget: 80000
+    policies:
+      default:
+        pending:
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        manager:
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        boss:
+          toolsets:
+            recon:
+              enabled: false
+      domains:
+        secbench:
+          pending:
+            toolsets:
+              recon:
+                enabled: false
+          manager:
+            max_iterations: 3
+            toolsets:
+              recon:
+                allowed_tools:
+                  - search_codebase
+                  - read_file
+                  - get_file_structure
+                  - get_symbols_overview
+                  - read_symbol
+
+output:
+  verbose: true
+  show_progress: true
+  log_level: INFO
+  directory: ./output
+
+security:
+  enabled: true
+  tools: [valgrind]

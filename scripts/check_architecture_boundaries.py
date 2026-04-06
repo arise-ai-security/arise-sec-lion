@@ -59,9 +59,10 @@ def find_boundary_violations(repo_root: Path = REPO_ROOT) -> list[str]:
             line = content.count("\n", 0, match.start()) + 1
             violations.append(f"{rel_path}:{line}: {message}")
 
-    for path in sorted(repo_root.glob("*.cve-*.json")):
+    for path in sorted(repo_root.glob("*.domain-fixture.*")):
         violations.append(
-            f"{path.relative_to(repo_root)}:1: CVE fixtures must live under plugins/ or tests/"
+            f"{path.relative_to(repo_root)}:1: "
+            "Domain fixture files must live under plugins/ or tests/"
         )
 
     return violations

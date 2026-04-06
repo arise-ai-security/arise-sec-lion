@@ -255,6 +255,7 @@ class PromptBuilder:
         parent_task: str | None = None,
         domain_context: object | None = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
+        prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
         """Build prompt for BOSS agent task delegation."""
         prompt_ctx = PromptContext(
@@ -265,6 +266,7 @@ class PromptBuilder:
             parent_task=parent_task,
             domain_context=domain_context,
             hierarchy_limits=hierarchy_limits,
+            prompt_capabilities=prompt_capabilities,
         )
         limits = self._limits_context(hierarchy_limits)
         chain = (
@@ -287,6 +289,12 @@ class PromptBuilder:
                 task_description=task_description,
                 briefing=None,
                 default_tool=self.default_tool,
+                has_tools=(
+                    prompt_capabilities.has_tools if prompt_capabilities is not None else False
+                ),
+                available_tools=(
+                    prompt_capabilities.available_tools if prompt_capabilities is not None else ()
+                ),
                 **limits,
             )
         )
@@ -307,6 +315,7 @@ class PromptBuilder:
         briefing: "Briefing | None" = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
         scope: SubtaskScope | None = None,
+        prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
         """Build prompt for MANAGER agent task decomposition."""
         prompt_ctx = PromptContext(
@@ -319,6 +328,7 @@ class PromptBuilder:
             hierarchy_limits=hierarchy_limits,
             domain_context=domain_context,
             scope=scope,
+            prompt_capabilities=prompt_capabilities,
         )
         limits = self._limits_context(hierarchy_limits)
         chain = (
@@ -347,6 +357,12 @@ class PromptBuilder:
                 task_description=task_description,
                 briefing=briefing,
                 default_tool=self.default_tool,
+                has_tools=(
+                    prompt_capabilities.has_tools if prompt_capabilities is not None else False
+                ),
+                available_tools=(
+                    prompt_capabilities.available_tools if prompt_capabilities is not None else ()
+                ),
                 **limits,
             )
         )

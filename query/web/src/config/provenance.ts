@@ -7,7 +7,7 @@
  * - SIBLING: Context shared between sibling agents (yellow)
  * - CHILDREN: Results/outcomes from child agents (purple)
  * - SHARED: Global shared context (decisions, artifacts) (orange)
- * - SYSTEM: System-injected context (CVE, workspace) (gray)
+ * - SYSTEM: System-injected context (domain context, workspace) (gray)
  */
 
 import type { SectionProvenance } from '../types/api';
@@ -82,7 +82,7 @@ export const PROVENANCE_STYLES: Record<SectionProvenance, ProvenanceStyle> = {
     borderClass: 'border-gray-300',
     textClass: 'text-gray-600',
     headerBgClass: 'bg-gray-100',
-    description: 'System-injected context (CVE, workspace, user prompt)',
+    description: 'System-injected context (domain context, workspace, user prompt)',
   },
 };
 

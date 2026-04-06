@@ -7,6 +7,7 @@ It properly initializes the event store using the lifespan context manager.
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,18 +16,16 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Settings
 from core.ports.event_store_port import EventStorePort
-from plugins.security import SecurityDomainPlugin
 from query.api.routes import agents, config, events, prompt_trace, prompts
 
 
-# Factory function injected by bootstrap layer (avoids query→infrastructure dependency)
+if TYPE_CHECKING:
+    from core.ports.domain_plugin_port import DomainPlugin
+
+
+# Factory functions injected by bootstrap layer (avoids query→plugins/infrastructure dependency)
 _event_store_factory: Callable[[str], EventStorePort] | None = None
-
-
-def _build_domain_plugin(settings: Settings):
-    if not settings.security.enabled:
-        return None
-    return SecurityDomainPlugin(enabled_tools=settings.security.tools)
+_domain_plugin_factory: Callable[["Settings"], "DomainPlugin | None"] | None = None
 
 
 def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
@@ -37,6 +36,16 @@ def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
     """
     global _event_store_factory
     _event_store_factory = factory
+
+
+def set_domain_plugin_factory(factory: Callable[["Settings"], "DomainPlugin | None"]) -> None:
+    """Set the domain plugin factory function.
+
+    Called by bootstrap layer to inject the concrete domain plugin builder.
+    This avoids query layer importing from plugins.
+    """
+    global _domain_plugin_factory
+    _domain_plugin_factory = factory
 
 
 @asynccontextmanager
@@ -106,7 +115,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
-    app.state.domain_plugin = _build_domain_plugin(settings)
+    app.state.domain_plugin = _domain_plugin_factory(settings) if _domain_plugin_factory else None
 
     # CORS middleware (configured via config.yaml)
     app.add_middleware(

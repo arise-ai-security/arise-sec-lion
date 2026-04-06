@@ -7,11 +7,11 @@ import shlex
 from pathlib import Path
 from uuid import UUID
 
-from plugins.security.container_runtime import (
+from .container_runtime import (
     SecBenchContainerSession,
     SecBenchWorkspace,
 )
-from plugins.security.cve_instance import CVEInstance
+from .cve_instance import CVEInstance
 
 
 logger = logging.getLogger(__name__)

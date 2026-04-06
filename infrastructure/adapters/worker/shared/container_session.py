@@ -63,19 +63,26 @@ class ContainerSessionContext:
             )
         prefix = (
             "## Container-backed SEC-bench workspace\n\n"
-            "**CRITICAL — path mapping (file reads/edits use HOST paths):**\n"
-            f"- Container `/src` → host `./src` (absolute: `{self.host_source_dir}`)\n"
-            f"- Container `/testcase` → host `./testcase` "
-            f"(absolute: `{self.host_testcase_dir}`)\n"
-            f"- Container `{self.container_working_directory}` → host `{work_dir}` "
-            f"(absolute: `{self.host_work_dir}`)\n"
-            "- NEVER use `/src/...` or `/testcase/...` for file read/edit/view — "
-            "use `./src/...` or `./testcase/...` instead.\n\n"
-            "**Source code is already cloned** at `./src/` with the correct commit "
-            "checked out. Do NOT re-clone the repository.\n\n"
-            f'**Helper**: `./{self.helper_script.name} "<command>"` '
-            "runs a shell command inside the container.\n"
+            "⚠️ **ABSOLUTE RULE — TWO SEPARATE FILESYSTEMS:**\n"
+            "You are running on a HOST machine. Source code and testcase files are "
+            "mirrored between host and a Docker container. The file editor tool "
+            "operates on HOST paths. Container paths like `/src/...` and "
+            "`/testcase/...` DO NOT EXIST on the host and WILL ERROR.\n\n"
+            "**File editor (read/write/edit) — ALWAYS use ABSOLUTE host paths:**\n"
+            f"- Source code: `{self.host_source_dir}/...` — "
+            "NOT `/src/...`\n"
+            f"- Test artifacts: `{self.host_testcase_dir}/...` — "
+            "NOT `/testcase/...`\n"
+            f"- Working dir: `{self.host_work_dir}/...` — "
+            f"NOT `{self.container_working_directory}/...`\n"
+            f"- Example: to read rla.c → `{self.host_source_dir}/imagemagick/coders/rla.c`\n"
+            f"- Example: to read repro.sh → `{self.host_testcase_dir}/repro.sh`\n\n"
+            "**Shell commands — ALWAYS use secb-exec for container commands:**\n"
             f"{shell_line}\n"
+            f"**Source code is already cloned** at `{self.host_source_dir}/` with the "
+            "correct commit checked out. Do NOT re-clone the repository.\n\n"
+            f'**Helper**: `./{self.helper_script.name} "<command>"` '
+            "runs a shell command inside the container.\n\n"
         )
         return f"{prefix}\n{task_description}"
 

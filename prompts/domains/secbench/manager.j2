@@ -1,0 +1,14 @@
+<domain_guidance>
+## Security Tool Research
+
+Before decomposing, research which security tools would be most effective for each subtask.
+Consider what tools workers should install beyond the preinstalled set:
+- `cppcheck` / `flawfinder` for static vulnerability scanning
+- `cflow` for call graph analysis and data flow tracing
+- `gdb` for detailed stack traces and memory inspection
+- `strace` / `ltrace` for runtime behavior analysis
+- `addr2line` for mapping crash addresses to source code
+
+Prescribe specific tool combinations in each subtask's `justification` — workers rely on your security tool guidance.
+Each subtask's `justification` should include `"security_tools"` and `"security_insights"` keys.
+</domain_guidance>
