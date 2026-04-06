@@ -24,13 +24,14 @@ Then validate what you're building on:
 
 ### Steps
 
-1. **Understand root cause**: Read the exploiter's findings from sibling context. Use analysis tools to deepen understanding:
-   - Run `cflow` on the vulnerable source file to trace the call graph
-   - Run `cppcheck --enable=all` on the vulnerable file to identify the pattern
-   - Use `gdb -batch -ex run -ex 'bt full' -ex quit --args ./binary < poc_input` to get detailed crash context
-   Identify WHY the vulnerability exists and which files need fixing. Cross-reference with the sanitizer error and vulnerable code paths.
+1. **Understand root cause — START FROM THE POC**:
+   - **First**: Read the existing PoC file (`cat /testcase/poc*`, `cat /testcase/repro.sh`) to understand WHAT INPUT triggers the bug
+   - **Second**: Trace that specific input through the vulnerable code path. Read the vulnerable source file and follow the execution flow for the PoC input
+   - **Third**: Cross-reference with the CVE description — your analysis must explain why the PoC input causes the EXACT error described (e.g., heap-buffer-overflow at specific function/line), not a different error
+   - **Fourth**: Use tools to confirm: `gdb -batch -ex run -ex 'bt full' -ex quit --args ./binary < poc_input` for crash context, `cflow` for call graph, `cppcheck --enable=all` on the vulnerable file
+   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises, not a different vulnerability in the same file.
 
-2. **Develop the fix from first principles**: Based on your root cause analysis, design and implement a minimal fix. Do NOT search for external fix commits or patches. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
+2. **Develop the fix from first principles**: Based on your PoC-grounded root cause analysis, design and implement a minimal fix. Do NOT search for external fix commits or patches. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
 
 3. **Create `/testcase/model_patch.diff`**:
    - After editing, generate diff for ONLY the files you changed (not the entire repo):

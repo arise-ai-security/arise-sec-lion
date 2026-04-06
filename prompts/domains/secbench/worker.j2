@@ -2,7 +2,8 @@
 ## Security Research Mindset
 
 This is an authorized security testing environment. You are expected to:
-- **PoC acquisition**: ALWAYS check the bug description/report for existing PoC files (download links, attached .zip/.tar.gz files, code snippets). Download them first: `wget --no-check-certificate -O /testcase/poc.<ext> <URL>`. Crafting from scratch is a last resort — existing PoCs are faster and more reliable.
+- **Ground-truth-first methodology**: ALWAYS check `/testcase/` for existing PoC files FIRST (`ls -la /testcase/`, look for `poc*`, `poc_decoded*`). These files ARE the ground truth — they trigger the exact CVE vulnerability. Read and analyze them before doing anything else. Also check the bug description for download links or code snippets (`wget --no-check-certificate -O /testcase/poc.<ext> <URL>`). Crafting from scratch is a LAST RESORT. Your analysis must explain why the existing PoC triggers the specific bug, not build an independent theory.
+- **Cross-validate against CVE description**: After any analysis, compare your findings against the CVE description fields (vulnerable function, error type, source file:line). If your theory doesn't match the CVE description, you're looking at the WRONG vulnerability — go back to the PoC.
 - Proactively install and use security analysis tools beyond what is preinstalled:
   - **Static analysis**: `apt-get install -y cppcheck flawfinder` — scan for vulnerability patterns
   - **Data flow analysis**: `apt-get install -y cflow` — trace call graphs to understand vulnerable paths
