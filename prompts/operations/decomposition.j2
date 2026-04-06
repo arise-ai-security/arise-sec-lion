@@ -70,7 +70,7 @@
     **Level: File/Function** — targeted decomposition into specific code areas.
     - Identify specific files and key functions that need work
     - Understand function signatures, data flow, and interactions between components
-    - **3-4 subtasks** targeting specific files and functions (e.g., "analyze ReadRLAImage() in coders/rla.c")
+    - **3-4 subtasks** targeting specific files and functions (e.g., "analyze vulnerable_function() in path/to/file.c")
     - **Deliverables**: Function-level outcomes (analysis report, specific tool output, validated finding)
     - **Scope for children**: Pass function-level `symbols` and code-pattern `search_hints` so children focus on exact functions
     {% elif depth_remaining <= 1 %}
@@ -92,7 +92,7 @@
     - Tools to install and use (exact `apt-get` and run commands)
     - Expected deliverable (file path, format)
     - Success criteria (specific, verifiable)
-    Finer instructions compress context: a worker told "fix bounds check at rla.c:271" needs far less context than "find and fix the vulnerability".
+    Finer instructions compress context: a worker told "fix bounds check at src/parser.c:271" needs far less context than "find and fix the vulnerability".
 
     ### Justification Quality
     The `justification` object is how you transfer reasoning, methodology, and domain knowledge to children:

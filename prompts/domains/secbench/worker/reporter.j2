@@ -20,9 +20,11 @@ cat /testcase/valgrind_convert.txt 2>/dev/null; cat /testcase/valgrind_run.txt 2
 cat /testcase/cppcheck*.txt 2>/dev/null || echo "no cppcheck output"
 ```
 
-Also read the vulnerable source code via shell:
+Also read the vulnerable source code referenced in sibling context (the affected file paths from the CVE):
 ```bash
-head -300 /src/{{ work_dir | replace('/src/', '') }}/coders/rla.c 2>/dev/null || find /src -name "*.c" -path "*rla*" | head -3
+# Read the vulnerable file(s) mentioned in sibling context — adjust the path based on what you find
+find {{ work_dir }} -name "*.c" -o -name "*.cpp" -o -name "*.h" | head -20
+# Then: head -300 {{ work_dir }}/<path-to-vulnerable-file>
 ```
 
 **Step 2: Read sibling context**

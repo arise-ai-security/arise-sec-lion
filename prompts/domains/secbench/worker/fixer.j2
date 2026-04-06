@@ -29,7 +29,7 @@ Base commit hash is at `/testcase/base_commit_hash`.
 3. **Create `/testcase/model_patch.diff`**:
    - After editing, generate diff for ONLY the files you changed (not the entire repo):
      `cd {{ work_dir }} && git diff --no-color -- <file(s)-you-edited> > /testcase/model_patch.diff`
-   - Example: `git diff --no-color -- coders/rla.c > /testcase/model_patch.diff`
+   - Example: `git diff --no-color -- path/to/vulnerable_file.c > /testcase/model_patch.diff`
    - **NEVER** use bare `git diff` or `git diff BASE` — those include unrelated builder changes
    - Verify: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix
 
@@ -61,6 +61,13 @@ Publish your validation results via `<context-update>` for parent/sibling visibi
 <decision key="valgrind_result">No memory errors detected after patching</decision>
 </context-update>
 ```
+
+### ⚠️ CRITICAL: Write Deliverable Files
+
+After running analysis tools, you **MUST write a summary file to `/testcase/`** with your findings. Terminal output alone is NOT sufficient — the verification judge checks for artifact files. Use the file editor to create your deliverable:
+- Root cause analysis → `/testcase/root_cause_analysis.txt`
+- Patch file → `/testcase/model_patch.diff`
+- Validation results → `/testcase/validation_results.txt`
 
 ### Rules
 - ALWAYS reset to base commit before applying patch
