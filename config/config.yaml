@@ -36,6 +36,8 @@ orchestration:
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
 
   retry:
+    max_worker_retries: 1
+    max_verification_retries: 2
     model_escalation_chain:
       - openai/gpt-4-turbo
     circuit_breaker_threshold: 3

@@ -47,6 +47,6 @@ def test_container_session_prefix_mentions_helper_for_manual_shell() -> None:
 
     prompt = session.apply_task_prefix("Do the task", auto_shell=False)
 
-    assert "./src" in prompt
-    assert "./testcase" in prompt
-    assert "./secb-exec" in prompt
+    assert "/src" in prompt
+    assert "/testcase" in prompt
+    assert "secb-exec" in prompt

@@ -14,7 +14,6 @@ class HierarchyLimits(BaseModel):
     current_depth: int
     max_depth: int  # -1 = unlimited
     max_children_per_node: int  # -1 = unlimited
-    max_retries: int
     root_id: UUID  # Reference to SharedStore
     max_total_agents: int = -1  # -1 = unlimited, global limit across hierarchy
     current_total_agents: int = 0  # Snapshot of total agents created so far
@@ -91,7 +90,6 @@ class HierarchyLimits(BaseModel):
         root_id: UUID,
         max_depth: int,
         max_children_per_node: int,
-        max_retries: int,
         max_total_agents: int = -1,
         domain_context: object | None = None,
     ) -> Self:
@@ -100,7 +98,6 @@ class HierarchyLimits(BaseModel):
             current_depth=0,
             max_depth=max_depth,
             max_children_per_node=max_children_per_node,
-            max_retries=max_retries,
             root_id=root_id,
             max_total_agents=max_total_agents,
             current_total_agents=1,  # Root agent counts as 1

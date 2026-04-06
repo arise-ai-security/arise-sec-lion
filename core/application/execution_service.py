@@ -474,7 +474,6 @@ class AgentExecutionService:
             root_id=root_id,
             max_depth=self._system_limits.max_depth,
             max_children_per_node=self._system_limits.max_children_per_node,
-            max_retries=self._config.max_retries,
             max_total_agents=self._system_limits.max_total_agents,
             domain_context=domain_context,
         )
@@ -628,7 +627,7 @@ class AgentExecutionService:
             return
 
         if agent.status == AgentStatus.FAILED:
-            # Verification-specific retry: up to 2 retries with judge feedback
+            # Verification-specific retries are budgeted independently.
             if await self._maybe_retry_verification(agent):
                 return
 
@@ -638,32 +637,39 @@ class AgentExecutionService:
 
             await self._parent_notifier.notify_if_failed(agent)
 
-    _MAX_VERIFICATION_RETRIES = 2
-
     async def _maybe_retry_verification(self, agent: AgentSession) -> bool:
-        """Retry a worker that failed verification, up to _MAX_VERIFICATION_RETRIES.
+        """Retry a worker that failed verification within the configured budget.
 
         Returns True if a retry was scheduled (caller should not notify parent).
         """
         if agent.role != AgentRole.WORKER:
             return False
 
-        if not agent.verification_feedback:
+        if not agent.failed_by_verification:
             return False
 
-        if agent.retry_count >= self._MAX_VERIFICATION_RETRIES:
+        max_verification_retries = (
+            self._retry_config.max_verification_retries
+            if self._retry_config is not None
+            else 2
+        )
+        if agent.verification_retry_count >= max_verification_retries:
             return False
 
         reason = agent.error_message or "Verification failed"
-        agent.schedule_retry(reason=reason, escalated_model=None)
+        agent.schedule_retry(
+            reason=reason,
+            escalated_model=None,
+            is_verification_retry=True,
+        )
 
         await self._repository.persist_events(
             agent, agent.version - 1, self._progress_callback
         )
         logger.info(
             "Verification retry %d/%d for agent %s: %s",
-            agent.retry_count,
-            self._MAX_VERIFICATION_RETRIES,
+            agent.verification_retry_count,
+            max_verification_retries,
             agent.agent_id,
             agent.verification_feedback,
         )

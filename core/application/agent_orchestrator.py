@@ -247,14 +247,17 @@ class AgentOrchestrator:
             )
 
             # Inject verification feedback on retry so worker knows what to fix
-            if agent.verification_feedback and agent.retry_count > 0:
-                criteria_block = ""
+            if (
+                agent.failed_by_verification
+                and agent.verification_feedback
+                and (agent.retry_count > 0 or agent.verification_retry_count > 0)
+            ):
                 if agent.success_criteria:
-                    criteria_block = (
+                    prompt += (
                         f"\n\n**Success criteria you MUST satisfy:**\n"
                         f"{agent.success_criteria}\n"
                     )
-                prompt = self._append_previous_attempt_feedback(prompt, agent)
+            prompt = self._append_previous_attempt_feedback(prompt, agent)
 
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
@@ -493,7 +496,10 @@ class AgentOrchestrator:
             agent: "AgentSession",
     ) -> str:
         """Append prior failure context so retries can self-correct."""
-        if agent.retry_count <= 0 or not agent.last_retry_reason:
+        if (
+            (agent.retry_count <= 0 and agent.verification_retry_count <= 0)
+            or not agent.last_retry_reason
+        ):
             return prompt
 
         feedback = agent.last_retry_reason.strip()

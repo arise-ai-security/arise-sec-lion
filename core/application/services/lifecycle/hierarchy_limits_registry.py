@@ -20,7 +20,6 @@ class HierarchyLimitsRegistry:
         root_id: UUID,
         max_depth: int,
         max_children_per_node: int,
-        max_retries: int,
         max_total_agents: int = -1,
         domain_context: object | None = None,
     ) -> HierarchyLimits:
@@ -29,7 +28,6 @@ class HierarchyLimitsRegistry:
             root_id=root_id,
             max_depth=max_depth,
             max_children_per_node=max_children_per_node,
-            max_retries=max_retries,
             max_total_agents=max_total_agents,
             domain_context=domain_context,
         )

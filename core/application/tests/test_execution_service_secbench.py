@@ -139,7 +139,6 @@ async def test_worker_execution_includes_domain_plugin_task_context(tmp_path: Pa
         agent_id,
         max_depth=-1,
         max_children_per_node=-1,
-        max_retries=3,
     )
 
     boss_config = BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000)

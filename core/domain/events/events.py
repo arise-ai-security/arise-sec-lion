@@ -200,6 +200,7 @@ class RetryScheduled(DomainEvent):
     attempt: int  # 1-indexed retry attempt number
     reason: str  # Why retry was scheduled (original failure reason)
     escalated_model: str | None = None  # New model if escalated, None if same
+    is_verification_retry: bool = False
 
 
 class CodeGenerationStarted(DomainEvent):

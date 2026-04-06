@@ -1,0 +1,66 @@
+database:
+  host: localhost
+  port: 5432
+  user: arise
+  name: arise_events
+
+boss:
+  model: o3
+  max_tokens: 4000
+
+manager:
+  model: o3
+  max_tokens: 4000
+
+worker:
+  model: openai/o3
+  tool: openhands
+  timeout: 900
+  max_iterations_per_run: 40
+
+orchestration:
+  max_retries: 2
+  poll_interval: 0.5
+  max_run_duration_seconds: 1800
+  max_redecompositions: 1
+  skip_judge: true
+
+  topology:
+    max_depth: 2               # BOSS(0) -> assessed(1) -> forced-workers(2)
+    max_children_per_node: 5
+    max_total_agents: 15
+
+  concurrency:
+    max_concurrent_workers: 1
+    max_concurrent_llm_calls: 1
+    llm_jitter_max_ms: 0
+
+  tool_calling:
+    max_iterations: 5
+    result_char_limit: 6000
+    condense_after_iteration: 2
+    token_budget: 80000
+    policies:
+      default:
+        pending:
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        manager:
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        boss:
+          toolsets:
+            recon:
+              enabled: false
+
+output:
+  verbose: true
+  show_progress: true
+  log_level: INFO
+  directory: ./output

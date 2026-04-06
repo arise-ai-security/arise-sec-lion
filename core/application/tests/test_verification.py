@@ -189,8 +189,8 @@ class TestVerificationJudge:
         assert not any("quality judge" in c.lower() for c in llm.calls)
 
     @pytest.mark.asyncio
-    async def test_judge_parse_failure_passes_gracefully(self) -> None:
-        """If judge response can't be parsed, verification passes (don't block)."""
+    async def test_judge_parse_failure_fails_verification(self) -> None:
+        """If judge response can't be parsed, verification fails."""
         llm = FakeLLM()
         llm._judge_response = "not json at all"  # type: ignore
         orchestrator = _make_orchestrator(llm=llm)
@@ -198,8 +198,8 @@ class TestVerificationJudge:
 
         await orchestrator.execute_task(agent)
 
-        # Should still pass (parse failure = pass)
-        assert agent.status == AgentStatus.COMPLETED
+        # Unparseable judge response now fails verification
+        assert agent.status == AgentStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_judge_prompt_strips_ansi_sequences(self) -> None:
