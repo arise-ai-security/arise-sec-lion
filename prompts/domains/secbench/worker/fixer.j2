@@ -64,10 +64,12 @@ Publish your validation results via `<context-update>` for parent/sibling visibi
 
 ### ⚠️ CRITICAL: Write Deliverable Files
 
-After running analysis tools, you **MUST write a summary file to `/testcase/`** with your findings. Terminal output alone is NOT sufficient — the verification judge checks for artifact files. Use the file editor to create your deliverable:
+After running analysis tools, you **MUST write a summary file to `/testcase/`** with your findings. Terminal output alone is NOT sufficient — the verification judge checks for artifact files. Use the file editor to create your deliverable, then **print the file contents** via `cat /testcase/<your-file>` so the judge can see the evidence in your output:
 - Root cause analysis → `/testcase/root_cause_analysis.txt`
 - Patch file → `/testcase/model_patch.diff`
 - Validation results → `/testcase/validation_results.txt`
+
+After creating each file, run: `echo "=== <filename> ===" && cat /testcase/<filename>` to make the contents visible.
 
 ### Rules
 - ALWAYS reset to base commit before applying patch
