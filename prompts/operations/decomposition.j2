@@ -53,7 +53,7 @@
     5. Use `read_symbol` or `read_file` for targeted deep reads of critical code
     6. Use your findings to create informed, specific subtask descriptions with:
        - Exact file paths and function names you discovered
-       - Specific code patterns or vulnerabilities you identified
+       - Specific code patterns or issues you identified
        - Tool combinations that would help workers analyze the code
     {% endif %}
     {% if depth_remaining is not none %}
@@ -63,14 +63,14 @@
     **Level: Module/Subsystem** — broad decomposition into major phases.
     - Identify major components, their responsibilities, and dependencies
     - Determine which subsystems need changes and their natural boundaries
-    - **2-3 subtasks** at phase boundaries (e.g., "build", "exploit", "fix")
-    - **Deliverables**: Phase-level outcomes (compiled binary, PoC script, patch file)
+    - **2-3 subtasks** at phase boundaries (e.g., "research", "implement", "verify")
+    - **Deliverables**: Phase-level outcomes (compiled artifact, test script, solution file)
     - **Scope for children**: Pass file-level `target_paths` and component-level `symbols` to narrow their focus
     {% elif depth_remaining == 2 %}
     **Level: File/Function** — targeted decomposition into specific code areas.
     - Identify specific files and key functions that need work
     - Understand function signatures, data flow, and interactions between components
-    - **3-4 subtasks** targeting specific files and functions (e.g., "analyze vulnerable_function() in path/to/file.c")
+    - **3-4 subtasks** targeting specific files and functions (e.g., "analyze parse_input() in path/to/file.c")
     - **Deliverables**: Function-level outcomes (analysis report, specific tool output, validated finding)
     - **Scope for children**: Pass function-level `symbols` and code-pattern `search_hints` so children focus on exact functions
     {% elif depth_remaining <= 1 %}
@@ -92,13 +92,13 @@
     - Tools to install and use (exact `apt-get` and run commands)
     - Expected deliverable (file path, format)
     - Success criteria (specific, verifiable)
-    Finer instructions compress context: a worker told "fix bounds check at src/parser.c:271" needs far less context than "find and fix the vulnerability".
+    Finer instructions compress context: a worker told "fix bounds check at src/parser.c:271" needs far less context than "investigate and resolve the problem".
 
     ### Justification Quality
     The `justification` object is how you transfer reasoning, methodology, and domain knowledge to children:
     - `"objective"`: What this achieves in the context of the overall goal
     - `"plan"`: Step-by-step methodology — specific commands, tools, analysis sequences, fallback approaches
-    - Domain-specific keys as instructed (e.g., `security_insights`, `security_tools`, `context_sharing`)
+    - Domain-specific keys as instructed (e.g., `domain_insights`, `recommended_tools`, `context_sharing`)
     Invest in rich justifications — they are the primary guidance for autonomous workers.
 
     ### Peer Coordination

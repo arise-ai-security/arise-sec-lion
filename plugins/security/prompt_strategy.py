@@ -127,23 +127,24 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
+        cve_ctx = cve_instance.to_template_context()
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
-        if branch is None:
-            return None
+
+        chain = _with_cve_display(chain, cve_instance, phase=branch)
+        chain = chain.render("domains/secbench/manager.j2", **cve_ctx)
 
         is_direct_boss_child = context.briefing is not None and len(context.briefing.ancestry) == 1
-        if not is_direct_boss_child:
-            return None
+        if branch is not None and is_direct_boss_child:
+            chain = (
+                chain
+                .render_if(branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx)
+                .render_if(branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx)
+                .render_if(branch == "fixer", "domains/secbench/manager/fixer.j2", **cve_ctx)
+            )
 
-        cve_ctx = cve_instance.to_template_context()
-        return (
-            _with_cve_display(chain, cve_instance, phase=branch)
-            .render_if(branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx)
-            .render_if(branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx)
-            .render_if(branch == "fixer", "domains/secbench/manager/fixer.j2", **cve_ctx)
-        )
+        return chain
 
     def extend_worker_prompt(
         self,
@@ -154,18 +155,21 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
+        cve_ctx = cve_instance.to_template_context()
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
-        if branch is None:
-            return None
 
-        cve_ctx = cve_instance.to_template_context()
+        chain = _with_cve_display(chain, cve_instance, phase=branch)
+        chain = chain.render("domains/secbench/worker.j2", **cve_ctx)
 
-        return (
-            _with_cve_display(chain, cve_instance, phase=branch)
-            .render_if(branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx)
-            .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
-            .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
-            .render_if(branch == "reporter", "domains/secbench/worker/reporter.j2", **cve_ctx)
-        )
+        if branch is not None:
+            chain = (
+                chain
+                .render_if(branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx)
+                .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
+                .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
+                .render_if(branch == "reporter", "domains/secbench/worker/reporter.j2", **cve_ctx)
+            )
+
+        return chain

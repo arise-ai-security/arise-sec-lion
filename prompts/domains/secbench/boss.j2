@@ -1,4 +1,18 @@
 <domain_operation>
+## Security Analysis Before Decomposition
+
+Analyze the vulnerability's attack surface before creating subtasks:
+- What is the vulnerability type (CWE class) and what analysis techniques apply?
+- What security tools beyond defaults would help? Consider:
+  - **Static analysis**: `cppcheck`, `flawfinder`, `cflow` for call graph and vulnerability patterns
+  - **Memory analysis**: `gdb` + backtrace, `addr2line`, enhanced ASan options, `strace`/`ltrace`
+  - **Dynamic analysis**: Valgrind with specific tool modes, custom sanitizer configurations
+- What are the key technical challenges and potential failure modes for this CVE?
+- What artifacts does each phase produce that downstream phases need?
+- Where might workers get stuck, and what alternative approaches should they try?
+
+Use this analysis to write richer `justification` objects that transfer your security insights to children.
+
 ## Vulnerability Reproduction — 4-Phase Process
 
 The repository is already cloned in the working directory. DO NOT clone again.
