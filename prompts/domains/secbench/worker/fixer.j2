@@ -5,16 +5,22 @@ Refer to Task Context above for repository location and vulnerability details.
 Base commit hash is at `/testcase/base_commit_hash`.
 **Exploiter phase is already complete** — use the exploiter's artifacts for validation.
 
-### Prerequisites — Validate Peer Work Before Starting
+### Prerequisites — Reuse Peer Work (CRITICAL)
 
-1. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Validate these findings:**
-   - Run `ls -la` on reported PoC file path — confirm it exists
-   - Run the reported exploit command — confirm it triggers the expected error
-   - If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
-2. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
-3. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
-4. **Install analysis tools**: `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
-5. **Read the PoC file** to understand what input triggers the vulnerability — this informs your root cause analysis.
+**BEFORE doing ANY analysis, leverage what siblings already produced:**
+1. Run `ls -la /testcase/` to see ALL existing artifacts from upstream siblings and peers
+2. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Reuse these directly.**
+3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis
+4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
+
+Then validate what you're building on:
+- Run `ls -la` on reported PoC file path — confirm it exists
+- Run the reported exploit command — confirm it triggers the expected error
+- If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
+5. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
+6. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
+7. **Install analysis tools**: `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
+8. **Read the PoC file** to understand what input triggers the vulnerability — this informs your root cause analysis.
 
 ### Steps
 

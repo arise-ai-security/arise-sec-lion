@@ -88,4 +88,5 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 - Workers operate autonomously — provide specific fallback approaches in justifications (e.g., "if the initial fix attempt doesn't resolve the sanitizer error, analyze the validation output and adjust the patch").
 - Instruct each downstream worker to **validate upstream peer findings** before using them (check files exist, verify reported analysis is consistent with the code).
 - Validation must use multiple complementary tools (Valgrind + GDB + ASan + static analysis) — not just one.
+- `success_criteria` for each subtask MUST reference only observable deliverables (files in `/testcase/`, sanitizer output, exit codes). Do NOT specify specific tool versions, library internals, or implementation techniques the worker must use.
 </domain_operation>

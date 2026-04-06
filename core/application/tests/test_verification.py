@@ -35,7 +35,7 @@ class FakeLLM:
     """Fake LLM for verification tests."""
 
     def __init__(self, judge_response: dict | None = None) -> None:
-        self._judge_response = judge_response or {"passed": True, "feedback": "ok"}
+        self._judge_response = judge_response or {"score": 85, "feedback": "ok"}
         self.calls: list[str] = []
 
     async def query(self, prompt: str, config_dict: dict) -> str:
@@ -151,7 +151,7 @@ class TestVerificationJudge:
 
     @pytest.mark.asyncio
     async def test_judge_passes(self) -> None:
-        llm = FakeLLM(judge_response={"passed": True, "feedback": "looks good"})
+        llm = FakeLLM(judge_response={"score": 85, "feedback": "looks good"})
         orchestrator = _make_orchestrator(llm=llm)
         agent = _make_worker_agent(success_criteria="Output must contain valid code")
 
@@ -161,7 +161,7 @@ class TestVerificationJudge:
 
     @pytest.mark.asyncio
     async def test_judge_fails(self) -> None:
-        llm = FakeLLM(judge_response={"passed": False, "feedback": "Missing tests"})
+        llm = FakeLLM(judge_response={"score": 30, "feedback": "Missing tests"})
         orchestrator = _make_orchestrator(llm=llm)
         agent = _make_worker_agent(success_criteria="Must include unit tests")
 
@@ -172,7 +172,41 @@ class TestVerificationJudge:
         assert len(verification_events) == 1
         assert verification_events[0].failed_stage == "judge"
         assert "Missing tests" in verification_events[0].feedback
+        assert verification_events[0].score == 30
         assert "structural" in verification_events[0].stages_passed
+
+    @pytest.mark.asyncio
+    async def test_judge_threshold_60_passes(self) -> None:
+        """Score of exactly 60 should pass (threshold is 60)."""
+        llm = FakeLLM(judge_response={"score": 60, "feedback": "barely acceptable"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Must do the work")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_judge_score_59_fails(self) -> None:
+        """Score of 59 should fail (below threshold of 60)."""
+        llm = FakeLLM(judge_response={"score": 59, "feedback": "not enough"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Must do the work")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_judge_backward_compat_passed_true(self) -> None:
+        """Old-style {"passed": true} response maps to score 100."""
+        llm = FakeLLM(judge_response={"passed": True, "feedback": "looks good"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Output must be valid")
+
+        await orchestrator.execute_task(agent)
+
+        assert agent.status == AgentStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_no_criteria_skips_judge(self) -> None:
@@ -189,8 +223,8 @@ class TestVerificationJudge:
         assert not any("quality judge" in c.lower() for c in llm.calls)
 
     @pytest.mark.asyncio
-    async def test_judge_parse_failure_passes_gracefully(self) -> None:
-        """If judge response can't be parsed, verification passes (don't block)."""
+    async def test_judge_parse_failure_fails_verification(self) -> None:
+        """If judge response can't be parsed, verification fails (don't silently pass)."""
         llm = FakeLLM()
         llm._judge_response = "not json at all"  # type: ignore
         orchestrator = _make_orchestrator(llm=llm)
@@ -198,8 +232,7 @@ class TestVerificationJudge:
 
         await orchestrator.execute_task(agent)
 
-        # Should still pass (parse failure = pass)
-        assert agent.status == AgentStatus.COMPLETED
+        assert agent.status == AgentStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_judge_prompt_strips_ansi_sequences(self) -> None:
@@ -254,9 +287,9 @@ class TestJudgeLargeOutput:
                 self.calls.append(prompt)
                 # If judge can see the evidence, it passes
                 if "expected pattern confirmed" in prompt:
-                    verdict = {"passed": True, "feedback": "Task completed"}
+                    verdict = {"score": 90, "feedback": "Task completed"}
                 else:
-                    verdict = {"passed": False, "feedback": "No evidence of completion"}
+                    verdict = {"score": 20, "feedback": "No evidence of completion"}
                 return LLMResponse(
                     content=json.dumps(verdict),
                     usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
@@ -286,9 +319,9 @@ class TestJudgeLargeOutput:
             async def query_with_usage(self, prompt: str, config_dict: dict) -> LLMResponse:
                 self.calls.append(prompt)
                 if "Fixed parsing error" in prompt:
-                    verdict = {"passed": True, "feedback": "Patch applied"}
+                    verdict = {"score": 90, "feedback": "Patch applied"}
                 else:
-                    verdict = {"passed": False, "feedback": "No patch found"}
+                    verdict = {"score": 20, "feedback": "No patch found"}
                 return LLMResponse(
                     content=json.dumps(verdict),
                     usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
