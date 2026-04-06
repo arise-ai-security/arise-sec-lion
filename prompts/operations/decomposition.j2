@@ -150,12 +150,12 @@
     },
     "config": {
     "strategy": "heuristic",
-    "base": {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 4000},
+    "base": {"model": "o3", "temperature": 0.5, "max_tokens": 4000},
     "tool": "{{ default_tool }}"
     },
     "depends_on": [],  // 0-indexed INTEGER positions of sibling subtasks this depends on (e.g. [0, 1]), NOT string names
     "estimated_complexity": "simple | complex | unknown",
-    "success_criteria": "what constitutes success",
+    "success_criteria": "observable, verifiable outcome — file exists, command exits 0, output contains pattern (NOT build tools or project internals)",
     "task_type": "general | research | implementation | testing | analysis",
     "target_paths": ["src/relevant_file.c"],
     "symbols": ["function_name"],
@@ -181,7 +181,8 @@
     6. Required fields: `description`, `justification`, `config`
     7. Optional fields: `depends_on`, `estimated_complexity`, `success_criteria`, `task_type`, `target_paths`,
     `symbols`, `search_hints`
-    8. Temperature: 0.0-2.0 | max_tokens: 1-100000
+    8. `success_criteria` MUST describe observable, verifiable outcomes (file exists, command exits 0, output contains pattern). Do NOT specify project-specific build tools, internal library names, or implementation details the worker cannot control.
+    9. Temperature: 0.0-2.0 | max_tokens: 1-100000
     {% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
 
         If constraints cannot be satisfied:

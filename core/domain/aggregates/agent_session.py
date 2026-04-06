@@ -285,10 +285,12 @@ class AgentSession:
         self.status = AgentStatus.FAILED
         self.error_message = f"Verification failed ({event.failed_stage}): {event.feedback}"
         self.verification_feedback = event.feedback
+        self.verification_score = event.score
         self.version += 1
 
     @_apply.register
     def _(self, event: VerificationPassed) -> None:
+        self.verification_score = event.score
         self.version += 1  # Observability only — status stays COMPLETED
 
     @_apply.register
@@ -445,6 +447,7 @@ class AgentSession:
         self.redecomposition_count: int = 0
         # Verification feedback for retry (populated on VerificationFailed)
         self.verification_feedback: str | None = None
+        self.verification_score: int | None = None
         # Track failed children for partial-success aggregation
         self.failed_children: set[UUID] = set()
 
@@ -764,6 +767,7 @@ class AgentSession:
         failed_stage: str,
         feedback: str,
         stages_passed: list[str],
+        score: int = 0,
     ) -> None:
         """Record a verification failure via the public aggregate API."""
         event = VerificationFailed(
@@ -772,15 +776,17 @@ class AgentSession:
             failed_stage=failed_stage,
             feedback=feedback,
             stages_passed=stages_passed,
+            score=score,
         )
         self._emit(event)
 
-    def mark_verification_passed(self, feedback: str = "") -> None:
+    def mark_verification_passed(self, feedback: str = "", score: int = 100) -> None:
         """Record that verification passed (observability event)."""
         event = VerificationPassed(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             feedback=feedback,
+            score=score,
         )
         self._emit(event)
 

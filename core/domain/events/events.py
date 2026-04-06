@@ -136,6 +136,7 @@ class VerificationFailed(DomainEvent):
     failed_stage: str  # "structural", "deterministic", "execution", "judge"
     feedback: str  # Structured feedback for retry/parent
     stages_passed: list[str] = Field(default_factory=list)  # Stages that passed before failure
+    score: int = 0  # Judge satisfaction score (0-100), 0 for non-judge stages
 
 
 class VerificationPassed(DomainEvent):
@@ -145,6 +146,7 @@ class VerificationPassed(DomainEvent):
     """
 
     feedback: str = ""  # Judge feedback when passed
+    score: int = 100  # Judge satisfaction score (0-100)
 
 
 class DecisionInfeasible(DomainEvent):

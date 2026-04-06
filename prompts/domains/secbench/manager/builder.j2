@@ -34,4 +34,5 @@ Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Ex
 - Instruct workers to install analysis tools: `apt-get install -y cppcheck gdb 2>/dev/null || true`
 - Workers operate autonomously — provide fallback approaches for common build failures in the justification.
 - Instruct each worker to validate upstream peer outcomes before building on them.
+- `success_criteria` for each subtask MUST reference only observable deliverables and exit codes. Do NOT specify which build system the project uses (make, cmake, ninja, rake, meson, etc.) — the worker will discover the correct build tool from `/src/build.sh` and the project's own configuration.
 </domain_operation>

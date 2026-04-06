@@ -60,6 +60,19 @@ If upstream siblings (e.g., Build-Setup) shared decisions, verify them:
 - Verify the repo is at the correct commit: `git log -1 --format=%H`
 - If findings are inconsistent, investigate and correct
 
+### CRITICAL: Print Deliverable Files
+
+After creating each deliverable, you **MUST print its contents** via `cat` so the verification judge can see the evidence in your output log. The judge evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
+
+```bash
+echo "=== base_commit_hash ===" && cat /testcase/base_commit_hash
+echo "=== build.sh ===" && cat /src/build.sh
+echo "=== repo_changes.diff ===" && cat /testcase/repo_changes.diff
+echo "=== packages.txt ===" && cat /testcase/packages.txt
+```
+
+After creating or editing each file, run: `echo "=== <filename> ===" && cat /path/to/<filename>` to make the contents visible.
+
 ### Rules
 - DO NOT disable sanitizer options — they are essential for bug detection
 </domain_instructions>

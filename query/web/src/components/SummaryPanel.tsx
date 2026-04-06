@@ -371,6 +371,7 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
         const feedback = (lastVerification.data as Record<string, unknown>)?.feedback as string || '';
         const failedStage = (lastVerification.data as Record<string, unknown>)?.failed_stage as string || '';
         const stagesPassed = (lastVerification.data as Record<string, unknown>)?.stages_passed as string[] || [];
+        const lastScore = (lastVerification.data as Record<string, unknown>)?.score as number | undefined;
 
         return (
           <Section title={`Verification ${passed ? 'Passed' : 'Failed'}${retryEvents.length > 0 ? ` (${retryEvents.length} retries)` : ''}`}>
@@ -384,6 +385,16 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                   <span className={`text-sm font-medium ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
                     {passed ? 'Verification Passed' : `Failed at stage: ${failedStage}`}
                   </span>
+                  {lastScore != null && (
+                    <span className={`ml-auto text-xs font-mono px-2 py-0.5 rounded-full ${
+                      lastScore >= 90 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' :
+                      lastScore >= 60 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300' :
+                      lastScore >= 30 ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300' :
+                      'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+                    }`}>
+                      Score: {lastScore}/100
+                    </span>
+                  )}
                 </div>
 
                 {!passed && stagesPassed.length > 0 && (
@@ -412,6 +423,7 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                     const evtFeedback = (evt.data as Record<string, unknown>)?.feedback as string || '';
                     const evtStage = (evt.data as Record<string, unknown>)?.failed_stage as string || '';
                     const evtStagesPassed = (evt.data as Record<string, unknown>)?.stages_passed as string[] || [];
+                    const evtScore = (evt.data as Record<string, unknown>)?.score as number | undefined;
                     // Find the first RetryScheduled that occurred after this verification event
                     const evtTime = new Date(evt.occurred_at).getTime();
                     const nextVerificationTime = i + 1 < verificationEvents.length
@@ -429,6 +441,13 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                           <span>{evtPassed ? '✓' : '✗'}</span>
                           <span className="font-medium">Attempt {i + 1}</span>
                           {!evtPassed && evtStage && <span className="text-red-500">({evtStage})</span>}
+                          {evtScore != null && (
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
+                              evtScore >= 60 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
+                              evtScore >= 30 ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' :
+                              'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                            }`}>{evtScore}/100</span>
+                          )}
                           <span className="text-gray-400 ml-auto">{new Date(evt.occurred_at).toLocaleTimeString()}</span>
                         </div>
                         {!evtPassed && evtStagesPassed.length > 0 && (

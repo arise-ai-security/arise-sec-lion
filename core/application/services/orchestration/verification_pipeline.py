@@ -49,6 +49,8 @@ class VerificationStage:
 class VerificationPipeline:
     """Run deterministic and judge-based verification for worker output."""
 
+    _JUDGE_PASS_THRESHOLD = 60
+
     def __init__(self, llm_port: "LLMPort", *, skip_judge: bool = False) -> None:
         self._llm_port = llm_port
         self._skip_judge = skip_judge
@@ -93,14 +95,14 @@ class VerificationPipeline:
 
         report_context = self._build_report_context(agent)
 
-        judge_passed, feedback = await self._verify_with_judge(
+        judge_passed, feedback, score = await self._verify_with_judge(
             result=result,
             success_criteria=agent.success_criteria,
             config=agent.config,
             report_context=report_context,
         )
         if judge_passed:
-            agent.mark_verification_passed(feedback)
+            agent.mark_verification_passed(feedback, score=score)
             return
 
         if not judge_passed:
@@ -108,6 +110,7 @@ class VerificationPipeline:
                 failed_stage="judge",
                 feedback=feedback,
                 stages_passed=stages_passed,
+                score=score,
             )
 
     @staticmethod
@@ -170,7 +173,7 @@ class VerificationPipeline:
         success_criteria: str,
         config: Any,
         report_context: str = "",
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, int]:
         """Stage 4: LLM judge evaluates output against success criteria."""
         report_section = ""
         if report_context:
@@ -197,15 +200,21 @@ class VerificationPipeline:
             "already produced the required deliverables, and the worker validated "
             "those existing artifacts (read and confirmed their quality), that "
             "counts as a PASS. Avoiding redundant work is efficient, not lazy.\n\n"
+            "BUILD TOOL TOLERANCE: If the success criteria mention a specific build "
+            "tool (e.g., Ninja, CMake, Meson, Rake) but the worker used a different "
+            "tool that successfully built the project, that is a PASS. The success "
+            "criteria may contain incorrect assumptions about the project's build "
+            "system. Judge by whether the build SUCCEEDED, not by which tool was used.\n\n"
             f"## Success Criteria\n{success_criteria}\n\n"
             f"{report_section}"
             f"## Work Output (command log, may be truncated)\n"
             f"{_head_tail(_strip_ansi(result), 30000)}\n\n"
             "YOUR RESPONSE MUST BE EXACTLY ONE LINE OF VALID JSON, nothing else. "
             "No markdown, no explanation before or after, just the JSON object:\n"
-            '{"passed": true, "feedback": "explanation of where deliverables were found"}\n'
-            "or\n"
-            '{"passed": false, "feedback": "explanation of what is missing"}'
+            '{"score": 75, "feedback": "explanation of what was accomplished and any gaps"}\n'
+            "Where score is an integer from 0 (nothing done) to 100 (fully complete). "
+            "Scoring guide: 90-100 = fully met criteria, 60-89 = substantially met "
+            "with minor gaps, 30-59 = partial progress, 0-29 = little to no progress."
         )
 
         raw = ""
@@ -219,7 +228,10 @@ class VerificationPipeline:
             raw = response.content
 
             if not raw or not raw.strip():
-                logger.warning("Judge returned empty response (model=%s), retrying once", response.model)
+                logger.warning(
+                    "Judge returned empty response (model=%s), retrying once",
+                    response.model,
+                )
                 # Retry once with higher token limit
                 retry_config = dict(config_dict)
                 retry_config["max_tokens"] = 1000
@@ -227,21 +239,49 @@ class VerificationPipeline:
                 raw = retry_response.content
                 if not raw or not raw.strip():
                     logger.warning("Judge retry also empty — failing verification")
-                    return False, "Judge could not evaluate (empty response after retry)"
+                    return False, "Judge could not evaluate (empty response after retry)", 0
 
             clean = strip_markdown_code_block(raw)
             data = json.loads(clean)
             if not isinstance(data, dict):
                 raise ValueError(f"Expected dict, got {type(data).__name__}")
-            return bool(data.get("passed", False)), data.get("feedback", "")
+            score = int(data.get("score", 0))
+            # Backward compat: if old-style "passed" key present but no "score"
+            if "passed" in data and "score" not in data:
+                score = 100 if data["passed"] else 0
+            feedback = data.get("feedback", "")
+            passed = score >= self._JUDGE_PASS_THRESHOLD
+            return passed, feedback, min(100, max(0, score))
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
-            logger.warning("Judge JSON parse failed (%s), trying regex fallback. Raw: %.500s", e, raw)
-            # Regex fallback: extract passed/feedback from malformed JSON
-            passed_match = re.search(r'"passed"\s*:\s*(true|false)', raw, re.IGNORECASE)
+            logger.warning(
+                "Judge JSON parse failed (%s), trying regex fallback. Raw: %.500s",
+                e, raw,
+            )
             feedback_match = re.search(r'"feedback"\s*:\s*"([^"]*)"', raw)
+            # Try score-based extraction first
+            score_match = re.search(r'"score"\s*:\s*(\d+)', raw)
+            if score_match:
+                score = min(100, max(0, int(score_match.group(1))))
+                feedback = feedback_match.group(1) if feedback_match else ""
+                passed = score >= self._JUDGE_PASS_THRESHOLD
+                fallback_msg = f"Judge score {score} (extracted)"
+                return passed, feedback or fallback_msg, score
+            # Fall back to old passed/feedback extraction
+            passed_match = re.search(
+                r'"passed"\s*:\s*(true|false)', raw, re.IGNORECASE,
+            )
             if passed_match:
                 passed = passed_match.group(1).lower() == "true"
+                score = 100 if passed else 0
                 feedback = feedback_match.group(1) if feedback_match else ""
-                return passed, feedback or ("Judge passed (extracted from malformed response)" if passed else "Judge failed (extracted from malformed response)")
-            logger.warning("Regex fallback also failed, failing verification. Raw length=%d", len(raw))
-            return False, "Judge response could not be parsed — verification failed"
+                fallback_msg = "Judge passed (extracted)" if passed else "Judge failed (extracted)"
+                return passed, feedback or fallback_msg, score
+            logger.warning(
+                "Regex fallback also failed, failing verification. Raw length=%d",
+                len(raw),
+            )
+            return (
+                False,
+                "Judge response could not be parsed — verification failed",
+                0,
+            )
