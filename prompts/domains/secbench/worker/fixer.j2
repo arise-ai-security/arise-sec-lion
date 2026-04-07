@@ -10,12 +10,13 @@ Base commit hash is at `/testcase/base_commit_hash`.
 **BEFORE doing ANY analysis, leverage what siblings already produced:**
 1. Run `ls -la /testcase/` to see ALL existing artifacts from upstream siblings and peers
 2. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Reuse these directly.**
-3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis
+3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis. **Peer workers' findings come from real experiments (gdb, code tracing, crash reproduction) and take priority over the manager's initial task framing when they conflict.** If the analyst discovered the root cause is in a different file than what the manager suggested, follow the analyst. **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself.
 4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
 
 Then validate what you're building on:
 - Run `ls -la` on reported PoC file path — confirm it exists
 - Run the reported exploit command — confirm it triggers the expected error
+- **Read exploiter artifacts** if available: `cat /testcase/data_flow_findings.txt`, `cat /testcase/asan_crash*.txt`, `cat /testcase/static_findings.txt` — these contain data flow traces, sanitizer output, and static analysis that inform root cause analysis
 - If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
 5. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
 6. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
@@ -24,33 +25,31 @@ Then validate what you're building on:
 
 ### Steps
 
-1. **Understand root cause — START FROM THE POC, CLASSIFY THE CWE**:
+1. **Understand root cause — START FROM THE POC, CLASSIFY THE CWE, TRACE TO DATA ORIGIN**:
    - **First**: Read the existing PoC file (`cat /testcase/poc*`, `cat /testcase/repro.sh`) to understand WHAT INPUT triggers the bug
-   - **Second**: Classify the CWE from the sanitizer error. Match the signature:
-     - `heap/stack-buffer-overflow`, `out-of-bounds` → **Memory Safety** (bounds check needed)
-     - `LeakSanitizer`, `double-free`, `use-after-free` → **Memory Lifecycle** (cleanup/lifecycle fix needed)
-     - `SEGV`, `null-dereference` → **Pointer Errors** (null check needed)
-     - Integer overflow indicators, UBSan → **Integer/Numeric** (range check needed)
-     - Format string, type confusion → **Logic/Type** (logic correction needed)
-   - **Third**: Trace the PoC input through the vulnerable code path using CWE-specific analysis:
-     - **Memory Safety**: Find where buffer is allocated (size?) and where it's accessed (with what offset/index?). The gap between allocation and access IS the bug.
-     - **Memory Lifecycle**: Find where memory is allocated, then find ALL paths to function exit. The path that skips `free()` IS the bug. Check for early returns, exception macros, goto labels.
-     - **Pointer Errors**: Find what returns the pointer (which function?), what makes it return NULL (what input condition?), and where it's dereferenced without a check.
-     - **Integer/Numeric**: Find the arithmetic operation, trace the input values, identify where overflow/truncation occurs.
-   - **Fourth**: Use CWE-appropriate tools to confirm:
-     - Memory Lifecycle: `valgrind --leak-check=full --track-origins=yes ./binary < poc` (shows exact allocation point of leaked memory)
-     - Memory Safety: `gdb -batch -ex run -ex 'bt full'` + `cppcheck --enable=all <vulnerable_file>`
-     - Pointer: `gdb -batch -ex run -ex 'bt full' -ex 'info locals'` (shows NULL pointer value)
-     - Integer: `cppcheck --enable=all` + GDB to print variable values at the overflow point
-   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises, not a different vulnerability in the same file.
+   - **Second**: Classify the CWE from the sanitizer error to guide your analysis approach:
+     - `heap/stack-buffer-overflow`, `out-of-bounds` → **Memory Safety** — trace buffer allocation vs access
+     - `LeakSanitizer`, `double-free`, `use-after-free` → **Memory Lifecycle** — map object lifecycle
+     - `SEGV`, `null-dereference` → **Pointer Errors** — trace pointer to where it becomes invalid
+     - Integer overflow indicators, UBSan → **Integer/Numeric** — trace arithmetic from input
+     - Format string, type confusion → **Logic/Type** — identify logic error
+   - **Third**: Identify TWO locations — the **crash site** and the **caller-side bug**:
+     - The **crash site** is where the program actually crashes (the sanitizer report tells you this). This is a SIGNAL, not the bug.
+     - The **caller-side bug** is WHY the program is in the invalid state that caused the crash. Trace BACKWARD from the crash: "Why is this pointer NULL?" → "Because function X returned early" → "Why did it return early?" → "Because field Y in the input was invalid" ��� "Where should field Y have been validated?" → THAT is the real bug.
+     - **Fix the caller-side bug**, not the crash site. Silencing the crash just hides the bug as silent failures.
+   - **Fourth**: **Read the code at the data origin.** Use `cat` or `read_file` to read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
+   - **Fifth**: Use CWE-appropriate tools to confirm your analysis:
+     - `gdb -batch -ex run -ex 'bt full'` to see the full crash chain
+     - `cppcheck --enable=all <vulnerable_file>` for static pattern detection
+     - Valgrind for memory lifecycle issues
+   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises.
 
-2. **Develop the fix using the CWE-appropriate pattern**: Based on your CWE classification and root cause analysis, apply the correct fix pattern. Do NOT search for external fix commits or patches.
-   - **Memory Safety**: Add bounds check — `if (offset + len > buf_size) { return ERROR; }` — BEFORE the out-of-bounds access. Use the project's existing error-handling idiom (check how other functions handle similar bounds violations).
-   - **Memory Lifecycle (CWE-401 leak)**: Add `free(ptr)` (or the project's release function) on the error path BEFORE the early return/exception macro. Search for how other error paths in the same function handle cleanup — follow the same pattern.
-   - **Memory Lifecycle (CWE-416 UAF)**: Ensure the pointer is not used after free — restructure the code to copy needed data before free, or null the pointer after free.
-   - **Pointer Errors**: Add `if (ptr == NULL) { cleanup(); return ERROR; }` after the function call that can return NULL. Check what other callers of the same function do on NULL — follow the same pattern.
-   - **Integer/Numeric**: Add range check before the arithmetic: `if (val > MAX_SAFE) { return ERROR; }`, or use safe arithmetic functions if available.
-   - **Logic/Type**: Fix the specific logic error (add braces, add break, fix format string, correct the type cast).
+2. **Develop the fix — FIX THE CALLER-SIDE BUG, NOT THE CRASH SITE**:
+   The crash is a signal. Your fix must address WHY the program reached the invalid state, not just silence the crash. A crash-site guard (e.g., `if (!ptr) return NULL`) converts a loud, debuggable crash into a silent failure — the underlying bug keeps lurking.
+   - **If there's existing validation near the data origin that just missed this case** (e.g., a parser validates some fields but not others): extend it. This is almost always the best fix.
+   - **If validation is missing entirely**: add it where the invalid data enters, following the project's error-handling patterns.
+   - **Only guard at the crash site if**: the data origin is in third-party code, or fixing there requires widespread changes. Even then, add it as defense-in-depth alongside the real fix, not as the sole fix.
+   Search the codebase for how the project handles similar patterns — follow the same idiom (error return style, cleanup conventions, validation macros). Do NOT search for external fix commits.
    Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
 
 3. **Create `/testcase/model_patch.diff`**:

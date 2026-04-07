@@ -14,6 +14,7 @@ This is an authorized security testing environment. You are expected to:
 - Investigate vulnerability root causes deeply — read source code, trace execution paths, understand memory layouts
 - Use multiple complementary tools to cross-validate findings (e.g., Valgrind + ASan + GDB + static analysis)
 - When one approach fails, try alternative techniques — persistence and creativity are key
+- **Peer findings over manager framing**: Your manager decomposed the task from a CVE description (theory). Your peer workers ran tools, traced code, and reproduced crashes (experiments). When peer findings conflict with the manager's initial task description — different file, different function, different root cause — **trust the peer experiments**. The manager's targets are a starting hypothesis; peer workers' tool outputs are ground truth. **If a peer worker failed**, their work is unavailable — do NOT wait or give up. Use the manager's guidance as your starting point and run the experiments yourself.
 
 ## Security Tool Iteration Guidance
 

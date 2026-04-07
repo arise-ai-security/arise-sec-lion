@@ -31,56 +31,50 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 
 **NOTE:** The fixer must develop patches from first principles based on root cause analysis. Do NOT search for or use external fix commits.
 
-### Step 2 — Identify CWE Class and Select Fix Pattern
+### Step 2 — Classify the CWE and Use It to Guide Analysis (NOT to Dictate the Fix)
 
-**Before creating subtasks**, classify the vulnerability from the sanitizer report and exploiter's findings. The CWE class determines the fix pattern, validation approach, and what each worker should focus on.
+**Before creating subtasks**, classify the vulnerability from the sanitizer report and exploiter's findings. The CWE class tells workers **how to investigate** — what to trace, what tools to use, and what patterns to look for. But the **actual fix must be driven by root cause analysis**, not by a CWE textbook recipe.
 
-#### A. Memory Safety — Buffer Overflows (CWE-119 family: 120-131, 785-789, 805-806)
-**Sanitizer**: `heap-buffer-overflow`, `stack-buffer-overflow`, `out-of-bounds-read/write`
-- **Root cause pattern**: Buffer accessed beyond its allocated size due to missing bounds check, incorrect size calculation, or unchecked input length
-- **Fix pattern**: Add bounds check BEFORE the buffer access: `if (offset + len > buf_size) { return ERROR; }`. For loops: verify loop bound ≤ buffer size. For copies: use bounded functions (`strncpy`, `snprintf`, `memcpy` with checked length). For index access: validate index < array_size.
-- **Search codebase**: Look for how the project handles bounds checking elsewhere — follow the same idiom (error return, goto cleanup, exception macro).
-- **Validation**: ASan clean (no `*-buffer-overflow`), Valgrind memcheck clean, cppcheck shows no remaining buffer access warnings on the patched file.
+**CRITICAL PRINCIPLE**: A crash is a **signal**, not the bug itself. The bug is whatever put the program into an invalid state. Silencing the crash (adding a NULL guard, a bounds check at the crash site) without understanding WHY the program reached that state just hides the bug — it will resurface as silent failures that are harder to debug than the original crash.
 
-#### B. Memory Lifecycle — Leaks, Double-Free, Use-After-Free (CWE-401, 415, 416, 460, 762, 763)
-**Sanitizer**: `LeakSanitizer`, `double-free`, `heap-use-after-free`
-- **Root cause pattern**:
-  - **CWE-401 (leak)**: Memory allocated but not freed on one or more error paths. Typically an early return or exception macro that skips cleanup.
-  - **CWE-415 (double free)**: Same pointer freed twice, often in error-handling + normal cleanup paths.
-  - **CWE-416 (use-after-free)**: Pointer used after the memory it points to has been freed, often due to wrong order of operations or missing ownership tracking.
-- **Fix pattern**:
-  - **CWE-401**: Add `free(ptr)` (or the project's own release function — search the codebase for the cleanup idiom used by other error paths in the same file) on the error path BEFORE the early return/exception macro. Most C projects use either `goto cleanup`, explicit free-before-return, or wrapper macros. Follow the existing pattern exactly.
-  - **CWE-415**: Add null-after-free: `free(ptr); ptr = NULL;` — the second free becomes a no-op on NULL. Or restructure to ensure only one code path frees.
-  - **CWE-416**: Restructure to ensure the pointer is not used after free — may need to reorder operations, copy data before free, or add a reference count check.
-- **Validation**: Valgrind `--leak-check=full --error-exitcode=1` shows 0 leaks and 0 errors. ASan `detect_leaks=1` clean. The PoC that previously triggered the leak/UAF/double-free must now run cleanly.
+Workers must always answer: **"Why is the program in this invalid state?"** Then fix the ANSWER, not the crash. For example: if `ptr` is NULL at a dereference → ask "why is it NULL?" → "because function X returned early" → "why did it return early?" → "because the input had invalid field Y" → fix: **validate field Y** (not: add `if (!ptr) return`).
 
-#### C. Pointer Errors — NULL Dereference, Invalid Pointer (CWE-476, 822-825, 562)
-**Sanitizer**: `SEGV`, `null-dereference`, `member-access-within-null-pointer`
-- **Root cause pattern**: A function returns NULL (failed allocation, missing lookup result, invalid input), and the caller dereferences the result without checking for NULL.
-- **Fix pattern**: Add null check after the function call that can return NULL. On the null path: return an error code, clean up any resources allocated so far, or skip the operation gracefully. Example: `ptr = get_thing(); if (ptr == NULL) { cleanup(); return ERROR; }`. If the function SHOULD NOT return NULL but does due to a bug, fix the function instead of adding a null guard.
-- **Search codebase**: Look for how other callers of the same function handle the NULL case — follow the same error-handling idiom.
-- **Validation**: No SEGV under ASan, GDB shows clean execution through the previously-crashing path, cppcheck shows no null-dereference warnings.
+CWE classification guides the analysis process. The root cause analysis determines the fix.
 
-#### D. Integer/Numeric — Overflow, Off-by-One, Type Conversion (CWE-190-197, 680, 681)
-**Sanitizer**: Often chains to buffer overflow; look for suspiciously large allocation sizes, negative array indices, or UBSan reports
-- **Root cause pattern**: Arithmetic on user-controlled values overflows, wraps, or truncates, leading to incorrect buffer size, wrong loop bound, or bypassed check.
-- **Fix pattern**:
-  - **CWE-190 (overflow)**: Add safe arithmetic check before the operation: `if (a > SIZE_MAX - b) { return ERROR; }` before `a + b`. Or use `__builtin_add_overflow` if GCC/Clang.
-  - **CWE-193 (off-by-one)**: Adjust loop bound (`<` vs `<=`) or buffer size calculation (`+1` for null terminator).
-  - **CWE-194/195/196 (sign conversion)**: Add explicit range check before cast: `if (signed_val < 0) { return ERROR; }` before casting to unsigned.
-- **Validation**: No UBSan errors if available, no downstream buffer overflow from the previously-overflowing calculation, cppcheck integer-overflow checks clean.
+#### CWE Analysis Methodology by Class
 
-#### E. Logic/Type — Type Confusion, Format String, Operator Errors (CWE-134, 480-484, 843)
-**Sanitizer**: Varies — format string exploitation, unexpected behavior, type-dependent crashes
-- **Root cause pattern**: Wrong operator, missing braces around multi-statement block, missing `break` in switch, user input passed as format string, wrong type cast.
-- **Fix pattern**:
-  - **CWE-134 (format string)**: Replace `printf(user_input)` with `printf("%s", user_input)`. Never pass untrusted data as format argument.
-  - **CWE-483 (block delimitation)**: Add braces `{ }` around multi-statement blocks after if/else/for/while.
-  - **CWE-484 (missing break)**: Add `break;` to fall-through switch cases.
-  - **CWE-843 (type confusion)**: Add type validation before cast, or use the correct type.
-- **Validation**: cppcheck clean, flawfinder clean, no unexpected behavior with the PoC input after fix.
+#### A. Memory Safety (CWE-119 family: 120-131, 785-789, 805-806)
+**Sanitizer signatures**: `heap-buffer-overflow`, `stack-buffer-overflow`, `out-of-bounds`
+- **Analysis focus**: Trace the buffer from allocation to the overflow access. Find: (1) where the buffer is allocated and what determines its size, (2) where the out-of-bounds access occurs, (3) what input data or calculation makes the access exceed the buffer. The gap between allocation size and access offset IS the root cause.
+- **Trace to data origin**: The crash is at the access site, but the bug may be in the size calculation, the input parsing that determines the size, or a missing validation at the input boundary. Identify WHERE the size/index value enters the system and whether it should have been validated there.
+- **Validation tools**: ASan (primary), Valgrind memcheck, cppcheck buffer access warnings.
 
-**Include the identified CWE class and fix pattern in each subtask's `security_insights` justification key** so workers know which fix approach to follow.
+#### B. Memory Lifecycle (CWE-401, 415, 416, 460, 762, 763)
+**Sanitizer signatures**: `LeakSanitizer`, `double-free`, `heap-use-after-free`
+- **Analysis focus**: Map the complete lifecycle — allocation site, all usage sites, all free sites, and all paths to function exit. For CWE-401 (leak): find the error path that skips cleanup. For CWE-416 (UAF): find what causes the access-after-free ordering. For CWE-415 (double-free): find the two free paths.
+- **Trace to data origin**: Leaks often result from an error condition that wasn't anticipated — trace what input triggers that error path. UAF often results from re-entrant or async code invalidating assumptions — trace what execution path causes the stale access.
+- **Validation tools**: Valgrind `--leak-check=full` (primary for leaks), ASan (primary for UAF/double-free).
+
+#### C. Pointer Errors (CWE-476, 822-825, 562)
+**Sanitizer signatures**: `SEGV`, `null-dereference`, `member-access-within-null-pointer`
+- **Analysis focus**: The crash is where the pointer is **dereferenced**, but the bug is WHY the pointer is **invalid in the first place**. A NULL pointer reaching a function means a caller-side bug: either a missing check after a lookup/allocation that can fail, or a use-after-free where a pointer wasn't cleared, or missing input validation that caused an initialization to be skipped. **The question is not "how do I avoid crashing here?" but "why is anyone passing NULL here?"**
+- **Trace to data origin**: Trace backward through callers: what passes the NULL? Why is it NULL? What input or error condition caused it? Keep asking "why?" until you reach the point where data enters the system or where a validation is missing. Adding a NULL guard at the crash site just converts a loud crash into a silent failure — the caller still has a bug, and downstream code now gets unexpected NULL returns that may cause harder-to-debug issues.
+- **Fix location decision**: The Root-Cause-Analyst must identify BOTH (a) the crash site and (b) the caller-side bug that produced the invalid pointer. The Candidate-Reviewer must fix the caller-side bug. Only add a crash-site guard as **defense-in-depth alongside the real fix**, never as the sole fix.
+- **Validation tools**: GDB `bt full` to trace the NULL origin, ASan, cppcheck null-dereference checks.
+
+#### D. Integer/Numeric (CWE-190-197, 680, 681)
+**Sanitizer signatures**: Often chains to buffer overflow; UBSan reports, suspiciously large allocations
+- **Analysis focus**: Find the arithmetic operation, trace where the input values come from, identify where overflow/truncation occurs. The crash may be a buffer overflow, but the root cause is the unchecked arithmetic.
+- **Trace to data origin**: The overflow happens in a calculation, but the values come from somewhere — a parsed header field, a user-supplied parameter, a file metadata value. Validate at the input boundary.
+- **Validation tools**: UBSan (primary), cppcheck integer checks, GDB value inspection.
+
+#### E. Logic/Type (CWE-134, 480-484, 843)
+**Sanitizer signatures**: Varies — format string, unexpected behavior, type confusion
+- **Analysis focus**: Identify the specific logic error — wrong operator, missing braces, missing break, type cast error, format string misuse.
+- **Trace to data origin**: For format strings, trace where user input reaches the format argument. For type confusion, trace where the wrong type assumption is made.
+- **Validation tools**: cppcheck, flawfinder, code review, GDB.
+
+**Include the CWE class, analysis methodology, and the "trace to data origin" requirement in each subtask's `security_insights` justification key.**
 
 ### Phase Deliverable (use EXACT name)
 - `/testcase/model_patch.diff` (required, exact name — do NOT rename to patch.diff, fix.diff, etc.)
@@ -96,19 +90,24 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 
 **CRITICAL**: Use the EXACT role names below in square brackets. Do NOT paraphrase, rename, or invent new names.
 
-1. **[Root-Cause-Analyst]** (index 0): First, classify the CWE from the sanitizer report (see Step 2 above). Then examine the exploiter's findings from sibling context — validate repro.sh exists and sanitizer error is accurate. **Read the PoC file** (e.g., `/testcase/poc.*`) to understand what input triggers the bug. Run the PoC with gdb to get a precise stack trace showing the exact crash/leak location. Apply CWE-specific analysis: for **Memory Safety** — trace buffer allocation size vs access offset; for **Memory Lifecycle** — map every allocation and identify error paths that skip cleanup; for **Pointer Errors** — trace the pointer from its source to the crash and identify the missing null check; for **Integer** — trace arithmetic from input to overflow point. Use static analysis tools per the CWE class.
-   - **REQUIRED DELIVERABLE**: Must create `/testcase/root_cause_analysis.txt` containing: root cause description, vulnerable file paths, function names, exact lines to fix, fix strategy, data flow path, and gdb stack trace. After writing, run `cat /testcase/root_cause_analysis.txt` to print contents.
+1. **[Root-Cause-Analyst]** (index 0): Classify the CWE from the sanitizer report (see Step 2), then use CWE-specific analysis methodology to investigate. Examine the exploiter's findings, validate repro.sh, and **read the PoC file** to understand what input triggers the bug. Run the PoC with gdb to get a precise stack trace. **CRITICAL — identify TWO locations**: (a) the **crash site** — where the program actually crashes/leaks, and (b) the **data origin** — where the invalid/unexpected data first enters the system or where a validation is missing that would have prevented the crash. For Pointer Errors: don't stop at "pointer X is NULL here" — trace back to WHY it's NULL (what function returned NULL? what input caused that function to fail? what validation was missing?). For Memory Safety: don't stop at the overflow — find where the size/index was calculated from unvalidated input. **After identifying the data origin, READ THE CODE there** (use `read_file` on the data-origin file, read 50+ lines around the location). Look for existing validation logic nearby — if there's already a block that validates similar fields/conditions, note it explicitly because the fix should extend that block. **Your fix recommendation MUST come from your experiments, not from the manager's initial target_paths.**
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/root_cause_analysis.txt` containing: (1) CWE classification, (2) crash site (file:line), (3) **data origin** (file:line where invalid data enters or validation is missing), (4) full trace from data origin to crash, (5) **existing validation patterns near the data origin** — quote any nearby code that already validates similar fields, (6) **recommended fix**: what specific data to validate, at what file:line, extending what existing pattern — this MUST be at the data origin, (7) gdb stack trace. After writing, run `cat /testcase/root_cause_analysis.txt` to print contents.
    - `depends_on`: []
    - `security_tools`: `"Install and use: (1) cflow (apt-get install -y cflow) to trace call graph from entry point to crash. (2) cppcheck (apt-get install -y cppcheck --enable=all) for vulnerability pattern scanning. (3) gdb (apt-get install -y gdb): run PoC with 'bt full' to get crash location and variable values. (4) addr2line to map crash addresses to source lines."`
-   - `context_sharing`: Publish via `<context-update>`: root cause description, vulnerable file paths, function names, exact lines to fix, fix strategy, data flow path, gdb stack trace.
-   - `success_criteria`: `/testcase/root_cause_analysis.txt` exists, contains specific vulnerable file:line references and root cause explanation grounded in PoC analysis.
+   - `context_sharing`: Publish via `<context-update>`: CWE class, crash site file:line, data origin file:line, trace from origin to crash, recommended fix location (data origin, not crash site).
+   - `success_criteria`: `/testcase/root_cause_analysis.txt` exists, identifies BOTH the crash site AND the data origin, explains the trace between them, and recommends fixing at the data origin.
 
-2. **[Candidate-Reviewer]** (index 1): Based on Root-Cause-Analyst's CWE classification and findings, select the fix pattern from Step 2 above and design the specific fix strategy. Read the vulnerable source code, understand the exact code path that triggers the vulnerability, and propose a minimal fix approach. Apply the CWE-specific fix pattern: for **Memory Safety** — add bounds check with exact size comparison; for **Memory Lifecycle** — add cleanup call on the specific error path using the project's cleanup idiom; for **Pointer Errors** — add null check with appropriate error handling; for **Integer** — add safe arithmetic check or range validation. **Search the codebase** for how similar patterns are handled elsewhere (e.g., `search_codebase` for the project's error-path cleanup idiom, bounds-check convention, or null-check style) and follow the same approach. Do NOT search for or apply existing external patches — develop the fix from first principles. Document the fix design: which lines to change, what operations to add/remove, and why this addresses the root cause. If the fix conditionalizes a function call that allocates or transfers ownership, note what happens to that resource on both the taken and not-taken paths — ensure no leak is introduced.
-   - **REQUIRED DELIVERABLE**: Must create `/testcase/design_notes.md` containing: fix strategy (which lines to change, what to add/remove), rationale, error paths that need fixing, and regression considerations. After writing, run `cat /testcase/design_notes.md` to print contents.
+2. **[Candidate-Reviewer]** (index 1): **Your primary input is Root-Cause-Analyst's experimental findings, not the manager's initial task description.** The manager decomposed from a sanitizer report (a hypothesis). The Root-Cause-Analyst ran gdb, traced code, and reproduced the crash (empirical evidence). When they conflict, follow the analyst.
+   **FIRST ACTION**: Use `read_file` to open the **data-origin file** identified by Root-Cause-Analyst. Read 50+ lines around the data-origin location. Look for existing validation logic: are there already checks for similar fields/conditions nearby? If you find a validation block that handles some cases but missed the one that causes this bug, your fix is to **extend that existing block** — this is almost always the correct approach.
+   Then evaluate two candidate fix locations:
+   - **Option A — Extend existing validation at data origin** (preferred): Add the missing check alongside existing validation. This prevents the entire class of downstream issues and integrates naturally with the codebase.
+   - **Option B — Guard at crash site** (last resort only): Add a NULL check / bounds check at the crash point. This silences the crash without fixing the underlying bug — the invalid state still exists and may cause harder-to-debug failures elsewhere. **Only acceptable if**: the data origin is in third-party code you cannot modify, OR the data origin requires changes across 5+ call sites. If you choose Option B, you must explain in design_notes.md why Option A was not feasible.
+   Document: which file:line to change, what to add/remove, WHY this location, what existing pattern it extends, and how it addresses the root cause.
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/design_notes.md` containing: (1) candidate fix locations evaluated (data origin vs crash site), (2) chosen location and WHY, (3) specific lines to change, (4) what to add/remove, (5) how existing code patterns inform the fix style. After writing, run `cat /testcase/design_notes.md` to print contents.
    - `depends_on`: [0]
-   - `security_tools`: `"Read source code at the vulnerable location. Use cppcheck to verify the proposed fix strategy addresses all vulnerable paths. Cross-reference with Root-Cause-Analyst's data flow analysis to ensure completeness."`
-   - `context_sharing`: Publish via `<context-update>`: fix strategy (which lines to change, what to add/remove), rationale for fix approach, all error paths that need fixing.
-   - `success_criteria`: `/testcase/design_notes.md` exists, contains specific fix strategy with line numbers and rationale for the approach.
+   - `security_tools`: `"Read source code at BOTH the crash site and the data origin identified by Root-Cause-Analyst. Search codebase for existing validation patterns near the data origin. Use cppcheck to verify the proposed fix addresses all vulnerable paths."`
+   - `context_sharing`: Publish via `<context-update>`: chosen fix location (data origin or crash site), specific file:line, what to change, rationale for location choice.
+   - `success_criteria`: `/testcase/design_notes.md` exists, explicitly compares data-origin vs crash-site fix, chooses a location with rationale, and provides specific line numbers.
 
 3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish. Implement the fix designed by Candidate-Reviewer: edit the vulnerable source file(s) directly, then generate model_patch.diff containing **ONLY the security fix files** — NOT builder changes:
    ```bash
