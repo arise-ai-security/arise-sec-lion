@@ -32,7 +32,16 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
 
 4. **Rebuild**: `cd {{ work_dir }} && /src/build.sh`
 
-5. **Fix build errors** (if any):
+5. **Verify sanitizer runtime**: If the build uses `-fsanitize=address`, test that the binary actually executes: run the main binary with `--help` or `-h`. If it fails with "cannot open shared object file: libclang_rt.asan" or "libasan", the sanitizer runtime library is missing. Fix it:
+   ```bash
+   # Install the ASan runtime matching the system's GCC/clang version:
+   apt-get install -y $(apt-cache search libasan | head -1 | awk '{print $1}') 2>/dev/null || true
+   # If clang's runtime is at a non-standard path, add it:
+   export LD_LIBRARY_PATH=$(dirname $(find /usr/local -name 'libclang_rt.asan*.so' 2>/dev/null | head -1)):$LD_LIBRARY_PATH
+   ```
+   This is critical — ALL downstream workers (Exploiter, Fixer) need to run the instrumented binary. A build that compiles but can't execute is worse than a build failure.
+
+6. **Fix build errors** (if any):
    - Focus on `error` messages only, ignore warnings
    - C++17 errors: add `-std=c++14` to CXXFLAGS only (NEVER add it to CFLAGS — it breaks the C compiler)
    - Implicit int: add explicit type declarations
@@ -40,17 +49,17 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - Define suppression flags before `./configure` or `cmake`
    - Make MINIMAL source changes if needed
 
-6. **Record installed packages**: If packages installed via `apt`, write to `/testcase/packages.txt` (one per line)
+7. **Record installed packages**: If packages installed via `apt`, write to `/testcase/packages.txt` (one per line)
 
-7. **Save source changes**: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
+8. **Save source changes**: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
 
-8. **Verify deliverables exist**:
+9. **Verify deliverables exist**:
    - `/testcase/base_commit_hash`
    - `/testcase/repo_changes.diff`
    - `/testcase/packages.txt` (if applicable)
    - `/src/build.sh`
 
-9. **Run quick static analysis** (optional but recommended):
+10. **Run quick static analysis** (optional but recommended):
    - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
    - Note any findings in context-update for exploiter/fixer workers
 

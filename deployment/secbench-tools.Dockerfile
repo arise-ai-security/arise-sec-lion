@@ -19,9 +19,12 @@ FROM ${BASE_IMAGE}
 USER root
 
 # Valgrind — dynamic analysis (memory errors, stack traces)
-# ~50MB, works on compiled binaries directly
+# Also install ASan/UBSan runtime libraries so -fsanitize=address binaries can execute
 RUN apt-get update && apt-get install -y --no-install-recommends \
     valgrind \
+    && (apt-get install -y --no-install-recommends libasan5 libubsan1 2>/dev/null \
+        || apt-get install -y --no-install-recommends libasan6 libubsan1 2>/dev/null \
+        || echo "ASan runtime not available via apt — builder will handle") \
     && rm -rf /var/lib/apt/lists/*
 
 # KLEE — symbolic execution engine (optional, not packaged in all base images)
