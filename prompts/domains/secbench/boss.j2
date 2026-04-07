@@ -33,7 +33,7 @@ Deliverable: `/testcase/model_patch.diff`.
 ### Phase 4: Report (index 3, depends_on: [0, 1, 2])
 Synthesize ALL findings from Builder, Exploiter, and Fixer into a comprehensive security analysis report. **Runs AFTER all other phases finish.**
 Deliverable: `/testcase/security_report.md` — this file MUST be created and non-empty.
-The reporter MUST: (1) read all `/testcase/` artifacts and sibling context, (2) write the report to `/testcase/security_report.md` using the file editor, (3) verify the file exists and is non-empty before finishing.
+The reporter MUST: (1) read all `/testcase/` artifacts and sibling context — especially `/testcase/fix_summary.md` for the Fixer's consistency check and confidence assessment, (2) ensure the report is internally consistent: if the root cause analysis identifies file X as the bug origin, the fix description must explain why the patch targets that file (or explicitly justify targeting a different file), (3) write the report to `/testcase/security_report.md` using the file editor, (4) verify the file exists and is non-empty before finishing.
 
 **ALL FOUR PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
 

@@ -6,7 +6,11 @@ Base commit is at `/testcase/base_commit_hash`.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
 
-**You MUST use your recon tools to read the vulnerable source code BEFORE creating subtasks.** Do not decompose blindly from the CVE description alone. Perform these reads:
+**You MUST use your recon tools to read the vulnerable source code BEFORE creating subtasks.** Do not decompose blindly from the CVE description alone.
+
+⚠️ **The function named in the CVE/bug report is where the program CRASHED, not necessarily where the bug IS.** The CVE text (e.g., "NULL Pointer Dereference in function X") describes the symptom location. The actual bug — the missing validation, the skipped cleanup, the unchecked input — is almost always in a different function upstream. When writing worker task descriptions, frame the CVE-named function as the crash site to investigate FROM, not the file to patch.
+
+Perform these reads:
 
 1. **Read the vulnerable file(s)**: Use `read_file` on the file(s) mentioned in the CVE/bug report. Understand the function structure, resource lifecycle (allocations, locks, file handles), and error handling paths.
 2. **Read the vulnerable function**: Use `read_symbol` on the specific function named in the bug report. Depending on the CWE type, identify:
@@ -98,41 +102,42 @@ CWE classification guides the analysis process. The root cause analysis determin
    - `success_criteria`: `/testcase/root_cause_analysis.txt` exists, identifies BOTH the crash site AND the data origin, explains the trace between them, and recommends fixing at the data origin.
 
 2. **[Candidate-Reviewer]** (index 1): **Your primary input is Root-Cause-Analyst's experimental findings, not the manager's initial task description.** The manager decomposed from a sanitizer report (a hypothesis). The Root-Cause-Analyst ran gdb, traced code, and reproduced the crash (empirical evidence). When they conflict, follow the analyst.
-   **FIRST ACTION**: Use `read_file` to open the **data-origin file** identified by Root-Cause-Analyst. Read 50+ lines around the data-origin location. Look for existing validation logic: are there already checks for similar fields/conditions nearby? If you find a validation block that handles some cases but missed the one that causes this bug, your fix is to **extend that existing block** — this is almost always the correct approach.
-   Then evaluate two candidate fix locations:
-   - **Option A — Extend existing validation at data origin** (preferred): Add the missing check alongside existing validation. This prevents the entire class of downstream issues and integrates naturally with the codebase.
-   - **Option B — Guard at crash site** (last resort only): Add a NULL check / bounds check at the crash point. This silences the crash without fixing the underlying bug — the invalid state still exists and may cause harder-to-debug failures elsewhere. **Only acceptable if**: the data origin is in third-party code you cannot modify, OR the data origin requires changes across 5+ call sites. If you choose Option B, you must explain in design_notes.md why Option A was not feasible.
-   Document: which file:line to change, what to add/remove, WHY this location, what existing pattern it extends, and how it addresses the root cause.
-   - **REQUIRED DELIVERABLE**: Must create `/testcase/design_notes.md` containing: (1) candidate fix locations evaluated (data origin vs crash site), (2) chosen location and WHY, (3) specific lines to change, (4) what to add/remove, (5) how existing code patterns inform the fix style. After writing, run `cat /testcase/design_notes.md` to print contents.
+   **Start by reading** `/testcase/root_cause_analysis.txt` and the source code at both the crash site and data origin identified by the analyst. Search the codebase for existing validation patterns near the data origin.
+   **Evaluate at least two candidate fix strategies.** For each candidate, document: the file:line, what to change, a pseudo-diff sketch, pros, cons, and whether it aligns with the analyst's recommendation. Consider options at different levels of the call chain (data origin, caller, crash site) — fixing closer to the data origin is generally stronger because it prevents the entire class of downstream issues. Crash-site guards are last resort since they silence symptoms without fixing the underlying invalid state.
+   **End with a clear verdict**: which option you chose, why, and specific implementation instructions (target file, function, lines, what to add) for the Patch-Creator. If you deviate from the analyst's recommendation, explain why.
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/patch_candidates_design_notes.md` containing: analyst summary, candidate options with pros/cons and pseudo-diffs, and a verdict with implementation instructions. After writing, run `cat /testcase/patch_candidates_design_notes.md` to print contents.
    - `depends_on`: [0]
    - `security_tools`: `"Read source code at BOTH the crash site and the data origin identified by Root-Cause-Analyst. Search codebase for existing validation patterns near the data origin. Use cppcheck to verify the proposed fix addresses all vulnerable paths."`
-   - `context_sharing`: Publish via `<context-update>`: chosen fix location (data origin or crash site), specific file:line, what to change, rationale for location choice.
-   - `success_criteria`: `/testcase/design_notes.md` exists, explicitly compares data-origin vs crash-site fix, chooses a location with rationale, and provides specific line numbers.
+   - `context_sharing`: Publish via `<context-update>`: chosen fix location, specific file:line, what to change, rationale, whether it aligns with Root-Cause-Analyst.
+   - `success_criteria`: `/testcase/patch_candidates_design_notes.md` exists, contains at least 2 candidate options with pros/cons, includes a verdict with rationale, and addresses alignment with Root-Cause-Analyst's recommendation.
 
-3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish. Implement the fix designed by Candidate-Reviewer: edit the vulnerable source file(s) directly, then generate model_patch.diff containing **ONLY the security fix files** — NOT builder changes:
+3. **[Patch-Creator]** (index 2): Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish.
+   **Before writing code**, read both `/testcase/root_cause_analysis.txt` and `/testcase/patch_candidates_design_notes.md`. Cross-reference: if the Reviewer's target file differs from the Analyst's data-origin file without justification, follow the Analyst — empirical evidence outweighs review opinion. If they agree, use the Reviewer's implementation instructions (they are more specific).
+   Edit the vulnerable source file(s) directly, then generate model_patch.diff containing **ONLY the security fix files** — NOT builder changes:
    ```bash
    cd {{ work_dir }} && git diff --no-color -- path/to/vulnerable_file.c > /testcase/model_patch.diff
    ```
    **IMPORTANT**: Use `git diff -- <specific-file(s)>` to include ONLY the file(s) you edited for the fix. NEVER use bare `git diff` or `git diff BASE` — those include unrelated builder changes (build system tweaks, man pages, config regeneration, etc.) that bloat the patch. The model_patch.diff must be minimal: only the vulnerability fix.
-   VERIFY: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix. If over 50, you included builder changes — regenerate with file-specific diff.
-   **CROSS-CHECK**: Read the diff you generated and compare it against Candidate-Reviewer's fix strategy. If the plan says to check a return value, your diff must check it. If the plan says to guard on two conditions, your diff must guard on both. Do not silently drop parts of the planned fix.
+   VERIFY: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix. If over 50, you included builder changes — regenerate with file-specific diff. Confirm the patched file matches what was planned in the upstream artifacts.
    - `depends_on`: [0, 1]
    - `security_tools`: `"Install cppcheck (apt-get install -y cppcheck). Run cppcheck on patched files to verify the vulnerability pattern is eliminated. Use 'git diff --stat' to confirm the patch is minimal."`
    - `context_sharing`: Publish via `<context-update>`: patch file path, files changed, fix description, static analysis result.
 
 4. **[Patch-Validator]** (index 3): Validate end-to-end using CWE-appropriate tools. Reset to base commit: `git reset --hard $(cat /testcase/base_commit_hash)`. Apply builder changes if `/testcase/repo_changes.diff` exists. Apply patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: run `/testcase/repro.sh` — must NOT trigger sanitizer error. Then apply CWE-specific validation: for **Memory Lifecycle** — Valgrind `--leak-check=full` MUST show 0 leaks (this is the primary validation); for **Memory Safety** — ASan must show no buffer overflow AND run with different input sizes near the boundary; for **Pointer Errors** — GDB must show clean execution through the previously-crashing path; for **Integer** — test with boundary values (0, MAX, -1). Use multiple complementary tools.
-   - **REQUIRED DELIVERABLE**: Must create `/testcase/validation_results.txt` containing: patch apply result, build result, repro.sh output, Valgrind output, and overall pass/fail verdict. After writing, run `cat /testcase/validation_results.txt` to print contents.
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/patch_validation_results.txt` containing: patch apply result, build result, repro.sh output, Valgrind output, and overall pass/fail verdict. After writing, run `cat /testcase/patch_validation_results.txt` to print contents.
    - `depends_on`: [2]
    - `security_tools`: `"Use multiple tools: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) — verify original error gone AND no new issues. (2) gdb: run PoC to confirm clean execution. (3) ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1. (4) cppcheck on patched source."`
    - `context_sharing`: Publish via `<context-update>`: validation result (pass/fail), Valgrind before vs after, gdb result, remaining issues.
-   - `success_criteria`: `/testcase/validation_results.txt` exists, patch applies cleanly, build succeeds, `/testcase/repro.sh` does NOT trigger sanitizer error after patching.
+   - `success_criteria`: `/testcase/patch_validation_results.txt` exists, patch applies cleanly, build succeeds, `/testcase/repro.sh` does NOT trigger sanitizer error after patching.
 
-5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and is MINIMAL. Run `wc -l /testcase/model_patch.diff` — if over 50 lines, it likely contains builder changes and must be regenerated using file-specific `git diff -- <vulnerable-file(s)>`. If model_patch.diff does NOT exist, create it the same way. THEN review holistically: (a) the patch addresses the root cause (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities introduced. Finally, create the security report.
-   - **REQUIRED DELIVERABLE**: Must create `/testcase/security_report.md` containing: CVE summary, root cause analysis, fix description, validation results, and confidence assessment. After writing, run `cat /testcase/security_report.md` to print contents.
+5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and is MINIMAL. Run `wc -l /testcase/model_patch.diff` — if over 50 lines, it likely contains builder changes and must be regenerated using file-specific `git diff -- <vulnerable-file(s)>`. If model_patch.diff does NOT exist, create it the same way.
+   **CONSISTENCY CHECK (mandatory)**: Read `/testcase/root_cause_analysis.txt` and extract the data-origin file. Read `/testcase/model_patch.diff` and check which file(s) it modifies. If the patch targets a different file than the data origin identified by the analyst, this is a consistency failure — document it in `fix_summary.md` under a "Consistency" section explaining the gap. If you can, regenerate the patch at the correct location; if not, flag it clearly so the Reporter can note it.
+   THEN review holistically: (a) the patch addresses the root cause (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities introduced.
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/fix_summary.md` (NOT `security_report.md` — that is the Reporter's job) containing: consistency check result, patch quality assessment, validation summary, and confidence assessment. After writing, run `cat /testcase/fix_summary.md` to print contents.
    - `depends_on`: [3]
    - `security_tools`: `"Independently verify: (1) Read the patch and cross-reference with Root-Cause-Analyst's findings — does it fix the actual root cause? (2) Run repro.sh 3 times to confirm deterministic fix. (3) Run Valgrind to independently verify no memory issues. (4) Run cppcheck on the entire vulnerable file (not just patched lines) to check for related issues."`
-   - `context_sharing`: Publish via `<context-update>`: aggregated_status (pass/fail), root_cause_addressed (yes/no), any corrections made, final confidence assessment.
-   - `success_criteria`: `/testcase/security_report.md` exists, `/testcase/model_patch.diff` exists and is minimal (<50 lines), patch confirmed working by independent validation.
+   - `context_sharing`: Publish via `<context-update>`: aggregated_status (pass/fail), root_cause_addressed (yes/no), consistency_check (pass/fail — does patch target the data-origin file?), any corrections made, final confidence assessment.
+   - `success_criteria`: `/testcase/fix_summary.md` exists, `/testcase/model_patch.diff` exists and is minimal (<50 lines), patch confirmed working by independent validation, consistency check between patch and root cause analysis is documented.
 
 ### Decomposition Requirements
 
