@@ -164,6 +164,21 @@ class DockerSecBenchRuntime:
             )
         finally:
             await self._run_best_effort(["docker", "rm", "-f", seed_container])
+        # docker cp preserves root ownership from the image.  Make the entire
+        # tree world-writable so the agent (running as a non-root host user)
+        # can edit source files to create patches.  Skip symlinks — they
+        # cannot have their permissions changed and may be broken.
+        for item in source_dir.rglob("*"):
+            if item.is_symlink():
+                continue
+            try:
+                mode = item.stat().st_mode
+                if item.is_dir():
+                    item.chmod(mode | 0o777)
+                else:
+                    item.chmod(mode | 0o666)
+            except OSError:
+                pass
         # Ensure build.sh is executable after copy (docker cp may not preserve mode).
         build_sh = source_dir / "build.sh"
         if build_sh.exists():
