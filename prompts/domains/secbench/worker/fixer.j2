@@ -10,12 +10,13 @@ Base commit hash is at `/testcase/base_commit_hash`.
 **BEFORE doing ANY analysis, leverage what siblings already produced:**
 1. Run `ls -la /testcase/` to see ALL existing artifacts from upstream siblings and peers
 2. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Reuse these directly.**
-3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis
+3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis. **Peer workers' findings come from real experiments (gdb, code tracing, crash reproduction) and take priority over the manager's initial task framing when they conflict.** If the analyst discovered the root cause is in a different file than what the manager suggested, follow the analyst. **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself.
 4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
 
 Then validate what you're building on:
 - Run `ls -la` on reported PoC file path — confirm it exists
 - Run the reported exploit command — confirm it triggers the expected error
+- **Read exploiter artifacts** if available: `cat /testcase/data_flow_findings.txt`, `cat /testcase/asan_crash*.txt`, `cat /testcase/static_findings.txt` — these contain data flow traces, sanitizer output, and static analysis that inform root cause analysis
 - If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
 5. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
 6. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
@@ -24,14 +25,32 @@ Then validate what you're building on:
 
 ### Steps
 
-1. **Understand root cause — START FROM THE POC**:
+1. **Understand root cause — START FROM THE POC, CLASSIFY THE CWE, TRACE TO DATA ORIGIN**:
    - **First**: Read the existing PoC file (`cat /testcase/poc*`, `cat /testcase/repro.sh`) to understand WHAT INPUT triggers the bug
-   - **Second**: Trace that specific input through the vulnerable code path. Read the vulnerable source file and follow the execution flow for the PoC input
-   - **Third**: Cross-reference with the CVE description — your analysis must explain why the PoC input causes the EXACT error described (e.g., heap-buffer-overflow at specific function/line), not a different error
-   - **Fourth**: Use tools to confirm: `gdb -batch -ex run -ex 'bt full' -ex quit --args ./binary < poc_input` for crash context, `cflow` for call graph, `cppcheck --enable=all` on the vulnerable file
-   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises, not a different vulnerability in the same file.
+   - **Second**: Classify the CWE from the sanitizer error to guide your analysis approach:
+     - `heap/stack-buffer-overflow`, `out-of-bounds` → **Memory Safety** — trace buffer allocation vs access
+     - `LeakSanitizer`, `double-free`, `use-after-free` → **Memory Lifecycle** — map object lifecycle
+     - `SEGV`, `null-dereference` → **Pointer Errors** — trace pointer to where it becomes invalid
+     - Integer overflow indicators, UBSan → **Integer/Numeric** — trace arithmetic from input
+     - Format string, type confusion → **Logic/Type** — identify logic error
+   - **Third**: Identify TWO locations — the **crash site** and the **caller-side bug**:
+     - The **crash site** is where the program actually crashes (the sanitizer report tells you this). This is a SIGNAL, not the bug.
+     - The **caller-side bug** is WHY the program is in the invalid state that caused the crash. Trace BACKWARD from the crash: "Why is this pointer NULL?" → "Because function X returned early" → "Why did it return early?" → "Because field Y in the input was invalid" ��� "Where should field Y have been validated?" → THAT is the real bug.
+     - **Fix the caller-side bug**, not the crash site. Silencing the crash just hides the bug as silent failures.
+   - **Fourth**: **Read the code at the data origin.** Use `cat` or `read_file` to read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
+   - **Fifth**: Use CWE-appropriate tools to confirm your analysis:
+     - `gdb -batch -ex run -ex 'bt full'` to see the full crash chain
+     - `cppcheck --enable=all <vulnerable_file>` for static pattern detection
+     - Valgrind for memory lifecycle issues
+   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises.
 
-2. **Develop the fix from first principles**: Based on your PoC-grounded root cause analysis, design and implement a minimal fix. Do NOT search for external fix commits or patches. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
+2. **Develop the fix — FIX THE CALLER-SIDE BUG, NOT THE CRASH SITE**:
+   The crash is a signal. Your fix must address WHY the program reached the invalid state, not just silence the crash. A crash-site guard (e.g., `if (!ptr) return NULL`) converts a loud, debuggable crash into a silent failure — the underlying bug keeps lurking.
+   - **If there's existing validation near the data origin that just missed this case** (e.g., a parser validates some fields but not others): extend it. This is almost always the best fix.
+   - **If validation is missing entirely**: add it where the invalid data enters, following the project's error-handling patterns.
+   - **Only guard at the crash site if**: the data origin is in third-party code, or fixing there requires widespread changes. Even then, add it as defense-in-depth alongside the real fix, not as the sole fix.
+   Search the codebase for how the project handles similar patterns — follow the same idiom (error return style, cleanup conventions, validation macros). Do NOT search for external fix commits.
+   Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
 
 3. **Create `/testcase/model_patch.diff`**:
    - After editing, generate diff for ONLY the files you changed (not the entire repo):
@@ -49,12 +68,20 @@ Then validate what you're building on:
    - Apply: `git apply /testcase/model_patch.diff`
    - Rebuild: `/src/build.sh`
 
-6. **Test fix with multiple tools**:
+6. **Test fix with CWE-appropriate validation** (use ALL tools, but prioritize based on CWE):
    - Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
-   - **Use Valgrind** to verify: `valgrind --tool=memcheck --leak-check=full --error-exitcode=1 ./binary < poc_input`
-   - **Use GDB** to confirm clean execution: `gdb -batch -ex run -ex 'bt' -ex quit --args ./binary < poc_input` — should NOT show a crash
-   - **Run with enhanced ASan**: `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 ./binary < poc_input`
-   - **Run cppcheck** on patched source: `cppcheck --enable=all <patched_file>` — should show no new issues
+   - **Memory Lifecycle (leaks)** — Valgrind is the PRIMARY validator:
+     `valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./binary < poc_input`
+     MUST show `All heap blocks were freed -- no leaks are possible` or `0 bytes in 0 blocks` for the previously-leaked allocation.
+   - **Memory Safety (buffer overflow)** — ASan is PRIMARY:
+     Run with ASan and verify NO `*-buffer-overflow` errors. Also test with Valgrind memcheck for double confirmation.
+   - **Pointer Errors (SEGV)** — GDB is PRIMARY:
+     `gdb -batch -ex run -ex 'bt' -ex quit --args ./binary < poc_input` — should NOT crash. Verify the previously-null pointer now has a valid value or the null path is handled.
+   - **Integer/Numeric** — boundary testing is PRIMARY:
+     Test with the original PoC AND with boundary values (0, MAX, -1) to ensure the range check works.
+   - **All CWE classes** — also run these general checks:
+     - `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 ./binary < poc_input`
+     - `cppcheck --enable=all <patched_file>` — should show no new issues
    - Confirm: (a) the original sanitizer error is gone, (b) no NEW memory issues introduced by the patch, (c) static analysis is clean.
    - Patch MUST NOT introduce new sanitizer errors.
 
@@ -73,8 +100,10 @@ Publish your validation results via `<context-update>` for parent/sibling visibi
 
 After running analysis tools, you **MUST write a summary file to `/testcase/`** with your findings. Terminal output alone is NOT sufficient — the verification judge checks for artifact files. Use the file editor to create your deliverable, then **print the file contents** via `cat /testcase/<your-file>` so the judge can see the evidence in your output:
 - Root cause analysis → `/testcase/root_cause_analysis.txt`
+- Patch candidates → `/testcase/patch_candidates_design_notes.md`
 - Patch file → `/testcase/model_patch.diff`
-- Validation results → `/testcase/validation_results.txt`
+- Validation results → `/testcase/patch_validation_results.txt`
+- Fix summary → `/testcase/fix_summary.md`
 
 After creating each file, run: `echo "=== <filename> ===" && cat /testcase/<filename>` to make the contents visible.
 

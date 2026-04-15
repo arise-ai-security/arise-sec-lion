@@ -27,9 +27,11 @@ find {{ work_dir }} -name "*.c" -o -name "*.cpp" -o -name "*.h" | head -20
 # Then: head -300 {{ work_dir }}/<path-to-vulnerable-file>
 ```
 
-**Step 2: Read sibling context**
+**Step 2: Read sibling context — trust experimental evidence**
 
 Your briefing above contains shared decisions and result summaries from Builder, Exploiter, and Fixer workers. Extract key facts: base commit, build status, PoC details, sanitizer errors, patch description, validation results.
+
+**When findings conflict** (e.g., Fixer claims patch works but Patch-Validator's logs show crash persists), trust the **tool output** (sanitizer logs, Valgrind reports, gdb traces) over summaries or claims. If a worker failed, note what is missing — do NOT fabricate results to fill gaps. If the Patch-Validator failed, report that the patch was NOT validated, even if the Fix-Aggregator claims success.
 
 **Step 3: Write the report using the FILE EDITOR TOOL**
 

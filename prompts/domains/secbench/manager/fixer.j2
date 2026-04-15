@@ -6,7 +6,11 @@ Base commit is at `/testcase/base_commit_hash`.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
 
-**You MUST use your recon tools to read the vulnerable source code BEFORE creating subtasks.** Do not decompose blindly from the CVE description alone. Perform these reads:
+**You MUST use your recon tools to read the vulnerable source code BEFORE creating subtasks.** Do not decompose blindly from the CVE description alone.
+
+⚠️ **The function named in the CVE/bug report is where the program CRASHED, not necessarily where the bug IS.** The CVE text (e.g., "NULL Pointer Dereference in function X") describes the symptom location. The actual bug — the missing validation, the skipped cleanup, the unchecked input — is almost always in a different function upstream. When writing worker task descriptions, frame the CVE-named function as the crash site to investigate FROM, not the file to patch.
+
+Perform these reads:
 
 1. **Read the vulnerable file(s)**: Use `read_file` on the file(s) mentioned in the CVE/bug report. Understand the function structure, resource lifecycle (allocations, locks, file handles), and error handling paths.
 2. **Read the vulnerable function**: Use `read_symbol` on the specific function named in the bug report. Depending on the CWE type, identify:
@@ -17,7 +21,7 @@ Base commit is at `/testcase/base_commit_hash`.
 3. **Search for patterns across files**: Use `search_codebase` to find how the codebase handles the relevant pattern (e.g., error-path cleanup idioms, bounds-checking conventions, object ownership patterns). This tells you what idiom the fix should follow. Also search for callers/callees — some vulnerabilities span multiple files.
 4. **Check existing artifacts**: Use `read_file` on `/testcase/repro.sh` to see the exploit command. List `/testcase/` to see what the Exploiter phase produced.
 
-**Use what you learn** to provide workers with exact file paths, function names, line numbers, the specific vulnerability pattern, and the error/code path that needs fixing. Workers given precise locations (e.g., "add cleanup at line 291 before the exception macro") need far less iteration than workers told "find and fix the vulnerability."
+**Use what you learn** to provide workers with exact file paths, function names, and line numbers as **investigation leads** — not as predetermined fix locations. Workers given precise starting points (e.g., "crash occurs at line 54 in njs_utf8.h, but the `end` pointer may be corrupted by `njs_string_trim` in njs_string.c:2849 — investigate both") need far less iteration than workers told "find and fix the vulnerability." However, do NOT tell workers WHERE to patch — that is the Root-Cause-Analyst's job to determine empirically.
 
 For **multi-file vulnerabilities**, search for callers and callees of the vulnerable function across files. Some bugs require fixes in multiple locations (e.g., a helper allocates memory but all callers need to free it on error paths, or a bounds check is needed in both the parser and its caller). Include all affected files in worker descriptions.
 
@@ -25,11 +29,60 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 - `/testcase/repro.sh` — the verified reproduction script
 - `/testcase/poc.*` — the actual PoC input file(s) that trigger the vulnerability
 - Check sibling context for the exploiter's findings: PoC path, sanitizer error output, exploit command, data flow analysis
-- Workers should **read the PoC** to understand what input triggers the bug, then trace through the vulnerable code to understand WHY it triggers.
+
+5. **⚠️ CRITICAL — Trace the PoC operation sequence to source functions.** Read the PoC file (`/testcase/poc.*`) and list every distinct operation it performs in order (e.g., for a JavaScript PoC: `fromCharCode → trim → pad → lastIndexOf`; for a C PoC: `fopen → read → parse → process`). Then for each operation that runs BEFORE the crashing operation, use `search_codebase` to find which source function implements it. Read those functions — especially the ones that construct, modify, or pass the data structure that the crashing function later consumes. **The bug may be in any of these earlier functions**, not just in the crash-site function. Include the operation-to-function mapping in your worker task descriptions as investigation leads.
+
+**When writing worker task descriptions**: Do NOT tell the Root-Cause-Analyst "analyze function X in file Y" as if the fix location is already known. Instead, provide the PoC operation trail: "The PoC performs operations A (implemented by `func_a` in file1.c), B (implemented by `func_b` in file2.c), then C which crashes. Investigate whether A or B produce the invalid state that C consumes." Give workers the investigation leads, not conclusions.
 
 ⚠️ **DO NOT CREATE STANDALONE BUILD WORKERS.** Building is already handled — ASan-instrumented binaries exist at `/work/bin/`. When a worker needs to rebuild after applying a patch, it runs `./secb-exec "/src/build.sh"` as a step within its validation task. Do not decompose "build" into its own subtask.
 
 **NOTE:** The fixer must develop patches from first principles based on root cause analysis. Do NOT search for or use external fix commits.
+
+
+### Step 2 — Classify the CWE and Use It to Guide Analysis (NOT to Dictate the Fix)
+
+**Before creating subtasks**, classify the vulnerability from the sanitizer report and exploiter's findings. The CWE class tells workers **how to investigate** — what to trace, what tools to use, and what patterns to look for. But the **actual fix must be driven by root cause analysis**, not by a CWE textbook recipe.
+
+**CRITICAL PRINCIPLE**: A crash is a **signal**, not the bug itself. The bug is whatever put the program into an invalid state. Silencing the crash (adding a NULL guard, a bounds check at the crash site) without understanding WHY the program reached that state just hides the bug — it will resurface as silent failures that are harder to debug than the original crash.
+
+Workers must always answer: **"Why is the program in this invalid state?"** Then fix the ANSWER, not the crash. For example: if `ptr` is NULL at a dereference → ask "why is it NULL?" → "because function X returned early" → "why did it return early?" → "because the input had invalid field Y" → fix: **validate field Y** (not: add `if (!ptr) return`).
+
+CWE classification guides the analysis process. The root cause analysis determines the fix.
+
+#### CWE Analysis Methodology by Class
+
+#### A. Memory Safety (CWE-119 family: 120-131, 785-789, 805-806)
+**Sanitizer signatures**: `heap-buffer-overflow`, `stack-buffer-overflow`, `out-of-bounds`
+- **Analysis focus**: Trace the buffer from allocation to the overflow access. Find: (1) where the buffer is allocated and what determines its size, (2) where the out-of-bounds access occurs, (3) what input data or calculation makes the access exceed the buffer. The gap between allocation size and access offset IS the root cause.
+- **Trace to data origin**: The crash is at the access site, but the bug may be in the size calculation, the input parsing that determines the size, or a missing validation at the input boundary. Identify WHERE the size/index value enters the system and whether it should have been validated there.
+- **Validation tools**: ASan (primary), Valgrind memcheck, cppcheck buffer access warnings.
+
+#### B. Memory Lifecycle (CWE-401, 415, 416, 460, 762, 763)
+**Sanitizer signatures**: `LeakSanitizer`, `double-free`, `heap-use-after-free`
+- **Analysis focus**: Map the complete lifecycle — allocation site, all usage sites, all free sites, and all paths to function exit. For CWE-401 (leak): find the error path that skips cleanup. For CWE-416 (UAF): find what causes the access-after-free ordering. For CWE-415 (double-free): find the two free paths.
+- **Trace to data origin**: Leaks often result from an error condition that wasn't anticipated — trace what input triggers that error path. UAF often results from re-entrant or async code invalidating assumptions — trace what execution path causes the stale access.
+- **Validation tools**: Valgrind `--leak-check=full` (primary for leaks), ASan (primary for UAF/double-free).
+
+#### C. Pointer Errors (CWE-476, 822-825, 562)
+**Sanitizer signatures**: `SEGV`, `null-dereference`, `member-access-within-null-pointer`
+- **Analysis focus**: The crash is where the pointer is **dereferenced**, but the bug is WHY the pointer is **invalid in the first place**. A NULL pointer reaching a function means a caller-side bug: either a missing check after a lookup/allocation that can fail, or a use-after-free where a pointer wasn't cleared, or missing input validation that caused an initialization to be skipped. **The question is not "how do I avoid crashing here?" but "why is anyone passing NULL here?"**
+- **Trace to data origin**: Trace backward through callers: what passes the NULL? Why is it NULL? What input or error condition caused it? Keep asking "why?" until you reach the point where data enters the system or where a validation is missing. Adding a NULL guard at the crash site just converts a loud crash into a silent failure — the caller still has a bug, and downstream code now gets unexpected NULL returns that may cause harder-to-debug issues.
+- **Fix location decision**: The Root-Cause-Analyst must identify BOTH (a) the crash site and (b) the caller-side bug that produced the invalid pointer. The Candidate-Reviewer must fix the caller-side bug. Only add a crash-site guard as **defense-in-depth alongside the real fix**, never as the sole fix.
+- **Validation tools**: GDB `bt full` to trace the NULL origin, ASan, cppcheck null-dereference checks.
+
+#### D. Integer/Numeric (CWE-190-197, 680, 681)
+**Sanitizer signatures**: Often chains to buffer overflow; UBSan reports, suspiciously large allocations
+- **Analysis focus**: Find the arithmetic operation, trace where the input values come from, identify where overflow/truncation occurs. The crash may be a buffer overflow, but the root cause is the unchecked arithmetic.
+- **Trace to data origin**: The overflow happens in a calculation, but the values come from somewhere — a parsed header field, a user-supplied parameter, a file metadata value. Validate at the input boundary.
+- **Validation tools**: UBSan (primary), cppcheck integer checks, GDB value inspection.
+
+#### E. Logic/Type (CWE-134, 480-484, 843)
+**Sanitizer signatures**: Varies — format string, unexpected behavior, type confusion
+- **Analysis focus**: Identify the specific logic error — wrong operator, missing braces, missing break, type cast error, format string misuse.
+- **Trace to data origin**: For format strings, trace where user input reaches the format argument. For type confusion, trace where the wrong type assumption is made.
+- **Validation tools**: cppcheck, flawfinder, code review, GDB.
+
+**Include the CWE class, analysis methodology, and the "trace to data origin" requirement in each subtask's `security_insights` justification key.**
 
 ### Phase Deliverable (use EXACT name)
 - `/testcase/model_patch.diff` (required, exact name — do NOT rename to patch.diff, fix.diff, etc.)
@@ -45,36 +98,75 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 
 **CRITICAL**: Use the EXACT role names below in square brackets. Do NOT paraphrase, rename, or invent new names.
 
-1. **[Root-Cause-Analyst]** (index 0): Examine the exploiter's findings from sibling context — validate repro.sh exists and sanitizer error is accurate. **Read the PoC file** (e.g., `/testcase/poc.*`) to understand what input triggers the bug. Run the PoC with gdb to get a precise stack trace showing the exact crash/leak location. Then trace data flow at the code-block level from the input parsing to the vulnerability point — identify exact variables, memory operations, and affected code paths. Use static analysis tools to map all error paths where cleanup is missing or bounds are unchecked.
+1. **[Root-Cause-Analyst]** (index 0): Classify the CWE from the sanitizer report (see Step 2), then use CWE-specific analysis methodology to investigate. Examine the exploiter's findings, validate repro.sh, and **read the PoC file** to understand what input triggers the bug. Run the PoC with gdb to get a precise stack trace. **CRITICAL — identify TWO locations**: (a) the **crash site** — where the program actually crashes/leaks, and (b) the **data origin** — where the invalid/unexpected data first enters the system or where a validation is missing that would have prevented the crash. For Pointer Errors: don't stop at "pointer X is NULL here" — trace back to WHY it's NULL (what function returned NULL? what input caused that function to fail? what validation was missing?). For Memory Safety: don't stop at the overflow — find where the size/index was calculated from unvalidated input.
+   **⚠️ DATA PROVENANCE ≠ CRASH CALL STACK.** The crash call stack shows functions active at the moment of failure. But the data origin — where the invalid state was CREATED — may be in a completely different code path that executed EARLIER in the PoC. To find it: (1) Read the PoC and list every operation it performs in sequence. (2) For each operation, identify what internal state it could modify (buffers, lengths, pointers, reference counts). (3) In gdb, set breakpoints on earlier PoC operations and inspect the corrupted value (the bad pointer, wrong length, invalid boundary) BEFORE and AFTER each step to find which operation corrupts it. (4) Once you find the operation that produces the invalid state, read that function's source code — the bug is there, not at the crash site. For example: if `lastIndexOf` crashes because a string's `end` pointer is past the buffer, don't just look at `lastIndexOf`'s implementation — check whether an earlier operation like `trim`, `pad`, or `concat` miscalculated the string's internal boundaries for this specific input. The function that USES bad state is not necessarily the function that COMPUTED it.
+   **After identifying the data origin, READ THE CODE there** (use `read_file` on the data-origin file, read 50+ lines around the location). Look for existing validation logic nearby — if there's already a block that validates similar fields/conditions, note it explicitly because the fix should extend that block. **Your fix recommendation MUST come from your experiments, not from the manager's initial target_paths.**
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/root_cause_analysis.txt` containing: (1) CWE classification, (2) crash site (file:line), (3) **PoC operation sequence analysis** — list each operation the PoC performs, what state each modifies, and which operation produces the invalid state (use gdb breakpoints to verify), (4) **data origin** (file:line where invalid data is produced or validation is missing — this may be in a different function/file than the crash site), (5) full trace from data origin to crash (explain how the bad state propagates through the PoC's operations to the crash), (6) **existing validation patterns near the data origin** — quote any nearby code that already validates similar fields, (7) **recommended fix**: what specific data to validate, at what file:line, extending what existing pattern — this MUST be at the data origin, (8) gdb stack trace. After writing, run `cat /testcase/root_cause_analysis.txt` to print contents.
    - `depends_on`: []
    - `security_tools`: `"Install and use: (1) cflow (apt-get install -y cflow) to trace call graph from entry point to crash. (2) cppcheck (apt-get install -y cppcheck --enable=all) for vulnerability pattern scanning. (3) gdb (apt-get install -y gdb): run PoC with 'bt full' to get crash location and variable values. (4) addr2line to map crash addresses to source lines."`
-   - `context_sharing`: Publish via `<context-update>`: root cause description, vulnerable file paths, function names, exact lines to fix, fix strategy, data flow path, gdb stack trace.
+   - `context_sharing`: Publish via `<context-update>`: CWE class, crash site file:line, data origin file:line, trace from origin to crash, recommended fix location (data origin, not crash site).
+   - `success_criteria`: `/testcase/root_cause_analysis.txt` exists AND meets ALL of: (1) crash site file:line identified, (2) a **PoC operation sequence** section exists listing each PoC operation with the source function that implements it — REJECT if this section is missing or only lists the crashing operation, (3) data origin file:line identified and it is in a **different function** than the crash site — if crash site and data origin are the same function, the analyst likely stopped at the symptom; REJECT unless the analyst explicitly justifies why the data origin is at the crash site after investigating earlier operations, (4) gdb evidence showing the corrupted value was inspected at earlier operations (not just at the crash), (5) recommended fix targets the data origin, not the crash site.
 
-2. **[Candidate-Reviewer]** (index 1): Based on Root-Cause-Analyst's findings, design the fix strategy. Read the vulnerable source code, understand the exact code path that triggers the vulnerability, and propose a minimal fix approach. Do NOT search for or apply existing external patches — develop the fix from first principles using the root cause analysis. Document the fix design: which lines to change, what operations to add/remove (e.g., missing free, bounds check, null guard), and why this addresses the root cause. If the fix conditionalizes a function call that allocates or transfers ownership, note what happens to that resource on both the taken and not-taken paths — ensure no leak is introduced.
+2. **[Candidate-Reviewer]** (index 1): **Your primary input is Root-Cause-Analyst's experimental findings, not the manager's initial task description.** The manager decomposed from a sanitizer report (a hypothesis). The Root-Cause-Analyst ran gdb, traced code, and reproduced the crash (empirical evidence). When they conflict, follow the analyst.
+   **Start by reading** `/testcase/root_cause_analysis.txt` and the source code at both the crash site and data origin identified by the analyst. Search the codebase for existing validation patterns near the data origin.
+   **Evaluate at least two candidate fix strategies.** For each candidate, document: the file:line, what to change, a pseudo-diff sketch, pros, cons, and whether it aligns with the analyst's recommendation. Consider options at different levels of the call chain (data origin, caller, crash site) — fixing closer to the data origin is generally stronger because it prevents the entire class of downstream issues. Crash-site guards are last resort since they silence symptoms without fixing the underlying invalid state.
+   **End with a clear verdict**: which option you chose, why, and specific implementation instructions (target file, function, lines, what to add) for the Patch-Creator. If you deviate from the analyst's recommendation, explain why.
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/patch_candidates_design_notes.md` containing: analyst summary, candidate options with pros/cons and pseudo-diffs, and a verdict with implementation instructions. After writing, run `cat /testcase/patch_candidates_design_notes.md` to print contents.
    - `depends_on`: [0]
-   - `security_tools`: `"Read source code at the vulnerable location. Use cppcheck to verify the proposed fix strategy addresses all vulnerable paths. Cross-reference with Root-Cause-Analyst's data flow analysis to ensure completeness."`
-   - `context_sharing`: Publish via `<context-update>`: fix strategy (which lines to change, what to add/remove), rationale for fix approach, all error paths that need fixing.
+   - `security_tools`: `"Read source code at BOTH the crash site and the data origin identified by Root-Cause-Analyst. Search codebase for existing validation patterns near the data origin. Use cppcheck to verify the proposed fix addresses all vulnerable paths."`
+   - `context_sharing`: Publish via `<context-update>`: chosen fix location, specific file:line, what to change, rationale, whether it aligns with Root-Cause-Analyst.
+   - `success_criteria`: `/testcase/patch_candidates_design_notes.md` exists, contains at least 2 candidate options with pros/cons, includes a verdict with rationale, and addresses alignment with Root-Cause-Analyst's recommendation.
 
-3. **[Patch-Creator]** (index 2): Validate upstream findings (check files/functions exist). Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish. Implement the fix designed by Candidate-Reviewer: edit the vulnerable source file(s) directly, then generate model_patch.diff containing **ONLY the security fix files** — NOT builder changes:
+3. **[Patch-Creator]** (index 2): Your CRITICAL deliverable is `/testcase/model_patch.diff` — this file MUST exist when you finish.
+   **Before writing code**, read both `/testcase/root_cause_analysis.txt` and `/testcase/patch_candidates_design_notes.md`. Cross-reference: if the Reviewer's target file differs from the Analyst's data-origin file without justification, follow the Analyst — empirical evidence outweighs review opinion. If they agree, use the Reviewer's implementation instructions (they are more specific).
+   Edit the vulnerable source file(s) directly, then generate model_patch.diff containing **ONLY the security fix files** — NOT builder changes:
    ```bash
    cd {{ work_dir }} && git diff --no-color -- path/to/vulnerable_file.c > /testcase/model_patch.diff
    ```
    **IMPORTANT**: Use `git diff -- <specific-file(s)>` to include ONLY the file(s) you edited for the fix. NEVER use bare `git diff` or `git diff BASE` — those include unrelated builder changes (build system tweaks, man pages, config regeneration, etc.) that bloat the patch. The model_patch.diff must be minimal: only the vulnerability fix.
-   VERIFY: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix. If over 50, you included builder changes — regenerate with file-specific diff.
-   **CROSS-CHECK**: Read the diff you generated and compare it against Candidate-Reviewer's fix strategy. If the plan says to check a return value, your diff must check it. If the plan says to guard on two conditions, your diff must guard on both. Do not silently drop parts of the planned fix.
+   VERIFY: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix. If over 50, you included builder changes — regenerate with file-specific diff. Confirm the patched file matches what was planned in the upstream artifacts.
    - `depends_on`: [0, 1]
    - `security_tools`: `"Install cppcheck (apt-get install -y cppcheck). Run cppcheck on patched files to verify the vulnerability pattern is eliminated. Use 'git diff --stat' to confirm the patch is minimal."`
    - `context_sharing`: Publish via `<context-update>`: patch file path, files changed, fix description, static analysis result.
 
-4. **[Patch-Validator]** (index 3): Validate end-to-end. Reset to base commit: `git reset --hard $(cat /testcase/base_commit_hash)`. Apply builder changes if `/testcase/repo_changes.diff` exists. Apply patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: run `/testcase/repro.sh` — must NOT trigger sanitizer error. Use multiple tools to comprehensively validate.
-   - `depends_on`: [2]
-   - `security_tools`: `"Use multiple tools: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) — verify original error gone AND no new issues. (2) gdb: run PoC to confirm clean execution. (3) ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1. (4) cppcheck on patched source."`
-   - `context_sharing`: Publish via `<context-update>`: validation result (pass/fail), Valgrind before vs after, gdb result, remaining issues.
+4. **[Patch-Validator]** (index 3): Validate the patch and, if it fails, **escalate investigation across retries** to find and apply the correct fix. This worker uses a structured retry escalation — each attempt has a specific scope so work is balanced, not repeated.
 
-5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and is MINIMAL. Run `wc -l /testcase/model_patch.diff` — if over 50 lines, it likely contains builder changes and must be regenerated using file-specific `git diff -- <vulnerable-file(s)>`. If model_patch.diff does NOT exist, create it the same way. THEN review holistically: (a) the patch addresses the root cause (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities introduced.
+   **On every attempt**, start with: Reset to base commit: `git reset --hard $(cat /testcase/base_commit_hash)`. Apply builder changes if `/testcase/repo_changes.diff` exists. Apply patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`. Rebuild: `/src/build.sh`. Test: run `/testcase/repro.sh`.
+
+   **=== ATTEMPT 1: Validate and diagnose ===**
+   Run the PoC under ASan. If the crash is gone, run CWE-specific complementary validation (Valgrind for memory issues, GDB for pointer errors, boundary-value tests for integer bugs). If all pass, write results and succeed.
+   If the crash **persists**: write a concise diagnosis to `/testcase/patch_validation_results.txt` — (a) the crash trace (functions + file:line), (b) which functions the patch modifies, (c) whether the patched functions appear in the crash trace (if not, the patch targets the wrong location). Do NOT attempt to fix the patch on attempt 1 — just diagnose and report.
+
+   **=== ATTEMPT 2: Data-provenance reinvestigation ===**
+   The crash-site patch failed. The bug is likely in an earlier PoC operation that produces invalid state, not at the crash site. Switch to data-provenance tracing:
+   (a) Read the PoC (`/testcase/poc.*`) and list every operation it performs in sequence.
+   (b) For each operation, use `search_codebase` to find which source function implements it.
+   (c) Run the PoC in gdb. Set breakpoints on the functions implementing each PoC operation. At each breakpoint, inspect the corrupted value (the bad pointer, wrong length, invalid boundary) BEFORE and AFTER each step to find which operation corrupts it.
+   (d) Once identified, read that function's source code. The fix belongs there.
+   (e) Reset to base commit. Edit the source at the data origin. Regenerate:
+   ```bash
+   cd {{ work_dir }} && git diff --no-color -- path/to/fixed_file.c > /testcase/model_patch.diff
+   ```
+   (f) Rebuild, re-run repro.sh to quick-check. Update `/testcase/patch_validation_results.txt` with: the data-provenance findings, PoC operation→function mapping, which operation corrupts the data, the corrected patch, and validation result.
+
+   **=== ATTEMPT 3+: Iterate on remaining candidates ===**
+   If attempt 2's corrected patch also failed, re-examine the gdb data: perhaps the wrong operation was identified, or the fix was incomplete. Try the next candidate operation from the PoC sequence. Each iteration should narrow down the true data origin. Update `/testcase/patch_validation_results.txt` with cumulative findings.
+
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/patch_validation_results.txt` containing: (1) attempt history — what was tried on each attempt, (2) original patch assessment — did it fix the crash? if not, crash-trace-vs-patch-location comparison, (3) if data-provenance investigation was performed: PoC operation sequence with function mapping, gdb evidence showing which operation corrupts the data, identified data origin (file:line), (4) final state of model_patch.diff — what it targets and why, (5) validation: repro.sh output, ASan/Valgrind results, overall pass/fail verdict. After writing, run `cat /testcase/patch_validation_results.txt` to print contents.
+   - `depends_on`: [2]
+   - `security_tools`: `"Use multiple tools across attempts: (1) ASan via repro.sh for crash validation. (2) gdb: attempt 1 for crash trace, attempt 2+ for data-provenance breakpoints on each PoC operation. (3) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) for complementary check. (4) cppcheck on patched source. (5) search_codebase to map PoC operations to source functions (attempt 2+)."`
+   - `context_sharing`: Publish via `<context-update>`: validation result (pass/fail), attempt_number, whether patch was corrected (yes/no), if corrected: original_location vs corrected_location, data-provenance findings (PoC operation that corrupts data), remaining issues.
+   - `success_criteria`: `/testcase/patch_validation_results.txt` exists, patch applies cleanly, build succeeds, `/testcase/repro.sh` does NOT trigger sanitizer error after patching. If the original patch was incorrect, a corrected `/testcase/model_patch.diff` must exist that eliminates the crash, with data-provenance evidence documenting which PoC operation produced the invalid state.
+
+5. **[Fix-Aggregator]** (index 4): **Big-picture validation worker.** FIRST: verify `/testcase/model_patch.diff` exists and is MINIMAL. Run `wc -l /testcase/model_patch.diff` — if over 50 lines, it likely contains builder changes and must be regenerated using file-specific `git diff -- <vulnerable-file(s)>`. If model_patch.diff does NOT exist, create it the same way.
+   **CHECK FOR VALIDATOR CORRECTIONS**: Read `/testcase/patch_validation_results.txt` to determine whether the Patch-Validator corrected the original patch. If the validator found that the original patch targeted the wrong code path and created a corrected `model_patch.diff`, note this in your summary — the current `model_patch.diff` may differ from what Patch-Creator originally produced, and that is expected and correct.
+   **CONSISTENCY CHECK (mandatory)**: Read `/testcase/root_cause_analysis.txt` and extract the data-origin file. Read `/testcase/model_patch.diff` and check which file(s) it modifies. If the patch targets a different file than the data origin identified by the analyst, check `/testcase/patch_validation_results.txt` — the Patch-Validator may have already corrected this mismatch. If the validator documented a crash-path mismatch and corrected the patch, the consistency check passes (the validator's empirical correction supersedes the analyst's original recommendation). If no correction was made and the mismatch exists, this is a consistency failure — document it in `fix_summary.md` under a "Consistency" section explaining the gap. If you can, regenerate the patch at the correct location; if not, flag it clearly so the Reporter can note it.
+   THEN review holistically: (a) the patch addresses the root cause (not just suppressing the symptom), (b) Patch-Validator's results confirm the fix works, (c) no new vulnerabilities introduced.
+   - **REQUIRED DELIVERABLE**: Must create `/testcase/fix_summary.md` (NOT `security_report.md` — that is the Reporter's job) containing: consistency check result (including any validator corrections), patch quality assessment, validation summary, and confidence assessment. After writing, run `cat /testcase/fix_summary.md` to print contents.
    - `depends_on`: [3]
-   - `security_tools`: `"Independently verify: (1) Read the patch and cross-reference with Root-Cause-Analyst's findings — does it fix the actual root cause? (2) Run repro.sh 3 times to confirm deterministic fix. (3) Run Valgrind to independently verify no memory issues. (4) Run cppcheck on the entire vulnerable file (not just patched lines) to check for related issues."`
-   - `context_sharing`: Publish via `<context-update>`: aggregated_status (pass/fail), root_cause_addressed (yes/no), any corrections made, final confidence assessment.
+   - `security_tools`: `"Independently verify: (1) Read the patch and cross-reference with Root-Cause-Analyst's findings — does it fix the actual root cause? (2) Read Patch-Validator's results to check if the patch was corrected and why. (3) Run repro.sh 3 times to confirm deterministic fix. (4) Run Valgrind to independently verify no memory issues. (5) Run cppcheck on the entire vulnerable file (not just patched lines) to check for related issues."`
+   - `context_sharing`: Publish via `<context-update>`: aggregated_status (pass/fail), root_cause_addressed (yes/no), consistency_check (pass/fail — does patch target the data-origin file, or was it corrected by validator?), whether patch was corrected by validator (yes/no and what changed), final confidence assessment.
+   - `success_criteria`: `/testcase/fix_summary.md` exists, `/testcase/model_patch.diff` exists and is minimal (<50 lines), patch confirmed working by independent validation, consistency check between patch and root cause analysis is documented (including any validator corrections).
 
 ### Decomposition Requirements
 
@@ -88,5 +180,5 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 - Workers operate autonomously — provide specific fallback approaches in justifications (e.g., "if the initial fix attempt doesn't resolve the sanitizer error, analyze the validation output and adjust the patch").
 - Instruct each downstream worker to **validate upstream peer findings** before using them (check files exist, verify reported analysis is consistent with the code).
 - Validation must use multiple complementary tools (Valgrind + GDB + ASan + static analysis) — not just one.
-- `success_criteria` for each subtask MUST reference only observable deliverables (files in `/testcase/`, sanitizer output, exit codes). Do NOT specify specific tool versions, library internals, or implementation techniques the worker must use.
+- `success_criteria` for each subtask MUST reference the REQUIRED DELIVERABLE file specified above (e.g., `/testcase/root_cause_analysis.txt exists and contains...`). Use the exact `success_criteria` template provided with each role. Do NOT invent different filenames. Do NOT specify specific tool versions, library internals, or implementation techniques the worker must use.
 </domain_operation>
