@@ -8,7 +8,27 @@ Consider what tools workers should install beyond the preinstalled set:
 - `gdb` for detailed stack traces and memory inspection
 - `strace` / `ltrace` for runtime behavior analysis
 - `addr2line` for mapping crash addresses to source code
+- **One-shot source instrumentation** — temporarily inject `fprintf(stderr, ...)` into the suspected function to print the actual runtime values (pointer addresses, type tags, sizes), rebuild, run the PoC, then `git checkout -- <file>` to revert. This is the highest-bandwidth oracle for type-confusion and NULL-deref bugs because static tools and `gdb bt` cannot reveal *what* the corrupted object is, only *where* it crashes.
 
 Prescribe specific tool combinations in each subtask's `justification` — workers rely on your security tool guidance.
 Each subtask's `justification` should include `"security_tools"` and `"security_insights"` keys.
+
+## Writing `security_insights` (the most-misused field)
+
+`security_insights` is **not** a place to restate the CVE. The worker already has the bug description in its task context. A `security_insights` value that just paraphrases "CVE-X is a NULL deref in function Y at line Z" is wasted bandwidth — the worker will then default to the most syntactically obvious fix (a guard at line Z) because nothing in the briefing pointed it elsewhere.
+
+A useful `security_insights` value gives the worker **hypotheses to falsify**, not answers to copy. It must contain at least:
+
+1. **The runtime question the worker MUST answer empirically.** Phrase it as a question whose answer requires running the PoC, not reading static code. Examples:
+   - For NULL-deref of a tagged value: *"What is the type tag (`tt` / `vtable` / `kind` field) of the object reaching the crash site? Capture it via one-shot `fprintf` instrumentation, then search for any static initializer of that type with a NULL field."*
+   - For buffer overflow: *"What is the actual `len` value passed to the allocator vs. the actual byte offset written? Print both before the overflowing write."*
+   - For UAF: *"At the use site, when was the object freed? Print the address at allocation, free, and use to confirm."*
+
+2. **At least two candidate fix layers** the worker must evaluate (closest-to-crash and closest-to-data-origin). Frame them as alternatives the worker chooses between based on the contract test (Step 2 of the worker prompt). Do NOT pre-commit to one layer — that defeats the worker's analysis. Example: *"Candidate A: guard at the crash-site dereference (closest, weakest — silences the symptom, hides the underlying invalid state). Candidate B: validate at function `mrb_X_ptr` which is documented to return NULL for values that cannot have a singleton (chokepoint, extends an existing contract). The worker MUST justify the chosen layer against contract / coverage / failure-mode."*
+
+3. **Known anti-patterns to refuse.** Examples: *"Do NOT add a NULL guard at the crash line as the sole fix — the analyst memory note shows we have repeatedly produced shallow patches by stopping at the crash site."* / *"Do NOT add unrelated NULL checks on `malloc`/`realloc` returns — that is scope creep, not a fix."*
+
+4. **The CWE-class-specific runtime evidence required.** Pointer Errors and Type Confusion bugs are NOT root-caused without live instrumentation output showing the type/identity of the corrupted object. State this explicitly in `security_insights` so the Root-Cause-Analyst cannot skip it.
+
+A weak `security_insights` produces a shallow fix even with strong tools. A strong one anchors the worker's investigation. Treat it as the most important part of the justification block.
 </domain_guidance>
