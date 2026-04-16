@@ -12,6 +12,31 @@ If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, y
 - **[Exploiter]** tasks involve: static analysis, PoC research, exploit crafting, testing with multiple tools, reproduction validation — **exactly 5 workers** with these EXACT role names (copy verbatim): `[PoC-Researcher]` → `[Data-Flow-Analyst]` → `[PoC-Tester]` → `[Repro-Creator]` → `[Exploit-Validator]`. Do NOT paraphrase (no [Static-Analyst], [PoC-Generator], [Leak-Tester], etc.).
 - **[Fixer]** tasks involve: root cause analysis at code-block level, fix design, patch creation, multi-tool validation — **exactly 5 workers** with these EXACT role names (copy verbatim): `[Root-Cause-Analyst]` → `[Candidate-Reviewer]` → `[Patch-Creator]` → `[Patch-Validator]` → `[Fix-Aggregator]`. Patches developed from first principles (no external fix commits). Do NOT paraphrase (no [Patch-Author], [Patched-Builder], etc.).
 
+  **⚠️ Fixer-specific `security_insights` requirements (mandatory for each Fixer subtask's justification).** A weak `security_insights` produces a shallow patch even with strong tools. Each Fixer subtask's `security_insights` MUST contain:
+
+  1. **A runtime question the worker must answer empirically.** Not a restatement of the CVE. Phrase it as a question whose answer requires running the PoC, not reading static code. Examples by CWE:
+     - Pointer Errors (CWE-476) / Type Confusion: *"What is the runtime type/kind of the object reaching the crash site? Identify whatever field the project's object model uses to tag object types (read the struct definition — each codebase uses a different name), capture its value via one-shot `fprintf` instrumentation injected before the dereference, rebuild, run PoC, then `git checkout -- <file>` to revert. Then grep for any static initializer of that type with NULL or uninitialized fields — often the data origin."*
+     - Memory Safety (CWE-122/121): *"What is the `len` value at allocation vs. the byte offset at the overflowing write? Print both before the write."*
+     - Memory Lifecycle (CWE-416/401): *"Print the object's address at allocation, free, and use to confirm the timing."*
+
+  2. **At least two candidate fix layers** the worker must evaluate against a contract/coverage/failure-mode rubric. NOT a single predetermined target. Frame them as: (A) the closest-to-crash guard (usually the weakest — silences the symptom, hides the underlying invalid state, may produce silent wrong results downstream); (B) a caller-side chokepoint where the existing function's documented or implicit contract *already* handles error/absent values and extending that contract to cover the new invalid case is a natural generalization. Worker MUST justify the chosen layer against contract / coverage / failure-mode and MUST pick based on the actual codebase structure — you (the decomposing manager) should NOT name the specific function; leave that to the worker's investigation.
+
+  3. **Known anti-patterns to refuse.** At minimum: *"Do NOT add a NULL guard at the crash line as the sole fix — repeated prior runs produced shallow patches by stopping at the crash site. Do NOT add unrelated defensive code (NULL-checks on `malloc`/`realloc`, hardening nearby functions) — that is scope creep."*
+
+  4. **For Pointer Errors and Type Confusion**: explicitly state that the Root-Cause-Analyst MUST perform one-shot source instrumentation (inject `fprintf` at the crash site to print type tag, rebuild, run, revert) and that static tools + `gdb bt` alone are insufficient evidence — reject the analyst's deliverable if it contains no runtime-observation section.
+
+  **⚠️ Fixer-specific structured-handoff requirement.** The `[Root-Cause-Analyst]` subtask's `success_criteria` MUST require that `/testcase/root_cause_analysis.txt` contains a machine-readable block at the bottom of the file with these exact keys:
+
+  ```
+  PROPOSED_FIX_SITE: <file>:<line>
+  PROPOSED_FIX_SITE_RATIONALE: <one sentence: which contract this extends, what coverage it gives>
+  ALTERNATIVE_SITE: <file>:<line>
+  ALTERNATIVE_SITE_REJECTED_BECAUSE: <one sentence: contract violation / coverage gap / silent failure mode>
+  RUNTIME_TYPE_TAG: <value observed via fprintf, or "n/a" with justification if not a tagged-object bug>
+  ```
+
+  The `[Patch-Creator]` subtask's task description MUST instruct the worker to extract `PROPOSED_FIX_SITE` from that block as its default fix location and to write a one-paragraph justification if it deviates. The `[Patch-Creator]` subtask MUST also include a no-scope-creep rule: *"The diff MUST contain only the change that fixes this CVE. Do NOT add unrelated NULL-checks, defensive hardening, or error handling for paths the PoC does not exercise. If the diff has more than one logical hunk or touches more than one function, justify each extra hunk against the analyst's block."*
+
 A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**. Exploiter and Fixer phases benefit from **more workers with narrower, more specific deliverables** because they require code-level analysis.
 
 ### Sub-phase tasks (children of Builder/Exploiter/Fixer managers) — EXECUTE by default
@@ -39,8 +64,8 @@ Only choose DECOMPOSE for a sub-phase task if it genuinely requires 3+ completel
 - Workers operate fully autonomously — justifications must be comprehensive enough for self-directed execution.
 - Include in each subtask's `justification`:
   - `role`: The specific role (e.g., "Root-Cause-Analyst")
-  - `security_tools`: Specific tools to **install and use** — include `apt-get install` commands. Prescribe tool combinations beyond Valgrind/KLEE: cppcheck, cflow, gdb, strace, ltrace, addr2line, flawfinder
-  - `security_insights`: CVE details, sanitizer type, vulnerable component, analysis strategy
+  - `security_tools`: Specific tools to **install and use** — include `apt-get install` commands. Prescribe tool combinations beyond Valgrind/KLEE: cppcheck, cflow, gdb, strace, ltrace, addr2line, flawfinder. For type-confusion / NULL-deref bugs, also prescribe **one-shot source instrumentation** (temporarily inject `fprintf(stderr, ...)` into the suspected function, rebuild, run PoC, `git checkout -- <file>` to revert) — this is the only way to learn *what* the corrupted object is, not just *where* the crash is.
+  - `security_insights`: **NOT a restatement of the CVE**. The worker already has the bug description in its task context. A `security_insights` that paraphrases "CVE-X is a NULL deref in function Y at line Z" is wasted bandwidth and produces a shallow fix because nothing pushes the worker off the syntactically obvious line. Instead, `security_insights` MUST give the worker **hypotheses to falsify**: (a) a runtime question the worker must answer empirically (not by reading static code), (b) at least two candidate analysis/fix directions framed as alternatives to evaluate (not a predetermined target), (c) known anti-patterns to refuse. See the Fixer-specific requirements above for concrete structure.
   - `context_sharing`: What to publish via `<context-update>` for downstream siblings
   - `peer_validation`: What each downstream worker should verify from upstream findings before proceeding
 </domain_assessment>

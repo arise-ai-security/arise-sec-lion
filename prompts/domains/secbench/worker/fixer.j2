@@ -37,26 +37,51 @@ Then validate what you're building on:
      - The **crash site** is where the program actually crashes (the sanitizer report tells you this). This is a SIGNAL, not the bug.
      - The **caller-side bug** is WHY the program is in the invalid state that caused the crash. Trace BACKWARD from the crash: "Why is this pointer NULL?" → "Because function X returned early" → "Why did it return early?" → "Because field Y in the input was invalid" ��� "Where should field Y have been validated?" → THAT is the real bug.
      - **Fix the caller-side bug**, not the crash site. Silencing the crash just hides the bug as silent failures.
-   - **Fourth**: **Read the code at the data origin.** Use `cat` or `read_file` to read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
-   - **Fifth**: Use CWE-appropriate tools to confirm your analysis:
+   - **Fourth — LIVE INSTRUMENTATION (REQUIRED for Pointer Errors and Type Confusion)**: Static tools and `gdb bt` only tell you WHERE the crash happens — they do not tell you WHAT the corrupted object actually IS. To answer that, add a one-shot `fprintf(stderr, ...)` immediately before the suspected dereference, printing the pointer's address, any tag/type field the project's object model uses (whatever field identifies an object's kind — it varies per codebase), and related fields. Rebuild with `/src/build.sh`, run the PoC, capture `stderr` to `/testcase/instrumentation_output.txt`, then **revert the change** (`cd {{ work_dir }} && git checkout -- <file>`) before any patch step. Confirm the revert with `git diff -- <file>` (must be empty). A NULL-deref or type-confusion bug whose object's *type tag* you have not observed at runtime is NOT yet root-caused — you are guessing.
+
+     **Shape of the instrumentation** (pseudo-C — do NOT copy field names; use what the actual project uses):
+     ```c
+     /* Immediately before the crashing dereference, print what you think the crash depends on. */
+     fprintf(stderr, "DBG %s: ptr=%p inner=%p <tag-field>=%d\n",
+             __func__, (void*)OBJ, (void*)OBJ->INNER, (int)OBJ->TAG_FIELD);
+     fflush(stderr);
+     <the existing crashing line goes here, unchanged>
+     ```
+     Discover the actual field names by reading the struct definition (`read_file` on the relevant header or source file) — the `OBJ->INNER` / `TAG_FIELD` above are uppercase placeholders, NOT real identifiers. Every codebase uses different names (a parser might use `node->kind`, a VM might use `v->type`, an image library might use `pixel->format` — you must find the ones this project actually uses). After running, the captured tag value tells you the type of the crashing object. Then `grep -n` for that type's struct definition or any **static const** initializer of that type with NULL/uninitialized fields — that is often the data origin.
+   - **Fifth**: **Read the code at the data origin.** Use `cat` or `read_file` to read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
+   - **Sixth**: Use CWE-appropriate tools to confirm your analysis:
      - `gdb -batch -ex run -ex 'bt full'` to see the full crash chain
      - `cppcheck --enable=all <vulnerable_file>` for static pattern detection
      - Valgrind for memory lifecycle issues
-   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises.
+   - **CRITICAL**: Do NOT build a theory from static analysis alone. The PoC demonstrates the real bug — your fix must address the specific code path the PoC exercises. Static tools converge on the crash site because that is the only signal they emit; they cannot tell you the data origin.
 
 2. **Develop the fix — FIX THE CALLER-SIDE BUG, NOT THE CRASH SITE**:
    The crash is a signal. Your fix must address WHY the program reached the invalid state, not just silence the crash. A crash-site guard (e.g., `if (!ptr) return NULL`) converts a loud, debuggable crash into a silent failure — the underlying bug keeps lurking.
+
+   **FIX-LAYER DECISION RUBRIC (mandatory)**: Before editing, list the candidate fix sites in order from "closest to crash" to "closest to data origin". For each candidate answer these three questions in writing inside `/testcase/root_cause_analysis.txt`:
+     1. **Contract**: Does this function have a documented or implicit contract (function-level comment, naming convention, callers' expectations) that a guard here would *extend*, or are you adding a check that *contradicts* the existing contract? Quote the contract if you can find it.
+     2. **Coverage**: Does a guard here also fix sibling call paths that could reach the same invalid state, or only the exact path this PoC exercises?
+     3. **Failure mode**: If the guard fires, does the immediate caller already know how to handle a NULL/error return (look at the caller — does it check the return value? does it raise a typed error?), or are you silently producing a wrong result?
+
+   **The right fix layer is the one where you can answer "extends an existing contract", "fixes other paths too", and "caller already handles this".** A crash-site guard is the LAST resort, not the first. If you choose the crash site anyway, justify it explicitly in `root_cause_analysis.txt` against all three questions.
+
+   **NO SCOPE CREEP**: The patch MUST contain ONLY the change that fixes the CVE. Do NOT add unrelated defensive code (e.g., NULL checks on `malloc`/`realloc` returns, error handling for cases the PoC does not exercise, hardening of nearby functions, extra logging). Each unrelated hunk you add is a new code path you have not validated and a reason for reviewers to reject the patch. If you find a related but separate bug, mention it in the analysis text — do NOT include it in the patch.
+
    - **If there's existing validation near the data origin that just missed this case** (e.g., a parser validates some fields but not others): extend it. This is almost always the best fix.
    - **If validation is missing entirely**: add it where the invalid data enters, following the project's error-handling patterns.
    - **Only guard at the crash site if**: the data origin is in third-party code, or fixing there requires widespread changes. Even then, add it as defense-in-depth alongside the real fix, not as the sole fix.
+
    Search the codebase for how the project handles similar patterns — follow the same idiom (error return style, cleanup conventions, validation macros). Do NOT search for external fix commits.
    Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
+   **Workflow**: Edit the source file directly (using `file_editor` or `sed`), then generate the diff with `git diff` in step 3. Never write `/testcase/model_patch.diff` by hand — special characters like `'\0'` get corrupted.
 
 3. **Create `/testcase/model_patch.diff`**:
    - After editing, generate diff for ONLY the files you changed (not the entire repo):
      `cd {{ work_dir }} && git diff --no-color -- <file(s)-you-edited> > /testcase/model_patch.diff`
    - Example: `git diff --no-color -- path/to/vulnerable_file.c > /testcase/model_patch.diff`
    - **NEVER** use bare `git diff` or `git diff BASE` — those include unrelated builder changes
+   - **NULL BYTE WARNING**: If your fix involves C null terminators (`'\0'`), use `git diff` to generate the patch — do NOT write the diff manually via the file editor. The editor may corrupt `'\0'` into a literal 0x00 byte, producing an invalid patch. Always edit the source file first, then generate the diff with `git diff --no-color -- <file>`.
+   - After generating, verify the diff is textually valid: `cat /testcase/model_patch.diff` — every line must be printable text. If you see blank characters where `'\0'` should be, the diff is corrupt — re-edit the source and regenerate.
    - Verify: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix
 
 4. **Review patch**: The diff MUST contain only your security fix. If `wc -l` shows >50 lines, you included builder changes — regenerate with file-specific `git diff -- <file>`.
