@@ -41,9 +41,11 @@ class SecurityDomainPlugin(DomainPlugin):
         self,
         enabled_tools: list[str] | None = None,
         container_runtime: SecurityContainerRuntime | None = None,
+        inject_tool_guidance_always: bool = True,
     ) -> None:
         self._enabled_tools = enabled_tools or []
         self._container_runtime = container_runtime
+        self._inject_tool_guidance_always = inject_tool_guidance_always
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
@@ -77,8 +79,13 @@ class SecurityDomainPlugin(DomainPlugin):
             return prompt
 
         phase = detect_benchmark_branch(briefing)  # type: ignore[arg-type]
-        if not phase:
-            return prompt
+        if phase is None:
+            if not self._inject_tool_guidance_always:
+                return prompt
+            # Flag on: no SEC-bench phase detected (e.g., NullPromptStrategy
+            # produced generic ancestry). Fall back to the union-yielding
+            # phase so Valgrind/KLEE guidance is still injected.
+            phase = "exploiter"
 
         tools = get_tools_for_phase(phase, self._enabled_tools)
         if not tools:
