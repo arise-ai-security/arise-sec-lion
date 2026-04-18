@@ -19,6 +19,7 @@ from plugins.security.container_runtime import (
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.image_resolver import resolve_secbench_image
+from plugins.security.null_prompt_strategy import NullPromptStrategy
 from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
 from plugins.security.security_tool import get_tools_for_phase
 
@@ -42,10 +43,12 @@ class SecurityDomainPlugin(DomainPlugin):
         enabled_tools: list[str] | None = None,
         container_runtime: SecurityContainerRuntime | None = None,
         inject_tool_guidance_always: bool = True,
+        use_null_prompt_strategy: bool = False,
     ) -> None:
         self._enabled_tools = enabled_tools or []
         self._container_runtime = container_runtime
         self._inject_tool_guidance_always = inject_tool_guidance_always
+        self._use_null_prompt_strategy = use_null_prompt_strategy
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
@@ -57,6 +60,8 @@ class SecurityDomainPlugin(DomainPlugin):
         self._container_runtime = container_runtime
 
     def get_prompt_strategy(self) -> PromptStrategy | None:
+        if self._use_null_prompt_strategy:
+            return NullPromptStrategy()
         return SecBenchPromptStrategy()
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:

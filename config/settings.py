@@ -263,6 +263,13 @@ class SecurityConfig(BaseModel):
         default_factory=lambda: ["valgrind", "klee"],
         description="Security analysis tools to enable in SEC-bench containers",
     )
+    prompt_strategy: Literal["default", "null"] = Field(
+        default="default",
+        description=(
+            "Prompt strategy selector: 'default' uses SecBenchPromptStrategy, "
+            "'null' defers to core's default role prompts (experiment cell B1)."
+        ),
+    )
 
 
 class CorsConfig(BaseModel):

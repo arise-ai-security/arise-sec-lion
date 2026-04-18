@@ -37,9 +37,11 @@ def _build_security_components(settings: Settings) -> DomainComponents:
         return DomainComponents()
 
     runtime = DockerSecBenchRuntime()
+    use_null = settings.security.prompt_strategy == "null"
     plugin = SecurityDomainPlugin(
         enabled_tools=settings.security.tools,
         inject_tool_guidance_always=True,
+        use_null_prompt_strategy=use_null,
     )
     plugin.set_container_runtime(runtime)
     return DomainComponents(
