@@ -8,14 +8,26 @@ Consumed by: Pillar B analysis scripts (load dataset -> compute metrics).
 
 Schema version: 1.0.  Breaking changes require a version bump and a new
 dataset version. Additive changes (new optional fields) are backward-compatible.
+
+Producer responsibility:
+- Map domain-level operation strings to the normalized Operation literal:
+    'complexity_evaluation' -> 'assess'
+    'task_decomposition'   -> 'decompose'
+    'worker_execution'     -> 'worker_execution' (unchanged)
+    'verification'         -> 'verification'     (unchanged)
+    'context_condense'     -> 'context_condense' (unchanged)
+- Uppercase role names before constructing NormalizedEvent. The domain emits
+  AgentRole values as lowercase ('boss', 'manager', 'worker', 'pending'); the
+  schema's Role literal is uppercase ('BOSS', 'MANAGER', 'WORKER', 'PENDING').
+  Producers MUST apply AgentRole(...).value.upper() (or equivalent) before
+  constructing a NormalizedEvent.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 
 SCHEMA_VERSION = "1.0"
@@ -120,6 +132,45 @@ class RunLifecyclePayload(BaseModel):
     duration_seconds: float | None = None
 
 
+class VerificationFailedPayload(BaseModel):
+    """Mirrors core.domain.events.events.VerificationFailed."""
+
+    model_config = {"frozen": True}
+    failed_stage: str  # "structural", "deterministic", "execution", "judge"
+    feedback: str
+    stages_passed: list[str] = Field(default_factory=list)
+
+
+class RetryScheduledPayload(BaseModel):
+    """Mirrors core.domain.events.events.RetryScheduled."""
+
+    model_config = {"frozen": True}
+    attempt: int  # 1-indexed retry attempt number
+    reason: str
+    escalated_model: str | None = None
+    is_verification_retry: bool = False
+
+
+class WorkerCostRecordedPayload(BaseModel):
+    """Mirrors core.domain.events.events.WorkerCostRecorded.
+
+    Token fields are optional because some worker tools (e.g., PTY-based
+    execution) do not expose token counts.
+    """
+
+    model_config = {"frozen": True}
+    tool_name: str  # "claude_code", "openhands"
+    model: str | None = None
+    tokens: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
+
+
 class GenericPayload(BaseModel):
     """Fallback for event types whose payload doesn't have a dedicated model yet."""
 
@@ -127,18 +178,28 @@ class GenericPayload(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-Payload = Union[
-    PromptSentPayload,
-    TokensConsumedPayload,
-    ToolUsePayload,
-    ToolResultPayload,
-    AgentCreatedPayload,
-    StatusChangedPayload,
-    SubtasksDefinedPayload,
-    ChildSpawnedPayload,
-    RunLifecyclePayload,
-    GenericPayload,
-]
+# Payload union dispatch: Pydantic v2 "smart union" matches the FIRST model
+# whose required fields validate. Because RunLifecyclePayload (and several
+# other members) have only optional fields, an empty {} payload will
+# deserialize as the first all-optional member (NOT GenericPayload).
+# DOWNSTREAM CONSUMERS MUST DISPATCH BY event_type, NOT by
+# isinstance(payload, ...). The Union ordering here is informational only;
+# do not rely on it for semantic dispatch.
+Payload = (
+    PromptSentPayload
+    | TokensConsumedPayload
+    | ToolUsePayload
+    | ToolResultPayload
+    | AgentCreatedPayload
+    | StatusChangedPayload
+    | SubtasksDefinedPayload
+    | ChildSpawnedPayload
+    | RunLifecyclePayload
+    | VerificationFailedPayload
+    | RetryScheduledPayload
+    | WorkerCostRecordedPayload
+    | GenericPayload
+)
 
 
 class NormalizedEvent(BaseModel):
@@ -148,7 +209,7 @@ class NormalizedEvent(BaseModel):
 
     event_id: str
     run_id: str
-    occurred_at: datetime
+    occurred_at: AwareDatetime
     event_type: EventType
     source: Source
     agent_id: str | None = None
@@ -176,8 +237,8 @@ class RunMeta(BaseModel):
     budget_usd_cap: float
     wallclock_sec_cap: int
     models: dict[str, str | None]
-    started_at: datetime
-    ended_at: datetime
+    started_at: AwareDatetime
+    ended_at: AwareDatetime
     wallclock_seconds: float
     termination_reason: Literal[
         "completed",

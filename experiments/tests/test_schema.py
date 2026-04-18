@@ -1,7 +1,12 @@
 """Tests for the normalized event schema (experiments.schema)."""
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from uuid import uuid4
+
+import pytest
+from pydantic import ValidationError
 
 from experiments.schema import (
     NormalizedEvent,
@@ -109,3 +114,22 @@ def test_run_meta_required_fields() -> None:
 
     # Then: validates without error
     assert meta.cell == "A1"
+
+
+def test_normalized_event_rejects_naive_datetime() -> None:
+    """NormalizedEvent.occurred_at requires tz-aware datetime (AwareDatetime invariant)."""
+    # Given: a naive datetime (no tzinfo)
+    naive = datetime(2026, 4, 18)
+
+    # When: constructing a NormalizedEvent with the naive datetime
+    # Then: Pydantic raises ValidationError because AwareDatetime rejects naive values
+    with pytest.raises(ValidationError):
+        NormalizedEvent(
+            event_id=str(uuid4()),
+            run_id="test",
+            occurred_at=naive,
+            event_type="tool_use",
+            source="flat_cli",
+            role="FLAT",
+            payload=ToolUsePayload(tool_name="Bash"),
+        )
