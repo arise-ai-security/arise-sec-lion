@@ -16,6 +16,7 @@ from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentS
 from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
+    TokensConsumed,
     VerificationFailed,
     WorkCompleted,
     WorkFailed,
@@ -304,3 +305,95 @@ class TestJudgeLargeOutput:
         await orchestrator.execute_task(agent)
 
         assert agent.status == AgentStatus.COMPLETED
+
+
+class TestJudgeTokensConsumed:
+    """Judge LLM calls must emit TokensConsumed events with operation='verification'."""
+
+    @pytest.mark.asyncio
+    async def test_judge_success_emits_single_tokens_consumed_with_verification_op(
+        self,
+    ) -> None:
+        """One successful judge call emits exactly one TokensConsumed(operation='verification')."""
+
+        # Given: a worker completes successfully and the judge returns a clean verdict.
+        llm = FakeLLM(judge_response={"passed": True, "feedback": "ok"})
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Output must describe completion")
+
+        # When: the orchestrator executes the task (runs verification including judge).
+        await orchestrator.execute_task(agent)
+
+        # Then: verification passed and the judge call produced a verification-labeled event.
+        assert agent.status == AgentStatus.COMPLETED
+        verification_events = [
+            e
+            for e in agent.events
+            if isinstance(e, TokensConsumed) and e.operation == "verification"
+        ]
+        assert len(verification_events) == 1
+
+        # And: the event carries the LLM response fields verbatim.
+        event = verification_events[0]
+        assert event.model == "gpt-4o"
+        assert event.prompt_tokens == 50
+        assert event.completion_tokens == 25
+        assert event.total_tokens == 75
+        assert event.cost_usd == 0.01
+
+    @pytest.mark.asyncio
+    async def test_judge_retry_emits_tokens_consumed_for_each_call(self) -> None:
+        """When judge's first call is empty and retries, each LLM call emits a TokensConsumed."""
+
+        # Given: a judge LLM whose first response is empty and second is valid.
+        class RetryingJudgeLLM(FakeLLM):
+            def __init__(self) -> None:
+                super().__init__()
+                self._counter = 0
+
+            async def query_with_usage(
+                self, prompt: str, config_dict: dict
+            ) -> LLMResponse:
+                self.calls.append(prompt)
+                self._counter += 1
+                if self._counter == 1:
+                    return LLMResponse(
+                        content="",
+                        usage=LLMUsage(
+                            prompt_tokens=100, completion_tokens=0, total_tokens=100
+                        ),
+                        model="gpt-4o",
+                        cost_usd=0.002,
+                    )
+                return LLMResponse(
+                    content=json.dumps({"passed": True, "feedback": "ok"}),
+                    usage=LLMUsage(
+                        prompt_tokens=150, completion_tokens=20, total_tokens=170
+                    ),
+                    model="gpt-4o",
+                    cost_usd=0.004,
+                )
+
+        llm = RetryingJudgeLLM()
+        orchestrator = _make_orchestrator(llm=llm)
+        agent = _make_worker_agent(success_criteria="Output must describe completion")
+
+        # When: the orchestrator executes the task.
+        await orchestrator.execute_task(agent)
+
+        # Then: both judge calls emitted TokensConsumed events labeled 'verification'.
+        assert agent.status == AgentStatus.COMPLETED
+        verification_events = [
+            e
+            for e in agent.events
+            if isinstance(e, TokensConsumed) and e.operation == "verification"
+        ]
+        assert len(verification_events) == 2
+
+        # And: the events record each call's usage independently.
+        assert verification_events[0].prompt_tokens == 100
+        assert verification_events[0].completion_tokens == 0
+        assert verification_events[0].cost_usd == 0.002
+        assert verification_events[1].prompt_tokens == 150
+        assert verification_events[1].completion_tokens == 20
+        assert verification_events[1].cost_usd == 0.004

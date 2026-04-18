@@ -14,6 +14,7 @@ from core.domain.services.context_update_parser import parse_context_update
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
+    from core.domain.values.llm_response import LLMResponse
     from core.ports.runtime_ports import LLMPort
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class VerificationPipeline:
         report_context = self._build_report_context(agent)
 
         judge_passed, feedback = await self._verify_with_judge(
+            agent=agent,
             result=result,
             success_criteria=agent.success_criteria,
             config=agent.config,
@@ -162,9 +164,22 @@ class VerificationPipeline:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _emit_judge_tokens(agent: "AgentSession", response: "LLMResponse") -> None:
+        """Record the judge LLM call's token usage on the agent's event stream."""
+        agent.emit_tokens_consumed(
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            cost_usd=response.cost_usd,
+            operation="verification",
+        )
+
     async def _verify_with_judge(
         self,
         *,
+        agent: "AgentSession",
         result: str,
         success_criteria: str,
         config: Any,
@@ -215,6 +230,7 @@ class VerificationPipeline:
             if config_dict.get("max_tokens", 0) < 200:
                 config_dict["max_tokens"] = 200
             response = await self._llm_port.query_with_usage(prompt, config_dict)
+            self._emit_judge_tokens(agent, response)
             raw = response.content
 
             if not raw or not raw.strip():
@@ -223,6 +239,7 @@ class VerificationPipeline:
                 retry_config = dict(config_dict)
                 retry_config["max_tokens"] = 1000
                 retry_response = await self._llm_port.query_with_usage(prompt, retry_config)
+                self._emit_judge_tokens(agent, retry_response)
                 raw = retry_response.content
                 if not raw or not raw.strip():
                     logger.warning("Judge retry also empty — failing verification")
