@@ -407,7 +407,8 @@ class TestAdapterIntegration:
         assert seen["model"] == "claude-opus-4-20250514"
 
 
-def test_make_cost_event_parses_cache_and_thinking_tokens():
+def test_make_cost_event_parses_cache_and_thinking_tokens() -> None:
+    """ResultMessage.usage is fully parsed into all 5 token dimensions on WorkerCostRecorded."""
     # Given: a Claude SDK ResultMessage with full usage dict including cache + reasoning tokens
     adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
     sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
@@ -434,3 +435,33 @@ def test_make_cost_event_parses_cache_and_thinking_tokens():
     assert event.reasoning_tokens == 75
     assert event.tokens == 825  # total across all five
     assert event.cost_usd == 0.0123
+
+
+def test_make_cost_event_preserves_explicit_zero_tokens() -> None:
+    """Usage dict with all-zero values preserves zeros (not None) to distinguish 'no cache hits' from 'no data'."""
+    # Given: a ResultMessage whose usage explicitly reports zeros on every dimension
+    adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+    sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+    message = MagicMock()
+    message.total_cost_usd = 0.0
+    message.usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+
+    # When: _make_cost_event runs
+    event = adapter._make_cost_event(message, sequencer, runtime_model="claude-sonnet-4-6")
+
+    # Then: each dimensional field on the event is 0 (not None), total_tokens is 0, cost is 0.0
+    assert event is not None
+    assert isinstance(event, WorkerCostRecorded)
+    assert event.prompt_tokens == 0
+    assert event.completion_tokens == 0
+    assert event.cache_read_tokens == 0
+    assert event.cache_write_tokens == 0
+    assert event.tokens == 0
+    assert event.cost_usd == 0.0
+    # And: reasoning_tokens key was absent from the usage dict, so it remains None
+    assert event.reasoning_tokens is None

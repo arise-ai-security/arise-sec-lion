@@ -218,38 +218,55 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         sequencer: EventSequencer,
         runtime_model: str | None,
     ) -> DomainEvent | None:
-        """Create WorkerCostRecorded event from ResultMessage if cost data available.
+        """Create a WorkerCostRecorded event from a Claude Agent SDK ResultMessage.
 
-        Parses the full Anthropic usage dict (including cache_read_input_tokens,
-        cache_creation_input_tokens, reasoning_tokens) and forwards every dimension
-        to the event sequencer. Previously only input_tokens + output_tokens were
-        captured, silently dropping cache + extended-thinking cost signal.
+        Captures the full Anthropic usage breakdown (input, output, cache_read,
+        cache_creation) so downstream cost projections can distinguish cached
+        from fresh tokens (Anthropic prices cached reads at ~10% of fresh input
+        tokens). Also forwards ``reasoning_tokens`` if the upstream usage dict
+        supplies it; the current Anthropic API folds extended-thinking output
+        into ``output_tokens``, but keeping the field wired matches the shape of
+        other adapters and is future-proof against an API change.
         """
         cost_usd = getattr(message, "total_cost_usd", None)
         usage = getattr(message, "usage", None) or {}
 
-        # Only emit if we have cost data
+        # No usage dict and no cost -> nothing meaningful to record.
         if cost_usd is None and not usage:
             return None
 
-        prompt_tokens = usage.get("input_tokens") or 0
-        completion_tokens = usage.get("output_tokens") or 0
-        cache_read = usage.get("cache_read_input_tokens") or 0
-        cache_write = usage.get("cache_creation_input_tokens") or 0
-        reasoning = usage.get("reasoning_tokens") or 0
-        total_tokens = prompt_tokens + completion_tokens + cache_read + cache_write + reasoning
+        prompt_tokens = usage.get("input_tokens")
+        completion_tokens = usage.get("output_tokens")
+        cache_read_tokens = usage.get("cache_read_input_tokens")
+        cache_write_tokens = usage.get("cache_creation_input_tokens")
+        reasoning_tokens = usage.get("reasoning_tokens")
+
+        # Total only counts dimensions we actually have data for; if the usage
+        # dict was empty, total_tokens stays None so it matches the "no data" signal.
+        parts = [
+            t
+            for t in (
+                prompt_tokens,
+                completion_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                reasoning_tokens,
+            )
+            if t is not None
+        ]
+        total_tokens = sum(parts) if parts else None
 
         return sequencer.cost_recorded(
             tool_name=self._get_tool_name(),
             cost_usd=cost_usd or 0.0,
             duration_seconds=self._get_duration(),
             model=runtime_model,
-            tokens=total_tokens or None,
-            prompt_tokens=prompt_tokens or None,
-            completion_tokens=completion_tokens or None,
-            cache_read_tokens=cache_read or None,
-            cache_write_tokens=cache_write or None,
-            reasoning_tokens=reasoning or None,
+            tokens=total_tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
 
     def _make_result_event(
