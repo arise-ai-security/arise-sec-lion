@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from config import (
@@ -36,6 +37,11 @@ from core.application.services import (
 )
 
 from .realtime_adapter import RealtimeCallbackAdapter
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+PROMPTS_DIR = _REPO_ROOT / "prompts"
+EXPERIMENTS_DIR = _REPO_ROOT / "experiments"
 
 
 if TYPE_CHECKING:
@@ -114,9 +120,12 @@ def get_application(
         manager_config=config.manager_config,
     )
 
-    # Create collaborators (composition root wiring)
+    # Create collaborators (composition root wiring).
+    # PROMPTS_DIR carries production Jinja templates; EXPERIMENTS_DIR carries
+    # shared experiment-scaffolding content (e.g. the canonical domain briefing).
+    # core/ stays domain-agnostic — only bootstrap knows these filesystem roots.
     prompt_builder = PromptBuilder(
-        "prompts",
+        [PROMPTS_DIR, EXPERIMENTS_DIR],
         config.default_worker_tool,
         strategy=config.prompt_strategy,
         domain_plugin=config.domain_plugin,

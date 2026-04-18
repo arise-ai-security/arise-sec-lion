@@ -84,16 +84,23 @@ class PromptBuilder:
 
     def __init__(
         self,
-        template_dir: str | Path,
+        template_dir: str | Path | list[str | Path],
         default_tool: str,
         strategy: PromptStrategy | None = None,
         domain_plugin: "DomainPlugin | None" = None,
     ) -> None:
-        self.template_dir = Path(template_dir)
+        if isinstance(template_dir, (str, Path)):
+            dirs = [Path(template_dir)]
+        else:
+            dirs = [Path(d) for d in template_dir]
+        if not dirs:
+            raise ValueError("template_dir must contain at least one path")
+        self.template_dir = dirs[0]
+        self.template_dirs: tuple[Path, ...] = tuple(dirs)
         self.default_tool = default_tool
         self._domain_plugin = domain_plugin
         self.env = Environment(
-            loader=FileSystemLoader(str(self.template_dir)),
+            loader=FileSystemLoader([str(d) for d in dirs]),
             autoescape=False,  # noqa: S701 - plain text prompts, not HTML
             trim_blocks=True,
             lstrip_blocks=True,

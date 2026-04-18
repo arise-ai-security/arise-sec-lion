@@ -41,6 +41,20 @@ def get_prompts_dir() -> Path:
 PROMPTS_DIR = get_prompts_dir()
 
 
+def get_experiments_dir() -> Path:
+    """Get the experiments directory path that works in Docker and locally."""
+    docker_path = Path("/app/experiments")
+    if docker_path.exists():
+        return docker_path
+    local_path = Path(__file__).parent.parent.parent.parent / "experiments"
+    if local_path.exists():
+        return local_path
+    return Path("experiments")
+
+
+EXPERIMENTS_DIR = get_experiments_dir()
+
+
 class TestPromptBuilderWithRealTemplates:
     """Tests that PromptBuilder works with actual templates from prompts/ directory."""
 
@@ -345,3 +359,69 @@ class TestProvenanceClassificationWithRealPrompts:
         system_sections = [s for s in sections if s.provenance == SectionProvenance.SYSTEM]
         assert len(system_sections) >= 1
         assert any(s.tag == "user_prompt" for s in system_sections)
+
+
+class TestPromptBuilderMultiTemplateDir:
+    """Tests that PromptBuilder accepts single-path and list-of-paths template_dir."""
+
+    def test_single_path_str_keeps_backward_compat(self) -> None:
+        """Passing a str template_dir leaves the loader behavior unchanged."""
+        # Given: a PromptBuilder constructed with a single string path
+        # When: template_dir is set
+        builder = PromptBuilder(template_dir=str(PROMPTS_DIR), default_tool="claude_code")
+
+        # Then: template_dir, template_dirs, and the loader reflect the single path
+        assert builder.template_dir == PROMPTS_DIR
+        assert builder.template_dirs == (PROMPTS_DIR,)
+        assert builder.env.get_template("system.j2") is not None
+
+    def test_single_path_object_keeps_backward_compat(self) -> None:
+        """Passing a Path template_dir leaves the loader behavior unchanged."""
+        # Given: a PromptBuilder constructed with a single Path
+        # When: template_dir is set
+        builder = PromptBuilder(template_dir=PROMPTS_DIR, default_tool="claude_code")
+
+        # Then: template_dirs collapses to the single path tuple
+        assert builder.template_dir == PROMPTS_DIR
+        assert builder.template_dirs == (PROMPTS_DIR,)
+
+    def test_list_template_dirs_loads_from_both_roots(self) -> None:
+        """A list template_dir lets Jinja find files in either root."""
+        # Given: a PromptBuilder that searches prompts/ and experiments/
+        # When: the loader is asked for files from each root
+        builder = PromptBuilder(
+            template_dir=[PROMPTS_DIR, EXPERIMENTS_DIR],
+            default_tool="claude_code",
+        )
+
+        # Then: template_dirs exposes both roots and each file resolves
+        assert builder.template_dirs == (PROMPTS_DIR, EXPERIMENTS_DIR)
+        assert builder.template_dir == PROMPTS_DIR
+        assert builder.env.get_template("system.j2") is not None
+        assert builder.env.get_template("domain_briefing.md") is not None
+
+    def test_empty_list_template_dir_rejected(self) -> None:
+        """An empty template_dir list raises early rather than silently no-oping."""
+        # Given: an empty list of template paths
+        # When: constructing a PromptBuilder
+        # Then: a ValueError surfaces immediately
+        with pytest.raises(ValueError, match="at least one path"):
+            PromptBuilder(template_dir=[], default_tool="claude_code")
+
+    def test_domain_briefing_is_includable_via_jinja(self) -> None:
+        """A template can include domain_briefing.md when experiments/ is on the loader path."""
+        # Given: a PromptBuilder with prompts/ and experiments/ on the loader path
+        builder = PromptBuilder(
+            template_dir=[PROMPTS_DIR, EXPERIMENTS_DIR],
+            default_tool="claude_code",
+        )
+
+        # When: a template string includes the briefing
+        rendered = builder.env.from_string(
+            "{% include 'domain_briefing.md' %}"
+        ).render()
+
+        # Then: canonical briefing content appears in the output
+        assert "# SEC-bench Task Context" in rendered
+        assert "secb build" in rendered
+        assert "## 5. Anti-Cheat Rules" in rendered
