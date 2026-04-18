@@ -289,3 +289,58 @@ class TestThoughtCapturedToolCallFields:
         # Then: defaults are None (backward-compatible with historical events)
         assert event.call_id is None
         assert event.duration_ms is None
+
+    def test_thought_captured_accepts_tool_metadata_fields(self) -> None:
+        """Extended ThoughtCaptured schema: was_truncated, result_bytes, tool_input_json."""
+        # Given: a ThoughtCaptured with all 5 tool-metadata fields populated
+        event = ThoughtCaptured(
+            aggregate_id=uuid4(),
+            sequence_number=5,
+            content="Reading: /src/foo.c",
+            output_type="tool_use",
+            call_id="tu_abc123",
+            duration_ms=42,
+            was_truncated=False,
+            result_bytes=None,
+            tool_input_json={"file_path": "/src/foo.c", "offset": 100},
+        )
+
+        # Then: every field is accessible and preserved through model_dump
+        assert event.was_truncated is False
+        assert event.result_bytes is None
+        assert event.tool_input_json == {"file_path": "/src/foo.c", "offset": 100}
+        dumped = event.model_dump()
+        assert dumped["tool_input_json"] == {"file_path": "/src/foo.c", "offset": 100}
+
+    def test_thought_captured_tool_result_truncation_metadata(self) -> None:
+        """was_truncated and result_bytes mark info loss from capping tool result content."""
+        # Given: a tool_result event that was truncated from 15000 to 10240 bytes
+        event = ThoughtCaptured(
+            aggregate_id=uuid4(),
+            sequence_number=6,
+            content="x" * 10240 + "…[TRUNCATED]",
+            output_type="tool_result",
+            call_id="tu_abc123",
+            was_truncated=True,
+            result_bytes=15000,
+        )
+
+        # Then: truncation metadata is preserved
+        assert event.was_truncated is True
+        assert event.result_bytes == 15000
+
+    def test_thought_captured_new_fields_default_preserves_backward_compat(self) -> None:
+        """Historical events without new fields still load cleanly."""
+        # When: an event is constructed with only pre-existing fields
+        event = ThoughtCaptured(
+            aggregate_id=uuid4(),
+            sequence_number=5,
+            content="legacy content",
+        )
+
+        # Then: all 5 tool-metadata fields have safe defaults
+        assert event.call_id is None
+        assert event.duration_ms is None
+        assert event.was_truncated is False
+        assert event.result_bytes is None
+        assert event.tool_input_json is None

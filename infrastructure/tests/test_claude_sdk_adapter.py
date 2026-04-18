@@ -5,6 +5,7 @@ Tests verify correct event mapping and error handling.
 """
 
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -44,8 +45,23 @@ class MockThinkingBlock:
 class MockToolResultBlock:
     """Mock ToolResultBlock from claude-agent-sdk."""
 
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, tool_use_id: str = "tu_stub") -> None:
         self.content = content
+        self.tool_use_id = tool_use_id
+
+
+class MockToolUseBlock:
+    """Mock ToolUseBlock from claude-agent-sdk."""
+
+    def __init__(
+        self,
+        name: str,
+        tool_input: dict,
+        block_id: str = "tu_stub",
+    ) -> None:
+        self.name = name
+        self.input = tool_input
+        self.id = block_id
 
 
 class MockAssistantMessage:
@@ -74,73 +90,144 @@ class TestProcessBlock:
 
     def test_text_block_returns_output(self) -> None:
         """TextBlock maps to output type."""
+        # Given: a TextBlock with non-empty text
         block = MockTextBlock("Hello world")
 
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
-        ):
+        # When: _process_block runs
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
-        assert result == ("Hello world", "output")
+        # Then: returns (content, output_type, empty metadata dict)
+        assert result == ("Hello world", "output", {})
 
     def test_text_block_empty_returns_none(self) -> None:
         """Empty TextBlock is skipped."""
+        # Given: a TextBlock with only whitespace
         block = MockTextBlock("   ")
 
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
-        ):
+        # When: _process_block runs
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
+        # Then: returns None (filtered out)
         assert result is None
 
     def test_tool_result_block_returns_tool_result(self) -> None:
-        """ToolResultBlock maps to tool_result type."""
+        """ToolResultBlock maps to tool_result type with metadata."""
+        # Given: a ToolResultBlock with short content
         block = MockToolResultBlock("command output here")
 
+        # When: _process_block runs
         with patch(
             f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
-        assert result == ("Tool result: command output here", "tool_result")
+        # Then: returns 3-tuple with metadata dict
+        assert result is not None
+        content, output_type, metadata = result
+        assert content == "Tool result: command output here"
+        assert output_type == "tool_result"
+        assert metadata["was_truncated"] is False
+        assert metadata["result_bytes"] == len("command output here")
 
     def test_tool_result_block_empty_content(self) -> None:
         """ToolResultBlock with no content shows placeholder."""
+        # Given: a ToolResultBlock with empty content
         block = MockToolResultBlock("")
 
+        # When: _process_block runs
         with patch(
             f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
             MockToolResultBlock,
         ):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
-        assert result == ("Tool result: (no output)", "tool_result")
-
-    def test_tool_result_truncates_long_content(self) -> None:
-        """ToolResultBlock truncates content over 500 chars."""
-        long_content = "x" * 600
-        block = MockToolResultBlock(long_content)
-
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.ToolResultBlock",
-            MockToolResultBlock,
-        ):
-            result = ClaudeAgentSDKAdapter._process_block(block)
-
+        # Then: placeholder text is used; metadata reports no truncation
         assert result is not None
-        content, _ = result
-        assert len(content) < 520  # "Tool result: " + 500 chars
+        content, output_type, metadata = result
+        assert content == "Tool result: (no output)"
+        assert output_type == "tool_result"
+        assert metadata["was_truncated"] is False
 
     def test_unknown_block_returns_none(self) -> None:
         """Unknown block types are skipped."""
+        # Given: an unrecognized block type
 
         class UnknownBlock:
             pass
 
+        # When: _process_block runs
         result = ClaudeAgentSDKAdapter._process_block(UnknownBlock())
+
+        # Then: returns None (ignored)
         assert result is None
+
+    def test_process_block_tool_use_captures_structured_input_json(self) -> None:
+        """ToolUseBlock processing captures the full tool_input dict as tool_input_json."""
+        # Given: a ToolUseBlock with structured input
+        block = MockToolUseBlock(
+            name="Read",
+            tool_input={"file_path": "/src/foo.c", "offset": 100},
+            block_id="tu_1",
+        )
+
+        # When: _process_block processes it
+        with patch(f"{SDK_ADAPTER_MODULE}.ToolUseBlock", MockToolUseBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block)
+
+        # Then: result carries the structured input + output_type="tool_use"
+        assert result is not None
+        content, output_type, metadata = result
+        assert output_type == "tool_use"
+        assert metadata["tool_input_json"] == {
+            "file_path": "/src/foo.c",
+            "offset": 100,
+        }
+        assert metadata["call_id"] == "tu_1"
+        # And: the human-readable formatter is applied to the content
+        assert "/src/foo.c" in content
+
+    def test_process_block_tool_result_raises_cap_to_10240_with_truncation_flag(
+        self,
+    ) -> None:
+        """Long tool_result is capped at 10240; was_truncated + result_bytes populate."""
+        # Given: a tool_result with 15000 chars of content
+        long_content = "x" * 15000
+        block = MockToolResultBlock(long_content, tool_use_id="tu_1")
+
+        # When: processed
+        with patch(f"{SDK_ADAPTER_MODULE}.ToolResultBlock", MockToolResultBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block)
+
+        # Then: content is capped, flags populate, call_id propagates
+        assert result is not None
+        content, output_type, metadata = result
+        assert output_type == "tool_result"
+        # small tolerance for "Tool result: " prefix + truncation marker
+        assert len(content) <= 10_240 + 100
+        assert metadata["was_truncated"] is True
+        assert metadata["result_bytes"] == 15000
+        assert metadata["call_id"] == "tu_1"
+
+    def test_process_block_tool_result_within_cap_not_truncated(self) -> None:
+        """Short tool_result passes through; was_truncated=False, result_bytes=original."""
+        # Given: a short tool_result within the cap
+        short_content = "file1\nfile2\n"
+        block = MockToolResultBlock(short_content, tool_use_id="tu_2")
+
+        # When: processed
+        with patch(f"{SDK_ADAPTER_MODULE}.ToolResultBlock", MockToolResultBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block)
+
+        # Then: metadata reports no truncation + exact original byte count
+        assert result is not None
+        _, output_type, metadata = result
+        assert output_type == "tool_result"
+        assert metadata["was_truncated"] is False
+        assert metadata["result_bytes"] == len(short_content)
+        assert metadata["call_id"] == "tu_2"
 
 
 class TestSDKAdapterConfig:
@@ -519,7 +606,9 @@ class TestPerToolCallDurationTracking:
         import asyncio
 
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
-        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        tool_queue: asyncio.Queue[
+            tuple[str, str, str | None, dict[str, Any] | None]
+        ] = asyncio.Queue()
 
         # When: building options
         with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:

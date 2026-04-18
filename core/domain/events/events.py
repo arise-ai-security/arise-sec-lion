@@ -212,10 +212,19 @@ class CodeGenerationStarted(DomainEvent):
 class ThoughtCaptured(DomainEvent):
     """Worker tool output captured (thinking, progress, output, debug).
 
-    Extended with per-tool-call correlation (``call_id``, ``duration_ms``) so
-    experiment analysis can compute per-call duration (p50/p95). Both fields are
-    optional to preserve backward compatibility with historical events and with
-    non-tool-call output types (thinking, output, progress).
+    Extended with per-tool-call correlation and payload metadata so experiment
+    analysis can compute per-call duration (p50/p95) and reason about tool I/O
+    without re-parsing the human-readable ``content`` string:
+
+    - ``call_id`` / ``duration_ms`` -- pair pre/post tool-use hooks (Task 4).
+    - ``was_truncated`` / ``result_bytes`` -- mark tool-result content that was
+      cut at the capture cap and record the original size for loss accounting.
+    - ``tool_input_json`` -- the structured tool-call arguments, preserved
+      verbatim so downstream analysis does not depend on the formatter string.
+
+    All five fields are optional to preserve backward compatibility with
+    historical events and with non-tool-call output types (thinking, output,
+    progress).
     """
 
     content: str
@@ -223,6 +232,9 @@ class ThoughtCaptured(DomainEvent):
     output_type: str = "output"
     call_id: str | None = None
     duration_ms: int | None = None
+    was_truncated: bool = False
+    result_bytes: int | None = None
+    tool_input_json: dict[str, Any] | None = None
 
 
 class PromptSent(DomainEvent):

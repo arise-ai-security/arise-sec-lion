@@ -226,6 +226,73 @@ class TestOpenHandsAdapter:
 
         conversation.release()
 
+    def test_cap_thought_content_under_limit_passes_through(self) -> None:
+        """Short content is returned unchanged; was_truncated False; result_bytes accurate."""
+        # Given: a short content string well under the cap
+        adapter = OpenHandsAdapter()
+        content = "short log line"
+
+        # When: cap helper runs
+        capped, was_truncated, result_bytes = adapter._cap_thought_content(content)
+
+        # Then: nothing truncated and the byte count matches the original length
+        assert capped == content
+        assert was_truncated is False
+        assert result_bytes == len(content)
+
+    def test_cap_thought_content_over_limit_truncates_and_flags(self) -> None:
+        """Content over the 10_240 cap is truncated; was_truncated True; result_bytes original."""
+        # Given: a content string 15 000 chars long
+        adapter = OpenHandsAdapter()
+        content = "x" * 15_000
+
+        # When: cap helper runs
+        capped, was_truncated, result_bytes = adapter._cap_thought_content(content)
+
+        # Then: capped length is bounded; metadata reports the pre-truncation size
+        assert was_truncated is True
+        assert result_bytes == 15_000
+        assert len(capped) <= 10_240 + 100  # + truncation marker
+        assert capped.endswith("…[TRUNCATED]")
+
+    @pytest.mark.asyncio
+    async def test_thought_events_include_truncation_metadata_for_schema_parity(
+        self, monkeypatch, tmp_path: Path,
+    ) -> None:
+        """ThoughtCaptured events carry was_truncated/result_bytes (Claude SDK parity)."""
+        # Given: a conversation that emits a single plain-output message event
+        adapter = OpenHandsAdapter(timeout_seconds=1)
+        conversation = _FakeConversation()
+        monkeypatch.setattr(
+            adapter,
+            "_build_conversation",
+            lambda *_args, **_kwargs: conversation,
+        )
+
+        # When: running the session
+        events = []
+        async for event in adapter.run_session(
+            {
+                "task_description": "Feature",
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+            }
+        ):
+            events.append(event)
+
+        # Then: every ThoughtCaptured event carries the new truncation fields
+        # (default False / accurate result_bytes for under-cap content), and
+        # the non-truncation fields (call_id / tool_input_json) stay None for
+        # OpenHands because the SDK does not expose them.
+        thought_events = [e for e in events if isinstance(e, ThoughtCaptured)]
+        assert thought_events, "expected at least one ThoughtCaptured event"
+        for event in thought_events:
+            assert event.was_truncated is False
+            assert event.result_bytes is not None
+            assert event.result_bytes == len(event.content)
+            assert event.call_id is None
+            assert event.tool_input_json is None
+
     @pytest.mark.asyncio
     async def test_run_session_prefers_task_context_model(
         self, monkeypatch, tmp_path: Path,

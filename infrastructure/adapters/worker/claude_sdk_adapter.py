@@ -28,6 +28,7 @@ from claude_agent_sdk import (
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
+    ToolUseBlock,
 )
 from claude_agent_sdk.types import SyncHookJSONOutput
 
@@ -41,6 +42,19 @@ logger = logging.getLogger(__name__)
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+
+# Cap for captured tool-result content. Raised from 500 to 10_240 (10 KiB) so
+# experiment dataset analyses (Pillar B) keep enough prefix to classify tool
+# behavior without letting a single blob dominate the event stream. Anything
+# above this cap sets ``was_truncated`` + preserves the original byte length.
+_TOOL_RESULT_CONTENT_CAP = 10_240
+_TRUNCATION_MARKER = "…[TRUNCATED]"
+
+# Queue tuple shape: (formatted_content, output_type, tool_use_id, tool_input_json).
+# Keeping ``tool_input_json`` on the queue lets the single _drain_queue site
+# build ThoughtCaptured with full metadata (call_id + duration_ms + structured
+# input) instead of forcing each producer to duplicate the kwargs plumbing.
+type _ToolEventEntry = tuple[str, str, str | None, dict[str, Any] | None]
 
 
 @dataclass
@@ -135,7 +149,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         """
         self._reset_session_state()
         self._start_timing()
-        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        tool_queue: asyncio.Queue[_ToolEventEntry] = asyncio.Queue()
         runtime_model = self._resolve_runtime_model(task_context, self.config.model)
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
@@ -192,7 +206,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     def _build_options(
         self,
         working_dir: str,
-        tool_queue: asyncio.Queue[tuple[str, str, str | None]],
+        tool_queue: asyncio.Queue[_ToolEventEntry],
         container_session: ContainerSessionContext | None,
         runtime_model: str | None,
     ) -> ClaudeAgentOptions:
@@ -213,11 +227,12 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             tool_use_id: str | None,
             _context: HookContext,
         ) -> SyncHookJSONOutput:
-            """PostToolUse: capture tool invocation and carry tool_use_id downstream."""
+            """PostToolUse: capture tool invocation + structured input downstream."""
             tool_name = getattr(input_data, "tool_name", "unknown")
-            tool_input = getattr(input_data, "tool_input", {})
+            tool_input = getattr(input_data, "tool_input", {}) or {}
             content = format_tool_event(tool_name, tool_input)
-            await tool_queue.put((content, "tool_use", tool_use_id))
+            tool_input_json = dict(tool_input) if isinstance(tool_input, dict) else None
+            await tool_queue.put((content, "tool_use", tool_use_id, tool_input_json))
             return SyncHookJSONOutput()
 
         async def can_use_tool(
@@ -248,18 +263,19 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
 
     async def _drain_queue(
         self,
-        queue: asyncio.Queue[tuple[str, str, str | None]],
+        queue: asyncio.Queue[_ToolEventEntry],
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
         """Drain all pending events from queue, attaching per-call duration_ms."""
         while not queue.empty():
-            content, output_type, tool_use_id = queue.get_nowait()
+            content, output_type, tool_use_id, tool_input_json = queue.get_nowait()
             duration_ms = self._get_and_pop_duration_ms(tool_use_id)
             yield sequencer.thought(
                 content,
                 output_type,
                 call_id=tool_use_id,
                 duration_ms=duration_ms,
+                tool_input_json=tool_input_json,
             )
 
     async def _process_message(
@@ -267,15 +283,44 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         message: Any,
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
-        """Process SDK message and yield domain events."""
+        """Process SDK message and yield domain events.
+
+        ToolUseBlock in AssistantMessage content is skipped at runtime: the
+        PostToolUse hook (``capture_tool_use``) owns ``tool_use`` emission and
+        carries the paired ``duration_ms`` from PreToolUse. Routing both through
+        the hook keeps one-to-one event semantics per tool invocation. The pure
+        ``_process_block`` helper still handles ``ToolUseBlock`` for testability
+        and for any future block-only path (e.g., replay without hooks).
+
+        For ``ToolResultBlock`` the per-call timing comes from the same pairing
+        via ``_get_and_pop_duration_ms``; content/type/metadata come from
+        ``_process_block``.
+        """
         if not isinstance(message, AssistantMessage):
             return
 
         for block in message.content:
+            if isinstance(block, ToolUseBlock):
+                continue  # Hook path owns tool_use emission.
             result = self._process_block(block)
-            if result:
-                content, output_type = result
-                yield sequencer.thought(content, output_type)
+            if result is None:
+                continue
+            content, output_type, metadata = result
+            call_id = metadata.get("call_id")
+            duration_ms = (
+                self._get_and_pop_duration_ms(call_id)
+                if output_type == "tool_result"
+                else None
+            )
+            yield sequencer.thought(
+                content,
+                output_type,
+                call_id=call_id,
+                duration_ms=duration_ms,
+                was_truncated=metadata.get("was_truncated", False),
+                result_bytes=metadata.get("result_bytes"),
+                tool_input_json=metadata.get("tool_input_json"),
+            )
 
     def _make_cost_event(
         self,
@@ -345,21 +390,53 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         return sequencer.completed(getattr(message, "result", None) or "Task completed")
 
     @staticmethod
-    def _process_block(block: Any) -> tuple[str, str] | None:
-        """Process a single content block, returning (content, output_type) or None."""
+    def _process_block(
+        block: Any,
+    ) -> tuple[str, str, dict[str, Any]] | None:
+        """Process a single content block, returning ``(content, output_type, metadata)``.
+
+        ``metadata`` carries the schema-parity fields for ``ThoughtCaptured``:
+        ``call_id``, ``was_truncated``, ``result_bytes``, ``tool_input_json``.
+        Only keys relevant for the block type are populated; the caller forwards
+        them verbatim to ``EventSequencer.thought``.
+        """
         if isinstance(block, TextBlock):
             if block.text.strip():
-                return block.text, "output"
+                return block.text, "output", {}
         elif isinstance(block, ThinkingBlock):
             if block.thinking.strip():
-                return block.thinking, "thinking"
+                return block.thinking, "thinking", {}
+        elif isinstance(block, ToolUseBlock):
+            tool_input = getattr(block, "input", {}) or {}
+            formatted = format_tool_event(getattr(block, "name", "unknown"), tool_input)
+            return (
+                formatted,
+                "tool_use",
+                {
+                    "call_id": getattr(block, "id", None),
+                    "tool_input_json": (
+                        dict(tool_input) if isinstance(tool_input, dict) else None
+                    ),
+                },
+            )
         elif isinstance(block, ToolResultBlock):
-            # TODO(task-5): extract block.tool_use_id and pass call_id to sequencer.thought
-            # (Task 4 attaches call_id+duration_ms only on the 'tool_use' event path via the
-            # PostToolUse hook queue. 'tool_result' events currently carry neither. Task 5
-            # will add was_truncated/result_bytes/tool_input_json + propagate call_id here.)
-            content = str(block.content)[:500] if block.content else "(no output)"
-            return f"Tool result: {content}", "tool_result"
+            raw_content = str(block.content) if block.content else "(no output)"
+            result_bytes = len(raw_content)
+            was_truncated = result_bytes > _TOOL_RESULT_CONTENT_CAP
+            capped = (
+                raw_content[:_TOOL_RESULT_CONTENT_CAP] + _TRUNCATION_MARKER
+                if was_truncated
+                else raw_content
+            )
+            return (
+                f"Tool result: {capped}",
+                "tool_result",
+                {
+                    "call_id": getattr(block, "tool_use_id", None),
+                    "was_truncated": was_truncated,
+                    "result_bytes": result_bytes,
+                },
+            )
         return None
 
     def _format_error(self, error: Exception) -> str:

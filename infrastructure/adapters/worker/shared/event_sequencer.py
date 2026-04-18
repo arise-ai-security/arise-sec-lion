@@ -3,6 +3,7 @@
 Tracks sequence numbers and creates domain events with proper sequencing.
 """
 
+from typing import Any
 from uuid import UUID
 
 from core.domain.events.events import (
@@ -61,6 +62,9 @@ class EventSequencer:
         output_type: str,
         call_id: str | None = None,
         duration_ms: int | None = None,
+        was_truncated: bool = False,
+        result_bytes: int | None = None,
+        tool_input_json: dict[str, Any] | None = None,
     ) -> ThoughtCaptured:
         """Create a ThoughtCaptured event and increment sequence.
 
@@ -71,6 +75,12 @@ class EventSequencer:
                 used to correlate pre/post tool use hooks.
             duration_ms: Optional per-tool-call duration in milliseconds,
                 computed from the matching PreToolUse start timestamp.
+            was_truncated: True if ``content`` was cut at the capture cap.
+            result_bytes: Original byte length of the tool result before any
+                capping was applied (None for non-tool-result events).
+            tool_input_json: Structured tool-call arguments captured verbatim so
+                downstream analysis does not need to re-parse the formatter
+                string (None when the adapter cannot expose structured input).
 
         Returns:
             ThoughtCaptured event with current sequence number.
@@ -83,6 +93,9 @@ class EventSequencer:
             output_type=output_type,
             call_id=call_id,
             duration_ms=duration_ms,
+            was_truncated=was_truncated,
+            result_bytes=result_bytes,
+            tool_input_json=tool_input_json,
         )
         self._sequence += 1
         return event
