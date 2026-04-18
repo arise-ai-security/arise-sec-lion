@@ -20,13 +20,16 @@ fast and deterministic.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import shlex
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 from uuid import uuid4
@@ -51,6 +54,13 @@ logger = logging.getLogger(__name__)
 # ``infrastructure/`` so the experiments tree has no inbound dependency on
 # the hex-boundary adapters.
 MAX_RESULT_BYTES = 10_240
+
+# Subprocess readline() buffer cap. Default asyncio StreamReader limit is
+# 64 KB, which is easily exceeded by a single stream-json line carrying a
+# large ``tool_result.content`` (valgrind stderr, klee output, etc.). When
+# breached, ``readline()`` raises ``ValueError`` and the run is incorrectly
+# marked ``container_error``. 10 MB is generous but bounded.
+STREAM_READ_BUFFER_LIMIT = 10 * 1024 * 1024
 
 # ``domain_briefing.md`` lives one level up from this file
 # (``experiments/domain_briefing.md``).
@@ -301,6 +311,65 @@ class RunSpec:
     workspace_host_root: Path | None = None  # provided by experiment runner
 
 
+async def _stream_to_events(
+    proc: asyncio.subprocess.Process,
+    events_f: TextIO,
+    log_f: TextIO,
+    *,
+    run_id: str,
+    spec: RunSpec,
+    started_monotonic: float,
+    starting_seq: int,
+) -> tuple[str, int, float]:
+    """Drain proc.stdout line-by-line, emit events, enforce caps.
+
+    Returns ``(termination_reason, last_seq, total_cost)``. The caller owns
+    ``proc`` and is responsible for reaping it after this returns. Callers
+    must pre-write any ``run_started`` event so ``starting_seq`` reflects
+    the next free sequence number.
+    """
+    assert proc.stdout is not None
+    termination_reason = "completed"
+    total_cost = 0.0
+    event_seq = starting_seq
+
+    while True:
+        if time.monotonic() - started_monotonic > spec.wallclock_sec_cap:
+            termination_reason = "wallclock_cap"
+            proc.kill()
+            break
+        try:
+            line = await asyncio.wait_for(proc.stdout.readline(), timeout=2.0)
+        except TimeoutError:
+            continue
+        if not line:
+            break
+        line_str = line.decode("utf-8", errors="replace").rstrip("\n")
+        log_f.write(line_str + "\n")
+        events = parse_stream_line(line_str, run_id=run_id, now=datetime.now(UTC))
+        kill_now = False
+        for ev in events:
+            ev_dump = ev.model_copy(update={"sequence_number": event_seq})
+            events_f.write(ev_dump.model_dump_json() + "\n")
+            event_seq += 1
+            if ev.event_type == "tokens_consumed":
+                # Downstream dispatch is by event_type (per schema docstring),
+                # but accessing payload fields requires getattr to appease
+                # the union type checker.
+                cost = getattr(ev.payload, "cost_usd", 0.0)
+                total_cost += float(cost or 0.0)
+                if total_cost >= spec.budget_usd_cap:
+                    termination_reason = "budget_cap"
+                    kill_now = True
+        if kill_now:
+            proc.kill()
+            break
+        if proc.returncode is not None:
+            break
+
+    return termination_reason, event_seq, total_cost
+
+
 async def run_flat_cli(spec: RunSpec, task_text: str) -> RunMeta:
     """Execute a single flat-CLI run and populate ``spec.output_dir``.
 
@@ -327,9 +396,20 @@ async def run_flat_cli(spec: RunSpec, task_text: str) -> RunMeta:
         [] if spec.cell.subagents_enabled else ["--disallowedTools", "Task"]
     )
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     started_monotonic = time.monotonic()
 
+    # Build the inner CLI command safely. ``shlex.join`` quotes each argv
+    # element so a malformed ``spec.model`` (set from YAML by Task 13)
+    # cannot escape into the outer ``bash -lc`` shell.
+    cli_cmd = shlex.join(
+        [
+            "claude", "--print", "--output-format", "stream-json",
+            "--model", spec.model,
+            "--permission-mode", "bypassPermissions",
+            *disallowed_args,
+        ]
+    )
     cmd = [
         "docker", "run", "--rm",
         "--network=none",
@@ -339,72 +419,45 @@ async def run_flat_cli(spec: RunSpec, task_text: str) -> RunMeta:
         "-w", "/src",
         spec.docker_image,
         "bash", "-lc",
-        " ".join(
-            [
-                "claude", "--print", "--output-format", "stream-json",
-                "--model", spec.model,
-                "--permission-mode", "bypassPermissions",
-                *disallowed_args,
-            ]
-        ),
+        cli_cmd,
     ]
 
     termination_reason: str = "completed"
-    total_cost = 0.0
     event_seq = 0
     proc: asyncio.subprocess.Process | None = None
 
     try:
+        # stderr is merged into stdout (STDOUT) rather than read via a
+        # separate PIPE: over a 10-minute container run stderr easily
+        # exceeds asyncio's 64 KB StreamReader default, which would block
+        # the writer and deadlock the pipeline. Merging keeps the capture
+        # in ``stdout_stderr.log`` and the parser already returns [] for
+        # any non-JSON line it encounters.
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            limit=STREAM_READ_BUFFER_LIMIT,
         )
         assert proc.stdin is not None
         proc.stdin.write(prompt.encode("utf-8"))
         proc.stdin.close()
 
-        with events_path.open("w", encoding="utf-8") as events_f, log_path.open(
-            "w", encoding="utf-8"
-        ) as log_f:
+        with (
+            events_path.open("w", encoding="utf-8") as events_f,
+            log_path.open("w", encoding="utf-8") as log_f,
+        ):
             event_seq = _emit_run_started(events_f, run_id, started_at, event_seq)
-            assert proc.stdout is not None
-            while True:
-                if time.monotonic() - started_monotonic > spec.wallclock_sec_cap:
-                    termination_reason = "wallclock_cap"
-                    proc.kill()
-                    break
-                try:
-                    line = await asyncio.wait_for(proc.stdout.readline(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    continue
-                if not line:
-                    break
-                line_str = line.decode("utf-8", errors="replace").rstrip("\n")
-                log_f.write(line_str + "\n")
-                events = parse_stream_line(
-                    line_str, run_id=run_id, now=datetime.now(timezone.utc)
-                )
-                kill_now = False
-                for ev in events:
-                    ev_dump = ev.model_copy(update={"sequence_number": event_seq})
-                    events_f.write(ev_dump.model_dump_json() + "\n")
-                    event_seq += 1
-                    if ev.event_type == "tokens_consumed":
-                        # Downstream dispatch is by event_type (per schema
-                        # docstring), but accessing payload fields requires
-                        # getattr to appease the union type checker.
-                        cost = getattr(ev.payload, "cost_usd", 0.0)
-                        total_cost += float(cost or 0.0)
-                        if total_cost >= spec.budget_usd_cap:
-                            termination_reason = "budget_cap"
-                            kill_now = True
-                if kill_now:
-                    proc.kill()
-                    break
-                if proc.returncode is not None:
-                    break
+            termination_reason, event_seq, _total_cost = await _stream_to_events(
+                proc,
+                events_f,
+                log_f,
+                run_id=run_id,
+                spec=spec,
+                started_monotonic=started_monotonic,
+                starting_seq=event_seq,
+            )
 
         await proc.wait()
     except Exception:
@@ -413,13 +466,22 @@ async def run_flat_cli(spec: RunSpec, task_text: str) -> RunMeta:
         # Don't re-raise; meta.json must still be written so the experiment
         # runner can index the failed run.
     finally:
-        if proc is not None and proc.returncode is None:
+        if proc is not None:
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            # Always reap the subprocess. ``proc.kill()`` delivers SIGKILL
+            # but the child remains a zombie until ``wait()`` returns; over
+            # 63 experiment runs, un-reaped zombies accumulate in the
+            # runner process.
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+                await asyncio.wait_for(proc.wait(), timeout=10.0)
+            except TimeoutError:
+                logger.warning(
+                    "Subprocess did not exit within 10s after kill; possible zombie"
+                )
 
-    ended_at = datetime.now(timezone.utc)
+    ended_at = datetime.now(UTC)
     wallclock = (ended_at - started_at).total_seconds()
 
     meta = RunMeta(
@@ -440,7 +502,7 @@ async def run_flat_cli(spec: RunSpec, task_text: str) -> RunMeta:
         wallclock_seconds=wallclock,
         termination_reason=termination_reason,  # type: ignore[arg-type]
         code_sha=_collect_code_shas(),
-        env={"date": datetime.now(timezone.utc).date().isoformat()},
+        env={"date": datetime.now(UTC).date().isoformat()},
         dataset_schema_version=SCHEMA_VERSION,
     )
     (spec.output_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
@@ -485,20 +547,26 @@ def _collect_code_shas() -> dict[str, str]:
     """Best-effort collection of git SHAs / versions for reproducibility."""
     shas: dict[str, str] = {}
     repo_root = Path(__file__).resolve().parents[2]
+    # PATH-lookup is intentional here: these are developer-tool discovery
+    # probes (git, the current venv's python, the CLI). They never run
+    # inside the container or on untrusted paths.
     try:
         arise = (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root)
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root)  # noqa: S607
             .decode()
             .strip()
         )
         shas["arise_sec_lion"] = arise
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         shas["arise_sec_lion"] = "unknown"
+    # Use ``sys.executable`` to probe the venv actually running this module.
+    # Bare ``"python"`` on dev machines often resolves to system Python,
+    # which lacks the SDK and returns "unknown" even when it is installed.
     try:
         shas["claude_sdk_version"] = (
-            subprocess.check_output(
+            subprocess.check_output(  # noqa: S603
                 [
-                    "python",
+                    sys.executable,
                     "-c",
                     "import claude_agent_sdk; print(claude_agent_sdk.__version__)",
                 ]
@@ -509,10 +577,12 @@ def _collect_code_shas() -> dict[str, str]:
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         shas["claude_sdk_version"] = "unknown"
     if shutil.which("claude"):
-        try:
+        with contextlib.suppress(
+            subprocess.CalledProcessError, FileNotFoundError, OSError
+        ):
             shas["claude_code_cli_version"] = (
-                subprocess.check_output(["claude", "--version"]).decode().strip()
+                subprocess.check_output(["claude", "--version"])  # noqa: S607
+                .decode()
+                .strip()
             )
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-            pass
     return shas
