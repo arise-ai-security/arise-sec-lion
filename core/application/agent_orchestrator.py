@@ -464,6 +464,7 @@ class AgentOrchestrator:
             prompt,
             config_dict,
             tool_context=tool_context,
+            agent=agent,
         )
         response = result.response
         self._emit_probe_events(agent, result.tool_records)

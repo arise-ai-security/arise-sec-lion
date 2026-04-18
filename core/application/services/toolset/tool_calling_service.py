@@ -24,6 +24,7 @@ from core.ports.runtime_ports import LLMPort
 
 if TYPE_CHECKING:
     from core.application.services.orchestration.context_condenser import ContextCondenser
+    from core.domain.aggregates.agent_session import AgentSession
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ class ToolCallingService:
         prompt: str,
         config_dict: dict[str, Any],
         tool_context: ActiveToolContext,
+        *,
+        agent: AgentSession | None = None,
     ) -> ToolCallingResult:
         """Run the agentic tool-calling loop.
 
@@ -83,6 +86,9 @@ class ToolCallingService:
             config_dict: Model config (model, temperature, max_tokens).
             tool_context: Resolved tool definitions, loop policy, and executor map
                 for this query.
+            agent: Optional ``AgentSession``. When supplied, context-condenser LLM
+                calls emit ``TokensConsumed(operation='context_condense')`` on the
+                agent's event stream.
 
         Returns:
             ToolCallingResult with final LLMResponse and tool call records for
@@ -190,7 +196,7 @@ class ToolCallingService:
             # Layer 2: condense older tool exchanges after threshold
             if self._condenser is not None:
                 messages = await self._condenser.maybe_condense(
-                    messages, current_iteration=iteration,
+                    messages, current_iteration=iteration, agent=agent,
                 )
 
             # Layer 3: if still over budget after condensation, force stop

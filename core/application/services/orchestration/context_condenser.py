@@ -11,10 +11,14 @@ AmortizedForgettingCondenser).
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.ports.runtime_ports import LLMPort
 
+
+if TYPE_CHECKING:
+    from core.domain.aggregates.agent_session import AgentSession
+    from core.domain.values.llm_response import LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,8 @@ class ContextCondenser:
         self,
         messages: list[dict[str, Any]],
         current_iteration: int,
+        *,
+        agent: "AgentSession | None" = None,
     ) -> list[dict[str, Any]]:
         """Condense older tool exchanges if we've passed the threshold.
 
@@ -94,6 +100,9 @@ class ContextCondenser:
         a single ``[RECON SUMMARY]`` user message containing a compressed
         digest. The most recent iteration's messages are kept verbatim so
         the LLM can reference exact file contents it just read.
+
+        When ``agent`` is supplied, the LLM summarization call's token usage
+        is recorded via ``TokensConsumed(operation='context_condense')``.
 
         Returns a new list (does not mutate the input).
         """
@@ -130,7 +139,7 @@ class ContextCondenser:
         if not old_messages:
             return messages
 
-        summary = await self._summarize_messages(old_messages)
+        summary = await self._summarize_messages(old_messages, agent=agent)
 
         condensed = [
             prompt_msg,
@@ -156,11 +165,18 @@ class ContextCondenser:
 
         return condensed
 
-    async def _summarize_messages(self, messages: list[dict[str, Any]]) -> str:
+    async def _summarize_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        agent: "AgentSession | None" = None,
+    ) -> str:
         """Produce a compact summary of tool exchanges.
 
-        If an LLM port is available, uses a cheap model for summarization.
-        Otherwise, falls back to deterministic extraction of key lines.
+        If an LLM port is available, uses a cheap model for summarization and
+        records the call's token usage via ``agent.emit_tokens_consumed`` when
+        an agent is supplied. Otherwise, falls back to deterministic extraction
+        of key lines. The deterministic fallback never emits ``TokensConsumed``.
         """
         # Build a text representation of the tool exchanges
         parts: list[str] = []
@@ -186,16 +202,30 @@ class ContextCondenser:
                     f"---\n{exchange_text}\n---\n\n"
                     "Concise digest of findings:"
                 )
-                response = await self._llm_port.query(
+                response = await self._llm_port.query_with_usage(
                     summary_prompt,
                     {"model": self._condenser_model, "temperature": 0.0, "max_tokens": 800},
                 )
-                return response
+                if agent is not None:
+                    self._emit_condense_tokens(agent, response)
+                return response.content
             except Exception:
                 logger.warning("LLM summarization failed, using deterministic fallback")
 
         # Deterministic fallback: extract tool names + first line of each result
         return self._deterministic_summary(messages)
+
+    @staticmethod
+    def _emit_condense_tokens(agent: "AgentSession", response: "LLMResponse") -> None:
+        """Record the condenser LLM call's token usage on the agent's event stream."""
+        agent.emit_tokens_consumed(
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            cost_usd=response.cost_usd,
+            operation="context_condense",
+        )
 
     @staticmethod
     def _deterministic_summary(messages: list[dict[str, Any]]) -> str:
