@@ -11,6 +11,7 @@ from core.domain.values.llm_response import LLMResponse
 
 if TYPE_CHECKING:
     from core.application.services.toolset.toolset_context import ActiveToolContext
+    from core.domain.aggregates.agent_session import AgentSession
     from core.ports.runtime_ports import LLMPort
 
 
@@ -38,8 +39,16 @@ class LLMQueryExecutor:
         prompt: str,
         config_dict: dict[str, Any],
         tool_context: ActiveToolContext | None = None,
+        *,
+        agent: AgentSession | None = None,
     ) -> LLMQueryResult:
-        """Execute the query with tools when a non-empty tool context is active."""
+        """Execute the query with tools when a non-empty tool context is active.
+
+        When ``agent`` is supplied, context-condenser LLM calls emit
+        ``TokensConsumed(operation='context_condense')`` on the agent's event
+        stream. The primary LLM call's usage is emitted by the caller (e.g.
+        ``AgentOrchestrator._query_llm``).
+        """
         if self._tool_calling_service is None or tool_context is None or not tool_context.has_tools:
             response = await self._llm_port.query_with_usage(prompt, config_dict)
             return LLMQueryResult(response=response)
@@ -48,6 +57,7 @@ class LLMQueryExecutor:
             prompt,
             config_dict,
             tool_context=tool_context,
+            agent=agent,
         )
         return LLMQueryResult(
             response=result.response,

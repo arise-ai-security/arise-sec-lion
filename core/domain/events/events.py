@@ -271,7 +271,7 @@ class TokensConsumed(DomainEvent):
     completion_tokens: int
     total_tokens: int
     cost_usd: float
-    operation: str  # "complexity_evaluation", "task_decomposition", "worker_execution", "verification"
+    operation: str  # "complexity_evaluation", "task_decomposition", "worker_execution", "verification", "context_condense"
 
 
 class WorkerCostItem(BaseModel):
