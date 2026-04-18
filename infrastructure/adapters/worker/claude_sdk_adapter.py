@@ -9,6 +9,7 @@ annotated with the ``tool_use_id`` (``call_id``) and the per-call
 """
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -34,6 +35,9 @@ from core.domain.events.events import DomainEvent, ThoughtCaptured
 
 from .base import WorkerAdapterBase
 from .shared import ContainerSessionContext, EventSequencer, format_tool_event
+
+
+logger = logging.getLogger(__name__)
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
@@ -70,38 +74,45 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             config: Optional configuration. Uses defaults if not provided.
         """
         self.config = config or SDKAdapterConfig()
-        # Pending PreToolUse start timestamps, keyed by tool_use_id. Paired
-        # with the matching PostToolUse to compute per-tool-call duration.
+        # Tracks tool_use_id -> start timestamp for per-call duration computation.
+        # Safe across concurrent SDK sessions because: (1) Anthropic's tool_use_id is
+        # globally unique per API request, and (2) dict insert/pop are atomic under the GIL.
+        # Cleared at the start of each _execute_task to prevent accumulation when
+        # PreToolUse fires but PostToolUse doesn't (SDK error / timeout).
         self._pending_tool_starts: dict[str, float] = {}
         super().__init__(timeout_seconds=self.config.timeout_seconds)
 
-    def _pre_tool_use_hook(
-        self,
-        tool_name: str,
-        tool_use_id: str,
-        tool_input: dict[str, Any],
-    ) -> None:
-        """Record a monotonic start timestamp for a tool invocation.
-
-        Keyed by ``tool_use_id`` so the matching PostToolUse can compute a
-        per-call duration. ``tool_name`` and ``tool_input`` are accepted to
-        match the SDK hook surface but are not stored here — callers that
-        need them should capture them separately.
-        """
-        del tool_name, tool_input  # reserved for future per-tool analytics
+    def _pre_tool_use_hook(self, tool_use_id: str) -> None:
+        """Record a start timestamp for pairing with the PostToolUse hook."""
         self._pending_tool_starts[tool_use_id] = time.monotonic()
+
+    def _reset_session_state(self) -> None:
+        """Clear transient state carried between SDK sessions.
+
+        The adapter is a long-lived singleton; any PreToolUse start time whose
+        matching PostToolUse didn't fire (SDK error / timeout) would otherwise
+        leak into the next session's dict. Resetting at session start keeps
+        ``_pending_tool_starts`` bounded.
+        """
+        self._pending_tool_starts.clear()
 
     def _get_and_pop_duration_ms(self, tool_use_id: str | None) -> int | None:
         """Pop the PreToolUse start for ``tool_use_id`` and return duration in ms.
 
         Returns None if no matching PreToolUse was recorded (e.g., the SDK
         did not emit one, or a restart dropped the in-memory state). Never
-        raises on unknown ids.
+        raises on unknown ids. Emits DEBUG for known-non-None ids that miss so
+        dataset holes are observable without spamming WARNING for internal
+        tool types that may legitimately skip PreToolUse.
         """
         if tool_use_id is None:
             return None
         start = self._pending_tool_starts.pop(tool_use_id, None)
         if start is None:
+            logger.debug(
+                "PostToolUse for unknown tool_use_id: %s (PreToolUse may not have fired)",
+                tool_use_id,
+            )
             return None
         return int((time.monotonic() - start) * 1000)
 
@@ -122,6 +133,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         Yields events as they are produced, not after completion. Pairs
         PreToolUse + PostToolUse hooks to capture per-tool-call duration.
         """
+        self._reset_session_state()
         self._start_timing()
         tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
         runtime_model = self._resolve_runtime_model(task_context, self.config.model)
@@ -187,19 +199,13 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         """Build SDK options with Pre/PostToolUse hooks for event + timing capture."""
 
         async def record_tool_start(
-            input_data: HookInput,
+            _input_data: HookInput,
             tool_use_id: str | None,
             _context: HookContext,
         ) -> SyncHookJSONOutput:
             """PreToolUse: stash a start timestamp keyed by tool_use_id."""
             if tool_use_id is not None:
-                tool_name = getattr(input_data, "tool_name", "unknown")
-                tool_input = getattr(input_data, "tool_input", {})
-                self._pre_tool_use_hook(
-                    tool_name=tool_name,
-                    tool_use_id=tool_use_id,
-                    tool_input=tool_input,
-                )
+                self._pre_tool_use_hook(tool_use_id)
             return SyncHookJSONOutput()
 
         async def capture_tool_use(
@@ -348,6 +354,10 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             if block.thinking.strip():
                 return block.thinking, "thinking"
         elif isinstance(block, ToolResultBlock):
+            # TODO(task-5): extract block.tool_use_id and pass call_id to sequencer.thought
+            # (Task 4 attaches call_id+duration_ms only on the 'tool_use' event path via the
+            # PostToolUse hook queue. 'tool_result' events currently carry neither. Task 5
+            # will add was_truncated/result_bytes/tool_input_json + propagate call_id here.)
             content = str(block.content)[:500] if block.content else "(no output)"
             return f"Tool result: {content}", "tool_result"
         return None

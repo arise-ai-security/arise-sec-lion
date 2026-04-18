@@ -477,11 +477,7 @@ class TestPerToolCallDurationTracking:
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
 
         # When: PreToolUse hook is invoked
-        adapter._pre_tool_use_hook(
-            tool_name="Bash",
-            tool_use_id="tu_abc123",
-            tool_input={"command": "ls"},
-        )
+        adapter._pre_tool_use_hook(tool_use_id="tu_abc123")
 
         # Then: adapter has recorded a start timestamp keyed by tool_use_id
         assert "tu_abc123" in adapter._pending_tool_starts
@@ -491,11 +487,7 @@ class TestPerToolCallDurationTracking:
         """PreToolUse + PostToolUse pair via tool_use_id to compute duration_ms."""
         # Given: a PreToolUse has recorded a start time
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
-        adapter._pre_tool_use_hook(
-            tool_name="Bash",
-            tool_use_id="tu_abc123",
-            tool_input={"command": "ls"},
-        )
+        adapter._pre_tool_use_hook(tool_use_id="tu_abc123")
 
         time.sleep(0.01)  # force a measurable duration
 
@@ -549,11 +541,7 @@ class TestPerToolCallDurationTracking:
         """End-to-end: PreToolUse + sequencer.thought yields ThoughtCaptured with both fields."""
         # Given: an adapter that has recorded a pre-tool-use start for a known id
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
-        adapter._pre_tool_use_hook(
-            tool_name="Bash",
-            tool_use_id="tu_xyz",
-            tool_input={"command": "ls"},
-        )
+        adapter._pre_tool_use_hook(tool_use_id="tu_xyz")
         time.sleep(0.005)
 
         sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
@@ -572,3 +560,35 @@ class TestPerToolCallDurationTracking:
         assert event.call_id == "tu_xyz"
         assert event.duration_ms is not None
         assert event.duration_ms >= 5
+
+    def test_reset_session_state_clears_pending_tool_starts(self) -> None:
+        """Each new session clears any leftover start times from prior sessions."""
+        # Given: an adapter with stale entries in _pending_tool_starts from a prior session
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        adapter._pending_tool_starts["stale_id_1"] = 12345.0
+        adapter._pending_tool_starts["stale_id_2"] = 12346.0
+
+        # When: a new session begins
+        adapter._reset_session_state()
+
+        # Then: the dict is empty
+        assert adapter._pending_tool_starts == {}
+
+    def test_get_and_pop_duration_ms_logs_debug_on_unknown_id(self, caplog) -> None:
+        """Missing tool_use_id emits a DEBUG log so dataset holes are observable."""
+        # Given: an adapter with empty pending dict
+        import logging
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+
+        # When: asked for duration of an id never recorded, with DEBUG capture enabled
+        with caplog.at_level(
+            logging.DEBUG,
+            logger="infrastructure.adapters.worker.claude_sdk_adapter",
+        ):
+            result = adapter._get_and_pop_duration_ms("unknown_id_xyz")
+
+        # Then: returns None, and a DEBUG message mentions the missing id
+        assert result is None
+        assert any("unknown_id_xyz" in rec.message for rec in caplog.records)
+        assert any(rec.levelno == logging.DEBUG for rec in caplog.records)
