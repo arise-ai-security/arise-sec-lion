@@ -218,7 +218,13 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         sequencer: EventSequencer,
         runtime_model: str | None,
     ) -> DomainEvent | None:
-        """Create WorkerCostRecorded event from ResultMessage if cost data available."""
+        """Create WorkerCostRecorded event from ResultMessage if cost data available.
+
+        Parses the full Anthropic usage dict (including cache_read_input_tokens,
+        cache_creation_input_tokens, reasoning_tokens) and forwards every dimension
+        to the event sequencer. Previously only input_tokens + output_tokens were
+        captured, silently dropping cache + extended-thinking cost signal.
+        """
         cost_usd = getattr(message, "total_cost_usd", None)
         usage = getattr(message, "usage", None) or {}
 
@@ -226,16 +232,24 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         if cost_usd is None and not usage:
             return None
 
-        total_tokens = None
-        if usage:
-            total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        prompt_tokens = usage.get("input_tokens") or 0
+        completion_tokens = usage.get("output_tokens") or 0
+        cache_read = usage.get("cache_read_input_tokens") or 0
+        cache_write = usage.get("cache_creation_input_tokens") or 0
+        reasoning = usage.get("reasoning_tokens") or 0
+        total_tokens = prompt_tokens + completion_tokens + cache_read + cache_write + reasoning
 
         return sequencer.cost_recorded(
             tool_name=self._get_tool_name(),
             cost_usd=cost_usd or 0.0,
             duration_seconds=self._get_duration(),
             model=runtime_model,
-            tokens=total_tokens,
+            tokens=total_tokens or None,
+            prompt_tokens=prompt_tokens or None,
+            completion_tokens=completion_tokens or None,
+            cache_read_tokens=cache_read or None,
+            cache_write_tokens=cache_write or None,
+            reasoning_tokens=reasoning or None,
         )
 
     def _make_result_event(
