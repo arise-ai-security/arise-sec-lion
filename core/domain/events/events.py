@@ -210,11 +210,19 @@ class CodeGenerationStarted(DomainEvent):
 
 
 class ThoughtCaptured(DomainEvent):
-    """Worker tool output captured (thinking, progress, output, debug)."""
+    """Worker tool output captured (thinking, progress, output, debug).
+
+    Extended with per-tool-call correlation (``call_id``, ``duration_ms``) so
+    experiment analysis can compute per-call duration (p50/p95). Both fields are
+    optional to preserve backward compatibility with historical events and with
+    non-tool-call output types (thinking, output, progress).
+    """
 
     content: str
     stream: str = "tool"
     output_type: str = "output"
+    call_id: str | None = None
+    duration_ms: int | None = None
 
 
 class PromptSent(DomainEvent):

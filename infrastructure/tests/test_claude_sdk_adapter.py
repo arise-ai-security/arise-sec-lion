@@ -4,6 +4,7 @@ Uses mocking to avoid requiring actual Claude Agent SDK installation and API cal
 Tests verify correct event mapping and error handling.
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -465,3 +466,109 @@ def test_make_cost_event_preserves_explicit_zero_tokens() -> None:
     assert event.cost_usd == 0.0
     # And: reasoning_tokens key was absent from the usage dict, so it remains None
     assert event.reasoning_tokens is None
+
+
+class TestPerToolCallDurationTracking:
+    """Tests for PreToolUse/PostToolUse pairing that yields per-tool-call duration_ms."""
+
+    def test_pretooluse_hook_records_start_time_for_correlation(self) -> None:
+        """PreToolUse hook records a start timestamp keyed by tool_use_id."""
+        # Given: a Claude SDK adapter with hooks initialized
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+
+        # When: PreToolUse hook is invoked
+        adapter._pre_tool_use_hook(
+            tool_name="Bash",
+            tool_use_id="tu_abc123",
+            tool_input={"command": "ls"},
+        )
+
+        # Then: adapter has recorded a start timestamp keyed by tool_use_id
+        assert "tu_abc123" in adapter._pending_tool_starts
+        assert isinstance(adapter._pending_tool_starts["tu_abc123"], float)
+
+    def test_posttooluse_computes_duration_ms_from_pending_start(self) -> None:
+        """PreToolUse + PostToolUse pair via tool_use_id to compute duration_ms."""
+        # Given: a PreToolUse has recorded a start time
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        adapter._pre_tool_use_hook(
+            tool_name="Bash",
+            tool_use_id="tu_abc123",
+            tool_input={"command": "ls"},
+        )
+
+        time.sleep(0.01)  # force a measurable duration
+
+        # When: PostToolUse fires for the same tool_use_id
+        duration_ms = adapter._get_and_pop_duration_ms("tu_abc123")
+
+        # Then: duration is > 0 and the pending entry is cleared
+        assert duration_ms is not None
+        assert duration_ms >= 10  # slept 10ms; scheduler may add a small delta
+        assert "tu_abc123" not in adapter._pending_tool_starts
+
+    def test_posttooluse_returns_none_for_unknown_tool_use_id(self) -> None:
+        """PostToolUse for a tool_use_id we didn't record returns None (no crash)."""
+        # Given: no PreToolUse was recorded for this id
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+
+        # When: asked for duration
+        duration_ms = adapter._get_and_pop_duration_ms("nonexistent_id")
+
+        # Then: returns None, doesn't raise
+        assert duration_ms is None
+
+    def test_build_options_registers_pre_and_post_tool_use_hooks(self, tmp_path) -> None:
+        """Adapter registers PreToolUse hook alongside PostToolUse via HookMatcher.
+
+        Verifies _build_options wires a PreToolUse entry with at least one callback.
+        """
+        # Given: an adapter and a tool queue
+        import asyncio
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+
+        # When: building options
+        with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=tool_queue,
+                container_session=None,
+                runtime_model=None,
+            )
+
+        # Then: the hooks kwarg passed to ClaudeAgentOptions has both PreToolUse
+        # and PostToolUse keys
+        _, kwargs = mock_options_cls.call_args
+        hooks = kwargs["hooks"]
+        assert "PreToolUse" in hooks
+        assert "PostToolUse" in hooks
+
+    def test_tool_result_thought_carries_duration_and_call_id(self) -> None:
+        """End-to-end: PreToolUse + sequencer.thought yields ThoughtCaptured with both fields."""
+        # Given: an adapter that has recorded a pre-tool-use start for a known id
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        adapter._pre_tool_use_hook(
+            tool_name="Bash",
+            tool_use_id="tu_xyz",
+            tool_input={"command": "ls"},
+        )
+        time.sleep(0.005)
+
+        sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+
+        # When: the PostToolUse path emits a thought annotated with the tool_use_id
+        duration_ms = adapter._get_and_pop_duration_ms("tu_xyz")
+        event = sequencer.thought(
+            content="Tool result: ok",
+            output_type="tool_result",
+            call_id="tu_xyz",
+            duration_ms=duration_ms,
+        )
+
+        # Then: the event carries both call_id and a positive duration_ms
+        assert isinstance(event, ThoughtCaptured)
+        assert event.call_id == "tu_xyz"
+        assert event.duration_ms is not None
+        assert event.duration_ms >= 5
