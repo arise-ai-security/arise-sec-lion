@@ -40,7 +40,7 @@ def _make_briefing_exploiter_phase() -> Briefing:
 
 
 def _chain_factory() -> Callable[[], object]:
-    # Given: the PromptBuilder owns the Jinja environment, so reuse its chain
+    # The PromptBuilder owns the Jinja environment, so reuse its chain
     # factory for realistic rendering behavior (same as production wiring).
     builder = PromptBuilder(
         template_dir=PROMPTS_DIR,
@@ -117,3 +117,27 @@ def test_enrich_prompt_injects_tools_when_phase_detected_regardless_of_flag() ->
     # Then: Valgrind guidance is injected via the normal phase-detected flow
     assert enriched.startswith("base prompt")
     assert "valgrind" in enriched.lower()
+
+
+def test_enrich_prompt_with_flag_true_renders_all_enabled_tools_via_fallback_phase() -> None:
+    """Fallback phase must advertise every enabled tool so Valgrind+KLEE always co-appear."""
+    # Given: a plugin with both Valgrind and KLEE enabled and a no-phase briefing
+    plugin = SecurityDomainPlugin(
+        enabled_tools=["valgrind", "klee"],
+        inject_tool_guidance_always=True,
+    )
+    cve = make_test_cve_instance()
+    briefing = _make_briefing_without_phase_keywords()
+
+    # When: enrich_prompt falls back to the union-yielding phase
+    enriched = plugin.enrich_prompt(
+        "base prompt",
+        domain_context=cve,
+        briefing=briefing,
+        chain_factory=_chain_factory(),
+    )
+
+    # Then: both enabled tools appear in the enriched prompt (spec-level invariant)
+    lowered = enriched.lower()
+    assert "valgrind" in lowered
+    assert "klee" in lowered
