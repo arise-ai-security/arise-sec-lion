@@ -3,10 +3,13 @@
 Yields ThoughtCaptured events with precise output_type values based on SDK
 message types, plus WorkCompleted/WorkFailed on completion.
 
-Uses PostToolUse hooks for capturing tool invocations as events.
+Uses paired PreToolUse + PostToolUse hooks so each tool invocation event is
+annotated with the ``tool_use_id`` (``call_id``) and the per-call
+``duration_ms`` derived from the monotonic PreToolUse start timestamp.
 """
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -67,7 +70,40 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             config: Optional configuration. Uses defaults if not provided.
         """
         self.config = config or SDKAdapterConfig()
+        # Pending PreToolUse start timestamps, keyed by tool_use_id. Paired
+        # with the matching PostToolUse to compute per-tool-call duration.
+        self._pending_tool_starts: dict[str, float] = {}
         super().__init__(timeout_seconds=self.config.timeout_seconds)
+
+    def _pre_tool_use_hook(
+        self,
+        tool_name: str,
+        tool_use_id: str,
+        tool_input: dict[str, Any],
+    ) -> None:
+        """Record a monotonic start timestamp for a tool invocation.
+
+        Keyed by ``tool_use_id`` so the matching PostToolUse can compute a
+        per-call duration. ``tool_name`` and ``tool_input`` are accepted to
+        match the SDK hook surface but are not stored here — callers that
+        need them should capture them separately.
+        """
+        del tool_name, tool_input  # reserved for future per-tool analytics
+        self._pending_tool_starts[tool_use_id] = time.monotonic()
+
+    def _get_and_pop_duration_ms(self, tool_use_id: str | None) -> int | None:
+        """Pop the PreToolUse start for ``tool_use_id`` and return duration in ms.
+
+        Returns None if no matching PreToolUse was recorded (e.g., the SDK
+        did not emit one, or a restart dropped the in-memory state). Never
+        raises on unknown ids.
+        """
+        if tool_use_id is None:
+            return None
+        start = self._pending_tool_starts.pop(tool_use_id, None)
+        if start is None:
+            return None
+        return int((time.monotonic() - start) * 1000)
 
     def _get_tool_name(self) -> str:
         """Return tool identifier for cost tracking."""
@@ -83,11 +119,11 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     ) -> AsyncIterator[DomainEvent]:
         """Execute task via SDK, stream ThoughtCaptured events, yield final event.
 
-        Yields events as they are produced, not after completion.
-        Uses PostToolUse hooks to capture tool invocations.
+        Yields events as they are produced, not after completion. Pairs
+        PreToolUse + PostToolUse hooks to capture per-tool-call duration.
         """
         self._start_timing()
-        tool_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
         runtime_model = self._resolve_runtime_model(task_context, self.config.model)
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
@@ -144,22 +180,38 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     def _build_options(
         self,
         working_dir: str,
-        tool_queue: asyncio.Queue[tuple[str, str]],
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]],
         container_session: ContainerSessionContext | None,
         runtime_model: str | None,
     ) -> ClaudeAgentOptions:
-        """Build SDK options with PostToolUse hook for event capture."""
+        """Build SDK options with Pre/PostToolUse hooks for event + timing capture."""
+
+        async def record_tool_start(
+            input_data: HookInput,
+            tool_use_id: str | None,
+            _context: HookContext,
+        ) -> SyncHookJSONOutput:
+            """PreToolUse: stash a start timestamp keyed by tool_use_id."""
+            if tool_use_id is not None:
+                tool_name = getattr(input_data, "tool_name", "unknown")
+                tool_input = getattr(input_data, "tool_input", {})
+                self._pre_tool_use_hook(
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    tool_input=tool_input,
+                )
+            return SyncHookJSONOutput()
 
         async def capture_tool_use(
             input_data: HookInput,
-            _tool_use_id: str | None,
+            tool_use_id: str | None,
             _context: HookContext,
         ) -> SyncHookJSONOutput:
-            """Hook callback to capture tool invocations."""
+            """PostToolUse: capture tool invocation and carry tool_use_id downstream."""
             tool_name = getattr(input_data, "tool_name", "unknown")
             tool_input = getattr(input_data, "tool_input", {})
             content = format_tool_event(tool_name, tool_input)
-            await tool_queue.put((content, "tool_use"))
+            await tool_queue.put((content, "tool_use", tool_use_id))
             return SyncHookJSONOutput()
 
         async def can_use_tool(
@@ -183,19 +235,26 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             permission_mode=self.config.permission_mode,
             can_use_tool=can_use_tool if container_session is not None else None,
             hooks={
+                "PreToolUse": [HookMatcher(hooks=[record_tool_start])],
                 "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
             },
         )
 
     async def _drain_queue(
         self,
-        queue: asyncio.Queue[tuple[str, str]],
+        queue: asyncio.Queue[tuple[str, str, str | None]],
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
-        """Drain all pending events from queue."""
+        """Drain all pending events from queue, attaching per-call duration_ms."""
         while not queue.empty():
-            content, output_type = queue.get_nowait()
-            yield sequencer.thought(content, output_type)
+            content, output_type, tool_use_id = queue.get_nowait()
+            duration_ms = self._get_and_pop_duration_ms(tool_use_id)
+            yield sequencer.thought(
+                content,
+                output_type,
+                call_id=tool_use_id,
+                duration_ms=duration_ms,
+            )
 
     async def _process_message(
         self,

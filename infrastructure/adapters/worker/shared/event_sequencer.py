@@ -55,12 +55,22 @@ class EventSequencer:
         """Return current sequence number (for testing/debugging)."""
         return self._sequence
 
-    def thought(self, content: str, output_type: str) -> ThoughtCaptured:
+    def thought(
+        self,
+        content: str,
+        output_type: str,
+        call_id: str | None = None,
+        duration_ms: int | None = None,
+    ) -> ThoughtCaptured:
         """Create a ThoughtCaptured event and increment sequence.
 
         Args:
             content: The thought content to capture.
             output_type: Type classification (thinking, output, progress, etc.).
+            call_id: Optional tool invocation id (matches SDK ``tool_use_id``)
+                used to correlate pre/post tool use hooks.
+            duration_ms: Optional per-tool-call duration in milliseconds,
+                computed from the matching PreToolUse start timestamp.
 
         Returns:
             ThoughtCaptured event with current sequence number.
@@ -71,6 +81,8 @@ class EventSequencer:
             content=_sanitize_for_jsonb(content),
             stream=self._stream,
             output_type=output_type,
+            call_id=call_id,
+            duration_ms=duration_ms,
         )
         self._sequence += 1
         return event

@@ -16,6 +16,7 @@ from core.domain.events.events import (
     ChildSpawned,
     SharedContextCreated,
     TaskAssigned,
+    ThoughtCaptured,
 )
 from core.domain.values.subtask import Subtask
 
@@ -253,3 +254,38 @@ class TestEventDictMutationAttempts:
 
         # Other event should be unaffected
         assert "test" not in event2.config
+
+
+class TestThoughtCapturedToolCallFields:
+    """Tests for the call_id/duration_ms fields added for per-tool-call timing."""
+
+    def test_thought_captured_accepts_call_id_and_duration_ms(self) -> None:
+        """ThoughtCaptured preserves the new tool-call correlation fields."""
+        # Given: a ThoughtCaptured with new optional fields populated
+        event = ThoughtCaptured(
+            aggregate_id=uuid4(),
+            sequence_number=5,
+            content="tool result",
+            call_id="tu_abc",
+            duration_ms=42,
+        )
+
+        # Then: fields round-trip through construction and serialization
+        assert event.call_id == "tu_abc"
+        assert event.duration_ms == 42
+        dumped = event.model_dump()
+        assert dumped["call_id"] == "tu_abc"
+        assert dumped["duration_ms"] == 42
+
+    def test_thought_captured_defaults_for_new_fields_keep_backward_compat(self) -> None:
+        """call_id and duration_ms default to None when omitted."""
+        # When: constructed without the new fields
+        event = ThoughtCaptured(
+            aggregate_id=uuid4(),
+            sequence_number=1,
+            content="x",
+        )
+
+        # Then: defaults are None (backward-compatible with historical events)
+        assert event.call_id is None
+        assert event.duration_ms is None
