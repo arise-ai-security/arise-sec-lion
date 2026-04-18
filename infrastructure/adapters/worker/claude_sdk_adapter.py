@@ -36,19 +36,13 @@ from core.domain.events.events import DomainEvent, ThoughtCaptured
 
 from .base import WorkerAdapterBase
 from .shared import ContainerSessionContext, EventSequencer, format_tool_event
+from .shared.truncation import cap_thought_content
 
 
 logger = logging.getLogger(__name__)
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
-
-# Cap for captured tool-result content. Raised from 500 to 10_240 (10 KiB) so
-# experiment dataset analyses (Pillar B) keep enough prefix to classify tool
-# behavior without letting a single blob dominate the event stream. Anything
-# above this cap sets ``was_truncated`` + preserves the original byte length.
-_TOOL_RESULT_CONTENT_CAP = 10_240
-_TRUNCATION_MARKER = "…[TRUNCATED]"
 
 # Queue tuple shape: (formatted_content, output_type, tool_use_id, tool_input_json).
 # Keeping ``tool_input_json`` on the queue lets the single _drain_queue site
@@ -292,9 +286,11 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         ``_process_block`` helper still handles ``ToolUseBlock`` for testability
         and for any future block-only path (e.g., replay without hooks).
 
-        For ``ToolResultBlock`` the per-call timing comes from the same pairing
-        via ``_get_and_pop_duration_ms``; content/type/metadata come from
-        ``_process_block``.
+        ``ToolResultBlock`` events carry ``duration_ms=None`` by design: the
+        timing was already emitted on the matching ``tool_use`` event (see the
+        comment inside the loop). Pillar B analysis should join ``tool_use``
+        and ``tool_result`` by ``call_id`` and read ``duration_ms`` from the
+        ``tool_use`` event.
         """
         if not isinstance(message, AssistantMessage):
             return
@@ -307,16 +303,17 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 continue
             content, output_type, metadata = result
             call_id = metadata.get("call_id")
-            duration_ms = (
-                self._get_and_pop_duration_ms(call_id)
-                if output_type == "tool_result"
-                else None
-            )
+            # Note: duration_ms for this tool call was already emitted on the
+            # matching 'tool_use' event (populated via _drain_queue's pop of the
+            # PreToolUse start timestamp). We do NOT call
+            # _get_and_pop_duration_ms here because the entry has been consumed.
+            # Pillar B analysis should read duration_ms from
+            # output_type='tool_use' events, not output_type='tool_result'.
             yield sequencer.thought(
                 content,
                 output_type,
                 call_id=call_id,
-                duration_ms=duration_ms,
+                duration_ms=None,
                 was_truncated=metadata.get("was_truncated", False),
                 result_bytes=metadata.get("result_bytes"),
                 tool_input_json=metadata.get("tool_input_json"),
@@ -421,13 +418,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             )
         elif isinstance(block, ToolResultBlock):
             raw_content = str(block.content) if block.content else "(no output)"
-            result_bytes = len(raw_content)
-            was_truncated = result_bytes > _TOOL_RESULT_CONTENT_CAP
-            capped = (
-                raw_content[:_TOOL_RESULT_CONTENT_CAP] + _TRUNCATION_MARKER
-                if was_truncated
-                else raw_content
-            )
+            capped, was_truncated, result_bytes = cap_thought_content(raw_content)
             return (
                 f"Tool result: {capped}",
                 "tool_result",

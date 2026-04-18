@@ -229,11 +229,12 @@ class TestOpenHandsAdapter:
     def test_cap_thought_content_under_limit_passes_through(self) -> None:
         """Short content is returned unchanged; was_truncated False; result_bytes accurate."""
         # Given: a short content string well under the cap
-        adapter = OpenHandsAdapter()
+        from infrastructure.adapters.worker.shared.truncation import cap_thought_content
+
         content = "short log line"
 
-        # When: cap helper runs
-        capped, was_truncated, result_bytes = adapter._cap_thought_content(content)
+        # When: shared cap helper runs (the OpenHands adapter delegates to it)
+        capped, was_truncated, result_bytes = cap_thought_content(content)
 
         # Then: nothing truncated and the byte count matches the original length
         assert capped == content
@@ -243,11 +244,12 @@ class TestOpenHandsAdapter:
     def test_cap_thought_content_over_limit_truncates_and_flags(self) -> None:
         """Content over the 10_240 cap is truncated; was_truncated True; result_bytes original."""
         # Given: a content string 15 000 chars long
-        adapter = OpenHandsAdapter()
+        from infrastructure.adapters.worker.shared.truncation import cap_thought_content
+
         content = "x" * 15_000
 
-        # When: cap helper runs
-        capped, was_truncated, result_bytes = adapter._cap_thought_content(content)
+        # When: shared cap helper runs (the OpenHands adapter delegates to it)
+        capped, was_truncated, result_bytes = cap_thought_content(content)
 
         # Then: capped length is bounded; metadata reports the pre-truncation size
         assert was_truncated is True

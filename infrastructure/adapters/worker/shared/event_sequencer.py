@@ -25,6 +25,23 @@ def _sanitize_for_jsonb(text: str) -> str:
     return text.replace("\x00", "")
 
 
+def _sanitize_dict_for_jsonb(value: Any) -> Any:
+    """Recursively strip null bytes from string leaves of a dict/list/scalar.
+
+    PostgreSQL rejects \\x00 inside JSONB strings. Tool inputs (Bash commands,
+    Grep patterns, file paths) can carry stray nulls from binary tool outputs
+    that flow back as arguments -- sanitize the same way strings are sanitized
+    in _sanitize_for_jsonb.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {k: _sanitize_dict_for_jsonb(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_dict_for_jsonb(v) for v in value]
+    return value
+
+
 class EventSequencer:
     """Tracks sequence numbers and creates domain events.
 
@@ -76,11 +93,16 @@ class EventSequencer:
             duration_ms: Optional per-tool-call duration in milliseconds,
                 computed from the matching PreToolUse start timestamp.
             was_truncated: True if ``content`` was cut at the capture cap.
-            result_bytes: Original byte length of the tool result before any
-                capping was applied (None for non-tool-result events).
+            result_bytes: Original byte length of ``content`` before any capping
+                was applied. Populated whenever the adapter applied the
+                truncation cap (both ``tool_result`` from the Claude SDK adapter
+                and all thought events from the OpenHands adapter). None when
+                the adapter does not expose a content length.
             tool_input_json: Structured tool-call arguments captured verbatim so
                 downstream analysis does not need to re-parse the formatter
                 string (None when the adapter cannot expose structured input).
+                Recursively sanitized for JSONB-incompatible null bytes before
+                being attached to the event.
 
         Returns:
             ThoughtCaptured event with current sequence number.
@@ -95,7 +117,11 @@ class EventSequencer:
             duration_ms=duration_ms,
             was_truncated=was_truncated,
             result_bytes=result_bytes,
-            tool_input_json=tool_input_json,
+            tool_input_json=(
+                _sanitize_dict_for_jsonb(tool_input_json)
+                if tool_input_json is not None
+                else None
+            ),
         )
         self._sequence += 1
         return event

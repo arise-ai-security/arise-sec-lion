@@ -19,6 +19,7 @@ from core.domain.events.events import (
 
 from .base import WorkerAdapterBase
 from .shared import ContainerSessionContext, EventSequencer
+from .shared.truncation import cap_thought_content
 
 
 # Suppress verbose OpenHands logging
@@ -30,12 +31,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
-
-# Cap for per-thought content captured from SDK events. Mirrors the Claude SDK
-# adapter (10 KiB) so downstream dataset analysis applies one truncation rule
-# across both arms of the tree-vs-flat experiment.
-_THOUGHT_CONTENT_CAP = 10_240
-_TRUNCATION_MARKER = "…[TRUNCATED]"
 
 
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
@@ -165,9 +160,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 content = self._extract_event_content(event)
                 if content and content.strip():
                     stripped = content.strip()
-                    capped, was_truncated, result_bytes = self._cap_thought_content(
-                        stripped,
-                    )
+                    capped, was_truncated, result_bytes = cap_thought_content(stripped)
                     yield sequencer.thought(
                         capped,
                         self._classify_event(event),
@@ -544,24 +537,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         """Classify SDK event type to output_type."""
         event_class_name = type(event).__name__
         return SDK_EVENT_TYPE_MAP.get(event_class_name, "output")
-
-    @staticmethod
-    def _cap_thought_content(content: str) -> tuple[str, bool, int]:
-        """Cap per-thought content, returning ``(capped, was_truncated, result_bytes)``.
-
-        ``result_bytes`` is the pre-truncation length so downstream loss
-        accounting stays honest. ``was_truncated`` reports whether the cap
-        actually fired. Schema-parity with the Claude SDK adapter (same cap,
-        same truncation marker) keeps Pillar B analysis code adapter-agnostic.
-        """
-        result_bytes = len(content)
-        if result_bytes <= _THOUGHT_CONTENT_CAP:
-            return content, False, result_bytes
-        return (
-            content[:_THOUGHT_CONTENT_CAP] + _TRUNCATION_MARKER,
-            True,
-            result_bytes,
-        )
 
     @staticmethod
     def _extract_event_content(event: Any) -> str | None:

@@ -217,14 +217,23 @@ class ThoughtCaptured(DomainEvent):
     without re-parsing the human-readable ``content`` string:
 
     - ``call_id`` / ``duration_ms`` -- pair pre/post tool-use hooks (Task 4).
-    - ``was_truncated`` / ``result_bytes`` -- mark tool-result content that was
-      cut at the capture cap and record the original size for loss accounting.
+    - ``was_truncated`` / ``result_bytes`` -- mark content that was cut at the
+      capture cap and record the original byte length for loss accounting.
+      ``result_bytes`` is populated by every adapter that applies the cap (the
+      Claude SDK adapter on ``tool_result`` blocks, the OpenHands adapter on
+      every thought) and is None only when the adapter does not expose a
+      content length.
     - ``tool_input_json`` -- the structured tool-call arguments, preserved
       verbatim so downstream analysis does not depend on the formatter string.
 
     All five fields are optional to preserve backward compatibility with
     historical events and with non-tool-call output types (thinking, output,
     progress).
+
+    ``duration_ms`` is populated on ``output_type='tool_use'`` events (the
+    Claude SDK adapter computes it via paired PreToolUse/PostToolUse hooks).
+    Matching ``tool_result`` events carry ``duration_ms=None`` to avoid
+    double-accounting; join by ``call_id`` for correlation.
     """
 
     content: str

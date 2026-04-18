@@ -118,6 +118,42 @@ class TestEventSequencer:
         assert sdk_event.stream == "claude_sdk"
         assert oh_event.stream == "openhands"
 
+    def test_thought_sanitizes_null_bytes_in_tool_input_json(self) -> None:
+        """JSONB-unsafe null bytes in tool_input_json are stripped before event construction."""
+        # Given: a sequencer and tool_input with embedded null bytes in nested values
+        seq = EventSequencer(agent_id=uuid4(), stream="test")
+        dirty_input = {
+            "command": "grep \x00pattern file",
+            "nested": {"path": "/src/foo\x00bar"},
+            "list_arg": ["clean", "dir\x00ty", 42],
+        }
+
+        # When: a tool_use thought is constructed
+        event = seq.thought(
+            content="Tool use",
+            output_type="tool_use",
+            call_id="tu_1",
+            tool_input_json=dirty_input,
+        )
+
+        # Then: all null bytes are stripped from nested strings
+        assert event.tool_input_json is not None
+        assert event.tool_input_json["command"] == "grep pattern file"
+        assert event.tool_input_json["nested"]["path"] == "/src/foobar"
+        # And: non-string scalars (int) are preserved unchanged
+        assert event.tool_input_json["list_arg"] == ["clean", "dirty", 42]
+
+    def test_thought_passes_none_tool_input_json_through(self) -> None:
+        """None tool_input_json stays None (no false dict materialization)."""
+        # Given: a sequencer
+        seq = EventSequencer(agent_id=uuid4(), stream="test")
+
+        # When: thought is constructed without tool_input_json
+        event = seq.thought(content="just text", output_type="output")
+
+        # Then: tool_input_json remains None
+        assert event.tool_input_json is None
+
 
 class TestFormatToolEvent:
     """Tests for format_tool_event function."""
