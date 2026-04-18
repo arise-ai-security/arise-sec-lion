@@ -9,11 +9,17 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events.events import (
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkerCostRecorded,
+    WorkFailed,
+)
 from infrastructure.adapters.worker.claude_sdk_adapter import (
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
 )
+from infrastructure.adapters.worker.shared.event_sequencer import EventSequencer
 
 
 # Module path for patching (use actual implementation module)
@@ -399,3 +405,32 @@ class TestAdapterIntegration:
                     pass
 
         assert seen["model"] == "claude-opus-4-20250514"
+
+
+def test_make_cost_event_parses_cache_and_thinking_tokens():
+    # Given: a Claude SDK ResultMessage with full usage dict including cache + reasoning tokens
+    adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+    sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+    message = MagicMock()
+    message.total_cost_usd = 0.0123
+    message.usage = {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_input_tokens": 400,
+        "cache_creation_input_tokens": 200,
+        "reasoning_tokens": 75,
+    }
+
+    # When: _make_cost_event is called
+    event = adapter._make_cost_event(message, sequencer, runtime_model="claude-sonnet-4-6")
+
+    # Then: all five token dimensions are captured on the resulting event
+    assert event is not None
+    assert isinstance(event, WorkerCostRecorded)
+    assert event.prompt_tokens == 100
+    assert event.completion_tokens == 50
+    assert event.cache_read_tokens == 400
+    assert event.cache_write_tokens == 200
+    assert event.reasoning_tokens == 75
+    assert event.tokens == 825  # total across all five
+    assert event.cost_usd == 0.0123
