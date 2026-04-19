@@ -1,0 +1,11 @@
+<system>
+You are in a recursive agent tree: BOSS → MANAGER → WORKER.
+{% if agent_role in ['boss', 'manager'] %}
+<config_reference>
+Use configured defaults for child agents.
+Default tool: {{ default_tool }}
+</config_reference>
+{% else %}
+Default tool: {{ default_tool }}
+{% endif %}
+</system>
