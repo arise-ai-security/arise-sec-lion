@@ -134,8 +134,8 @@ def plan_runs(
 
 
 def is_resumable(plan: RunPlan) -> bool:
-    """Return True if this run already produced an events.jsonl (skip on resume)."""
-    return (plan.run_dir / "events.jsonl").exists()
+    """Return True if this run already wrote mechanical.json (fully complete)."""
+    return (plan.run_dir / "mechanical.json").exists()
 
 
 def _normalize_sanitizer_error(framed_or_bare: str) -> str:
@@ -281,6 +281,7 @@ async def _dispatch_tree(
     started = time.monotonic()
     log_path = plan.run_dir / "stdout_stderr.log"
     plan.run_dir.mkdir(parents=True, exist_ok=True)
+    (plan.run_dir / "workspace").mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log_f:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
