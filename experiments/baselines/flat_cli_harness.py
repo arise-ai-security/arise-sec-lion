@@ -307,7 +307,7 @@ class RunSpec:
     docker_image: str  # e.g. secb-tools:njs.cve-2022-32414
     model: str = "claude-sonnet-4-6"
     budget_usd_cap: float = 3.0
-    wallclock_sec_cap: int = 1200
+    wallclock_sec_cap: int = 5400
     workspace_host_root: Path | None = None  # provided by experiment runner
 
 
