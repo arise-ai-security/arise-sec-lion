@@ -34,5 +34,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     || { echo "KLEE not available in base image repos — skipping"; rm -rf /var/lib/apt/lists/*; }
 
+# Node.js + Claude Code CLI
+# Required by the flat-CLI baseline arm (experiments/baselines/flat_cli_harness.py)
+# which invokes ``claude --print --output-format stream-json`` inside the container.
+# Uses NodeSource's current LTS (Node 20) for the @anthropic-ai/claude-code package.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+       > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code \
+    && node --version && claude --version
+
 # Verify installations
 RUN valgrind --version && { klee --version 2>/dev/null || echo "KLEE not installed"; }
