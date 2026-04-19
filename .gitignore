@@ -692,6 +692,8 @@ FodyWeavers.xsd
 !agent-docs/*.md
 !.claude/docs/*.md
 !experiments/domain_briefing.md
+!docs/pillar_b/**/*.md
+!docs/superpowers/**/*.md
 
 # Output directory (generated code, exports, last run tracking)
 output/

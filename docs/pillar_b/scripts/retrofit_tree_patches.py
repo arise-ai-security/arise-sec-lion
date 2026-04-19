@@ -448,6 +448,7 @@ def retrofit_one_run(
     cve_entry: dict,
     *,
     skip_eval: bool = False,
+    output_name: str = "mechanical.json",
 ) -> dict:
     """Retrofit a single B-cell run; return a summary dict.
 
@@ -468,6 +469,7 @@ def retrofit_one_run(
         "error": None,
     }
 
+    target_path = run_dir / output_name
     existing = run_dir / "mechanical.json"
     if existing.exists():
         try:
@@ -520,7 +522,7 @@ def retrofit_one_run(
             docker_image=docker_image,
             expected_sanitizer_error=sanitizer,
         )
-        existing.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        target_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         summary["mechanical_pass_after"] = {
             "builder": bool(report["builder_pass"]),
             "exploiter": bool(report["exploiter_pass"]),
@@ -546,6 +548,21 @@ def main() -> int:
         action="store_true",
         help="Stage patches but do NOT re-run evaluator or rewrite INDEX.",
     )
+    ap.add_argument(
+        "--cells",
+        default="B1,B2",
+        help="Comma-separated cell IDs to process. Default 'B1,B2' (retrofit).",
+    )
+    ap.add_argument(
+        "--output-name",
+        default="mechanical.json",
+        help="Output filename. Use 'corrected_mechanical.json' for sensitivity mode.",
+    )
+    ap.add_argument(
+        "--no-index-update",
+        action="store_true",
+        help="Do not rewrite INDEX.jsonl (for A-cell sensitivity analysis).",
+    )
     args = ap.parse_args()
 
     if not INDEX_PATH.exists():
@@ -555,10 +572,11 @@ def main() -> int:
     locked = load_locked_instances()
 
     rows = [json.loads(line) for line in INDEX_PATH.read_text().splitlines() if line.strip()]
-    b_rows = [r for r in rows if r["cell"] in {"B1", "B2"}]
+    target_cells = {c.strip() for c in args.cells.split(",") if c.strip()}
+    b_rows = [r for r in rows if r["cell"] in target_cells]
     if args.only:
         b_rows = [r for r in b_rows if r["run_id"] == args.only]
-    logger.info("Found %d B-cell runs to process", len(b_rows))
+    logger.info("Found %d runs to process (cells=%s)", len(b_rows), sorted(target_cells))
 
     summaries: list[dict] = []
     for idx, row in enumerate(b_rows, start=1):
@@ -573,12 +591,17 @@ def main() -> int:
             logger.warning("cve_id %s not in locked_instances; skipping", cve_id)
             continue
         logger.info("[%d/%d] Retrofitting %s", idx, len(b_rows), row["run_id"])
-        s = retrofit_one_run(run_dir, locked[cve_id], skip_eval=args.dry_run)
+        s = retrofit_one_run(
+            run_dir,
+            locked[cve_id],
+            skip_eval=args.dry_run,
+            output_name=args.output_name,
+        )
         summaries.append(s)
-        if s["mechanical_pass_after"] is not None:
+        if s["mechanical_pass_after"] is not None and not args.no_index_update:
             row["mechanical_pass"] = s["mechanical_pass_after"]
 
-    if not args.dry_run and not args.only:
+    if not args.dry_run and not args.only and not args.no_index_update:
         INDEX_PATH.write_text(
             "\n".join(json.dumps(r) for r in rows) + "\n",
             encoding="utf-8",
