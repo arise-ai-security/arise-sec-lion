@@ -1,0 +1,10 @@
+# Cell A4: flat Claude Code CLI with subagents OFF and domain briefing injected.
+#
+# See config/exp-secbench-A1.yaml for the provenance note on this file.
+cell_id: A4
+system: flat_cli
+subagents_enabled: false
+domain_briefing_enabled: true
+model: claude-sonnet-4-6
+budget_usd_cap: 3.0
+wallclock_sec_cap: 600

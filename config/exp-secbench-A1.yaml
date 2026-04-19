@@ -1,0 +1,14 @@
+# Cell A1: flat Claude Code CLI with subagents ON, no domain briefing.
+#
+# Consumed by experiments.run_experiment via the flat_cli_harness CELL_CONFIGS
+# lookup; the file exists for dataset-provenance (code_sha / env capture) and
+# reference. The runner does NOT read this YAML to configure the flat CLI --
+# CELL_CONFIGS["A1"] is the single source of truth for subagents/briefing
+# flags. Fields below mirror those defaults so the run manifest is readable.
+cell_id: A1
+system: flat_cli
+subagents_enabled: true
+domain_briefing_enabled: false
+model: claude-sonnet-4-6
+budget_usd_cap: 3.0
+wallclock_sec_cap: 600

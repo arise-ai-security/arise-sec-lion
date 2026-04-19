@@ -1,0 +1,55 @@
+# Cell B1: tree with NullPromptStrategy (no SEC-bench domain prompts).
+#
+# Consumed by `python main.py -c config/exp-secbench-B1.yaml run ...`. The
+# settings YAML schema is defined in config/settings.py; this file populates
+# the fields the tree arm reads.
+#
+# NOTE: the SecurityConfig.prompt_strategy field is typed as
+# Literal["default", "null"], so the value MUST be the quoted string
+# "null" -- a bare YAML `null` keyword would decode to Python None and fail
+# validation.
+database:
+  host: localhost
+  port: 5432
+  user: arise
+  name: arise_events
+
+boss:
+  model: claude-opus-4-7
+  max_tokens: 4000
+
+manager:
+  model: claude-opus-4-7
+  max_tokens: 4000
+
+worker:
+  model: claude-sonnet-4-6
+  tool: claude_code   # switched from openhands for this experiment
+  timeout: 600
+  max_iterations_per_run: 40
+
+orchestration:
+  max_retries: 2
+  poll_interval: 0.5
+  max_run_duration_seconds: 600
+  max_redecompositions: 1
+  skip_judge: true   # judge is excluded from pass-rate; judge cost still measured
+  topology:
+    max_depth: 2
+    max_children_per_node: 5
+    max_total_agents: 15
+  concurrency:
+    max_concurrent_workers: 1
+    max_concurrent_llm_calls: 1
+    llm_jitter_max_ms: 0
+
+security:
+  enabled: true
+  tools: [valgrind, klee]
+  prompt_strategy: "null"   # NullPromptStrategy (quoted -- see header note)
+
+output:
+  verbose: true
+  show_progress: true
+  log_level: INFO
+  directory: ./output
