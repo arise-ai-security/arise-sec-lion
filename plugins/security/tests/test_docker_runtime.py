@@ -35,4 +35,5 @@ def test_exec_helper_falls_back_to_root_when_project_dirs_disappear(
 
     script = workspace.helper_script.read_text(encoding="utf-8")
     assert 'docker exec "$CONTAINER" test -d /src 2>/dev/null' in script
-    assert 'docker exec -i -w / "$CONTAINER" bash -lc "$*"' in script
+    assert 'CMD="umask 000; $*"' in script
+    assert 'docker exec -i -w / "$CONTAINER" bash -lc "$CMD"' in script

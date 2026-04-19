@@ -189,7 +189,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
         agent = Agent(
             llm=llm,
             tools=[
-                Tool(name=TerminalTool.name),
+                # Force subprocess-backed shell instead of the auto-detected tmux
+                # PTY: tmux streams commands character-by-character with
+                # bracketed-paste toggling per line, which stalls on complex
+                # nested quoting (e.g. secb-exec "... grep 'id=\"[^\"]*\"' ...").
+                # Subprocess sends the command as argv, bypassing terminal
+                # emulation entirely.
+                Tool(
+                    name=TerminalTool.name,
+                    params={"terminal_type": "subprocess"},
+                ),
                 Tool(name=FileEditorTool.name),
             ],
         )
