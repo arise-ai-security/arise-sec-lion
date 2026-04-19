@@ -91,6 +91,16 @@ def _create_parser() -> argparse.ArgumentParser:
         choices=["claude_code", "openhands", "google_adk"],
         help="Override worker execution tool (claude_code, openhands, google_adk)",
     )
+    p.add_argument(
+        "--output-dir",
+        type=Path,
+        help=(
+            "Override the run's output directory. When set, .last_run.json and any "
+            "per-run artifacts land here instead of settings.output.directory. Used by "
+            "the experiment runner so per-cell dataset outputs land in the planned "
+            "dataset/runs/<cve>/<cell>/ path."
+        ),
+    )
 
     for name, help_text, extra_args in [
         ("events", "View events for a task run", [("--errors-only", {"action": "store_true"})]),
@@ -138,6 +148,7 @@ async def _run_task(args: argparse.Namespace) -> None:
     from presentation.formatters import ProgressDisplayFormatter
 
     settings = _apply_worker_overrides(_load_settings(args.config), args)
+    settings = _apply_output_dir_override(settings, args)
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
 
     context_file = getattr(args, "domain_context_file", None)
@@ -195,6 +206,20 @@ def _print_inferred_domain_context(
     instance_id = metadata.get("instance_id")
     if isinstance(instance_id, str):
         print(f"[Inferred] Domain context: {instance_id}")
+
+
+def _apply_output_dir_override(settings: Settings, args: argparse.Namespace) -> Settings:
+    """Apply ``--output-dir`` CLI override by replacing settings.output.directory.
+
+    This lets an orchestrator (experiments/run_experiment.py) land every per-cell
+    run's ``.last_run.json`` in a predictable dataset directory so the
+    tree_projection step can locate the BOSS root_id by reading that file.
+    """
+    output_dir = getattr(args, "output_dir", None)
+    if output_dir is None:
+        return settings
+    new_output = settings.output.model_copy(update={"directory": str(output_dir)})
+    return settings.model_copy(update={"output": new_output})
 
 
 def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Settings:

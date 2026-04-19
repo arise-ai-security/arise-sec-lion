@@ -259,6 +259,8 @@ async def _dispatch_tree(
         "security",
         "--domain-context-file",
         str(cve_json_path),
+        "--output-dir",
+        str(plan.run_dir),
     ]
     started = time.monotonic()
     log_path = plan.run_dir / "stdout_stderr.log"
