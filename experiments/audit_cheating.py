@@ -10,6 +10,11 @@ forbidden patterns defined in the domain briefing:
 
 Writes audit.json alongside events.jsonl. Runs are NOT auto-excluded; Pillar B
 reports results with and without violating runs separately.
+
+TODO(audit-v2): `git show <commit-sha>` is currently not flagged. The briefing
+allows `git show <candidate_fix_hash>` only when candidate fixes are explicitly
+provided in task context. To check this properly we'd need per-CVE candidate-fix
+config. Tracked for follow-up; not a v1.0 blocker.
 """
 
 from __future__ import annotations
@@ -38,11 +43,14 @@ EXTERNAL_URL_PATTERNS = [
 INTERNAL_HOSTS = ("localhost", "127.", "0.0.0.0", "::1")  # noqa: S104
 
 GIT_CHECKOUT_SHA_RE = re.compile(
-    r"\bgit\s+checkout\s+(?P<sha>[A-Fa-f0-9]{7,40}|\S+)",
+    r"\bgit\s+checkout\s+(?P<sha>[A-Fa-f0-9]{7,40})\b",
     re.IGNORECASE,
 )
-GIT_LOG_ALL_RE = re.compile(r"\bgit\s+log\b[^\n]*--all\b", re.IGNORECASE)
-GIT_BRANCH_ALL_RE = re.compile(r"\bgit\s+branch\b[^\n]*-a\b", re.IGNORECASE)
+GIT_LOG_ALL_RE = re.compile(r"\bgit\s+log\b[^\n]*--all(?:\s|$)", re.IGNORECASE)
+GIT_BRANCH_ALL_RE = re.compile(
+    r"\bgit\s+branch\b[^\n]*(?:--all\b|-\w*a\w*\b)",
+    re.IGNORECASE,
+)
 CURL_WGET_HTTP_RE = re.compile(r"\b(?:curl|wget)\b[^\n]*https?://", re.IGNORECASE)
 
 
@@ -96,8 +104,7 @@ def _check_bash(
     ev: dict[str, Any],
     violations: list[dict[str, Any]],
 ) -> None:
-    m = GIT_CHECKOUT_SHA_RE.search(command)
-    if m:
+    for m in GIT_CHECKOUT_SHA_RE.finditer(command):
         sha = m.group("sha").lower().rstrip(".")
         if not _is_base_commit(sha, base_commit):
             violations.append(
@@ -147,11 +154,16 @@ def _is_external_url(url: str) -> bool:
 
 
 def _is_base_commit(sha: str, base_commit: str) -> bool:
-    """Match short or full SHAs against the configured base commit."""
-    base = base_commit.lower()
+    """Match short or full SHAs against the configured base commit.
+
+    Requires at least 7 hex chars (git's default abbrev length). Shorter
+    prefixes are rejected to prevent trivial 1-3 char prefix bypasses.
+    """
     sha_lower = sha.lower()
-    # Full match or prefix match (short SHAs are valid prefixes of the base SHA)
-    return base.startswith(sha_lower) or sha_lower.startswith(base[: len(sha_lower)])
+    base_lower = base_commit.lower()
+    if len(sha_lower) < 7:
+        return False
+    return base_lower.startswith(sha_lower)
 
 
 def main() -> None:

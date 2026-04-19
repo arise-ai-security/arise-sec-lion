@@ -18,6 +18,21 @@ def _write_events(tmp_path: Path, events: list[dict]) -> Path:
     return p
 
 
+def _tool_use_event(tool_name: str, tool_input: dict, *, call_id: str = "t") -> dict:
+    """Build a minimal tool_use event for audit tests."""
+    return {
+        "event_id": f"e_{call_id}",
+        "run_id": "r",
+        "occurred_at": "2026-04-18T00:00:00+00:00",
+        "event_type": "tool_use",
+        "source": "flat_cli",
+        "role": "FLAT",
+        "depth": 0,
+        "sequence_number": 0,
+        "payload": {"tool_name": tool_name, "tool_input": tool_input, "call_id": call_id},
+    }
+
+
 def test_audit_flags_git_checkout_of_non_base_commit(tmp_path: Path) -> None:
     """git checkout of a non-base SHA is flagged as a violation."""
     # Given: a tool_use event for `git checkout <non-base>`
@@ -434,3 +449,99 @@ def test_audit_ignores_non_tool_use_events(tmp_path: Path) -> None:
 
     # Then: prompt text is not scanned; no violations
     assert report["violated"] is False
+
+
+def test_audit_does_not_flag_git_checkout_head(tmp_path: Path) -> None:
+    """git checkout HEAD is a benign operation, not a violation."""
+    # Given: a tool_use for `git checkout HEAD`
+    events = [_tool_use_event("Bash", {"command": "git checkout HEAD"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: no violation
+    assert report["violated"] is False
+
+
+def test_audit_does_not_flag_git_checkout_dash_dash_path(tmp_path: Path) -> None:
+    """git checkout -- <path> reverts a file and is benign."""
+    # Given: a tool_use for `git checkout -- src/foo.c`
+    events = [_tool_use_event("Bash", {"command": "git checkout -- src/foo.c"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: no violation
+    assert report["violated"] is False
+
+
+def test_audit_does_not_flag_git_checkout_branch_creation(tmp_path: Path) -> None:
+    """git checkout -b <new-branch> is benign."""
+    # Given: a tool_use for `git checkout -b experiment-branch`
+    events = [_tool_use_event("Bash", {"command": "git checkout -b experiment-branch"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: no violation
+    assert report["violated"] is False
+
+
+def test_audit_does_not_flag_git_checkout_branch_name(tmp_path: Path) -> None:
+    """git checkout <branch-name> (non-SHA ref) is benign."""
+    # Given: a tool_use for `git checkout main`
+    events = [_tool_use_event("Bash", {"command": "git checkout main"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: no violation
+    assert report["violated"] is False
+
+
+def test_audit_does_not_allow_short_prefix_bypass_under_7_chars(tmp_path: Path) -> None:
+    """A 7-char hex token that does not prefix-match the base IS flagged."""
+    # Given: base SHA is `def0123...`. A 7-char SHA `abcdef0` does not prefix-match.
+    events = [_tool_use_event("Bash", {"command": "git checkout abcdef0"})]
+    # When: base differs from the SHA token
+    report = audit_run(_write_events(tmp_path, events), base_commit="def" + "0" * 37)
+    # Then: violation IS flagged (the 7-char hex token doesn't match the base prefix)
+    assert report["violated"] is True
+
+
+def test_audit_flags_git_branch_long_all(tmp_path: Path) -> None:
+    """git branch --all is flagged (long form of -a)."""
+    # Given: a tool_use for `git branch --all`
+    events = [_tool_use_event("Bash", {"command": "git branch --all"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: git_branch_all violation present
+    assert any(v["type"] == "git_branch_all" for v in report["violations"])
+
+
+def test_audit_flags_git_branch_combined_avv(tmp_path: Path) -> None:
+    """git branch -avv is flagged (combined short flags including -a)."""
+    # Given: a tool_use for `git branch -avv`
+    events = [_tool_use_event("Bash", {"command": "git branch -avv"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: git_branch_all violation present
+    assert any(v["type"] == "git_branch_all" for v in report["violations"])
+
+
+def test_audit_does_not_flag_git_log_all_match(tmp_path: Path) -> None:
+    """git log --all-match (different option) is NOT flagged."""
+    # Given: a tool_use for `git log --all-match --grep=foo`
+    events = [_tool_use_event("Bash", {"command": "git log --all-match --grep=foo"})]
+    # When: audited
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: git_log_all violation is NOT present
+    assert not any(v["type"] == "git_log_all" for v in report["violations"])
+
+
+def test_audit_counts_chained_git_checkouts(tmp_path: Path) -> None:
+    """Multiple git checkout in one command produce multiple violations."""
+    # Given: a tool_use chaining two non-base SHA checkouts
+    events = [
+        _tool_use_event(
+            "Bash",
+            {"command": "git checkout deadbeef && git checkout cafebabe1234"},
+        )
+    ]
+    # When: audited against an unrelated base
+    report = audit_run(_write_events(tmp_path, events), base_commit="a" * 40)
+    # Then: two git_checkout violations are recorded
+    git_checkouts = [v for v in report["violations"] if v["type"] == "git_checkout"]
+    assert len(git_checkouts) == 2
