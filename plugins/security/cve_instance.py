@@ -28,6 +28,7 @@ class CVEInstance(BaseModel):
     sanitizer_report: str = ""
     bug_report: str = ""
     candidate_fixes: str = ""
+    docker_image_override: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -38,6 +39,8 @@ class CVEInstance(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def docker_image(self) -> str:
+        if self.docker_image_override:
+            return self.docker_image_override
         return f"hwiwonlee/secb.eval.x86_64.{self.project_name}.{self.cve_id}:patch"
 
     @computed_field  # type: ignore[prop-decorator]
