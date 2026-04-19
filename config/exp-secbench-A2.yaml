@@ -6,5 +6,5 @@ system: flat_cli
 subagents_enabled: false
 domain_briefing_enabled: false
 model: claude-sonnet-4-6
-budget_usd_cap: 3.0
+budget_usd_cap: 10.0
 wallclock_sec_cap: 5400

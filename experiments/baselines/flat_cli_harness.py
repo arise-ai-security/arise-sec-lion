@@ -5,7 +5,7 @@ container, streams stdout line-by-line, converts each recognized event into a
 ``NormalizedEvent`` conforming to ``experiments.schema``, and writes
 ``events.jsonl``.
 
-Enforces per-run budget ($3) and wall-clock (10 min) caps by killing the
+Enforces per-run budget ($10) and wall-clock (90 min) caps by killing the
 container when exceeded; synthesizes a ``run_completed`` event with
 termination reason in the accompanying ``meta.json``.
 
@@ -306,7 +306,7 @@ class RunSpec:
     output_dir: Path  # dataset/runs/<cve>/<cell>/<replicate>/
     docker_image: str  # e.g. secb-tools:njs.cve-2022-32414
     model: str = "claude-sonnet-4-6"
-    budget_usd_cap: float = 3.0
+    budget_usd_cap: float = 10.0
     wallclock_sec_cap: int = 5400
     workspace_host_root: Path | None = None  # provided by experiment runner
 

@@ -625,7 +625,7 @@ async def _project(run_dir: Path, config_path: Path | None) -> int:
         "subagent_enabled": existing_meta.get("subagent_enabled"),
         "prompt_strategy": existing_meta.get("prompt_strategy", "secbench"),
         "docker_image": existing_meta.get("docker_image", "unknown"),
-        "budget_usd_cap": float(existing_meta.get("budget_usd_cap", 3.0)),
+        "budget_usd_cap": float(existing_meta.get("budget_usd_cap", 10.0)),
         "wallclock_sec_cap": int(existing_meta.get("wallclock_sec_cap", 600)),
         "models": existing_meta.get(
             "models",
