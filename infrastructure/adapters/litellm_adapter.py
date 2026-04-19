@@ -35,9 +35,19 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _is_o_series(model: str) -> bool:
-        """Return True for OpenAI O-series models that reject temperature."""
+        """Return True for models that reject the ``temperature`` parameter.
+
+        * OpenAI O-series (``o1``, ``o3``, ``o4``) have never supported it.
+        * Anthropic ``claude-opus-4-7`` deprecated it (API returns a 400 with
+          ``"temperature is deprecated for this model."``) — pending Anthropic
+          publishing a broader list, extend conservatively to any ``opus-4-7``
+          variant. Sonnet / Haiku 4.x still accept ``temperature`` as of
+          2026-04.
+        """
         base = model.split("/")[-1].lower()
-        return base.startswith(("o1", "o3", "o4"))
+        if base.startswith(("o1", "o3", "o4")):
+            return True
+        return "opus-4-7" in base or "opus-4.7" in base
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.

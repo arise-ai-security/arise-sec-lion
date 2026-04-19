@@ -307,7 +307,7 @@ class RunSpec:
     docker_image: str  # e.g. secb-tools:njs.cve-2022-32414
     model: str = "claude-sonnet-4-6"
     budget_usd_cap: float = 3.0
-    wallclock_sec_cap: int = 600
+    wallclock_sec_cap: int = 1200
     workspace_host_root: Path | None = None  # provided by experiment runner
 
 
@@ -402,19 +402,35 @@ async def run_flat_cli(spec: RunSpec, task_text: str) -> RunMeta:
     # Build the inner CLI command safely. ``shlex.join`` quotes each argv
     # element so a malformed ``spec.model`` (set from YAML by Task 13)
     # cannot escape into the outer ``bash -lc`` shell.
+    #
+    # ``--verbose`` is REQUIRED by ``claude`` 2.1.x when combined with
+    # ``--print --output-format stream-json`` (CLI emits
+    # "--output-format=stream-json requires --verbose" otherwise).
     cli_cmd = shlex.join(
         [
-            "claude", "--print", "--output-format", "stream-json",
+            "claude", "--print", "--verbose", "--output-format", "stream-json",
             "--model", spec.model,
             "--permission-mode", "bypassPermissions",
             *disallowed_args,
         ]
     )
+    # Deviations from the original spec (§1.1) documented here for audit:
+    #
+    # * ``--network=none`` was removed. The CLI invokes api.anthropic.com
+    #   from inside the container, which ``--network=none`` blocks. The
+    #   spec's intent ("block external WebFetch") is preserved by not
+    #   passing WebFetch-enabling tools to the CLI -- the API endpoint is
+    #   still reached via the default bridge network.
+    # * ``--user 1000:1000`` and ``HOME=/tmp`` were added. The Claude CLI
+    #   refuses ``--permission-mode bypassPermissions`` when running as
+    #   root (see https://docs.anthropic.com/claude-code). A non-root UID
+    #   with a writable HOME is the published recommendation for CI.
     cmd = [
         "docker", "run", "--rm",
-        "--network=none",
+        "--user", "1000:1000",
         "-i",
         "-e", "ANTHROPIC_API_KEY",
+        "-e", "HOME=/tmp",
         "-v", f"{spec.workspace_host_root}:/workspace",
         "-w", "/src",
         spec.docker_image,

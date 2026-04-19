@@ -31,7 +31,7 @@ worker:
 orchestration:
   max_retries: 2
   poll_interval: 0.5
-  max_run_duration_seconds: 600
+  max_run_duration_seconds: 1800
   max_redecompositions: 1
   skip_judge: true   # judge is excluded from pass-rate; judge cost still measured
   topology:

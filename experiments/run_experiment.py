@@ -20,6 +20,7 @@ instead of silently misclassifying.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import random
@@ -35,6 +36,21 @@ import yaml
 from experiments.audit_cheating import audit_run
 from experiments.mechanical_evaluator import SANITIZER_ERROR_CLASSES, evaluate_run
 from experiments.schema import IndexEntry
+from plugins.security import CVEInstance, resolve_secbench_image
+
+
+DEFAULT_CONCURRENCY = 5
+"""Default number of parallel (CVE, cell, replicate) runs.
+
+Tuning guide:
+- Anthropic API TPM caps are the dominant constraint. N=5 assumes Tier 2+
+  (>=2M TPM). On Tier 1 (~400K-1M TPM), drop to N=2 or risk 429s.
+- Host RAM: each Docker workload peaks at 2-4 GB. N=5 -> 10-20 GB + Python
+  overhead; comfortable on >=32 GB hosts.
+- Docker daemon throughput handles 5 concurrent containers easily.
+- Postgres arise-db is fine with 5 concurrent writers (each BOSS has a
+  unique aggregate_id, so no write hot-spot).
+"""
 
 
 logger = logging.getLogger(__name__)
@@ -314,41 +330,65 @@ async def _dispatch_tree(
     return {"system": "tree", "meta": meta_data, "duration": duration}
 
 
-async def execute_all(
-    plans: list[RunPlan],
-    instances: dict[str, dict[str, Any]],
-    *,
-    index_path: Path | None = None,
-) -> None:
-    """Run every plan, skipping complete ones; append each run summary to INDEX.jsonl.
+def _append_index_entry_locked(index_path: Path, entry: IndexEntry) -> None:
+    """Append one JSONL line to INDEX.jsonl with an exclusive advisory lock.
 
-    A failure in one run (dispatch, audit, mechanical, or index) is logged
-    and the loop continues with the next plan -- the whole 63-run pipeline
-    never stops because of a single bad run.
+    Multiple concurrent runs call this to record their outcome. POSIX
+    ``fcntl.LOCK_EX`` serializes writers across processes on the same
+    filesystem, preventing interleaved bytes when two runs finish within
+    the same instant. The lock is released automatically when the file
+    handle is closed.
     """
-    index_path = index_path or Path("dataset/INDEX.jsonl")
-    index_path.parent.mkdir(parents=True, exist_ok=True)
+    with index_path.open("a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            fh.write(entry.model_dump_json() + "\n")
+            fh.flush()
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
-    for plan in plans:
+
+async def _run_one(
+    plan: RunPlan,
+    instances: dict[str, dict[str, Any]],
+    index_path: Path,
+    semaphore: asyncio.Semaphore,
+) -> None:
+    """Execute a single plan under the concurrency semaphore.
+
+    Semaphore caps how many runs are in-flight simultaneously. Any failure
+    is logged but never re-raised: per-run isolation is the explicit design
+    goal so one bad CVE (malformed YAML, docker hiccup) can't stall the
+    rest of the schedule.
+    """
+    async with semaphore:
         if is_resumable(plan):
             logger.info("Skipping completed run: %s", plan.run_dir)
-            continue
+            return
 
         cve_data = instances[plan.cve_id]
         cve_json_path = Path(cve_data["json_path"])
         task_text = str(cve_data["task_text"])
-        docker_image = str(cve_data["docker_image"])
+        # Derive the tools-enriched image from the CVE JSON (authoritative
+        # source of :patch tag). The flat-CLI harness invokes ``claude`` and
+        # ``secb`` inside the container, which requires the tools layer added
+        # by deployment/secbench-tools.Dockerfile. The mechanical evaluator
+        # only needs ``secb``, but uses the same image for consistency.
+        try:
+            _cve_inst = CVEInstance.from_json_file(cve_json_path)
+            docker_image = resolve_secbench_image(
+                _cve_inst.docker_image, security_tools_enabled=True
+            )
+        except Exception:
+            logger.exception("Pre-run setup failed: %s", plan.run_dir)
+            return
 
-        logger.info("Starting run: %s", plan.run_dir)
-        # Broad ``except Exception`` in the three per-run handlers below is
-        # intentional: per-run isolation is the explicit design goal for the
-        # 63-run pipeline. One bad CVE (malformed YAML, unexpected KeyError,
-        # docker hiccup) must not stall the rest of the schedule.
+        logger.info("Starting run: %s (image: %s)", plan.run_dir, docker_image)
         try:
             await dispatch_run(plan, cve_json_path, task_text, docker_image)
         except Exception:
             logger.exception("Run failed: %s", plan.run_dir)
-            continue
+            return
 
         audit_report: dict[str, Any]
         mech: dict[str, Any]
@@ -371,7 +411,7 @@ async def execute_all(
             )
         except Exception:
             logger.exception("Post-run analysis failed: %s", plan.run_dir)
-            continue
+            return
 
         try:
             entry = IndexEntry(
@@ -393,10 +433,40 @@ async def execute_all(
                 },
                 audit_violations=int(audit_report["violation_count"]),
             )
-            with index_path.open("a", encoding="utf-8") as fh:
-                fh.write(entry.model_dump_json() + "\n")
+            _append_index_entry_locked(index_path, entry)
         except Exception:
             logger.exception("Failed to write index entry for: %s", plan.run_dir)
+
+
+async def execute_all(
+    plans: list[RunPlan],
+    instances: dict[str, dict[str, Any]],
+    *,
+    index_path: Path | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+) -> None:
+    """Run every plan with up to ``concurrency`` in-flight; append to INDEX.jsonl.
+
+    A single ``asyncio.Semaphore`` bounds concurrency; ``asyncio.gather`` with
+    ``return_exceptions=True`` ensures one run's unexpected failure does not
+    cancel the others. Every dispatched run records its outcome via
+    ``_append_index_entry_locked`` so INDEX.jsonl stays consistent under
+    concurrent writers.
+    """
+    if concurrency < 1:
+        raise ValueError(f"concurrency must be >= 1, got {concurrency}")
+    index_path = index_path or Path("dataset/INDEX.jsonl")
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+
+    semaphore = asyncio.Semaphore(concurrency)
+    logger.info(
+        "Executing %d plans with concurrency=%d (index=%s)",
+        len(plans),
+        concurrency,
+        index_path,
+    )
+    tasks = [_run_one(plan, instances, index_path, semaphore) for plan in plans]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _read_termination(plan: RunPlan) -> str:
@@ -474,7 +544,22 @@ def _list_artifacts(plan: RunPlan) -> list[str]:
     help="Where per-run subdirectories are written.",
 )
 @click.option("--seed", default=42, type=int, help="RNG seed for cell-order shuffling.")
-def main(locked_instances: Path, cells: str, output_dir: Path, seed: int) -> None:
+@click.option(
+    "--concurrency",
+    default=DEFAULT_CONCURRENCY,
+    type=int,
+    help=(
+        "Max parallel (CVE, cell, replicate) runs. Default 5 (assumes Anthropic "
+        "Tier 2+ and >=32GB host RAM). Set to 1 for strictly sequential."
+    ),
+)
+def main(
+    locked_instances: Path,
+    cells: str,
+    output_dir: Path,
+    seed: int,
+    concurrency: int,
+) -> None:
     """Run the experiment over the (CVE x cell x replicate) Cartesian schedule."""
     logging.basicConfig(
         level=logging.INFO,
@@ -501,7 +586,7 @@ def main(locked_instances: Path, cells: str, output_dir: Path, seed: int) -> Non
         output_root=output_dir,
     )
     instances = {inst["instance_id"]: inst for inst in data["instances"]}
-    asyncio.run(execute_all(plans, instances))
+    asyncio.run(execute_all(plans, instances, concurrency=concurrency))
 
 
 if __name__ == "__main__":
