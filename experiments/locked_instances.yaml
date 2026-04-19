@@ -1,0 +1,140 @@
+# Pre-registered CVE list for tree-vs-flat experiment.
+# Locked 2026-04-18. Any substitution from backup_list must be documented in dataset changelog.
+
+anchor:
+  cve_id: openjpeg.cve-2016-7445
+  cell: A1
+  replicates: 3  # 1 primary + 2 additional = 3 total on anchor A1
+
+instances:
+- instance_id: njs.cve-2022-32414
+  stratum: EASY
+  json_path: deployment/njs-cve-2022-32414.json
+  docker_image: hwiwonlee/secb.eval.x86_64.njs.cve-2022-32414
+  tools_image: secb-tools:njs.cve-2022-32414
+  task_text: Reproduce and patch CVE-2022-32414 in nginx/njs. Follow the deliverable
+    contract in the domain briefing.
+  base_commit: f65981b0b8fcf02d69a40bc934803c25c9f607ab
+  expected_sanitizer_error: SEGV
+  project: njs
+  sanitizer: address
+  cwe: CWE-476
+- instance_id: njs.cve-2022-38890
+  stratum: EASY
+  json_path: deployment/njs-cve-2022-38890.json
+  docker_image: hwiwonlee/secb.eval.x86_64.njs.cve-2022-38890
+  tools_image: secb-tools:njs.cve-2022-38890
+  task_text: Reproduce and patch CVE-2022-38890 in nginx/njs. Follow the deliverable
+    contract in the domain briefing.
+  base_commit: 6af74b6c5e120595e11df74ca8749021e5f2a7e1
+  expected_sanitizer_error: SEGV
+  project: njs
+  sanitizer: address
+  cwe: CWE-125
+- instance_id: faad2.cve-2021-32272
+  stratum: EASY
+  json_path: deployment/faad2-cve-2021-32272.json
+  docker_image: hwiwonlee/secb.eval.x86_64.faad2.cve-2021-32272
+  tools_image: secb-tools:faad2.cve-2021-32272
+  task_text: Reproduce and patch CVE-2021-32272 in faad2. Follow the deliverable contract
+    in the domain briefing.
+  base_commit: 1073aeef823cafd844704389e9a497c257768e2f
+  expected_sanitizer_error: heap-buffer-overflow
+  project: faad2
+  sanitizer: address
+  cwe: CWE-787
+- instance_id: faad2.cve-2018-20196
+  stratum: EASY
+  json_path: deployment/faad2-cve-2018-20196.json
+  docker_image: hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196
+  tools_image: secb-tools:faad2.cve-2018-20196
+  task_text: Reproduce and patch CVE-2018-20196 in faad2. Follow the deliverable contract
+    in the domain briefing.
+  base_commit: 334e7647a5f31903aca33dde39bb8683e9d8cccd
+  expected_sanitizer_error: stack-buffer-overflow
+  project: faad2
+  sanitizer: address
+  cwe: CWE-121
+- instance_id: openjpeg.cve-2016-7445
+  stratum: MEDIUM
+  json_path: deployment/openjpeg-cve-2016-7445.json
+  docker_image: hwiwonlee/secb.eval.x86_64.openjpeg.cve-2016-7445
+  tools_image: secb-tools:openjpeg.cve-2016-7445
+  task_text: Reproduce and patch CVE-2016-7445 in openjpeg. Follow the deliverable
+    contract in the domain briefing.
+  base_commit: 53f25200ed696cf5dc71d5fe12faad2570861b20
+  expected_sanitizer_error: SEGV
+  project: openjpeg
+  sanitizer: address
+  cwe: CWE-476
+- instance_id: gpac.cve-2021-40575
+  stratum: MEDIUM
+  json_path: deployment/gpac-cve-2021-40575.json
+  docker_image: hwiwonlee/secb.eval.x86_64.gpac.cve-2021-40575
+  tools_image: secb-tools:gpac.cve-2021-40575
+  task_text: Reproduce and patch CVE-2021-40575 in gpac. Follow the deliverable contract
+    in the domain briefing.
+  base_commit: d003a572d57940460eb0bffbdbb824b59d4ddac9
+  expected_sanitizer_error: negative-size-param
+  project: gpac
+  sanitizer: address
+  cwe: CWE-787
+- instance_id: mruby.cve-2022-0240
+  stratum: MEDIUM
+  json_path: deployment/mruby-cve-2022-0240.json
+  docker_image: hwiwonlee/secb.eval.x86_64.mruby.cve-2022-0240
+  tools_image: secb-tools:mruby.cve-2022-0240
+  task_text: Reproduce and patch CVE-2022-0240 in mruby. Follow the deliverable contract
+    in the domain briefing.
+  base_commit: 475b868b7236fd8e8824618e8724b587f08fbe9d
+  expected_sanitizer_error: SEGV
+  project: mruby
+  sanitizer: address
+  cwe: CWE-416
+- instance_id: gpac.cve-2022-1795
+  stratum: MEDIUM
+  json_path: deployment/gpac-cve-2022-1795.json
+  docker_image: hwiwonlee/secb.eval.x86_64.gpac.cve-2022-1795
+  tools_image: secb-tools:gpac.cve-2022-1795
+  task_text: Reproduce and patch CVE-2022-1795 in gpac. Follow the deliverable contract
+    in the domain briefing.
+  base_commit: 8595ef82b37f9219962d21ca9b985b256b125774
+  expected_sanitizer_error: heap-use-after-free
+  project: gpac
+  sanitizer: address
+  cwe: CWE-416
+- instance_id: exiv2.cve-2017-14859
+  stratum: HARD
+  json_path: deployment/exiv2-cve-2017-14859.json
+  docker_image: hwiwonlee/secb.eval.x86_64.exiv2.cve-2017-14859
+  tools_image: secb-tools:exiv2.cve-2017-14859
+  task_text: Reproduce and patch CVE-2017-14859 in exiv2. Follow the deliverable contract
+    in the domain briefing.
+  base_commit: f06418c656e86dc88d29f1b658c78a5f047f9673
+  expected_sanitizer_error: SEGV
+  project: exiv2
+  sanitizer: address
+  cwe: CWE-125
+- instance_id: imagemagick.cve-2019-13309
+  stratum: HARD
+  json_path: deployment/imagemagick-cve-2019-13309.json
+  docker_image: hwiwonlee/secb.eval.x86_64.imagemagick.cve-2019-13309
+  tools_image: secb-tools:imagemagick.cve-2019-13309
+  task_text: Reproduce and patch CVE-2019-13309 in ImageMagick. Follow the deliverable
+    contract in the domain briefing.
+  base_commit: 63bf487f438e051094b92b570aff08efe7068f79
+  expected_sanitizer_error: leak
+  project: imagemagick
+  sanitizer: address
+  cwe: CWE-401
+
+backup_list:
+- njs.cve-2022-31307
+- faad2.cve-2021-32278
+- gpac.cve-2021-32437
+- exiv2.cve-2017-14857
+# + one additional openjpeg.* to be named if openjpeg.cve-2016-7445 is substituted
+
+metadata:
+  locked_date: '2026-04-18'
+  design_doc_sha: <fill>

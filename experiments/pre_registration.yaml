@@ -1,0 +1,80 @@
+# Pre-registered hypotheses, metrics, and thresholds.
+# Locked 2026-04-18. Any change requires a new dataset version.
+
+primary_hypotheses:
+  H1:
+    statement: >
+      Given identical budget ($3/run), identical model (Claude Sonnet 4.6 for worker LLM),
+      and identical execution environment, the tree-orchestrated system (B2) achieves higher
+      end-to-end mechanical success rate on stratified SEC-bench instances than the flat
+      Claude Code CLI baseline (A1).
+    primary_metric: end_to_end_pass
+    primary_comparison: A1_vs_B2
+    success_criterion: >
+      B2 wins on >=3 of the non-tied pairs AND effect-direction holds across all 3 difficulty strata.
+    falsification: >
+      A1 matches or beats B2 overall AND the advantage does not concentrate in any difficulty stratum.
+  H2:
+    statement: >
+      The tree-orchestrated system exhibits measurable context duplication across
+      sibling/hierarchy boundaries, motivating follow-up work on manager-level tool-calling.
+    primary_metric: tool_call_redundancy_sibling_plus_hierarchy
+    thresholds:
+      - redundancy_fraction: 0.20
+      - cnr_at_manager_depth: 0.40
+    supported_when: both thresholds met in tree cells (B1, B2) averaged
+  H3:
+    statement: >
+      Context quality (LLM-judge cq_mean) is higher for the tree's prompts than for
+      the flat CLI's accumulated conversation context.
+    primary_metric: cq_mean
+    success_criterion: tree cq_mean > flat cq_mean on >=7 of 10 CVEs
+
+secondary_comparisons:
+  - id: S1
+    spec: B1 vs B2 — effect of briefing in tree
+  - id: S2
+    spec: A1 vs A3 — effect of briefing in flat
+  - id: S3
+    spec: A1 vs A2 — effect of Claude subagents
+  - id: S4
+    spec: A2 vs B1 — orchestration effect stripped of extras
+  - id: S5
+    spec: A3 vs B2 — apples-to-apples at matched domain-knowledge
+
+analysis_plan:
+  binary_test: McNemar exact paired
+  continuous_test: Wilcoxon signed-rank paired
+  effect_size: Cliff's delta (binary) / median diff + bootstrap 95% CI 10k resamples (continuous)
+  multiple_comparison_correction: none (exploratory; descriptive framing)
+  missing_data_handling: >
+    Budget / timeout runs = end_to_end_pass=0;
+    LLM / container errors excluded from headline, reported in separate run-status table;
+    cheating violations NOT excluded, results reported with/without.
+
+exp2_trigger:
+  conditions_all_required:
+    - metric: tool_call_redundancy_sibling_plus_hierarchy
+      threshold: 0.20
+      comparator: ">="
+    - metric: cnr_manager_depth
+      threshold: 0.40
+      comparator: "<="
+
+judge_configuration:
+  model: gpt-5  # locked at run time to SOTA GPT
+  temperature: 0.0
+  rubric_template: experiments/rubrics/context_quality.j2
+  reliability_sub_study:
+    subset_fraction: 0.10
+    resamples: 5
+
+tokenizer_for_cnr: anthropic/claude-3-tokenizer
+
+artifact_anchors_for_manual_rubric:
+  gold_patch_source: 'cve_json_field("patch")'
+  synthetic_bad_patches: "count: 3; hand-crafted (no-op / feature-flag / over-broad)"
+
+metadata:
+  locked_date: "2026-04-18"
+  design_doc_sha: "<fill>"

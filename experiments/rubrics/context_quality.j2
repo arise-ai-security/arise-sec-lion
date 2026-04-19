@@ -1,0 +1,33 @@
+You are evaluating the quality of a context / prompt received by a software
+engineering agent. Score it on four dimensions using the rubric below.
+
+Context to evaluate:
+```
+{{ prompt_text }}
+```
+
+Subtask description (what this context is supposed to help accomplish):
+```
+{{ subtask_description }}
+```
+
+Score each dimension 1-5 (integers only):
+
+**Relevance** — does the context focus on content needed for the subtask?
+  1 = mostly unrelated content; 2 = some relevant parts; 3 = relevant core with tangents;
+  4 = nearly all relevant; 5 = every section directly supports the subtask.
+
+**Sufficiency** — does the context include everything the agent needs to solve the subtask?
+  1 = missing critical info (unsolvable); 2 = missing some important info; 3 = core info
+  present but some detail missing; 4 = nearly complete; 5 = all needed info present.
+
+**Non-redundancy** — does the context avoid duplicating information?
+  1 = >50% duplicates earlier context; 2 = significant duplication; 3 = some duplication;
+  4 = minor duplication; 5 = no duplication.
+
+**Specificity** — is the context concrete (file paths, line numbers, commands) vs. abstract?
+  1 = vague ("analyze the code"); 2 = mostly abstract; 3 = mix of abstract and concrete;
+  4 = mostly concrete; 5 = concrete file paths, line numbers, commands throughout.
+
+Output format (exact JSON, one line, no markdown):
+{"relevance": <int>, "sufficiency": <int>, "non_redundancy": <int>, "specificity": <int>, "rationale": "<one-sentence>"}
