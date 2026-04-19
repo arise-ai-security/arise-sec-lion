@@ -9,6 +9,7 @@ import pytest
 from experiments.run_experiment import (
     RunPlan,
     _normalize_sanitizer_error,
+    _validate_cve_data,
     is_resumable,
     plan_runs,
 )
@@ -113,3 +114,64 @@ def test_plan_runs_handles_anchor_replicates_zero() -> None:
     )
     # When/Then: exactly 1 cve * 2 cells = 2 base plans, no extras
     assert len(plans) == 2
+
+
+def test_plan_runs_run_dir_absolute_when_output_root_absolute(tmp_path: Path) -> None:
+    """plan_runs respects an absolute output_root and produces absolute run_dir paths."""
+    # Given: an absolute output root
+    abs_root = (tmp_path / "runs").resolve()
+    # When: plans created
+    plans = plan_runs(
+        cves=["a"],
+        cells=["A1"],
+        anchor_cve="a",
+        anchor_cell="A1",
+        anchor_replicates=1,
+        seed=1,
+        output_root=abs_root,
+    )
+    # Then: every run_dir is absolute (so Docker bind-mounts work)
+    assert all(p.run_dir.is_absolute() for p in plans)
+
+
+def test_plan_runs_raises_when_anchor_cell_not_in_cells() -> None:
+    """plan_runs raises ValueError if anchor_replicates > 1 and anchor_cell is unknown."""
+    # Given: anchor_replicates=3 but anchor_cell not in cells
+    # When/Then: ValueError raised before any plans are constructed
+    with pytest.raises(ValueError, match="anchor_cell"):
+        plan_runs(
+            cves=["a"],
+            cells=["A1"],
+            anchor_cve="a",
+            anchor_cell="B99",
+            anchor_replicates=3,
+            seed=1,
+        )
+
+
+def test_plan_runs_raises_when_anchor_cve_not_in_cves() -> None:
+    """plan_runs raises ValueError if anchor_replicates > 1 and anchor_cve is unknown."""
+    # Given: anchor_replicates=3 but anchor_cve not in cves
+    # When/Then: ValueError raised before any plans are constructed
+    with pytest.raises(ValueError, match="anchor_cve"):
+        plan_runs(
+            cves=["a"],
+            cells=["A1"],
+            anchor_cve="unknown-cve",
+            anchor_cell="A1",
+            anchor_replicates=3,
+            seed=1,
+        )
+
+
+def test_validate_cve_data_raises_on_missing_keys() -> None:
+    """_validate_cve_data raises ValueError listing the missing required keys."""
+    # Given: an entry missing docker_image and base_commit
+    cve_data = {
+        "json_path": "/fake/path/x.json",
+        "task_text": "t",
+        "expected_sanitizer_error": "ERROR: AddressSanitizer: heap-buffer-overflow",
+    }
+    # When/Then: ValueError enumerates the missing keys
+    with pytest.raises(ValueError, match="missing required keys"):
+        _validate_cve_data(cve_data, "some-cve")

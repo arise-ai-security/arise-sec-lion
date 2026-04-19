@@ -73,7 +73,22 @@ def plan_runs(
     ``anchor_replicates`` total runs (replicate indices 0, 1, ..., N-1). The
     replicate-0 entry is already produced by the Cartesian product, so only
     the extra replicates 1..N-1 are appended here.
+
+    ``output_root`` SHOULD be absolute; :func:`main` ensures this before
+    calling (a relative path propagates into Docker ``-v`` args and is
+    silently interpreted as a named volume, mounting an empty dir).
     """
+    if anchor_replicates > 1:
+        if anchor_cve not in cves:
+            raise ValueError(
+                f"anchor_cve={anchor_cve!r} must be in cves; otherwise the base "
+                f"(replicate=0) anchor run is missing while extras are scheduled."
+            )
+        if anchor_cell not in cells:
+            raise ValueError(
+                f"anchor_cell={anchor_cell!r} must be in cells={cells!r} for the "
+                f"same reason."
+            )
     # Seeded RNG is used strictly for deterministic cell-ordering; no crypto.
     rng = random.Random(seed)  # noqa: S311
     plans: list[RunPlan] = []
@@ -113,6 +128,14 @@ def _normalize_sanitizer_error(framed_or_bare: str) -> str:
     Raises ValueError if no known class (per :data:`SANITIZER_ERROR_CLASSES`)
     is present -- the mechanical evaluator requires a bare class and a silent
     substring match would corrupt the primary metric.
+
+    Known failure shapes (these raise ValueError and drop the CVE from the
+    primary metric until :class:`plugins.security.cve_instance.CVEInstance`
+    is fixed upstream):
+
+    * ``"ERROR: MemorySanitizer"`` -- no class suffix after the sanitizer name.
+    * ``"runtime error"`` -- UBSan-style string with no class.
+    * ``"ERROR: <Sanitizer>Sanitizer"`` fallback -- no bare class present.
     """
     text_lower = framed_or_bare.lower()
     for cls in SANITIZER_ERROR_CLASSES:
@@ -122,6 +145,44 @@ def _normalize_sanitizer_error(framed_or_bare: str) -> str:
         f"Could not extract a known sanitizer class from {framed_or_bare!r}. "
         f"Known classes: {SANITIZER_ERROR_CLASSES}"
     )
+
+
+def _validate_cve_data(cve_data: dict[str, Any], cve_id: str) -> None:
+    """Raise ValueError early if required keys are missing from a locked-instance entry."""
+    required = (
+        "json_path",
+        "task_text",
+        "docker_image",
+        "base_commit",
+        "expected_sanitizer_error",
+    )
+    missing = [k for k in required if k not in cve_data]
+    if missing:
+        raise ValueError(
+            f"locked_instances entry for {cve_id!r} missing required keys: {missing}"
+        )
+
+
+def _preflight_check_sanitizer_normalization(instances: list[dict[str, Any]]) -> None:
+    """Warn (don't fail) for CVEs whose expected_sanitizer_error cannot be normalized.
+
+    Such CVEs will not produce a mechanical.json and will be missing from
+    INDEX.jsonl. The operator may have intentionally included MSan/UBSan CVEs
+    that cannot be mechanically evaluated in v1.0, so we warn and continue
+    rather than abort.
+    """
+    for inst in instances:
+        try:
+            _normalize_sanitizer_error(str(inst["expected_sanitizer_error"]))
+        except ValueError as exc:
+            logger.warning(
+                "CVE %r will not be mechanically evaluated: %s. "
+                "TODO(task-15): include only CVEs with extractable bare classes, "
+                "OR fix CVEInstance.expected_sanitizer_error to include the class "
+                "for MSan/UBSan.",
+                inst["instance_id"],
+                exc,
+            )
 
 
 async def dispatch_run(
@@ -209,9 +270,18 @@ async def _dispatch_tree(
             stderr=asyncio.subprocess.STDOUT,
         )
         await proc.wait()
+    if proc.returncode != 0:
+        logger.warning(
+            "Tree run exited non-zero (%d) for %s",
+            proc.returncode,
+            plan.run_dir,
+        )
     duration = time.monotonic() - started
 
     # Project the event store into events.jsonl + meta.json (currently a stub).
+    # stdout/stderr go to DEVNULL to avoid the classic PIPE + await deadlock
+    # (64KB pipe buffer fills once the real projection ships richer output);
+    # any diagnostics should be written to files under plan.run_dir, not stdout.
     projection_cmd = [
         sys.executable,
         "-m",
@@ -221,10 +291,16 @@ async def _dispatch_tree(
     ]
     projection_proc = await asyncio.create_subprocess_exec(
         *projection_cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
     )
     await projection_proc.wait()
+    if projection_proc.returncode != 0:
+        logger.warning(
+            "tree_projection exited non-zero (%d) for %s",
+            projection_proc.returncode,
+            plan.run_dir,
+        )
 
     meta_path = plan.run_dir / "meta.json"
     meta_data: dict[str, Any] = {}
@@ -262,9 +338,13 @@ async def execute_all(
         docker_image = str(cve_data["docker_image"])
 
         logger.info("Starting run: %s", plan.run_dir)
+        # Broad ``except Exception`` in the three per-run handlers below is
+        # intentional: per-run isolation is the explicit design goal for the
+        # 63-run pipeline. One bad CVE (malformed YAML, unexpected KeyError,
+        # docker hiccup) must not stall the rest of the schedule.
         try:
             await dispatch_run(plan, cve_json_path, task_text, docker_image)
-        except (OSError, RuntimeError, ValueError):
+        except Exception:
             logger.exception("Run failed: %s", plan.run_dir)
             continue
 
@@ -287,8 +367,7 @@ async def execute_all(
             (plan.run_dir / "mechanical.json").write_text(
                 json.dumps(mech, indent=2), encoding="utf-8"
             )
-        except (OSError, ValueError):
-            # FileNotFoundError is a subclass of OSError and is covered here.
+        except Exception:
             logger.exception("Post-run analysis failed: %s", plan.run_dir)
             continue
 
@@ -314,7 +393,7 @@ async def execute_all(
             )
             with index_path.open("a", encoding="utf-8") as fh:
                 fh.write(entry.model_dump_json() + "\n")
-        except (OSError, ValueError):
+        except Exception:
             logger.exception("Failed to write index entry for: %s", plan.run_dir)
 
 
@@ -399,7 +478,15 @@ def main(locked_instances: Path, cells: str, output_dir: Path, seed: int) -> Non
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # Docker bind-mounts silently become NAMED VOLUMES for relative paths --
+    # resolve once here so every downstream -v arg is guaranteed absolute.
+    output_dir = output_dir.resolve()
     data = yaml.safe_load(locked_instances.read_text(encoding="utf-8"))
+    # Pre-flight: fail loudly for malformed YAML entries before any run starts.
+    for inst in data["instances"]:
+        _validate_cve_data(inst, inst["instance_id"])
+    # Pre-flight: warn (don't fail) for CVEs that can't be mechanically evaluated.
+    _preflight_check_sanitizer_normalization(data["instances"])
     cve_ids: list[str] = [inst["instance_id"] for inst in data["instances"]]
     cell_list = list(CELLS_ALL) if cells == "all" else cells.split(",")
     plans = plan_runs(
