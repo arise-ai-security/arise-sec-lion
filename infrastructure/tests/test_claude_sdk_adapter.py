@@ -626,6 +626,29 @@ class TestPerToolCallDurationTracking:
         assert "PreToolUse" in hooks
         assert "PostToolUse" in hooks
 
+    def test_build_options_pins_system_prompt_to_claude_code_preset(self, tmp_path) -> None:
+        """_build_options passes the explicit claude_code preset as system_prompt."""
+        # Given: an adapter and a tool queue
+        import asyncio
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        tool_queue: asyncio.Queue[
+            tuple[str, str, str | None, dict[str, Any] | None]
+        ] = asyncio.Queue()
+
+        # When: building options
+        with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=tool_queue,
+                container_session=None,
+                runtime_model=None,
+            )
+
+        # Then: system_prompt kwarg is the explicit claude_code preset
+        _, kwargs = mock_options_cls.call_args
+        assert kwargs["system_prompt"] == {"type": "preset", "preset": "claude_code"}
+
     def test_tool_result_thought_carries_duration_and_call_id(self) -> None:
         """End-to-end: PreToolUse + sequencer.thought yields ThoughtCaptured with both fields."""
         # Given: an adapter that has recorded a pre-tool-use start for a known id

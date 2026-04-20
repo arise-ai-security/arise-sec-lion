@@ -249,6 +249,10 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             allowed_tools=self.config.allowed_tools,
             permission_mode=self.config.permission_mode,
             can_use_tool=can_use_tool if container_session is not None else None,
+            # Pin the system prompt explicitly so Anthropic's prefix cache
+            # can hit across sibling worker sessions. See
+            # docs/pillar_b/scripts/worker_cache_audit.py for the v1 audit.
+            system_prompt={"type": "preset", "preset": "claude_code"},
             hooks={
                 "PreToolUse": [HookMatcher(hooks=[record_tool_start])],
                 "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
