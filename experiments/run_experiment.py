@@ -4,7 +4,8 @@ Reads the locked_instances.yaml produced by Task 15, constructs the full schedul
 dispatches each run to either the flat CLI harness (cells A1-A4) or the tree
 (cells B1-B2 via `python main.py`), invokes the mechanical evaluator and the
 anti-cheat audit after each run, and appends one line per completed run to
-INDEX.jsonl. Resume-safe: runs whose ``events.jsonl`` already exists are skipped.
+INDEX.jsonl. Resume-safe: runs that pass :func:`is_resumable` are skipped (see
+its docstring for the exact gate).
 
 Sanitizer-error normalization
 -----------------------------
@@ -43,6 +44,7 @@ from experiments.anomaly_detector import (
 from experiments.audit_cheating import audit_run
 from experiments.mechanical_evaluator import SANITIZER_ERROR_CLASSES, evaluate_run
 from experiments.schema import IndexEntry
+from experiments.tree_projection import _project as _project_tree_run
 from plugins.security import CVEInstance, resolve_secbench_image
 
 
@@ -236,7 +238,7 @@ async def dispatch_run(
     """Send the plan to the correct execution path; capture outcome dict."""
     plan.run_dir.mkdir(parents=True, exist_ok=True)
     if plan.cell in TREE_CELLS:
-        return await _dispatch_tree(plan, cve_json_path, task_text)
+        return await _dispatch_tree(plan, cve_json_path, task_text, docker_image)
     return await _dispatch_flat(plan, cve_json_path, task_text, docker_image)
 
 
@@ -268,28 +270,84 @@ async def _dispatch_flat(
     return {"system": "flat_cli", "meta": meta}
 
 
+def _write_tree_meta_seed(
+    plan: RunPlan,
+    docker_image: str,
+    config_path: Path,
+) -> None:
+    """Pre-seed ``<run-dir>/meta.json`` with fields the runner authoritatively
+    knows (cell, replicate, docker image, per-cell caps, models).
+
+    Without this, :func:`experiments.tree_projection._project` falls back to
+    hardcoded defaults (``docker_image="unknown"``, ``wallclock_sec_cap=600``,
+    etc.) that don't match the actual cell config. The projector merges this
+    seed with the lifecycle fields it derives from the event stream
+    (``started_at``, ``ended_at``, ``wallclock_seconds``, ``termination_reason``)
+    before overwriting ``meta.json`` with the final :class:`RunMeta`.
+    """
+    try:
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        logger.warning(
+            "Could not read cell config %s; meta.json seed will be minimal",
+            config_path,
+        )
+        cfg = {}
+
+    security = cfg.get("security") or {}
+    orchestration = cfg.get("orchestration") or {}
+    boss = cfg.get("boss") or {}
+    manager = cfg.get("manager") or {}
+    worker = cfg.get("worker") or {}
+
+    prompt_strategy = str(security.get("prompt_strategy", "default"))
+    seed: dict[str, Any] = {
+        "run_id": f"{plan.cve_id}-{plan.cell}-{plan.replicate}",
+        "cve_id": plan.cve_id,
+        "cell": plan.cell,
+        "replicate": plan.replicate,
+        "domain_briefing_enabled": bool(security.get("enabled", False))
+        and prompt_strategy != "null",
+        "subagent_enabled": worker.get("tool") == "claude_code",
+        "prompt_strategy": prompt_strategy,
+        "docker_image": docker_image,
+        "budget_usd_cap": 10.0,
+        "wallclock_sec_cap": int(
+            orchestration.get("max_run_duration_seconds", 5400)
+        ),
+        "models": {
+            "boss": str(boss.get("model", "unknown")),
+            "manager": str(manager.get("model", "unknown")),
+            "worker": str(worker.get("model", "unknown")),
+            "judge": "gpt-5",
+        },
+    }
+    (plan.run_dir / "meta.json").write_text(
+        json.dumps(seed, indent=2), encoding="utf-8"
+    )
+
+
 async def _dispatch_tree(
     plan: RunPlan,
     cve_json_path: Path,
     task_text: str,
+    docker_image: str,
 ) -> dict[str, Any]:
     """Invoke ``python main.py run`` with the per-cell config.
 
-    KNOWN GAP (Task 16 concern): the current ``main.py run`` CLI accepts
-    ``-c/--config`` and ``--domain-context-file`` but NOT ``--cve-file`` or
-    ``--output-dir``. Adding those flags to bootstrap is out of scope for
-    Task 13. Until Task 16 wires them up, this dispatch:
-
-    * passes the per-cell config via ``-c`` (verified present),
-    * passes the CVE JSON via ``--domain-context-file`` (verified present),
-    * does NOT pass ``--output-dir`` -- the tree writes to its default
-      output directory; ``experiments/tree_projection.py`` (stub) is the
-      hook that will later copy the run into ``plan.run_dir``.
-
-    The tree-projection stub currently logs a warning and exits 0; no
-    ``events.jsonl`` is produced for tree runs at this stage.
+    The subprocess writes ``.last_run.json`` into ``--output-dir`` via
+    :class:`presentation.persistence.RunPersistence`, which records the
+    root BOSS aggregate UUID. After the subprocess exits we call
+    :func:`experiments.tree_projection._project` to pull the hierarchy from
+    Postgres and materialize ``events.jsonl`` + final ``meta.json`` for the
+    shared downstream helpers. Postgres remains the authoritative event store;
+    ``events.jsonl`` is a derived read-view (like a build artifact).
     """
     config_path = Path(f"config/exp-secbench-{plan.cell}.yaml")
+    plan.run_dir.mkdir(parents=True, exist_ok=True)
+    (plan.run_dir / "workspace").mkdir(parents=True, exist_ok=True)
+    _write_tree_meta_seed(plan, docker_image, config_path)
+
     cmd = [
         sys.executable,
         "main.py",
@@ -306,8 +364,6 @@ async def _dispatch_tree(
     ]
     started = time.monotonic()
     log_path = plan.run_dir / "stdout_stderr.log"
-    plan.run_dir.mkdir(parents=True, exist_ok=True)
-    (plan.run_dir / "workspace").mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log_f:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -323,10 +379,26 @@ async def _dispatch_tree(
         )
     duration = time.monotonic() - started
 
-    # B-cell events live in Postgres (the event store). Do NOT project to
-    # events.jsonl here -- analysis should query the event store directly via
-    # EventStoreReadPort. tree_projection.py is kept as an optional offline
-    # export tool (tool_name and tool_input are preserved since v3).
+    # Postgres is the authoritative event store for tree runs. Project the
+    # hierarchy into ``<run-dir>/events.jsonl`` + final ``meta.json`` so the
+    # shared post-run helpers (audit_run, detect_anomalies,
+    # _compute_cost_breakdown, _count_events, is_resumable) operate on a
+    # single on-disk view regardless of whether the cell is flat (A*) or
+    # tree (B*). If projection fails we log and leave events.jsonl absent,
+    # which detect_anomalies correctly classifies as
+    # ``uncaught_orchestration_exception``.
+    try:
+        rc = await _project_tree_run(plan.run_dir, config_path)
+    except Exception:
+        logger.exception("tree_projection raised for %s", plan.run_dir)
+        rc = 1
+    if rc != 0:
+        logger.error(
+            "tree_projection returned rc=%d for %s; events.jsonl may be "
+            "absent or incomplete -- detect_anomalies will flag this run",
+            rc,
+            plan.run_dir,
+        )
 
     meta_path = plan.run_dir / "meta.json"
     meta_data: dict[str, Any] = {}
