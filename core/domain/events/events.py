@@ -225,8 +225,12 @@ class ThoughtCaptured(DomainEvent):
       content length.
     - ``tool_input_json`` -- the structured tool-call arguments, preserved
       verbatim so downstream analysis does not depend on the formatter string.
+    - ``tool_name`` -- the SDK-reported tool identifier (``Read``, ``Bash``,
+      ``Write``, ``Edit``, ``Grep``, ``Glob``, etc.), captured verbatim from
+      the Claude Agent SDK so downstream analysis does not depend on regex
+      reconstruction from the formatted ``content`` string.
 
-    All five fields are optional to preserve backward compatibility with
+    All six fields are optional to preserve backward compatibility with
     historical events and with non-tool-call output types (thinking, output,
     progress).
 
@@ -244,6 +248,7 @@ class ThoughtCaptured(DomainEvent):
     was_truncated: bool = False
     result_bytes: int | None = None
     tool_input_json: dict[str, Any] | None = None
+    tool_name: str | None = None
 
 
 class PromptSent(DomainEvent):

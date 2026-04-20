@@ -5,15 +5,17 @@ Task 16's smoke run.
 """
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 
+from core.domain.events.events import ThoughtCaptured
 from experiments.tree_projection import (
     _VALID_ROLES,
+    _AgentState,
     _build_agent_index,
-    _extract_tool_name,
+    _convert_event,
     _map_operation,
     _map_role,
     _parse_cell_from_run_dir,
@@ -23,6 +25,10 @@ from experiments.tree_projection import (
     _to_int_or_none,
     _to_str_or_none,
 )
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestMapOperation:
@@ -71,28 +77,67 @@ class TestMapRole:
 
     def test_valid_roles_constant_matches_schema(self) -> None:
         # Defensive: the _VALID_ROLES set must cover every schema Role literal.
-        assert _VALID_ROLES == frozenset(
+        assert frozenset(
             {"BOSS", "MANAGER", "WORKER", "PENDING", "JUDGE", "CONDENSER", "FLAT"}
+        ) == _VALID_ROLES
+
+
+class TestToolNameProjection:
+    """Verify _convert_event reads tool_name directly from ThoughtCaptured."""
+
+    def _make_state(self, agent_id: object = None) -> _AgentState:
+        return _AgentState(
+            agent_id=agent_id or uuid4(),
+            role="WORKER",
+            parent_id=None,
+            depth=1,
         )
 
+    def _make_thought(self, tool_name: str | None) -> ThoughtCaptured:
+        return ThoughtCaptured(
+            aggregate_id=uuid4(),
+            sequence_number=1,
+            content="Running: ls -la",
+            stream="claude_sdk",
+            output_type="tool_use",
+            call_id="tu_1",
+            tool_input_json={"command": "ls -la"},
+            tool_name=tool_name,
+        )
 
-class TestExtractToolName:
-    def test_reading_maps_to_read(self) -> None:
-        assert _extract_tool_name("Reading: /src/foo.c") == "Read"
+    def test_tool_name_from_event_used_directly(self) -> None:
+        # Given: a ThoughtCaptured with tool_name="Bash" from the SDK
+        ev = self._make_thought(tool_name="Bash")
 
-    def test_running_maps_to_bash(self) -> None:
-        assert _extract_tool_name("Running: ./build.sh") == "Bash"
+        # When: projected
+        result = _convert_event(ev, self._make_state(), "test-run", 1)
 
-    def test_editing_maps_to_edit(self) -> None:
-        assert _extract_tool_name("Editing: /src/foo.c") == "Edit"
+        # Then: payload uses the SDK tool_name, not regex
+        assert result is not None
+        assert result.payload.tool_name == "Bash"
 
-    def test_unknown_verb_title_cased(self) -> None:
-        # Given: a string with an unrecognized verb prefix
-        # When / Then: returns the verb capitalized
-        assert _extract_tool_name("Sniffing: packets") == "Sniffing"
+    def test_none_tool_name_becomes_unknown(self) -> None:
+        # Given: a historical ThoughtCaptured without tool_name
+        ev = self._make_thought(tool_name=None)
 
-    def test_no_verb_returns_unknown(self) -> None:
-        assert _extract_tool_name("no colon pattern") == "Unknown"
+        # When: projected
+        result = _convert_event(ev, self._make_state(), "test-run", 1)
+
+        # Then: falls back to "Unknown" (honest signal)
+        assert result is not None
+        assert result.payload.tool_name == "Unknown"
+
+    def test_each_tool_type_preserved(self) -> None:
+        # Given: events for each known tool type
+        for name in ("Read", "Write", "Edit", "Bash", "Grep", "Glob"):
+            ev = self._make_thought(tool_name=name)
+
+            # When: projected
+            result = _convert_event(ev, self._make_state(), "test-run", 1)
+
+            # Then: tool_name is preserved exactly
+            assert result is not None
+            assert result.payload.tool_name == name
 
 
 class TestRunDirParsing:

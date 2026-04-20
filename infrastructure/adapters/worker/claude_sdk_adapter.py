@@ -44,11 +44,11 @@ logger = logging.getLogger(__name__)
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
 
-# Queue tuple shape: (formatted_content, output_type, tool_use_id, tool_input_json).
-# Keeping ``tool_input_json`` on the queue lets the single _drain_queue site
+# Queue tuple shape: (formatted_content, output_type, tool_use_id, tool_input_json, tool_name).
+# Keeping structured fields on the queue lets the single _drain_queue site
 # build ThoughtCaptured with full metadata (call_id + duration_ms + structured
-# input) instead of forcing each producer to duplicate the kwargs plumbing.
-type _ToolEventEntry = tuple[str, str, str | None, dict[str, Any] | None]
+# input + SDK tool name) instead of forcing each producer to duplicate the kwargs plumbing.
+type _ToolEventEntry = tuple[str, str, str | None, dict[str, Any] | None, str | None]
 
 
 @dataclass
@@ -230,7 +230,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             tool_input = input_data["tool_input"] or {}
             content = format_tool_event(tool_name, tool_input)
             tool_input_json = dict(tool_input) if tool_input else None
-            await tool_queue.put((content, "tool_use", tool_use_id, tool_input_json))
+            await tool_queue.put((content, "tool_use", tool_use_id, tool_input_json, tool_name))
             return SyncHookJSONOutput()
 
         async def can_use_tool(
@@ -270,7 +270,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     ) -> AsyncIterator[ThoughtCaptured]:
         """Drain all pending events from queue, attaching per-call duration_ms."""
         while not queue.empty():
-            content, output_type, tool_use_id, tool_input_json = queue.get_nowait()
+            content, output_type, tool_use_id, tool_input_json, tool_name = queue.get_nowait()
             duration_ms = self._get_and_pop_duration_ms(tool_use_id)
             yield sequencer.thought(
                 content,
@@ -278,6 +278,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 call_id=tool_use_id,
                 duration_ms=duration_ms,
                 tool_input_json=tool_input_json,
+                tool_name=tool_name,
             )
 
     async def _process_message(
@@ -325,6 +326,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 was_truncated=metadata.get("was_truncated", False),
                 result_bytes=metadata.get("result_bytes"),
                 tool_input_json=metadata.get("tool_input_json"),
+                tool_name=metadata.get("tool_name"),
             )
 
     def _make_cost_event(
@@ -413,7 +415,8 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 return block.thinking, "thinking", {}
         elif isinstance(block, ToolUseBlock):
             tool_input = getattr(block, "input", {}) or {}
-            formatted = format_tool_event(getattr(block, "name", "unknown"), tool_input)
+            block_tool_name = getattr(block, "name", None)
+            formatted = format_tool_event(block_tool_name or "unknown", tool_input)
             return (
                 formatted,
                 "tool_use",
@@ -422,6 +425,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                     "tool_input_json": (
                         dict(tool_input) if isinstance(tool_input, dict) else None
                     ),
+                    "tool_name": block_tool_name,
                 },
             )
         elif isinstance(block, ToolResultBlock):

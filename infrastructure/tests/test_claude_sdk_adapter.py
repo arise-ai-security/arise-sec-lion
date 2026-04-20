@@ -607,7 +607,7 @@ class TestPerToolCallDurationTracking:
 
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
         tool_queue: asyncio.Queue[
-            tuple[str, str, str | None, dict[str, Any] | None]
+            tuple[str, str, str | None, dict[str, Any] | None, str | None]
         ] = asyncio.Queue()
 
         # When: building options
@@ -633,7 +633,7 @@ class TestPerToolCallDurationTracking:
 
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
         tool_queue: asyncio.Queue[
-            tuple[str, str, str | None, dict[str, Any] | None]
+            tuple[str, str, str | None, dict[str, Any] | None, str | None]
         ] = asyncio.Queue()
 
         # When: building options
@@ -729,7 +729,7 @@ class TestPostToolUseHookPropagatesToolIdentity:
 
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
         tool_queue: asyncio.Queue[
-            tuple[str, str, str | None, dict[str, Any] | None]
+            tuple[str, str, str | None, dict[str, Any] | None, str | None]
         ] = asyncio.Queue()
         with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
             adapter._build_options(
@@ -755,10 +755,11 @@ class TestPostToolUseHookPropagatesToolIdentity:
 
         # Then: the queued tool_use entry carries the real name + structured input
         assert tool_queue.qsize() == 1
-        content, output_type, tool_use_id, tool_input_json = tool_queue.get_nowait()
+        content, output_type, tool_use_id, tool_input_json, tool_name = tool_queue.get_nowait()
         assert output_type == "tool_use"
         assert tool_use_id == "tu_read_1"
         assert tool_input_json == {"file_path": "/src/foo.c"}
+        assert tool_name == "Read"
         assert "Read" in content or "/src/foo.c" in content
 
     @pytest.mark.asyncio
@@ -768,7 +769,7 @@ class TestPostToolUseHookPropagatesToolIdentity:
 
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
         tool_queue: asyncio.Queue[
-            tuple[str, str, str | None, dict[str, Any] | None]
+            tuple[str, str, str | None, dict[str, Any] | None, str | None]
         ] = asyncio.Queue()
         with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
             adapter._build_options(
@@ -783,3 +784,150 @@ class TestPostToolUseHookPropagatesToolIdentity:
         # Then: the hook raises loudly so the dataset holes are obvious.
         with pytest.raises(KeyError):
             await post_hook({"hook_event_name": "PostToolUse"}, "tu_drift", MagicMock())
+
+
+class TestToolNameFirstClassField:
+    """Verify tool_name from the SDK survives as a first-class field on ThoughtCaptured."""
+
+    def test_sequencer_thought_passes_tool_name_to_event(self) -> None:
+        """EventSequencer.thought(tool_name=...) populates ThoughtCaptured.tool_name."""
+        # Given: a sequencer
+        sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+
+        # When: thought() is called with a tool_name
+        event = sequencer.thought(
+            content="Running: ls -la",
+            output_type="tool_use",
+            tool_name="Bash",
+        )
+
+        # Then: the event carries the tool_name
+        assert isinstance(event, ThoughtCaptured)
+        assert event.tool_name == "Bash"
+
+    def test_sequencer_thought_defaults_tool_name_to_none(self) -> None:
+        """EventSequencer.thought() without tool_name leaves it None."""
+        # Given: a sequencer
+        sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+
+        # When: thought() is called without tool_name
+        event = sequencer.thought(content="Thinking...", output_type="thinking")
+
+        # Then: tool_name is None
+        assert isinstance(event, ThoughtCaptured)
+        assert event.tool_name is None
+
+    def test_process_block_tool_use_includes_tool_name_in_metadata(self) -> None:
+        """ToolUseBlock.name is forwarded as tool_name in _process_block metadata."""
+        # Given: a ToolUseBlock with name="Edit"
+        block = MockToolUseBlock(
+            name="Edit",
+            tool_input={"file_path": "/src/main.py", "old_string": "x", "new_string": "y"},
+            block_id="tu_edit_1",
+        )
+
+        # When: _process_block processes it
+        with patch(f"{SDK_ADAPTER_MODULE}.ToolUseBlock", MockToolUseBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block)
+
+        # Then: metadata includes the tool_name from the block
+        assert result is not None
+        _, _, metadata = result
+        assert metadata["tool_name"] == "Edit"
+
+    @pytest.mark.asyncio
+    async def test_hook_path_tool_name_survives_into_domain_event(self, tmp_path) -> None:
+        """PostToolUse hook -> queue -> _drain_queue -> ThoughtCaptured.tool_name."""
+        # Given: adapter with hook registered, and a tool event in the queue
+        import asyncio
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        tool_queue: asyncio.Queue[
+            tuple[str, str, str | None, dict[str, Any] | None, str | None]
+        ] = asyncio.Queue()
+
+        with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=tool_queue,
+                container_session=None,
+                runtime_model=None,
+            )
+
+        # Extract the post hook and invoke it with a Bash tool call
+        _, kwargs = mock_options_cls.call_args
+        matchers = kwargs["hooks"]["PostToolUse"]
+        post_hook = matchers[0].hooks[0]
+
+        adapter._pre_tool_use_hook(tool_use_id="tu_bash_1")
+        hook_input: dict[str, Any] = {
+            "hook_event_name": "PostToolUse",
+            "session_id": "sess",
+            "transcript_path": "",
+            "cwd": str(tmp_path),
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls -la"},
+            "tool_response": {"content": "file1\nfile2"},
+        }
+        await post_hook(hook_input, "tu_bash_1", MagicMock())
+
+        # When: _drain_queue processes the queued event
+        sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+        events = [ev async for ev in adapter._drain_queue(tool_queue, sequencer)]
+
+        # Then: the ThoughtCaptured event carries tool_name="Bash"
+        assert len(events) == 1
+        assert isinstance(events[0], ThoughtCaptured)
+        assert events[0].tool_name == "Bash"
+        assert events[0].output_type == "tool_use"
+        assert events[0].tool_input_json == {"command": "ls -la"}
+
+    @pytest.mark.asyncio
+    async def test_hook_path_multiple_tools_each_get_own_tool_name(self, tmp_path) -> None:
+        """Multiple tool calls in one message each get their own tool_name."""
+        # Given: adapter with hook registered
+        import asyncio
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        tool_queue: asyncio.Queue[
+            tuple[str, str, str | None, dict[str, Any] | None, str | None]
+        ] = asyncio.Queue()
+
+        with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=tool_queue,
+                container_session=None,
+                runtime_model=None,
+            )
+
+        _, kwargs = mock_options_cls.call_args
+        post_hook = kwargs["hooks"]["PostToolUse"][0].hooks[0]
+
+        # When: two different tool calls are queued
+        for tool_use_id, name, inp in [
+            ("tu_1", "Read", {"file_path": "/a.py"}),
+            ("tu_2", "Grep", {"pattern": "TODO", "path": "/src"}),
+        ]:
+            adapter._pre_tool_use_hook(tool_use_id=tool_use_id)
+            await post_hook(
+                {
+                    "hook_event_name": "PostToolUse",
+                    "session_id": "sess",
+                    "transcript_path": "",
+                    "cwd": str(tmp_path),
+                    "tool_name": name,
+                    "tool_input": inp,
+                    "tool_response": {"content": "ok"},
+                },
+                tool_use_id,
+                MagicMock(),
+            )
+
+        sequencer = EventSequencer(agent_id=uuid4(), stream="claude_sdk")
+        events = [ev async for ev in adapter._drain_queue(tool_queue, sequencer)]
+
+        # Then: each event carries its own distinct tool_name
+        assert len(events) == 2
+        assert events[0].tool_name == "Read"
+        assert events[1].tool_name == "Grep"

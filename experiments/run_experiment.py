@@ -324,9 +324,9 @@ async def _dispatch_tree(
     duration = time.monotonic() - started
 
     # B-cell events live in Postgres (the event store). Do NOT project to
-    # events.jsonl here -- the projection is lossy (drops tool_name/tool_input)
-    # and analysis should query the event store directly via EventStoreReadPort.
-    # tree_projection.py is kept only as an optional offline export tool.
+    # events.jsonl here -- analysis should query the event store directly via
+    # EventStoreReadPort. tree_projection.py is kept as an optional offline
+    # export tool (tool_name and tool_input are preserved since v3).
 
     meta_path = plan.run_dir / "meta.json"
     meta_data: dict[str, Any] = {}

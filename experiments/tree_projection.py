@@ -329,12 +329,13 @@ def _convert_event(
         content = str(getattr(ev, "content", ""))
         if output_type == "tool_use":
             tool_input_json = getattr(ev, "tool_input_json", None)
+            raw_tool_name = getattr(ev, "tool_name", None)
             return NormalizedEvent(
                 **base,
                 event_type="tool_use",
                 payload=ToolUsePayload(
                     call_id=_to_str_or_none(getattr(ev, "call_id", None)),
-                    tool_name=_extract_tool_name(content),
+                    tool_name=raw_tool_name or "Unknown",
                     tool_input=tool_input_json if isinstance(tool_input_json, dict) else {},
                     duration_ms=_to_int_or_none(getattr(ev, "duration_ms", None)),
                 ),
@@ -455,31 +456,6 @@ def _convert_event(
         payload=GenericPayload(data={"domain_event_type": name, "fields": raw_data}),
     )
 
-
-def _extract_tool_name(content: str) -> str:
-    """Best-effort tool-name extraction from the formatter-summary string.
-
-    The adapter's format_tool_event produces strings like "Reading: /path" or
-    "Running: cmd". We pattern-match the first word.
-    """
-    m = re.match(r"^\s*(\w+)\s*[:\-].*", content)
-    if m:
-        verb = m.group(1).lower()
-        verb_to_tool = {
-            "reading": "Read",
-            "read": "Read",
-            "writing": "Write",
-            "write": "Write",
-            "editing": "Edit",
-            "edit": "Edit",
-            "running": "Bash",
-            "bash": "Bash",
-            "searching": "Grep",
-            "grepping": "Grep",
-            "globbing": "Glob",
-        }
-        return verb_to_tool.get(verb, verb.capitalize())
-    return "Unknown"
 
 
 def _to_int_or_none(value: Any) -> int | None:

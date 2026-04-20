@@ -82,6 +82,7 @@ class EventSequencer:
         was_truncated: bool = False,
         result_bytes: int | None = None,
         tool_input_json: dict[str, Any] | None = None,
+        tool_name: str | None = None,
     ) -> ThoughtCaptured:
         """Create a ThoughtCaptured event and increment sequence.
 
@@ -103,6 +104,8 @@ class EventSequencer:
                 string (None when the adapter cannot expose structured input).
                 Recursively sanitized for JSONB-incompatible null bytes before
                 being attached to the event.
+            tool_name: SDK-reported tool identifier (e.g. ``Read``, ``Bash``).
+                None for non-tool events or adapters that lack structured names.
 
         Returns:
             ThoughtCaptured event with current sequence number.
@@ -122,6 +125,7 @@ class EventSequencer:
                 if tool_input_json is not None
                 else None
             ),
+            tool_name=tool_name,
         )
         self._sequence += 1
         return event
