@@ -47,7 +47,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ASSESSMENT_PARSE_RETRIES = 2
+_JSON_PARSE_RETRIES = 3
+
+# Structured prefix used on agent fail_with_reason messages when the LLM's
+# JSON output could not be parsed after all retries. The experiment-level
+# anomaly detector greps for this prefix to distinguish infrastructure
+# failures from business-level outcomes.
+MALFORMED_JSON_REASON_PREFIX = "malformed_json_after_retries"
 
 
 class AgentOrchestrator:
@@ -111,7 +117,7 @@ class AgentOrchestrator:
 
                 # Query LLM and parse; retry on malformed JSON
                 last_parse_error: Exception | None = None
-                for attempt in range(_ASSESSMENT_PARSE_RETRIES):
+                for attempt in range(_JSON_PARSE_RETRIES):
                     response = await self._query_llm(
                         agent,
                         prompt,
@@ -123,19 +129,19 @@ class AgentOrchestrator:
                         break
                     except (json.JSONDecodeError, ValueError, KeyError) as e:
                         last_parse_error = e
-                        if attempt < _ASSESSMENT_PARSE_RETRIES - 1:
+                        if attempt < _JSON_PARSE_RETRIES - 1:
                             logger.warning(
                                 "Assessment parse attempt %d/%d failed for "
                                 "agent=%s: %s",
                                 attempt + 1,
-                                _ASSESSMENT_PARSE_RETRIES,
+                                _JSON_PARSE_RETRIES,
                                 agent.agent_id,
                                 e,
                             )
                 else:
                     agent.fail_with_reason(
-                        f"Assessment failed after {_ASSESSMENT_PARSE_RETRIES} "
-                        f"attempts: {last_parse_error}"
+                        f"{MALFORMED_JSON_REASON_PREFIX}: Assessment failed after "
+                        f"{_JSON_PARSE_RETRIES} attempts: {last_parse_error}"
                     )
                     return
 
@@ -181,32 +187,48 @@ class AgentOrchestrator:
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
-            # Query LLM (with tool calling if available)
-            response = await self._query_llm(
-                agent,
-                prompt,
-                op,
-                tool_context=tool_context,
-            )
+            # Query LLM and parse; retry on malformed JSON (mirrors assess_task).
+            # InfeasibleError is a valid outcome, not a retryable parse failure.
+            last_parse_error: Exception | None = None
+            subtasks = None
+            for attempt in range(_JSON_PARSE_RETRIES):
+                response = await self._query_llm(
+                    agent,
+                    prompt,
+                    op,
+                    tool_context=tool_context,
+                )
+                try:
+                    subtasks = parse_subtasks_from_llm(response.content)
+                    break
+                except InfeasibleError as e:
+                    logger.warning(
+                        "Agent %s reported unsatisfiable constraints: %s",
+                        agent.agent_id,
+                        e.failure.format_message(),
+                    )
+                    agent.mark_infeasible(
+                        reason=e.failure.reason,
+                        minimum_subtasks=e.failure.minimum_subtasks,
+                        minimum_depth=e.failure.minimum_depth,
+                    )
+                    return
+                except ValueError as e:
+                    last_parse_error = e
+                    if attempt < _JSON_PARSE_RETRIES - 1:
+                        logger.warning(
+                            "Decomposition parse attempt %d/%d failed for agent=%s: %s",
+                            attempt + 1,
+                            _JSON_PARSE_RETRIES,
+                            agent.agent_id,
+                            e,
+                        )
 
-            # Parse subtasks
-            try:
-                subtasks = parse_subtasks_from_llm(response.content)
-            except InfeasibleError as e:
-                logger.warning(
-                    "Agent %s reported unsatisfiable constraints: %s",
-                    agent.agent_id,
-                    e.failure.format_message(),
+            if subtasks is None:
+                agent.fail_with_reason(
+                    f"{MALFORMED_JSON_REASON_PREFIX}: Decomposition failed after "
+                    f"{_JSON_PARSE_RETRIES} attempts: {last_parse_error}"
                 )
-                agent.mark_infeasible(
-                    reason=e.failure.reason,
-                    minimum_subtasks=e.failure.minimum_subtasks,
-                    minimum_depth=e.failure.minimum_depth,
-                )
-                return
-            except ValueError as e:
-                logger.warning("Failed to parse subtasks for agent=%s: %s", agent.agent_id, e)
-                agent.fail_with_reason(f"Failed to parse subtasks: {e}")
                 return
 
             failure = self._spawn_children(agent, subtasks)
