@@ -33,6 +33,13 @@ from typing import Any
 import click
 import yaml
 
+from experiments.anomaly_detector import (
+    Anomaly,
+    AnomalyHalt,
+    detect_anomalies,
+    run_ended_cleanly,
+    write_anomaly_report,
+)
 from experiments.audit_cheating import audit_run
 from experiments.mechanical_evaluator import SANITIZER_ERROR_CLASSES, evaluate_run
 from experiments.schema import IndexEntry
@@ -134,8 +141,27 @@ def plan_runs(
 
 
 def is_resumable(plan: RunPlan) -> bool:
-    """Return True if this run already wrote mechanical.json (fully complete)."""
-    return (plan.run_dir / "mechanical.json").exists()
+    """Return True if this run completed cleanly and should be skipped on resume.
+
+    Clean means all three must hold:
+
+    1. ``mechanical.json`` was written (post-run analysis completed).
+    2. ``events.jsonl`` ends with a ``run_completed`` event (runtime
+       didn't crash mid-write, per
+       :func:`experiments.anomaly_detector.run_ended_cleanly`).
+    3. No ``anomaly.json`` flag file is present (the anomaly detector did
+       not flag infrastructure issues).
+
+    Conditions (1) and (2) together close the crash-between-mechanical-and-
+    anomaly-write window that a single-file check would leave open. An
+    anomaly-flagged run re-executes on resume so the operator can confirm
+    the fix worked.
+    """
+    if not (plan.run_dir / "mechanical.json").exists():
+        return False
+    if (plan.run_dir / "anomaly.json").exists():
+        return False
+    return run_ended_cleanly(plan.run_dir)
 
 
 def _normalize_sanitizer_error(framed_or_bare: str) -> str:
@@ -297,29 +323,10 @@ async def _dispatch_tree(
         )
     duration = time.monotonic() - started
 
-    # Project the event store into events.jsonl + meta.json (currently a stub).
-    # stdout/stderr go to DEVNULL to avoid the classic PIPE + await deadlock
-    # (64KB pipe buffer fills once the real projection ships richer output);
-    # any diagnostics should be written to files under plan.run_dir, not stdout.
-    projection_cmd = [
-        sys.executable,
-        "-m",
-        "experiments.tree_projection",
-        "--run-dir",
-        str(plan.run_dir),
-    ]
-    projection_proc = await asyncio.create_subprocess_exec(
-        *projection_cmd,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await projection_proc.wait()
-    if projection_proc.returncode != 0:
-        logger.warning(
-            "tree_projection exited non-zero (%d) for %s",
-            projection_proc.returncode,
-            plan.run_dir,
-        )
+    # B-cell events live in Postgres (the event store). Do NOT project to
+    # events.jsonl here -- the projection is lossy (drops tool_name/tool_input)
+    # and analysis should query the event store directly via EventStoreReadPort.
+    # tree_projection.py is kept only as an optional offline export tool.
 
     meta_path = plan.run_dir / "meta.json"
     meta_data: dict[str, Any] = {}
@@ -349,11 +356,27 @@ def _append_index_entry_locked(index_path: Path, entry: IndexEntry) -> None:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
+@dataclass
+class _HaltState:
+    """Shared halt coordinator for the queue driver.
+
+    When any run in the schedule detects an anomaly, it appends to
+    ``anomalies`` and sets ``event``; subsequent runs still waiting on the
+    semaphore check ``event`` at entry and skip gracefully. The queue driver
+    raises :class:`AnomalyHalt` after :func:`asyncio.gather` returns.
+    """
+
+    event: asyncio.Event
+    anomalies: list[tuple[RunPlan, list[Anomaly]]]
+
+
 async def _run_one(
     plan: RunPlan,
     instances: dict[str, dict[str, Any]],
     index_path: Path,
     semaphore: asyncio.Semaphore,
+    halt_state: _HaltState | None = None,
+    halt_on_anomaly: bool = True,
 ) -> None:
     """Execute a single plan under the concurrency semaphore.
 
@@ -361,8 +384,20 @@ async def _run_one(
     is logged but never re-raised: per-run isolation is the explicit design
     goal so one bad CVE (malformed YAML, docker hiccup) can't stall the
     rest of the schedule.
+
+    Halt behaviour: if ``halt_state`` is provided and its event is set by
+    a prior anomaly, this run skips entirely. After the run completes, the
+    events.jsonl is scanned via :func:`detect_anomalies`; any finding
+    writes ``anomaly.json``, tags the INDEX entry, and sets
+    ``halt_state.event``.
     """
     async with semaphore:
+        if halt_state is not None and halt_state.event.is_set():
+            logger.info(
+                "Skipping %s: prior anomaly already halted the queue",
+                plan.run_dir,
+            )
+            return
         if is_resumable(plan):
             logger.info("Skipping completed run: %s", plan.run_dir)
             return
@@ -414,6 +449,43 @@ async def _run_one(
             logger.exception("Post-run analysis failed: %s", plan.run_dir)
             return
 
+        anomalies: list[Anomaly] = []
+        try:
+            anomalies = detect_anomalies(plan.run_dir)
+        except Exception:
+            # A bug in the detector itself must not corrupt INDEX or the halt
+            # signal; log loudly and fall through as if zero anomalies fired.
+            logger.exception("Anomaly detection crashed for: %s", plan.run_dir)
+
+        if anomalies:
+            try:
+                write_anomaly_report(plan.run_dir, anomalies)
+            except OSError:
+                logger.exception("Failed to write anomaly.json for: %s", plan.run_dir)
+                # CRITICAL: is_resumable returns True when mechanical.json
+                # exists and anomaly.json does not. If we can't write
+                # anomaly.json, we MUST invalidate mechanical.json so the
+                # next resume re-runs this row instead of silently marking
+                # it clean.
+                mechanical_path = plan.run_dir / "mechanical.json"
+                try:
+                    mechanical_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.exception(
+                        "Failed to invalidate mechanical.json after anomaly.json write failure: %s",
+                        plan.run_dir,
+                    )
+            termination_reason = f"anomaly:{anomalies[0].kind}"
+            logger.error(
+                "Anomaly detected in %s: %s",
+                plan.run_dir,
+                [a.kind for a in anomalies],
+            )
+        else:
+            termination_reason = _read_termination(plan)
+
+        cost_breakdown = _compute_cost_breakdown(plan)
+
         try:
             entry = IndexEntry(
                 run_id=f"{plan.cve_id}-{plan.cell}-{plan.replicate}",
@@ -421,9 +493,9 @@ async def _run_one(
                 cell=plan.cell,
                 replicate=plan.replicate,
                 path=str(plan.run_dir),
-                termination_reason=_read_termination(plan),
+                termination_reason=termination_reason,
                 wallclock_seconds=_read_wallclock(plan),
-                total_cost_usd=_sum_cost(plan),
+                total_cost_usd=cost_breakdown["total_usd"],
                 event_count=_count_events(plan),
                 artifacts_produced=_list_artifacts(plan),
                 mechanical_pass={
@@ -433,10 +505,16 @@ async def _run_one(
                     "end_to_end": bool(mech["end_to_end_pass"]),
                 },
                 audit_violations=int(audit_report["violation_count"]),
+                cost_breakdown=cost_breakdown,
             )
             _append_index_entry_locked(index_path, entry)
         except Exception:
             logger.exception("Failed to write index entry for: %s", plan.run_dir)
+
+        if anomalies and halt_state is not None:
+            halt_state.anomalies.append((plan, anomalies))
+            if halt_on_anomaly:
+                halt_state.event.set()
 
 
 async def execute_all(
@@ -445,6 +523,7 @@ async def execute_all(
     *,
     index_path: Path | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
+    halt_on_anomaly: bool = True,
 ) -> None:
     """Run every plan with up to ``concurrency`` in-flight; append to INDEX.jsonl.
 
@@ -453,6 +532,10 @@ async def execute_all(
     cancel the others. Every dispatched run records its outcome via
     ``_append_index_entry_locked`` so INDEX.jsonl stays consistent under
     concurrent writers.
+
+    Raises :class:`AnomalyHalt` after all tasks complete if any run detected
+    an infrastructure anomaly. Remaining queued runs skip eagerly once the
+    halt event is set; in-flight runs finish cleanly.
     """
     if concurrency < 1:
         raise ValueError(f"concurrency must be >= 1, got {concurrency}")
@@ -460,14 +543,50 @@ async def execute_all(
     index_path.parent.mkdir(parents=True, exist_ok=True)
 
     semaphore = asyncio.Semaphore(concurrency)
+    halt_state = _HaltState(event=asyncio.Event(), anomalies=[])
     logger.info(
         "Executing %d plans with concurrency=%d (index=%s)",
         len(plans),
         concurrency,
         index_path,
     )
-    tasks = [_run_one(plan, instances, index_path, semaphore) for plan in plans]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [
+        _run_one(plan, instances, index_path, semaphore, halt_state, halt_on_anomaly)
+        for plan in plans
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Surface unexpected per-run exceptions so they don't silently vanish
+    # into return_exceptions=True. AnomalyHalt is raised separately below
+    # from the halt_state, so we ignore it here.
+    for plan, result in zip(plans, results, strict=False):
+        if isinstance(result, BaseException) and not isinstance(result, AnomalyHalt):
+            logger.error(
+                "Unexpected exception in run %s: %r",
+                plan.run_dir,
+                result,
+                exc_info=result,
+            )
+
+    if halt_state.anomalies:
+        if halt_on_anomaly:
+            first_plan, first_anomalies = halt_state.anomalies[0]
+            logger.error(
+                "Halting queue: %d run(s) flagged anomalies. See anomaly.json "
+                "in each run_dir.",
+                len(halt_state.anomalies),
+            )
+            for plan, anomalies in halt_state.anomalies:
+                logger.error("  %s: %s", plan.run_dir, [a.kind for a in anomalies])
+            raise AnomalyHalt(first_plan.run_dir, first_anomalies)
+        # halt_on_anomaly disabled: surface the anomalies but do not raise so
+        # the queue continues to the next CVE.
+        logger.warning(
+            "Completed with %d anomalous run(s) (continuing queue).",
+            len(halt_state.anomalies),
+        )
+        for plan, anomalies in halt_state.anomalies:
+            logger.warning("  %s: %s", plan.run_dir, [a.kind for a in anomalies])
 
 
 def _read_termination(plan: RunPlan) -> str:
@@ -492,11 +611,31 @@ def _read_wallclock(plan: RunPlan) -> float:
     return float(data.get("wallclock_seconds", 0.0))
 
 
-def _sum_cost(plan: RunPlan) -> float:
+def _compute_cost_breakdown(plan: RunPlan) -> dict[str, float]:
+    """Return the per-source cost breakdown for this run.
+
+    Two independent cost streams are billed separately by Anthropic:
+
+    * ``tokens_consumed`` events — emitted by the flat CLI harness for its
+      single session, and by the tree BOSS for ``decompose`` plus periodic
+      ``context_condense`` calls.
+    * ``worker_cost_recorded`` events — emitted once per tree worker that
+      spawns ``claude_code`` (or another budget-tracked tool). Tree WORKER
+      cost is concentrated here and was historically missing from the
+      INDEX sum (see Pillar B analysis, §2.3).
+
+    Returned keys: ``tokens_consumed_usd``, ``worker_recorded_usd``,
+    ``total_usd``. ``total_usd`` is the authoritative run cost written to
+    :attr:`experiments.schema.IndexEntry.total_cost_usd`.
+    """
+    breakdown = {
+        "tokens_consumed_usd": 0.0,
+        "worker_recorded_usd": 0.0,
+        "total_usd": 0.0,
+    }
     events_path = plan.run_dir / "events.jsonl"
     if not events_path.exists():
-        return 0.0
-    total = 0.0
+        return breakdown
     for line in events_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -504,12 +643,19 @@ def _sum_cost(plan: RunPlan) -> float:
             ev = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if ev.get("event_type") == "tokens_consumed":
-            payload = ev.get("payload") or {}
-            cost = payload.get("cost_usd")
-            if cost is not None:
-                total += float(cost)
-    return total
+        payload = ev.get("payload") or {}
+        cost = payload.get("cost_usd")
+        if cost is None:
+            continue
+        event_type = ev.get("event_type")
+        if event_type == "tokens_consumed":
+            breakdown["tokens_consumed_usd"] += float(cost)
+        elif event_type == "worker_cost_recorded":
+            breakdown["worker_recorded_usd"] += float(cost)
+    breakdown["total_usd"] = (
+        breakdown["tokens_consumed_usd"] + breakdown["worker_recorded_usd"]
+    )
+    return breakdown
 
 
 def _count_events(plan: RunPlan) -> int:
@@ -554,12 +700,25 @@ def _list_artifacts(plan: RunPlan) -> list[str]:
         "Tier 2+ and >=32GB host RAM). Set to 1 for strictly sequential."
     ),
 )
+@click.option(
+    "--continue-on-anomaly/--halt-on-anomaly",
+    default=False,
+    help=(
+        "When set, anomalies (malformed_json_after_retries, worker_stuck, etc.) "
+        "are still recorded via anomaly.json and termination_reason tags, but do "
+        "NOT halt the queue. Use this for data-collection runs where every CVE "
+        "should be attempted even if some fail deterministically. Default "
+        "(halt) matches Step-4 semantics: stop on first anomaly so the operator "
+        "can fix the root cause."
+    ),
+)
 def main(
     locked_instances: Path,
     cells: str,
     output_dir: Path,
     seed: int,
     concurrency: int,
+    continue_on_anomaly: bool,
 ) -> None:
     """Run the experiment over the (CVE x cell x replicate) Cartesian schedule."""
     logging.basicConfig(
@@ -587,7 +746,27 @@ def main(
         output_root=output_dir,
     )
     instances = {inst["instance_id"]: inst for inst in data["instances"]}
-    asyncio.run(execute_all(plans, instances, concurrency=concurrency))
+    # Derive INDEX.jsonl sibling of the runs dir so each dataset generation
+    # gets its own INDEX rather than appending to the default dataset/INDEX.jsonl.
+    index_path = output_dir.parent / "INDEX.jsonl"
+    try:
+        asyncio.run(
+            execute_all(
+                plans,
+                instances,
+                index_path=index_path,
+                concurrency=concurrency,
+                halt_on_anomaly=not continue_on_anomaly,
+            )
+        )
+    except AnomalyHalt as halt:
+        click.echo(
+            f"\nAnomaly halt: {halt}\n"
+            f"See <run_dir>/anomaly.json for details. Fix the underlying issue, "
+            f"then re-run to resume (completed runs are skipped automatically).",
+            err=True,
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":

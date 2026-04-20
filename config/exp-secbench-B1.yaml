@@ -19,7 +19,7 @@ boss:
   max_tokens: 4000
 
 manager:
-  model: claude-opus-4-7
+  model: claude-sonnet-4-6   # v2: was claude-opus-4-7; Sonnet for cheaper mid-tier reasoning
   max_tokens: 4000
 
 worker:
@@ -35,11 +35,11 @@ orchestration:
   max_redecompositions: 1
   skip_judge: true   # judge is excluded from pass-rate; judge cost still measured
   topology:
-    max_depth: 2
-    max_children_per_node: 5
-    max_total_agents: 15
+    max_depth: 5                # v2: was 2 — allow MANAGER layer at depth 1 + further sub-decomposition
+    max_children_per_node: 8    # v2: was 5
+    max_total_agents: 10000     # v2: was 15 — effectively unbounded; budget/wallclock + shape caps are the real ceiling
   concurrency:
-    max_concurrent_workers: 1
+    max_concurrent_workers: 1   # unchanged — sequential execution
     max_concurrent_llm_calls: 1
     llm_jitter_max_ms: 0
 

@@ -255,7 +255,15 @@ class RunMeta(BaseModel):
 
 
 class IndexEntry(BaseModel):
-    """One line of INDEX.jsonl -- run-level summary for fast filtering."""
+    """One line of INDEX.jsonl -- run-level summary for fast filtering.
+
+    ``total_cost_usd`` is the authoritative run cost -- downstream analyses
+    should rely on it. ``cost_breakdown`` exposes the two underlying event
+    streams (``tokens_consumed`` for flat CLI + tree BOSS/condense,
+    ``worker_cost_recorded`` for tree workers spawned via claude_code)
+    because they are billed independently and the split matters when
+    comparing tree vs. flat cost composition.
+    """
 
     model_config = {"frozen": True}
 
@@ -271,3 +279,4 @@ class IndexEntry(BaseModel):
     artifacts_produced: list[str] = Field(default_factory=list)
     mechanical_pass: dict[str, bool] = Field(default_factory=dict)
     audit_violations: int = 0
+    cost_breakdown: dict[str, float] = Field(default_factory=dict)

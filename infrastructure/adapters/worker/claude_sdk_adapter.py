@@ -222,10 +222,14 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             _context: HookContext,
         ) -> SyncHookJSONOutput:
             """PostToolUse: capture tool invocation + structured input downstream."""
-            tool_name = getattr(input_data, "tool_name", "unknown")
-            tool_input = getattr(input_data, "tool_input", {}) or {}
+            # PostToolUseHookInput is a TypedDict (claude_agent_sdk/types.py:191)
+            # — a plain dict at runtime with guaranteed `tool_name` / `tool_input`
+            # keys. Using dict indexing (not getattr) fails loudly on SDK contract
+            # drift instead of silently emitting "unknown" / {}.
+            tool_name = input_data["tool_name"]
+            tool_input = input_data["tool_input"] or {}
             content = format_tool_event(tool_name, tool_input)
-            tool_input_json = dict(tool_input) if isinstance(tool_input, dict) else None
+            tool_input_json = dict(tool_input) if tool_input else None
             await tool_queue.put((content, "tool_use", tool_use_id, tool_input_json))
             return SyncHookJSONOutput()
 

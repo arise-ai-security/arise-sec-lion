@@ -62,9 +62,7 @@ MAX_RESULT_BYTES = 10_240
 # marked ``container_error``. 10 MB is generous but bounded.
 STREAM_READ_BUFFER_LIMIT = 10 * 1024 * 1024
 
-# ``domain_briefing.md`` lives one level up from this file
-# (``experiments/domain_briefing.md``).
-DOMAIN_BRIEFING_PATH = Path(__file__).resolve().parents[1] / "domain_briefing.md"
+DOMAIN_BRIEFING_PATH = Path(__file__).resolve().parents[1] / "configs" / "domain_briefing.md"
 
 SECURITY_TOOL_PREAMBLE = """\
 AVAILABLE SECURITY TOOLS

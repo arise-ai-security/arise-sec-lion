@@ -1,0 +1,22 @@
+diff --git a/src/class.c b/src/class.c
+index ec9c648..2f76a8a 100644
+--- a/src/class.c
++++ b/src/class.c
+@@ -357,7 +357,7 @@ prepare_singleton_class(mrb_state *mrb, struct RBasic *o)
+ {
+   struct RClass *sc, *c;
+ 
+-  if (o->c->tt == MRB_TT_SCLASS) return;
++  if (o->c && o->c->tt == MRB_TT_SCLASS) return;
+   sc = MRB_OBJ_ALLOC(mrb, MRB_TT_SCLASS, mrb->class_class);
+   sc->flags |= MRB_FL_CLASS_IS_INHERITED;
+   sc->mt = mt_new(mrb);
+@@ -379,7 +379,7 @@ prepare_singleton_class(mrb_state *mrb, struct RBasic *o)
+     sc->super = c->super->c;
+   }
+   else {
+-    sc->super = o->c;
++    sc->super = o->c ? o->c : mrb->object_class;
+     prepare_singleton_class(mrb, (struct RBasic*)sc);
+   }
+   o->c = sc;

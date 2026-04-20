@@ -8,6 +8,7 @@ import pytest
 
 from experiments.run_experiment import (
     RunPlan,
+    _compute_cost_breakdown,
     _normalize_sanitizer_error,
     _validate_cve_data,
     is_resumable,
@@ -61,12 +62,23 @@ def test_plan_runs_assignment_is_deterministic_for_same_seed() -> None:
     assert plans_a == plans_b
 
 
-def test_is_resumable_returns_true_when_events_file_exists(tmp_path: Path) -> None:
-    """is_resumable=True when events.jsonl exists in the run dir."""
-    # Given: a run dir with events.jsonl
+def _write_clean_events(run_dir: Path) -> None:
+    """Write a minimal events.jsonl that ends with run_completed."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    events = [
+        '{"event_type": "run_started", "occurred_at": "2026-04-19T12:00:00+00:00"}',
+        '{"event_type": "run_completed", "occurred_at": "2026-04-19T12:00:01+00:00"}',
+    ]
+    (run_dir / "events.jsonl").write_text("\n".join(events) + "\n", encoding="utf-8")
+
+
+def test_is_resumable_returns_true_when_run_completed_and_no_anomaly(tmp_path: Path) -> None:
+    """is_resumable=True only when mechanical.json exists, events.jsonl ends in run_completed, and no anomaly.json."""
+
+    # Given: a run dir with mechanical.json and a run_completed event
     run_dir = tmp_path / "njs.cve-1" / "A1" / "0"
-    run_dir.mkdir(parents=True)
-    (run_dir / "events.jsonl").write_text("")
+    _write_clean_events(run_dir)
+    (run_dir / "mechanical.json").write_text("{}")
 
     plan = RunPlan(cve_id="njs.cve-1", cell="A1", replicate=0, run_dir=run_dir)
     # When/Then: is_resumable returns True
@@ -74,13 +86,132 @@ def test_is_resumable_returns_true_when_events_file_exists(tmp_path: Path) -> No
 
 
 def test_is_resumable_returns_false_when_only_meta_exists(tmp_path: Path) -> None:
-    """is_resumable=False when events.jsonl is missing (only meta.json present)."""
-    # Given: a run dir with only meta.json
+    """is_resumable=False when mechanical.json is missing (run never completed)."""
+
+    # Given: a run dir with only meta.json (no mechanical.json, no events.jsonl)
     run_dir = tmp_path / "njs.cve-1" / "A1" / "0"
     run_dir.mkdir(parents=True)
     (run_dir / "meta.json").write_text("{}")
     plan = RunPlan(cve_id="njs.cve-1", cell="A1", replicate=0, run_dir=run_dir)
     # When/Then: is_resumable returns False
+    assert is_resumable(plan) is False
+
+
+def test_is_resumable_returns_false_when_anomaly_flagged(tmp_path: Path) -> None:
+    """An anomaly-flagged run re-executes on resume even when mechanical.json is present."""
+
+    # Given: a run dir with mechanical.json, a clean events.jsonl, AND anomaly.json
+    run_dir = tmp_path / "njs.cve-1" / "B2" / "0"
+    _write_clean_events(run_dir)
+    (run_dir / "mechanical.json").write_text("{}")
+    (run_dir / "anomaly.json").write_text('[{"kind": "malformed_json_after_retries"}]')
+
+    plan = RunPlan(cve_id="njs.cve-1", cell="B2", replicate=0, run_dir=run_dir)
+    # When/Then: is_resumable returns False so the operator can re-run after fixing
+    assert is_resumable(plan) is False
+
+
+def _write_events(run_dir: Path, events: list[dict]) -> Path:
+    import json
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    events_path = run_dir / "events.jsonl"
+    events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    return events_path
+
+
+def test_compute_cost_breakdown_sums_both_event_types(tmp_path: Path) -> None:
+    """_compute_cost_breakdown sums tokens_consumed + worker_cost_recorded into total_usd.
+
+    Pre-Step-6 behaviour summed only tokens_consumed, which silently
+    dropped tree-worker cost; this test pins the fix.
+    """
+
+    # Given: events.jsonl with both a tokens_consumed and two worker_cost_recorded rows
+    run_dir = tmp_path / "mixed-cost"
+    events = [
+        {"event_type": "run_started", "payload": {}},
+        {"event_type": "tokens_consumed", "payload": {"cost_usd": 0.47}},
+        {"event_type": "worker_cost_recorded", "payload": {"cost_usd": 3.90}},
+        {"event_type": "worker_cost_recorded", "payload": {"cost_usd": 9.71}},
+        {"event_type": "run_completed", "payload": {}},
+    ]
+    _write_events(run_dir, events)
+    plan = RunPlan(cve_id="njs.cve-1", cell="B1", replicate=0, run_dir=run_dir)
+
+    # When: compute the breakdown
+    breakdown = _compute_cost_breakdown(plan)
+
+    # Then: each stream is reported independently and total is the sum
+    assert breakdown["tokens_consumed_usd"] == pytest.approx(0.47)
+    assert breakdown["worker_recorded_usd"] == pytest.approx(13.61)
+    assert breakdown["total_usd"] == pytest.approx(14.08)
+
+
+def test_compute_cost_breakdown_returns_zeros_when_no_events_file(tmp_path: Path) -> None:
+    """A run with no events.jsonl yields a zero-valued breakdown (not a KeyError)."""
+
+    # Given: a run dir with no events.jsonl
+    run_dir = tmp_path / "empty"
+    run_dir.mkdir(parents=True)
+    plan = RunPlan(cve_id="njs.cve-1", cell="A1", replicate=0, run_dir=run_dir)
+
+    # When: compute the breakdown
+    breakdown = _compute_cost_breakdown(plan)
+
+    # Then: all three keys present and zero
+    assert breakdown == {
+        "tokens_consumed_usd": 0.0,
+        "worker_recorded_usd": 0.0,
+        "total_usd": 0.0,
+    }
+
+
+def test_compute_cost_breakdown_ignores_events_without_cost_usd(tmp_path: Path) -> None:
+    """Events without cost_usd are silently skipped (tool_use, run_started, etc.)."""
+
+    # Given: events that carry no cost_usd and one that does
+    run_dir = tmp_path / "noise"
+    events = [
+        {"event_type": "run_started", "payload": {}},
+        {"event_type": "tool_use", "payload": {"tool_name": "Bash"}},
+        {"event_type": "tokens_consumed", "payload": {"cost_usd": 1.25}},
+        {"event_type": "run_completed", "payload": {}},
+    ]
+    _write_events(run_dir, events)
+    plan = RunPlan(cve_id="njs.cve-1", cell="A1", replicate=0, run_dir=run_dir)
+
+    # When: compute the breakdown
+    breakdown = _compute_cost_breakdown(plan)
+
+    # Then: only the cost-bearing row contributed
+    assert breakdown["tokens_consumed_usd"] == pytest.approx(1.25)
+    assert breakdown["worker_recorded_usd"] == 0.0
+    assert breakdown["total_usd"] == pytest.approx(1.25)
+
+
+def test_is_resumable_returns_false_when_mechanical_exists_but_events_truncated(
+    tmp_path: Path,
+) -> None:
+    """Crash between mechanical.json write and anomaly.json write must not mark run resumable.
+
+    This covers the narrow crash window: the runner wrote mechanical.json but
+    the process died before detect_anomalies ran. Without the run_completed
+    gate, the next resume would silently skip this broken row.
+    """
+
+    # Given: mechanical.json present but events.jsonl does not contain run_completed
+    run_dir = tmp_path / "njs.cve-1" / "B2" / "0"
+    run_dir.mkdir(parents=True)
+    (run_dir / "mechanical.json").write_text("{}")
+    # Events without run_completed (simulating process-kill after mechanical write)
+    (run_dir / "events.jsonl").write_text(
+        '{"event_type": "run_started", "occurred_at": "2026-04-19T12:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
+
+    plan = RunPlan(cve_id="njs.cve-1", cell="B2", replicate=0, run_dir=run_dir)
+    # When/Then: is_resumable returns False so the run is re-executed
     assert is_resumable(plan) is False
 
 

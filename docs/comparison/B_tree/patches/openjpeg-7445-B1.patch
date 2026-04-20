@@ -1,0 +1,15 @@
+diff --git a/src/bin/jp2/convert.c b/src/bin/jp2/convert.c
+index c130b3b..04cf95c 100644
+--- a/src/bin/jp2/convert.c
++++ b/src/bin/jp2/convert.c
+@@ -1481,8 +1481,10 @@ static void read_pnm_header(FILE *reader, struct pnm_header *ph)
+         if( !have_wh)
+         {
+             s = skip_int(s, &ph->width);
++            if(s == NULL) return;
+ 
+             s = skip_int(s, &ph->height);
++            if(s == NULL) return;
+ 
+             have_wh = 1;
+ 

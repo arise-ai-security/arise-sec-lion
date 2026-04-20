@@ -1,0 +1,12 @@
+diff --git a/src/njs_vmcode.c b/src/njs_vmcode.c
+index ec47865..aff6199 100644
+--- a/src/njs_vmcode.c
++++ b/src/njs_vmcode.c
+@@ -1430,6 +1430,7 @@ njs_vmcode_property_foreach(njs_vm_t *vm, njs_value_t *object,
+         return NJS_ERROR;
+     }
+ 
++    njs_set_undefined(&vm->retval);
+     vm->retval.data.u.next = next;
+ 
+     code = (njs_vmcode_prop_foreach_t *) pc;

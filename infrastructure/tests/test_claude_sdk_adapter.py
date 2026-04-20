@@ -704,3 +704,82 @@ class TestPerToolCallDurationTracking:
         assert result is None
         assert any("unknown_id_xyz" in rec.message for rec in caplog.records)
         assert any(rec.levelno == logging.DEBUG for rec in caplog.records)
+
+
+class TestPostToolUseHookPropagatesToolIdentity:
+    """Regression guard: PostToolUseHookInput is a TypedDict — the hook must
+    read its fields via dict access, not getattr, so tool_name and tool_input
+    reach the event stream instead of being stripped to "unknown" / {}.
+    """
+
+    @staticmethod
+    def _extract_singleton_post_hook(mock_options_cls: Any) -> Any:
+        _, kwargs = mock_options_cls.call_args
+        matchers = kwargs["hooks"]["PostToolUse"]
+        assert len(matchers) == 1, "adapter should register exactly one PostToolUse matcher"
+        assert len(matchers[0].hooks) == 1, "matcher should hold exactly one callback"
+        return matchers[0].hooks[0]
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_reads_tool_name_and_input_from_typeddict(
+        self, tmp_path
+    ) -> None:
+        # Given: the adapter has registered its PostToolUse hook
+        import asyncio
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        tool_queue: asyncio.Queue[
+            tuple[str, str, str | None, dict[str, Any] | None]
+        ] = asyncio.Queue()
+        with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=tool_queue,
+                container_session=None,
+                runtime_model=None,
+            )
+        post_hook = self._extract_singleton_post_hook(mock_options_cls)
+
+        # When: the SDK invokes the hook with the real PostToolUseHookInput
+        # shape (TypedDict = dict at runtime)
+        hook_input: dict[str, Any] = {
+            "hook_event_name": "PostToolUse",
+            "session_id": "sess",
+            "transcript_path": "",
+            "cwd": str(tmp_path),
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/src/foo.c"},
+            "tool_response": {"content": "ok"},
+        }
+        await post_hook(hook_input, "tu_read_1", MagicMock())
+
+        # Then: the queued tool_use entry carries the real name + structured input
+        assert tool_queue.qsize() == 1
+        content, output_type, tool_use_id, tool_input_json = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_use_id == "tu_read_1"
+        assert tool_input_json == {"file_path": "/src/foo.c"}
+        assert "Read" in content or "/src/foo.c" in content
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_raises_on_contract_drift(self, tmp_path) -> None:
+        # Given: the adapter has registered its PostToolUse hook
+        import asyncio
+
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        tool_queue: asyncio.Queue[
+            tuple[str, str, str | None, dict[str, Any] | None]
+        ] = asyncio.Queue()
+        with patch(f"{SDK_ADAPTER_MODULE}.ClaudeAgentOptions") as mock_options_cls:
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=tool_queue,
+                container_session=None,
+                runtime_model=None,
+            )
+        post_hook = self._extract_singleton_post_hook(mock_options_cls)
+
+        # When: the SDK delivers a payload missing the TypedDict contract,
+        # Then: the hook raises loudly so the dataset holes are obvious.
+        with pytest.raises(KeyError):
+            await post_hook({"hook_event_name": "PostToolUse"}, "tu_drift", MagicMock())

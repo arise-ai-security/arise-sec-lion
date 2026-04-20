@@ -692,8 +692,7 @@ FodyWeavers.xsd
 !agent-docs/*.md
 !.claude/docs/*.md
 !experiments/domain_briefing.md
-!docs/pillar_b/**/*.md
-!docs/superpowers/**/*.md
+!experiments/RUNBOOK_V3_B_RERUN.md
 
 # Output directory (generated code, exports, last run tracking)
 output/
@@ -705,6 +704,12 @@ output/
 
 # Custom
 data/
+
+# Experiment datasets (large, generated locally per machine)
+dataset/
+dataset-*/
+dataset-*.tar.zst
+dataset-*.tar.zst.sha256
 
 # SEC-bench run artifacts (anchored to root to avoid matching query/web/src/)
 /src/

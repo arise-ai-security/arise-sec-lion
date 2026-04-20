@@ -1,0 +1,18 @@
+diff --git a/frontend/mp4read.c b/frontend/mp4read.c
+index 1414684..34c54b4 100644
+--- a/frontend/mp4read.c
++++ b/frontend/mp4read.c
+@@ -344,7 +344,12 @@ static int stszin(int size)
+     u32in();
+     // Number of entries
+     mp4config.frame.ents = u32in();
+-    // fixme: check atom size
++    // Validate entry count against atom size to prevent integer overflow and
++    // heap-buffer-overflow (CVE-2021-32272).
++    // Atom has 12 bytes of header (version/flags + sample_size + num_entries)
++    // followed by 4 bytes per entry.
++    if (size < 12 || mp4config.frame.ents > (uint32_t)(size - 12) / sizeof(*mp4config.frame.data))
++        return ERR_FAIL;
+     mp4config.frame.data = malloc(sizeof(*mp4config.frame.data)
+                                   * (mp4config.frame.ents + 1));
+ 

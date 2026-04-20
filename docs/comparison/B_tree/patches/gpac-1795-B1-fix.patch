@@ -1,0 +1,12 @@
+diff --git a/src/isomedia/box_code_base.c b/src/isomedia/box_code_base.c
+index 2bf22d2..d518dd2 100644
+--- a/src/isomedia/box_code_base.c
++++ b/src/isomedia/box_code_base.c
+@@ -3708,6 +3708,7 @@ GF_Err moov_on_child_box(GF_Box *s, GF_Box *a, Bool is_rem)
+ 		if (ptr->iods && !ptr->iods->descriptor) {
+ 			ptr->iods = NULL;
+ 			gf_isom_box_del_parent(&s->child_boxes, a);
++			return GF_ISOM_INVALID_MEDIA;
+ 		}
+ 		return GF_OK;
+ 

@@ -1,0 +1,26 @@
+diff --git a/src/tiffvisitor.cpp b/src/tiffvisitor.cpp
+index 4ab733d..3e31e90 100644
+--- a/src/tiffvisitor.cpp
++++ b/src/tiffvisitor.cpp
+@@ -1518,7 +1518,7 @@ namespace Exiv2 {
+         }
+         if (size > 4) {
+             pData = const_cast<byte*>(pData_) + baseOffset() + offset;
+-            if (size > static_cast<uint32_t>(pLast_ - pData)) {
++            if (pData >= pLast_ || size > static_cast<uint32_t>(pLast_ - pData)) {
+ #ifndef SUPPRESS_WARNINGS
+                 EXV_ERROR << "Upper boundary of data for "
+                           << "directory " << groupName(object->group())
+diff --git a/src/value.cpp b/src/value.cpp
+index d518926..3c696b0 100644
+--- a/src/value.cpp
++++ b/src/value.cpp
+@@ -299,7 +299,7 @@ namespace Exiv2 {
+     int StringValueBase::read(const byte* buf, long len, ByteOrder /*byteOrder*/)
+     {
+         // byteOrder not needed
+-        if (buf) value_ = std::string(reinterpret_cast<const char*>(buf), len);
++        if (buf && len > 0) value_ = std::string(reinterpret_cast<const char*>(buf), len);
+         return 0;
+     }
+ 

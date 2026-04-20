@@ -1,0 +1,24 @@
+diff --git a/frontend/mp4read.c b/frontend/mp4read.c
+index 1414684..5cee3dd 100644
+--- a/frontend/mp4read.c
++++ b/frontend/mp4read.c
+@@ -338,13 +338,18 @@ static int stszin(int size)
+     int cnt;
+     uint32_t ofs;
+ 
++    if (size < 12)
++        return ERR_FAIL;
++
+     // version/flags
+     u32in();
+     // Sample size
+     u32in();
+     // Number of entries
+     mp4config.frame.ents = u32in();
+-    // fixme: check atom size
++    // Validate entry_count against remaining atom bytes (each entry is 4 bytes)
++    if (mp4config.frame.ents > (uint32_t)(size - 12) / 4)
++        return ERR_FAIL;
+     mp4config.frame.data = malloc(sizeof(*mp4config.frame.data)
+                                   * (mp4config.frame.ents + 1));
+ 

@@ -1,0 +1,94 @@
+database:
+  host: localhost
+  port: 5432
+  user: arise
+  name: arise_events
+
+boss:
+  model: o3
+  max_tokens: 4000
+
+manager:
+  model: o3
+  max_tokens: 4000
+
+worker:
+  model: anthropic/claude-sonnet-4-6
+  tool: openhands
+  timeout: 900
+  max_iterations_per_run: 40
+
+orchestration:
+  max_retries: 2
+  poll_interval: 0.5
+  max_run_duration_seconds: 2400
+  max_redecompositions: 1
+  skip_judge: true
+
+  topology:
+    max_depth: 2
+    max_children_per_node: 5
+    max_total_agents: 15
+
+  concurrency:
+    max_concurrent_workers: 1
+    max_concurrent_llm_calls: 1
+    llm_jitter_max_ms: 0
+
+  retry:
+    max_worker_retries: 1
+    max_verification_retries: 2
+    model_escalation_chain:
+      - openai/o3
+    circuit_breaker_threshold: 3
+    circuit_breaker_reset_seconds: 300
+
+  tool_calling:
+    max_iterations: 5
+    result_char_limit: 6000
+    condense_after_iteration: 2
+    token_budget: 80000
+    policies:
+      default:
+        pending:
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        manager:
+          max_iterations: 5
+          result_char_limit: 6000
+          toolsets:
+            recon:
+              enabled: false
+        boss:
+          toolsets:
+            recon:
+              enabled: false
+      domains:
+        secbench:
+          pending:
+            toolsets:
+              recon:
+                enabled: false
+          manager:
+            max_iterations: 3
+            toolsets:
+              recon:
+                allowed_tools:
+                  - search_codebase
+                  - read_file
+                  - get_file_structure
+                  - get_symbols_overview
+                  - read_symbol
+
+output:
+  verbose: true
+  show_progress: true
+  log_level: INFO
+  directory: ./output/exp-secbench-nojudge
+
+security:
+  enabled: true
+  tools: [valgrind]

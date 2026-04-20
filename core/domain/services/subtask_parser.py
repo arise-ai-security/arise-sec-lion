@@ -54,6 +54,43 @@ def strip_markdown_code_block(text: str) -> str:
     return stripped
 
 
+def extract_json_envelope(response: str) -> Any:
+    """Extract and parse a JSON value from an LLM response, tolerating prose.
+
+    Strategy (in order):
+    1. Strip markdown code fences, then ``json.loads`` the result.
+    2. If that fails, scan the stripped text for the widest ``[...]`` span and
+       try ``json.loads`` on that substring (array-shaped response with prose
+       before/after).
+    3. Repeat with ``{...}`` (dict-shaped response).
+
+    Raises:
+        json.JSONDecodeError: When no strategy yields valid JSON.
+    """
+    clean = strip_markdown_code_block(response)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    for open_ch, close_ch in (("[", "]"), ("{", "}")):
+        start = clean.find(open_ch)
+        end = clean.rfind(close_ch)
+        if start != -1 and end > start:
+            candidate = clean[start : end + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+    raise json.JSONDecodeError(
+        "LLM response could not be parsed as JSON "
+        "(tried code-fence strip and ``[...]``/``{...}`` envelope extraction)",
+        response,
+        0,
+    )
+
+
 def parse_subtasks_from_llm(response: str) -> list[Subtask]:
     """Parse LLM response into domain objects.
 
@@ -71,10 +108,9 @@ def parse_subtasks_from_llm(response: str) -> list[Subtask]:
 
 
 def _parse_json(response: str) -> Any:
-    """Extract and parse JSON from LLM response."""
-    clean = strip_markdown_code_block(response)
+    """Extract and parse JSON from LLM response (tolerant of prose / fences)."""
     try:
-        return json.loads(clean)
+        return extract_json_envelope(response)
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM response is not valid JSON: {e}") from e
 
@@ -263,8 +299,7 @@ def parse_assessment_response(response: str) -> AssessmentResult:
         json.JSONDecodeError: If response is not valid JSON.
         ValueError: If action is invalid or subtasks are malformed.
     """
-    clean = strip_markdown_code_block(response)
-    data = json.loads(clean)
+    data = extract_json_envelope(response)
 
     # Check constraint failure first
     if ConstraintFailure.matches(data):

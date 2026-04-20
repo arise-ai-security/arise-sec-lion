@@ -1,0 +1,12 @@
+diff --git a/src/filters/reframe_mpgvid.c b/src/filters/reframe_mpgvid.c
+index 328db28..b7a8c7d 100644
+--- a/src/filters/reframe_mpgvid.c
++++ b/src/filters/reframe_mpgvid.c
+@@ -639,6 +639,7 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
+ 		Bool copy_last_bytes = GF_FALSE;
+ 
+ 		//not enough bytes to parse start code
++		if (remain<=0) break;
+ 		if (remain<5) {
+ 			memcpy(ctx->hdr_store, start, remain);
+ 			ctx->bytes_in_header = remain;

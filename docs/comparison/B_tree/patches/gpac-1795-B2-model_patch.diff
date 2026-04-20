@@ -1,0 +1,12 @@
+diff --git a/src/bifs/memory_decoder.c b/src/bifs/memory_decoder.c
+index 74d6357..ee92cfc 100644
+--- a/src/bifs/memory_decoder.c
++++ b/src/bifs/memory_decoder.c
+@@ -862,6 +862,7 @@ GF_Err BM_SceneReplace(GF_BifsDecoder *codec, GF_BitStream *bs, GF_List *com_lis
+ 
+ 	/*restore*/
+ 	com->node = codec->scenegraph->RootNode;
++	if (com->node) gf_node_register(com->node, NULL);
+ 	codec->scenegraph->RootNode = backup_root;
+ 	gf_list_add(com_list, com);
+ 	/*insert routes*/
