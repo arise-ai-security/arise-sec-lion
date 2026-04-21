@@ -80,6 +80,9 @@ class FakeAgent:
         total_tokens: int,
         cost_usd: float,
         operation: str,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
     ) -> None:
         self.tokens_consumed_calls.append(
             {
@@ -89,6 +92,9 @@ class FakeAgent:
                 "total_tokens": total_tokens,
                 "cost_usd": cost_usd,
                 "operation": operation,
+                "cache_read_tokens": cache_read_tokens,
+                "cache_write_tokens": cache_write_tokens,
+                "reasoning_tokens": reasoning_tokens,
             }
         )
 
