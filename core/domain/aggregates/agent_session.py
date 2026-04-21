@@ -278,6 +278,7 @@ class AgentSession:
     def _(self, event: WorkFailed) -> None:
         self.status = AgentStatus.FAILED
         self.error_message = event.reason
+        self.failed_by_verification = False
         self.version += 1
 
     @_apply.register
@@ -286,17 +287,20 @@ class AgentSession:
         self.error_message = f"Verification failed ({event.failed_stage}): {event.feedback}"
         self.verification_feedback = event.feedback
         self.verification_score = event.score
+        self.failed_by_verification = True
         self.version += 1
 
     @_apply.register
     def _(self, event: VerificationPassed) -> None:
         self.verification_score = event.score
+        self.failed_by_verification = False
         self.version += 1  # Observability only — status stays COMPLETED
 
     @_apply.register
     def _(self, event: DecisionInfeasible) -> None:
         self.status = AgentStatus.FAILED
         self.error_message = f"Infeasible: {event.reason}"
+        self.failed_by_verification = False
         self.version += 1
 
     @_apply.register
@@ -319,7 +323,10 @@ class AgentSession:
     @_apply.register
     def _(self, event: RetryScheduled) -> None:
         self.status = AgentStatus.ANALYZING
-        self.retry_count = event.attempt
+        if event.is_verification_retry:
+            self.verification_retry_count = event.attempt
+        else:
+            self.retry_count = event.attempt
         self.last_retry_reason = event.reason
         self.result = None
         self.error_message = None
@@ -345,6 +352,7 @@ class AgentSession:
     def _(self, event: WorkCompleted) -> None:
         self.status = AgentStatus.COMPLETED
         self.result = event.result
+        self.failed_by_verification = False
         self.version += 1
 
     @_apply.register
@@ -445,8 +453,10 @@ class AgentSession:
         self.search_hints: tuple[str, ...] = ()
         # Retry tracking
         self.retry_count: int = 0
+        self.verification_retry_count: int = 0
         self.last_retry_reason: str | None = None
         self.redecomposition_count: int = 0
+        self.failed_by_verification: bool = False
         # Verification feedback for retry (populated on VerificationFailed)
         self.verification_feedback: str | None = None
         self.verification_score: int | None = None
@@ -560,14 +570,25 @@ class AgentSession:
         )
         self._emit(event)
 
-    def schedule_retry(self, reason: str, escalated_model: str | None = None) -> None:
+    def schedule_retry(
+        self,
+        reason: str,
+        escalated_model: str | None = None,
+        *,
+        is_verification_retry: bool = False,
+    ) -> None:
         """Schedule retry, transitioning FAILED → ANALYZING."""
         event = RetryScheduled(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
-            attempt=self.retry_count + 1,
+            attempt=(
+                self.verification_retry_count + 1
+                if is_verification_retry
+                else self.retry_count + 1
+            ),
             reason=reason,
             escalated_model=escalated_model,
+            is_verification_retry=is_verification_retry,
         )
         self._emit(event)
 

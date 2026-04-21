@@ -228,7 +228,6 @@ class TestBuildBriefing:
             root_id=root_id,
             max_depth=5,
             max_children_per_node=10,
-            max_retries=3,
         )
         agent.set_hierarchy_limits(limits)
 
@@ -270,7 +269,6 @@ class TestBuildBriefing:
             current_depth=1,
             max_depth=5,
             max_children_per_node=10,
-            max_retries=3,
             root_id=uuid4(),
         )
         child.set_hierarchy_limits(limits)

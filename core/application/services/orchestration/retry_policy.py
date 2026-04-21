@@ -72,7 +72,10 @@ class RetryPolicy:
         return True
 
     def _max_retries(self) -> int:
-        """Retry budget is the length of the escalation chain."""
+        """Return the configured worker retry budget."""
+        retry_cfg = self._retry_config
+        if retry_cfg is not None and retry_cfg.max_worker_retries is not None:
+            return retry_cfg.max_worker_retries
         return len(self._get_model_chain())
 
     def _get_model_chain(self) -> list[str]:
@@ -107,19 +110,13 @@ class RetryPolicy:
         self._model_last_failure_time.pop(model, None)
 
     def _get_escalated_model(self, agent: AgentSession) -> str | None:
-        """Get the next healthy model from the escalation chain."""
+        """Get the next healthy retry model for this attempt."""
         chain = self._get_model_chain()
         if not chain:
             return None
 
-        current_model = self._get_current_model(agent)
-        candidates = (
-            chain[chain.index(current_model) + 1 :]
-            if current_model in chain
-            else chain
-        )
-
-        for model in candidates:
+        start_index = min(agent.retry_count, len(chain) - 1)
+        for model in chain[start_index:]:
             if not self._is_circuit_broken(model):
                 return model
         return None

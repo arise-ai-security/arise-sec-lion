@@ -105,13 +105,12 @@ class VerificationPipeline:
             agent.mark_verification_passed(feedback, score=score)
             return
 
-        if not judge_passed:
-            agent.mark_verification_failed(
-                failed_stage="judge",
-                feedback=feedback,
-                stages_passed=stages_passed,
-                score=score,
-            )
+        agent.mark_verification_failed(
+            failed_stage="judge",
+            feedback=feedback,
+            stages_passed=stages_passed,
+            score=score,
+        )
 
     @staticmethod
     def _verify_structural(result: str) -> bool:

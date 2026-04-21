@@ -185,6 +185,16 @@ class ToolCallingConfig(BaseModel):
 class RetryConfig(BaseModel):
     """Retry and auto-healing settings."""
 
+    max_worker_retries: int | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum worker retry attempts; defaults to escalation chain length when unset",
+    )
+    max_verification_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Maximum retries for verification failures",
+    )
     model_escalation_chain: list[str] = Field(
         default_factory=list,
         description="Models to try on failure, in order",

@@ -303,7 +303,7 @@ async def test_run_agent_step_worker_role_calls_execute_task(
     agent_id = uuid4()
 
     # Register as root limits (required for sibling view lookup)
-    limits_registry.create_root(agent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
+    limits_registry.create_root(agent_id, max_depth=-1, max_children_per_node=-1)
 
     event1 = AgentCreated(
         aggregate_id=agent_id,
@@ -643,7 +643,7 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     child_id = uuid4()
 
     # Register limits (parent is root, child inherits)
-    limits_registry.create_root(parent_id, max_depth=-1, max_children_per_node=-1, max_retries=3)
+    limits_registry.create_root(parent_id, max_depth=-1, max_children_per_node=-1)
     limits_registry.propagate_to_child(parent_id, child_id)
 
     # Child events (WORKER that completes)

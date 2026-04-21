@@ -1,7 +1,6 @@
 """Bootstrap-level retry wiring and retry-context tests."""
 
 from collections.abc import AsyncIterator
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -82,7 +81,6 @@ async def test_create_runtime_cli_wires_retry_config_and_retry_feedback(
         worker_tool=worker,
         shared_context=shared_context,
         recon_tool=_NoopReconTool(),
-        secbench_runtime=SimpleNamespace(),
     )
 
     monkeypatch.setattr(
@@ -94,6 +92,8 @@ async def test_create_runtime_cli_wires_retry_config_and_retry_feedback(
     retry_config = cli.execution_service._retry_config
 
     assert retry_config is not None
+    assert retry_config.max_worker_retries == 1
+    assert retry_config.max_verification_retries == 2
     assert retry_config.model_escalation_chain == ["openai/gpt-4-turbo"]
 
     boss_id = await cli.execution_service.create_boss_agent("Bootstrap retry wiring test")
