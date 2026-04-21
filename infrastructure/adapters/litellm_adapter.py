@@ -6,6 +6,7 @@ cost tracking via the CostCalculatorPort.
 """
 
 import json
+import logging
 from typing import Any
 
 import litellm
@@ -13,6 +14,9 @@ import litellm
 from core.domain.exceptions import LLMError
 from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage, ToolCall
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
+
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMAdapter(LLMPort):
@@ -258,14 +262,26 @@ class LiteLLMAdapter(LLMPort):
         Returns:
             Cost in USD.
         """
-        # Use injected calculator if available
+        # Use injected calculator if available. Bootstrap always injects
+        # ``DefaultCostCalculator`` in production; the fallback path below only
+        # runs in tests or ad-hoc scripts that construct the adapter directly.
         if self._cost_calculator is not None:
             return self._cost_calculator.calculate_llm_cost(model, prompt_tokens, completion_tokens)
 
-        # Fall back to LiteLLM's built-in cost calculation
+        # Fall back to LiteLLM's built-in cost calculation.
         try:
             cost = litellm.completion_cost(completion_response=response)
             return round(cost, 6)
-        except Exception:
-            # If LiteLLM cost calculation fails, return 0
+        except Exception as exc:
+            # Silently returning 0 here previously masked the fact that
+            # LiteLLM's pricing table does not know about every production
+            # model (Anthropic 4.x landed without an entry for months). Log
+            # loudly so the dataset operator spots the miscalculation.
+            logger.warning(
+                "litellm.completion_cost failed for model %r (%s); "
+                "recording cost_usd=0.0. Inject a CostCalculatorPort "
+                "(e.g. DefaultCostCalculator) to avoid this fallback.",
+                model,
+                exc,
+            )
             return 0.0

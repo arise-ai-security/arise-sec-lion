@@ -8,7 +8,7 @@ LiteLLM pricing source:
 - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
 """
 
-
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
@@ -76,15 +76,22 @@ class PriceInfo:
 # Default Pricing Tables (Fallback)
 # =============================================================================
 
-# Only used when LiteLLM pricing is unavailable
+# Used when LiteLLM's own cost map is missing an entry (it currently lacks
+# Anthropic 4.x). Prices in USD per 1M tokens, sourced from
+# https://platform.claude.com/docs/en/about-claude/pricing (verified 2026-04).
 FALLBACK_PRICING: dict[str, ModelPricing] = {
     "gpt-4o": ModelPricing(2.50, 10.00),
     "gpt-4o-mini": ModelPricing(0.15, 0.60),
     "claude-3-5-sonnet-20241022": ModelPricing(3.00, 15.00),
     "claude-3-opus-20240229": ModelPricing(15.00, 75.00),
+    # Anthropic 4.x — used across the tree-vs-flat experiment cells.
+    "claude-opus-4-7": ModelPricing(5.00, 25.00),
+    "claude-sonnet-4-6": ModelPricing(3.00, 15.00),
+    "claude-haiku-4-5": ModelPricing(1.00, 5.00),
 }
 
-# Conservative default for completely unknown models
+# Conservative default for completely unknown models; logged as a warning so
+# experiment operators spot silent misattribution.
 DEFAULT_PRICING = ModelPricing(5.00, 15.00)
 
 # Worker tool pricing: USD per minute of execution
@@ -288,13 +295,24 @@ class DefaultCostCalculator(CostCalculatorPort):
 
     def _resolve_pricing(self, model: str) -> ModelPricing:
         """Resolve pricing for a model using all available sources."""
-        # Try LiteLLM first (most accurate)
+        # Try LiteLLM first (most accurate when up to date).
         litellm_pricing = _lookup_litellm_pricing(model)
         if litellm_pricing is not None:
             return litellm_pricing
 
-        # Fall back to static pricing
-        return self._lookup_fallback_pricing(model)
+        # Fall back to our own table; warn loudly on default so experiment
+        # operators catch silent misattribution when the map ages.
+        pricing = self._lookup_fallback_pricing(model)
+        if pricing is DEFAULT_PRICING:
+            logger.warning(
+                "No pricing entry for model %r — using DEFAULT_PRICING "
+                "(input=%s/MTok, output=%s/MTok). Cost accounting for this "
+                "model will be inaccurate; add it to FALLBACK_PRICING.",
+                model,
+                DEFAULT_PRICING.input_cost_per_million,
+                DEFAULT_PRICING.output_cost_per_million,
+            )
+        return pricing
 
     def _lookup_fallback_pricing(self, model: str) -> ModelPricing:
         """Look up pricing from fallback table with fuzzy matching."""
