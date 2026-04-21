@@ -3,6 +3,7 @@
 These tests verify the orchestration logic using mocked ports.
 """
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -239,6 +240,121 @@ async def test_run_agent_step_boss_role_calls_evaluate_task(
     # And: Events should have been saved (append or append_batch)
     events_persisted = mock_event_store.append.called or mock_event_store.append_batch.called
     assert events_persisted, "Should save SubtasksDefined event"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_task_retries_on_malformed_json_and_succeeds(
+    execution_service, mock_event_store, mock_llm_port
+) -> None:
+    """evaluate_task retries up to _JSON_PARSE_RETRIES times and succeeds on a later attempt."""
+
+    # Given: A BOSS agent ready to decompose
+    agent_id = uuid4()
+
+    event1 = AgentCreated(
+        aggregate_id=agent_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config=_test_config(),
+    )
+    event2 = TaskAssigned(
+        aggregate_id=agent_id,
+        sequence_number=2,
+        task_description="Decompose a task that requires retries",
+    )
+    mock_event_store.get_events.return_value = [event1, event2]
+
+    # And: The LLM returns malformed JSON on the first call, valid JSON on the second
+    config = _test_config()
+    valid_payload = (
+        '[{"description": "First subtask", "config": '
+        f"{json.dumps(config)}" + "}]"
+    )
+    mock_llm_port.query_with_usage.side_effect = [
+        _make_llm_response("This is not JSON at all"),
+        _make_llm_response(valid_payload),
+    ]
+
+    # When: Run agent step
+    await execution_service.run_agent_step(agent_id)
+
+    # Then: The LLM was called twice (first attempt failed, second succeeded)
+    assert mock_llm_port.query_with_usage.await_count == 2, (
+        "evaluate_task should retry after the first malformed JSON response"
+    )
+
+    # And: No WorkFailed event carrying the malformed-JSON marker was persisted
+    persisted = _collect_persisted_events(mock_event_store)
+    failed_reasons = [
+        ev.reason for ev in persisted if getattr(ev, "reason", None) is not None
+    ]
+    assert not any("malformed_json_after_retries" in r for r in failed_reasons), (
+        f"Agent should not have failed; reasons={failed_reasons!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_evaluate_task_fails_with_marker_after_all_retries(
+    execution_service, mock_event_store, mock_llm_port
+) -> None:
+    """evaluate_task emits a WorkFailed with the malformed_json_after_retries marker
+    when every LLM attempt returns unparsable content.
+    """
+
+    # Given: A BOSS agent ready to decompose
+    agent_id = uuid4()
+
+    event1 = AgentCreated(
+        aggregate_id=agent_id,
+        sequence_number=1,
+        role=AgentRole.BOSS.value,
+        parent_id=None,
+        config=_test_config(),
+    )
+    event2 = TaskAssigned(
+        aggregate_id=agent_id,
+        sequence_number=2,
+        task_description="Decompose a task that will never produce valid JSON",
+    )
+    mock_event_store.get_events.return_value = [event1, event2]
+
+    # And: Every LLM call returns garbage
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("garbage garbage garbage")
+
+    # When: Run agent step
+    await execution_service.run_agent_step(agent_id)
+
+    # Then: The LLM was called _JSON_PARSE_RETRIES times
+    from core.application.agent_orchestrator import (
+        _JSON_PARSE_RETRIES,
+        MALFORMED_JSON_REASON_PREFIX,
+    )
+
+    assert mock_llm_port.query_with_usage.await_count == _JSON_PARSE_RETRIES, (
+        f"Expected exactly {_JSON_PARSE_RETRIES} LLM calls, "
+        f"got {mock_llm_port.query_with_usage.await_count}"
+    )
+
+    # And: WorkFailed event carries the structured marker used by the anomaly detector
+    persisted = _collect_persisted_events(mock_event_store)
+    failed = [ev for ev in persisted if getattr(ev, "reason", None) is not None]
+    assert failed, "Expected at least one WorkFailed event after all retries exhausted"
+    assert any(MALFORMED_JSON_REASON_PREFIX in ev.reason for ev in failed), (
+        f"No WorkFailed event contained the '{MALFORMED_JSON_REASON_PREFIX}' marker; "
+        f"reasons={[ev.reason for ev in failed]!r}"
+    )
+
+
+def _collect_persisted_events(mock_event_store):
+    """Flatten all events that were append-ed (single or batch) during the test run."""
+    collected = []
+    for call in mock_event_store.append.await_args_list:
+        collected.append(call.args[0] if call.args else call.kwargs.get("event"))
+    for call in mock_event_store.append_batch.await_args_list:
+        batch = call.args[0] if call.args else call.kwargs.get("events") or []
+        collected.extend(batch)
+    return collected
 
 
 @pytest.mark.asyncio

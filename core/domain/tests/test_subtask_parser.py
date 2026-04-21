@@ -5,7 +5,7 @@ import json
 import pytest
 
 from core.domain.exceptions import InfeasibleError
-from core.domain.services import parse_subtasks_from_llm
+from core.domain.services import extract_json_envelope, parse_subtasks_from_llm
 from core.domain.values.constraint_failure import ConstraintFailure
 from core.domain.values.subtask import Subtask
 
@@ -306,6 +306,104 @@ def test_constraint_failure_format_message_minimal() -> None:
 
     # Then: Message has reason only
     assert msg == "Constraints unsatisfiable: Cannot decompose"
+
+
+# ---------------------------------------------------------------------------
+# Prose-tolerant JSON envelope extraction (for malformed LLM output with
+# preamble / postamble text around the JSON payload).
+# ---------------------------------------------------------------------------
+
+
+def test_extract_json_envelope_accepts_plain_array() -> None:
+    """Valid JSON array with no surrounding prose parses normally."""
+
+    # Given: Bare JSON array
+    text = '[{"a": 1}, {"a": 2}]'
+
+    # When: Extract envelope
+    data = extract_json_envelope(text)
+
+    # Then: Returns the parsed array
+    assert data == [{"a": 1}, {"a": 2}]
+
+
+def test_extract_json_envelope_strips_fenced_code_block() -> None:
+    """Fenced `````json ...````` wrappers are transparently stripped."""
+
+    # Given: Array wrapped in a ```json ... ``` code fence
+    text = '```json\n[{"a": 1}]\n```'
+
+    # When: Extract envelope
+    data = extract_json_envelope(text)
+
+    # Then: Returns the parsed array
+    assert data == [{"a": 1}]
+
+
+def test_extract_json_envelope_recovers_array_with_preamble() -> None:
+    """When LLM prefixes JSON with prose, envelope extraction still succeeds."""
+
+    # Given: Explanatory preamble followed by JSON array (no code fence)
+    text = 'Here is the decomposition:\n\n[{"description": "x"}]'
+
+    # When: Extract envelope
+    data = extract_json_envelope(text)
+
+    # Then: Returns the parsed array
+    assert data == [{"description": "x"}]
+
+
+def test_extract_json_envelope_recovers_array_with_postamble() -> None:
+    """Trailing prose after the JSON array does not defeat extraction."""
+
+    # Given: JSON array followed by a trailing sentence
+    text = '[{"description": "x"}]\n\nThat fulfills the 4-phase mandate.'
+
+    # When: Extract envelope
+    data = extract_json_envelope(text)
+
+    # Then: Returns the parsed array
+    assert data == [{"description": "x"}]
+
+
+def test_extract_json_envelope_recovers_dict_with_prose() -> None:
+    """Dict-shaped responses wrapped in prose are also recoverable."""
+
+    # Given: Explanatory text with an embedded JSON object
+    text = 'The answer is:\n{"action": "execute", "reasoning": "single concern"}\nDone.'
+
+    # When: Extract envelope
+    data = extract_json_envelope(text)
+
+    # Then: Returns the parsed dict
+    assert data == {"action": "execute", "reasoning": "single concern"}
+
+
+def test_extract_json_envelope_raises_on_genuine_garbage() -> None:
+    """Input containing no JSON-shaped span raises JSONDecodeError."""
+
+    # Given: Text with no array / object literals at all
+    text = "I could not produce output — please retry."
+
+    # When / Then: extraction raises JSONDecodeError
+    with pytest.raises(json.JSONDecodeError):
+        extract_json_envelope(text)
+
+
+def test_parse_subtasks_recovers_from_preamble_prose() -> None:
+    """parse_subtasks_from_llm inherits the envelope recovery from extract_json_envelope."""
+
+    # Given: Preamble prose before a valid subtask array
+    config = _test_config_json()
+    payload = json.dumps([{"description": "Research", "config": config}])
+    llm_response = f"Sure! Here is the decomposition:\n{payload}"
+
+    # When: Parse the response
+    subtasks = parse_subtasks_from_llm(llm_response)
+
+    # Then: Returns the subtask
+    assert len(subtasks) == 1
+    assert subtasks[0].description == "Research"
 
 
 def test_parse_constraint_failure_response() -> None:
