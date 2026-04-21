@@ -42,16 +42,55 @@ SECONDS_PER_MINUTE: float = 60.0
 
 @dataclass(frozen=True, slots=True)
 class ModelPricing:
-    """Immutable pricing per 1M tokens for a model."""
+    """Immutable pricing per 1M tokens for a model.
+
+    Anthropic and (increasingly) other providers bill prompt-cache-read and
+    prompt-cache-creation tokens at non-standard rates: cache-read is
+    ~10 percent of input; cache-creation is ~125 percent. The raw
+    ``prompt_tokens`` field already includes both buckets, so the cache
+    tokens must be subtracted from the fresh input count and re-added at
+    their adjusted rates. The ratios are hardcoded rather than per-model
+    because Anthropic applies them uniformly across their current frontier.
+    """
 
     input_cost_per_million: float
     output_cost_per_million: float
+    cache_read_multiplier: float = 0.1
+    cache_write_multiplier: float = 1.25
 
-    def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """Calculate total cost for given token counts."""
-        input_cost = (prompt_tokens / TOKENS_PER_MILLION) * self.input_cost_per_million
+    def calculate_cost(
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+    ) -> float:
+        """Calculate total cost for given token counts.
+
+        ``prompt_tokens`` is expected to include cache-read and cache-write
+        tokens (that's how Anthropic's usage schema reports them); they get
+        subtracted from the fresh-input cost and re-added at the cache
+        multipliers. Callers that don't track cache buckets pass 0 for
+        both, which collapses to the legacy two-term cost.
+        """
+        fresh_input = max(0, prompt_tokens - cache_read_tokens - cache_write_tokens)
+        input_cost = (fresh_input / TOKENS_PER_MILLION) * self.input_cost_per_million
+        cache_read_cost = (
+            (cache_read_tokens / TOKENS_PER_MILLION)
+            * self.input_cost_per_million
+            * self.cache_read_multiplier
+        )
+        cache_write_cost = (
+            (cache_write_tokens / TOKENS_PER_MILLION)
+            * self.input_cost_per_million
+            * self.cache_write_multiplier
+        )
         output_cost = (completion_tokens / TOKENS_PER_MILLION) * self.output_cost_per_million
-        return round(input_cost + output_cost, COST_DECIMAL_PLACES)
+        return round(
+            input_cost + cache_read_cost + cache_write_cost + output_cost,
+            COST_DECIMAL_PLACES,
+        )
 
     def average_cost_per_million(self) -> float:
         """Average of input and output cost (for when split is unknown)."""
@@ -211,19 +250,32 @@ class DefaultCostCalculator(CostCalculatorPort):
         model: str,
         prompt_tokens: int,
         completion_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> float:
         """Calculate cost in USD for an LLM call.
 
         Args:
             model: Model name (with or without provider prefix).
-            prompt_tokens: Number of input tokens.
+            prompt_tokens: Number of input tokens (includes any cache tokens,
+                matching Anthropic's usage-schema semantics).
             completion_tokens: Number of output tokens.
+            cache_read_tokens: Subset of ``prompt_tokens`` that hit the prompt
+                cache; billed at ``cache_read_multiplier`` times input rate.
+            cache_write_tokens: Subset of ``prompt_tokens`` that created cache
+                entries; billed at ``cache_write_multiplier`` times input rate.
 
         Returns:
             Cost in USD, rounded to 6 decimal places.
         """
         pricing = self._resolve_pricing(model)
-        return pricing.calculate_cost(prompt_tokens, completion_tokens)
+        return pricing.calculate_cost(
+            prompt_tokens,
+            completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
 
     def calculate_worker_cost(
         self,

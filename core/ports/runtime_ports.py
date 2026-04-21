@@ -71,10 +71,23 @@ class WorkerToolPort(Protocol):
 
 
 class CostCalculatorPort(Protocol):
-    """Calculate USD cost from token usage and model information."""
+    """Calculate USD cost from token usage and model information.
+
+    ``calculate_llm_cost`` accepts optional cache-read / cache-write token
+    counts so providers that bill prompt-caching separately (Anthropic
+    charges cache-read at ~10 percent of input and cache-creation at ~125
+    percent) can be priced accurately. Implementations that don't support
+    the split should treat the kwargs as a no-op.
+    """
 
     def calculate_llm_cost(
-        self, model: str, prompt_tokens: int, completion_tokens: int
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> float: ...
 
     def calculate_worker_cost(

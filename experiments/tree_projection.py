@@ -293,7 +293,10 @@ def _convert_event(
         op_raw = str(getattr(ev, "operation", "worker_execution"))
         prompt_tokens = int(getattr(ev, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(ev, "completion_tokens", 0) or 0)
-        # TokensConsumed's current schema doesn't split cache tokens; use what's there.
+        # TokensConsumed carries cache-read / cache-creation / reasoning
+        # tokens as of the P2 cost-accounting fix; ``getattr`` with a ``0``
+        # default keeps replay of pre-fix events working (they just contribute
+        # zero to the cache dimensions).
         return NormalizedEvent(
             **base,
             event_type="tokens_consumed",

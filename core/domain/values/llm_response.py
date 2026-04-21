@@ -10,13 +10,25 @@ from pydantic import BaseModel, Field
 
 
 class LLMUsage(BaseModel):
-    """Token usage from an LLM response."""
+    """Token usage from an LLM response.
+
+    ``prompt_tokens`` / ``completion_tokens`` / ``total_tokens`` are the
+    headline counts. Anthropic (and increasingly other providers) bill some
+    of the prompt at different rates — cache-read at ~10 percent of input,
+    cache-write at ~125 percent — so the extra dimensions below are needed
+    to compute accurate per-call cost. ``reasoning_tokens`` is carried for
+    schema parity with providers that bill thinking output separately; at
+    the moment Anthropic folds it into ``completion_tokens``.
+    """
 
     model_config = {"frozen": True}
 
     prompt_tokens: int = Field(ge=0)
     completion_tokens: int = Field(ge=0)
     total_tokens: int = Field(ge=0)
+    cache_read_tokens: int = Field(ge=0, default=0)
+    cache_write_tokens: int = Field(ge=0, default=0)
+    reasoning_tokens: int = Field(ge=0, default=0)
 
     def __add__(self, other: "LLMUsage") -> "LLMUsage":
         """Accumulate usage across multiple LLM turns."""
@@ -24,6 +36,9 @@ class LLMUsage(BaseModel):
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
 

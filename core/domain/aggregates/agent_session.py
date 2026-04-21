@@ -630,10 +630,15 @@ class AgentSession:
         total_tokens: int,
         cost_usd: float,
         operation: str,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        reasoning_tokens: int = 0,
     ) -> None:
         """Emit TokensConsumed event (pure domain method).
 
-        Called by orchestrator after LLM call completes.
+        Called by orchestrator after LLM call completes. Cache and reasoning
+        dimensions are optional so callers that don't carry them (tests,
+        older code paths) default to zero without breaking the event schema.
         """
         cost_event = TokensConsumed(
             aggregate_id=self.agent_id,
@@ -644,6 +649,9 @@ class AgentSession:
             total_tokens=total_tokens,
             cost_usd=cost_usd,
             operation=operation,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
         self._emit(cost_event)
 
