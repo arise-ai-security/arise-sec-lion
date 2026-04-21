@@ -314,6 +314,18 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         if not isinstance(message, AssistantMessage):
             return
 
+        # ``AssistantMessage.error`` carries non-terminal signals like
+        # ``"rate_limit"`` or ``"server_error"`` that fire mid-stream and are
+        # distinct from the final ``ResultMessage.is_error``. Historically
+        # these were dropped, so post-run analysis could not see API-level
+        # failures that the orchestrator still recovered from.
+        sdk_error = getattr(message, "error", None)
+        if sdk_error:
+            yield sequencer.thought(
+                str(sdk_error),
+                output_type="error",
+            )
+
         for block in message.content:
             if isinstance(block, ToolUseBlock):
                 continue  # Hook path owns tool_use emission.
@@ -337,6 +349,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 result_bytes=metadata.get("result_bytes"),
                 tool_input_json=metadata.get("tool_input_json"),
                 tool_name=metadata.get("tool_name"),
+                is_error=bool(metadata.get("is_error", False)),
             )
 
     def _make_cost_event(
@@ -448,6 +461,12 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                     "call_id": getattr(block, "tool_use_id", None),
                     "was_truncated": was_truncated,
                     "result_bytes": result_bytes,
+                    # ToolResultBlock.is_error signals that the tool itself
+                    # reported failure (e.g. Bash non-zero exit, permission
+                    # denied). Forwarding it preserves the success/fail signal
+                    # for downstream analysis; without this the normalized
+                    # dataset treats every tool call as successful.
+                    "is_error": bool(getattr(block, "is_error", False)),
                 },
             )
         return None

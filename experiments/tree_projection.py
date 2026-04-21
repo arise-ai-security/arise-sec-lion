@@ -352,13 +352,24 @@ def _convert_event(
                     result_text=content,
                     was_truncated=bool(getattr(ev, "was_truncated", False)),
                     result_bytes=_to_int_or_none(getattr(ev, "result_bytes", None)),
-                    is_error=False,  # domain doesn't currently split out is_error
+                    is_error=bool(getattr(ev, "is_error", False)),
                 ),
             )
-        # thinking / progress / output text: emit as generic so CNR can still see them.
+        # Non-tool output types each get their own normalized event_type so
+        # the dataset doesn't conflate plain assistant text / reasoning /
+        # sdk errors with tool calls. Previously all fell through to
+        # tool_use or tool_result which corrupted every per-cell event-type
+        # count.
+        output_type_to_event_type: dict[str, str] = {
+            "output": "assistant_text",
+            "thinking": "thinking",
+            "error": "sdk_error",
+            "heartbeat": "heartbeat",
+        }
+        mapped = output_type_to_event_type.get(output_type, "assistant_text")
         return NormalizedEvent(
             **base,
-            event_type="tool_use" if output_type == "output" else "tool_result",
+            event_type=mapped,  # type: ignore[arg-type]
             payload=GenericPayload(data={"output_type": output_type, "content": content}),
         )
 

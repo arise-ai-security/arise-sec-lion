@@ -249,6 +249,12 @@ class ThoughtCaptured(DomainEvent):
     result_bytes: int | None = None
     tool_input_json: dict[str, Any] | None = None
     tool_name: str | None = None
+    # Tool-result error flag, populated from ``ToolResultBlock.is_error`` on
+    # output_type='tool_result' events. False for non-tool-result events.
+    # Without this, failed tool invocations (e.g. Bash non-zero exit surfaced
+    # via `is_error=True`) were indistinguishable from successful ones in the
+    # normalized dataset.
+    is_error: bool = False
 
 
 class PromptSent(DomainEvent):

@@ -41,6 +41,20 @@ EventType = Literal[
     "tokens_consumed",
     "tool_use",
     "tool_result",
+    # Assistant text and thinking events are emitted by the Claude SDK
+    # adapter as ThoughtCaptured(output_type in {"output", "thinking"}).
+    # Previously coerced to tool_use / tool_result, which corrupted per-cell
+    # event-type counts.
+    "assistant_text",
+    "thinking",
+    # SDK-level error signals (e.g. AssistantMessage.error in {rate_limit,
+    # server_error}) that fire without being the terminal ResultMessage.
+    "sdk_error",
+    # Periodic liveness event emitted by the Claude SDK adapter when no
+    # other event has been seen within a heartbeat window. Lets
+    # anomaly_detector distinguish a real hang from a legitimately slow
+    # tool call.
+    "heartbeat",
     "worker_cost_recorded",
     "status_changed",
     "subtasks_defined",

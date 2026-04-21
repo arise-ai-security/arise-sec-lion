@@ -83,6 +83,7 @@ class EventSequencer:
         result_bytes: int | None = None,
         tool_input_json: dict[str, Any] | None = None,
         tool_name: str | None = None,
+        is_error: bool = False,
     ) -> ThoughtCaptured:
         """Create a ThoughtCaptured event and increment sequence.
 
@@ -126,6 +127,7 @@ class EventSequencer:
                 else None
             ),
             tool_name=tool_name,
+            is_error=is_error,
         )
         self._sequence += 1
         return event
