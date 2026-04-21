@@ -431,7 +431,12 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         reasoning_tokens = usage.get("reasoning_tokens")
 
         # Total only counts dimensions we actually have data for; if the usage
-        # dict was empty, total_tokens stays None so it matches the "no data" signal.
+        # dict was empty, total_tokens stays None so it matches the "no data"
+        # signal. ``reasoning_tokens`` is deliberately excluded from the sum:
+        # Anthropic's current API folds extended-thinking output into
+        # ``output_tokens`` (see docstring above), so summing it would
+        # double-count. The field stays populated on the event for future
+        # reconciliation if Anthropic unbundles thinking billing.
         parts = [
             t
             for t in (
@@ -439,7 +444,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 completion_tokens,
                 cache_read_tokens,
                 cache_write_tokens,
-                reasoning_tokens,
             )
             if t is not None
         ]
