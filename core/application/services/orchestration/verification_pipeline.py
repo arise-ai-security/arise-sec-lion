@@ -177,6 +177,9 @@ class VerificationPipeline:
             total_tokens=response.usage.total_tokens,
             cost_usd=response.cost_usd,
             operation="verification",
+            cache_read_tokens=response.usage.cache_read_tokens,
+            cache_write_tokens=response.usage.cache_write_tokens,
+            reasoning_tokens=response.usage.reasoning_tokens,
         )
 
     async def _verify_with_judge(

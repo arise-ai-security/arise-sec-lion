@@ -274,6 +274,12 @@ class TokensConsumed(DomainEvent):
 
     Emitted after each LLM call to track token usage and costs.
     Enables cost aggregation per agent, per operation, and system-wide.
+
+    The cache/reasoning dimensions are optional (default 0) so replay of
+    historical events stays backward-compatible. Current adapters (LiteLLM,
+    Claude SDK worker) populate them when the upstream usage dict exposes
+    them — Anthropic tracks cache-read and cache-creation separately, and
+    those tokens are billed at different rates from fresh input tokens.
     """
 
     model: str
@@ -281,7 +287,10 @@ class TokensConsumed(DomainEvent):
     completion_tokens: int
     total_tokens: int
     cost_usd: float
-    operation: str  # "complexity_evaluation", "task_decomposition", "worker_execution", "verification", "context_condense"
+    operation: str  # "complexity_evaluation", "task_decomposition", "task_assessment", "worker_execution", "verification", "context_condense"
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
 
 
 class WorkerCostItem(BaseModel):

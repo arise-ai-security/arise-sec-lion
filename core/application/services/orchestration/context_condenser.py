@@ -225,6 +225,9 @@ class ContextCondenser:
             total_tokens=response.usage.total_tokens,
             cost_usd=response.cost_usd,
             operation="context_condense",
+            cache_read_tokens=response.usage.cache_read_tokens,
+            cache_write_tokens=response.usage.cache_write_tokens,
+            reasoning_tokens=response.usage.reasoning_tokens,
         )
 
     @staticmethod
