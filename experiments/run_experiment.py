@@ -300,14 +300,23 @@ def _write_tree_meta_seed(
     manager = cfg.get("manager") or {}
     worker = cfg.get("worker") or {}
 
-    prompt_strategy = str(security.get("prompt_strategy", "default"))
+    # The cell YAML uses SecurityConfig.prompt_strategy ("default" for
+    # SecBenchPromptStrategy, "null" for NullPromptStrategy), but
+    # RunMeta.prompt_strategy is a separate schema vocabulary
+    # (Literal["secbench", "null", "cli_default"]). Translate before writing
+    # or RunMeta(...) validation rejects the seed and tree_projection leaves
+    # meta.json unfinalized.
+    raw_strategy = str(security.get("prompt_strategy", "default"))
+    prompt_strategy = {"default": "secbench", "null": "null"}.get(
+        raw_strategy, "secbench"
+    )
     seed: dict[str, Any] = {
         "run_id": f"{plan.cve_id}-{plan.cell}-{plan.replicate}",
         "cve_id": plan.cve_id,
         "cell": plan.cell,
         "replicate": plan.replicate,
         "domain_briefing_enabled": bool(security.get("enabled", False))
-        and prompt_strategy != "null",
+        and raw_strategy != "null",
         "subagent_enabled": worker.get("tool") == "claude_code",
         "prompt_strategy": prompt_strategy,
         "docker_image": docker_image,
