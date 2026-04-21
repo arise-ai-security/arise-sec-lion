@@ -434,7 +434,9 @@ def test_make_cost_event_parses_cache_and_thinking_tokens() -> None:
     assert event.cache_read_tokens == 400
     assert event.cache_write_tokens == 200
     assert event.reasoning_tokens == 75
-    assert event.tokens == 825  # total across all five
+    # reasoning_tokens is not added to ``tokens`` — Anthropic folds extended
+    # thinking output into ``output_tokens``, so summing it would double-count.
+    assert event.tokens == 750  # prompt + completion + cache_read + cache_write
     assert event.cost_usd == 0.0123
 
 
