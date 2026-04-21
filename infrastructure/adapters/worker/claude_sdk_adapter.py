@@ -42,6 +42,15 @@ from .shared.truncation import cap_thought_content
 logger = logging.getLogger(__name__)
 
 
+# Heartbeat interval for the idle-wait liveness signal inside
+# ``_execute_task``. Chosen well below the 900s ``worker_stuck`` threshold
+# (``experiments/anomaly_detector.py::STUCK_TIME_THRESHOLD_SECONDS``) so a
+# legitimately long tool invocation (e.g. a multi-minute Bash build or a
+# Docker build inside a secbench worker) still produces periodic liveness
+# events and is not misclassified as a hang.
+HEARTBEAT_INTERVAL_SECONDS: float = 60.0
+
+
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
 
 # Queue tuple shape: (formatted_content, output_type, tool_use_id, tool_input_json, tool_name).
@@ -169,35 +178,75 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             # propagates cancellation out of the ``async for`` and lets the
             # ``ClaudeSDKClient`` ``__aexit__`` handler tear the subprocess and
             # container down cleanly.
+            #
+            # We drive the iterator manually so ``asyncio.wait`` can race the
+            # next SDK message against a heartbeat timer; that lets a legitimate
+            # multi-minute tool call (Docker build, compile) emit periodic
+            # liveness events instead of looking indistinguishable from a hang
+            # to the ``worker_stuck`` detector.
+            pending: asyncio.Task[Any] | None = None
             async with ClaudeSDKClient(options=options) as client:
                 async with asyncio.timeout(self.timeout_seconds):
                     await client.query(task_description)
 
-                    async for message in client.receive_response():
-                        # Yield pending tool events from hooks
-                        async for event in self._drain_queue(tool_queue, sequencer):
-                            yield event
+                    message_iter = aiter(client.receive_response())
+                    pending = asyncio.ensure_future(anext(message_iter))
 
-                        # Process message content blocks
-                        async for event in self._process_message(message, sequencer):
-                            yield event
+                    try:
+                        while True:
+                            done, _ = await asyncio.wait(
+                                {pending}, timeout=HEARTBEAT_INTERVAL_SECONDS
+                            )
 
-                        # Handle result message (terminal)
-                        if isinstance(message, ResultMessage):
+                            # Hooks may have fired during our wait; drain
+                            # before processing whatever the SDK produced.
                             async for event in self._drain_queue(tool_queue, sequencer):
                                 yield event
 
-                            # Emit cost event before terminal event
-                            cost_event = self._make_cost_event(
-                                message,
-                                sequencer,
-                                runtime_model=runtime_model,
-                            )
-                            if cost_event:
-                                yield cost_event
+                            if not done:
+                                # No SDK message this interval. Emit a
+                                # heartbeat so downstream analysis can
+                                # distinguish slow work from a real hang.
+                                yield sequencer.thought(
+                                    "(awaiting SDK response)",
+                                    output_type="heartbeat",
+                                )
+                                continue
 
-                            yield self._make_result_event(message, sequencer)
-                            return
+                            try:
+                                message = pending.result()
+                            except StopAsyncIteration:
+                                # Iterator exhausted without a ResultMessage
+                                # (unexpected but recoverable — treat as
+                                # complete, let outer code finalize).
+                                break
+
+                            async for event in self._process_message(message, sequencer):
+                                yield event
+
+                            if isinstance(message, ResultMessage):
+                                async for event in self._drain_queue(tool_queue, sequencer):
+                                    yield event
+
+                                cost_event = self._make_cost_event(
+                                    message,
+                                    sequencer,
+                                    runtime_model=runtime_model,
+                                )
+                                if cost_event:
+                                    yield cost_event
+
+                                yield self._make_result_event(message, sequencer)
+                                return
+
+                            # Queue the next message for the next iteration.
+                            pending = asyncio.ensure_future(anext(message_iter))
+                    finally:
+                        # Cancel any still-pending anext() task so it cannot
+                        # leak across session boundaries (e.g. on timeout or
+                        # error path).
+                        if pending is not None and not pending.done():
+                            pending.cancel()
 
         except TimeoutError:
             yield sequencer.failed(
