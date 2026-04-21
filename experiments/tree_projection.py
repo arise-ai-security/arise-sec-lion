@@ -63,9 +63,12 @@ logger = logging.getLogger(__name__)
 
 
 # Maps the domain's lower-case "operation" strings on TokensConsumed /
-# PromptSent to the normalized-schema Operation literals.
+# PromptSent to the normalized-schema Operation literals. Keep in sync with
+# the OperationType alias in core/domain/services/config_resolver.py and
+# every `op = "..."` / `operation=` call site in core/application/.
 OPERATION_MAP: dict[str, str] = {
     "complexity_evaluation": "assess",
+    "task_assessment": "assess",
     "task_decomposition": "decompose",
     "worker_execution": "worker_execution",
     "verification": "verification",
