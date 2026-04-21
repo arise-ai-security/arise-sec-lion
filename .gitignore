@@ -688,6 +688,7 @@ FodyWeavers.xsd
 !USER_MANUAL.md
 !agent-docs/*.md
 !.claude/docs/*.md
+!skills/*.md
 
 # Output directory (generated code, exports, last run tracking)
 output/
