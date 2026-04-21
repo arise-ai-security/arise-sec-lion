@@ -6,6 +6,7 @@ from typing import Literal
 import infrastructure.adapters.sinks as _sinks  # noqa: F401 - registers sinks via decorators
 from core.ports.event_store_port import EventStorePort
 from core.ports.runtime_ports import LLMPort, ReconToolPort, SharedContextPort, WorkerToolPort
+from infrastructure.adapters.cost_calculator import DefaultCostCalculator
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.adapters.recon_tool_adapter import ReconToolAdapter
@@ -75,7 +76,12 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
 def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     """Create all infrastructure adapters."""
     event_store = PostgresEventStore(config.postgres_connection_string)
-    llm_adapter = LiteLLMAdapter()
+    # Inject an explicit cost calculator. Without it, LiteLLMAdapter falls
+    # back to ``litellm.completion_cost`` whose on-disk cost map lacks
+    # Anthropic 4.x entries; the except-branch used to silently record
+    # ``cost_usd=0`` for every tree BOSS/MANAGER/judge/condenser call, so
+    # INDEX.jsonl.total_cost_usd severely under-reported API spend.
+    llm_adapter = LiteLLMAdapter(cost_calculator=DefaultCostCalculator())
     worker_tool = _create_worker_adapter(config)
     shared_context = PostgresSharedContextAdapter(event_store)
     recon_tool = ReconToolAdapter()

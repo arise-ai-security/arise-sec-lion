@@ -152,34 +152,44 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 runtime_model=runtime_model,
             )
 
+            # Per-worker deadline. ``ClaudeSDKClient.receive_response()`` is an
+            # async iterator that the upstream SDK documents as running
+            # indefinitely if the model never emits a ``ResultMessage`` (e.g.
+            # tool-loop stall, network wedge). Without an explicit deadline the
+            # whole experiment runner hangs, holding Docker worker containers
+            # open until an external operator kills the process. ``asyncio.timeout``
+            # propagates cancellation out of the ``async for`` and lets the
+            # ``ClaudeSDKClient`` ``__aexit__`` handler tear the subprocess and
+            # container down cleanly.
             async with ClaudeSDKClient(options=options) as client:
-                await client.query(task_description)
+                async with asyncio.timeout(self.timeout_seconds):
+                    await client.query(task_description)
 
-                async for message in client.receive_response():
-                    # Yield pending tool events from hooks
-                    async for event in self._drain_queue(tool_queue, sequencer):
-                        yield event
-
-                    # Process message content blocks
-                    async for event in self._process_message(message, sequencer):
-                        yield event
-
-                    # Handle result message (terminal)
-                    if isinstance(message, ResultMessage):
+                    async for message in client.receive_response():
+                        # Yield pending tool events from hooks
                         async for event in self._drain_queue(tool_queue, sequencer):
                             yield event
 
-                        # Emit cost event before terminal event
-                        cost_event = self._make_cost_event(
-                            message,
-                            sequencer,
-                            runtime_model=runtime_model,
-                        )
-                        if cost_event:
-                            yield cost_event
+                        # Process message content blocks
+                        async for event in self._process_message(message, sequencer):
+                            yield event
 
-                        yield self._make_result_event(message, sequencer)
-                        return
+                        # Handle result message (terminal)
+                        if isinstance(message, ResultMessage):
+                            async for event in self._drain_queue(tool_queue, sequencer):
+                                yield event
+
+                            # Emit cost event before terminal event
+                            cost_event = self._make_cost_event(
+                                message,
+                                sequencer,
+                                runtime_model=runtime_model,
+                            )
+                            if cost_event:
+                                yield cost_event
+
+                            yield self._make_result_event(message, sequencer)
+                            return
 
         except TimeoutError:
             yield sequencer.failed(
