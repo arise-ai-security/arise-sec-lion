@@ -120,7 +120,7 @@
     {% if at_max_depth or (agents_remaining is not none and agents_remaining <= 0) %}
         3. **FORCED**: You MUST choose `"execute"` (constraint reached)
     {% else %}
-        3. If decomposing: 2-3 subtasks optimal{% if max_subtasks %} (max {{ max_subtasks }}){% endif %}
+        3. If decomposing: use only as many subtasks as needed{% if max_subtasks %} (max {{ max_subtasks }}){% endif %}
         4. Each subtask should pass the "execute directly" confidence test
     {% endif %}
     {% if max_subtasks or (agents_remaining is not none and agents_remaining > 0 and agents_remaining <= 10) %}

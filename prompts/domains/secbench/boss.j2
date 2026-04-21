@@ -39,15 +39,15 @@ The reporter MUST: (1) read all `/testcase/` artifacts and sibling context, (2) 
 
 ## Decomposition Requirements
 
-- Create exactly 4 subtasks, one per phase.
+- Create one subtask per phase.
 - Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, `[Fixer]`, and `[Reporter]`.
 - **Sequential dependencies are REQUIRED**: set `"depends_on": []` for Builder (index 0), `"depends_on": [0]` for Exploiter (index 1), `"depends_on": [1]` for Fixer (index 2), `"depends_on": [0, 1, 2]` for Reporter (index 3).
 - Do not merge phases together or skip validation deliverables for any phase.
 - Mark Builder, Exploiter, and Fixer as `"estimated_complexity": "complex"` — each phase benefits from further decomposition into specialized workers.
 - Mark Reporter as `"estimated_complexity": "simple"` — it is a single worker that reads and synthesizes findings, not a decomposition target.
-- **Builder** decomposes into exactly 3 workers (infrastructure, not code analysis — no deeper granularity needed).
-- **Exploiter** decomposes into 4-5 workers with progressively finer code analysis (static analysis → data flow → PoC crafting → reproduction → validation). Finer analysis demands more targeted workers.
-- **Fixer** decomposes into 4-5 workers (root cause analysis → fix design → patch creation → validation → aggregated verification). Patches must be developed from first principles based on root cause analysis — no external fix commits. Include a final validation worker that checks the big picture.
+- **Builder** decomposes into workers for infrastructure setup (setup → compile → verify). Builder is infrastructure work, not code analysis — no deeper granularity needed.
+- **Exploiter** decomposes into workers with progressively finer code analysis (static analysis → data flow → PoC crafting → reproduction → validation). Finer analysis demands more targeted workers.
+- **Fixer** decomposes into workers (root cause analysis → fix design → patch creation → validation → aggregated verification). Patches must be developed from first principles based on root cause analysis. Include a final validation worker that checks the big picture.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,

@@ -112,6 +112,16 @@ def _parse_json(response: str) -> Any:
     try:
         return extract_json_envelope(response)
     except json.JSONDecodeError as e:
+        # Diagnostic: log head + tail of the raw response so malformed-JSON
+        # anomalies are actionable without re-running with a debugger.
+        snippet_head = response[:1500] if response else "<empty>"
+        snippet_tail = response[-500:] if len(response) > 2000 else ""
+        logger.warning(
+            "subtask_parser: raw LLM response (len=%d) head=%r tail=%r",
+            len(response or ""),
+            snippet_head,
+            snippet_tail,
+        )
         raise ValueError(f"LLM response is not valid JSON: {e}") from e
 
 

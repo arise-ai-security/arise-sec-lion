@@ -67,7 +67,7 @@ class SDKAdapterConfig:
     model: str | None = None
     timeout_seconds: int = 300
     allowed_tools: list[str] = field(
-        default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+        default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "WebSearch"]
     )
     permission_mode: PermissionMode = "bypassPermissions"
 

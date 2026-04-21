@@ -29,7 +29,7 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 
 ⚠️ **DO NOT CREATE STANDALONE BUILD WORKERS.** Building is already handled — ASan-instrumented binaries exist at `/work/bin/`. When a worker needs to rebuild after applying a patch, it runs `./secb-exec "/src/build.sh"` as a step within its validation task. Do not decompose "build" into its own subtask.
 
-**NOTE:** The fixer must develop patches from first principles based on root cause analysis. Do NOT search for or use external fix commits.
+**NOTE:** The fixer must develop patches from first principles based on root cause analysis.
 
 ### Phase Deliverable (use EXACT name)
 - `/testcase/model_patch.diff` (required, exact name — do NOT rename to patch.diff, fix.diff, etc.)
@@ -50,7 +50,7 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
    - `security_tools`: `"Install and use: (1) cflow (apt-get install -y cflow) to trace call graph from entry point to crash. (2) cppcheck (apt-get install -y cppcheck --enable=all) for vulnerability pattern scanning. (3) gdb (apt-get install -y gdb): run PoC with 'bt full' to get crash location and variable values. (4) addr2line to map crash addresses to source lines."`
    - `context_sharing`: Publish via `<context-update>`: root cause description, vulnerable file paths, function names, exact lines to fix, fix strategy, data flow path, gdb stack trace.
 
-2. **[Candidate-Reviewer]** (index 1): Based on Root-Cause-Analyst's findings, design the fix strategy. Read the vulnerable source code, understand the exact code path that triggers the vulnerability, and propose a minimal fix approach. Do NOT search for or apply existing external patches — develop the fix from first principles using the root cause analysis. Document the fix design: which lines to change, what operations to add/remove (e.g., missing free, bounds check, null guard), and why this addresses the root cause.
+2. **[Candidate-Reviewer]** (index 1): Based on Root-Cause-Analyst's findings, design the fix strategy. Read the vulnerable source code, understand the exact code path that triggers the vulnerability, and propose a minimal fix approach. Document the fix design: which lines to change, what operations to add/remove (e.g., missing free, bounds check, null guard), and why this addresses the root cause.
    - `depends_on`: [0]
    - `security_tools`: `"Read source code at the vulnerable location. Use cppcheck to verify the proposed fix strategy addresses all vulnerable paths. Cross-reference with Root-Cause-Analyst's data flow analysis to ensure completeness."`
    - `context_sharing`: Publish via `<context-update>`: fix strategy (which lines to change, what to add/remove), rationale for fix approach, all error paths that need fixing.
@@ -77,7 +77,7 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 
 ### Decomposition Requirements
 
-- **Use ONLY the 5 bracketed role names above — VERBATIM.** Copy them exactly: [Root-Cause-Analyst], [Candidate-Reviewer], [Patch-Creator], [Patch-Validator], [Fix-Aggregator]. Do NOT paraphrase (e.g., no [Patch-Author], [Patched-Builder], [Validator-ASan-Valgrind]). Do NOT invent new roles. Never create [Builder], [Build-Setup], [Build-Compiler], or any build-only worker. Rebuilding is a step within Patch-Validator's task, not a separate subtask.
+- **Use ONLY the bracketed role names above — VERBATIM.** Copy them exactly: [Root-Cause-Analyst], [Candidate-Reviewer], [Patch-Creator], [Patch-Validator], [Fix-Aggregator]. Do NOT paraphrase (e.g., no [Patch-Author], [Patched-Builder], [Validator-ASan-Valgrind]). Do NOT invent new roles. Never create [Builder], [Build-Setup], [Build-Compiler], or any build-only worker. Rebuilding is a step within Patch-Validator's task, not a separate subtask.
 - Set `depends_on` as specified (analyst → reviewer → creator → validator → aggregator).
 - Always reset to the recorded base commit before validating the patch.
 - Do not modify `/testcase/base_commit_hash`.

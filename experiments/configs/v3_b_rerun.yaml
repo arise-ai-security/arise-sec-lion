@@ -57,7 +57,7 @@ instances:
   base_commit: 1073aeef823cafd844704389e9a497c257768e2f
   expected_sanitizer_error: heap-buffer-overflow
   project: faad2
-  cwe: CWE-122
+  cwe: CWE-787
 
 - instance_id: faad2.cve-2018-20196
   stratum: EASY
@@ -65,7 +65,7 @@ instances:
   docker_image: hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196
   tools_image: secb-tools:faad2.cve-2018-20196
   task_text: Reproduce and patch CVE-2018-20196 in faad2. Follow the deliverable contract in the domain briefing.
-  base_commit: 942c7e48c8abf5acfc73a2e3468af5c0a0f08e62
+  base_commit: 334e7647a5f31903aca33dde39bb8683e9d8cccd
   expected_sanitizer_error: stack-buffer-overflow
   project: faad2
   cwe: CWE-121
@@ -76,7 +76,7 @@ instances:
   docker_image: hwiwonlee/secb.eval.x86_64.openjpeg.cve-2016-7445
   tools_image: secb-tools:openjpeg.cve-2016-7445
   task_text: Reproduce and patch CVE-2016-7445 in openjpeg. Follow the deliverable contract in the domain briefing.
-  base_commit: 83e8b28ffe52126be43f1d7e5e69da6fae9a7880
+  base_commit: 53f25200ed696cf5dc71d5fe12faad2570861b20
   expected_sanitizer_error: SEGV
   project: openjpeg
   cwe: CWE-476
@@ -87,10 +87,10 @@ instances:
   docker_image: hwiwonlee/secb.eval.x86_64.gpac.cve-2021-40575
   tools_image: secb-tools:gpac.cve-2021-40575
   task_text: Reproduce and patch CVE-2021-40575 in gpac. Follow the deliverable contract in the domain briefing.
-  base_commit: 4ee0b903d7c5e40f15272d53fe8dd55889ae7deb
-  expected_sanitizer_error: SEGV
+  base_commit: d003a572d57940460eb0bffbdbb824b59d4ddac9
+  expected_sanitizer_error: negative-size-param
   project: gpac
-  cwe: CWE-476
+  cwe: CWE-787
 
 - instance_id: mruby.cve-2022-0240
   stratum: MEDIUM
@@ -98,7 +98,7 @@ instances:
   docker_image: hwiwonlee/secb.eval.x86_64.mruby.cve-2022-0240
   tools_image: secb-tools:mruby.cve-2022-0240
   task_text: Reproduce and patch CVE-2022-0240 in mruby. Follow the deliverable contract in the domain briefing.
-  base_commit: 65a631d50c8931a46b40d511b0d3cca3e17e2f78
+  base_commit: 475b868b7236fd8e8824618e8724b587f08fbe9d
   expected_sanitizer_error: SEGV
   project: mruby
   cwe: CWE-416
@@ -110,9 +110,9 @@ instances:
   tools_image: secb-tools:gpac.cve-2022-1795
   task_text: Reproduce and patch CVE-2022-1795 in gpac. Follow the deliverable contract in the domain briefing.
   base_commit: 8595ef82b37f9219962d21ca9b985b256b125774
-  expected_sanitizer_error: SEGV
+  expected_sanitizer_error: heap-use-after-free
   project: gpac
-  cwe: CWE-476
+  cwe: CWE-416
 
 - instance_id: exiv2.cve-2017-14859
   stratum: HARD
@@ -120,8 +120,8 @@ instances:
   docker_image: hwiwonlee/secb.eval.x86_64.exiv2.cve-2017-14859
   tools_image: secb-tools:exiv2.cve-2017-14859
   task_text: Reproduce and patch CVE-2017-14859 in exiv2. Follow the deliverable contract in the domain briefing.
-  base_commit: 0513a4da0e9e1a9f0c1b2a3ea93e92d17db7a0dc
-  expected_sanitizer_error: heap-buffer-overflow
+  base_commit: f06418c656e86dc88d29f1b658c78a5f047f9673
+  expected_sanitizer_error: SEGV
   project: exiv2
   cwe: CWE-125
 
@@ -131,7 +131,7 @@ instances:
   docker_image: hwiwonlee/secb.eval.x86_64.imagemagick.cve-2019-13309
   tools_image: secb-tools:imagemagick.cve-2019-13309
   task_text: Reproduce and patch CVE-2019-13309 in ImageMagick. Follow the deliverable contract in the domain briefing.
-  base_commit: 3594b0e6ef42319f92f53a34e5e9233e7d2abfa3
-  expected_sanitizer_error: indirect-leak
+  base_commit: 63bf487f438e051094b92b570aff08efe7068f79
+  expected_sanitizer_error: leak
   project: imagemagick
   cwe: CWE-401

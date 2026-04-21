@@ -16,22 +16,24 @@ database:
 
 boss:
   model: claude-opus-4-7
-  max_tokens: 4000
+  # 16000: SecBench 4-phase decomposition (Builder/Exploiter/Fixer/Reporter with
+  # multi-paragraph justifications) truncates at 4000; matches base config.yaml.
+  max_tokens: 16000
 
 manager:
   model: claude-sonnet-4-6   # v2: was claude-opus-4-7; Sonnet for cheaper mid-tier reasoning
-  max_tokens: 4000
+  max_tokens: 8000
 
 worker:
   model: claude-sonnet-4-6
   tool: claude_code   # switched from openhands for this experiment
   timeout: 600
-  max_iterations_per_run: 40
+  max_iterations_per_run: 20   # v3 budget-tighten: was 40; caps runaway worker_stuck cost
 
 orchestration:
   max_retries: 2
   poll_interval: 0.5
-  max_run_duration_seconds: 5400
+  max_run_duration_seconds: 2700   # v3 budget-tighten: was 5400; halves worst-case wallclock
   max_redecompositions: 1
   skip_judge: true   # judge is bypassed entirely — neither pass-rate nor cost for the judge contributes to this cell
   topology:

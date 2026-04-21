@@ -1,0 +1,3 @@
+count_B1,count_B2,share_B1,share_B2,termination_reason
+3,9,0.3,0.9,anomaly:worker_stuck
+7,1,0.7,0.1,completed

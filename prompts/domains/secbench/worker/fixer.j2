@@ -24,7 +24,7 @@ Base commit hash is at `/testcase/base_commit_hash`.
    - Use `gdb -batch -ex run -ex 'bt full' -ex quit --args ./binary < poc_input` to get detailed crash context
    Identify WHY the vulnerability exists and which files need fixing. Cross-reference with the sanitizer error and vulnerable code paths.
 
-2. **Develop the fix from first principles**: Based on your root cause analysis, design and implement a minimal fix. Do NOT search for external fix commits or patches. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
+2. **Develop the fix from first principles**: Based on your root cause analysis, design and implement a minimal fix. Read the vulnerable code, understand the memory lifecycle, and add the necessary cleanup/guard code. Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
 
 3. **Create `/testcase/model_patch.diff`**:
    - After editing, generate diff for ONLY the files you changed (not the entire repo):
@@ -75,5 +75,4 @@ After creating each file, run: `echo "=== <filename> ===" && cat /testcase/<file
 - ALWAYS reset to base commit before applying patch
 - DO NOT change `/testcase/base_commit_hash`
 - Verify `/testcase/model_patch.diff` exists and is correct before concluding
-- Do NOT search for or use external fix commits — develop patches from root cause analysis only
 </domain_instructions>

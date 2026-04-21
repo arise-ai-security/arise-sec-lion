@@ -2,7 +2,7 @@
 ## Builder Manager — Decomposition
 
 Decompose the build setup phase into worker subtasks with explicit roles.
-**Builder is infrastructure work, not code-level analysis** — keep exactly 3 workers (setup → compile → verify).
+**Builder is infrastructure work, not code-level analysis** — decompose into setup → compile → verify stages.
 Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Exploiter and Fixer phases.
 
 ### Phase Deliverables
