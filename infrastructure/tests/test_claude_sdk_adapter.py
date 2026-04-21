@@ -327,3 +327,75 @@ class TestAdapterIntegration:
                 assert len(events) == 1
                 assert isinstance(events[0], WorkFailed)
                 assert "file not found" in events[0].reason
+
+    @pytest.mark.asyncio
+    async def test_run_session_prefers_task_context_model(self) -> None:
+        """Runtime worker config overrides the adapter default model."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4"))
+        agent_id = uuid4()
+        seen: dict[str, str | None] = {}
+
+        async def _fake_drain_queue(*_args, **_kwargs):
+            if False:
+                yield
+
+        async def _fake_process_message(*_args, **_kwargs):
+            if False:
+                yield
+
+        def _fake_build_options(
+            _working_dir,
+            _tool_queue,
+            _container_session,
+            runtime_model,
+        ):
+            seen["model"] = runtime_model
+            return MagicMock()
+
+        adapter._build_options = _fake_build_options  # type: ignore[method-assign]
+        adapter._drain_queue = _fake_drain_queue  # type: ignore[method-assign]
+        adapter._process_message = _fake_process_message  # type: ignore[method-assign]
+
+        result_msg = MockResultMessage(result="Task completed successfully")
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "claude_agent_sdk": MagicMock(
+                    AssistantMessage=MockAssistantMessage,
+                    ResultMessage=MockResultMessage,
+                    TextBlock=MockTextBlock,
+                    ToolResultBlock=MockToolResultBlock,
+                    ClaudeAgentOptions=MagicMock,
+                    ClaudeSDKClient=MagicMock,
+                    HookMatcher=MagicMock,
+                ),
+            },
+        ):
+            from infrastructure.adapters.worker import claude_sdk_adapter
+
+            mock_client = AsyncMock()
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = MagicMock(
+                return_value=async_iter([result_msg])
+            )
+
+            mock_client_class = MagicMock()
+            mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+            with patch.object(
+                claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class
+            ), patch.object(
+                claude_sdk_adapter, "ResultMessage", MockResultMessage
+            ):
+                async for _event in adapter.run_session(
+                    {
+                        "task_description": "Use the escalated model",
+                        "agent_id": agent_id,
+                        "config": {"base": {"model": "claude-opus-4-20250514"}},
+                    }
+                ):
+                    pass
+
+        assert seen["model"] == "claude-opus-4-20250514"

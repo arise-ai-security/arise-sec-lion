@@ -149,6 +149,17 @@ class TestGoogleADKAdapter:
                    (500 / 1_000_000) * GEMINI_3_PRO_OUTPUT_PRICE_PER_M
         assert abs(cost - expected) < 0.0001
 
+    def test_resolve_runtime_model_prefers_task_context(self) -> None:
+        """Retry-selected model overrides the adapter default."""
+        adapter = GoogleADKAdapter(ADKAdapterConfig(model="gemini-3-pro"))
+
+        model = adapter._resolve_runtime_model(
+            {"config": {"base": {"model": "gemini-2.0-flash"}}},
+            adapter.config.model,
+        )
+
+        assert model == "gemini-2.0-flash"
+
 
 class TestAdapterExecution:
     """Tests for adapter execution behavior."""

@@ -123,3 +123,24 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         Use when calling sequencer.cost_recorded().
         """
         return time() - self._start_time if self._start_time else 0.0
+
+    @staticmethod
+    def _resolve_runtime_model(
+        task_context: dict[str, Any],
+        default_model: str | None,
+    ) -> str | None:
+        """Prefer the agent's current config model over the adapter default."""
+        config = task_context.get("config")
+        base = getattr(config, "base", None)
+        model = getattr(base, "model", None)
+        if isinstance(model, str) and model:
+            return model
+
+        if isinstance(config, dict):
+            base_config = config.get("base")
+            if isinstance(base_config, dict):
+                raw_model = base_config.get("model")
+                if isinstance(raw_model, str) and raw_model:
+                    return raw_model
+
+        return default_model

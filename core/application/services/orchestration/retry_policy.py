@@ -3,6 +3,7 @@
 Owns retry state, model escalation, and circuit-breaker decisions.
 """
 
+import time
 from typing import Any
 
 from core.application.types import ProgressCallback
@@ -24,10 +25,12 @@ class RetryPolicy:
         self._retry_config = retry_config
         self._progress_callback = progress_callback
         self._model_failures: dict[str, int] = {}
+        self._model_last_failure_time: dict[str, float] = {}
 
     def reset(self) -> None:
         """Clear per-run retry state."""
         self._model_failures.clear()
+        self._model_last_failure_time.clear()
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
         """Set the progress callback for retry persistence."""
@@ -52,9 +55,11 @@ class RetryPolicy:
             return False
 
         if current_model:
+            now = time.monotonic()
             self._model_failures[current_model] = (
                 self._model_failures.get(current_model, 0) + 1
             )
+            self._model_last_failure_time[current_model] = now
 
         reason = agent.error_message or "Unknown failure"
         agent.schedule_retry(reason=reason, escalated_model=escalated_model)
@@ -81,8 +86,25 @@ class RetryPolicy:
         retry_cfg = self._retry_config
         if retry_cfg is None:
             return False
+        self._maybe_reset_circuit_breaker(model)
         failures = self._model_failures.get(model, 0)
         return failures >= retry_cfg.circuit_breaker_threshold
+
+    def _maybe_reset_circuit_breaker(self, model: str) -> None:
+        """Reset stale circuit-breaker state for a model after the cooldown window."""
+        retry_cfg = self._retry_config
+        if retry_cfg is None or retry_cfg.circuit_breaker_reset_seconds <= 0:
+            return
+
+        last_failure = self._model_last_failure_time.get(model)
+        if last_failure is None:
+            return
+
+        if time.monotonic() - last_failure < retry_cfg.circuit_breaker_reset_seconds:
+            return
+
+        self._model_failures.pop(model, None)
+        self._model_last_failure_time.pop(model, None)
 
     def _get_escalated_model(self, agent: AgentSession) -> str | None:
         """Get the next healthy model from the escalation chain."""

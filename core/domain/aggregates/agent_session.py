@@ -320,6 +320,7 @@ class AgentSession:
     def _(self, event: RetryScheduled) -> None:
         self.status = AgentStatus.ANALYZING
         self.retry_count = event.attempt
+        self.last_retry_reason = event.reason
         self.result = None
         self.error_message = None
         if event.escalated_model:
@@ -444,6 +445,7 @@ class AgentSession:
         self.search_hints: tuple[str, ...] = ()
         # Retry tracking
         self.retry_count: int = 0
+        self.last_retry_reason: str | None = None
         self.redecomposition_count: int = 0
         # Verification feedback for retry (populated on VerificationFailed)
         self.verification_feedback: str | None = None

@@ -88,6 +88,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         """
         self._start_timing()
         tool_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        runtime_model = self._resolve_runtime_model(task_context, self.config.model)
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -100,6 +101,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 working_dir,
                 tool_queue,
                 container_session,
+                runtime_model=runtime_model,
             )
 
             async with ClaudeSDKClient(options=options) as client:
@@ -120,7 +122,11 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                             yield event
 
                         # Emit cost event before terminal event
-                        cost_event = self._make_cost_event(message, sequencer)
+                        cost_event = self._make_cost_event(
+                            message,
+                            sequencer,
+                            runtime_model=runtime_model,
+                        )
                         if cost_event:
                             yield cost_event
 
@@ -140,6 +146,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         working_dir: str,
         tool_queue: asyncio.Queue[tuple[str, str]],
         container_session: ContainerSessionContext | None,
+        runtime_model: str | None,
     ) -> ClaudeAgentOptions:
         """Build SDK options with PostToolUse hook for event capture."""
 
@@ -170,7 +177,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             )
 
         return ClaudeAgentOptions(
-            model=self.config.model,
+            model=runtime_model,
             cwd=working_dir,
             allowed_tools=self.config.allowed_tools,
             permission_mode=self.config.permission_mode,
@@ -209,6 +216,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         self,
         message: ResultMessage,
         sequencer: EventSequencer,
+        runtime_model: str | None,
     ) -> DomainEvent | None:
         """Create WorkerCostRecorded event from ResultMessage if cost data available."""
         cost_usd = getattr(message, "total_cost_usd", None)
@@ -226,7 +234,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             tool_name=self._get_tool_name(),
             cost_usd=cost_usd or 0.0,
             duration_seconds=self._get_duration(),
-            model=self.config.model,
+            model=runtime_model,
             tokens=total_tokens,
         )
 

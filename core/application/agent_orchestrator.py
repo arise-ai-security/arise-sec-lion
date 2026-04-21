@@ -245,24 +245,7 @@ class AgentOrchestrator:
                 domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
             )
-
-            # Inject verification feedback on retry so worker knows what to fix
-            if agent.verification_feedback and agent.retry_count > 0:
-                criteria_block = ""
-                if agent.success_criteria:
-                    criteria_block = (
-                        f"\n\n**Success criteria you MUST satisfy:**\n"
-                        f"{agent.success_criteria}\n"
-                    )
-                prompt += (
-                    "\n\n## Previous Attempt Feedback (Retry)\n"
-                    "Your previous attempt was rejected by the verifier:\n"
-                    f"> {agent.verification_feedback}\n"
-                    f"{criteria_block}\n"
-                    "You MUST address this feedback in your current attempt. "
-                    "Produce all required artifacts and evidence explicitly."
-                )
-
+            prompt = self._append_previous_attempt_feedback(prompt, agent)
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
             # Run worker session
@@ -493,3 +476,23 @@ class AgentOrchestrator:
                 probe_type=record.tool_name,
                 result_summary=record.result_summary,
             )
+
+    @staticmethod
+    def _append_previous_attempt_feedback(
+            prompt: str,
+            agent: "AgentSession",
+    ) -> str:
+        """Append prior failure context so retries can self-correct."""
+        if agent.retry_count <= 0 or not agent.last_retry_reason:
+            return prompt
+
+        feedback = agent.last_retry_reason.strip()
+        if not feedback:
+            return prompt
+
+        return (
+            f"{prompt}\n\n"
+            "<previous_attempt_feedback>\n"
+            f"{feedback}\n"
+            "</previous_attempt_feedback>"
+        )

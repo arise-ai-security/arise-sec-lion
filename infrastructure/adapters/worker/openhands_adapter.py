@@ -74,20 +74,26 @@ class OpenHandsAdapter(WorkerAdapterBase):
         """Initialize OpenHands adapter."""
         super().__init__(timeout_seconds=timeout_seconds)
         self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
-        self.api_key = api_key or self._detect_api_key()
+        self._explicit_api_key = api_key
         self.max_iterations_per_run = max_iterations_per_run
 
-    def _detect_api_key(self) -> str | None:
+    def _detect_api_key(self, model: str) -> str | None:
         """Detect appropriate API key based on model name."""
         if api_key := os.getenv("LLM_API_KEY"):
             return api_key
 
-        model_lower = self.model.lower()
+        model_lower = model.lower()
         if "claude" in model_lower or "anthropic" in model_lower:
             return os.getenv("ANTHROPIC_API_KEY")
         if "gemini" in model_lower or "google" in model_lower:
             return os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         return os.getenv("OPENAI_API_KEY")
+
+    def _resolve_api_key(self, model: str) -> str | None:
+        """Resolve the API key for the selected runtime model."""
+        if self._explicit_api_key is not None:
+            return self._explicit_api_key
+        return self._detect_api_key(model)
 
     def _get_tool_name(self) -> str:
         """Return tool identifier for cost tracking."""
@@ -104,6 +110,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         """Execute task via OpenHands SDK with native conversation lifecycle."""
         del agent_id
         self._start_timing()
+        runtime_model = self._resolve_runtime_model(task_context, self.model) or self.model
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -112,7 +119,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
 
         try:
-            conversation = self._build_conversation(working_dir)
+            conversation = self._build_conversation(
+                working_dir,
+                model=runtime_model,
+                api_key=self._resolve_api_key(runtime_model),
+            )
         except ImportError as error:
             yield sequencer.failed(
                 "OpenHands packages not installed. "
@@ -160,7 +171,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 tool_name=self._get_tool_name(),
                 cost_usd=cost_data.cost_usd,
                 duration_seconds=self._get_duration(),
-                model=self._resolve_cost_model(cost_data),
+                model=self._resolve_cost_model(cost_data, runtime_model),
                 tokens=cost_data.tokens,
                 prompt_tokens=cost_data.prompt_tokens,
                 completion_tokens=cost_data.completion_tokens,
@@ -179,13 +190,19 @@ class OpenHandsAdapter(WorkerAdapterBase):
             self._request_shutdown(conversation)
             executor.shutdown(wait=False)
 
-    def _build_conversation(self, working_dir: str) -> Any:
+    def _build_conversation(
+        self,
+        working_dir: str,
+        *,
+        model: str,
+        api_key: str | None,
+    ) -> Any:
         """Create an OpenHands SDK conversation for the current task."""
         from openhands.sdk import LLM, Agent, Conversation, Tool
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.terminal import TerminalTool
 
-        llm = LLM(model=self.model, api_key=self.api_key)
+        llm = LLM(model=model, api_key=api_key)
         agent = Agent(
             llm=llm,
             tools=[
@@ -355,12 +372,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
             self._maybe_int(self._get_stat(stats, "reasoning_tokens")),
         )
 
-    def _resolve_cost_model(self, cost_data: OpenHandsCostData) -> str | None:
+    def _resolve_cost_model(
+        self,
+        cost_data: OpenHandsCostData,
+        runtime_model: str | None,
+    ) -> str | None:
         """Return a representative model value for the aggregate worker event."""
         usage_models = {usage.model for usage in cost_data.usage_metrics if usage.model}
         if len(usage_models) == 1:
             return next(iter(usage_models))
-        return self.model
+        return runtime_model
 
     @staticmethod
     def _get_stat(obj: Any, name: str, default: Any = None) -> Any:
