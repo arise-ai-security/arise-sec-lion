@@ -559,6 +559,7 @@ class AgentExecutionService:
                 "model": boss_cfg.model,
                 "temperature": boss_cfg.temperature,
                 "max_tokens": boss_cfg.max_tokens,
+                "api_base": getattr(boss_cfg, "api_base", None),
             },
             "tool": self._config.default_worker_tool,
         }

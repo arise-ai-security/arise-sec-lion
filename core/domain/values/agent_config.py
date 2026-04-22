@@ -17,6 +17,10 @@ class LLMConfig(BaseModel):
     model: str = Field(..., min_length=1)
     temperature: float = Field(..., ge=0.0, le=2.0)
     max_tokens: int = Field(..., gt=0, le=100000)
+    # Optional per-call overrides for LiteLLM. When None, LiteLLM falls back to
+    # provider-specific env vars (e.g. OLLAMA_API_BASE, OLLAMA_API_KEY).
+    api_base: str | None = Field(default=None)
+    api_key: str | None = Field(default=None)
 
 
 class HeuristicConfig(BaseModel):
