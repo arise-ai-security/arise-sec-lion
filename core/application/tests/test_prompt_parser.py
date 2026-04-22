@@ -315,7 +315,7 @@ Primary responsibility: Strategic task analysis and delegation.</ROLE>
         prompt = """
 <ROLE>You are a WORKER agent. Execute the task directly.</ROLE>
 
-<TASK>Build the project with ASAN</TASK>
+<TASK>Build the project with strict checks</TASK>
 
 <THINKER_JUSTIFICATION>Your thinker (parent agent) assigned this task with the following context:
 

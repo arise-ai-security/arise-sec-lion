@@ -192,7 +192,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 # Force subprocess-backed shell instead of the auto-detected tmux
                 # PTY: tmux streams commands character-by-character with
                 # bracketed-paste toggling per line, which stalls on complex
-                # nested quoting (e.g. secb-exec "... grep 'id=\"[^\"]*\"' ...").
+                # nested quoting (e.g. ./run-cmd "... grep 'id=\"[^\"]*\"' ...").
                 # Subprocess sends the command as argv, bypassing terminal
                 # emulation entirely.
                 Tool(
