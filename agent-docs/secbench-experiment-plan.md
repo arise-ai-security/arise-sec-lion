@@ -140,7 +140,7 @@ CVE instance data exists on HuggingFace (`SEC-bench/Seed` dataset). We do NOT cr
 ### 0.3 Smoke Test (Single Instance)
 - Run with `max_depth=1` (forces BOSS -> 3 WORKERs, mimics SEC-bench flat structure):
   ```
-  python main.py run "<task>" --cve-file deployment/njs-cve-2022-32414.json --domain security
+  python main.py run "<task>" --cve-file deployment/cve-instances/njs-cve-2022-32414.json --domain security
   ```
 - Verify: events stored, workers spawned, Docker containers start, `secb` commands execute
 - Verify: anti-cheat constraints are in prompts, Valgrind/KLEE available

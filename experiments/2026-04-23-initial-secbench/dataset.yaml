@@ -16,13 +16,13 @@ per_cell_overrides: {}
 source:
   kind: deployment-json
   paths:
-    - deployment/gpac-cve-2021-40575.json
-    - deployment/openjpeg-cve-2016-7445.json
-    - deployment/exiv2-cve-2017-14859.json
-    - deployment/imagemagick-cve-2019-13309.json
-    - deployment/faad2-cve-2021-32272.json
-    - deployment/mruby-cve-2022-0240.json
-    - deployment/njs-cve-2022-38890.json
-    - deployment/njs-cve-2022-32414.json
-    - deployment/faad2-cve-2018-20196.json
-    - deployment/gpac-cve-2022-1795.json
+    - deployment/cve-instances/gpac-cve-2021-40575.json
+    - deployment/cve-instances/openjpeg-cve-2016-7445.json
+    - deployment/cve-instances/exiv2-cve-2017-14859.json
+    - deployment/cve-instances/imagemagick-cve-2019-13309.json
+    - deployment/cve-instances/faad2-cve-2021-32272.json
+    - deployment/cve-instances/mruby-cve-2022-0240.json
+    - deployment/cve-instances/njs-cve-2022-38890.json
+    - deployment/cve-instances/njs-cve-2022-32414.json
+    - deployment/cve-instances/faad2-cve-2018-20196.json
+    - deployment/cve-instances/gpac-cve-2022-1795.json

@@ -372,23 +372,23 @@ def test_match_path_for_task_prefers_exact_stem() -> None:
     """Prefix-related slugs must pick the exact stem first (codex Phase 4 P2)."""
     # Given: two candidate paths where one is a prefix of the other.
     paths = [
-        "deployment/foo-cve-2021-12345.json",  # prefix match (longer stem)
-        "deployment/foo-cve-2021-1234.json",  # exact match
+        "deployment/cve-instances/foo-cve-2021-12345.json",  # prefix match (longer stem)
+        "deployment/cve-instances/foo-cve-2021-1234.json",  # exact match
     ]
     task = "foo.cve-2021-1234"
 
     # When/Then: exact match is chosen, even though it appears second.
-    assert harness._match_path_for_task(task, paths) == "deployment/foo-cve-2021-1234.json"
+    assert harness._match_path_for_task(task, paths) == "deployment/cve-instances/foo-cve-2021-1234.json"
 
 
 def test_match_path_for_task_falls_back_to_substring() -> None:
     # Given: no exact stem match.
-    paths = ["deployment/openjpeg-cve-2016-7445-extra.json"]
+    paths = ["deployment/cve-instances/openjpeg-cve-2016-7445-extra.json"]
     task = "openjpeg.cve-2016-7445"
 
     # When/Then: substring fallback picks the only candidate.
     assert (
-        harness._match_path_for_task(task, paths) == "deployment/openjpeg-cve-2016-7445-extra.json"
+        harness._match_path_for_task(task, paths) == "deployment/cve-instances/openjpeg-cve-2016-7445-extra.json"
     )
 
 

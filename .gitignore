@@ -691,6 +691,14 @@ FodyWeavers.xsd
 !experiments/**/reports/**/*.md
 !experiments/**/reports/*.md
 !prompts/**/*.md
+
+# Tooling scratch dirs
+.serena/
+.serena
+.worktree/
+.worktree
+.worktrees/
+.worktrees
 !skills/*.md
 
 # Run artifacts (generated code, exports, last run tracking)
