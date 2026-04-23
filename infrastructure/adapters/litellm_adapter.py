@@ -35,9 +35,23 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _is_o_series(model: str) -> bool:
-        """Return True for OpenAI O-series models that reject temperature."""
+        """Return True for OpenAI models that reject temperature (O-series, GPT-5)."""
         base = model.split("/")[-1].lower()
-        return base.startswith(("o1", "o3", "o4"))
+        return base.startswith(("o1", "o3", "o4", "gpt-5"))
+
+    @staticmethod
+    def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
+        """Extract optional LiteLLM overrides (api_base, api_key) from config.
+
+        Values that are None are omitted so LiteLLM's own env-var resolution
+        (e.g. OLLAMA_API_BASE, OLLAMA_API_KEY) still applies.
+        """
+        overrides: dict[str, Any] = {}
+        for key in ("api_base", "api_key"):
+            value = merged_config.get(key)
+            if value:
+                overrides[key] = value
+        return overrides
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.
@@ -135,6 +149,7 @@ class LiteLLMAdapter(LLMPort):
         }
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+        call_kwargs.update(self._provider_overrides(merged_config))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -166,6 +181,7 @@ class LiteLLMAdapter(LLMPort):
         }
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+        call_kwargs.update(self._provider_overrides(merged_config))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -204,6 +220,7 @@ class LiteLLMAdapter(LLMPort):
         }
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+        call_kwargs.update(self._provider_overrides(merged_config))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 

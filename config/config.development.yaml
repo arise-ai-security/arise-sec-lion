@@ -1,5 +1,5 @@
 llm:
-  model_boss: o3
+  model_boss: gpt-5.3-codex
 
 output:
   verbose: true

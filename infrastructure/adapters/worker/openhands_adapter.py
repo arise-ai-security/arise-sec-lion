@@ -70,12 +70,15 @@ class OpenHandsAdapter(WorkerAdapterBase):
         api_key: str | None = None,
         timeout_seconds: int = 300,
         max_iterations_per_run: int = DEFAULT_MAX_ITERATIONS_PER_RUN,
+        base_url: str | None = None,
     ) -> None:
         """Initialize OpenHands adapter."""
         super().__init__(timeout_seconds=timeout_seconds)
         self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
         self.api_key = api_key or self._detect_api_key()
         self.max_iterations_per_run = max_iterations_per_run
+        # None lets OpenHands/LiteLLM fall back to env vars (e.g. OLLAMA_API_BASE).
+        self.base_url = base_url
 
     def _detect_api_key(self) -> str | None:
         """Detect appropriate API key based on model name."""
@@ -87,6 +90,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
             return os.getenv("ANTHROPIC_API_KEY")
         if "gemini" in model_lower or "google" in model_lower:
             return os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if model_lower.startswith(("ollama/", "ollama_chat/")) or "ollama" in model_lower:
+            return os.getenv("OLLAMA_API_KEY")
         return os.getenv("OPENAI_API_KEY")
 
     def _get_tool_name(self) -> str:
@@ -185,7 +190,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.terminal import TerminalTool
 
-        llm = LLM(model=self.model, api_key=self.api_key)
+        llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
+        if self.base_url:
+            llm_kwargs["base_url"] = self.base_url
+        llm = LLM(**llm_kwargs)
         agent = Agent(
             llm=llm,
             tools=[

@@ -18,10 +18,15 @@ FROM ${BASE_IMAGE}
 
 USER root
 
-# Valgrind — dynamic analysis (memory errors, stack traces)
-# Also install ASan/UBSan runtime libraries so -fsanitize=address binaries can execute
+# Core analysis tools — pre-installed so workers skip apt-get at runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     valgrind \
+    gdb \
+    cppcheck \
+    strace \
+    ltrace \
+    cflow \
+    jq \
     && (apt-get install -y --no-install-recommends libasan5 libubsan1 2>/dev/null \
         || apt-get install -y --no-install-recommends libasan6 libubsan1 2>/dev/null \
         || echo "ASan runtime not available via apt — builder will handle") \
