@@ -484,6 +484,16 @@ def _plan_enroll_legacy_runs(
 ) -> list[EnrollLegacyRun]:
     """Plan one enrollment action per migrated run.
 
+    Sources two paths so re-running a partially-applied migration still
+    enrolls everything:
+
+    1. ``copies`` — runs about to be migrated in this invocation.
+    2. Pre-existing ``runs/_legacy/<uuid>/run_manifest.json`` entries with the
+       ``legacy_migration`` marker — runs migrated by an earlier invocation.
+
+    Deduped by ``run_id``. register_run is idempotent, so even if the same
+    run_id appears in both lists it's safe to emit both actions.
+
     Gated on the seed study's ``manifest.yaml`` existing — if the seed study
     hasn't been created yet (e.g. during a dev-environment migration), we
     skip enrollment entirely instead of emitting actions that would fail.
@@ -496,7 +506,9 @@ def _plan_enroll_legacy_runs(
         )
         return []
 
+    seen: set[str] = set()
     planned: list[EnrollLegacyRun] = []
+
     for copy in copies:
         manifest = copy.manifest
         cell = manifest.get("cell")
@@ -504,6 +516,9 @@ def _plan_enroll_legacy_runs(
         attempt = manifest.get("attempt", 0)
         if not isinstance(cell, str) or not isinstance(task, str):
             continue
+        if copy.run_id in seen:
+            continue
+        seen.add(copy.run_id)
         planned.append(
             EnrollLegacyRun(
                 run_id=copy.run_id,
@@ -513,6 +528,39 @@ def _plan_enroll_legacy_runs(
                 attempt=int(attempt),
             )
         )
+
+    if LEGACY_POOL.is_dir():
+        for run_dir in sorted(LEGACY_POOL.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            run_id = run_dir.name
+            if run_id in seen:
+                continue
+            manifest_path = run_dir / "run_manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not data.get("legacy_migration"):
+                continue
+            cell = data.get("cell")
+            task = data.get("task")
+            attempt = data.get("attempt", 0)
+            if not isinstance(cell, str) or not isinstance(task, str):
+                continue
+            seen.add(run_id)
+            planned.append(
+                EnrollLegacyRun(
+                    run_id=run_id,
+                    study_id=study_id,
+                    cell=cell,
+                    task=task,
+                    attempt=int(attempt),
+                )
+            )
+
     return planned
 
 
@@ -640,8 +688,33 @@ def _execute_copy_legacy_run(action: CopyLegacyRun) -> None:
 
 def _execute_archive_tar(action: ArchiveTar) -> None:
     LEGACY_POOL.mkdir(parents=True, exist_ok=True)
+    skipped: list[str] = []
+
+    def _walk_and_add(tar: tarfile.TarFile, source: Path, arcname: str) -> None:
+        try:
+            tar.add(source, arcname=arcname, recursive=False)
+        except (PermissionError, OSError) as exc:
+            skipped.append(f"{source}: {exc}")
+            return
+        if source.is_dir() and not source.is_symlink():
+            try:
+                children = sorted(source.iterdir())
+            except PermissionError as exc:
+                skipped.append(f"{source}: {exc}")
+                return
+            for child in children:
+                _walk_and_add(tar, child, f"{arcname}/{child.name}")
+
     with tarfile.open(action.target, "w:gz") as tar:
-        tar.add(action.source, arcname=action.source.name)
+        _walk_and_add(tar, action.source, action.source.name)
+
+    if skipped:
+        logger.warning(
+            "skipped %d unreadable path(s) while archiving %s: %s",
+            len(skipped),
+            action.source,
+            "; ".join(skipped[:5]) + ("…" if len(skipped) > 5 else ""),
+        )
 
 
 def _execute_rename_dir(action: RenameDir) -> None:

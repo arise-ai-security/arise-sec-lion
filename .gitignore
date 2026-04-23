@@ -688,6 +688,9 @@ FodyWeavers.xsd
 !USER_MANUAL.md
 !agent-docs/*.md
 !.claude/docs/*.md
+!experiments/**/reports/**/*.md
+!experiments/**/reports/*.md
+!prompts/**/*.md
 !skills/*.md
 
 # Run artifacts (generated code, exports, last run tracking)

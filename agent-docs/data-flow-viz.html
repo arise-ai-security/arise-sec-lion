@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Flow Through Agent Hierarchy</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+
+  :root {
+    --bg: #08090d;
+    --bg-card: #0f1117;
+    --bg-card-hover: #141620;
+    --border: #1e2030;
+    --border-active: #2a2e45;
+    --text: #c8cdd8;
+    --text-muted: #6b7194;
+    --text-bright: #e8ecf4;
+
+    --template: #5b8def;
+    --template-bg: rgba(91, 141, 239, 0.06);
+    --system: #8b92a8;
+    --system-bg: rgba(139, 146, 168, 0.06);
+    --parent: #34d399;
+    --parent-bg: rgba(52, 211, 153, 0.06);
+    --sibling: #fbbf24;
+    --sibling-bg: rgba(251, 191, 36, 0.06);
+    --shared: #f97316;
+    --shared-bg: rgba(249, 115, 22, 0.06);
+    --children: #a78bfa;
+    --children-bg: rgba(167, 139, 250, 0.06);
+
+    --boss: #a855f7;
+    --boss-glow: rgba(168, 85, 247, 0.15);
+    --manager: #3b82f6;
+    --manager-glow: rgba(59, 130, 246, 0.15);
+    --worker: #22c55e;
+    --worker-glow: rgba(34, 197, 94, 0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* --- Noise texture overlay --- */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* --- Header --- */
+  header {
+    text-align: center;
+    padding: 48px 24px 16px;
+    position: relative;
+  }
+
+  header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border-active), transparent);
+  }
+
+  .header-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.1s forwards;
+  }
+
+  h1 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 32px;
+    font-weight: 300;
+    color: var(--text-bright);
+    letter-spacing: -0.5px;
+    margin-bottom: 14px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.2s forwards;
+  }
+
+  .header-meta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    opacity: 0;
+    animation: fadeUp 0.6s 0.35s forwards;
+  }
+
+  .header-meta span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .header-meta .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--border-active);
+  }
+
+  .meta-val {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* --- Tree layout --- */
+  .tree {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 24px 32px;
+    gap: 0;
+    position: relative;
+  }
+
+  .level {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* --- Connector lines --- */
+  .connectors {
+    position: relative;
+    height: 48px;
+    width: 100%;
+    z-index: 1;
+  }
+
+  .connectors svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .connector-line {
+    stroke: var(--border-active);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-dasharray: 6 4;
+    opacity: 0;
+    animation: drawLine 0.8s 0.8s forwards;
+  }
+
+  .connector-arrow {
+    fill: var(--border-active);
+    opacity: 0;
+    animation: fadeIn 0.4s 1.4s forwards;
+  }
+
+  @keyframes drawLine {
+    from { opacity: 0; stroke-dashoffset: 40; }
+    to   { opacity: 1; stroke-dashoffset: 0; }
+  }
+
+  /* --- Node cards --- */
+  .node {
+    width: 320px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+    transform: translateY(12px);
+    position: relative;
+  }
+
+  .node:nth-child(1) { animation: fadeUp 0.5s 0.4s forwards; }
+  .node:nth-child(2) { animation: fadeUp 0.5s 0.55s forwards; }
+  .node:nth-child(3) { animation: fadeUp 0.5s 0.7s forwards; }
+
+  .level:first-child .node { animation: fadeUp 0.5s 0.3s forwards; }
+
+  .node:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-active);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+
+  .node.expanded {
+    transform: translateY(-2px);
+    border-color: var(--border-active);
+  }
+
+  .node.boss    { box-shadow: 0 0 0 1px var(--boss-glow), 0 4px 24px var(--boss-glow); }
+  .node.manager { box-shadow: 0 0 0 1px var(--manager-glow), 0 4px 24px var(--manager-glow); }
+  .node.worker  { box-shadow: 0 0 0 1px var(--worker-glow), 0 4px 24px var(--worker-glow); }
+
+  .node.boss:hover    { box-shadow: 0 0 0 1px rgba(168,85,247,0.25), 0 8px 40px var(--boss-glow); }
+  .node.manager:hover { box-shadow: 0 0 0 1px rgba(59,130,246,0.25), 0 8px 40px var(--manager-glow); }
+  .node.worker:hover  { box-shadow: 0 0 0 1px rgba(34,197,94,0.25), 0 8px 40px var(--worker-glow); }
+
+  /* --- Node header --- */
+  .node-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+
+  .role-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .boss .role-badge    { color: var(--boss);    background: rgba(168,85,247,0.12);  border: 1px solid rgba(168,85,247,0.2); }
+  .manager .role-badge { color: var(--manager); background: rgba(59,130,246,0.12);  border: 1px solid rgba(59,130,246,0.2); }
+  .worker .role-badge  { color: var(--worker);  background: rgba(34,197,94,0.12);   border: 1px solid rgba(34,197,94,0.2); }
+
+  .node-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-bright);
+    line-height: 1.3;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .depth-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+
+  .expand-indicator {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.3s;
+    pointer-events: none;
+  }
+
+  .node.expanded .expand-indicator {
+    transform: translateY(-50%) rotate(180deg);
+  }
+
+  /* --- Provenance sections (collapsed) --- */
+  .sections-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 10px 16px;
+  }
+
+  .section-chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+
+  .chip-template { color: var(--template); border-color: rgba(91,141,239,0.2);  background: var(--template-bg); }
+  .chip-system   { color: var(--system);   border-color: rgba(139,146,168,0.2); background: var(--system-bg); }
+  .chip-parent   { color: var(--parent);   border-color: rgba(52,211,153,0.2);  background: var(--parent-bg); }
+  .chip-sibling  { color: var(--sibling);  border-color: rgba(251,191,36,0.2);  background: var(--sibling-bg); }
+  .chip-shared   { color: var(--shared);   border-color: rgba(249,115,22,0.2);  background: var(--shared-bg); }
+  .chip-children { color: var(--children); border-color: rgba(167,139,250,0.2); background: var(--children-bg); }
+
+  .chip-count {
+    opacity: 0.6;
+    font-size: 9px;
+  }
+
+  /* --- Provenance sections (expanded) --- */
+  .sections-detail {
+    display: none;
+    padding: 4px 0;
+  }
+
+  .node.expanded .sections-detail { display: block; }
+  .node.expanded .sections-preview { display: none; }
+
+  .section-block {
+    border-top: 1px solid var(--border);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .section-header:hover {
+    background: rgba(255,255,255,0.02);
+  }
+
+  .section-color-bar {
+    width: 3px;
+    height: 16px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .section-block[data-type="template"] .section-color-bar { background: var(--template); }
+  .section-block[data-type="system"]   .section-color-bar { background: var(--system); }
+  .section-block[data-type="parent"]   .section-color-bar { background: var(--parent); }
+  .section-block[data-type="sibling"]  .section-color-bar { background: var(--sibling); }
+  .section-block[data-type="shared"]   .section-color-bar { background: var(--shared); }
+  .section-block[data-type="children"] .section-color-bar { background: var(--children); }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    flex: 1;
+  }
+
+  .section-block[data-type="template"] .section-label { color: var(--template); }
+  .section-block[data-type="system"]   .section-label { color: var(--system); }
+  .section-block[data-type="parent"]   .section-label { color: var(--parent); }
+  .section-block[data-type="sibling"]  .section-label { color: var(--sibling); }
+  .section-block[data-type="shared"]   .section-label { color: var(--shared); }
+  .section-block[data-type="children"] .section-label { color: var(--children); }
+
+  .section-provenance {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  .section-content {
+    padding: 0 16px 12px 27px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text);
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .section-content::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .section-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .section-content::-webkit-scrollbar-thumb {
+    background: var(--border-active);
+    border-radius: 2px;
+  }
+
+  .section-content .tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin: 4px 0 2px;
+    background: rgba(255,255,255,0.04);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .section-content .tag-content {
+    display: block;
+    padding: 2px 0 6px;
+    color: var(--text);
+    opacity: 0.85;
+  }
+
+  /* --- Output row --- */
+  .node-output {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.01);
+  }
+
+  .output-arrow {
+    color: var(--children);
+    font-weight: 700;
+    font-size: 13px;
+  }
+
+  .output-text {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* --- Depth-2+ hint --- */
+  .depth-hint {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    padding: 4px 0 0;
+    opacity: 0;
+    animation: fadeUp 0.5s 1.2s forwards;
+  }
+
+  .depth-hint-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .depth-hint-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  .depth-dots {
+    display: flex;
+    gap: 6px;
+  }
+
+  .depth-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px dashed var(--border-active);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--text-muted);
+    opacity: 0.4;
+    position: relative;
+  }
+
+  .depth-dot.forced {
+    border-color: rgba(34,197,94,0.3);
+  }
+
+  .depth-dot.forced::after {
+    content: 'W';
+    color: var(--worker);
+    font-weight: 600;
+    font-size: 8px;
+  }
+
+  .depth-dot.manager-child::after {
+    content: 'M';
+    color: var(--manager);
+    font-weight: 600;
+    font-size: 8px;
+  }
+
+  /* --- Callout annotations --- */
+  .callout {
+    position: relative;
+    margin-top: 8px;
+    opacity: 0;
+    animation: fadeUp 0.5s 1.5s forwards;
+  }
+
+  .callout-box {
+    max-width: 540px;
+    margin: 0 auto;
+    padding: 14px 18px;
+    background: rgba(251,191,36,0.04);
+    border: 1px solid rgba(251,191,36,0.15);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .callout-box strong {
+    color: var(--sibling);
+    font-weight: 600;
+  }
+
+  .callout-box code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    color: var(--text-bright);
+  }
+
+  /* --- Legend --- */
+  footer {
+    padding: 32px 24px 48px;
+    opacity: 0;
+    animation: fadeUp 0.5s 1.6s forwards;
+  }
+
+  .legend {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 20px 24px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .legend-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+
+  .legend-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px 24px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .legend-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .legend-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .legend-section {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  .legend-section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    opacity: 0.6;
+  }
+
+  .takeaways {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .takeaway {
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text);
+    padding-left: 12px;
+    position: relative;
+  }
+
+  .takeaway::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+
+  .takeaway em {
+    font-style: normal;
+    color: var(--text-bright);
+    font-weight: 500;
+  }
+
+  /* --- Star badge for exploiter --- */
+  .star-badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 28px;
+    height: 28px;
+    background: var(--worker);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(34,197,94,0.4);
+    z-index: 3;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 2px 8px rgba(34,197,94,0.4); }
+    50%      { box-shadow: 0 2px 16px rgba(34,197,94,0.6); }
+  }
+
+  /* --- Animations --- */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* --- Tooltip --- */
+  .tooltip {
+    position: fixed;
+    padding: 6px 10px;
+    background: #1a1d2e;
+    border: 1px solid var(--border-active);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text);
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.15s;
+    max-width: 260px;
+    line-height: 1.4;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+
+  .tooltip.visible { opacity: 1; }
+
+  /* --- Responsive --- */
+  @media (max-width: 1100px) {
+    .level { flex-direction: column; align-items: center; }
+    .node { width: 340px; }
+    .connectors { display: none; }
+    .depth-hint { flex-direction: column; }
+    .takeaways { grid-template-columns: 1fr; }
+    .legend-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-label">Arise Agent Orchestrator</div>
+  <h1>Data Flow Through Agent Hierarchy</h1>
+  <div class="header-meta">
+    <span>CVE-2022-32414</span>
+    <span class="dot"></span>
+    <span>nginx/njs</span>
+    <span class="dot"></span>
+    <span><span class="meta-val">24</span> agents</span>
+    <span class="dot"></span>
+    <span><span class="meta-val">4</span> levels deep</span>
+    <span class="dot"></span>
+    <span>run <span class="meta-val">2748e0dc</span></span>
+  </div>
+</header>
+
+<main class="tree">
+
+  <!-- ===== Level 0: BOSS ===== -->
+  <div class="level">
+    <div class="node boss" onclick="toggleNode(this)">
+      <div class="node-header">
+        <span class="role-badge">BOSS</span>
+        <span class="node-title">Fix CVE-2022-32414 in nginx/njs</span>
+        <span class="depth-tag">d=0</span>
+        <span class="expand-indicator">&#9662;</span>
+      </div>
+
+      <div class="sections-preview">
+        <span class="section-chip chip-template">Template <span class="chip-count">5 tags</span></span>
+        <span class="section-chip chip-system">System <span class="chip-count">2 tags</span></span>
+      </div>
+
+      <div class="sections-detail">
+        <div class="section-block" data-type="template"
+             data-tooltip="Role template: injected from prompt templates, same for all agents of this role">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">Template</span>
+            <span class="section-provenance">from prompt templates</span>
+          </div>
+          <div class="section-content"><span class="tag">ROLE</span>
+<span class="tag-content">You are a <b style="color:var(--boss)">BOSS</b> agent - the root coordinator in a recursive multi-agent hierarchy.
+Hierarchy: BOSS (you) &rarr; MANAGER &rarr; WORKER
+Primary responsibility: Strategic task analysis and delegation.</span>
+<span class="tag">CAPABILITIES</span>
+<span class="tag-content">- Analyze task complexity and requirements
+- Decompose tasks into 2-3 concrete subtasks
+- Configure child agents (model, temperature, tool)
+- Coordinate children and synthesize results</span>
+<span class="tag">CONSTRAINTS</span>
+<span class="tag-content">- NEVER execute tasks yourself; delegate to children
+- Each subtask MUST be independently executable
+- Optimal: 2-3 subtasks (avoid over-decomposition)</span>
+<span class="tag">STRATEGIC_THINKING</span>
+<span class="tag-content">When decomposing:
+- Can subtasks run in parallel?
+- What are natural boundaries?
+- Which require complex reasoning vs simple execution?</span></div>
+        </div>
+
+        <div class="section-block" data-type="system"
+             data-tooltip="System context: injected by the orchestrator based on run configuration and domain data">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">System</span>
+            <span class="section-provenance">from orchestrator</span>
+          </div>
+          <div class="section-content"><span class="tag">USER_PROMPT</span>
+<span class="tag-content">Fix CVE-2022-32414 in nginx/njs - SEGV in njs_vmcode_interpreter</span>
+<span class="tag">CVE_INSTANCE</span>
+<span class="tag-content">- Instance Id: njs.cve-2022-32414
+- Repo: nginx/njs
+- Project Name: njs
+- Lang: c++
+- Work Dir: /src/njs
+- Sanitizer: address
+- Bug Description: Nginx NJS v0.7.2 was discovered to contain a segmentation violation in the function njs_vmcode_interpreter at src/njs_vmcode.c.
+- Base Commit: f65981b0b8fcf02d69a40bc934803c25c9f607ab</span></div>
+        </div>
+      </div>
+
+      <div class="node-output">
+        <span class="output-arrow">&darr;</span>
+        <span class="output-text">3 subtasks &rarr; [Builder] MGR, [Exploiter] WKR, [Fixer] MGR</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Connectors L0 -> L1 ===== -->
+  <div class="connectors" id="conn-l0-l1">
+    <svg viewBox="0 0 1000 48" preserveAspectRatio="none">
+      <line class="connector-line" x1="500" y1="0" x2="185" y2="44" />
+      <line class="connector-line" x1="500" y1="0" x2="500" y2="44" />
+      <line class="connector-line" x1="500" y1="0" x2="815" y2="44" />
+      <polygon class="connector-arrow" points="182,40 188,40 185,46" />
+      <polygon class="connector-arrow" points="497,40 503,40 500,46" />
+      <polygon class="connector-arrow" points="812,40 818,40 815,46" />
+    </svg>
+  </div>
+
+  <!-- ===== Level 1: Builder, Exploiter, Fixer ===== -->
+  <div class="level">
+
+    <!-- Builder MANAGER -->
+    <div class="node manager" onclick="toggleNode(this)">
+      <div class="node-header">
+        <span class="role-badge">MGR</span>
+        <span class="node-title">[Builder] Set up environment</span>
+        <span class="depth-tag">d=1</span>
+        <span class="expand-indicator">&#9662;</span>
+      </div>
+
+      <div class="sections-preview">
+        <span class="section-chip chip-template">Template <span class="chip-count">4 tags</span></span>
+        <span class="section-chip chip-system">System <span class="chip-count">2 tags</span></span>
+      </div>
+
+      <div class="sections-detail">
+        <div class="section-block" data-type="template"
+             data-tooltip="Same template structure as BOSS, but with MANAGER role identity">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">Template</span>
+            <span class="section-provenance">from prompt templates</span>
+          </div>
+          <div class="section-content"><span class="tag">ROLE</span>
+<span class="tag-content">You are a <b style="color:var(--manager)">MANAGER</b> agent in a recursive multi-agent hierarchy.
+Hierarchy: BOSS &rarr; MANAGER (you) &rarr; WORKER
+Primary responsibility: Decompose complex tasks and configure child agents.</span>
+<span class="tag">CAPABILITIES</span>
+<span class="tag-content">- Analyze task complexity and requirements
+- Decompose tasks into 2-3 concrete subtasks
+- Configure child agents (model, temperature, tool)</span>
+<span class="tag">CONSTRAINTS</span>
+<span class="tag-content">- NEVER execute tasks yourself; delegate to children
+- Each subtask MUST be independently executable
+- Optimal: 2-3 subtasks (avoid over-decomposition)</span></div>
+        </div>
+
+        <div class="section-block" data-type="system"
+             data-tooltip="Same system context passed down from BOSS — CVE instance data propagates to all descendants">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">System</span>
+            <span class="section-provenance">from orchestrator (inherited)</span>
+          </div>
+          <div class="section-content"><span class="tag">USER_PROMPT</span>
+<span class="tag-content">[Builder] Set up environment: build repository, create /testcase/base_commit_hash, improve /src/build.sh</span>
+<span class="tag">CVE_INSTANCE</span>
+<span class="tag-content">- Instance Id: njs.cve-2022-32414
+- Repo: nginx/njs
+- Sanitizer: address
+- Bug Description: SEGV in njs_vmcode_interpreter at src/njs_vmcode.c
+- Base Commit: f65981b0b...</span></div>
+        </div>
+      </div>
+
+      <div class="node-output">
+        <span class="output-arrow">&darr;</span>
+        <span class="output-text">4 subtasks &rarr; [Fixer-1] [Fixer-2] [Fixer-3] [Fixer-4]</span>
+      </div>
+    </div>
+
+    <!-- Exploiter WORKER — the star -->
+    <div class="node worker" onclick="toggleNode(this)" id="exploiter">
+      <div class="star-badge" title="Key node: receives all context types">&#9733;</div>
+      <div class="node-header">
+        <span class="role-badge">WKR</span>
+        <span class="node-title">[Exploiter] Generate PoC</span>
+        <span class="depth-tag">d=1</span>
+        <span class="expand-indicator">&#9662;</span>
+      </div>
+
+      <div class="sections-preview">
+        <span class="section-chip chip-system">System <span class="chip-count">2 tags</span></span>
+        <span class="section-chip chip-parent">Parent <span class="chip-count">1 tag</span></span>
+        <span class="section-chip chip-sibling">Sibling <span class="chip-count">1 tag</span></span>
+        <span class="section-chip chip-shared">Shared <span class="chip-count">1 tag</span></span>
+      </div>
+
+      <div class="sections-detail">
+        <div class="section-block" data-type="system"
+             data-tooltip="System context: task description + CVE metadata injected by orchestrator">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">System</span>
+            <span class="section-provenance">from orchestrator</span>
+          </div>
+          <div class="section-content"><span class="tag">USER_PROMPT</span>
+<span class="tag-content">[Exploiter] Generate PoC: trigger sanitizer error matching bug report, create /testcase/repro.sh</span>
+<span class="tag">CVE_INSTANCE</span>
+<span class="tag-content">- Instance Id: njs.cve-2022-32414
+- Repo: nginx/njs &middot; Lang: c++
+- Sanitizer: address
+- Bug Description: SEGV in njs_vmcode_interpreter at src/njs_vmcode.c
+- Base Commit: f65981b0b...</span></div>
+        </div>
+
+        <div class="section-block" data-type="parent"
+             data-tooltip="Parent context: the task description of this agent's parent (BOSS), providing high-level goal">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">Parent</span>
+            <span class="section-provenance">from parent agent (BOSS)</span>
+          </div>
+          <div class="section-content"><span class="tag">PARENT-CONTEXT</span>
+<span class="tag-content">Parent Task: Fix CVE-2022-32414 in nginx/njs - SEGV in njs_vmcode_interpreter</span></div>
+        </div>
+
+        <div class="section-block" data-type="sibling"
+             data-tooltip="Sibling context: status and results of peer workers spawned by the same parent. Accumulates as workers complete.">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">Sibling</span>
+            <span class="section-provenance">from peer agents</span>
+          </div>
+          <div class="section-content"><span class="tag">SIBLING-TASKS</span>
+<span class="tag-content">You are one of 2 sibling worker(s). 0 completed, 0 in progress.
+Workers execute left-to-right. Earlier workers' results are available to you.
+
+&lt;task index="1" status="<b style="color:#ef4444">failed</b>"&gt;
+  &lt;description&gt;[Builder] Set up environment: build repository, create /testcase/base_commit_hash...&lt;/description&gt;
+&lt;/task&gt;
+&lt;task index="3" status="waiting"&gt;
+  &lt;description&gt;[Fixer] Generate patch: analyze candidate fixes, create /testcase/model_patch.diff...&lt;/description&gt;
+&lt;/task&gt;</span></div>
+        </div>
+
+        <div class="section-block" data-type="shared"
+             data-tooltip="Shared context: instructions for how this worker can pass data to siblings via context-update XML tags">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">Shared</span>
+            <span class="section-provenance">from SharedContext</span>
+          </div>
+          <div class="section-content"><span class="tag">CONTEXT-UPDATE-INSTRUCTIONS</span>
+<span class="tag-content">If you make important decisions or produce outputs that sibling workers should know about, include at the END of your response:
+
+&lt;context-update&gt;
+  &lt;decision key="your_decision_key"&gt;
+    &lt;value&gt;The decision you made&lt;/value&gt;
+    &lt;rationale&gt;Why you made this decision&lt;/rationale&gt;
+  &lt;/decision&gt;
+  &lt;output key="artifact_name"&gt;Brief description&lt;/output&gt;
+&lt;/context-update&gt;</span></div>
+        </div>
+      </div>
+
+      <div class="node-output">
+        <span class="output-arrow">&rarr;</span>
+        <span class="output-text">Worker execution &rarr; openhands tool (code + terminal)</span>
+      </div>
+    </div>
+
+    <!-- Fixer MANAGER -->
+    <div class="node manager" onclick="toggleNode(this)">
+      <div class="node-header">
+        <span class="role-badge">MGR</span>
+        <span class="node-title">[Fixer] Generate patch</span>
+        <span class="depth-tag">d=1</span>
+        <span class="expand-indicator">&#9662;</span>
+      </div>
+
+      <div class="sections-preview">
+        <span class="section-chip chip-template">Template <span class="chip-count">4 tags</span></span>
+        <span class="section-chip chip-system">System <span class="chip-count">2 tags</span></span>
+      </div>
+
+      <div class="sections-detail">
+        <div class="section-block" data-type="template"
+             data-tooltip="MANAGER template: identical structure to Builder, role determines behavior">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">Template</span>
+            <span class="section-provenance">from prompt templates</span>
+          </div>
+          <div class="section-content"><span class="tag">ROLE</span>
+<span class="tag-content">You are a <b style="color:var(--manager)">MANAGER</b> agent in a recursive multi-agent hierarchy.
+Hierarchy: BOSS &rarr; MANAGER (you) &rarr; WORKER
+Primary responsibility: Decompose complex tasks and configure child agents.</span>
+<span class="tag">CAPABILITIES</span>
+<span class="tag-content">- Analyze task complexity and requirements
+- Decompose tasks into 2-3 concrete subtasks
+- Configure child agents (model, temperature, tool)</span>
+<span class="tag">CONSTRAINTS</span>
+<span class="tag-content">- NEVER execute tasks yourself; delegate to children
+- Each subtask MUST be independently executable
+- Optimal: 2-3 subtasks (avoid over-decomposition)</span></div>
+        </div>
+
+        <div class="section-block" data-type="system"
+             data-tooltip="System context: this manager's specific task + inherited CVE data">
+          <div class="section-header">
+            <div class="section-color-bar"></div>
+            <span class="section-label">System</span>
+            <span class="section-provenance">from orchestrator (inherited)</span>
+          </div>
+          <div class="section-content"><span class="tag">USER_PROMPT</span>
+<span class="tag-content">[Fixer] Generate patch: analyze candidate fixes, create /testcase/model_patch.diff, validate fix removes sanitizer errors</span>
+<span class="tag">CVE_INSTANCE</span>
+<span class="tag-content">- Instance Id: njs.cve-2022-32414
+- Repo: nginx/njs
+- Sanitizer: address
+- Bug Description: SEGV in njs_vmcode_interpreter at src/njs_vmcode.c
+- Base Commit: f65981b0b...</span></div>
+        </div>
+      </div>
+
+      <div class="node-output">
+        <span class="output-arrow">&darr;</span>
+        <span class="output-text">4 subtasks &rarr; [Fixer-1] [Fixer-2] [Fixer-3] [Fixer-4]</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ===== Connectors L1 -> L2 ===== -->
+  <div class="connectors" id="conn-l1-l2">
+    <svg viewBox="0 0 1000 48" preserveAspectRatio="none">
+      <!-- Builder -> depth-2 children -->
+      <line class="connector-line" x1="185" y1="0" x2="80" y2="44" />
+      <line class="connector-line" x1="185" y1="0" x2="145" y2="44" />
+      <line class="connector-line" x1="185" y1="0" x2="210" y2="44" />
+      <line class="connector-line" x1="185" y1="0" x2="275" y2="44" />
+      <!-- Fixer -> depth-2 children -->
+      <line class="connector-line" x1="815" y1="0" x2="710" y2="44" />
+      <line class="connector-line" x1="815" y1="0" x2="775" y2="44" />
+      <line class="connector-line" x1="815" y1="0" x2="840" y2="44" />
+      <line class="connector-line" x1="815" y1="0" x2="905" y2="44" />
+    </svg>
+  </div>
+
+  <!-- ===== Depth 2+ hints ===== -->
+  <div class="depth-hint">
+    <div class="depth-hint-group">
+      <div class="depth-hint-label">Builder's children (d=2)</div>
+      <div class="depth-dots">
+        <div class="depth-dot manager-child" title="Fixer-1: MANAGER (d=2)"></div>
+        <div class="depth-dot forced" title="Fixer-2: WORKER (d=2, simple)"></div>
+        <div class="depth-dot forced" title="Fixer-3: WORKER (d=2, simple)"></div>
+        <div class="depth-dot forced" title="Fixer-4: WORKER (d=2, simple)"></div>
+      </div>
+      <div class="depth-hint-label" style="opacity:0.3">&#x2502;</div>
+      <div class="depth-hint-label" style="opacity:0.3">d=3 managers &rarr; d=4 workers (forced)</div>
+    </div>
+
+    <div style="width:200px"></div>
+
+    <div class="depth-hint-group">
+      <div class="depth-hint-label">Fixer's children (d=2)</div>
+      <div class="depth-dots">
+        <div class="depth-dot manager-child" title="Fixer-1: MANAGER (d=2)"></div>
+        <div class="depth-dot forced" title="Fixer-2: WORKER (d=2, simple)"></div>
+        <div class="depth-dot forced" title="Fixer-3: WORKER (d=2, simple)"></div>
+        <div class="depth-dot forced" title="Fixer-4: WORKER (d=2, simple)"></div>
+      </div>
+      <div class="depth-hint-label" style="opacity:0.3">&#x2502;</div>
+      <div class="depth-hint-label" style="opacity:0.3">d=3 managers &rarr; d=4 workers (forced)</div>
+    </div>
+  </div>
+
+  <!-- ===== Key insight callout ===== -->
+  <div class="callout">
+    <div class="callout-box">
+      <strong>Key insight:</strong> Workers receive <em>accumulated</em> context from peers.
+      The Exploiter sees that <code>[Builder]</code> <b style="color:#ef4444">failed</b> and <code>[Fixer]</code> is <b style="color:var(--text-muted)">waiting</b> &mdash; its sibling context grows as earlier workers complete.
+      At depth 4, agents are <em>forced</em> to WORKER role by <code>max_depth</code> limit enforcement.
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  <div class="legend">
+    <div class="legend-title">Provenance Legend</div>
+    <div class="legend-grid">
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:var(--template)"></div>
+        <div>
+          <div class="legend-label">Template</div>
+          <div class="legend-desc">Role prompt templates</div>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:var(--system)"></div>
+        <div>
+          <div class="legend-label">System</div>
+          <div class="legend-desc">Orchestrator-injected data</div>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:var(--parent)"></div>
+        <div>
+          <div class="legend-label">Parent</div>
+          <div class="legend-desc">Parent agent's task context</div>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:var(--sibling)"></div>
+        <div>
+          <div class="legend-label">Sibling</div>
+          <div class="legend-desc">Peer worker status &amp; results</div>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:var(--shared)"></div>
+        <div>
+          <div class="legend-label">Shared</div>
+          <div class="legend-desc">Cross-agent context updates</div>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:var(--children)"></div>
+        <div>
+          <div class="legend-label">Children</div>
+          <div class="legend-desc">Output to child agents</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend-section">
+      <div class="legend-section-title">What this shows</div>
+      <div class="takeaways">
+        <div class="takeaway"><em>BOSS</em> gets role template + CVE data, outputs subtask decomposition</div>
+        <div class="takeaway"><em>MANAGER</em> gets same frame + system context, decomposes further</div>
+        <div class="takeaway"><em>WORKER</em> gets system + parent + sibling + shared context, executes code</div>
+        <div class="takeaway">Sibling context <em>accumulates</em> as workers complete left-to-right</div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  // Toggle node expansion
+  function toggleNode(node) {
+    node.classList.toggle('expanded');
+  }
+
+  // Tooltip on section hover
+  const tooltip = document.getElementById('tooltip');
+
+  document.querySelectorAll('[data-tooltip]').forEach(el => {
+    el.addEventListener('mouseenter', e => {
+      tooltip.textContent = el.dataset.tooltip;
+      tooltip.classList.add('visible');
+    });
+    el.addEventListener('mousemove', e => {
+      tooltip.style.left = e.clientX + 12 + 'px';
+      tooltip.style.top = e.clientY - 8 + 'px';
+    });
+    el.addEventListener('mouseleave', () => {
+      tooltip.classList.remove('visible');
+    });
+  });
+
+  // Auto-expand the Exploiter node after a brief delay (it's the star)
+  setTimeout(() => {
+    const exploiter = document.getElementById('exploiter');
+    if (exploiter && !exploiter.classList.contains('expanded')) {
+      exploiter.classList.add('expanded');
+    }
+  }, 2000);
+</script>
+
+</body>
+</html>

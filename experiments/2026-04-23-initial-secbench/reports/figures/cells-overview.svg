@@ -1,18 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 240" role="img" aria-label="Cells overview bar chart">
 <rect width="480" height="240" fill="#0f172a"/>
 <text x="240" y="24" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="16" font-weight="600">Initial SEC-bench — runs per cell</text>
-<rect x="40" y="200" width="70" height="0" fill="#38bdf8"/>
+<rect x="40" y="94" width="70" height="106" fill="#38bdf8"/>
 <text x="75" y="218" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">A1</text>
-<text x="75" y="196" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">0</text>
-<rect x="120" y="200" width="70" height="0" fill="#38bdf8"/>
+<text x="75" y="90" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">12</text>
+<rect x="120" y="112" width="70" height="88" fill="#38bdf8"/>
 <text x="155" y="218" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">A2</text>
-<text x="155" y="196" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">0</text>
-<rect x="200" y="200" width="70" height="0" fill="#38bdf8"/>
+<text x="155" y="108" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">10</text>
+<rect x="200" y="58" width="70" height="142" fill="#38bdf8"/>
 <text x="235" y="218" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">B1</text>
-<text x="235" y="196" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">0</text>
-<rect x="280" y="200" width="70" height="0" fill="#38bdf8"/>
+<text x="235" y="54" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">16</text>
+<rect x="280" y="40" width="70" height="160" fill="#38bdf8"/>
 <text x="315" y="218" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">B2</text>
-<text x="315" y="196" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">0</text>
+<text x="315" y="36" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">18</text>
 <rect x="360" y="200" width="70" height="0" fill="#38bdf8"/>
 <text x="395" y="218" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">B3</text>
 <text x="395" y="196" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="12">0</text>
