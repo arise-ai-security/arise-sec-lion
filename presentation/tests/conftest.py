@@ -4,12 +4,32 @@ These fixtures provide mocked application services for testing CLI behavior
 without real infrastructure dependencies.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
+from core.domain.events.events import DomainEvent
 from presentation.cli import CLI, CLIConfig
+
+
+class FakeEventStore:
+    """Minimal read-only event store stub for presentation tests."""
+
+    def __init__(self, events: dict[UUID, list[DomainEvent]] | None = None) -> None:
+        self._events: dict[UUID, list[DomainEvent]] = events or {}
+
+    def set_events(self, aggregate_id: UUID, events: list[DomainEvent]) -> None:
+        self._events[aggregate_id] = list(events)
+
+    async def get_events(
+        self,
+        aggregate_id: UUID,
+        *,
+        limit: int | None = None,
+        after_sequence: int | None = None,
+    ) -> list[DomainEvent]:
+        return list(self._events.get(aggregate_id, []))
 
 
 class FakeExecutionService:
@@ -83,14 +103,34 @@ def fake_execution_service() -> FakeExecutionService:
 
 
 @pytest.fixture
-def cli_with_fake_service(fake_execution_service: FakeExecutionService) -> CLI:
-    """Provide CLI instance with fake execution service."""
-    config = CLIConfig(verbose=False)
-    return CLI(execution_service=fake_execution_service, config=config)  # type: ignore
+def fake_event_store() -> FakeEventStore:
+    """Provide a fake read-only event store for testing."""
+    return FakeEventStore()
 
 
 @pytest.fixture
-def verbose_cli_with_fake_service(fake_execution_service: FakeExecutionService) -> CLI:
+def cli_with_fake_service(
+    fake_execution_service: FakeExecutionService,
+    fake_event_store: FakeEventStore,
+) -> CLI:
+    """Provide CLI instance with fake execution service."""
+    config = CLIConfig(verbose=False)
+    return CLI(
+        execution_service=fake_execution_service,  # type: ignore[arg-type]
+        event_store=fake_event_store,  # type: ignore[arg-type]
+        config=config,
+    )
+
+
+@pytest.fixture
+def verbose_cli_with_fake_service(
+    fake_execution_service: FakeExecutionService,
+    fake_event_store: FakeEventStore,
+) -> CLI:
     """Provide verbose CLI instance with fake execution service."""
     config = CLIConfig(verbose=True)
-    return CLI(execution_service=fake_execution_service, config=config)  # type: ignore
+    return CLI(
+        execution_service=fake_execution_service,  # type: ignore[arg-type]
+        event_store=fake_event_store,  # type: ignore[arg-type]
+        config=config,
+    )

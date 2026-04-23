@@ -56,12 +56,16 @@ def _create_test_cli(
         poll_interval=0.5,
         boss_config=boss_config,
         manager_config=manager_config,
-        output_directory="./output",
+        output_directory="./runs",
         default_worker_tool=infrastructure_config.default_worker_tool,
     )
 
     app = get_application(infra, app_config)
-    return CLI(execution_service=app.execution_service, config=cli_config)
+    return CLI(
+        execution_service=app.execution_service,
+        event_store=infra.event_store,
+        config=cli_config,
+    )
 
 
 # ============================================================================

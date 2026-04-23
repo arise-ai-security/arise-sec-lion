@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,6 +21,9 @@ from .composition import (
     get_first_enabled_domain_components,
     get_run_domain_components,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -135,7 +140,9 @@ async def _event_store(settings: Settings) -> AsyncIterator[PostgresEventStore]:
 
 
 async def _run_task(args: argparse.Namespace) -> None:
+    from core.query.projections import ProjectionPipelineBuilder
     from presentation.formatters import ProgressDisplayFormatter
+    from presentation.persistence import RunPersistence
 
     settings = _apply_worker_overrides(_load_settings(args.config), args)
     callback = ProgressDisplayFormatter.display if settings.output.verbose else None
@@ -157,11 +164,62 @@ async def _run_task(args: argparse.Namespace) -> None:
         verbose=settings.output.verbose,
     )
 
-    await create_runtime_cli(
+    cli = create_runtime_cli(
         settings,
         progress_callback=callback,
         domain_components=domain_components,
-    ).run_task(args.task, domain_context=domain_context)
+    )
+
+    # Wall-clock timings cover runtime setup (domain plugin init, docker
+    # workspace prep) and execution up to cli.run_task() returning. Post-run
+    # projection is NOT included because it can fail independently of the run
+    # succeeding.
+    wall_started_at = datetime.now(UTC)
+    result = await cli.run_task(args.task, domain_context=domain_context)
+    wall_ended_at = datetime.now(UTC)
+
+    # Post-run projection is best-effort: if Postgres is momentarily unhappy
+    # the manifest still lands (with summary_available=false) so the harness's
+    # register_run step has something to enroll. A completed run must not be
+    # blocked from study enrollment by a transient projection failure, and
+    # consumers can tell "genuinely zero" from "projection failed" via
+    # summary_available rather than faked zero tokens/costs.
+    summary = None
+    try:
+        async with _event_store(settings) as store:
+            pipeline = ProjectionPipelineBuilder(store).with_output("summary").build()
+            summary = await pipeline.execute_summary(root_agent_id=result.root_id)
+    except Exception:
+        logger.exception(
+            "Failed to project run summary for %s; manifest will record "
+            "summary_available=false",
+            result.root_id,
+        )
+
+    persistence = RunPersistence(Path(settings.output.directory))
+    domain_context_path = Path(context_file) if context_file else None
+    try:
+        await persistence.write_run_manifest(
+            result.root_id,
+            settings=settings,
+            task=args.task,
+            domain_context_path=domain_context_path,
+            exit_status=result.status,
+            wall_started_at=wall_started_at,
+            wall_ended_at=wall_ended_at,
+            summary=summary,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to write run manifest for %s; run outcome: %s",
+            result.root_id,
+            result.status,
+        )
+
+    # Preserve pre-change behavior: a non-success run exits non-zero so
+    # automation (study harness, CI) can distinguish passing from failing runs.
+    if result.status != "success":
+        sys.exit(1)
 
 
 def _infer_domain_context(

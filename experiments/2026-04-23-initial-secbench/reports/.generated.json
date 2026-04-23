@@ -1,0 +1,24 @@
+{
+  "experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg": {
+    "generated_at": "2026-04-23T19:12:19.779941Z",
+    "generated_by": "experiments/2026-04-23-initial-secbench/scripts/plot_success.py",
+    "inputs": [
+      "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv"
+    ],
+    "inputs_sha256": {
+      "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": "e35731d8d07dbe0b1e47b3f87bdfc185c5f2dcb1c8978a9de18234858f3aaa5c"
+    },
+    "output_sha256": "a17178d24b9cf563274170fe7513a3654fa6aac547c770ec2fdd3ba7f6bd1ab8"
+  },
+  "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": {
+    "generated_at": "2026-04-23T19:12:19.738586Z",
+    "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
+    "inputs": [
+      "experiments/2026-04-23-initial-secbench/manifest.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "1837767e246b30a25c5236b3dc27bf97463a30ad2b2a30eb8c8345681d50bf7c"
+    },
+    "output_sha256": "e35731d8d07dbe0b1e47b3f87bdfc185c5f2dcb1c8978a9de18234858f3aaa5c"
+  }
+}

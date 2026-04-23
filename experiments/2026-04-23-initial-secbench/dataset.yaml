@@ -1,0 +1,28 @@
+name: secbench-v1-10cves
+default_cves:
+  - gpac.cve-2021-40575
+  - openjpeg.cve-2016-7445
+  - exiv2.cve-2017-14859
+  - imagemagick.cve-2019-13309
+  - faad2.cve-2021-32272
+  - mruby.cve-2022-0240
+  - njs.cve-2022-38890
+  - njs.cve-2022-32414
+  - faad2.cve-2018-20196
+  - gpac.cve-2022-1795
+
+per_cell_overrides: {}
+
+source:
+  kind: deployment-json
+  paths:
+    - deployment/gpac-cve-2021-40575.json
+    - deployment/openjpeg-cve-2016-7445.json
+    - deployment/exiv2-cve-2017-14859.json
+    - deployment/imagemagick-cve-2019-13309.json
+    - deployment/faad2-cve-2021-32272.json
+    - deployment/mruby-cve-2022-0240.json
+    - deployment/njs-cve-2022-38890.json
+    - deployment/njs-cve-2022-32414.json
+    - deployment/faad2-cve-2018-20196.json
+    - deployment/gpac-cve-2022-1795.json

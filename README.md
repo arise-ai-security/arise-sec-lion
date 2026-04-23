@@ -128,7 +128,7 @@ After editing Python code, rebuild only the app container: `docker compose --pro
    ├─ 4. watch it live                                                │
    │      http://localhost:8000  (tree + tabs)                        │
    └─ 5. inspect artifacts                                            │
-          output/<BOSS_ID>/testcase/                                  ┘
+          runs/<BOSS_ID>/testcase/                                  ┘
           ├─ security_report.md   ← human-readable summary
           ├─ model_patch.diff     ← the fix
           ├─ repro.sh             ← crash reproducer
@@ -171,7 +171,7 @@ After editing Python code, rebuild only the app container: `docker compose --pro
    docker exec arise-app python main.py list --limit 5   # find the BOSS_ID
    ```
 
-5. **Inspect artifacts** in `output/<BOSS_ID>/testcase/` once the run finishes (§8 lists the deliverables).
+5. **Inspect artifacts** in `runs/<BOSS_ID>/testcase/` once the run finishes (§8 lists the deliverables).
 
 ### Path B — `/secbench-run` skill (optional shortcut)
 
@@ -326,13 +326,13 @@ docker build \
 Every run gets a UUID (the BOSS agent id) and a directory:
 
 ```
-output/<BOSS_ID>/
+runs/<BOSS_ID>/
 ├── testcase/         ← all deliverables and tool outputs
 ├── src/              ← mirror of the vulnerable source tree
 └── secb-exec         ← driver script used by workers
 ```
 
-**Required deliverables** in `output/<BOSS_ID>/testcase/`:
+**Required deliverables** in `runs/<BOSS_ID>/testcase/`:
 
 | File | What it is |
 |------|-----------|
@@ -350,12 +350,12 @@ output/<BOSS_ID>/
 - Build setup + compile reports (`build_setup_report.txt`, `build_compile_report.txt`)
 - Root-cause + patch design notes (`root_cause_analysis.txt`, `patch_candidates_design_notes.md`)
 
-A typical successful run has 50–120 files in `testcase/`. See `output/04146448-7d88-4f04-9fa3-3e4b2180e679/testcase/` as a reference (the `quickjs-ng.issue-1302` success).
+A typical successful run has 50–120 files in `testcase/`. See `runs/04146448-7d88-4f04-9fa3-3e4b2180e679/testcase/` as a reference (the `quickjs-ng.issue-1302` success).
 
 To find the latest run:
 
 ```bash
-ls -td output/*/ | head -1
+ls -td runs/*/ | head -1
 # or
 docker exec arise-app python main.py list --limit 5
 ```
@@ -369,7 +369,7 @@ With the local profile up, `http://localhost:8000` serves the React dashboard (V
 ```
   VISUAL (primary)               CLI (primary)              ON DISK
   ────────────────               ─────────────              ───────
-  Dashboard                      docker exec arise-app \    output/<BOSS_ID>/
+  Dashboard                      docker exec arise-app \    runs/<BOSS_ID>/
    @ localhost:8000                python main.py summary    testcase/
    ├─ Agent Tree                   python main.py events      ├─ security_report.md
    ├─ Summary                       --errors-only             ├─ model_patch.diff
@@ -457,7 +457,7 @@ Rule of thumb:
 | Run fails at startup with "Missing SEC-bench image `secb-tools:<id>-patch`" | `bash deployment/build-secbench-tools.sh <fixture.json>` |
 | `docker pull` of the base image fails | Check resolution order in §7; the fixture may reference a private image — set `docker_image_override` to `hwiwonlee/…` as a fallback |
 | `fetch_secbench.py` fails importing `datasets` | Run inside `uv run`: `uv run python plugins/security/tests/fixtures/fetch_secbench.py …` |
-| Run finishes but `output/<id>/testcase/` is missing deliverables | The Reporter phase timed out; check the dashboard Events tab for that phase's VerificationFailed reasons |
+| Run finishes but `runs/<id>/testcase/` is missing deliverables | The Reporter phase timed out; check the dashboard Events tab for that phase's VerificationFailed reasons |
 | Agent count exploded past 25 | Over-decomposition — see `/secbench-run` Phase 4, edit `prompts/domains/secbench/assess.j2` |
 | Need to re-run a stuck instance | `docker compose --profile local restart app` (or use `/secbench-run` which restarts automatically) |
 
@@ -529,8 +529,31 @@ arise-sec-lion/
 ├── deployment/              # Docker Compose, Dockerfiles, build scripts
 ├── skills/                  # ← checked-in Claude Code slash commands
 │                            #   (install into .claude/commands/ — see skills/README.md)
-└── output/                  # ← run artifacts, one subdir per BOSS_ID
+├── experiments/             # ← git-tracked comparative studies (see below)
+│   ├── shared/              #   reusable harness, writers, validators
+│   └── <study-id>/          #   one directory per study (manifest, configs, report)
+└── runs/                    # ← run artifacts, one subdir per BOSS_ID (gitignored)
 ```
+
+### Comparative experiments — `experiments/` vs. `runs/`
+
+The repo uses a two-area split for comparative studies:
+
+- `experiments/<study-id>/` — **small, git-tracked, derived products only.**
+  Holds the study's `manifest.yaml`, pinned `configs/`, analysis `scripts/`,
+  Jinja `templates/`, and rendered `reports/`. Every file under any
+  `reports/` directory is emitted by a committed script and carries
+  provenance metadata (YAML frontmatter for `.md`, `.generated.json`
+  sidecar for binaries). The `validate-experiment-reports` pre-commit hook
+  rejects any commit that violates this invariant.
+- `runs/` — **large, gitignored, raw artifacts.** Flat pool keyed by
+  `run_id` (= BOSS agent UUID). Each run is self-describing via
+  `run_manifest.json`. Legacy runs migrated from the pre-2026-04 layout
+  live under `runs/_legacy/`.
+
+Primary harness: `python -m experiments.shared.harness run-ours …` /
+`run-baseline …`. Full design: see
+`docs/superpowers/specs/2026-04-22-experiments-layout-design.md`.
 
 Deep dives in [`agent-docs/`](agent-docs/):
 

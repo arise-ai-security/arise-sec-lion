@@ -84,7 +84,7 @@ At the start of Phase 3, remind the user they have three complementary views int
    - **Costs** tab: tokens + $ per run (live).
    - **Prompts** tab: exact rendered prompts the worker saw.
    - **Prompt Trace** page (purple button top-right → `/prompt-trace/<rootId>`): full composed system prompt per agent, including the security-tools block and supervisor insights.
-3. **Artifacts on disk** at `output/<BOSS_ID>/testcase/` — appears incrementally as workers complete; safe to `tail -f` individual files.
+3. **Artifacts on disk** at `runs/<BOSS_ID>/testcase/` — appears incrementally as workers complete; safe to `tail -f` individual files.
 
 Use the dashboard for intuition, this skill for rigour.
 
@@ -207,15 +207,15 @@ Expected Fixer roles: Root-Cause-Analyst, Candidate-Reviewer, Patch-Creator, Pat
 **Fix**: `core/application/services/orchestration/verification_pipeline.py` - judge prompt flexibility.
 
 #### Missing deliverables
-**Check**: After run completes, verify these files exist in the output testcase directory:
+**Check**: After run completes, verify these files exist in the run testcase directory:
 ```bash
-ls output/<BOSS_ID>/testcase/
+ls runs/<BOSS_ID>/testcase/
 ```
 Required: `base_commit_hash`, `repro.sh`, `model_patch.diff`, `security_report.md`
 
 ### Phase 5: Post-run analysis
 
-Artifacts land in `output/<BOSS_ID>/testcase/`. Required deliverables:
+Artifacts land in `runs/<BOSS_ID>/testcase/`. Required deliverables:
 
 | File | Meaning |
 |------|--------|

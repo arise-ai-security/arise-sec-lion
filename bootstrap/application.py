@@ -40,6 +40,7 @@ from .realtime_adapter import RealtimeCallbackAdapter
 if TYPE_CHECKING:
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
+    from core.ports.event_store_port import EventStoreReadPort
     from presentation.cli import CLI, CLIConfig
 
     from .infrastructure import Infrastructure
@@ -219,9 +220,10 @@ def get_application(
 
 def get_cli(
     execution_service: AgentExecutionService,
+    event_store: EventStoreReadPort,
     config: CLIConfig | None = None,
 ) -> CLI:
     """Create CLI interface."""
     from presentation.cli import CLI
 
-    return CLI(execution_service=execution_service, config=config)
+    return CLI(execution_service=execution_service, event_store=event_store, config=config)

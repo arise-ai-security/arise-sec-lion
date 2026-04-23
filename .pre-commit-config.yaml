@@ -10,6 +10,13 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: validate-experiment-reports
+        name: validate scripts-first provenance on experiment reports
+        entry: python3 -m experiments.shared.scripts.validate_reports
+        language: system
+        files: ^experiments/.+/reports/
+        pass_filenames: true
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.5
     hooks:

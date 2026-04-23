@@ -1,0 +1,31 @@
+study_id: 2026-04-23-initial-secbench
+created_at: 2026-04-23 00:00:00+00:00
+hypothesis: Seed study produced by migrating dataset-final/ into the experiments/runs
+  layout. Establishes the end-to-end shape (pinned configs, scripts-first reports,
+  run enrollment) without claiming new experimental findings.
+dataset: dataset.yaml
+cells:
+  A1:
+    config: configs/A1-claude-code-subagent.yaml
+    harness: baseline-claude-code-subagent
+  A2:
+    config: configs/A2-claude-code-nosubagent.yaml
+    harness: baseline-claude-code-nosubagent
+  B1:
+    config: configs/B1-ours-naive.yaml
+    harness: ours
+  B2:
+    config: configs/B2-ours-cybersec.yaml
+    harness: ours
+  B3:
+    config: configs/B3-ours-full.yaml
+    harness: ours
+runs:
+- run_id: 4fb43a9c-6ca6-4013-8b7e-79af250bad62
+  cell: B1
+  task: gpac.cve-2021-40575
+  attempt: 0
+- run_id: b6e3862a-deef-41df-945e-db75b73ddbb2
+  cell: A1
+  task: gpac.cve-2021-40575
+  attempt: 0

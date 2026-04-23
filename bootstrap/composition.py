@@ -130,6 +130,7 @@ def create_runtime_cli(
 
     return CLI(
         execution_service=app.execution_service,
+        event_store=infra.event_store,
         config=CLIConfig(
             verbose=settings.output.verbose,
             output_directory=settings.output.directory,

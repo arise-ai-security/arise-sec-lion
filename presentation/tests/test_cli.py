@@ -8,13 +8,16 @@ The CLI should correctly:
 """
 
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID, uuid4
 
 import pytest
 
-from presentation.cli import CLI, CLIConfig
+from core.domain.events.events import RunCompleted
+from presentation.cli import CLI, CLIConfig, RunResult
 
-from .conftest import FakeExecutionService
+from .conftest import FakeEventStore, FakeExecutionService
 
 
 class TestCLIBanner:
@@ -163,9 +166,146 @@ class TestCLIConfig:
     def test_config_default_output_directory(self) -> None:
         """Test that CLIConfig has default output_directory."""
         config = CLIConfig()
-        assert config.output_directory == "./output"
+        assert config.output_directory == "./runs"
 
     def test_config_custom_output_directory(self) -> None:
         """Test that CLIConfig accepts custom output_directory."""
         config = CLIConfig(output_directory="/custom/path")
         assert config.output_directory == "/custom/path"
+
+
+class TestCLIRunTaskStatusMapping:
+    """CLI.run_task() must map execution outcomes to the RunResult status.
+
+    The contract: the orchestration loop emits RunCompleted events whose
+    `status` field is one of {"timed_out", "completed", anything-else},
+    mirroring `core.application.execution_service.ExecutionService` internal
+    signalling. CLI translates those to the presentation-facing values
+    "timeout" / "success" / "failed" without re-running any logic.
+    """
+
+    @pytest.fixture
+    def forced_boss_id(self) -> UUID:
+        """Pin the boss_id so events can be pre-seeded in the fake store."""
+        return uuid4()
+
+    @pytest.fixture
+    def pinned_fake_service(
+        self,
+        fake_execution_service: FakeExecutionService,
+        forced_boss_id: UUID,
+    ) -> FakeExecutionService:
+        """Patch the fake to produce a deterministic root agent id."""
+
+        async def _create(
+            task_description: str,
+            domain_context: object | None = None,  # noqa: ARG001 - interface parity
+        ) -> UUID:
+            fake_execution_service.last_task_description = task_description
+            fake_execution_service.created_boss_id = str(forced_boss_id)
+            return forced_boss_id
+
+        fake_execution_service.create_boss_agent = _create  # type: ignore[method-assign]
+        return fake_execution_service
+
+    @pytest.fixture
+    def cli(
+        self,
+        pinned_fake_service: FakeExecutionService,
+        fake_event_store: FakeEventStore,
+        tmp_path: Path,
+    ) -> CLI:
+        config = CLIConfig(verbose=False, output_directory=str(tmp_path))
+        return CLI(
+            execution_service=pinned_fake_service,  # type: ignore[arg-type]
+            event_store=fake_event_store,  # type: ignore[arg-type]
+            config=config,
+        )
+
+    @staticmethod
+    def _run_completed(boss_id: UUID, status: str) -> RunCompleted:
+        return RunCompleted(
+            aggregate_id=boss_id,
+            sequence_number=0,
+            status=status,
+            duration_seconds=1.0,
+            total_agents=1,
+            completed_agents=1,
+            failed_agents=0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_timed_out_status_maps_to_timeout(
+        self,
+        cli: CLI,
+        fake_event_store: FakeEventStore,
+        forced_boss_id: UUID,
+    ) -> None:
+        # Given: a RunCompleted event with status="timed_out" — what the
+        # execution service emits via run_status_override on deadline hit.
+        fake_event_store.set_events(
+            forced_boss_id, [self._run_completed(forced_boss_id, "timed_out")]
+        )
+
+        # When
+        result = await cli.run_task("task")
+
+        # Then
+        assert isinstance(result, RunResult)
+        assert result.root_id == forced_boss_id
+        assert result.status == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_completed_status_maps_to_success(
+        self,
+        cli: CLI,
+        fake_event_store: FakeEventStore,
+        forced_boss_id: UUID,
+    ) -> None:
+        # Given: a normally completing run emits RunCompleted(status="completed").
+        fake_event_store.set_events(
+            forced_boss_id, [self._run_completed(forced_boss_id, "completed")]
+        )
+
+        # When
+        result = await cli.run_task("task")
+
+        # Then
+        assert result.status == "success"
+
+    @pytest.mark.asyncio
+    async def test_exception_in_orchestration_maps_to_failed(
+        self,
+        cli: CLI,
+        pinned_fake_service: FakeExecutionService,
+    ) -> None:
+        # Given: the orchestration loop raises — simulating an unexpected
+        # runtime error. The event store is not consulted on the exception
+        # path, so no RunCompleted events are needed.
+        async def _boom(_root_id: object) -> None:
+            raise RuntimeError("something exploded")
+
+        pinned_fake_service.run_system_loop = _boom  # type: ignore[method-assign]
+
+        # When
+        result = await cli.run_task("task")
+
+        # Then
+        assert result.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_missing_run_completed_event_maps_to_failed(
+        self,
+        cli: CLI,
+        forced_boss_id: UUID,
+    ) -> None:
+        # Given: the orchestration loop returns cleanly but no RunCompleted
+        # event has been persisted — treated as "failed" (not "success")
+        # because we cannot prove success without the event.
+
+        # When
+        result = await cli.run_task("task")
+
+        # Then
+        assert result.root_id == forced_boss_id
+        assert result.status == "failed"

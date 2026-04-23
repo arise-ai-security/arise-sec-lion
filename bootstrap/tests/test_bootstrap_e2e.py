@@ -6,6 +6,15 @@ Run with:
     uv run pytest bootstrap/tests/ -v
 """
 
+import argparse
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
 import pytest
 
 from bootstrap import (
@@ -16,7 +25,7 @@ from bootstrap import (
     get_infrastructure,
 )
 from config import ConcurrencyConfig, ToolCallingConfig, TopologyConfig
-from presentation.cli import CLI, CLIConfig
+from presentation.cli import CLI, CLIConfig, RunResult
 
 
 pytestmark = pytest.mark.e2e
@@ -101,7 +110,7 @@ class TestPresentationWiring:
         """Test that get_cli returns a properly configured CLI."""
         infra = get_infrastructure(make_infra_config())
         app = get_application(infra, make_app_config())
-        cli = get_cli(app.execution_service, CLIConfig(verbose=False))
+        cli = get_cli(app.execution_service, infra.event_store, CLIConfig(verbose=False))
 
         assert isinstance(cli, CLI)
         assert cli.config.verbose is False
@@ -110,7 +119,7 @@ class TestPresentationWiring:
         """Test that CLI has access to execution service."""
         infra = get_infrastructure(make_infra_config())
         app = get_application(infra, make_app_config())
-        cli = get_cli(app.execution_service)
+        cli = get_cli(app.execution_service, infra.event_store)
 
         assert cli.execution_service is app.execution_service
 
@@ -133,7 +142,7 @@ class TestFullWiringChain:
         ))
 
         # Presentation
-        cli = get_cli(app.execution_service, CLIConfig(
+        cli = get_cli(app.execution_service, infra.event_store, CLIConfig(
             verbose=True,
             output_directory="./custom_output",
         ))
@@ -176,3 +185,153 @@ class TestFullAgentFlow:
             assert stats.total_agents >= 1
         finally:
             await e2e_cli.execution_service.cleanup()
+
+
+class TestRunTaskManifestAssembly:
+    """Verify bootstrap._run_task wiring around cli.run_task() and manifest write.
+
+    These tests exercise the orchestration contract documented in spec §10
+    without spinning up Postgres: they stub out CLI construction, the event
+    store context, and projection pipeline so the assertions focus on the
+    three guarantees that motivated Phase 1:
+
+    (a) wall_started_at is captured BEFORE cli.run_task() is awaited;
+    (b) a FRESH event store is opened for projection (not shared with CLI);
+    (c) write_run_manifest receives RunResult.status unchanged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_task_manifest_inputs_are_plumbed_correctly(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from bootstrap import bootstrap as bootstrap_module
+
+        # Given: a deterministic run_id returned by a faked CLI.
+        run_id = uuid4()
+
+        # And: instrumentation to capture the observed timeline.
+        timeline: list[tuple[str, datetime]] = []
+        captured_manifest_kwargs: dict[str, Any] = {}
+
+        async def _fake_cli_run_task(
+            task: str,  # noqa: ARG001 - matches CLI.run_task signature
+            domain_context: object | None = None,  # noqa: ARG001 - matches CLI.run_task signature
+        ) -> RunResult:
+            # Record the moment cli.run_task() starts executing so the test
+            # can assert wall_started_at was stamped BEFORE this point.
+            timeline.append(("cli_run_task_entered", datetime.now(UTC)))
+            await asyncio.sleep(0)  # let the event loop tick
+            return RunResult(root_id=run_id, status="timeout")
+
+        fake_cli = MagicMock()
+        fake_cli.run_task = AsyncMock(side_effect=_fake_cli_run_task)
+
+        # Event store contexts opened by bootstrap — bootstrap should open
+        # its own, separate from anything CLI used internally.
+        opened_stores: list[MagicMock] = []
+
+        @asynccontextmanager
+        async def _fake_event_store_cm(_settings: Any) -> AsyncIterator[MagicMock]:
+            store = MagicMock(name=f"EventStore-{len(opened_stores)}")
+            opened_stores.append(store)
+            yield store
+
+        # Projection pipeline returns a synthetic summary the manifest writer
+        # will receive unchanged.
+        fake_summary = MagicMock(name="ProjectionSummary")
+        fake_pipeline = MagicMock()
+        fake_pipeline.execute_summary = AsyncMock(return_value=fake_summary)
+
+        fake_builder = MagicMock()
+        fake_builder.with_output.return_value = fake_builder
+        fake_builder.build.return_value = fake_pipeline
+
+        # Manifest writer: capture kwargs so the test can inspect the
+        # forwarded fields.
+        async def _fake_write_run_manifest(run_id_arg: Any, **kwargs: Any) -> Any:
+            timeline.append(("write_run_manifest_entered", datetime.now(UTC)))
+            captured_manifest_kwargs["run_id"] = run_id_arg
+            captured_manifest_kwargs.update(kwargs)
+            return tmp_path / "manifest.json"
+
+        fake_persistence = MagicMock()
+        fake_persistence.write_run_manifest = AsyncMock(
+            side_effect=_fake_write_run_manifest
+        )
+
+        # Settings stub — only the attributes bootstrap reaches into matter.
+        settings_stub = MagicMock(name="Settings")
+        settings_stub.output.verbose = False
+        settings_stub.output.directory = str(tmp_path)
+
+        args = argparse.Namespace(
+            config=None,
+            task="smoke-task",
+            domain_context_file=None,
+            domain=None,
+            worker_model=None,
+            worker_tool=None,
+        )
+
+        # When: running _run_task with every collaborator stubbed.
+        with (
+            patch.object(bootstrap_module, "_load_settings", return_value=settings_stub),
+            patch.object(
+                bootstrap_module, "_apply_worker_overrides", side_effect=lambda s, _: s
+            ),
+            patch.object(
+                bootstrap_module,
+                "get_run_domain_components",
+                return_value=MagicMock(plugin=None),
+            ),
+            patch.object(bootstrap_module, "create_runtime_cli", return_value=fake_cli),
+            patch.object(bootstrap_module, "_event_store", _fake_event_store_cm),
+            patch(
+                "core.query.projections.ProjectionPipelineBuilder",
+                return_value=fake_builder,
+            ),
+            patch(
+                "presentation.persistence.RunPersistence",
+                return_value=fake_persistence,
+            ),
+        ):
+            # Snapshot before delegation — anything captured by bootstrap as
+            # wall_started_at must be >= this instant but < the moment
+            # cli.run_task() started executing.
+            test_start = datetime.now(UTC)
+            # Non-success runs exit non-zero (contract with automation); the
+            # manifest writer still fires before sys.exit, so the captured
+            # kwargs are populated below.
+            with pytest.raises(SystemExit):
+                await bootstrap_module._run_task(args)
+
+        # Then:
+
+        # (c) the manifest received the RunResult.status verbatim — bootstrap
+        # did not re-infer anything.
+        assert captured_manifest_kwargs["run_id"] == run_id
+        assert captured_manifest_kwargs["exit_status"] == "timeout"
+        assert captured_manifest_kwargs["summary"] is fake_summary
+
+        # (a) wall_started_at was captured BEFORE cli.run_task() was awaited.
+        wall_started = captured_manifest_kwargs["wall_started_at"]
+        wall_ended = captured_manifest_kwargs["wall_ended_at"]
+        cli_entered_at = next(
+            moment for name, moment in timeline if name == "cli_run_task_entered"
+        )
+        assert test_start <= wall_started <= cli_entered_at
+        assert wall_started < wall_ended
+
+        # (b) a fresh event store was opened for projection. We count exactly
+        # one bootstrap-owned store per _run_task invocation; separation from
+        # any CLI-internal store is by construction since create_runtime_cli
+        # is also patched out.
+        assert len(opened_stores) == 1
+        # And: the projection pipeline was driven against that store.
+        fake_pipeline.execute_summary.assert_awaited_once_with(root_agent_id=run_id)
+
+        # Sanity: the stubbed CLI.run_task was actually invoked with the args
+        # bootstrap forwarded — proves the create_runtime_cli patch is live
+        # and the other assertions are not passing spuriously.
+        fake_cli.run_task.assert_awaited_once_with("smoke-task", domain_context=None)
