@@ -281,6 +281,14 @@ def parse_assessment_response(response: str) -> AssessmentResult:
             constraint_failure=ConstraintFailure.from_llm_response(data),
         )
 
+    # Qwen-family models may wrap the response in a tool-call shape;
+    # unwrap {"name": ..., "arguments": {...}} to get the real payload.
+    if isinstance(data, dict) and "name" in data and "arguments" in data:
+        inner = data["arguments"]
+        if isinstance(inner, dict):
+            logger.warning("Assessment response wrapped in tool-call shape, unwrapping")
+            data = inner
+
     action = data.get("action", "").lower()
     reasoning = data.get("reasoning", "")
 
@@ -295,5 +303,22 @@ def parse_assessment_response(response: str) -> AssessmentResult:
             reasoning=reasoning,
             subtasks=subtasks,
         )
+
+    # Qwen-family models sometimes omit the "action" field entirely.
+    # Infer intent from response structure: if subtasks are present,
+    # treat as decompose; otherwise default to execute.
+    if not action:
+        raw_subtasks = data.get("subtasks") or data.get("tasks") or data.get("children")
+        if raw_subtasks and isinstance(raw_subtasks, list):
+            logger.warning("Assessment missing 'action' field but has subtasks, inferring 'decompose'")
+            subtasks = _validate_subtasks(raw_subtasks)
+            return AssessmentResult(
+                action="decompose",
+                reasoning=reasoning,
+                subtasks=subtasks,
+            )
+        # No subtasks and no action — default to execute (single worker)
+        logger.warning("Assessment missing 'action' field and no subtasks, defaulting to 'execute'")
+        return AssessmentResult(action="execute", reasoning=reasoning)
 
     raise ValueError(f"Invalid action: '{action}'. Expected 'execute' or 'decompose'.")
