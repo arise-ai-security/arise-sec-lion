@@ -1,5 +1,5 @@
 llm:
-  model_boss: gpt-5.3-codex
+  model_boss: ollama_chat/qwen3.5:397b-cloud
 
 output:
   verbose: true
