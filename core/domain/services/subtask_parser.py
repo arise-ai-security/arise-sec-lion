@@ -71,10 +71,22 @@ def parse_subtasks_from_llm(response: str) -> list[Subtask]:
 
 
 def _parse_json(response: str) -> Any:
-    """Extract and parse JSON from LLM response."""
+    """Extract and parse JSON from LLM response.
+
+    Uses ``raw_decode`` to tolerate trailing content after the JSON object.
+    Qwen-family models (e.g. qwen3.5 via Ollama Cloud) sometimes append
+    ``<think>…</think>`` reasoning tags, explanatory prose, or a duplicate
+    JSON object after the primary response.  ``json.loads`` rejects this
+    ("Extra data …"), but ``raw_decode`` parses only the first JSON value
+    and ignores the rest.
+    """
     clean = strip_markdown_code_block(response)
     try:
-        return json.loads(clean)
+        # lstrip() is defensive: raw_decode (unlike json.loads) rejects
+        # leading whitespace.  strip_markdown_code_block already strips,
+        # but we guard against future changes to that function.
+        data, _ = json.JSONDecoder().raw_decode(clean.lstrip())
+        return data
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM response is not valid JSON: {e}") from e
 
@@ -272,7 +284,32 @@ def parse_assessment_response(response: str) -> AssessmentResult:
         ValueError: If action is invalid or subtasks are malformed.
     """
     clean = strip_markdown_code_block(response)
-    data = json.loads(clean)
+    logger.debug("Assessment response (first 500 chars): %.500s", clean)
+
+    # Use raw_decode to tolerate trailing content after the JSON object.
+    # Qwen-family models (e.g. qwen3.5 via Ollama Cloud) exhibit three
+    # known behaviors that produce non-empty trailing content:
+    #   1. Appending <think>…</think> reasoning tags after the JSON body.
+    #   2. Emitting explanatory prose ("Here is my assessment: …") after
+    #      the closing brace.
+    #   3. Producing a duplicate/secondary JSON object on the next line.
+    # json.loads() rejects all of these with "Extra data", but raw_decode
+    # parses only the first JSON value and ignores the rest.  GPT and
+    # Claude always return a single clean JSON object, so this path is
+    # a no-op for them.
+    # lstrip() is defensive: raw_decode (unlike json.loads) rejects
+    # leading whitespace.  strip_markdown_code_block already strips,
+    # but we guard against future changes to that function.
+    clean_lstripped = clean.lstrip()
+    data, end = json.JSONDecoder().raw_decode(clean_lstripped)
+    trailing = clean_lstripped[end:].strip()
+    if trailing:
+        logger.warning(
+            "Assessment response had trailing content after JSON "
+            "(Qwen quirk), ignored %d chars: %.120s",
+            len(trailing),
+            trailing,
+        )
 
     # Check constraint failure first
     if ConstraintFailure.matches(data):
