@@ -94,6 +94,11 @@ def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
             return items
         case {"description": _} | {"config": _}:
             return [data]  # Single subtask wrapped
+        case {"name": _, "arguments": dict() as args}:
+            # Qwen-family models (e.g. qwen3.5 via Ollama) emit tool-call-shaped
+            # JSON {"name": "...", "arguments": {...}} even when no tools are
+            # offered.  Unwrap and recurse into the arguments payload.
+            return _extract_subtask_list(args)
         case dict() as d:
             raise ValueError(f"Expected list of subtasks, got dict with keys: {list(d.keys())}")
         case _:
@@ -217,7 +222,14 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
             raise ValueError(f"Subtask {idx}: expected dict, got {type(item).__name__}")
 
         if "config" not in item:
-            raise ValueError(f"Subtask {idx}: missing 'config' field")
+            # Qwen-family models sometimes omit the config field entirely.
+            # Inject a safe default so downstream validation succeeds.
+            logger.warning("Subtask %d: missing 'config' field, injecting default", idx)
+            item["config"] = {
+                "strategy": "heuristic",
+                "base": {"model": "placeholder", "temperature": 0.7, "max_tokens": 16000},
+                "tool": DEFAULT_WORKER_TOOL,
+            }
 
         sanitized_item = item  # Already sanitized above
 

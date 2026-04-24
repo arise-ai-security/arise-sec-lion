@@ -193,6 +193,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
+        # Qwen-family models via Ollama report context_length (e.g. 262144)
+        # as max_output_tokens, but the actual output limit is lower (65536).
+        # litellm's auto-detection conflates context window with output cap,
+        # causing Ollama to reject the request.  Cap explicitly.
+        if self.model.startswith(("ollama/", "ollama_chat/")):
+            llm_kwargs["max_output_tokens"] = 16000
         llm = LLM(**llm_kwargs)
         agent = Agent(
             llm=llm,
