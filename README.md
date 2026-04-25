@@ -20,8 +20,7 @@ New to this repo? Read this file top-to-bottom once — it walks you from a fres
 10. [Review results through Claude Code automation (optional shortcut)](#10-review-results-through-claude-code-automation-optional-shortcut)
 11. [Where security-related system prompts are written](#11-where-security-related-system-prompts-are-written)
 12. [Troubleshooting cheat sheet](#12-troubleshooting-cheat-sheet)
-13. [Use Ollama Cloud models (optional)](#13-use-ollama-cloud-models-optional)
-14. [Project structure and docs index](#14-project-structure-and-docs-index)
+13. [Project structure and docs index](#13-project-structure-and-docs-index)
 
 ---
 
@@ -58,11 +57,8 @@ For SEC-bench the BOSS always follows a 4-phase process: **Builder → Exploiter
 - A **Claude Code** session in this repo root if you want to use the `/secbench-run` and `/secbench-fixture` shortcut skills. They're optional; see [`skills/README.md`](skills/README.md) for one-line install (symlink or copy into `.claude/commands/`). The skill source of truth lives under `skills/` because `.claude/` is gitignored
 - A `deployment/.env` file with:
   - `POSTGRES_PASSWORD` (anything, local-only)
-  - `OPENAI_API_KEY` (required for OpenAI-backed runs — LiteLLM default path)
+  - `OPENAI_API_KEY` (required — LiteLLM default path)
   - `ANTHROPIC_API_KEY` (required if using the Claude Code worker)
-  - `OLLAMA_API_KEY` + `OLLAMA_API_BASE=https://ollama.com` (optional — switch the
-    stack to [Ollama Cloud](https://docs.ollama.com/cloud) by setting models to
-    e.g. `ollama_chat/gpt-oss:120b` in `config/config.yaml`; see §13)
   - `HOST_PROJECT_ROOT=/home/<you>/arise-sec-lion` (needed for Docker-out-of-Docker volume mounts)
 
 Copy the template: `cp deployment/.env.example deployment/.env` and fill in the values.
@@ -465,50 +461,7 @@ Full diagnostic checklist: `skills/secbench-run.md` → Phase 4.
 
 ---
 
-## 13. Use Ollama Cloud models (optional)
-
-Ollama Cloud hosts large models (`gpt-oss:120b`, `gpt-oss:20b`, `deepseek-v3.1:671b`, …) behind a Bearer-auth `https://ollama.com` endpoint. LiteLLM's `ollama_chat/` provider speaks this protocol, and the OpenHands SDK uses LiteLLM under the hood — so switching any of BOSS / MANAGER / worker over is a config-only change.
-
-1. **Create a key** at <https://ollama.com/settings/keys>.
-
-2. **Add the env vars** to `deployment/.env`:
-
-   ```env
-   OLLAMA_API_KEY=<your-key>
-   OLLAMA_API_BASE=https://ollama.com
-   ```
-
-   (LiteLLM reads both automatically; the `api_base` / `base_url` YAML fields below are optional overrides.)
-
-3. **Point any or all roles at an Ollama model** in `config/config.yaml`:
-
-   ```yaml
-   boss:
-     model: ollama_chat/gpt-oss:120b
-     # api_base: https://ollama.com   # optional — env var is enough
-
-   manager:
-     model: ollama_chat/gpt-oss:120b
-
-   worker:
-     model: ollama_chat/gpt-oss:120b
-     tool: openhands
-     # base_url: https://ollama.com   # optional — env var is enough
-   ```
-
-   Use `ollama_chat/` (not `ollama/`) — it maps to the `/api/chat` endpoint Ollama Cloud exposes.
-
-4. **Restart the app container** so new env vars and config are picked up:
-
-   ```bash
-   docker compose --profile local up -d --build app
-   ```
-
-That's the whole integration — no code-path differences from OpenAI runs. Cost tracking falls through LiteLLM's calculator; Ollama Cloud pricing is handled server-side, so `cost_usd` will report `0.0` for those calls.
-
----
-
-## 14. Project structure and docs index
+## 13. Project structure and docs index
 
 ```
 arise-sec-lion/

@@ -247,12 +247,7 @@ class VerificationPipeline:
                     return False, "Judge could not evaluate (empty response after retry)", 0
 
             clean = strip_markdown_code_block(raw)
-            # Use raw_decode to tolerate trailing content after JSON.
-            # Qwen-family models (e.g. qwen3.5 via Ollama Cloud) may append
-            # <think> tags, prose, or duplicate JSON after the primary object.
-            # json.loads rejects this ("Extra data"); raw_decode parses only
-            # the first JSON value.  No-op for GPT/Claude.
-            data, _ = json.JSONDecoder().raw_decode(clean.lstrip())
+            data = json.loads(clean)
             if not isinstance(data, dict):
                 raise ValueError(f"Expected dict, got {type(data).__name__}")
             score = int(data.get("score", 0))

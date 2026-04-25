@@ -17,8 +17,7 @@ Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Ex
    - `depends_on`: []
    - `context_sharing`: Publish the base commit hash via `<context-update>` decision.
 
-2. **[Build-Compiler]** (index 1): Run `cd {{ work_dir }} && /src/build.sh` to perform the initial build. Improve `/src/build.sh` to be standalone: remove undefined variables, remove fuzzer commands, add `-j$(nproc)` to make, add `-p` to mkdir, preserve sanitizer flags, keep `make install` if present. Fix build errors (C++17: `-std=c++14` in CXXFLAGS only, implicit int: add types, overload: `-D_GNU_SOURCE`). Rebuild after improvements.
-   **CRITICAL — preserve incremental builds**: Do NOT add `make clean`, `cmake --target clean`, `ninja -t clean`, or any clean step to `build.sh`. Downstream workers (Fixer, Validator) run `build.sh` after small source edits — a clean step forces a full rebuild that can cause timeouts on large projects. The script must support fast incremental rebuilds. Also do NOT inject compiler flags (CFLAGS, CXXFLAGS, LDFLAGS) that differ from how the project was originally built in the Docker image — changing flags invalidates the build cache and triggers a full recompile.
+2. **[Build-Compiler]** (index 1): Run `cd {{ work_dir }} && /src/build.sh` to perform the initial build. Improve `/src/build.sh` to be standalone: remove undefined variables, remove fuzzer commands, add `-j$(nproc)` to make, add `-p` to mkdir, place `make clean` before configure, preserve sanitizer flags, keep `make install` if present. Fix build errors (C++17: `-std=c++14` in CXXFLAGS only, implicit int: add types, overload: `-D_GNU_SOURCE`). Rebuild after improvements.
    - `depends_on`: [0]
    - `context_sharing`: Publish build status (success/failure) and binary locations via `<context-update>`.
 

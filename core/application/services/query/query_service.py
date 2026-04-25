@@ -311,9 +311,9 @@ class AgentQueryService:
         1. All sibling_indices in its depends_on are terminal, AND
         2. All ancestor managers have their own sibling dependencies satisfied.
 
-        Without check (2), a grandchild task under a blocked nested manager
-        would execute before its parent's dependencies complete (e.g. sibling
-        managers not yet finished).
+        Without check (2), grandchildren of blocked managers (e.g. Fixer's
+        workers) would execute before their parent's dependencies complete
+        (e.g. Builder/Exploiter not yet finished).
         """
         eligible = []
 

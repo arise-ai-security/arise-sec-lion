@@ -94,7 +94,6 @@ class ChildAgentFactory:
         manager_model = self._manager_config.model
         manager_temp = self._manager_config.temperature
         manager_max_tokens = self._manager_config.max_tokens
-        manager_api_base = getattr(self._manager_config, "api_base", None)
 
         # Handle heuristic/hybrid strategy (has "base" field)
         if "base" in result and isinstance(result["base"], dict):
@@ -102,7 +101,6 @@ class ChildAgentFactory:
             result["base"]["model"] = manager_model
             result["base"]["temperature"] = manager_temp
             result["base"]["max_tokens"] = manager_max_tokens
-            result["base"]["api_base"] = manager_api_base
 
         # Handle per_operation strategy (has complexity_evaluation, task_decomposition)
         for op_key in ("complexity_evaluation", "task_decomposition"):
@@ -111,7 +109,6 @@ class ChildAgentFactory:
                 result[op_key]["model"] = manager_model
                 result[op_key]["temperature"] = manager_temp
                 result[op_key]["max_tokens"] = manager_max_tokens
-                result[op_key]["api_base"] = manager_api_base
 
         return result
 

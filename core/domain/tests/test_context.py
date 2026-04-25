@@ -90,20 +90,20 @@ class TestAncestor:
         )
         # Realistic multi-part task (typical length ~200 chars)
         task = (
-            "Analyze issue PROJ-4820: incorrect ordering in the "
-            "checkout module CartReconciler at cart_service.py:388. "
-            "Reproduce the failure, develop a targeted fix that "
-            "restores correct ordering, and verify the fix eliminates "
-            "the failure under test."
+            "Analyze issue PROJ-4820: null-pointer dereference in njs "
+            "module ngx_stream_js_body_filter at stream.c:388. "
+            "Reproduce the crash, develop a targeted fix that guards "
+            "the null access path, and verify the fix eliminates "
+            "the crash under test."
         )
         agent.assign_task(task)
         info = Ancestor.from_agent(agent)
 
         # All critical details must survive truncation
         assert "PROJ-4820" in info.task_summary
-        assert "CartReconciler" in info.task_summary
-        assert "cart_service.py:388" in info.task_summary
-        assert "incorrect ordering" in info.task_summary
+        assert "ngx_stream_js_body_filter" in info.task_summary
+        assert "stream.c:388" in info.task_summary
+        assert "null-pointer" in info.task_summary
 
     def test_serialization_roundtrip(self) -> None:
         """Test model_dump and model_validate roundtrip."""

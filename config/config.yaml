@@ -5,17 +5,17 @@ database:
   name: arise_events
 
 boss:
-  model: gpt-5.3-codex
+  model: o3
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 manager:
-  model: gpt-5.3-codex
+  model: o3
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 worker:
-  model: gpt-5.3-codex
+  model: openai/o3
   tool: openhands
-  timeout: 1000
+  timeout: 600
   max_iterations_per_run: 20
 
 orchestration:

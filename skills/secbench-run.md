@@ -47,20 +47,7 @@ Ask: "Which CVE instance would you like to run?" and wait for the user's respons
 
 ### Phase 1b: Build SEC-bench tools image
 
-Before starting the run, ensure the SEC-bench Docker image exists for this CVE.
-
-**Preferred method** — manual pull + build (no venv required). If the fixture JSON has a
-`docker_image_override` field, use it as the base image directly (it's already on DockerHub):
-```bash
-# 1. Pull the base image (docker_image_override from the fixture)
-docker pull <BASE_IMAGE>
-# 2. Build the tools layer on top
-cd /home/songli/arise-sec-lion && docker build -f deployment/secbench-tools.Dockerfile \
-  --build-arg BASE_IMAGE=<BASE_IMAGE> \
-  -t secb-tools:<instance_id>-patch .
-```
-
-**Alternative** — build script (requires working venv):
+Before starting the run, ensure the SEC-bench Docker image exists for this CVE:
 ```bash
 cd /home/songli/arise-sec-lion && bash deployment/build-secbench-tools.sh <CVE_FILE_PATH>
 ```

@@ -69,10 +69,6 @@ class BossConfig(BaseModel):
     model: str
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1000, gt=0, le=100000)
-    api_base: str | None = Field(
-        default=None,
-        description="Optional LiteLLM api_base override (e.g. https://ollama.com for Ollama Cloud).",
-    )
 
 
 class ManagerConfig(BaseModel):
@@ -81,10 +77,6 @@ class ManagerConfig(BaseModel):
     model: str
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1000, gt=0, le=100000)
-    api_base: str | None = Field(
-        default=None,
-        description="Optional LiteLLM api_base override (e.g. https://ollama.com for Ollama Cloud).",
-    )
 
 
 class WorkerConfig(BaseModel):
@@ -97,10 +89,6 @@ class WorkerConfig(BaseModel):
         default=20,
         gt=0,
         description="Per-run iteration cap for worker tools that support it.",
-    )
-    base_url: str | None = Field(
-        default=None,
-        description="Optional base URL for the worker LLM (e.g. https://ollama.com for Ollama Cloud).",
     )
 
 

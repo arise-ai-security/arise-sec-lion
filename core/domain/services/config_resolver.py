@@ -27,8 +27,6 @@ class ConfigResolver:
                 model=base.model,
                 temperature=0.3,
                 max_tokens=min(base.max_tokens, 500),
-                api_base=base.api_base,
-                api_key=base.api_key,
             )
         if operation == "task_decomposition":
             return base
