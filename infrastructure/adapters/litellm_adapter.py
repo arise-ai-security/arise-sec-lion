@@ -44,6 +44,11 @@ class LiteLLMAdapter(LLMPort):
         return base.startswith(("o1", "o3", "o4", "gpt-5"))
 
     @staticmethod
+    def _is_ollama(model: str) -> bool:
+        """Return True for models served via Ollama (local or cloud)."""
+        return model.startswith(("ollama/", "ollama_chat/"))
+
+    @staticmethod
     def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
         """Extract optional LiteLLM overrides (api_base, api_key) from config.
 
@@ -56,6 +61,21 @@ class LiteLLMAdapter(LLMPort):
             if value:
                 overrides[key] = value
         return overrides
+
+    @staticmethod
+    def _ollama_overrides(model: str) -> dict[str, Any]:
+        """Return extra kwargs for Ollama models (disable thinking mode).
+
+        Ollama reasoning models (qwen3.5, etc.) wrap output in <think> tags,
+        consuming all tokens on reasoning. Ollama strips thinking content
+        at the API level, returning content="" when all output is
+        reasoning-only. Passing think=False via extra_body disables
+        thinking mode so the model outputs content directly.
+        litellm's reasoning_effort param does NOT propagate to Ollama.
+        """
+        if not model.startswith(("ollama/", "ollama_chat/")):
+            return {}
+        return {"extra_body": {"options": {"think": False}}}
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.
@@ -154,6 +174,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -186,6 +207,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -225,6 +247,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
