@@ -197,10 +197,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # as max_output_tokens, but the actual output limit is lower.
         # litellm's auto-detection conflates context window with output cap,
         # causing Ollama to reject the request.  Cap explicitly.
-        # Ollama Cloud subscription provides ample context — set to 100K
-        # so workers have enough budget for thinking + multi-turn tool calls.
+        # Ollama Cloud enforces a 65536 server-side output limit for
+        # qwen3.5:397b-cloud; use 65000 to stay within bounds while giving
+        # workers ample budget for thinking + multi-turn tool calls.
         if self.model.startswith(("ollama/", "ollama_chat/")):
-            llm_kwargs["max_output_tokens"] = 100000
+            llm_kwargs["max_output_tokens"] = 65000
         llm = LLM(**llm_kwargs)
         agent = Agent(
             llm=llm,
