@@ -67,16 +67,25 @@ class LiteLLMAdapter(LLMPort):
     def _ollama_overrides(model: str) -> dict[str, Any]:
         """Return extra kwargs for Ollama models (disable thinking mode).
 
-        Ollama reasoning models (qwen3.5, etc.) wrap output in <think> tags,
-        consuming all tokens on reasoning. Ollama strips thinking content
-        at the API level, returning content="" when all output is
-        reasoning-only. Passing think=False via extra_body disables
-        thinking mode so the model outputs content directly.
-        litellm's reasoning_effort param does NOT propagate to Ollama.
+        Ollama reasoning models (qwen3.5, deepseek-v4-flash, etc.) emit
+        their reasoning either as inline ``<think>`` tags (Qwen) or in a
+        separate ``thinking`` field (DeepSeek), often at the cost of
+        leaving ``content`` empty or near-empty on long structured
+        prompts. Ollama's chat API recognises a top-level ``think: false``
+        flag that disables both behaviours; the older ``options.think``
+        form is ignored by DeepSeek (and by recent Ollama Cloud builds),
+        so we send the flag at the top level only.
+
+        litellm's ``reasoning_effort`` param does NOT propagate to Ollama.
         """
         if not model.startswith(("ollama/", "ollama_chat/")):
             return {}
-        return {"extra_body": {"options": {"think": False}}}
+        # litellm's ollama_chat handler pops top-level ``think`` out of
+        # optional_params and writes it into the request body as
+        # ``data["think"]`` (see litellm/llms/ollama_chat.py). Passing it
+        # as a direct kwarg avoids the extra_body merge logic, which
+        # behaves differently across providers.
+        return {"think": False}
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.
@@ -241,10 +250,15 @@ class LiteLLMAdapter(LLMPort):
 
         call_kwargs: dict[str, Any] = {
             "messages": messages,
-            "tools": tools,
             "max_tokens": merged_config.get("max_tokens", 4000),
             "top_p": merged_config.get("top_p"),
         }
+        # Some providers (notably ollama_chat) reject ``tools=[]`` outright;
+        # callers using this method as a multi-turn no-tools query path
+        # (e.g. orchestrator decomposition recovery) pass an empty list to
+        # signal "no tools this turn". Drop the key entirely in that case.
+        if tools:
+            call_kwargs["tools"] = tools
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))

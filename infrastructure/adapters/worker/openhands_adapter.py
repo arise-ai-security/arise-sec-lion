@@ -255,13 +255,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
             # force format constraints.
             llm_kwargs["native_tool_calling"] = False
             # Disable thinking/reasoning mode for Ollama reasoning models.
-            # qwen3.5 wraps output in <think> tags, consuming all tokens
-            # on reasoning and producing empty or malformed tool calls
-            # (e.g. missing required parameters). With thinking disabled
-            # via Ollama's native `think` option, the model outputs clean
-            # tool calls directly. litellm's `reasoning_effort` param
-            # does NOT propagate to Ollama — must use extra_body.
-            llm_kwargs["litellm_extra_body"] = {"options": {"think": False}}
+            # qwen3.5 wraps output in inline <think> tags; deepseek-v4-flash
+            # emits a separate `thinking` field — both routinely consume
+            # the response budget on reasoning and leave `content` empty
+            # or malformed (missing tool-call args, truncated JSON).
+            # Ollama exposes a top-level `think: false` flag that
+            # suppresses both behaviours; the older nested
+            # `options.think` form is silently ignored by deepseek and
+            # recent Ollama Cloud builds. litellm's `reasoning_effort`
+            # param does NOT propagate to Ollama — must use extra_body.
+            llm_kwargs["litellm_extra_body"] = {"think": False}
         llm = LLM(**llm_kwargs)
         agent = Agent(
             llm=llm,
