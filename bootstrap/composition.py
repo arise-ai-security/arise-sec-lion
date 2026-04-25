@@ -101,6 +101,10 @@ def create_runtime_cli(
             worker_tool_timeout=settings.worker.timeout,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
+            format_repairer_enabled=settings.format_repairer.enabled,
+            format_repairer_model=settings.format_repairer.model,
+            format_repairer_max_tokens=settings.format_repairer.max_tokens,
+            format_repairer_api_base=settings.format_repairer.api_base,
         )
     )
 

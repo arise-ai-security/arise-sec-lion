@@ -51,6 +51,41 @@ class LLMPort(Protocol):
 
 
 # =============================================================================
+# Output Format Repairer (LLM-backed fallback for malformed model output)
+# =============================================================================
+#
+# NOTE: Distinct from the security-domain "Fixer" agent role. This port
+# repairs the *output format* of LLM responses — never source code.
+
+
+class FormatRepairerPort(Protocol):
+    """Repair malformed JSON-shaped LLM output by sending it to a repair model.
+
+    Used as the second-tier fallback after the deterministic
+    ``strip_markdown_code_block`` / ``raw_decode`` / ``_repair_json`` chain
+    fails. Implementations must instruct the repair model to preserve every
+    field value verbatim and only correct structural problems.
+    """
+
+    async def repair(self, raw: str, schema_hint: str) -> str:
+        """Return a JSON string matching ``schema_hint`` derived from ``raw``.
+
+        Args:
+            raw: The original (malformed) model output.
+            schema_hint: A short natural-language description of the target
+                JSON shape (keys + types). The repair model must preserve
+                any values present in ``raw``.
+
+        Returns:
+            A string the caller should re-parse with the standard pipeline.
+            Implementations should not raise on a repair-call failure;
+            instead, return ``raw`` unchanged so callers fall through to
+            the original error.
+        """
+        ...
+
+
+# =============================================================================
 # Worker Tool
 # =============================================================================
 

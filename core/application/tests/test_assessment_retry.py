@@ -12,7 +12,7 @@ from core.application.agent_orchestrator import (
 )
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.values.agent_config import AgentConfig
-from core.domain.values.hierarchy_limits import HierarchyLimits
+from core.domain.values.limits import HierarchyLimits
 from core.domain.values.llm_response import LLMResponse, LLMUsage
 
 

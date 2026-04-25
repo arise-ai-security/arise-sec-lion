@@ -175,6 +175,7 @@ def get_application(
         llm_query_executor=llm_query_executor,
         toolset_resolver=toolset_resolver,
         skip_judge=config.skip_judge,
+        format_repairer=infrastructure.format_repairer,
     )
 
     parent_notifier = ParentNotificationService(
