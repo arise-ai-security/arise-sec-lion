@@ -17,8 +17,8 @@ from core.application.services import SubtaskScope, build_prompt_capabilities
 from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
 from core.domain.services import (
     AssessmentResult,
-    parse_assessment_response,
-    parse_subtasks_from_llm,
+    parse_assessment_response_async,
+    parse_subtasks_from_llm_async,
 )
 from core.domain.services.config_resolver import ConfigResolver
 from core.domain.values.enums import AgentRole, AgentStatus
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from core.domain.values.node_message import Handoff
     from core.domain.values.subtask import Subtask
     from core.ports.runtime_ports import (
+        FormatRepairerPort,
         LLMPort,
         RealtimeCallbackPort,
         WorkerToolPort,
@@ -70,6 +71,7 @@ class AgentOrchestrator:
             llm_query_executor: LLMQueryExecutor | None = None,
             toolset_resolver: ToolsetPolicyResolver | None = None,
             skip_judge: bool = False,
+            format_repairer: "FormatRepairerPort | None" = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -78,7 +80,12 @@ class AgentOrchestrator:
         self._realtime_callback = realtime_callback
         self._llm_query_executor = llm_query_executor or LLMQueryExecutor(llm_port)
         self._toolset_resolver = toolset_resolver or ToolsetPolicyResolver()
-        self._verification_pipeline = VerificationPipeline(llm_port, skip_judge=skip_judge)
+        self._format_repairer = format_repairer
+        self._verification_pipeline = VerificationPipeline(
+            llm_port,
+            skip_judge=skip_judge,
+            format_repairer=format_repairer,
+        )
 
     async def assess_task(self, agent: "AgentSession") -> None:
         """Assess a PENDING agent: execute directly or decompose.
@@ -119,7 +126,10 @@ class AgentOrchestrator:
                         tool_context=tool_context,
                     )
                     try:
-                        result = parse_assessment_response(response.content)
+                        result = await parse_assessment_response_async(
+                            response.content,
+                            repairer=self._format_repairer,
+                        )
                         break
                     except (json.JSONDecodeError, ValueError, KeyError) as e:
                         last_parse_error = e
@@ -191,7 +201,10 @@ class AgentOrchestrator:
 
             # Parse subtasks
             try:
-                subtasks = parse_subtasks_from_llm(response.content)
+                subtasks = await parse_subtasks_from_llm_async(
+                    response.content,
+                    repairer=self._format_repairer,
+                )
             except InfeasibleError as e:
                 logger.warning(
                     "Agent %s reported unsatisfiable constraints: %s",

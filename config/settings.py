@@ -104,6 +104,44 @@ class WorkerConfig(BaseModel):
     )
 
 
+class FormatRepairerConfig(BaseModel):
+    """Fallback LLM-backed output-format repairer settings.
+
+    Used when the deterministic ``raw_decode`` / ``_repair_json`` chain
+    fails on output from less-disciplined models (qwen3, deepseek, GLM,
+    unknown). Default model is the one that most commonly produces
+    malformed output via Ollama Cloud — it knows what it meant to emit.
+
+    Distinct from the security-domain "Fixer" agent role — this repairs
+    output format, never source code.
+    """
+
+    # Disabled by default. Enable when running on models prone to malformed
+    # output (qwen3, qwen3.5, deepseek, GLM, …). Adds a dependency on the
+    # configured repair model (default: Ollama Cloud) and a one-shot LLM
+    # call per parse failure. GPT/Claude paths are unaffected when enabled.
+    enabled: bool = False
+    # Default to qwen3-coder:480b-cloud (Ollama Cloud, coder-tuned, no
+    # thinking-on-by-default). Reasoning:
+    # - Coder-specialised → reliable structured-JSON output.
+    # - No <think> tags → won't reintroduce the failure mode the
+    #   qwen3.5 reasoning model causes (the very thing we're repairing).
+    # - Different model family from typical boss/manager/worker (qwen3.5
+    #   or gpt-5.x) → independence from the source-of-the-bug model.
+    # - Only fires on parse failure (0–3× per run worst-case), so the
+    #   accuracy/speed tradeoff favours accuracy over the smaller
+    #   qwen3-coder-next:cloud preview.
+    model: str = "ollama_chat/qwen3-coder:480b-cloud"
+    # Default 16000 to match boss/manager.max_tokens — a repaired output
+    # cannot need more space than the source model could have produced.
+    # Empirical max from prior runs: ~5000 tokens; p99 ~3500.
+    max_tokens: int = Field(default=16000, gt=0, le=100000)
+    api_base: str | None = Field(
+        default=None,
+        description="Optional LiteLLM api_base override for the repairer.",
+    )
+
+
 class ToolsetPolicyConfig(BaseModel):
     """Per-toolset enablement and allowed-tool overrides."""
 
@@ -295,6 +333,7 @@ class Settings(BaseSettings):
     boss: BossConfig
     manager: ManagerConfig
     worker: WorkerConfig
+    format_repairer: FormatRepairerConfig = FormatRepairerConfig()  # Optional with defaults
     orchestration: OrchestrationConfig
     output: OutputConfig
     security: SecurityConfig = SecurityConfig()  # Optional with defaults
@@ -327,11 +366,18 @@ class Settings(BaseSettings):
         # CORS config is optional with defaults
         cors_config = config.get("cors", {})
 
+        format_repairer_config = config.get("format_repairer", {})
+
         return cls(
             database=DatabaseConfig(**db_config),
             boss=BossConfig(**config.get("boss", {})),
             manager=ManagerConfig(**config.get("manager", {})),
             worker=WorkerConfig(**config.get("worker", {})),
+            format_repairer=(
+                FormatRepairerConfig(**format_repairer_config)
+                if format_repairer_config
+                else FormatRepairerConfig()
+            ),
             orchestration=OrchestrationConfig(**config.get("orchestration", {})),
             output=OutputConfig(**config.get("output", {})),
             security=SecurityConfig(**security_config) if security_config else SecurityConfig(),

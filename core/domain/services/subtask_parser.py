@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -18,7 +18,124 @@ from core.domain.values.constraint_failure import ConstraintFailure
 from core.domain.values.subtask import Subtask
 
 
+if TYPE_CHECKING:
+    from core.ports.runtime_ports import FormatRepairerPort
+
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Schema hints for the LLM-backed format repairer (FormatRepairerPort).
+# ---------------------------------------------------------------------------
+# We derive the per-object schemas from Pydantic models at runtime so
+# that any new required field, renamed field, or removed field on
+# Subtask / AgentConfig / ConstraintFailure automatically propagates
+# into the repairer prompt. The outer envelope (action/reasoning/
+# subtasks) is hand-parsed and kept as a small template that
+# interpolates the dynamic blocks.
+
+from functools import lru_cache  # noqa: E402  — placed near the schema helpers
+
+
+def _compact_pydantic_schema(model_class: Any) -> str:
+    """Render a Pydantic model's JSON schema as a compact JSON string.
+
+    The schema includes ``$defs``, ``required``, ``properties.{name.type}``,
+    enum values, etc. — i.e. every constraint downstream validation will
+    enforce. The repairer prompt embeds this verbatim so the model has
+    the exact shape the parser expects.
+    """
+    return json.dumps(model_class.model_json_schema(), indent=2, sort_keys=True)
+
+
+@lru_cache(maxsize=1)
+def build_assessment_schema_hint() -> str:
+    """Build the assessment-response schema hint from current Pydantic models.
+
+    Cached because Pydantic schemas do not change at runtime; if a model
+    is hot-reloaded during dev, restart the process to pick up changes.
+    """
+    subtask_schema = _compact_pydantic_schema(Subtask)
+    failure_schema = _compact_pydantic_schema(ConstraintFailure)
+    return f"""\
+A JSON object representing one of three actions from a task-assessment
+agent. Pick the action that matches the original (malformed) output.
+
+Action 1 — "execute" (single-worker task):
+  {{
+    "action": "execute",
+    "reasoning": "<why a single worker suffices, preserved verbatim>"
+  }}
+
+Action 2 — "decompose" (split into child subtasks):
+  {{
+    "action": "decompose",
+    "reasoning": "<why decomposition is needed>",
+    "subtasks": [<Subtask>, <Subtask>, ...]
+  }}
+
+  Each <Subtask> object follows this JSON Schema (auto-generated from
+  the downstream Pydantic model — every field marked "required" must
+  be present if the original payload contained it):
+
+  {subtask_schema}
+
+Action 3 — constraint failure (parser tolerates this in place of action):
+  This object follows the ConstraintFailure schema:
+
+  {failure_schema}
+
+  In raw form it looks like:
+  {{
+    "status": "constraints_unsatisfiable",
+    "reason": "<why>",
+    "minimum_required": {{"subtasks": <int>, "depth_levels": <int>}}
+  }}
+
+Preserve every value verbatim. Omit any field the original did not
+include — the parser will fail with a clear validation error if a
+required field is missing, which is the correct behavior."""
+
+
+@lru_cache(maxsize=1)
+def build_subtasks_schema_hint() -> str:
+    """Build the subtasks-list schema hint from current Pydantic models."""
+    subtask_schema = _compact_pydantic_schema(Subtask)
+    failure_schema = _compact_pydantic_schema(ConstraintFailure)
+    return f"""\
+A JSON array of subtask objects, or an object whose "subtasks" /
+"tasks" / "items" / "children" key holds that array. Preserve whichever
+shape the original used.
+
+Each subtask object follows this JSON Schema (auto-generated from the
+downstream Pydantic model):
+
+{subtask_schema}
+
+If the original payload was a constraint-failure marker rather than a
+subtask list, return that instead. Constraint failure schema:
+
+{failure_schema}
+
+In raw form a constraint failure looks like:
+{{
+  "status": "constraints_unsatisfiable",
+  "reason": "<why>",
+  "minimum_required": {{"subtasks": <int>, "depth_levels": <int>}}
+}}
+
+Preserve every value verbatim. Omit any field the original did not
+include."""
+
+
+# Stable string names for direct use by callers. Resolved at import
+# time via lru_cache; call ``build_*_schema_hint.cache_clear()`` and
+# re-import the constants if Pydantic models are hot-swapped during
+# testing. Call sites pass these directly to
+# ``FormatRepairerPort.repair(raw, schema_hint)``.
+ASSESSMENT_SCHEMA_HINT: str = build_assessment_schema_hint()
+SUBTASKS_SCHEMA_HINT: str = build_subtasks_schema_hint()
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +406,8 @@ def _resolve_depends_on(items: list[dict[str, Any]]) -> None:
     # Build name→index map from description bracketed prefixes
     name_to_idx: dict[str, int] = {}
     for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
         desc = item.get("description", "")
         m = _BRACKET_PREFIX.match(desc)
         if m:
@@ -296,6 +415,8 @@ def _resolve_depends_on(items: list[dict[str, Any]]) -> None:
 
     # Resolve deferred string references
     for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
         deferred = item.pop("_deferred_depends_on", None)
         if not deferred:
             continue
@@ -470,3 +591,122 @@ def parse_assessment_response(response: str) -> AssessmentResult:
         return AssessmentResult(action="execute", reasoning=reasoning)
 
     raise ValueError(f"Invalid action: '{action}'. Expected 'execute' or 'decompose'.")
+
+
+# ---------------------------------------------------------------------------
+# Async variants with LLM-backed format-repair fallback
+# ---------------------------------------------------------------------------
+# These are the orchestrator's entry points. They first try the fast
+# sync parser; only if that raises do they call the repairer and re-try
+# once on the repaired text. The sync parsers above are unchanged so
+# tests, CLI tools, and any non-async caller keep working.
+
+
+async def _try_repair(
+    response: str,
+    repairer: "FormatRepairerPort",
+    schema_hint: str,
+    original_error: Exception,
+) -> str | None:
+    """Invoke the LLM repairer with full failure tolerance.
+
+    Returns the repaired text on success, ``None`` if the repairer should
+    be treated as unavailable (call raised, returned no-op, or returned
+    empty). Callers must surface ``original_error`` when this returns
+    ``None`` — the LLM repairer is auxiliary; its failure must never
+    mask the genuine mechanical-parse problem.
+    """
+    try:
+        repaired = await repairer.repair(response, schema_hint)
+    except Exception as repair_exc:  # noqa: BLE001 — auxiliary, must not propagate
+        logger.warning(
+            "Format repairer raised (%s); falling back to mechanical-parser "
+            "error: %s",
+            repair_exc,
+            original_error,
+        )
+        return None
+    if not repaired or repaired == response:
+        # Adapter's documented no-op: LLM call failed and repaired == raw.
+        # Treat as "repairer unavailable".
+        return None
+    return repaired
+
+
+async def parse_assessment_response_async(
+    response: str,
+    repairer: "FormatRepairerPort | None" = None,
+) -> AssessmentResult:
+    """Parse an assessment response, with LLM-repair fallback on failure.
+
+    Behaviour matrix:
+    - repairer is None         → identical to :func:`parse_assessment_response`.
+    - mechanical parse OK      → repairer not invoked.
+    - mechanical fails, repair
+      OK and reparse OK        → repaired result returned.
+    - mechanical fails, repair
+      no-op / errors / repaired
+      reparse fails            → ORIGINAL mechanical error raised.
+    """
+    try:
+        return parse_assessment_response(response)
+    except (json.JSONDecodeError, ValueError, KeyError) as first_error:
+        if repairer is None:
+            raise
+        logger.warning(
+            "Assessment parse failed (%s); invoking format repairer",
+            first_error,
+        )
+        repaired = await _try_repair(
+            response, repairer, ASSESSMENT_SCHEMA_HINT, first_error,
+        )
+        if repaired is None:
+            raise
+        try:
+            return parse_assessment_response(repaired)
+        except (json.JSONDecodeError, ValueError, KeyError) as second_error:
+            logger.warning(
+                "Assessment parse failed even after format repair (%s); "
+                "surfacing original error",
+                second_error,
+            )
+            raise first_error from second_error
+
+
+async def parse_subtasks_from_llm_async(
+    response: str,
+    repairer: "FormatRepairerPort | None" = None,
+) -> list[Subtask]:
+    """Parse a decomposition response, with LLM-repair fallback on failure.
+
+    Same behaviour matrix as :func:`parse_assessment_response_async`.
+    ``InfeasibleError`` is never repaired — it represents a semantic
+    decision by the source model, not a format problem.
+    """
+    try:
+        return parse_subtasks_from_llm(response)
+    except InfeasibleError:
+        raise
+    except (json.JSONDecodeError, ValueError, KeyError) as first_error:
+        if repairer is None:
+            raise
+        logger.warning(
+            "Subtasks parse failed (%s); invoking format repairer",
+            first_error,
+        )
+        repaired = await _try_repair(
+            response, repairer, SUBTASKS_SCHEMA_HINT, first_error,
+        )
+        if repaired is None:
+            raise
+        try:
+            return parse_subtasks_from_llm(repaired)
+        except InfeasibleError:
+            raise
+        except (json.JSONDecodeError, ValueError, KeyError) as second_error:
+            logger.warning(
+                "Subtasks parse failed even after format repair (%s); "
+                "surfacing original error",
+                second_error,
+            )
+            raise first_error from second_error

@@ -7,6 +7,7 @@ cost tracking via the CostCalculatorPort.
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -44,6 +45,11 @@ class LiteLLMAdapter(LLMPort):
         return base.startswith(("o1", "o3", "o4", "gpt-5"))
 
     @staticmethod
+    def _is_ollama(model: str) -> bool:
+        """Return True for models served via Ollama (local or cloud)."""
+        return model.startswith(("ollama/", "ollama_chat/"))
+
+    @staticmethod
     def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
         """Extract optional LiteLLM overrides (api_base, api_key) from config.
 
@@ -56,6 +62,21 @@ class LiteLLMAdapter(LLMPort):
             if value:
                 overrides[key] = value
         return overrides
+
+    @staticmethod
+    def _ollama_overrides(model: str) -> dict[str, Any]:
+        """Return extra kwargs for Ollama models (disable thinking mode).
+
+        Ollama reasoning models (qwen3.5, etc.) wrap output in <think> tags,
+        consuming all tokens on reasoning. Ollama strips thinking content
+        at the API level, returning content="" when all output is
+        reasoning-only. Passing think=False via extra_body disables
+        thinking mode so the model outputs content directly.
+        litellm's reasoning_effort param does NOT propagate to Ollama.
+        """
+        if not model.startswith(("ollama/", "ollama_chat/")):
+            return {}
+        return {"extra_body": {"options": {"think": False}}}
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.
@@ -154,6 +175,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -186,6 +208,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -225,6 +248,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -247,12 +271,12 @@ class LiteLLMAdapter(LLMPort):
             # message.tool_calls.  Detect and parse these so the tool-calling
             # loop can execute them.  Only activates when: (1) the API was
             # given tool definitions, (2) no structured tool_calls came back,
-            # and (3) content parses as a tool-call-shaped dict.  GPT/Claude
+            # and (3) content parses as tool-call-shaped JSON.  GPT/Claude
             # models always populate message.tool_calls, so this path is
             # never reached for them.
-            parsed_tc = _try_parse_content_tool_call(content, tools)
-            if parsed_tc is not None:
-                tool_calls.append(parsed_tc)
+            parsed_tcs = _try_parse_content_tool_calls(content, tools)
+            if parsed_tcs:
+                tool_calls.extend(parsed_tcs)
                 content = None  # consumed as tool call, not text
 
         llm_usage, cost_usd = self._extract_usage(model, response)
@@ -296,29 +320,58 @@ class LiteLLMAdapter(LLMPort):
             return 0.0
 
 
-def _try_parse_content_tool_call(
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_llm_wrappers(text: str) -> str:
+    """Strip Qwen think tags and markdown code fences from LLM output.
+
+    Same pre-processing as the subtask parser, applied here so that
+    tool-call-shaped JSON wrapped in think tags or code fences is
+    detected before it reaches downstream parsers.
+    """
+    cleaned = _THINK_TAG_RE.sub("", text).strip()
+    match = _CODE_FENCE_RE.search(cleaned)
+    if match:
+        cleaned = match.group(1).strip()
+    return cleaned
+
+
+def _try_parse_content_tool_calls(
     content: str,
     tools: list[dict[str, Any]],
-) -> ToolCall | None:
-    """Detect a tool call emitted as plain JSON in message.content.
+) -> list[ToolCall] | None:
+    """Detect tool calls emitted as plain JSON in message.content.
 
     Qwen-family models (e.g. qwen3.5 via Ollama Cloud) sometimes return
     tool invocations as raw JSON text instead of populating the API's
-    ``tool_calls`` field.  Two known shapes:
+    ``tool_calls`` field.  Four known shapes:
 
-    1. ``{"name": "<tool>", "arguments": {...}}``  — OpenAI-style wrapper
-    2. ``{"<param>": <value>, ...}``               — bare arguments dict
+    1.  ``{"name": "<tool>", "arguments": {...}}``  — OpenAI-style wrapper
+    1b. ``{"name": "<tool>", ...}``                 — name matches a tool,
+        remaining fields become arguments (no ``description`` key —
+        that would indicate a subtask, not a tool call)
+    2.  ``{"<param>": <value>, ...}``               — bare arguments dict
+    3.  ``[<item>, ...]``                           — array of any of the
+        above; all items must resolve to tool calls (if any item looks
+        like a subtask — has a ``description`` field — we bail and let
+        the subtask parser handle the whole array)
 
     For shape (2) we match against the registered tool definitions: if the
     dict keys are a subset of exactly one tool's parameters, treat it as a
     call to that tool.
 
-    Returns ``None`` when the content is not recognisable as a tool call,
+    Returns ``None`` when the content is not recognisable as tool calls,
     so callers treat the response as a normal text answer (no behaviour
     change for models that already use structured tool_calls).
     """
-    stripped = content.strip()
-    if not stripped.startswith("{"):
+    # Strip Qwen <think>…</think> tags and markdown code fences before
+    # checking for JSON.  The subtask parser does this too, but we need
+    # it here so tool-call-shaped content wrapped in think tags is
+    # intercepted before it reaches the subtask parser.
+    stripped = _strip_llm_wrappers(content)
+    if not stripped.startswith(("{", "[")):
         return None
 
     try:
@@ -326,37 +379,82 @@ def _try_parse_content_tool_call(
     except json.JSONDecodeError:
         return None
 
-    if not isinstance(data, dict):
+    # Normalize to a list of items to inspect
+    if isinstance(data, dict):
+        items = [data]
+    elif isinstance(data, list) and data:
+        items = [x for x in data if isinstance(x, dict)]
+        if not items:
+            return None
+    else:
         return None
 
-    # Shape 1: {"name": "...", "arguments": {...}}
-    if "name" in data and "arguments" in data and isinstance(data["arguments"], dict):
-        tool_name = data["name"]
-        if any(
-            t.get("function", {}).get("name") == tool_name
-            for t in tools
-        ):
-            logger.info("Parsed Qwen-style text tool call: %s", tool_name)
+    tool_name_set = {
+        t.get("function", {}).get("name")
+        for t in tools
+    }
+    tool_param_index = _build_tool_param_index(tools)
+
+    calls: list[ToolCall] = []
+    for item in items:
+        tc = _match_single_tool_call(item, tool_name_set, tool_param_index)
+        if tc is None:
+            # If any item is not a tool call, the whole blob might be
+            # subtask JSON — bail and let the subtask parser handle it.
+            return None
+        calls.append(tc)
+
+    if calls:
+        for tc in calls:
+            logger.info("Parsed Qwen-style text tool call: %s", tc.name)
+    return calls or None
+
+
+def _match_single_tool_call(
+    item: dict[str, Any],
+    tool_name_set: set[str | None],
+    tool_param_index: dict[str, frozenset[str]],
+) -> ToolCall | None:
+    """Try to match a single dict as a tool call against known tool defs.
+
+    Returns a ToolCall on match, None otherwise.
+    """
+    # Shape 1: {"name": "<tool>", "arguments": {...}}
+    if "name" in item and "arguments" in item and isinstance(item["arguments"], dict):
+        if item["name"] in tool_name_set:
             return ToolCall(
                 id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-                name=tool_name,
-                arguments=data["arguments"],
+                name=item["name"],
+                arguments=item["arguments"],
             )
 
-    # Shape 2: bare arguments dict — match keys against tool parameter schemas
-    tool_names = _build_tool_param_index(tools)
-    keys = frozenset(data.keys())
-    candidates = [name for name, params in tool_names.items() if keys <= params]
-    if len(candidates) == 1:
-        tool_name = candidates[0]
-        logger.info(
-            "Parsed Qwen-style bare-args tool call: %s (keys=%s)",
-            tool_name, sorted(keys),
-        )
+    # Shape 1b: {"name": "<tool>", ...} — name matches a tool, no
+    # "arguments" wrapper, and no "description" (which would indicate
+    # a subtask rather than a tool call).
+    if (
+        "name" in item
+        and item["name"] in tool_name_set
+        and "description" not in item
+        and "arguments" not in item
+    ):
+        args = {k: v for k, v in item.items() if k != "name"}
         return ToolCall(
             id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-            name=tool_name,
-            arguments=data,
+            name=item["name"],
+            arguments=args,
+        )
+
+    # Shape 2: bare arguments dict — keys subset of exactly one tool
+    keys = frozenset(item.keys())
+    candidates = [
+        name for name, params in tool_param_index.items()
+        if keys <= params
+    ]
+    if len(candidates) == 1:
+        return ToolCall(
+            id=f"qwen-text-{uuid.uuid4().hex[:8]}",
+            name=candidates[0],
+            arguments=item,
         )
 
     return None

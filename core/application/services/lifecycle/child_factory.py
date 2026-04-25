@@ -52,11 +52,13 @@ class ChildAgentFactory:
         limits_registry: "HierarchyLimitsRegistry",
         max_total_agents: int = -1,  # -1 means unlimited
         manager_config: "ManagerConfig | None" = None,
+        default_worker_tool: str | None = None,
     ) -> None:
         self._repository = repository
         self._limits_registry = limits_registry
         self._max_total_agents = max_total_agents
         self._manager_config = manager_config
+        self._default_worker_tool = default_worker_tool
         self._total_created: int = 0
 
     def reset(self, initial_count: int = 0) -> None:
@@ -82,15 +84,23 @@ class ChildAgentFactory:
     def _apply_manager_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """Apply manager config defaults to child config.
 
-        Overrides LLM-generated model names with configured values to prevent
-        invalid model names (e.g., "claude-3-5-sonnet" without date suffix).
+        Overrides LLM-generated model names and tool with configured values.
+        The worker tool is always forced to the configured default — LLMs must
+        not choose the execution tool.
         Handles both heuristic/hybrid (base) and per_operation strategies.
         """
-        if self._manager_config is None:
-            return config
-
         # Deep copy to avoid mutating original
         result = dict(config)
+
+        # Always enforce the configured worker tool, regardless of what the
+        # LLM generated.  Qwen-family models frequently hallucinate tool
+        # names (e.g., "claude_code") that don't match the deployment config.
+        if self._default_worker_tool is not None:
+            result["tool"] = self._default_worker_tool
+
+        if self._manager_config is None:
+            return result
+
         manager_model = self._manager_config.model
         manager_temp = self._manager_config.temperature
         manager_max_tokens = self._manager_config.max_tokens

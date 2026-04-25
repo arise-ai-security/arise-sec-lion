@@ -32,6 +32,45 @@ DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
 
 
+def _patch_openhands_fn_converter() -> None:
+    """Tolerate assistant messages that lost their 'content' key.
+
+    Why: Qwen via Ollama frequently emits a function call with no preceding
+    prose. OpenHands' prompt-mocked converter strips the <function=...> tag,
+    leaving content="". On the next turn, Message.to_chat_dict calls
+    _remove_content_if_empty which drops the content key for assistant
+    messages with tool_calls. The next pass through
+    convert_fncall_messages_to_non_fncall_messages then crashes with
+    KeyError('content') at fn_call_converter.py:705 — surfaced as
+    ConversationRunError("...: 'content'"). Claude/GPT don't trigger this
+    because they always include reasoning text before the tag.
+    """
+    from openhands.sdk.llm.mixins import fn_call_converter as _fcc
+    from openhands.sdk.llm.mixins import non_native_fc as _nnfc
+
+    if getattr(_fcc, "_arise_content_key_patched", False):
+        return
+    _orig = _fcc.convert_fncall_messages_to_non_fncall_messages
+
+    def _patched(
+        messages: list[dict[str, Any]],
+        tools: list[Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        for msg in messages:
+            if "content" not in msg:
+                msg["content"] = ""
+        return _orig(messages, tools, *args, **kwargs)
+
+    # Patch the canonical definition in fn_call_converter
+    _fcc.convert_fncall_messages_to_non_fncall_messages = _patched
+    # Also patch the reference imported by non_native_fc, which captures the
+    # original function at import time and bypasses the module-level patch.
+    _nnfc.convert_fncall_messages_to_non_fncall_messages = _patched
+    _fcc._arise_content_key_patched = True  # type: ignore[attr-defined]
+
+
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
     "ActionEvent": "thinking",
     "AgentThinkAction": "thinking",
@@ -190,6 +229,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.terminal import TerminalTool
 
+        _patch_openhands_fn_converter()
+
         llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
@@ -202,6 +243,25 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # workers ample budget for thinking + multi-turn tool calls.
         if self.model.startswith(("ollama/", "ollama_chat/")):
             llm_kwargs["max_output_tokens"] = 65000
+            # litellm marks Ollama models as supports_function_calling=False,
+            # triggering a crude single-shot JSON fallback that forces
+            # `format: json` and a "Produce JSON OUTPUT ONLY!" prompt.
+            # This is fundamentally incompatible with OpenHands' multi-turn
+            # agent loop: the model generates minimal JSON, never executes
+            # any commands, and finishes immediately (0 ThoughtCaptured).
+            # Setting native_tool_calling=False makes OpenHands use its own
+            # XML-based prompt mocking (<function=...> / </function>) which
+            # works correctly with multi-turn conversations and does not
+            # force format constraints.
+            llm_kwargs["native_tool_calling"] = False
+            # Disable thinking/reasoning mode for Ollama reasoning models.
+            # qwen3.5 wraps output in <think> tags, consuming all tokens
+            # on reasoning and producing empty or malformed tool calls
+            # (e.g. missing required parameters). With thinking disabled
+            # via Ollama's native `think` option, the model outputs clean
+            # tool calls directly. litellm's `reasoning_effort` param
+            # does NOT propagate to Ollama — must use extra_body.
+            llm_kwargs["litellm_extra_body"] = {"options": {"think": False}}
         llm = LLM(**llm_kwargs)
         agent = Agent(
             llm=llm,

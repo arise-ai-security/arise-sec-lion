@@ -5,8 +5,15 @@ from typing import Literal
 
 import infrastructure.adapters.sinks as _sinks  # noqa: F401 - registers sinks via decorators
 from core.ports.event_store_port import EventStorePort
-from core.ports.runtime_ports import LLMPort, ReconToolPort, SharedContextPort, WorkerToolPort
+from core.ports.runtime_ports import (
+    FormatRepairerPort,
+    LLMPort,
+    ReconToolPort,
+    SharedContextPort,
+    WorkerToolPort,
+)
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
+from infrastructure.adapters.llm_format_repairer import LLMFormatRepairer
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.adapters.recon_tool_adapter import ReconToolAdapter
 from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
@@ -32,6 +39,10 @@ class InfrastructureConfig:
     worker_tool_timeout: int
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
+    format_repairer_enabled: bool = False
+    format_repairer_model: str = "ollama_chat/qwen3-coder:480b-cloud"
+    format_repairer_max_tokens: int = 16000
+    format_repairer_api_base: str | None = None
 
 
 @dataclass
@@ -43,6 +54,7 @@ class Infrastructure:
     worker_tool: WorkerToolPort
     shared_context: SharedContextPort
     recon_tool: ReconToolPort
+    format_repairer: FormatRepairerPort | None
 
 
 def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
@@ -82,10 +94,20 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     shared_context = PostgresSharedContextAdapter(event_store)
     recon_tool = ReconToolAdapter()
 
+    format_repairer: FormatRepairerPort | None = None
+    if config.format_repairer_enabled:
+        format_repairer = LLMFormatRepairer(
+            llm_port=llm_adapter,
+            model=config.format_repairer_model,
+            max_tokens=config.format_repairer_max_tokens,
+            api_base=config.format_repairer_api_base,
+        )
+
     return Infrastructure(
         event_store=event_store,
         llm_adapter=llm_adapter,
         worker_tool=worker_tool,
         shared_context=shared_context,
         recon_tool=recon_tool,
+        format_repairer=format_repairer,
     )

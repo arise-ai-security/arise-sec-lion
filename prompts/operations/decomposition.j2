@@ -35,7 +35,7 @@
     {% endif %}
     {% if has_tools and available_tools %}
 
-    ### Research Before Decomposition
+    ### Research Before Decomposition (Phase 1 — tool calls)
 
     You have tool-calling capabilities to inspect the codebase before decomposing.
     **Use these tools to make informed decomposition decisions** — do not decompose blindly.
@@ -55,6 +55,13 @@
        - Exact file paths and function names you discovered
        - Specific code patterns or issues you identified
        - Tool combinations that would help workers analyze the code
+
+    > **IMPORTANT — Two separate phases:**
+    > **Phase 1** (now): Call the research tools above via the function-calling interface.
+    > The system executes each tool and returns results to you.
+    > **Phase 2** (after research): Produce your FINAL decomposition as a plain JSON array
+    > of subtask objects (see `<output_format>` below). This is ordinary text output,
+    > **NOT** a tool call. Do not wrap subtasks in tool-call syntax.
     {% endif %}
     {% if depth_remaining is not none %}
 
@@ -165,7 +172,7 @@
     ```
 
     Rules:
-    1. Pure JSON array only (no markdown, no commentary)
+    1. Pure JSON array only (no markdown, no commentary, no tool-call wrappers)
     2. 2-3 subtasks optimal
     {% if max_subtasks %}
         3. **HARD LIMIT**: Maximum {{ max_subtasks }} subtasks

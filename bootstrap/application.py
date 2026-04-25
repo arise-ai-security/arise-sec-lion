@@ -135,6 +135,7 @@ def get_application(
         limits_registry=limits_registry,
         max_total_agents=config.topology.max_total_agents,
         manager_config=config.manager_config,
+        default_worker_tool=config.default_worker_tool,
     )
 
     # Create event broadcaster and adapter for real-time streaming
@@ -175,6 +176,7 @@ def get_application(
         llm_query_executor=llm_query_executor,
         toolset_resolver=toolset_resolver,
         skip_judge=config.skip_judge,
+        format_repairer=infrastructure.format_repairer,
     )
 
     parent_notifier = ParentNotificationService(

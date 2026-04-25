@@ -5,7 +5,10 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 from core.domain.services import strip_markdown_code_block
 from core.domain.services.config_resolver import ConfigResolver
@@ -14,9 +17,41 @@ from core.domain.services.context_update_parser import parse_context_update
 
 if TYPE_CHECKING:
     from core.domain.aggregates.agent_session import AgentSession
-    from core.ports.runtime_ports import LLMPort
+    from core.ports.runtime_ports import FormatRepairerPort, LLMPort
 
 logger = logging.getLogger(__name__)
+
+
+class JudgeResponse(BaseModel):
+    """Schema the judge LLM is expected to return.
+
+    Defined as a Pydantic model so the format-repairer prompt is
+    auto-generated from this single source of truth: adding/renaming a
+    required field here propagates into the repair prompt next call.
+    """
+
+    score: int = Field(ge=0, le=100)
+    feedback: str = ""
+
+
+@lru_cache(maxsize=1)
+def build_judge_schema_hint() -> str:
+    schema = json.dumps(
+        JudgeResponse.model_json_schema(), indent=2, sort_keys=True,
+    )
+    return f"""\
+A JSON object with the worker-evaluation result. Auto-generated schema:
+
+{schema}
+
+In raw form:
+  {{"score": <int 0..100>, "feedback": "<one-paragraph feedback>"}}
+
+Preserve the score and feedback values from the malformed input
+verbatim — do not re-interpret or rescale."""
+
+
+JUDGE_SCHEMA_HINT: str = build_judge_schema_hint()
 
 
 def _head_tail(text: str, limit: int) -> str:
@@ -51,9 +86,32 @@ class VerificationPipeline:
 
     _JUDGE_PASS_THRESHOLD = 60
 
-    def __init__(self, llm_port: "LLMPort", *, skip_judge: bool = False) -> None:
+    @staticmethod
+    def _parse_judge_payload(raw: str) -> dict[str, Any]:
+        """Parse a judge response into a dict, raising on failure.
+
+        Handles markdown fences, <think> tags, and trailing content via
+        the standard ``strip_markdown_code_block`` + ``raw_decode`` path.
+        Raises ``json.JSONDecodeError`` or ``ValueError`` on failure.
+        """
+        clean = strip_markdown_code_block(raw)
+        # raw_decode tolerates trailing prose/JSON that some Qwen responses
+        # append after the primary object. No-op for GPT/Claude.
+        data, _ = json.JSONDecoder().raw_decode(clean.lstrip())
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict, got {type(data).__name__}")
+        return data
+
+    def __init__(
+        self,
+        llm_port: "LLMPort",
+        *,
+        skip_judge: bool = False,
+        format_repairer: "FormatRepairerPort | None" = None,
+    ) -> None:
         self._llm_port = llm_port
         self._skip_judge = skip_judge
+        self._format_repairer = format_repairer
         self._stages: tuple[VerificationStage, ...] = (
             VerificationStage(
                 name="structural",
@@ -246,15 +304,34 @@ class VerificationPipeline:
                     logger.warning("Judge retry also empty — failing verification")
                     return False, "Judge could not evaluate (empty response after retry)", 0
 
-            clean = strip_markdown_code_block(raw)
-            # Use raw_decode to tolerate trailing content after JSON.
-            # Qwen-family models (e.g. qwen3.5 via Ollama Cloud) may append
-            # <think> tags, prose, or duplicate JSON after the primary object.
-            # json.loads rejects this ("Extra data"); raw_decode parses only
-            # the first JSON value.  No-op for GPT/Claude.
-            data, _ = json.JSONDecoder().raw_decode(clean.lstrip())
-            if not isinstance(data, dict):
-                raise ValueError(f"Expected dict, got {type(data).__name__}")
+            try:
+                data = self._parse_judge_payload(raw)
+            except (json.JSONDecodeError, ValueError) as standard_err:
+                if self._format_repairer is None:
+                    raise
+                logger.warning(
+                    "Judge JSON parse failed (%s); invoking format repairer",
+                    standard_err,
+                )
+                # Repairer failure (any exception, including network/auth)
+                # must NOT mask the standard parse error or skip the
+                # downstream regex fallback. Treat any repairer problem
+                # as "repairer unavailable".
+                try:
+                    repaired = await self._format_repairer.repair(
+                        raw, JUDGE_SCHEMA_HINT,
+                    )
+                except Exception as repair_exc:  # noqa: BLE001 — auxiliary
+                    logger.warning(
+                        "Judge format repairer raised (%s); falling back "
+                        "to regex extraction",
+                        repair_exc,
+                    )
+                    raise standard_err
+                if not repaired or repaired == raw:
+                    raise standard_err
+                data = self._parse_judge_payload(repaired)
+
             score = int(data.get("score", 0))
             # Backward compat: if old-style "passed" key present but no "score"
             if "passed" in data and "score" not in data:
