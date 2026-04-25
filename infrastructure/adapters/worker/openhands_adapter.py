@@ -46,6 +46,7 @@ def _patch_openhands_fn_converter() -> None:
     because they always include reasoning text before the tag.
     """
     from openhands.sdk.llm.mixins import fn_call_converter as _fcc
+    from openhands.sdk.llm.mixins import non_native_fc as _nnfc
 
     if getattr(_fcc, "_arise_content_key_patched", False):
         return
@@ -62,7 +63,11 @@ def _patch_openhands_fn_converter() -> None:
                 msg["content"] = ""
         return _orig(messages, tools, *args, **kwargs)
 
+    # Patch the canonical definition in fn_call_converter
     _fcc.convert_fncall_messages_to_non_fncall_messages = _patched
+    # Also patch the reference imported by non_native_fc, which captures the
+    # original function at import time and bypasses the module-level patch.
+    _nnfc.convert_fncall_messages_to_non_fncall_messages = _patched
     _fcc._arise_content_key_patched = True  # type: ignore[attr-defined]
 
 

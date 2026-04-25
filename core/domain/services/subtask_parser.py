@@ -406,6 +406,8 @@ def _resolve_depends_on(items: list[dict[str, Any]]) -> None:
     # Build name→index map from description bracketed prefixes
     name_to_idx: dict[str, int] = {}
     for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
         desc = item.get("description", "")
         m = _BRACKET_PREFIX.match(desc)
         if m:
@@ -413,6 +415,8 @@ def _resolve_depends_on(items: list[dict[str, Any]]) -> None:
 
     # Resolve deferred string references
     for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
         deferred = item.pop("_deferred_depends_on", None)
         if not deferred:
             continue

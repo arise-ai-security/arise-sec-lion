@@ -23,6 +23,9 @@
         1. If you have scope hints (target_paths, symbols, search_hints), start there
         2. Use the narrowest tool call that answers the next question
         3. Gather only enough evidence to decide execute vs decompose
+
+        > After using tools, produce your FINAL decision as plain JSON (see `<output_format>`).
+        > Your final output is ordinary text, **not** a tool call.
     {% else %}
         Additional tool-calling capabilities are not available for this assessment. Decide based on the
         task, inherited context, and any scope hints already provided.
