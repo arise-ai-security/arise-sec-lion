@@ -29,6 +29,7 @@ Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Ex
 ### Decomposition Requirements
 
 - Use the bracketed role names above in each subtask's `description` field.
+- **Mark every subtask `"estimated_complexity": "simple"`.** These three workers are atomic leaves — they must NOT be further decomposed. The orchestrator uses this hint to skip the per-child assessment LLM and execute each worker directly.
 - Set `depends_on` as specified (sequential: setup → compile → verify).
 - Preserve sanitizer instrumentation throughout the build phase.
 - Each subtask's `justification` MUST include `"role"`, `"security_insights"`, `"security_tools"`, and `"context_sharing"` keys.

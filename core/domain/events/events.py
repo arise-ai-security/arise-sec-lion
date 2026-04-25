@@ -72,6 +72,12 @@ class AgentCreated(DomainEvent):
     depends_on: list[int] = Field(default_factory=list)
     success_criteria: str = ""  # From Subtask.success_criteria, used by verification
 
+    # Parent's complexity hint, propagated from Subtask. Lets the
+    # orchestrator skip the assessment LLM when the parent has already
+    # scoped the task to an atomic worker — replayable via this event so
+    # historical agents reconstruct identically.
+    estimated_complexity: str = "unknown"
+
     # Structured child scoping — from Subtask, persisted for replay
     target_paths: list[str] = Field(default_factory=list)
     symbols: list[str] = Field(default_factory=list)

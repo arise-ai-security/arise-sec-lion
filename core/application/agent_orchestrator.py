@@ -249,6 +249,35 @@ class AgentOrchestrator:
         op = "task_assessment"
         with self._timed_operation(agent, op):
             try:
+                # Shortcut: when the parent's decomposition flagged this
+                # task as ``estimated_complexity="simple"``, the parent has
+                # already scoped it to an atomic worker. Skip the assessment
+                # LLM and execute directly. This is domain-agnostic — the
+                # ``simple`` hint comes from whichever domain prompt drove
+                # the decomposition (e.g. secbench manager templates that
+                # mark Build-Setup/Patch-Creator/etc. as simple).
+                # Open-source models otherwise re-decompose these into
+                # duplicates of their own siblings, wasting tokens.
+                if agent.estimated_complexity == "simple":
+                    logger.info(
+                        "Skipping assessment LLM for agent=%s — parent "
+                        "decomposition marked it estimated_complexity=simple; "
+                        "executing directly",
+                        agent.agent_id,
+                    )
+                    self._apply_assessment_result(
+                        agent,
+                        AssessmentResult(
+                            action="execute",
+                            reasoning=(
+                                "Parent decomposition marked this task "
+                                "estimated_complexity=simple; assessment "
+                                "LLM skipped"
+                            ),
+                        ),
+                    )
+                    return
+
                 domain_context = self._get_domain_context(agent)
                 tool_context = self._toolset_resolver.resolve(agent.role)
 
@@ -359,17 +388,43 @@ class AgentOrchestrator:
                                 repairer=self._format_repairer,
                             )
                         except (json.JSONDecodeError, ValueError, KeyError) as e2:
-                            agent.fail_with_reason(
-                                f"Assessment failed after recovery turn: {e2}"
+                            # Recovery turn produced empty / malformed
+                            # content too. Rather than killing the agent —
+                            # which orphans its sibling deliverables —
+                            # fall back to single-worker execution. The
+                            # parent already broke this task down; even a
+                            # leaf attempt is more useful than a hard fail.
+                            logger.warning(
+                                "Recovery-turn parse failed for agent=%s "
+                                "(%s); defaulting to single-worker execute",
+                                agent.agent_id,
+                                e2,
                             )
-                            return
+                            result = AssessmentResult(
+                                action="execute",
+                                reasoning=(
+                                    "Assessment failed after recovery turn; "
+                                    "defaulting to single-worker execute"
+                                ),
+                            )
                     if result is None:
-                        agent.fail_with_reason(
-                            f"Assessment failed after "
-                            f"{_ASSESSMENT_PARSE_RETRIES} attempts: "
-                            f"{last_parse_error}"
+                        # Recovery call itself failed (network/auth/empty
+                        # content). Same fallback rationale as above.
+                        logger.warning(
+                            "Assessment recovery unavailable for agent=%s "
+                            "(last error: %s); defaulting to single-worker "
+                            "execute",
+                            agent.agent_id,
+                            last_parse_error,
                         )
-                        return
+                        result = AssessmentResult(
+                            action="execute",
+                            reasoning=(
+                                "Assessment LLM unavailable after retries "
+                                "and recovery turn; defaulting to "
+                                "single-worker execute"
+                            ),
+                        )
 
                 self._apply_assessment_result(agent, result)
             except (json.JSONDecodeError, ValueError, KeyError) as e:

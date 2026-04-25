@@ -5,15 +5,15 @@ database:
   name: arise_events
 
 boss:
-  model: ollama_chat/glm-5.1:cloud
+  model: ollama_chat/kimi-k2.6:cloud
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 manager:
-  model: ollama_chat/glm-5.1:cloud
+  model: ollama_chat/kimi-k2.6:cloud
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 worker:
-  model: ollama_chat/glm-5.1:cloud
+  model: ollama_chat/kimi-k2.6:cloud
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20

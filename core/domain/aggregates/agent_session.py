@@ -72,6 +72,7 @@ class AgentSession:
         target_paths: list[str] | None = None,
         symbols: list[str] | None = None,
         search_hints: list[str] | None = None,
+        estimated_complexity: str = "unknown",
     ) -> AgentSession:
         instance = cls(agent_id)
         event = AgentCreated(
@@ -87,6 +88,7 @@ class AgentSession:
             target_paths=target_paths or [],
             symbols=symbols or [],
             search_hints=search_hints or [],
+            estimated_complexity=estimated_complexity,
         )
         instance._emit(event)
         return instance
@@ -248,6 +250,7 @@ class AgentSession:
         self.target_paths = tuple(event.target_paths)
         self.symbols = tuple(event.symbols)
         self.search_hints = tuple(event.search_hints)
+        self.estimated_complexity = event.estimated_complexity
         if event.briefing is not None:
             self.briefing = Briefing.model_validate(event.briefing)
         self.version += 1
@@ -442,6 +445,10 @@ class AgentSession:
         self.target_paths: tuple[str, ...] = ()
         self.symbols: tuple[str, ...] = ()
         self.search_hints: tuple[str, ...] = ()
+        # Parent's complexity hint from the Subtask. ``"simple"`` lets the
+        # orchestrator skip the assessment LLM and execute directly.
+        # ``"unknown"`` (default) preserves prior behaviour.
+        self.estimated_complexity: str = "unknown"
         # Retry tracking
         self.retry_count: int = 0
         self.redecomposition_count: int = 0
