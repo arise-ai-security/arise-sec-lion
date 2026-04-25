@@ -39,6 +39,16 @@ The reporter MUST: (1) read all `/testcase/` artifacts and sibling context — e
 
 ## Decomposition Requirements
 
+> **Precedence**: The rules below override any conflicting guidance you
+> may have read elsewhere about subtask counts (e.g. "2–3 subtasks
+> optimal"), per-phase complexity defaults, or "hard limits" of N.
+> Those numbers are generic priors. This domain mandates exactly four
+> top-level subtasks. The "decomposes into 3 / 4–5 / 4–5 workers"
+> notes describe the **next** decomposition level — they are
+> instructions for the children when they later decompose, not
+> additional sibling subtasks at this level. Do **not** raise a
+> ``constraints_unsatisfiable`` failure on this basis.
+
 - Create exactly 4 subtasks, one per phase.
 - Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, `[Fixer]`, and `[Reporter]`.
 - **Sequential dependencies are REQUIRED**: set `"depends_on": []` for Builder (index 0), `"depends_on": [0]` for Exploiter (index 1), `"depends_on": [1]` for Fixer (index 2), `"depends_on": [0, 1, 2]` for Reporter (index 3).

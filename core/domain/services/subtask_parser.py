@@ -113,8 +113,10 @@ downstream Pydantic model):
 
 {subtask_schema}
 
-If the original payload was a constraint-failure marker rather than a
-subtask list, return that instead. Constraint failure schema:
+If — AND ONLY IF — the original payload explicitly declared a
+constraint failure (e.g. literal ``"status": "constraints_unsatisfiable"``
+or a clear refusal that the requested decomposition cannot satisfy the
+limits), return that instead, using this schema:
 
 {failure_schema}
 
@@ -124,6 +126,12 @@ In raw form a constraint failure looks like:
   "reason": "<why>",
   "minimum_required": {{"subtasks": <int>, "depth_levels": <int>}}
 }}
+
+Do **not** invent a constraint failure to wrap arbitrary prose,
+half-formed thoughts, or "let me research first" preambles. Those are
+malformed-output problems for which the correct repaired form is a
+**subtask array** that best matches the model's evident intent — never
+a synthetic refusal.
 
 Preserve every value verbatim. Omit any field the original did not
 include."""

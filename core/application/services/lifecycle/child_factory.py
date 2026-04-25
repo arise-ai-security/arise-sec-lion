@@ -159,6 +159,7 @@ class ChildAgentFactory:
             target_paths=list(event.subtask.target_paths),
             symbols=list(event.subtask.symbols),
             search_hints=list(event.subtask.search_hints),
+            estimated_complexity=event.subtask.estimated_complexity,
         )
         child.assign_task(event.subtask.description)
 
@@ -223,6 +224,7 @@ class ChildAgentFactory:
             target_paths=list(event.subtask.target_paths),
             symbols=list(event.subtask.symbols),
             search_hints=list(event.subtask.search_hints),
+            estimated_complexity=event.subtask.estimated_complexity,
         )
         child.assign_task(event.subtask.description)
 
