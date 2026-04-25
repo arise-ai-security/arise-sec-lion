@@ -6,6 +6,8 @@ cost tracking via the CostCalculatorPort.
 """
 
 import json
+import logging
+import uuid
 from typing import Any
 
 import litellm
@@ -13,6 +15,8 @@ import litellm
 from core.domain.exceptions import LLMError
 from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage, ToolCall
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMAdapter(LLMPort):
@@ -35,9 +39,23 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _is_o_series(model: str) -> bool:
-        """Return True for OpenAI O-series models that reject temperature."""
+        """Return True for OpenAI models that reject temperature (O-series, GPT-5)."""
         base = model.split("/")[-1].lower()
-        return base.startswith(("o1", "o3", "o4"))
+        return base.startswith(("o1", "o3", "o4", "gpt-5"))
+
+    @staticmethod
+    def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
+        """Extract optional LiteLLM overrides (api_base, api_key) from config.
+
+        Values that are None are omitted so LiteLLM's own env-var resolution
+        (e.g. OLLAMA_API_BASE, OLLAMA_API_KEY) still applies.
+        """
+        overrides: dict[str, Any] = {}
+        for key in ("api_base", "api_key"):
+            value = merged_config.get(key)
+            if value:
+                overrides[key] = value
+        return overrides
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with unified exception handling.
@@ -135,6 +153,7 @@ class LiteLLMAdapter(LLMPort):
         }
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+        call_kwargs.update(self._provider_overrides(merged_config))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -166,6 +185,7 @@ class LiteLLMAdapter(LLMPort):
         }
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+        call_kwargs.update(self._provider_overrides(merged_config))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
@@ -204,10 +224,12 @@ class LiteLLMAdapter(LLMPort):
         }
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
+        call_kwargs.update(self._provider_overrides(merged_config))
 
         response = await self._call_litellm(model=model, **call_kwargs)
 
         message = response.choices[0].message
+        content = message.content
 
         # Parse tool calls if present
         tool_calls: list[ToolCall] = []
@@ -219,11 +241,24 @@ class LiteLLMAdapter(LLMPort):
                 tool_calls.append(
                     ToolCall(id=tc.id, name=tc.function.name, arguments=args)
                 )
+        elif tools and content:
+            # Qwen-family models (e.g. qwen3.5 via Ollama) may emit tool calls
+            # as plain JSON in message.content instead of populating
+            # message.tool_calls.  Detect and parse these so the tool-calling
+            # loop can execute them.  Only activates when: (1) the API was
+            # given tool definitions, (2) no structured tool_calls came back,
+            # and (3) content parses as a tool-call-shaped dict.  GPT/Claude
+            # models always populate message.tool_calls, so this path is
+            # never reached for them.
+            parsed_tc = _try_parse_content_tool_call(content, tools)
+            if parsed_tc is not None:
+                tool_calls.append(parsed_tc)
+                content = None  # consumed as tool call, not text
 
         llm_usage, cost_usd = self._extract_usage(model, response)
 
         return LLMToolResponse(
-            content=message.content,
+            content=content,
             tool_calls=tool_calls,
             usage=llm_usage,
             model=model,
@@ -259,3 +294,84 @@ class LiteLLMAdapter(LLMPort):
         except Exception:
             # If LiteLLM cost calculation fails, return 0
             return 0.0
+
+
+def _try_parse_content_tool_call(
+    content: str,
+    tools: list[dict[str, Any]],
+) -> ToolCall | None:
+    """Detect a tool call emitted as plain JSON in message.content.
+
+    Qwen-family models (e.g. qwen3.5 via Ollama Cloud) sometimes return
+    tool invocations as raw JSON text instead of populating the API's
+    ``tool_calls`` field.  Two known shapes:
+
+    1. ``{"name": "<tool>", "arguments": {...}}``  — OpenAI-style wrapper
+    2. ``{"<param>": <value>, ...}``               — bare arguments dict
+
+    For shape (2) we match against the registered tool definitions: if the
+    dict keys are a subset of exactly one tool's parameters, treat it as a
+    call to that tool.
+
+    Returns ``None`` when the content is not recognisable as a tool call,
+    so callers treat the response as a normal text answer (no behaviour
+    change for models that already use structured tool_calls).
+    """
+    stripped = content.strip()
+    if not stripped.startswith("{"):
+        return None
+
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Shape 1: {"name": "...", "arguments": {...}}
+    if "name" in data and "arguments" in data and isinstance(data["arguments"], dict):
+        tool_name = data["name"]
+        if any(
+            t.get("function", {}).get("name") == tool_name
+            for t in tools
+        ):
+            logger.info("Parsed Qwen-style text tool call: %s", tool_name)
+            return ToolCall(
+                id=f"qwen-text-{uuid.uuid4().hex[:8]}",
+                name=tool_name,
+                arguments=data["arguments"],
+            )
+
+    # Shape 2: bare arguments dict — match keys against tool parameter schemas
+    tool_names = _build_tool_param_index(tools)
+    keys = frozenset(data.keys())
+    candidates = [name for name, params in tool_names.items() if keys <= params]
+    if len(candidates) == 1:
+        tool_name = candidates[0]
+        logger.info(
+            "Parsed Qwen-style bare-args tool call: %s (keys=%s)",
+            tool_name, sorted(keys),
+        )
+        return ToolCall(
+            id=f"qwen-text-{uuid.uuid4().hex[:8]}",
+            name=tool_name,
+            arguments=data,
+        )
+
+    return None
+
+
+def _build_tool_param_index(
+    tools: list[dict[str, Any]],
+) -> dict[str, frozenset[str]]:
+    """Build tool-name → parameter-keys index from OpenAI-format tool defs."""
+    index: dict[str, frozenset[str]] = {}
+    for t in tools:
+        func = t.get("function", {})
+        name = func.get("name")
+        if not name:
+            continue
+        params = func.get("parameters", {}).get("properties", {})
+        index[name] = frozenset(params.keys())
+    return index

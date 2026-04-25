@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ContainerSessionContext:
-    """Serializable SEC-bench container session for worker adapters."""
+    """Serializable container session context shared by worker adapters."""
 
     container_id: str
     container_name: str
@@ -45,24 +45,25 @@ class ContainerSessionContext:
 
     def apply_task_prefix(self, task_description: str, *, auto_shell: bool) -> str:
         """Explain the host/container mapping to the worker."""
-        work_dir = self.relative_host_work_dir()
+        helper_name = self.helper_script.name
         if auto_shell:
             shell_line = (
-                "- Shell commands are already routed into the SEC-bench "
+                "- Shell commands are already routed into the target "
                 "container by this runtime.\n"
-                '- Use normal shell commands, or `./secb-exec "<command>"` as a fallback.\n'
+                f'- Use normal shell commands, or `./{helper_name} "<command>"` '
+                "as a fallback.\n"
             )
         else:
             shell_line = (
-                '- **ALL build/test/runtime shell commands** MUST use '
-                '`./secb-exec "<command>"`.  '
+                "- **ALL build/test/runtime shell commands** MUST use "
+                f'`./{helper_name} "<command>"`.  '
                 "Do NOT run them directly — they will fail because "
                 "container paths do not exist on this host.\n"
-                '- Example: `./secb-exec "cd /src/imagemagick && make"` '
-                "(NOT `cd /src/imagemagick && make`)\n"
+                f'- Example: `./{helper_name} "cd /src/<project> && make"` '
+                "(NOT `cd /src/<project> && make`)\n"
             )
         prefix = (
-            "## Container-backed SEC-bench workspace\n\n"
+            "## Container-backed workspace\n\n"
             "⚠️ **ABSOLUTE RULE — TWO SEPARATE FILESYSTEMS:**\n"
             "You are running on a HOST machine. Source code and testcase files are "
             "mirrored between host and a Docker container. The file editor tool "
@@ -75,13 +76,17 @@ class ContainerSessionContext:
             "NOT `/testcase/...`\n"
             f"- Working dir: `{self.host_work_dir}/...` — "
             f"NOT `{self.container_working_directory}/...`\n"
-            f"- Example: to read rla.c → `{self.host_source_dir}/imagemagick/coders/rla.c`\n"
-            f"- Example: to read repro.sh → `{self.host_testcase_dir}/repro.sh`\n\n"
-            "**Shell commands — ALWAYS use secb-exec for container commands:**\n"
+            f"- Example: to read a source file → "
+            f"`{self.host_source_dir}/<project>/src/file.c` "
+            "(read files under this path, not `/src/...`)\n"
+            f"- Example: to read a testcase artifact → "
+            f"`{self.host_testcase_dir}/<testcase>.sh`\n\n"
+            f"**Shell commands — ALWAYS use the helper script `./{helper_name}` "
+            "for container commands:**\n"
             f"{shell_line}\n"
             f"**Source code is already cloned** at `{self.host_source_dir}/` with the "
             "correct commit checked out. Do NOT re-clone the repository.\n\n"
-            f'**Helper**: `./{self.helper_script.name} "<command>"` '
+            f'**Helper**: `./{helper_name} "<command>"` '
             "runs a shell command inside the container.\n\n"
         )
         return f"{prefix}\n{task_description}"
@@ -127,7 +132,8 @@ class ContainerSessionContext:
             return command
         if stripped.startswith("docker exec "):
             return command
-        if stripped.startswith(("./secb-exec ", "secb-exec ")):
+        helper_name = self.helper_script.name
+        if stripped.startswith((f"./{helper_name} ", f"{helper_name} ")):
             return command
         cd_prefix = (
             f"cd {shlex.quote(self.container_working_directory)} 2>/dev/null "

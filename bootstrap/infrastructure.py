@@ -31,6 +31,7 @@ class InfrastructureConfig:
     worker_tool_model: str
     worker_tool_timeout: int
     worker_tool_max_iterations: int = 20
+    worker_tool_base_url: str | None = None
 
 
 @dataclass
@@ -61,6 +62,7 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             model=config.worker_tool_model,
             timeout_seconds=config.worker_tool_timeout,
             max_iterations_per_run=config.worker_tool_max_iterations,
+            base_url=config.worker_tool_base_url,
         )
     if config.default_worker_tool == "google_adk":
         return GoogleADKAdapter(

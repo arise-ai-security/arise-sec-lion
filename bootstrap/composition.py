@@ -100,6 +100,7 @@ def create_runtime_cli(
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
+            worker_tool_base_url=settings.worker.base_url,
         )
     )
 

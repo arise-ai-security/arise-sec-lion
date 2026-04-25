@@ -110,7 +110,7 @@ class ReconToolAdapter:
     def set_working_directory(self, path: str) -> None:
         """Update the working directory for this adapter.
 
-        Called at run start to point recon tools at the SEC-bench workspace
+        Called at run start to point recon tools at the configured workspace
         so thinker agents can read target code instead of the orchestrator project.
         """
         self._workdir = Path(path).resolve()

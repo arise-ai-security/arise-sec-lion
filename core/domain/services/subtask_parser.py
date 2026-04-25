@@ -21,25 +21,64 @@ from core.domain.values.subtask import Subtask
 logger = logging.getLogger(__name__)
 
 
-# Patterns for extracting JSON from LLM responses
-# Pattern 1: Full match - entire response is wrapped in code block
+# ---------------------------------------------------------------------------
+# Standard JSON extraction (GPT / Claude)
+# ---------------------------------------------------------------------------
+# GPT and Claude reliably return a single JSON object, optionally wrapped in
+# a ```json … ``` markdown code block.  The two patterns below handle the
+# code-block case; plain JSON passes through unchanged.
+
 _FULL_CODE_BLOCK_PATTERN = re.compile(
     r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
     re.DOTALL | re.IGNORECASE,
 )
-# Pattern 2: Search - code block anywhere in response (handles extra text after)
 _SEARCH_CODE_BLOCK_PATTERN = re.compile(
     r"```(?:json)?\s*\n(.*?)\n\s*```",
     re.DOTALL | re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Ollama / Qwen-family response sanitisation
+# ---------------------------------------------------------------------------
+# Qwen models served through Ollama (qwen3, qwen3-coder, qwen3.5) deviate
+# from the GPT/Claude output contract in several ways that Ollama itself
+# does NOT repair — Ollama's own Qwen3 parser hard-crashes (HTTP 500) on
+# malformed JSON (ollama/ollama#14570; fix pending in PR #14835).
+#
+# We handle the following Qwen-specific behaviors here so that the rest of
+# the codebase sees clean JSON identical to what GPT/Claude produce.
+#
+# 1. <think>…</think> tags — Qwen wraps chain-of-thought reasoning in
+#    these tags.  Three variants observed:
+#      a. "<think>…</think>\n{JSON}" — tags precede the answer.
+#      b. "<think>…</think>"         — entire response is thinking only;
+#         Ollama sets content="" (ollama/ollama#10976).
+#      c. "{JSON}\n<think>…</think>" — tags trail the answer.
+#    GPT / Claude never emit <think> tags — stripping is a no-op for them.
+#
+# 2. Trailing content after JSON — extra JSON objects, prose, or think
+#    tags after the primary JSON value.  Handled by raw_decode (parses
+#    only the first JSON value, ignores the rest).
+#
+# 3. Structurally invalid JSON — trailing commas, unclosed strings/braces,
+#    response truncated by num_predict or context-window limits.
+#    Handled by _repair_json (lightweight Gemma4-style repair).
+
+_THINK_TAG_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
+
 
 def strip_markdown_code_block(text: str) -> str:
     """Extract content from markdown code block wrapper (```json...```).
 
-    Handles cases where LLM adds explanatory text before or after the JSON block.
+    Also strips Qwen-family ``<think>…</think>`` reasoning blocks that
+    precede, follow, or surround the JSON payload.  Thinking tags are
+    removed first so that code-block extraction sees clean content.
+
+    No-op for GPT/Claude (they never emit ``<think>`` tags or require
+    code-block unwrapping beyond what they already produce).
     """
-    stripped = text.strip()
+    # Strip <think>…</think> blocks (Qwen thinking mode).
+    stripped = _THINK_TAG_PATTERN.sub("", text).strip()
 
     # First try exact match (entire response is the code block)
     match = _FULL_CODE_BLOCK_PATTERN.match(stripped)
@@ -70,13 +109,95 @@ def parse_subtasks_from_llm(response: str) -> list[Subtask]:
     return _validate_subtasks(items)
 
 
-def _parse_json(response: str) -> Any:
-    """Extract and parse JSON from LLM response."""
-    clean = strip_markdown_code_block(response)
+def _repair_json(text: str) -> str | None:
+    """Attempt lightweight repair of malformed JSON from Qwen-family models.
+
+    Qwen models (qwen3, qwen3-coder via Ollama) produce structurally
+    invalid JSON in large decomposition responses.  Observed patterns:
+
+      1. Trailing commas before ``}`` or ``]``  (``{..., }``).
+      2. Unclosed strings / objects — the response was truncated by
+         ``num_predict`` or context-window limits (ollama/ollama#14570).
+      3. Single-quoted string values instead of double-quoted.
+
+    Inspired by Ollama's Gemma4 parser (``repairGemma4ToolCallArgs``),
+    which is the only Ollama parser that attempts JSON repair.  Ollama's
+    own Qwen3 parser does **not** repair — it returns HTTP 500 on
+    malformed JSON (fix pending in PR #14835).
+
+    GPT / Claude never produce malformed JSON, so this is a no-op path
+    that is only reached after a ``JSONDecodeError`` from ``raw_decode``.
+
+    Returns repaired text, or ``None`` if repair was not possible.
+    """
+    candidate = text
+
+    # Fix 1: trailing commas  {…, }  or  […, ]
+    candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+
+    # Fix 2: single-quoted strings → double-quoted
+    # Only apply if the text has no double quotes at all (avoids
+    # breaking strings that legitimately contain single quotes).
+    if '"' not in candidate and "'" in candidate:
+        candidate = candidate.replace("'", '"')
+
+    # Fix 3: unclosed objects / arrays — try closing them
+    opens = candidate.count("{") - candidate.count("}")
+    candidate += "}" * max(opens, 0)
+    opens_arr = candidate.count("[") - candidate.count("]")
+    candidate += "]" * max(opens_arr, 0)
+
+    # Fix 4: unclosed string at end — close it, then close containers
+    if candidate.count('"') % 2 != 0:
+        candidate += '"'
+        # Re-balance after adding the closing quote
+        opens = candidate.count("{") - candidate.count("}")
+        candidate += "}" * max(opens, 0)
+        opens_arr = candidate.count("[") - candidate.count("]")
+        candidate += "]" * max(opens_arr, 0)
+
+    if candidate == text:
+        return None  # no repairs attempted
+
     try:
-        return json.loads(clean)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LLM response is not valid JSON: {e}") from e
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        return None
+
+
+def _parse_json(response: str) -> Any:
+    """Extract and parse JSON from LLM response.
+
+    Two-tier strategy to handle both GPT/Claude and Ollama/Qwen models:
+
+    1. **Standard path (GPT / Claude)** — ``raw_decode`` on the cleaned
+       text.  Succeeds on the first try for well-formed JSON; also
+       tolerates trailing content that Qwen may append after the object.
+    2. **Ollama / Qwen repair fallback** — only reached when raw_decode
+       raises ``JSONDecodeError``.  Applies lightweight structural fixes
+       (trailing commas, unclosed braces/strings) inspired by Ollama's
+       Gemma4 parser.  Never reached for GPT/Claude.
+    """
+    clean = strip_markdown_code_block(response)
+
+    # --- Standard path (GPT / Claude — always succeeds here) -----------
+    try:
+        # lstrip() is defensive: raw_decode (unlike json.loads) rejects
+        # leading whitespace.  strip_markdown_code_block already strips,
+        # but we guard against future changes to that function.
+        data, _ = json.JSONDecoder().raw_decode(clean.lstrip())
+        return data
+    except json.JSONDecodeError:
+        pass
+
+    # --- Ollama / Qwen repair fallback ---------------------------------
+    repaired = _repair_json(clean)
+    if repaired is not None:
+        logger.warning("Repaired malformed JSON from LLM (Qwen quirk)")
+        return json.loads(repaired)
+
+    raise ValueError(f"LLM response is not valid JSON and repair failed: {clean[:200]}")
 
 
 def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
@@ -94,6 +215,11 @@ def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
             return items
         case {"description": _} | {"config": _}:
             return [data]  # Single subtask wrapped
+        case {"name": _, "arguments": dict() as args}:
+            # Qwen-family models (e.g. qwen3.5 via Ollama) emit tool-call-shaped
+            # JSON {"name": "...", "arguments": {...}} even when no tools are
+            # offered.  Unwrap and recurse into the arguments payload.
+            return _extract_subtask_list(args)
         case dict() as d:
             raise ValueError(f"Expected list of subtasks, got dict with keys: {list(d.keys())}")
         case _:
@@ -217,7 +343,14 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
             raise ValueError(f"Subtask {idx}: expected dict, got {type(item).__name__}")
 
         if "config" not in item:
-            raise ValueError(f"Subtask {idx}: missing 'config' field")
+            # Qwen-family models sometimes omit the config field entirely.
+            # Inject a safe default so downstream validation succeeds.
+            logger.warning("Subtask %d: missing 'config' field, injecting default", idx)
+            item["config"] = {
+                "strategy": "heuristic",
+                "base": {"model": "placeholder", "temperature": 0.7, "max_tokens": 16000},
+                "tool": DEFAULT_WORKER_TOOL,
+            }
 
         sanitized_item = item  # Already sanitized above
 
@@ -260,7 +393,34 @@ def parse_assessment_response(response: str) -> AssessmentResult:
         ValueError: If action is invalid or subtasks are malformed.
     """
     clean = strip_markdown_code_block(response)
-    data = json.loads(clean)
+    logger.debug("Assessment response (first 500 chars): %.500s", clean)
+
+    # --- Standard path (GPT / Claude — always succeeds here) -----------
+    clean_lstripped = clean.lstrip()
+    try:
+        data, end = json.JSONDecoder().raw_decode(clean_lstripped)
+    except json.JSONDecodeError:
+        # --- Ollama / Qwen repair fallback -----------------------------
+        # Qwen produces structurally invalid JSON (trailing commas,
+        # unclosed braces, unescaped quotes in large responses).
+        # Ollama does not repair this (ollama/ollama#14570).
+        repaired = _repair_json(clean_lstripped)
+        if repaired is None:
+            raise
+        logger.warning("Repaired malformed assessment JSON (Qwen quirk)")
+        data = json.loads(repaired)
+        end = len(repaired)
+
+    # Qwen may append trailing content (think tags, prose, duplicate JSON)
+    # after the primary object.  GPT/Claude never do this.
+    trailing = clean_lstripped[end:].strip()
+    if trailing:
+        logger.warning(
+            "Assessment response had trailing content after JSON "
+            "(Qwen quirk), ignored %d chars: %.120s",
+            len(trailing),
+            trailing,
+        )
 
     # Check constraint failure first
     if ConstraintFailure.matches(data):
@@ -268,6 +428,14 @@ def parse_assessment_response(response: str) -> AssessmentResult:
             action="infeasible",
             constraint_failure=ConstraintFailure.from_llm_response(data),
         )
+
+    # Qwen-family models may wrap the response in a tool-call shape;
+    # unwrap {"name": ..., "arguments": {...}} to get the real payload.
+    if isinstance(data, dict) and "name" in data and "arguments" in data:
+        inner = data["arguments"]
+        if isinstance(inner, dict):
+            logger.warning("Assessment response wrapped in tool-call shape, unwrapping")
+            data = inner
 
     action = data.get("action", "").lower()
     reasoning = data.get("reasoning", "")
@@ -283,5 +451,22 @@ def parse_assessment_response(response: str) -> AssessmentResult:
             reasoning=reasoning,
             subtasks=subtasks,
         )
+
+    # Qwen-family models sometimes omit the "action" field entirely.
+    # Infer intent from response structure: if subtasks are present,
+    # treat as decompose; otherwise default to execute.
+    if not action:
+        raw_subtasks = data.get("subtasks") or data.get("tasks") or data.get("children")
+        if raw_subtasks and isinstance(raw_subtasks, list):
+            logger.warning("Assessment missing 'action' field but has subtasks, inferring 'decompose'")
+            subtasks = _validate_subtasks(raw_subtasks)
+            return AssessmentResult(
+                action="decompose",
+                reasoning=reasoning,
+                subtasks=subtasks,
+            )
+        # No subtasks and no action — default to execute (single worker)
+        logger.warning("Assessment missing 'action' field and no subtasks, defaulting to 'execute'")
+        return AssessmentResult(action="execute", reasoning=reasoning)
 
     raise ValueError(f"Invalid action: '{action}'. Expected 'execute' or 'decompose'.")

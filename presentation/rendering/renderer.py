@@ -41,7 +41,7 @@ class OutputRenderer:
         click.echo()
         click.echo("Examples:")
         click.echo('  python main.py run "Build a REST API with authentication"')
-        click.echo('  python main.py run "Analyze this codebase for security issues"')
+        click.echo('  python main.py run "Analyze this codebase and summarize its architecture"')
         click.echo('  python main.py run "Refactor the payment module to use Strategy pattern"')
         click.echo()
         click.echo("Other commands:")
