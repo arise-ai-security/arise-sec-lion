@@ -13,7 +13,7 @@ manager:
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 worker:
-  model: openai/gpt-5.3-codex
+  model: gpt-5.3-codex
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20
