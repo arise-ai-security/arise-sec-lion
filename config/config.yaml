@@ -124,7 +124,7 @@ output:
   verbose: true
   show_progress: true
   log_level: INFO
-  directory: ./runs
+  directory: ./output
 
 # CORS (Cross-Origin Resource Sharing) settings
 cors:
