@@ -1,10 +1,20 @@
-# Pinned config for cell A2 — Claude Code baseline WITHOUT subagents.
-# The harness dispatches to
-# experiments.shared.baselines.run_claude_code_no_subagent via
-# `run-baseline --variant claude-code-nosubagent`. The Task tool is
-# disallowed (`--disallowedTools Task`) so the model executes flat.
+# Cell A2 — Claude Code CLI baseline with sub-agents disabled.
+# Same as A1 except `--disallowedTools Task` so the model cannot spawn
+# child agents. The diff between A1 and A2 isolates the value of Claude's
+# own hierarchical decomposition.
 
-variant: claude-code-nosubagent
-notes: |
-  Flat Claude Code run. Compared to A1, this isolates the cost/quality
-  effect of hierarchical task decomposition.
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: flat
+  worker.tool: claude_code
+  worker.tool_params:
+    # Drop the inherited openhands slot so the tagged-union validator
+    # only sees the active claude_code params (Settings._validate_worker_tool_params).
+    openhands: null
+    claude_code:
+      allowed_tools: ["*"]
+      disallowed_tools: ["Task"]
+      output_format: stream-json
+      include_partial_messages: true
+  domain.plugin: null

@@ -134,10 +134,10 @@ def test_existing_b_configs_still_parse() -> None:
 
 
 def test_b_configs_default_oh_params_match_runtime_timeout() -> None:
-    """B configs (worker.timeout=600) populate openhands.timeout_seconds with 600 default
-    (NOT mirrored from worker.timeout — the OpenHandsParams default value)."""
+    """B configs inherit worker.timeout and openhands.timeout_seconds from the
+    base config (PR 5 turned B-cells into overlays of `config/config.yaml`)."""
 
-    # Given: the B1 cell config.
+    # Given: the B1 cell config (overlay extending config/config.yaml).
     cell = (
         REPO_ROOT / "experiments" / "2026-04-23-initial-secbench" / "configs" / "B1-ours-naive.yaml"
     )
@@ -145,11 +145,15 @@ def test_b_configs_default_oh_params_match_runtime_timeout() -> None:
     # When: it loads.
     settings = Settings.from_yaml(cell)
 
-    # Then: openhands.timeout_seconds gets the OpenHandsParams default (600).
-    # The duplicated worker.timeout/tool_params.openhands.timeout_seconds collapse
-    # is deferred to a later PR.
+    # Then: openhands.timeout_seconds matches the inherited base value.
+    # PR 5: B-cells are placeholder overlays pending Q1 resolution; they
+    # inherit base settings unchanged. The duplicated
+    # worker.timeout/tool_params.openhands.timeout_seconds collapse is
+    # deferred to a later PR.
+    base_payload = _load_base_config()
+    expected_timeout = base_payload["worker"]["tool_params"]["openhands"]["timeout_seconds"]
     assert settings.worker.tool_params.openhands is not None
-    assert settings.worker.tool_params.openhands.timeout_seconds == 600
+    assert settings.worker.tool_params.openhands.timeout_seconds == expected_timeout
 
 
 def test_explicit_tool_params_override_defaults(tmp_path: Path) -> None:

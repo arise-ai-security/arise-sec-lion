@@ -1,6 +1,6 @@
 {
   "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml": {
-    "generated_at": "2026-04-26T20:12:41.456342Z",
+    "generated_at": "2026-04-26T21:53:19.121968Z",
     "generated_by": "experiments/shared/scripts/collect.py",
     "inputs": [
       "experiments/2026-04-23-initial-secbench/manifest.yaml"
@@ -8,7 +8,7 @@
     "inputs_sha256": {
       "experiments/2026-04-23-initial-secbench/manifest.yaml": "e439bd137d980a1d44daf0819d49314766f8d5ad8ba24c3f6b7409747db52a6b"
     },
-    "output_sha256": "6470ffce8e354370b9aa7812eac49c4910c6d72e915f4d965320b6357b27a2df"
+    "output_sha256": "429e477821c218ddba21806cf29739108f3acf371e7cdc22dc8855fbb37ea479"
   },
   "experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg": {
     "generated_at": "2026-04-23T19:44:31.912728Z",

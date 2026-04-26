@@ -63,11 +63,7 @@ def test_aris_runner_delegates_to_harness_run_ours(monkeypatch: pytest.MonkeyPat
         captured.update(kwargs)
         return sentinel
 
-    def _fake_run_baseline(**_kwargs: object) -> object:
-        pytest.fail("run_baseline must not be called by aris in PR 4b")
-
     monkeypatch.setattr(harness, "run_ours", _fake_run_ours)
-    monkeypatch.setattr(harness, "run_baseline", _fake_run_baseline)
 
     # When: dispatching an A-cell (flat-mode) and a B-cell (hierarchical-mode)
     # through the same runner.

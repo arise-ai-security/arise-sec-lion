@@ -1,15 +1,17 @@
 """Cross-mode invariance tests for ``core.application.run_invariants``.
 
-These tests are the protection against drift between flat-mode baselines and
-hierarchical-mode workers. The legacy comparison test in particular pins the
-prompt format to ``experiments/shared/baselines/run_claude_code._compose_prompt``
-so PR 4b/5/6 cannot silently change the framing one mode sees.
+These tests pin the behaviour of the shared task-prompt / tool-policy /
+timeout / workspace builders so flat-mode and hierarchical-mode dispatchers
+see byte-identical framing. The legacy parity comparators against
+``experiments/shared/baselines/run_claude_code._compose_prompt`` were
+retired alongside that module in PR 5; the hash invariant now lives inside
+``build_task_prompt`` itself and is exercised by the worker tests in
+``infrastructure/tests``.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
@@ -284,88 +286,6 @@ def test_value_objects_are_frozen(tmp_path: Path) -> None:
             setattr(obj, attr, "mutated")
 
 
-def test_build_task_prompt_byte_identical_to_legacy_for_synthetic_fixture(
-    tmp_path: Path, fixture_briefing: Path
-) -> None:
-    """Synthetic fixtures (whose on-disk text is exactly ``json.dumps(indent=2)``
-    output) round-trip byte-identically through the dict-fallback path.
-
-    This pins the format for the easy case. Production fixtures may have
-    trailing newlines or other formatting that does NOT match
-    ``json.dumps(indent=2)`` output — those callers must use the
-    ``cve_context_text`` raw-embed path instead, exercised by
-    ``test_build_task_prompt_byte_identical_to_legacy_for_real_fixture``.
-    """
-    from experiments.shared.baselines.run_claude_code import _compose_prompt
-
-    # Given: a CVE context dict serialized to a fixture file the same way
-    # the dict-fallback embed will serialize it (so the embedded JSON byte-matches).
-    cve_context = {"cve_id": "CVE-2023-12345", "package": "openssl"}
-    context_file = tmp_path / "cve.json"
-    context_file.write_text(
-        json.dumps(cve_context, indent=2),
-        encoding="utf-8",
-    )
-
-    task = "Reproduce and patch the heap overflow"
-
-    # When: calling both implementations with byte-equivalent inputs (no
-    # cve_context_text — exercises the dict-fallback path).
-    legacy_output = _compose_prompt(
-        task_prompt=task,
-        context_file=context_file,
-        briefing_path=fixture_briefing,
-    )
-    new_spec = build_task_prompt(
-        briefing_path=fixture_briefing,
-        cve_context=cve_context,
-        task=task,
-        cve_context_name=context_file.name,
-    )
-
-    # Then: the rendered prompts are byte-identical.
-    assert new_spec.rendered_prompt == legacy_output
-
-
-def test_build_task_prompt_byte_identical_to_legacy_for_real_fixture() -> None:
-    """Given a real production CVE fixture whose on-disk text differs from
-    ``json.dumps(indent=2)`` output (trailing newline, etc.),
-    ``build_task_prompt`` with ``cve_context_text=<raw text>`` produces output
-    byte-identical to legacy ``_compose_prompt`` for the same fixture path.
-
-    This is the contract that the dict-fallback path CANNOT honour — this
-    test fails without the raw-text override and is the regression guard
-    for the spec gap fixed by PR 4a's follow-up.
-    """
-    from config._paths import get_repo_root
-    from experiments.shared.baselines.run_claude_code import _compose_prompt
-
-    # Given: a real CVE fixture and the canonical briefing.
-    fixture_path = get_repo_root() / "deployment" / "cve-instances" / "faad2-cve-2021-32272.json"
-    raw_text = fixture_path.read_text(encoding="utf-8")
-    parsed = json.loads(raw_text)
-    briefing_path = get_repo_root() / "prompts" / "domains" / "secbench" / "briefing.md"
-    task = "faad2.cve-2021-32272"
-
-    # When: invoking the new builder with raw text and the legacy composer
-    # with the same fixture path + briefing.
-    new_spec = build_task_prompt(
-        briefing_path=briefing_path,
-        cve_context=parsed,
-        cve_context_text=raw_text,
-        cve_context_name=fixture_path.name,
-        task=task,
-    )
-    legacy_prompt = _compose_prompt(
-        briefing_path=briefing_path,
-        context_file=fixture_path,
-        task_prompt=task,
-    )
-
-    # Then: rendered prompts are byte-identical for the production fixture.
-    assert new_spec.rendered_prompt == legacy_prompt
-
-
 def test_task_prompt_omits_context_block_when_none(fixture_briefing: Path) -> None:
     """When cve_context is None, the prompt has only briefing + task."""
 
@@ -379,41 +299,3 @@ def test_task_prompt_omits_context_block_when_none(fixture_briefing: Path) -> No
     # When/Then: the rendered prompt has no "Task context" block.
     assert "Task context" not in spec.rendered_prompt
     assert spec.rendered_prompt.endswith("Task: hello")
-
-
-def test_briefing_byte_identity_survives_crlf_briefing(tmp_path: Path) -> None:
-    """Given a briefing written with CRLF line endings (e.g. from a Windows
-    editor or autocrlf=true), build_task_prompt produces the same rendered
-    prompt as legacy _compose_prompt does when reading the same file."""
-    from experiments.shared.baselines.run_claude_code import _compose_prompt
-
-    # Given: a CRLF-encoded briefing file.
-    crlf_briefing = tmp_path / "briefing.md"
-    crlf_briefing.write_bytes(b"Line one.\r\nLine two.\r\n")
-
-    # When: the new builder reads it via read_bytes + universal-newline normalize,
-    # and the legacy composer reads it via Path.read_text (which also normalizes).
-    new = build_task_prompt(
-        briefing_path=crlf_briefing,
-        cve_context=None,
-        task="t",
-    ).rendered_prompt
-    legacy = _compose_prompt(
-        briefing_path=crlf_briefing,
-        context_file=None,
-        task_prompt="t",
-    )
-
-    # Then: the rendered prompts are byte-identical despite the CRLF input.
-    assert new == legacy
-
-
-def test_env_policy_matches_legacy_allowlist() -> None:
-    """Drift-guard: the new env allowlist must equal the legacy baseline
-    runner's allowlist until the legacy module is removed in PR 5."""
-    # Given: import both private allowlists.
-    from core.application.run_invariants import _ENV_ALLOWLIST
-    from experiments.shared.baselines.run_claude_code import _SUBPROCESS_ENV_ALLOWLIST
-
-    # Then: byte-equality, not just inclusion.
-    assert _ENV_ALLOWLIST == _SUBPROCESS_ENV_ALLOWLIST

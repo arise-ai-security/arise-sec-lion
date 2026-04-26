@@ -2,8 +2,8 @@
 
 The registry is module-level state. Each test mutates a *copy* via
 monkeypatch (or restores after). For dispatch tests we monkey-patch
-`harness.run_ours` and `harness.run_baseline` to return sentinel UUIDs so
-no real subprocess is spawned.
+`harness.run_ours` to return sentinel UUIDs so no real subprocess is
+spawned.
 """
 
 from __future__ import annotations
@@ -76,9 +76,8 @@ def test_all_ids_returns_sorted_list(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_aris_dispatches_a_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> None:
     """A-cells now flow through ``run_ours`` (i.e. ``main.py run``); the cell
     config selects flat-mode via ``orchestration.mode: flat``. PR 4b removed
-    the legacy ``run_baseline`` short-circuit."""
-    # Given: a sentinel UUID returned by a stubbed `run_ours` and a guard
-    # against any accidental `run_baseline` call.
+    the legacy ``run_baseline`` short-circuit; PR 5 deleted ``run_baseline``."""
+    # Given: a sentinel UUID returned by a stubbed `run_ours`.
     sentinel = uuid4()
     captured: dict[str, object] = {}
 
@@ -86,11 +85,7 @@ def test_aris_dispatches_a_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> 
         captured.update(kwargs)
         return sentinel
 
-    def _fake_run_baseline(**_kwargs):
-        pytest.fail("run_baseline must not be called for A-cells anymore")
-
     monkeypatch.setattr(harness, "run_ours", _fake_run_ours)
-    monkeypatch.setattr(harness, "run_baseline", _fake_run_baseline)
 
     aris = runners.get("aris")
 
@@ -116,7 +111,7 @@ def test_aris_dispatches_a_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_aris_dispatches_b_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given: a sentinel returned by `run_ours` and an asserting `run_baseline`.
+    # Given: a sentinel returned by `run_ours`.
     sentinel = uuid4()
     captured: dict[str, object] = {}
 
@@ -124,11 +119,7 @@ def test_aris_dispatches_b_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> 
         captured.update(kwargs)
         return sentinel
 
-    def _fake_run_baseline(**_kwargs):
-        pytest.fail("run_baseline must not be called for B-cells")
-
     monkeypatch.setattr(harness, "run_ours", _fake_run_ours)
-    monkeypatch.setattr(harness, "run_baseline", _fake_run_baseline)
 
     aris = runners.get("aris")
     config_path = Path("/tmp/config.yaml")  # noqa: S108 - test sentinel only

@@ -1,136 +1,19 @@
-# Pinned config for cell B3 (ours-full).
-# This is a frozen copy of config/config.yaml at the time of study setup.
-# Re-running requires invoking: python main.py -c <this path> run <task>
+# Cell B3 — ours-full.
+#
+# TODO(Q1): The semantic deltas between B1 (naive), B2 (cybersec), and
+# B3 (full) are not yet defined. Until that research question is resolved,
+# all three B cells run the same treatment (our hierarchical pipeline with
+# the security domain plugin enabled). See `.claude/docs/experiments-rearchitecture.md`
+# §7 (Open Questions) and `.claude/docs/experiments-implementation-plan.md`
+# (PR 5 — pending Q1 resolution).
+#
+# When Q1 is answered, this file should encode the cell-specific deltas
+# from `config/config.yaml`. Until then, the overlay is intentionally a
+# pass-through.
 
-database:
-  host: localhost
-  port: 5432
-  user: arise
-  name: arise_events
+extends: config/config.yaml
 
-boss:
-  model: o3
-  max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
-
-manager:
-  model: o3
-  max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
-
-worker:
-  model: openai/o3
-  tool: openhands
-  timeout: 600
-  max_iterations_per_run: 20
-
-orchestration:
-  max_retries: 3
-  poll_interval: 0.5  # seconds between orchestration loop iterations
-  max_run_duration_seconds: 5400  # hard stop for the full orchestration run (90 min)
-  max_redecompositions: 2  # per-parent limit for infeasibility-driven re-planning
-  # skip_judge: false  # set true to skip LLM judge verification (stages 1-3 still run)
-
-  topology:
-    max_depth: 3               # BOSS(0) → children(1) → grandchildren(2) → forced-workers(3)
-    max_children_per_node: 7   # Deeper levels produce more fine-grained workers (3-5 per node)
-    max_total_agents: 40       # Accommodates deeper trees with more workers per phase
-
-  concurrency:
-    max_concurrent_workers: 1  # Sequential execution so sibling context is populated
-    max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
-    llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
-
-  tool_calling:
-    # Iterations control how many tool-calling rounds an agent gets.
-    # Context management layers (truncation, condensation, budget gate)
-    # prevent overflow, so the cap can be raised safely.
-    max_iterations: 5
-
-    # Context condensation for tool-calling loop.
-    # Layer 1: hard-cap each tool result (chars). Prevents single results
-    #   from dominating the context window.
-    result_char_limit: 6000
-    # Layer 2: after this many iterations, older tool exchanges are
-    #   LLM-summarized into a compact digest (keeps recent results verbatim).
-    condense_after_iteration: 2
-    # Layer 3: estimated token ceiling. If exceeded, force-stop the loop
-    #   and produce a final answer with whatever info has been gathered.
-    token_budget: 80000
-
-    # Per-role and per-domain tool-calling policy overrides.
-    # Merged: domain-specific > role default > hardcoded fallback.
-    policies:
-      default:
-        pending:
-          max_iterations: 5
-          result_char_limit: 6000
-          toolsets:
-            recon:
-              enabled: false
-        manager:
-          max_iterations: 5
-          result_char_limit: 6000
-          toolsets:
-            recon:
-              enabled: false
-        boss:
-          toolsets:
-            recon:
-              enabled: false   # BOSS recon deferred — separate concern
-      domains:
-        secbench:
-          boss:
-            max_iterations: 3
-            toolsets:
-              recon:
-                allowed_tools:
-                  - search_codebase
-                  - read_file
-                  - get_file_structure
-                  - get_symbols_overview
-                  - read_symbol
-          pending:
-            max_iterations: 3
-            toolsets:
-              recon:
-                allowed_tools:
-                  - search_codebase
-                  - read_file
-                  - get_file_structure
-                  - get_symbols_overview
-                  - read_symbol
-          manager:
-            max_iterations: 3
-            toolsets:
-              recon:
-                allowed_tools:
-                  - search_codebase
-                  - read_file
-                  - get_file_structure
-                  - get_symbols_overview
-                  - read_symbol
-
-output:
-  verbose: true
-  show_progress: true
-  log_level: INFO
-  directory: ./runs
-
-# CORS (Cross-Origin Resource Sharing) settings
-cors:
-  allowed_origins:
-    - "http://localhost:5173"  # Vite dev server
-    - "http://localhost:3000"  # Alternative React dev port
-  allowed_methods:
-    - "GET"
-    - "POST"
-    - "PUT"
-    - "DELETE"
-    - "OPTIONS"
-  allowed_headers:
-    - "*"
-  allow_credentials: true
-
-# SEC-bench container settings
-security:
-  enabled: true  # Uses worker.timeout for secb commands
-  tools: [valgrind]  # KLEE unavailable in Ubuntu Focal base images
+overrides:
+  orchestration.mode: hierarchical
+  worker.tool: openhands
+  domain.plugin: security

@@ -1,5 +1,5 @@
 ---
-generated_at: '2026-04-26T20:12:44.322133Z'
+generated_at: '2026-04-26T21:53:21.907967Z'
 generated_by: experiments/2026-04-23-initial-secbench/scripts/render_report.py
 inputs:
 - experiments/2026-04-23-initial-secbench/manifest.yaml
@@ -9,7 +9,7 @@ inputs:
 - experiments/shared/groups.yaml
 inputs_sha256:
   experiments/2026-04-23-initial-secbench/manifest.yaml: e439bd137d980a1d44daf0819d49314766f8d5ad8ba24c3f6b7409747db52a6b
-  experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml: 6470ffce8e354370b9aa7812eac49c4910c6d72e915f4d965320b6357b27a2df
+  experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml: 429e477821c218ddba21806cf29739108f3acf371e7cdc22dc8855fbb37ea479
   experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg: 690852336e7480a712b0c329f10426ea69599d7bd75d61d512dcb82516768609
   experiments/2026-04-23-initial-secbench/reports/tables/summary.csv: e7c3a6b2667498bda683f4368ec1e581a187788b194aa2dd44ebe7d7bdc83b63
   experiments/2026-04-23-initial-secbench/templates/report.md.j2: ab997f70578b17162515763a435b6ceeb0b6d74be78c3486a22b417c8e810630

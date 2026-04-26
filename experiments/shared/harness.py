@@ -1,9 +1,9 @@
-"""Top-level study harness: `run-ours` and `run-baseline` subcommands.
+"""Top-level study harness: `run-ours` subcommand.
 
 Depends only on stdlib + subprocess + yaml plus the cross-study utilities
 in ``experiments/shared/scripts``. No import of core/, plugins/, or
 infrastructure/ — the harness is pure orchestration around ``main.py run``
-and baseline subprocesses (spec §8).
+(spec §8).
 
 Run the A/B cells sequentially by default: the harness relies on
 ``runs/.last_run.json`` to learn the boss_id emitted by ``main.py run``,
@@ -17,29 +17,19 @@ Usage::
         --task gpac.cve-2021-40575 \\
         --attempt 0 \\
         --config experiments/2026-04-22-demo/configs/B2.yaml
-
-    python -m experiments.shared.harness run-baseline \\
-        --study 2026-04-22-demo \\
-        --cell A1 \\
-        --task gpac.cve-2021-40575 \\
-        --attempt 0 \\
-        --variant claude-code-subagent
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import json
 import logging
-import shutil
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from typing import Any
+from uuid import UUID
 
 import yaml
 
@@ -48,31 +38,19 @@ from experiments.shared.scripts.project_events import project_events_to_jsonl
 from experiments.shared.scripts.register_run import register_run
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-
 logger = logging.getLogger(__name__)
-
-
-_BASELINE_MODULES: dict[str, str] = {
-    "claude-code-subagent": "experiments.shared.baselines.run_claude_code",
-    "claude-code-nosubagent": "experiments.shared.baselines.run_claude_code_no_subagent",
-}
 
 
 # =============================================================================
 # Manifest-driven dispatch (PR 2 onward)
 # =============================================================================
-# `run_ours` and `run_baseline` below are still the load-bearing implementations
-# of the two execution paths today. Starting in PR 2, they are dispatched via
-# the runner registry (`experiments/shared/runners/aris.py`) rather than read
-# from a free-form `harness:` field in the study manifest. PR 6's
-# `run_matrix.py` resolves a cell to a runner via `runners.get(cell.runner)`
-# and calls `runner.run(...)`, which in turn calls back into these helpers.
-# PR 4b will introduce flat-mode dispatch in `aris.run` that may bypass
-# `run_baseline` entirely once flat configs land. Until then, A-cells flow
-# through `run_baseline` and B-cells flow through `run_ours` exactly as before.
+# `run_ours` below is the load-bearing implementation of the unified execution
+# path. PR 2 introduced runner-registry dispatch (`experiments/shared/runners/aris.py`)
+# so cells resolve to a runner via `runners.get(cell.runner)` and the runner
+# calls back into `run_ours`. PR 4b folded flat-mode into the same pipeline,
+# and PR 5 deleted the legacy `run_baseline` path entirely — every cell (A or
+# B) now goes through `main.py run` with `orchestration.mode` selecting flat
+# vs. hierarchical dispatch inside the bootstrap composition root.
 
 # =============================================================================
 # Dataset and study helpers
@@ -148,8 +126,7 @@ def _ensure_task_coverage(dataset: dict[str, Any]) -> dict[str, Path]:
         match = _match_path_for_task(task, paths)
         if match is None:
             raise ValueError(
-                f"dataset.source.paths has no entry matching task {task!r}; "
-                f"found paths: {paths}"
+                f"dataset.source.paths has no entry matching task {task!r}; found paths: {paths}"
             )
         resolved = get_repo_root() / match
         if not resolved.is_file():
@@ -183,9 +160,7 @@ def _match_path_for_task(task: str, paths: list[str]) -> str | None:
     return None
 
 
-def _resolve_effective_cves(
-    dataset: dict[str, Any], cell: str
-) -> list[str]:
+def _resolve_effective_cves(dataset: dict[str, Any], cell: str) -> list[str]:
     defaults: list[str] = list(dataset.get("default_cves") or [])
     overrides = dataset.get("per_cell_overrides") or {}
     cell_override = overrides.get(cell) or {}
@@ -204,9 +179,7 @@ def _validate_cell_declared(manifest: dict[str, Any], cell: str) -> None:
     cells = manifest.get("cells") or {}
     if not isinstance(cells, dict) or cell not in cells:
         declared = ", ".join(sorted(cells)) if isinstance(cells, dict) else "<none>"
-        raise ValueError(
-            f"cell {cell!r} is not declared in study.cells (declared: {declared})"
-        )
+        raise ValueError(f"cell {cell!r} is not declared in study.cells (declared: {declared})")
 
 
 # =============================================================================
@@ -319,9 +292,7 @@ def run_ours(
 
     curr_boss_id, curr_mtime = _last_run_snapshot(pool)
     if curr_boss_id is None:
-        raise FileNotFoundError(
-            "`main.py run` produced no `.last_run.json`; refusing to enroll"
-        )
+        raise FileNotFoundError("`main.py run` produced no `.last_run.json`; refusing to enroll")
     pointer_advanced = (curr_boss_id != prev_boss_id) or (
         prev_mtime is not None and curr_mtime is not None and curr_mtime > prev_mtime
     )
@@ -365,140 +336,8 @@ def run_ours(
     return run_id
 
 
-# =============================================================================
-# `run-baseline` path
-# =============================================================================
-
-
-def _pick_baseline_runner(variant: str) -> Callable[..., dict[str, object]]:
-    module_name = _BASELINE_MODULES.get(variant)
-    if module_name is None:
-        raise ValueError(
-            f"unknown baseline variant {variant!r}; "
-            f"known variants: {sorted(_BASELINE_MODULES)}"
-        )
-    module = importlib.import_module(module_name)
-    if not hasattr(module, "run_baseline"):
-        raise RuntimeError(f"baseline module {module_name} has no run_baseline()")
-    return module.run_baseline
-
-
-def _current_git_sha() -> str | None:
-    git_bin = shutil.which("git")
-    if git_bin is None:
-        return None
-    try:
-        result = subprocess.run(  # noqa: S603
-            [git_bin, "rev-parse", "HEAD"],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    except (subprocess.CalledProcessError, OSError):
-        return None
-    return result.stdout.strip() or None
-
-
-def _iso_utc(moment: datetime) -> str:
-    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-def run_baseline(
-    *,
-    study_id: str,
-    cell: str,
-    task: str,
-    attempt: int,
-    variant: str,
-    runs_root: Path | None = None,
-) -> UUID:
-    """Mint a run_id, run the baseline, write its manifest, and enroll.
-
-    KNOWN LIMITATION: this path does NOT yet materialize the SEC-bench
-    workspace (`/src`, `/testcase`, `secb`) that `main.py run` prepares via
-    SecurityDomainPlugin. Baselines therefore start from an empty run dir and
-    must rely on the shared briefing + context JSON to locate the target
-    source. A follow-up should expose workspace prep as a standalone CLI that
-    the harness can shell out to before dispatching to the baseline runner.
-    """
-    runner = _pick_baseline_runner(variant)
-
-    manifest = _load_study_manifest(study_id)
-    _validate_cell_declared(manifest, cell)
-    dataset = _load_dataset(study_id, manifest=manifest)
-    coverage = _ensure_task_coverage(dataset)
-
-    effective = _resolve_effective_cves(dataset, cell)
-    if task not in effective:
-        raise ValueError(
-            f"task {task!r} is not in the effective CVE set for cell {cell!r}: {effective}"
-        )
-
-    context_file = coverage[task]
-    pool = runs_root or _runs_root()
-    run_id, run_dir = _mint_fresh_run_dir(pool)
-
-    started = datetime.now(UTC)
-    extras = runner(
-        run_dir=run_dir,
-        task_prompt=task,
-        context_file=context_file,
-    )
-    ended = datetime.now(UTC)
-
-    baseline_payload: dict[str, Any] = {
-        "run_id": str(run_id),
-        "kind": "claude_code_baseline",
-        "started_at": _iso_utc(started),
-        "ended_at": _iso_utc(ended),
-        "exit_status": extras.get("exit_status", "failed"),
-        "variant": extras.get("variant", variant),
-        "git_sha": _current_git_sha(),
-    }
-    manifest_path = run_dir / "run_manifest.json"
-    tmp = manifest_path.with_name(manifest_path.name + ".tmp")
-    tmp.write_text(json.dumps(baseline_payload, indent=2, sort_keys=True) + "\n")
-    tmp.replace(manifest_path)
-
-    # See `run_ours` above: `attempt=` is the deprecated alias retained for
-    # one PR cycle (PR 6 / Task 7 drops it).
-    register_run(
-        study_id=study_id,
-        run_id=run_id,
-        cell=cell,
-        task=task,
-        attempt=attempt,
-        output_directory=pool,
-    )
-    return run_id
-
-
 def _runs_root() -> Path:
     return get_repo_root() / "runs"
-
-
-_MAX_RUN_ID_RETRIES = 3
-
-
-def _mint_fresh_run_dir(pool: Path) -> tuple[UUID, Path]:
-    """Mint a uuid4 and create ``pool/<uuid>/`` exclusively.
-
-    uuid4 collisions are astronomically unlikely, but ``exist_ok=True`` would
-    silently overwrite an existing run directory. Retry up to
-    ``_MAX_RUN_ID_RETRIES`` times on FileExistsError; other OSErrors
-    propagate so disk/permission failures are not masked.
-    """
-    for _attempt in range(_MAX_RUN_ID_RETRIES):
-        candidate = uuid4()
-        run_dir = pool / str(candidate)
-        try:
-            run_dir.mkdir(parents=True, exist_ok=False)
-        except FileExistsError:
-            continue
-        return candidate, run_dir
-    raise RuntimeError(
-        f"failed to mint a unique run_id after {_MAX_RUN_ID_RETRIES} attempts"
-    )
 
 
 # =============================================================================
@@ -520,17 +359,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ours.add_argument("--attempt", type=int, required=True)
     ours.add_argument("--config", type=Path, required=True)
 
-    baseline = sub.add_parser("run-baseline", help="Run a baseline tool and enroll it")
-    baseline.add_argument("--study", required=True)
-    baseline.add_argument("--cell", required=True)
-    baseline.add_argument("--task", required=True)
-    baseline.add_argument("--attempt", type=int, required=True)
-    baseline.add_argument(
-        "--variant",
-        required=True,
-        choices=sorted(_BASELINE_MODULES),
-    )
-
     return parser
 
 
@@ -546,14 +374,6 @@ def main(argv: list[str] | None = None) -> int:
                 task=args.task,
                 attempt=args.attempt,
                 config=args.config,
-            )
-        elif args.command == "run-baseline":
-            run_baseline(
-                study_id=args.study,
-                cell=args.cell,
-                task=args.task,
-                attempt=args.attempt,
-                variant=args.variant,
             )
         else:
             logger.error("unknown subcommand: %s", args.command)
