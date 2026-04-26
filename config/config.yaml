@@ -17,6 +17,11 @@ worker:
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20
+  tool_params:
+    openhands:
+      image: openhands:latest
+      timeout_seconds: 1000  # mirrors worker.timeout above; collapsed in a follow-up PR
+      max_iterations_per_run: 20
 
 # Output-format repairer: second-tier LLM-backed JSON parser. Only invoked
 # when the deterministic raw_decode/_repair_json chain fails. Distinct
@@ -34,6 +39,7 @@ format_repairer:
   # api_base: https://ollama.com  # uncomment for Ollama Cloud
 
 orchestration:
+  mode: hierarchical                # default; flat is opt-in via overlay
   max_retries: 3
   poll_interval: 0.5  # seconds between orchestration loop iterations
   max_run_duration_seconds: 7200  # hard stop for the full orchestration run (2 hrs)
@@ -145,3 +151,8 @@ cors:
 security:
   enabled: true  # Uses worker.timeout for secb commands
   tools: [valgrind]  # KLEE unavailable in Ubuntu Focal base images
+
+# Active domain plugin and its opaque per-plugin params.
+domain:
+  plugin: security
+  params: {}

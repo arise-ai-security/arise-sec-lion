@@ -1,6 +1,3 @@
-llm:
-  model_boss: gpt-5.3-codex
-
 output:
   verbose: true
   log_level: DEBUG

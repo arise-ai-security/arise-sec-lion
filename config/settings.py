@@ -1,11 +1,14 @@
 """Configuration via Pydantic Settings with phase-specific YAML support."""
 
+from __future__ import annotations
+
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +54,8 @@ def _load_yaml_hierarchy(env: str | None = None) -> dict[str, Any]:
 class DatabaseConfig(BaseModel):
     """PostgreSQL connection settings."""
 
+    model_config = {"extra": "forbid"}
+
     host: str
     port: int
     user: str
@@ -66,6 +71,8 @@ class DatabaseConfig(BaseModel):
 class BossConfig(BaseModel):
     """Boss agent LLM settings."""
 
+    model_config = {"extra": "forbid"}
+
     model: str
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1000, gt=0, le=100000)
@@ -78,6 +85,8 @@ class BossConfig(BaseModel):
 class ManagerConfig(BaseModel):
     """Manager agent LLM settings."""
 
+    model_config = {"extra": "forbid"}
+
     model: str
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1000, gt=0, le=100000)
@@ -87,8 +96,53 @@ class ManagerConfig(BaseModel):
     )
 
 
+class ClaudeCodeParams(BaseModel):
+    """Tool-specific params for the Claude Code worker backend."""
+
+    model_config = {"extra": "forbid"}
+
+    allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
+    disallowed_tools: list[str] = Field(default_factory=list)
+    output_format: Literal["stream-json", "text"] = "stream-json"
+    include_partial_messages: bool = True
+    max_turns: int = Field(default=40, gt=0)
+
+
+class OpenHandsParams(BaseModel):
+    """Tool-specific params for the OpenHands worker backend."""
+
+    model_config = {"extra": "forbid"}
+
+    image: str = "openhands:latest"
+    timeout_seconds: int = Field(default=600, gt=0)
+    max_iterations_per_run: int = Field(default=20, gt=0)
+
+
+class GoogleAdkParams(BaseModel):
+    """Tool-specific params for the Google ADK worker backend.
+
+    Placeholder; expand when the adapter consumes structured params.
+    """
+
+    model_config = {"extra": "forbid"}
+
+
+class WorkerToolParams(BaseModel):
+    """Tagged union by tool name. Only the slot matching ``worker.tool`` is populated;
+    others are ``None``. The ``Settings`` model validator enforces this.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    claude_code: ClaudeCodeParams | None = None
+    openhands: OpenHandsParams | None = None
+    google_adk: GoogleAdkParams | None = None
+
+
 class WorkerConfig(BaseModel):
     """Worker tool settings."""
+
+    model_config = {"extra": "forbid"}
 
     model: str
     tool: Literal["claude_code", "openhands", "google_adk"]
@@ -102,6 +156,7 @@ class WorkerConfig(BaseModel):
         default=None,
         description="Optional base URL for the worker LLM (e.g. https://ollama.com for Ollama Cloud).",
     )
+    tool_params: WorkerToolParams = Field(default_factory=WorkerToolParams)
 
 
 class FormatRepairerConfig(BaseModel):
@@ -115,6 +170,8 @@ class FormatRepairerConfig(BaseModel):
     Distinct from the security-domain "Fixer" agent role — this repairs
     output format, never source code.
     """
+
+    model_config = {"extra": "forbid"}
 
     # Disabled by default. Enable when running on models prone to malformed
     # output (qwen3, qwen3.5, deepseek, GLM, …). Adds a dependency on the
@@ -145,12 +202,16 @@ class FormatRepairerConfig(BaseModel):
 class ToolsetPolicyConfig(BaseModel):
     """Per-toolset enablement and allowed-tool overrides."""
 
+    model_config = {"extra": "forbid"}
+
     enabled: bool = True
     allowed_tools: list[str] | None = None
 
 
 class ToolsetRoleConfig(BaseModel):
     """Per-role tool-calling policy defaults."""
+
+    model_config = {"extra": "forbid"}
 
     max_iterations: int = 5
     result_char_limit: int = 6_000
@@ -183,6 +244,8 @@ class ToolsetConfig(BaseModel):
                   recon: {allowed_tools: [...]}
     """
 
+    model_config = {"extra": "forbid"}
+
     default: dict[str, ToolsetRoleConfig] = Field(default_factory=dict)
     domains: dict[str, dict[str, ToolsetRoleConfig]] = Field(default_factory=dict)
 
@@ -193,6 +256,8 @@ class ToolsetConfig(BaseModel):
 
 class TopologyConfig(BaseModel):
     """Agent hierarchy shape limits."""
+
+    model_config = {"extra": "forbid"}
 
     max_depth: int
     max_children_per_node: int
@@ -211,6 +276,8 @@ class TopologyConfig(BaseModel):
 class ConcurrencyConfig(BaseModel):
     """Parallelism and rate-limiting settings."""
 
+    model_config = {"extra": "forbid"}
+
     max_concurrent_workers: int
     max_concurrent_llm_calls: int = 5
     llm_jitter_max_ms: int = 500
@@ -225,6 +292,8 @@ class ConcurrencyConfig(BaseModel):
 class ToolCallingConfig(BaseModel):
     """Tool-calling loop defaults and per-role policies."""
 
+    model_config = {"extra": "forbid"}
+
     max_iterations: int = 10
     result_char_limit: int = 6_000
     condense_after_iteration: int = 2
@@ -234,6 +303,8 @@ class ToolCallingConfig(BaseModel):
 
 class RetryConfig(BaseModel):
     """Retry and auto-healing settings."""
+
+    model_config = {"extra": "forbid"}
 
     model_escalation_chain: list[str] = Field(
         default_factory=list,
@@ -260,6 +331,12 @@ class RetryConfig(BaseModel):
 class OrchestrationConfig(BaseModel):
     """Execution behavior settings."""
 
+    model_config = {"extra": "forbid"}
+
+    mode: Literal["hierarchical", "flat"] = Field(
+        default="hierarchical",
+        description="Top-level execution shape: hierarchical (BOSS->managers->workers) or flat.",
+    )
     max_retries: int = Field(ge=0, le=10)
     poll_interval: float = Field(ge=0.01)
     max_run_duration_seconds: float = Field(
@@ -295,6 +372,8 @@ class OrchestrationConfig(BaseModel):
 class OutputConfig(BaseModel):
     """UI and output settings."""
 
+    model_config = {"extra": "forbid"}
+
     verbose: bool
     show_progress: bool
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -304,6 +383,8 @@ class OutputConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """SEC-bench container settings."""
 
+    model_config = {"extra": "forbid"}
+
     enabled: bool = True  # Uses worker.timeout for secb commands
     tools: list[str] = Field(
         default_factory=lambda: ["valgrind", "klee"],
@@ -311,8 +392,23 @@ class SecurityConfig(BaseModel):
     )
 
 
+class DomainConfig(BaseModel):
+    """Domain plugin selection and plugin-specific params.
+
+    The ``params`` slot is intentionally an opaque dict; each plugin is
+    responsible for shape-validating its own subkey.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    plugin: Literal["security"] | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class CorsConfig(BaseModel):
     """CORS (Cross-Origin Resource Sharing) settings."""
+
+    model_config = {"extra": "forbid"}
 
     allowed_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"]
@@ -324,33 +420,52 @@ class CorsConfig(BaseModel):
     allow_credentials: bool = True
 
 
+_WORKER_TOOL_PARAM_TYPES: dict[str, type[BaseModel]] = {
+    "claude_code": ClaudeCodeParams,
+    "openhands": OpenHandsParams,
+    "google_adk": GoogleAdkParams,
+}
+
+
 class Settings(BaseSettings):
     """Root config: secrets from env, everything else from YAML."""
 
-    model_config = SettingsConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="forbid")
 
     database: DatabaseConfig
     boss: BossConfig
     manager: ManagerConfig
     worker: WorkerConfig
-    format_repairer: FormatRepairerConfig = FormatRepairerConfig()  # Optional with defaults
+    format_repairer: FormatRepairerConfig = Field(default_factory=FormatRepairerConfig)
     orchestration: OrchestrationConfig
     output: OutputConfig
-    security: SecurityConfig = SecurityConfig()  # Optional with defaults
-    cors: CorsConfig = CorsConfig()  # Optional with defaults
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    domain: DomainConfig = Field(default_factory=DomainConfig)
+    cors: CorsConfig = Field(default_factory=CorsConfig)
+
+    @model_validator(mode="after")
+    def _validate_worker_tool_params(self) -> Settings:
+        """Tagged-union check: ``worker.tool_params.<tool>`` must be populated
+        when ``worker.tool`` selects that tool.
+        """
+        slot = getattr(self.worker.tool_params, self.worker.tool)
+        if slot is None:
+            raise ValueError(
+                f"worker.tool_params.{self.worker.tool} must be populated when "
+                f"worker.tool={self.worker.tool!r}"
+            )
+        return self
 
     @classmethod
-    def _build_from_config(cls, config: dict[str, Any]) -> "Settings":
+    def _build_from_config(cls, config: dict[str, Any]) -> Settings:
         """Build Settings from config dict, injecting env vars."""
-        db_config = config.get("database", {})
+        merged = deepcopy(config)
 
-        # Password is required from environment (secrets)
+        db_config = dict(merged.get("database", {}))
         postgres_password = os.getenv("POSTGRES_PASSWORD")
         if not postgres_password:
             raise ValueError("POSTGRES_PASSWORD environment variable is required")
         db_config["password"] = postgres_password
-
-        # Allow env overrides for all database settings (useful for dev/cloud DBs)
         if os.getenv("POSTGRES_HOST"):
             db_config["host"] = os.getenv("POSTGRES_HOST")
         if os.getenv("POSTGRES_PORT"):
@@ -359,45 +474,54 @@ class Settings(BaseSettings):
             db_config["user"] = os.getenv("POSTGRES_USER")
         if os.getenv("POSTGRES_DB"):
             db_config["name"] = os.getenv("POSTGRES_DB")
+        merged["database"] = db_config
 
-        # Security config is optional with defaults
-        security_config = config.get("security", {})
+        merged["worker"] = _populate_default_tool_params(dict(merged.get("worker", {})))
 
-        # CORS config is optional with defaults
-        cors_config = config.get("cors", {})
-
-        format_repairer_config = config.get("format_repairer", {})
-
-        return cls(
-            database=DatabaseConfig(**db_config),
-            boss=BossConfig(**config.get("boss", {})),
-            manager=ManagerConfig(**config.get("manager", {})),
-            worker=WorkerConfig(**config.get("worker", {})),
-            format_repairer=(
-                FormatRepairerConfig(**format_repairer_config)
-                if format_repairer_config
-                else FormatRepairerConfig()
-            ),
-            orchestration=OrchestrationConfig(**config.get("orchestration", {})),
-            output=OutputConfig(**config.get("output", {})),
-            security=SecurityConfig(**security_config) if security_config else SecurityConfig(),
-            cors=CorsConfig(**cors_config) if cors_config else CorsConfig(),
-        )
+        return cls.model_validate(merged)
 
     @classmethod
-    def load(cls, env: str | None = None) -> "Settings":
+    def load(cls, env: str | None = None) -> Settings:
         """Load settings: YAML config + env secrets."""
         config = _load_yaml_hierarchy(env)
         return cls._build_from_config(config)
 
     @classmethod
-    def from_yaml(cls, config_path: str | Path) -> "Settings":
-        """Load from specific YAML file (for testing)."""
+    def from_yaml(cls, config_path: str | Path) -> Settings:
+        """Load from a specific YAML file (for tests) or an overlay file.
+
+        Overlay support: if the YAML declares ``extends:`` + ``overrides:``,
+        they are resolved recursively against the base before validation.
+        """
         config_file = Path(config_path)
         if not config_file.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        with config_file.open(encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
+        from config._paths import get_repo_root
+        from config.overlay import resolve_overlay
 
+        config = resolve_overlay(config_file, repo_root=get_repo_root())
         return cls._build_from_config(config)
+
+
+def _populate_default_tool_params(worker_raw: dict[str, Any]) -> dict[str, Any]:
+    """If ``worker.tool_params`` is absent for the active tool, fill the
+    matching slot with that tool's default params.
+
+    An explicit ``null`` left in YAML by the operator (e.g. via a
+    ``tool_params: {openhands: null}`` override) is preserved so the
+    ``Settings`` model validator can reject the misconfiguration loudly.
+    """
+    tool = worker_raw.get("tool")
+    if tool not in _WORKER_TOOL_PARAM_TYPES:
+        # Let WorkerConfig's own Literal validation report unknown tools.
+        return worker_raw
+    raw_params = worker_raw.get("tool_params")
+    if raw_params is None and "tool_params" not in worker_raw:
+        worker_raw["tool_params"] = {tool: _WORKER_TOOL_PARAM_TYPES[tool]().model_dump()}
+        return worker_raw
+    if isinstance(raw_params, dict) and tool not in raw_params:
+        raw_params = dict(raw_params)
+        raw_params[tool] = _WORKER_TOOL_PARAM_TYPES[tool]().model_dump()
+        worker_raw["tool_params"] = raw_params
+    return worker_raw

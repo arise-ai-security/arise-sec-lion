@@ -2,10 +2,14 @@
 
 from .settings import (
     BossConfig,
+    ClaudeCodeParams,
     ConcurrencyConfig,
     CorsConfig,
     DatabaseConfig,
+    DomainConfig,
+    GoogleAdkParams,
     ManagerConfig,
+    OpenHandsParams,
     OrchestrationConfig,
     OutputConfig,
     RetryConfig,
@@ -17,16 +21,21 @@ from .settings import (
     ToolsetRoleConfig,
     TopologyConfig,
     WorkerConfig,
+    WorkerToolParams,
     get_environment,
 )
 
 
 __all__ = [
     "BossConfig",
+    "ClaudeCodeParams",
     "ConcurrencyConfig",
     "CorsConfig",
     "DatabaseConfig",
+    "DomainConfig",
+    "GoogleAdkParams",
     "ManagerConfig",
+    "OpenHandsParams",
     "OrchestrationConfig",
     "OutputConfig",
     "RetryConfig",
@@ -38,5 +47,6 @@ __all__ = [
     "ToolsetRoleConfig",
     "TopologyConfig",
     "WorkerConfig",
+    "WorkerToolParams",
     "get_environment",
 ]
