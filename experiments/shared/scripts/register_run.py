@@ -1,10 +1,17 @@
-"""Enroll an existing run into a study manifest.
+"""Stamp experiment-level fields onto a run's `run_manifest.json`.
 
-The runtime writes runtime-level fields (`started_at`, `models`, `tokens`, …)
+The runtime writes runtime-level fields (`started_at`, `models`, `tokens`, ...)
 into `runs/<run_id>/run_manifest.json` when `main.py run` executes; the
-experiment-level fields (`cell`, `task`, `attempt`, `study_id`) are merged
-in here by the harness after the subprocess returns (spec §10.3), or by a
-human invoking this script for a historical run.
+experiment-level fields (`cell`, `task`, `replicate`, `study_id`) are merged
+in here by the harness after the subprocess returns, or by a human invoking
+this script for a historical run.
+
+This module no longer mutates `experiments/<study>/manifest.yaml`. The
+study manifest is design-only (cells, hypothesis, dataset); the enrollment
+roster is a derived artifact, regenerated from the runs pool by
+``experiments.shared.scripts.collect`` into
+``experiments/<study>/reports/enrollment.lock.yaml`` (PR 1 of the
+experiments rearchitecture).
 
 Usage::
 
@@ -13,7 +20,7 @@ Usage::
         --run-id <uuid> \
         --cell B2 \
         --task gpac.cve-2021-40575 \
-        --attempt 0
+        --replicate 0
 """
 
 from __future__ import annotations
@@ -62,59 +69,20 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _dump_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-    tmp.replace(path)
-
-
-def _upsert_run_in_study(
-    study: dict[str, Any],
-    *,
-    run_id: UUID,
-    cell: str,
-    task: str,
-    attempt: int,
-) -> None:
-    """Add or update the row for `run_id` in study.runs. Idempotent."""
-    runs: list[dict[str, Any]] = list(study.get("runs") or [])
-    for index, existing in enumerate(runs):
-        if str(existing.get("run_id")) == str(run_id):
-            runs[index] = {
-                "run_id": str(run_id),
-                "cell": cell,
-                "task": task,
-                "attempt": attempt,
-            }
-            study["runs"] = runs
-            return
-    runs.append(
-        {
-            "run_id": str(run_id),
-            "cell": cell,
-            "task": task,
-            "attempt": attempt,
-        }
-    )
-    study["runs"] = runs
-
-
 def _prepare_run_manifest_payload(
     run_manifest_path: Path,
     *,
     study_id: str,
     cell: str,
     task: str,
-    attempt: int,
+    replicate: int,
 ) -> dict[str, Any]:
-    """Load and merge experiment-level fields into the run manifest in memory.
+    """Load the run manifest and merge experiment-level fields in memory.
 
     Does not write anything. Raises FileNotFoundError if the run manifest is
-    absent so callers can fail fast before mutating the study manifest.
+    absent so callers can fail fast. ``attempt`` is preserved alongside
+    ``replicate`` for one rename cycle so consumers that still read the old
+    field keep working.
     """
     if not run_manifest_path.is_file():
         raise FileNotFoundError(
@@ -127,7 +95,8 @@ def _prepare_run_manifest_payload(
             "study_id": study_id,
             "cell": cell,
             "task": task,
-            "attempt": attempt,
+            "replicate": replicate,
+            "attempt": replicate,
         }
     )
     return payload
@@ -144,9 +113,7 @@ def _validate_cell_declared(study: dict[str, Any], cell: str) -> None:
     cells = study.get("cells") or {}
     if not isinstance(cells, dict) or cell not in cells:
         declared = ", ".join(sorted(cells)) if isinstance(cells, dict) else "<none>"
-        raise ValueError(
-            f"cell {cell!r} not declared in study.cells (declared: {declared})"
-        )
+        raise ValueError(f"cell {cell!r} not declared in study.cells (declared: {declared})")
 
 
 def _validate_task_in_cell_scope(study: dict[str, Any], cell: str, task: str) -> None:
@@ -166,8 +133,7 @@ def _validate_task_in_cell_scope(study: dict[str, Any], cell: str, task: str) ->
         # Declared but missing is a configuration bug — fail closed so typos
         # don't silently disable the CVE-scope invariant.
         raise FileNotFoundError(
-            f"study declares dataset={dataset_rel!r} but the file was not found "
-            f"at {dataset_path}"
+            f"study declares dataset={dataset_rel!r} but the file was not found at {dataset_path}"
         )
 
     dataset = yaml.safe_load(dataset_path.read_text(encoding="utf-8")) or {}
@@ -179,8 +145,7 @@ def _validate_task_in_cell_scope(study: dict[str, Any], cell: str, task: str) ->
     effective = list(subset) if subset is not None else list(defaults)
     if task not in effective:
         raise ValueError(
-            f"task {task!r} is not in the effective CVE set for cell {cell!r}: "
-            f"{effective}"
+            f"task {task!r} is not in the effective CVE set for cell {cell!r}: {effective}"
         )
 
 
@@ -190,27 +155,31 @@ def register_run(
     run_id: UUID,
     cell: str,
     task: str,
-    attempt: int,
+    replicate: int | None = None,
+    attempt: int | None = None,
     output_directory: str | Path | None = None,
 ) -> None:
-    """Enroll ``run_id`` into study ``study_id`` for the given cell/task/attempt.
+    """Stamp experiment-level fields onto ``run_id``'s run_manifest.json.
 
-    Transactional ordering (spec §8, must-fix #4):
+    Validates (cell declared, task in cell scope) against
+    ``experiments/<study>/manifest.yaml`` but never writes back to it — the
+    enrollment roster is a derived artifact regenerated by
+    ``experiments.shared.scripts.collect``.
 
-    1. Validate (cell declared, task in cell scope).
-    2. Build the updated study manifest and run_manifest payloads in memory.
-       Fails fast if the run_manifest doesn't exist — nothing is written yet.
-    3. Write the study manifest FIRST. After this step the run is enrolled.
-    4. Write the run_manifest SECOND. The run_manifest only caches the
-       experiment-level fields already durable in the study manifest, so a
-       crash between 3 and 4 is recoverable: re-running ``register_run`` with
-       the same arguments completes the back-fill. The operator is notified
-       via a logged error.
-
-    Idempotent: re-running with the same ``run_id`` overwrites the study-row
-    in place (``_upsert_run_in_study``) and rewrites the run_manifest with
-    the same merged payload (``_write_run_manifest``).
+    ``replicate`` is the canonical name; ``attempt`` is accepted as an alias
+    for one rename cycle. Exactly one of them must be provided.
     """
+    if replicate is not None and attempt is not None and replicate != attempt:
+        raise ValueError(
+            f"register_run got conflicting replicate={replicate} and attempt={attempt}"
+        )
+    if replicate is not None:
+        effective_replicate = replicate
+    elif attempt is not None:
+        effective_replicate = attempt
+    else:
+        raise ValueError("register_run requires `replicate` (or its alias `attempt`)")
+
     study_manifest_path = _study_manifest_path(study_id)
     study = _load_yaml(study_manifest_path)
     study.setdefault("study_id", study_id)
@@ -220,46 +189,32 @@ def register_run(
     runs_root = _runs_root(output_directory)
     run_manifest_path = _run_manifest_path(run_id, runs_root)
 
-    # Build both payloads in memory before touching disk so a validation
-    # failure (e.g. missing run_manifest) aborts cleanly.
     run_manifest_payload = _prepare_run_manifest_payload(
         run_manifest_path,
         study_id=study_id,
         cell=cell,
         task=task,
-        attempt=attempt,
+        replicate=effective_replicate,
     )
-    _upsert_run_in_study(study, run_id=run_id, cell=cell, task=task, attempt=attempt)
-
-    # Study manifest first: this is the source of truth for enrollment.
-    _dump_yaml(study_manifest_path, study)
-
-    # Run manifest second: a failure here leaves the run enrolled but without
-    # cached experiment-level fields. Re-running register_run with the same
-    # arguments backfills cleanly.
-    try:
-        _write_run_manifest(run_manifest_path, run_manifest_payload)
-    except OSError:
-        logger.exception(
-            "enrolled run_id=%s for study=%s but failed to update "
-            "run_manifest.json at %s; re-run register_run to backfill",
-            run_id,
-            study_id,
-            run_manifest_path,
-        )
-        raise
+    _write_run_manifest(run_manifest_path, run_manifest_payload)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="register_run",
-        description="Enroll an existing run into a study manifest.",
+        description="Stamp experiment-level fields onto a run's run_manifest.json.",
     )
     parser.add_argument("--study", required=True, help="Study id, e.g. 2026-04-22-demo")
     parser.add_argument("--run-id", type=UUID, required=True)
-    parser.add_argument("--cell", required=True, help="Cell slug (A1, B2, …)")
+    parser.add_argument("--cell", required=True, help="Cell slug (A1, B2, ...)")
     parser.add_argument("--task", required=True, help="Task name (CVE slug, etc.)")
-    parser.add_argument("--attempt", type=int, required=True)
+    replicate_group = parser.add_mutually_exclusive_group(required=True)
+    replicate_group.add_argument("--replicate", type=int, help="Sample index within (cell, task)")
+    replicate_group.add_argument(
+        "--attempt",
+        type=int,
+        help="Deprecated alias for --replicate (kept for one rename cycle)",
+    )
     parser.add_argument(
         "--output-directory",
         help="Override the runs/ root (default: <repo_root>/runs)",
@@ -276,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             run_id=args.run_id,
             cell=args.cell,
             task=args.task,
+            replicate=args.replicate,
             attempt=args.attempt,
             output_directory=args.output_directory,
         )

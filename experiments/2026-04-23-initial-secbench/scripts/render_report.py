@@ -1,4 +1,4 @@
-"""Render `reports/report.md` from the Jinja template and the summary CSV.
+"""Render `reports/report.md` from the Jinja template, summary CSV, and lockfile.
 
 Uses `write_md` so the output carries YAML frontmatter with input and
 output sha256s. The validator will reject any post-hoc edit to the body.
@@ -20,14 +20,19 @@ if str(_REPO_ROOT) not in sys.path:
 import jinja2  # noqa: E402
 import yaml  # noqa: E402
 
+from experiments.shared.scripts.collect import (  # noqa: E402
+    ENROLLMENT_LOCK_FILENAME,
+    load_enrollment_lock,
+)
 from experiments.shared.scripts.write_report import write_md  # noqa: E402
 
 
 STUDY_DIR = Path(__file__).resolve().parent.parent
+STUDY_ID = STUDY_DIR.name
 logger = logging.getLogger(__name__)
 
 
-def _render(rows: list[dict[str, str]], manifest: dict) -> str:
+def _render(rows: list[dict[str, str]], manifest: dict, enrollment: list[dict]) -> str:
     template_dir = STUDY_DIR / "templates"
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(template_dir),
@@ -49,16 +54,15 @@ def _render(rows: list[dict[str, str]], manifest: dict) -> str:
         }
         for row in rows
     ]
-    enrolled = manifest.get("runs") or []
     legacy_count = sum(
-        1 for r in enrolled if str(r.get("legacy_migration", False)).lower() == "true"
+        1 for r in enrollment if str(r.get("legacy_migration", False)).lower() == "true"
     )
     return template.render(
         hypothesis=manifest.get("hypothesis", ""),
         cells=cells,
-        total_runs=len(enrolled),
+        total_runs=len(enrollment),
         legacy_runs=legacy_count,
-        live_runs=len(enrolled) - legacy_count,
+        live_runs=len(enrollment) - legacy_count,
         figure_path="figures/cells-overview.svg",
         table_rows=table_rows,
     )
@@ -71,6 +75,7 @@ def main() -> int:
     manifest_rel = f"{rel_study}/manifest.yaml"
     table_rel = f"{rel_study}/reports/tables/summary.csv"
     figure_rel = f"{rel_study}/reports/figures/cells-overview.svg"
+    enrollment_rel = f"{rel_study}/reports/{ENROLLMENT_LOCK_FILENAME}"
     template_rel = f"{rel_study}/templates/report.md.j2"
     output_rel = f"{rel_study}/reports/report.md"
     script_rel = f"{rel_study}/scripts/render_report.py"
@@ -85,13 +90,15 @@ def main() -> int:
 
     manifest = yaml.safe_load(manifest_abs.read_text(encoding="utf-8"))
     rows = list(csv.DictReader(io.StringIO(table_abs.read_text(encoding="utf-8"))))
+    enrollment_doc = load_enrollment_lock(STUDY_ID)
+    enrollment = enrollment_doc.get("enrollment") or []
 
     write_md(
         path=output_rel,
-        content=_render(rows, manifest),
+        content=_render(rows, manifest, enrollment),
         script=script_rel,
         template=template_rel,
-        inputs=[manifest_rel, table_rel, figure_rel],
+        inputs=[manifest_rel, table_rel, figure_rel, enrollment_rel],
     )
     logger.info("wrote %s", output_rel)
     return 0

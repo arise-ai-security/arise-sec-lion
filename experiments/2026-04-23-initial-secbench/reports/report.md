@@ -1,12 +1,14 @@
 ---
-generated_at: '2026-04-23T19:44:31.974176Z'
+generated_at: '2026-04-26T19:25:45.339228Z'
 generated_by: experiments/2026-04-23-initial-secbench/scripts/render_report.py
 inputs:
 - experiments/2026-04-23-initial-secbench/manifest.yaml
 - experiments/2026-04-23-initial-secbench/reports/tables/summary.csv
 - experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg
+- experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml
 inputs_sha256:
-  experiments/2026-04-23-initial-secbench/manifest.yaml: 792004886138872c1d4cfa56943a9ea105e6957bcf5f9ed4062f0ca51d089bd6
+  experiments/2026-04-23-initial-secbench/manifest.yaml: a8cebe0c2d65d48b27bb811c703ed158c85f07b25540dd9152f4f8993203e0f2
+  experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml: db3e3dcd714c98212ee1f5e21112789c9f6dfed2f037ab241c1e56f474990259
   experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg: 690852336e7480a712b0c329f10426ea69599d7bd75d61d512dcb82516768609
   experiments/2026-04-23-initial-secbench/reports/tables/summary.csv: e7c3a6b2667498bda683f4368ec1e581a187788b194aa2dd44ebe7d7bdc83b63
   experiments/2026-04-23-initial-secbench/templates/report.md.j2: bfcc3884cde9f92720f085d7a69b73093a786a1ae82e9231c6f2552ab09f56de

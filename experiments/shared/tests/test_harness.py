@@ -40,9 +40,9 @@ def _write_study(
         yaml.safe_dump(
             {
                 "study_id": study_id,
+                "schema_version": 2,
                 "cells": cells,
                 "dataset": "dataset.yaml",
-                "runs": [],
             },
             sort_keys=False,
         )
@@ -162,14 +162,16 @@ def test_run_ours_enrolls_run_into_study(
     assert run_manifest["study_id"] == study_id
     assert run_manifest["cell"] == "B2"
     assert run_manifest["task"] == "gpac.cve-2021-40575"
+    assert run_manifest["replicate"] == 0
+    # And: the legacy attempt alias is preserved for one rename cycle.
     assert run_manifest["attempt"] == 0
 
-    # And: the study manifest lists the run.
+    # And: the study manifest is design-only — register_run no longer writes
+    # a `runs:` list back into it (PR 1: enrollment moved to the lockfile).
     study_manifest = yaml.safe_load(
         (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
     )
-    assert len(study_manifest["runs"]) == 1
-    assert study_manifest["runs"][0]["run_id"] == str(run_id)
+    assert "runs" not in study_manifest
 
     # And: events.jsonl was produced (by the fake projector).
     assert (repo_root / "runs" / str(run_id) / "events.jsonl").exists()
@@ -365,6 +367,7 @@ def test_run_baseline_enrolls_newly_minted_run(
     assert manifest["study_id"] == study_id
     assert manifest["cell"] == "A1"
     assert manifest["task"] == "gpac.cve-2021-40575"
+    assert manifest["replicate"] == 0
     assert manifest["attempt"] == 0
 
 

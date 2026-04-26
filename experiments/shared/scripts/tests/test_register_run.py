@@ -1,4 +1,11 @@
-"""Tests for `experiments.shared.scripts.register_run`."""
+"""Tests for `experiments.shared.scripts.register_run`.
+
+PR 1 of the experiments rearchitecture: ``register_run`` only stamps the
+per-run ``run_manifest.json`` — the study manifest is design-only and
+the enrollment roster lives in ``reports/enrollment.lock.yaml``. Tests
+that previously asserted study-manifest writeback now assert the
+manifest stays untouched.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +16,6 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from experiments.shared.scripts import register_run as register_run_module
 from experiments.shared.scripts.register_run import register_run
 
 
@@ -25,9 +31,9 @@ def _write_study_manifest(repo_root: Path, study_id: str, cells: dict[str, dict]
         yaml.safe_dump(
             {
                 "study_id": study_id,
+                "schema_version": 2,
                 "created_at": "2026-04-22T00:00:00Z",
                 "cells": cells,
-                "runs": [],
             },
             sort_keys=False,
         )
@@ -51,9 +57,9 @@ def _seed_run_manifest(runs_pool: Path, run_id: str, extra: dict | None = None) 
     return manifest
 
 
-def test_register_run_merges_both_manifests(repo_root: Path) -> None:
+def test_register_run_stamps_run_manifest_with_replicate(repo_root: Path) -> None:
     # Given: a study manifest declaring cell B2, and a finished run in the pool.
-    study_id = "2026-04-22-naive-vs-cybersec"
+    study_id = "2026-04-22-stamp-test"
     _write_study_manifest(
         repo_root,
         study_id,
@@ -70,7 +76,7 @@ def test_register_run_merges_both_manifests(repo_root: Path) -> None:
         run_id=run_id,
         cell="B2",
         task="gpac.cve-2021-40575",
-        attempt=0,
+        replicate=0,
         output_directory=runs_pool,
     )
 
@@ -79,57 +85,60 @@ def test_register_run_merges_both_manifests(repo_root: Path) -> None:
     assert updated["study_id"] == study_id
     assert updated["cell"] == "B2"
     assert updated["task"] == "gpac.cve-2021-40575"
+    assert updated["replicate"] == 0
+    # And: the legacy attempt alias is preserved for one cycle.
     assert updated["attempt"] == 0
 
-    # And: the study manifest lists the run exactly once.
-    study_manifest = yaml.safe_load(
-        (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
+
+def test_register_run_accepts_legacy_attempt_kwarg(repo_root: Path) -> None:
+    # Given: a study + run.
+    study_id = "2026-04-22-attempt-alias"
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
+    runs_pool = repo_root / "runs"
+    run_id = uuid4()
+    run_manifest = _seed_run_manifest(runs_pool, str(run_id))
+
+    # When: caller still uses the old `attempt=` keyword.
+    register_run(
+        study_id=study_id,
+        run_id=run_id,
+        cell="A1",
+        task="t",
+        attempt=2,
+        output_directory=runs_pool,
     )
-    rows = study_manifest["runs"]
-    assert len(rows) == 1
-    assert rows[0] == {
-        "run_id": str(run_id),
-        "cell": "B2",
-        "task": "gpac.cve-2021-40575",
-        "attempt": 0,
-    }
+
+    # Then: replicate is set to the same value, and attempt is preserved.
+    updated = json.loads(run_manifest.read_text())
+    assert updated["replicate"] == 2
+    assert updated["attempt"] == 2
 
 
-def test_register_run_is_idempotent(repo_root: Path) -> None:
-    # Given: a valid study + run.
-    study_id = "idempotency-study"
-    _write_study_manifest(
-        repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}}
-    )
+def test_register_run_rejects_conflicting_replicate_and_attempt(repo_root: Path) -> None:
+    # Given: a study + run.
+    study_id = "conflict-study"
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
     runs_pool = repo_root / "runs"
     run_id = uuid4()
     _seed_run_manifest(runs_pool, str(run_id))
 
-    # When: registered twice.
-    kwargs = {
-        "study_id": study_id,
-        "run_id": run_id,
-        "cell": "A1",
-        "task": "t",
-        "attempt": 0,
-        "output_directory": runs_pool,
-    }
-    register_run(**kwargs)
-    register_run(**kwargs)
-
-    # Then: still only one row in the study manifest.
-    study = yaml.safe_load(
-        (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
-    )
-    assert len(study["runs"]) == 1
+    # When/Then: the alias and the new field disagree.
+    with pytest.raises(ValueError, match="conflicting"):
+        register_run(
+            study_id=study_id,
+            run_id=run_id,
+            cell="A1",
+            task="t",
+            replicate=0,
+            attempt=1,
+            output_directory=runs_pool,
+        )
 
 
 def test_register_run_rejects_unknown_cell(repo_root: Path) -> None:
     # Given: a study declaring only A1.
     study_id = "unknown-cell-study"
-    _write_study_manifest(
-        repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}}
-    )
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
     runs_pool = repo_root / "runs"
     run_id = uuid4()
     _seed_run_manifest(runs_pool, str(run_id))
@@ -141,7 +150,7 @@ def test_register_run_rejects_unknown_cell(repo_root: Path) -> None:
             run_id=run_id,
             cell="ZZ",
             task="t",
-            attempt=0,
+            replicate=0,
             output_directory=runs_pool,
         )
 
@@ -149,9 +158,7 @@ def test_register_run_rejects_unknown_cell(repo_root: Path) -> None:
 def test_register_run_requires_existing_run_manifest(repo_root: Path) -> None:
     # Given: a study with a declared cell but NO run on disk.
     study_id = "missing-run-study"
-    _write_study_manifest(
-        repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}}
-    )
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
     runs_pool = repo_root / "runs"
     runs_pool.mkdir(parents=True, exist_ok=True)
 
@@ -162,77 +169,9 @@ def test_register_run_requires_existing_run_manifest(repo_root: Path) -> None:
             run_id=uuid4(),
             cell="A1",
             task="t",
-            attempt=0,
+            replicate=0,
             output_directory=runs_pool,
         )
-
-
-def test_register_run_survives_run_manifest_write_failure(
-    repo_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Transactional ordering (must-fix #4): study manifest is written FIRST.
-
-    If the run_manifest write fails after the study manifest succeeded, the
-    study is durably enrolled and the operator can recover by re-running
-    register_run (which is idempotent). The failure must surface, not be
-    silently swallowed.
-    """
-    # Given: a valid study + seeded run_manifest.
-    study_id = "txn-study"
-    _write_study_manifest(
-        repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}}
-    )
-    runs_pool = repo_root / "runs"
-    run_id = uuid4()
-    run_manifest = _seed_run_manifest(runs_pool, str(run_id))
-    original_run_manifest_bytes = run_manifest.read_bytes()
-
-    # Fail the run_manifest write ONCE, then restore the real writer so the
-    # recovery re-run backfills it cleanly.
-    real_write = register_run_module._write_run_manifest
-    calls = {"count": 0}
-
-    def _one_shot_boom(path, payload):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            raise OSError("disk full during run_manifest write")
-        return real_write(path, payload)
-
-    monkeypatch.setattr(register_run_module, "_write_run_manifest", _one_shot_boom)
-
-    kwargs = {
-        "study_id": study_id,
-        "run_id": run_id,
-        "cell": "A1",
-        "task": "t",
-        "attempt": 0,
-        "output_directory": runs_pool,
-    }
-
-    # When/Then: the first call fails.
-    with pytest.raises(OSError, match="disk full"):
-        register_run(**kwargs)
-
-    # Then: the study manifest is durably enrolled (write-first ordering).
-    study = yaml.safe_load(
-        (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
-    )
-    assert len(study["runs"]) == 1
-    assert study["runs"][0]["run_id"] == str(run_id)
-    # And: the run_manifest is untouched — recoverable via re-run.
-    assert run_manifest.read_bytes() == original_run_manifest_bytes
-
-    # When: the operator re-runs register_run (idempotent backfill).
-    register_run(**kwargs)
-
-    # Then: run_manifest now carries the experiment fields, study still has one row.
-    updated = json.loads(run_manifest.read_text())
-    assert updated["study_id"] == study_id
-    assert updated["cell"] == "A1"
-    study_after = yaml.safe_load(
-        (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
-    )
-    assert len(study_after["runs"]) == 1
 
 
 def test_register_run_enforces_task_in_cell_scope(repo_root: Path) -> None:
@@ -244,9 +183,9 @@ def test_register_run_enforces_task_in_cell_scope(repo_root: Path) -> None:
         yaml.safe_dump(
             {
                 "study_id": study_id,
+                "schema_version": 2,
                 "cells": {"A1": {"config": "x", "harness": "ours"}},
                 "dataset": "dataset.yaml",
-                "runs": [],
             },
             sort_keys=False,
         )
@@ -271,6 +210,6 @@ def test_register_run_enforces_task_in_cell_scope(repo_root: Path) -> None:
             run_id=run_id,
             cell="A1",
             task="cve-b",
-            attempt=0,
+            replicate=0,
             output_directory=runs_pool,
         )

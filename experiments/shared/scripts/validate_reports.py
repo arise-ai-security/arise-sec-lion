@@ -122,7 +122,7 @@ def _parse_frontmatter(raw: bytes) -> tuple[dict[str, Any], bytes] | None:
         else:
             return None
 
-    yaml_payload = raw[search_from:close_idx + 1]
+    yaml_payload = raw[search_from : close_idx + 1]
     body_start = close_idx + 1 + len(_FRONTMATTER_DELIM_LINE)
 
     try:
@@ -294,16 +294,12 @@ def _check_inputs_consistency_md(
 
     missing_hashes = [i for i in declared_inputs if i not in inputs_sha256]
     if missing_hashes:
-        errors.append(
-            f"{context}: inputs_sha256 missing entries for: {', '.join(missing_hashes)}"
-        )
+        errors.append(f"{context}: inputs_sha256 missing entries for: {', '.join(missing_hashes)}")
         return False
 
     template = frontmatter.get("template")
     if isinstance(template, str) and template not in inputs_sha256:
-        errors.append(
-            f"{context}: inputs_sha256 must include the template path {template}"
-        )
+        errors.append(f"{context}: inputs_sha256 must include the template path {template}")
         return False
 
     return True
@@ -328,12 +324,8 @@ def _check_body_sha256(
         )
 
 
-def _check_entry_generated_by(
-    entry: dict[str, Any], errors: list[str], *, context: str
-) -> bool:
-    generated_by = _validate_stored_path(
-        entry.get("generated_by"), "generated_by", context, errors
-    )
+def _check_entry_generated_by(entry: dict[str, Any], errors: list[str], *, context: str) -> bool:
+    generated_by = _validate_stored_path(entry.get("generated_by"), "generated_by", context, errors)
     if generated_by is None:
         return False
     if not resolve_repo_path(generated_by).is_file():
@@ -342,9 +334,7 @@ def _check_entry_generated_by(
     return True
 
 
-def _check_entry_inputs(
-    entry: dict[str, Any], errors: list[str], *, context: str
-) -> bool:
+def _check_entry_inputs(entry: dict[str, Any], errors: list[str], *, context: str) -> bool:
     inputs_sha256 = entry.get("inputs_sha256") or {}
     if not isinstance(inputs_sha256, dict):
         errors.append(f"{context}: inputs_sha256 must be a mapping")
@@ -362,17 +352,13 @@ def _check_entry_inputs(
             return False
 
     if set(inputs_sha256.keys()) != set(declared_inputs):
-        errors.append(
-            f"{context}: inputs list and inputs_sha256 keys must match exactly"
-        )
+        errors.append(f"{context}: inputs list and inputs_sha256 keys must match exactly")
         return False
 
     return True
 
 
-def _check_entry_shape(
-    entry: dict[str, Any], errors: list[str], *, context: str
-) -> bool:
+def _check_entry_shape(entry: dict[str, Any], errors: list[str], *, context: str) -> bool:
     """Validate sidecar entry structure (keys, types, recorded paths)."""
     missing = [key for key in _REQUIRED_ENTRY_KEYS if key not in entry]
     if missing:
@@ -476,6 +462,72 @@ def validate_paths(paths: Iterable[Path]) -> list[str]:
     return errors
 
 
+def validate_study(study_id: str) -> list[str]:
+    """Study-level invariants that complement the per-file walker.
+
+    Returns a list of error messages (empty = valid). Enforces, in order:
+
+    1. ``experiments/<study>/reports/enrollment.lock.yaml`` exists.
+    2. ``experiments/<study>/manifest.yaml`` does NOT carry a ``runs:`` key
+       (PR 1: roster moved to the lockfile; a regression here would silently
+       reintroduce mixed-lifecycle state into the design file).
+    3. Every ``run_id`` listed in the lockfile resolves to a discoverable
+       ``run_manifest.json`` somewhere in the pool roots.
+    """
+    # Local imports keep this module's import surface small for the file
+    # walker (the historical entry point) — only the study path needs them.
+    from experiments.shared.scripts.collect import (
+        ENROLLMENT_LOCK_FILENAME,
+        load_enrollment_lock,
+    )
+    from experiments.shared.scripts.load_runs import iter_run_manifests
+
+    errors: list[str] = []
+    study_dir = get_repo_root() / "experiments" / study_id
+    manifest_path = study_dir / "manifest.yaml"
+    lock_path = study_dir / "reports" / ENROLLMENT_LOCK_FILENAME
+
+    if not lock_path.is_file():
+        errors.append(
+            f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: missing; "
+            "run `python -m experiments.shared.scripts.collect "
+            f"--study {study_id}`"
+        )
+
+    if manifest_path.is_file():
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        if isinstance(manifest, dict) and "runs" in manifest:
+            errors.append(
+                f"experiments/{study_id}/manifest.yaml: contains a `runs:` key; "
+                "the enrollment roster lives in reports/enrollment.lock.yaml now"
+            )
+    else:
+        errors.append(f"experiments/{study_id}/manifest.yaml: not found")
+
+    if lock_path.is_file():
+        try:
+            lock = load_enrollment_lock(study_id)
+        except (FileNotFoundError, ValueError) as exc:
+            errors.append(f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: {exc}")
+            return errors
+
+        enrolled = lock.get("enrollment") or []
+        # Build the set of every run_id present anywhere in the pool, then
+        # cross-check enrollment without re-walking the filesystem per row.
+        pool_run_ids: set[str] = set()
+        for path in iter_run_manifests():
+            pool_run_ids.add(path.parent.name)
+        for entry in enrolled:
+            run_id = entry.get("run_id") if isinstance(entry, dict) else None
+            if not isinstance(run_id, str) or run_id not in pool_run_ids:
+                errors.append(
+                    f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
+                    f"run_id {run_id!r} has no run_manifest.json in any pool root"
+                )
+
+    return errors
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="validate_reports",
@@ -487,7 +539,29 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Specific files to validate; defaults to all files under experiments/*/reports/",
     )
+    parser.add_argument(
+        "--study",
+        action="append",
+        dest="studies",
+        help=(
+            "Run study-level invariants for this study id (repeatable). "
+            "Checks enrollment.lock.yaml exists, manifest.yaml has no `runs:` "
+            "key, and every enrolled run_id resolves in the pool."
+        ),
+    )
     return parser
+
+
+def _discover_study_ids() -> list[str]:
+    """Return every ``experiments/<id>/`` whose ``manifest.yaml`` exists."""
+    experiments_dir = get_repo_root() / "experiments"
+    if not experiments_dir.is_dir():
+        return []
+    return sorted(
+        entry.name
+        for entry in experiments_dir.iterdir()
+        if entry.is_dir() and (entry / "manifest.yaml").is_file()
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -495,10 +569,26 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
     targets = list(args.paths) if args.paths else _discover_report_files()
-    if not targets:
-        return 0
+    file_errors = validate_paths(targets) if targets else []
 
-    errors = validate_paths(targets)
+    # Auto-discover studies when no specific paths are passed and no
+    # explicit --study flag is given. Without this the pre-commit hook
+    # (which calls `validate_reports` with no args) would never run the
+    # PR 1 invariants, so a regression dropping the lockfile or
+    # reintroducing `runs:` in manifest.yaml could slip in unnoticed.
+    studies: list[str]
+    if args.studies:
+        studies = list(args.studies)
+    elif not args.paths:
+        studies = _discover_study_ids()
+    else:
+        studies = []
+
+    study_errors: list[str] = []
+    for study_id in studies:
+        study_errors.extend(validate_study(study_id))
+
+    errors = file_errors + study_errors
     if not errors:
         return 0
 
