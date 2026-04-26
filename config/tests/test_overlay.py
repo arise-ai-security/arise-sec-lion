@@ -206,3 +206,47 @@ def test_overlay_dotted_collision_raises(tmp_path: Path) -> None:
     # When/Then: resolve_overlay raises ValueError.
     with pytest.raises(ValueError, match="collision"):
         resolve_overlay(overlay, repo_root=tmp_path)
+
+
+def test_overlay_dotted_collision_dict_then_scalar_raises(tmp_path: Path) -> None:
+    """Reverse-order collision (dict subtree built first, then scalar tries
+    to overwrite it) is also rejected.
+    """
+
+    # Given: orchestration.topology.max_depth (a deep dotted key) appears
+    # before orchestration.topology (a scalar that would clobber the subtree).
+    # Written as raw YAML so insertion order is preserved through the loader
+    # (yaml.safe_dump alphabetizes by default).
+    base = tmp_path / "base.yaml"
+    _write_yaml(base, {})
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text(
+        "extends: base.yaml\n"
+        "overrides:\n"
+        "  orchestration.topology.max_depth: 5\n"
+        "  orchestration.topology: scalar\n",
+        encoding="utf-8",
+    )
+
+    # When/Then: resolve_overlay raises a ValueError flagging the overwrite.
+    with pytest.raises(ValueError, match="would overwrite dict"):
+        resolve_overlay(overlay, repo_root=tmp_path)
+
+
+def test_overlay_extends_cycle_raises(tmp_path: Path) -> None:
+    """A cycle in the extends chain is detected and raised with both files
+    in the error message.
+    """
+
+    # Given: A.yaml extends B.yaml which extends A.yaml.
+    a_path = tmp_path / "A.yaml"
+    b_path = tmp_path / "B.yaml"
+    _write_yaml(a_path, {"extends": "B.yaml", "overrides": {}})
+    _write_yaml(b_path, {"extends": "A.yaml", "overrides": {}})
+
+    # When/Then: resolve_overlay raises a ValueError mentioning both files.
+    with pytest.raises(ValueError, match="cycle detected in overlay extends chain") as exc_info:
+        resolve_overlay(a_path, repo_root=tmp_path)
+    msg = str(exc_info.value)
+    assert str(a_path.resolve()) in msg
+    assert str(b_path.resolve()) in msg

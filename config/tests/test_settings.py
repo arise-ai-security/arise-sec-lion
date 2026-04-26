@@ -173,6 +173,37 @@ def test_explicit_tool_params_override_defaults(tmp_path: Path) -> None:
     assert settings.worker.tool_params.openhands.max_iterations_per_run == 3
 
 
+def test_tool_params_rejects_inactive_slot_payload(tmp_path: Path) -> None:
+    """A populated slot for a non-active tool surfaces as a validation error."""
+
+    # Given: an overlay selecting openhands but also carrying a claude_code payload.
+    overlay = tmp_path / "cross_tool.yaml"
+    _write_yaml(
+        overlay,
+        {
+            "extends": str(BASE_CONFIG.relative_to(REPO_ROOT)),
+            "overrides": {
+                "worker.tool": "openhands",
+                "worker.tool_params": {
+                    "openhands": {
+                        "image": "x:latest",
+                        "timeout_seconds": 10,
+                        "max_iterations_per_run": 5,
+                    },
+                    "claude_code": {"disallowed_tools": ["Task"]},
+                },
+            },
+        },
+    )
+
+    # When/Then: validation rejects the stray claude_code slot.
+    with pytest.raises(ValidationError) as exc_info:
+        Settings.from_yaml(overlay)
+    msg = str(exc_info.value)
+    assert "populated slots for inactive tools" in msg
+    assert "claude_code" in msg
+
+
 def test_overlay_yaml_is_resolved_by_from_yaml(tmp_path: Path) -> None:
     """from_yaml transparently resolves extends:/overrides: overlays."""
 

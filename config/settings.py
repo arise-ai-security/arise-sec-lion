@@ -446,13 +446,26 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_worker_tool_params(self) -> Settings:
         """Tagged-union check: ``worker.tool_params.<tool>`` must be populated
-        when ``worker.tool`` selects that tool.
+        when ``worker.tool`` selects that tool, and no other slot may carry a
+        payload (catches operator typos like ``tool: openhands`` paired with
+        a stray ``claude_code:`` block).
         """
-        slot = getattr(self.worker.tool_params, self.worker.tool)
+        active = self.worker.tool
+        slot = getattr(self.worker.tool_params, active)
         if slot is None:
             raise ValueError(
-                f"worker.tool_params.{self.worker.tool} must be populated when "
-                f"worker.tool={self.worker.tool!r}"
+                f"worker.tool_params.{active} must be populated when worker.tool={active!r}"
+            )
+        populated_others = [
+            name
+            for name in _WORKER_TOOL_PARAM_TYPES
+            if name != active and getattr(self.worker.tool_params, name) is not None
+        ]
+        if populated_others:
+            raise ValueError(
+                f"worker.tool_params has populated slots for inactive tools: "
+                f"{populated_others} (active tool is {active!r}). "
+                f"Remove the unused slots or change worker.tool."
             )
         return self
 

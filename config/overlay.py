@@ -23,21 +23,34 @@ from typing import Any
 import yaml
 
 
-def resolve_overlay(path: Path, *, repo_root: Path) -> dict[str, Any]:
+def resolve_overlay(
+    path: Path,
+    *,
+    repo_root: Path,
+    _visited: frozenset[Path] = frozenset(),
+) -> dict[str, Any]:
     """Load YAML at ``path``; if it has ``extends:`` + ``overrides:``, merge
     recursively against the resolved base.
 
     Args:
         path: YAML file to load.
         repo_root: Root directory used to resolve relative ``extends:`` paths.
+        _visited: Private. Set of canonical paths already in the extends chain,
+            used to detect cycles.
 
     Returns:
         Materialized configuration dict.
 
     Raises:
-        ValueError: Top-level YAML is not a mapping, or only one of
-            ``extends:``/``overrides:`` is present.
+        ValueError: Top-level YAML is not a mapping; only one of
+            ``extends:``/``overrides:`` is present; or an ``extends:`` cycle is
+            detected.
     """
+    canonical = path.resolve()
+    if canonical in _visited:
+        chain = " -> ".join(str(p) for p in _visited) + f" -> {canonical}"
+        raise ValueError(f"cycle detected in overlay extends chain: {chain}")
+
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: top-level YAML must be a mapping")
@@ -59,7 +72,11 @@ def resolve_overlay(path: Path, *, repo_root: Path) -> dict[str, Any]:
     if not base_path.is_absolute():
         base_path = repo_root / base_path
 
-    base = resolve_overlay(base_path, repo_root=repo_root)
+    base = resolve_overlay(
+        base_path,
+        repo_root=repo_root,
+        _visited=_visited | {canonical},
+    )
     overrides = _flatten_dotted(raw["overrides"] or {})
     return _deep_merge(base, overrides)
 
@@ -90,6 +107,11 @@ def _flatten_dotted(d: dict[str, Any]) -> dict[str, Any]:
             existing_leaf = cursor.get(leaf)
             if isinstance(existing_leaf, dict) and isinstance(expanded_value, dict):
                 cursor[leaf] = _deep_merge(existing_leaf, expanded_value)
+            elif isinstance(existing_leaf, dict) and not isinstance(expanded_value, dict):
+                raise ValueError(
+                    f"Cannot expand dotted key {key!r}: would overwrite dict at {leaf!r} "
+                    f"with {type(expanded_value).__name__}"
+                )
             else:
                 cursor[leaf] = expanded_value
         else:

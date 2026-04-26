@@ -1,8 +1,8 @@
-"""Repo-root resolver for config-layer helpers.
+"""Resolve the repository root from the location of this file.
 
-Walks up from this file (``config/_paths.py`` -> ``config/`` -> repo root)
-and verifies the parent contains ``pyproject.toml``. Tests can patch
-``REPO_ROOT`` via ``monkeypatch.setattr`` on this module.
+Resolves the parent of ``config/_paths.py`` (i.e. ``config/``'s parent) and
+verifies it contains ``pyproject.toml``. Tests can patch ``REPO_ROOT`` via
+``monkeypatch.setattr`` on this module.
 """
 
 from __future__ import annotations
