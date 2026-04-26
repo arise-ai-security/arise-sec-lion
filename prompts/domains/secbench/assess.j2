@@ -49,6 +49,8 @@ If your task description starts with ANY of these bracketed role names, you **MU
 
 **Why this is forbidden**: When a leaf worker is promoted to manager, it has no finer-grained decomposition template — it can only regenerate the same role set its parent already created (`[PoC-Researcher]` → `[Data-Flow-Analyst]` → `[PoC-Tester]` → ...). This produces children with identical roles and responsibilities as its own siblings, duplicating work without adding value. A single worker with the right tools completes any of these tasks in one run.
 
+**Fallback — unique role names required**: If you decompose despite the above rules, every child subtask MUST have a bracketed role name that is DIFFERENT from your own role name AND from all your siblings' role names. Reusing names from the parent level (e.g., creating `[PoC-Researcher]` children when your siblings already include `[PoC-Researcher]`) produces identical work on the same codebase, wasting the agent budget.
+
 **General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles listed in the section above.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
