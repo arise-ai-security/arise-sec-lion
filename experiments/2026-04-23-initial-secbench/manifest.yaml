@@ -7,18 +7,8 @@ hypothesis: Seed study produced by migrating dataset-final/ into the experiments
 dataset: dataset.yaml
 replicates: 1
 cells:
-  A1:
-    config: configs/A1-claude-code-subagent.yaml
-    harness: baseline-claude-code-subagent
-  A2:
-    config: configs/A2-claude-code-nosubagent.yaml
-    harness: baseline-claude-code-nosubagent
-  B1:
-    config: configs/B1-ours-naive.yaml
-    harness: ours
-  B2:
-    config: configs/B2-ours-cybersec.yaml
-    harness: ours
-  B3:
-    config: configs/B3-ours-full.yaml
-    harness: ours
+  A1: {group: A, runner: aris, config: configs/A1-claude-code-subagent.yaml}
+  A2: {group: A, runner: aris, config: configs/A2-claude-code-nosubagent.yaml}
+  B1: {group: B, runner: aris, config: configs/B1-ours-naive.yaml}
+  B2: {group: B, runner: aris, config: configs/B2-ours-cybersec.yaml}
+  B3: {group: B, runner: aris, config: configs/B3-ours-full.yaml}

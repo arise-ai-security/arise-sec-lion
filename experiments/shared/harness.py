@@ -62,6 +62,19 @@ _BASELINE_MODULES: dict[str, str] = {
 
 
 # =============================================================================
+# Manifest-driven dispatch (PR 2 onward)
+# =============================================================================
+# `run_ours` and `run_baseline` below are still the load-bearing implementations
+# of the two execution paths today. Starting in PR 2, they are dispatched via
+# the runner registry (`experiments/shared/runners/aris.py`) rather than read
+# from a free-form `harness:` field in the study manifest. PR 6's
+# `run_matrix.py` resolves a cell to a runner via `runners.get(cell.runner)`
+# and calls `runner.run(...)`, which in turn calls back into these helpers.
+# PR 4b will introduce flat-mode dispatch in `aris.run` that may bypass
+# `run_baseline` entirely once flat configs land. Until then, A-cells flow
+# through `run_baseline` and B-cells flow through `run_ours` exactly as before.
+
+# =============================================================================
 # Dataset and study helpers
 # =============================================================================
 

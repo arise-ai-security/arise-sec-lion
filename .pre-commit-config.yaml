@@ -17,6 +17,13 @@ repos:
         files: ^experiments/.+/reports/
         pass_filenames: true
 
+      - id: validate-experiment-manifests
+        name: validate experiment manifests
+        entry: python3 -m experiments.shared.scripts.validate_manifest
+        language: system
+        files: ^experiments/.*/manifest\.yaml$|^experiments/shared/groups\.yaml$|^experiments/shared/runners/.*\.py$
+        pass_filenames: false
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.5
     hooks:

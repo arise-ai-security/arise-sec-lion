@@ -29,7 +29,14 @@ from experiments.shared.scripts.write_report import write_md  # noqa: E402
 
 STUDY_DIR = Path(__file__).resolve().parent.parent
 STUDY_ID = STUDY_DIR.name
+_GROUPS_YAML = STUDY_DIR.parent / "shared" / "groups.yaml"
 logger = logging.getLogger(__name__)
+
+
+def _load_groups() -> dict[str, str]:
+    """Load `experiments/shared/groups.yaml` as letter -> label."""
+    data = yaml.safe_load(_GROUPS_YAML.read_text(encoding="utf-8")) or {}
+    return {str(k): str(v) for k, v in data.items()}
 
 
 def _render(rows: list[dict[str, str]], manifest: dict, enrollment: list[dict]) -> str:
@@ -42,8 +49,18 @@ def _render(rows: list[dict[str, str]], manifest: dict, enrollment: list[dict]) 
     )
     template = env.get_template("report.md.j2")
 
+    # PR 2: cells now carry {group, runner, config}. Display the group letter
+    # plus its human label (looked up in the project-wide groups.yaml). The
+    # runner column is omitted because it is uniform (`aris`) for every cell
+    # in this study; PR 4b will revisit when external runners are introduced.
+    groups = _load_groups()
     cells = [
-        {"id": name, "harness": entry.get("harness", ""), "config": entry.get("config", "")}
+        {
+            "id": name,
+            "group": entry.get("group", ""),
+            "group_label": groups.get(str(entry.get("group", "")), ""),
+            "config": entry.get("config", ""),
+        }
         for name, entry in (manifest.get("cells") or {}).items()
     ]
     table_rows = [
@@ -72,6 +89,7 @@ def main() -> int:
     figure_rel = f"{rel_study}/reports/figures/cells-overview.svg"
     enrollment_rel = f"{rel_study}/reports/{ENROLLMENT_LOCK_FILENAME}"
     template_rel = f"{rel_study}/templates/report.md.j2"
+    groups_rel = "experiments/shared/groups.yaml"
     output_rel = f"{rel_study}/reports/report.md"
     script_rel = f"{rel_study}/scripts/render_report.py"
 
@@ -93,7 +111,7 @@ def main() -> int:
         content=_render(rows, manifest, enrollment),
         script=script_rel,
         template=template_rel,
-        inputs=[manifest_rel, table_rel, figure_rel, enrollment_rel],
+        inputs=[manifest_rel, table_rel, figure_rel, enrollment_rel, groups_rel],
     )
     logger.info("wrote %s", output_rel)
     return 0

@@ -1,6 +1,6 @@
 study_id: 2026-04-23-initial-secbench
-rendered_at: '2026-04-26T19:25:45.235284Z'
-design_sha: 1914bd4dbbd23ed9401f2e9e573b216e7fbfa0c7
+rendered_at: '2026-04-26T20:12:41.443407Z'
+design_sha: 4bf8114690629ae7b9e9491e97282185c2586b89
 enrollment:
 - run_id: c82e7dd9-a265-4dec-829f-9628d33519b4
   cell: A1

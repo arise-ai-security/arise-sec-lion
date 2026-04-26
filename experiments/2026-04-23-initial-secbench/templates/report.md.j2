@@ -5,7 +5,7 @@
 ## Cells
 
 {% for cell in cells -%}
-- **{{ cell.id }}** ({{ cell.harness }}) — config `{{ cell.config }}`
+- **{{ cell.id }}** ({{ cell.group }} — {{ cell.group_label }}) — config `{{ cell.config }}`
 {% endfor %}
 
 ## Runs Summary
