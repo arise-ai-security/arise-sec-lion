@@ -1,9 +1,7 @@
 """Worker that invokes the Claude Code CLI (``claude -p ...``) for a single task.
 
 Conforms to ``core.ports.worker_port.WorkerPort``. Replaces the legacy
-``experiments/shared/baselines/run_claude_code.py`` for execution under the
-unified pipeline; the legacy module is retained as a drift-guard reference
-and is removed in PR 5.
+baseline runner for execution under the unified pipeline.
 """
 
 from __future__ import annotations

@@ -23,9 +23,10 @@ if TYPE_CHECKING:
     from config.settings import Settings
 
 
-# Strict allowlist for subprocess env mirrored from the legacy baseline runner
-# (``experiments/shared/baselines/run_claude_code.py::_SUBPROCESS_ENV_ALLOWLIST``).
-# Keep these in sync — the centralization is the whole point of this module.
+# Strict allowlist for subprocess env: anything not listed here is structurally
+# unreachable for any subprocess the worker spawns. Matches what we historically
+# stripped to before invoking subprocess workers; the centralization here is
+# the whole point of this module.
 _ENV_ALLOWLIST: frozenset[str] = frozenset(
     {
         # Shell/locale basics.
@@ -117,22 +118,20 @@ def build_task_prompt(
     """Compose the briefing + CVE context + task slug.
 
     The briefing is the canonical security-domain framing read from
-    ``prompts/domains/secbench/briefing.md`` (already shared with the legacy
-    baseline runner via ``_compose_prompt``). Returns a frozen spec carrying
+    ``prompts/domains/secbench/briefing.md``. Returns a frozen spec carrying
     the rendered prompt and the briefing's content sha for provenance.
 
-    The output format mirrors
-    ``experiments/shared/baselines/run_claude_code.py::_compose_prompt``
-    exactly so flat-mode baselines and hierarchical-mode workers see byte-
-    identical framing.
+    The prompt format mirrors what flat-mode dispatch built before
+    consolidation, so flat-mode baselines and hierarchical-mode workers see
+    byte-identical framing.
 
     The CVE context can be supplied two ways:
 
     - ``cve_context_text``: raw text from the fixture file. **When given,
-      this is embedded verbatim** — guarantees byte-identity with the
-      legacy baseline runner regardless of fixture formatting (whitespace,
-      key order, trailing newlines). Production callers that have the
-      fixture path on disk should pass this.
+      this is embedded verbatim** — preserves byte-identity regardless of
+      fixture formatting (whitespace, key order, trailing newlines).
+      Production callers that have the fixture path on disk should pass
+      this.
     - ``cve_context``: parsed mapping. Used for in-memory provenance fields
       and as a fallback for embedding when text is not supplied
       (re-serialized via ``json.dumps(parsed, indent=2)``). This path loses

@@ -1,7 +1,7 @@
 """Runner registry: dispatch a study's cell to the right runtime.
 
-Today there's exactly one runner -- `aris` -- which delegates to the existing
-`harness.run_ours` and `harness.run_baseline` functions. Future runners
+Today there's exactly one runner -- `aris` -- which delegates to
+`harness.run_ours` (the unified `main.py run` entry point). Future runners
 (external research baselines that can't be expressed as a config of our
 system) plug in by registering a Runner instance at module import.
 """

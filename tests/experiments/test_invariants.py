@@ -299,3 +299,26 @@ def test_task_prompt_omits_context_block_when_none(fixture_briefing: Path) -> No
     # When/Then: the rendered prompt has no "Task context" block.
     assert "Task context" not in spec.rendered_prompt
     assert spec.rendered_prompt.endswith("Task: hello")
+
+
+def test_briefing_crlf_lines_are_normalized(tmp_path: Path) -> None:
+    """Given a briefing written with CRLF line endings (e.g. from a Windows
+    editor or core.autocrlf=true), build_task_prompt normalizes them to LF
+    so flat-mode and hierarchical-mode prompts cannot desync on newline
+    style alone."""
+    # Given: a briefing with CRLF line endings.
+    crlf_briefing = tmp_path / "briefing.md"
+    crlf_briefing.write_bytes(b"Line one.\r\nLine two.\r\n")
+
+    # When: build_task_prompt reads it.
+    spec = build_task_prompt(
+        briefing_path=crlf_briefing,
+        cve_context=None,
+        cve_context_text=None,
+        task="t",
+    )
+
+    # Then: the rendered prompt has only LF line endings.
+    assert "\r\n" not in spec.rendered_prompt
+    assert "\r" not in spec.rendered_prompt
+    assert "Line one.\nLine two." in spec.rendered_prompt
