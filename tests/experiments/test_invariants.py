@@ -21,6 +21,7 @@ from core.application.run_invariants import (
     TaskPromptSpec,
     TimeoutBudget,
     ToolPolicy,
+    WorkerResult,
     WorkspaceSpec,
     build_env_policy,
     build_task_prompt,
@@ -260,13 +261,16 @@ def test_workspace_spec_carries_extras(tmp_path: Path) -> None:
 
 def test_value_objects_are_frozen(tmp_path: Path) -> None:
     """Setting an attribute on TaskPromptSpec / ToolPolicy / TimeoutBudget /
-    WorkspaceSpec raises ValidationError (Pydantic frozen=True)."""
+    WorkspaceSpec / WorkerResult raises ValidationError (Pydantic frozen=True)."""
 
     # Given: instances of each value object.
+    from uuid import uuid4
+
     spec = TaskPromptSpec(rendered_prompt="hi", briefing_sha="abc", cve_context=None, task="t")
     policy = ToolPolicy(allowed=("a",), disallowed=(), allowed_bash_commands=())
     budget = TimeoutBudget(per_worker_call=10, per_run_total=20)
     workspace = WorkspaceSpec(root=tmp_path, extras={})
+    result = WorkerResult(run_id=uuid4(), exit_status="completed", wall_time_seconds=1.0)
 
     # When/Then: any attempt to mutate raises ValidationError.
     for obj, attr in (
@@ -274,6 +278,7 @@ def test_value_objects_are_frozen(tmp_path: Path) -> None:
         (policy, "allowed"),
         (budget, "per_run_total"),
         (workspace, "root"),
+        (result, "exit_status"),
     ):
         with pytest.raises(ValidationError):
             setattr(obj, attr, "mutated")
@@ -374,3 +379,41 @@ def test_task_prompt_omits_context_block_when_none(fixture_briefing: Path) -> No
     # When/Then: the rendered prompt has no "Task context" block.
     assert "Task context" not in spec.rendered_prompt
     assert spec.rendered_prompt.endswith("Task: hello")
+
+
+def test_briefing_byte_identity_survives_crlf_briefing(tmp_path: Path) -> None:
+    """Given a briefing written with CRLF line endings (e.g. from a Windows
+    editor or autocrlf=true), build_task_prompt produces the same rendered
+    prompt as legacy _compose_prompt does when reading the same file."""
+    from experiments.shared.baselines.run_claude_code import _compose_prompt
+
+    # Given: a CRLF-encoded briefing file.
+    crlf_briefing = tmp_path / "briefing.md"
+    crlf_briefing.write_bytes(b"Line one.\r\nLine two.\r\n")
+
+    # When: the new builder reads it via read_bytes + universal-newline normalize,
+    # and the legacy composer reads it via Path.read_text (which also normalizes).
+    new = build_task_prompt(
+        briefing_path=crlf_briefing,
+        cve_context=None,
+        task="t",
+    ).rendered_prompt
+    legacy = _compose_prompt(
+        briefing_path=crlf_briefing,
+        context_file=None,
+        task_prompt="t",
+    )
+
+    # Then: the rendered prompts are byte-identical despite the CRLF input.
+    assert new == legacy
+
+
+def test_env_policy_matches_legacy_allowlist() -> None:
+    """Drift-guard: the new env allowlist must equal the legacy baseline
+    runner's allowlist until the legacy module is removed in PR 5."""
+    # Given: import both private allowlists.
+    from core.application.run_invariants import _ENV_ALLOWLIST
+    from experiments.shared.baselines.run_claude_code import _SUBPROCESS_ENV_ALLOWLIST
+
+    # Then: byte-equality, not just inclusion.
+    assert _ENV_ALLOWLIST == _SUBPROCESS_ENV_ALLOWLIST

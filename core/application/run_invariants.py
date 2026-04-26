@@ -46,7 +46,12 @@ _ENV_ALLOWLIST: frozenset[str] = frozenset(
 
 
 class TaskPromptSpec(BaseModel):
-    """Rendered task prompt with provenance for both flat and hierarchical dispatchers."""
+    """Rendered task prompt with provenance for both flat and hierarchical dispatchers.
+
+    Although ``cve_context`` is typed ``Mapping``, Pydantic v2 coerces inputs to a
+    plain ``dict`` during validation; mutating its values is not supported and may
+    produce undefined behavior. Treat as read-only.
+    """
 
     model_config = {"frozen": True}
 
@@ -76,7 +81,12 @@ class TimeoutBudget(BaseModel):
 
 
 class WorkspaceSpec(BaseModel):
-    """Generic workspace handoff. Plugin-specific paths live in ``extras``."""
+    """Generic workspace handoff. Plugin-specific paths live in ``extras``.
+
+    Although ``extras`` is typed ``Mapping``, Pydantic v2 coerces inputs to a plain
+    ``dict`` during validation; mutating its values is not supported and may produce
+    undefined behavior. Treat as read-only.
+    """
 
     model_config = {"frozen": True}
 
@@ -151,7 +161,12 @@ def build_task_prompt(
     parts: list[str] = []
 
     briefing_bytes = briefing_path.read_bytes()
-    briefing_text = briefing_bytes.decode("utf-8")
+    briefing_sha = hashlib.sha256(briefing_bytes).hexdigest()
+    # Match legacy ``_compose_prompt``'s ``Path.read_text`` universal-newline
+    # behavior so a CRLF-encoded briefing (Windows editor, ``core.autocrlf=true``)
+    # produces a prompt byte-identical to the legacy runner. The SHA above is
+    # still computed over raw bytes for content-addressed provenance.
+    briefing_text = briefing_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     if briefing_text:
         parts.append(briefing_text)
 
@@ -173,7 +188,6 @@ def build_task_prompt(
         )
 
     rendered = "\n\n".join(parts)
-    briefing_sha = hashlib.sha256(briefing_bytes).hexdigest()
 
     return TaskPromptSpec(
         rendered_prompt=rendered,
