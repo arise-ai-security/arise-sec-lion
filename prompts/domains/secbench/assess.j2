@@ -39,13 +39,15 @@ If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, y
 
 A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**. Exploiter and Fixer phases benefit from **more workers with narrower, more specific deliverables** because they require code-level analysis.
 
-### Sub-phase tasks (children of Builder/Exploiter/Fixer managers) — EXECUTE by default
+### Sub-phase tasks — EXECUTE is MANDATORY for these role names
 
-If your task is a subtask WITHIN a phase (you have a parent MANAGER), you should almost always choose **EXECUTE**. You are a leaf worker. Your parent already decomposed the work — further decomposition wastes agents and time.
+If your task description starts with ANY of these bracketed role names, you **MUST choose `"action": "execute"`**. Choosing DECOMPOSE for these roles is **FORBIDDEN** — they are atomic leaf workers by design:
 
-Only choose DECOMPOSE for a sub-phase task if it genuinely requires 3+ completely independent analysis steps by different tools. Build/compile tasks, single-tool analysis, file creation, and validation steps are always EXECUTE.
+`[PoC-Researcher]`, `[Data-Flow-Analyst]`, `[PoC-Tester]`, `[Repro-Creator]`, `[Exploit-Validator]`, `[Root-Cause-Analyst]`, `[Candidate-Reviewer]`, `[Patch-Creator]`, `[Patch-Validator]`, `[Fix-Aggregator]`, `[Build-Setup]`, `[Build-Compiler]`, `[Build-Verifier]`, `[Instrumented-Builder]`, `[Reporter]`
 
-**NEVER decompose build tasks** (Build-Setup, Build-Compiler, Build-Verifier, Instrumented-Builder, etc.) — these are single-command operations that should always EXECUTE directly.
+**Why this is forbidden**: When a leaf worker is promoted to manager, it has no finer-grained decomposition template — it can only regenerate the same role set its parent already created (`[PoC-Researcher]` → `[Data-Flow-Analyst]` → `[PoC-Tester]` → ...). This produces children with identical roles and responsibilities as its own siblings, duplicating work without adding value. A single worker with the right tools completes any of these tasks in one run.
+
+**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles listed in the section above.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
 
