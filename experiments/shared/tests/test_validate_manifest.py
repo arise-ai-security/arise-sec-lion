@@ -185,6 +185,26 @@ def test_unknown_group_raises(repo_root: Path) -> None:
         vm.validate_manifest(manifest, repo_root=repo_root)
 
 
+def test_validate_manifest_unknown_group_does_not_emit_prefix_error(repo_root: Path) -> None:
+    """Given cells.X1.group = 'Z' where Z is not in groups.yaml, only the
+    'not in groups.yaml' error is emitted; no spurious prefix-mismatch
+    error mentioning the unknown letter."""
+
+    # Given: groups.yaml only declares A; manifest's X1 cell references Z.
+    _write_groups(repo_root, {"A": "Claude Code CLI"})
+    manifest = {
+        "study_id": "unknown-group-no-prefix",
+        "cells": {"X1": {"group": "Z", "runner": "aris", "config": "x.yaml"}},
+    }
+
+    # When: validation runs.
+    with pytest.raises(ValueError, match=r"cells\.X1\.group = 'Z' not in groups\.yaml") as exc_info:
+        vm.validate_manifest(manifest, repo_root=repo_root)
+
+    # Then: no prefix-mismatch error mentioning the unknown letter is emitted.
+    assert "must start with group letter" not in str(exc_info.value)
+
+
 def test_unknown_runner_raises(repo_root: Path) -> None:
     # Given
     _write_groups(repo_root, {"A": "Claude Code CLI"})
@@ -264,6 +284,22 @@ def test_missing_config_file_raises(repo_root: Path) -> None:
         vm.validate_manifest(manifest, repo_root=repo_root)
 
 
+def test_validate_manifest_non_string_config_raises_helpfully(repo_root: Path) -> None:
+    """Given a cell with config: 42 (non-string), validator emits an
+    actionable type error instead of crashing with TypeError."""
+
+    # Given: a cell whose `config` is an int rather than a string path.
+    _write_groups(repo_root, {"A": "Claude Code CLI"})
+    manifest = {
+        "study_id": "non-string-config",
+        "cells": {"A1": {"group": "A", "runner": "aris", "config": 42}},
+    }
+
+    # When/Then: validator emits a typed error, not a TypeError crash.
+    with pytest.raises(ValueError, match=r"cells\.A1\.config must be a string path \(got int\)"):
+        vm.validate_manifest(manifest, repo_root=repo_root)
+
+
 # -----------------------------
 # groups.yaml shape errors
 # -----------------------------
@@ -301,6 +337,19 @@ def test_empty_cells_block_raises(repo_root: Path) -> None:
 
     # When/Then
     with pytest.raises(ValueError, match=r"manifest\.cells is empty"):
+        vm.validate_manifest(manifest, repo_root=repo_root)
+
+
+def test_validate_manifest_non_dict_cells_block_raises_helpfully(repo_root: Path) -> None:
+    """Given cells: [A1, B1] (list, not mapping), validator emits a shape
+    error instead of crashing with AttributeError."""
+
+    # Given: `cells` is a list rather than a mapping.
+    _write_groups(repo_root, {"A": "Claude Code CLI"})
+    manifest = {"study_id": "list-cells", "cells": ["A1", "B1"]}
+
+    # When/Then: validator surfaces a shape error, not an AttributeError crash.
+    with pytest.raises(ValueError, match=r"manifest\.cells must be a mapping \(got list\)"):
         vm.validate_manifest(manifest, repo_root=repo_root)
 
 

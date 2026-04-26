@@ -1,7 +1,7 @@
 """Validate an experiments study manifest before any run executes.
 
 Catches: unknown groups, unknown runners, missing config files, cell name /
-group letter mismatches, schema_version drift, missing required fields.
+group letter mismatches, missing required fields.
 Runs at the top of `run_matrix.py` (PR 6) and as a pre-commit hook.
 """
 
@@ -38,7 +38,7 @@ def _load_groups(repo_root: Path) -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()}
 
 
-def validate_manifest(manifest: dict[str, Any], *, repo_root: Path) -> None:
+def validate_manifest(manifest: dict[str, Any], *, repo_root: Path) -> None:  # noqa: PLR0912
     """Raise ValueError listing every problem; success is silent."""
     from experiments.shared import runners
 
@@ -47,6 +47,9 @@ def validate_manifest(manifest: dict[str, Any], *, repo_root: Path) -> None:
     errors: list[str] = []
 
     cells = manifest.get("cells") or {}
+    if not isinstance(cells, dict):
+        errors.append(f"manifest.cells must be a mapping (got {type(cells).__name__})")
+        cells = {}
     if not cells:
         errors.append("manifest.cells is empty")
 
@@ -68,7 +71,7 @@ def validate_manifest(manifest: dict[str, Any], *, repo_root: Path) -> None:
                 f"cells.{cell_name}.group = {group!r} not in groups.yaml; "
                 f"known groups: {sorted(groups)}"
             )
-        if group is not None and not cell_name.startswith(group):
+        if group is not None and group in groups and not cell_name.startswith(group):
             errors.append(
                 f"cells.{cell_name}: name must start with group letter "
                 f"{group!r} (got {cell_name!r})"
@@ -82,6 +85,11 @@ def validate_manifest(manifest: dict[str, Any], *, repo_root: Path) -> None:
             )
 
         config_path = spec.get("config")
+        if config_path is not None and not isinstance(config_path, str):
+            errors.append(
+                f"cells.{cell_name}.config must be a string path (got {type(config_path).__name__})"
+            )
+            continue
         if config_path and study_id:
             full = repo_root / "experiments" / study_id / config_path
             if not full.is_file():

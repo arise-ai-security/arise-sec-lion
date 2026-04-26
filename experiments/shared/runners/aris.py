@@ -45,6 +45,10 @@ class _Aris:
         config: Path,
         context_file: Path,
     ) -> UUID:
+        # `context_file` is unused by this shim -- `harness.run_ours` /
+        # `harness.run_baseline` derive their own context from the dataset
+        # coverage map. PR 4b's flat-mode dispatch will forward this argument
+        # directly to the worker without going through `harness`.
         if cell.startswith("A"):
             variant = _LEGACY_VARIANTS.get(cell)
             if variant is None:
