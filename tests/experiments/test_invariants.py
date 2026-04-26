@@ -279,20 +279,22 @@ def test_value_objects_are_frozen(tmp_path: Path) -> None:
             setattr(obj, attr, "mutated")
 
 
-def test_invariants_match_legacy_baseline_prompt_composition(
+def test_build_task_prompt_byte_identical_to_legacy_for_synthetic_fixture(
     tmp_path: Path, fixture_briefing: Path
 ) -> None:
-    """Bring in the existing baseline _compose_prompt implementation as the
-    reference; assert build_task_prompt produces the same string for a
-    representative CVE fixture.
+    """Synthetic fixtures (whose on-disk text is exactly ``json.dumps(indent=2)``
+    output) round-trip byte-identically through the dict-fallback path.
 
-    This is the most important test in the suite — it pins the prompt format
-    to the legacy baseline so PR 4b/5/6 cannot silently drift.
+    This pins the format for the easy case. Production fixtures may have
+    trailing newlines or other formatting that does NOT match
+    ``json.dumps(indent=2)`` output — those callers must use the
+    ``cve_context_text`` raw-embed path instead, exercised by
+    ``test_build_task_prompt_byte_identical_to_legacy_for_real_fixture``.
     """
     from experiments.shared.baselines.run_claude_code import _compose_prompt
 
     # Given: a CVE context dict serialized to a fixture file the same way
-    # build_task_prompt will serialize it (so the embedded JSON byte-matches).
+    # the dict-fallback embed will serialize it (so the embedded JSON byte-matches).
     cve_context = {"cve_id": "CVE-2023-12345", "package": "openssl"}
     context_file = tmp_path / "cve.json"
     context_file.write_text(
@@ -302,7 +304,8 @@ def test_invariants_match_legacy_baseline_prompt_composition(
 
     task = "Reproduce and patch the heap overflow"
 
-    # When: calling both implementations with byte-equivalent inputs.
+    # When: calling both implementations with byte-equivalent inputs (no
+    # cve_context_text — exercises the dict-fallback path).
     legacy_output = _compose_prompt(
         task_prompt=task,
         context_file=context_file,
@@ -317,6 +320,45 @@ def test_invariants_match_legacy_baseline_prompt_composition(
 
     # Then: the rendered prompts are byte-identical.
     assert new_spec.rendered_prompt == legacy_output
+
+
+def test_build_task_prompt_byte_identical_to_legacy_for_real_fixture() -> None:
+    """Given a real production CVE fixture whose on-disk text differs from
+    ``json.dumps(indent=2)`` output (trailing newline, etc.),
+    ``build_task_prompt`` with ``cve_context_text=<raw text>`` produces output
+    byte-identical to legacy ``_compose_prompt`` for the same fixture path.
+
+    This is the contract that the dict-fallback path CANNOT honour — this
+    test fails without the raw-text override and is the regression guard
+    for the spec gap fixed by PR 4a's follow-up.
+    """
+    from config._paths import get_repo_root
+    from experiments.shared.baselines.run_claude_code import _compose_prompt
+
+    # Given: a real CVE fixture and the canonical briefing.
+    fixture_path = get_repo_root() / "deployment" / "cve-instances" / "faad2-cve-2021-32272.json"
+    raw_text = fixture_path.read_text(encoding="utf-8")
+    parsed = json.loads(raw_text)
+    briefing_path = get_repo_root() / "prompts" / "domains" / "secbench" / "briefing.md"
+    task = "faad2.cve-2021-32272"
+
+    # When: invoking the new builder with raw text and the legacy composer
+    # with the same fixture path + briefing.
+    new_spec = build_task_prompt(
+        briefing_path=briefing_path,
+        cve_context=parsed,
+        cve_context_text=raw_text,
+        cve_context_name=fixture_path.name,
+        task=task,
+    )
+    legacy_prompt = _compose_prompt(
+        briefing_path=briefing_path,
+        context_file=fixture_path,
+        task_prompt=task,
+    )
+
+    # Then: rendered prompts are byte-identical for the production fixture.
+    assert new_spec.rendered_prompt == legacy_prompt
 
 
 def test_task_prompt_omits_context_block_when_none(fixture_briefing: Path) -> None:

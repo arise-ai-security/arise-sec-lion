@@ -101,6 +101,7 @@ def build_task_prompt(
     briefing_path: Path,
     cve_context: Mapping[str, object] | None,
     task: str,
+    cve_context_text: str | None = None,
     cve_context_name: str = "context.json",
 ) -> TaskPromptSpec:
     """Compose the briefing + CVE context + task slug.
@@ -115,12 +116,33 @@ def build_task_prompt(
     exactly so flat-mode baselines and hierarchical-mode workers see byte-
     identical framing.
 
+    The CVE context can be supplied two ways:
+
+    - ``cve_context_text``: raw text from the fixture file. **When given,
+      this is embedded verbatim** — guarantees byte-identity with the
+      legacy baseline runner regardless of fixture formatting (whitespace,
+      key order, trailing newlines). Production callers that have the
+      fixture path on disk should pass this.
+    - ``cve_context``: parsed mapping. Used for in-memory provenance fields
+      and as a fallback for embedding when text is not supplied
+      (re-serialized via ``json.dumps(parsed, indent=2)``). This path loses
+      byte-identity for fixtures whose formatting differs from
+      ``json.dumps(indent=2)`` output.
+
+    If both are supplied, ``cve_context_text`` wins for the embedded
+    content; ``cve_context`` populates ``TaskPromptSpec.cve_context`` for
+    provenance.
+
     Args:
         briefing_path: Absolute path to the briefing markdown file.
-        cve_context: Plugin-supplied structured context, serialized to JSON
-            and embedded in the prompt for the worker. ``None`` skips the
-            context block (matching the legacy ``context_file=None`` branch).
+        cve_context: Plugin-supplied structured context. Stored on the
+            returned spec for provenance and used as the fallback embed
+            source when ``cve_context_text`` is not supplied. ``None``
+            (with ``cve_context_text`` also ``None``) skips the context
+            block entirely (matching legacy ``context_file=None``).
         task: The task slug provided by the caller.
+        cve_context_text: Raw fixture text. When given, embedded verbatim
+            for byte-identity with the legacy baseline runner.
         cve_context_name: Filename label for the embedded JSON block. The
             legacy runner uses ``context_file.name``; callers in the new
             architecture pass the original fixture filename when they have
@@ -135,7 +157,16 @@ def build_task_prompt(
 
     parts.append(f"Task: {task}")
 
-    if cve_context is not None:
+    if cve_context_text is not None:
+        # Embed verbatim — preserves byte-identity with the legacy runner
+        # regardless of fixture formatting (whitespace, key order, trailing
+        # newlines).
+        parts.append(
+            f"Task context (contents of `{cve_context_name}`):\n```json\n{cve_context_text}\n```"
+        )
+    elif cve_context is not None:
+        # Fallback: re-serialize the parsed mapping. Loses byte-identity
+        # for fixtures whose formatting differs from json.dumps(indent=2).
         context_json = json.dumps(dict(cve_context), indent=2)
         parts.append(
             f"Task context (contents of `{cve_context_name}`):\n```json\n{context_json}\n```"
