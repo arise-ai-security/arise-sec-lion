@@ -43,6 +43,7 @@ testpaths = [
     "presentation/tests",
     "bootstrap/tests",
     "config/tests",
+    "tests/experiments",
 ]
 markers = [
     "e2e: end-to-end tests (require full infrastructure)",
