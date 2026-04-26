@@ -1,9 +1,13 @@
-"""Default runner: 'aris'. PR 2 implementation is a thin shim delegating
-to the existing `harness.run_ours` / `harness.run_baseline` functions. PR 4b
-will rewrite it to:
-  - Resolve the cell config overlay via `Settings.from_yaml`.
-  - Build invariants via `core.application.run_invariants`.
-  - Dispatch on `settings.orchestration.mode` (flat | hierarchical).
+"""Default runner: 'aris'.
+
+Every cell — flat or hierarchical — flows through the unified ``main.py run``
+pipeline (via ``harness.run_ours``). The cell config selects between modes by
+setting ``orchestration.mode: flat`` or ``orchestration.mode: hierarchical``;
+``main.py`` reads the value through ``Settings`` and dispatches accordingly.
+
+The previous PR-2 shim routed A-cells to ``harness.run_baseline`` to preserve
+legacy behaviour. PR 4b removes that branch entirely now that flat-mode lives
+inside the same pipeline.
 """
 
 from __future__ import annotations
@@ -19,18 +23,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
 
-# Cell-name -> harness baseline variant. Temporary mapping retained only so PR 2
-# can dispatch A-cells to `harness.run_baseline` without changing semantics. PR
-# 4b deletes this entirely once flat-mode dispatch reads `orchestration.mode:
-# flat` + `worker.tool: claude_code` directly from the resolved config.
-_LEGACY_VARIANTS: dict[str, str] = {
-    "A1": "claude-code-subagent",
-    "A2": "claude-code-nosubagent",
-}
-
-
 class _Aris:
-    """Default runner: dispatches A-cells to `run_baseline` and B-cells to `run_ours`."""
+    """Default runner: dispatches every cell through ``harness.run_ours``."""
 
     id = "aris"
     label = "Our System"
@@ -45,24 +39,11 @@ class _Aris:
         config: Path,
         context_file: Path,
     ) -> UUID:
-        # `context_file` is unused by this shim -- `harness.run_ours` /
-        # `harness.run_baseline` derive their own context from the dataset
-        # coverage map. PR 4b's flat-mode dispatch will forward this argument
-        # directly to the worker without going through `harness`.
-        if cell.startswith("A"):
-            variant = _LEGACY_VARIANTS.get(cell)
-            if variant is None:
-                raise ValueError(
-                    f"cell {cell!r} starts with 'A' but has no legacy baseline variant; "
-                    f"add it to _LEGACY_VARIANTS or wait for PR 4b."
-                )
-            return harness.run_baseline(
-                study_id=study_id,
-                cell=cell,
-                task=task,
-                attempt=replicate,
-                variant=variant,
-            )
+        # ``context_file`` is unused: ``harness.run_ours`` derives the per-task
+        # context_file from the dataset coverage map. We keep the parameter for
+        # the runner-protocol shape; if a future runner needs to override the
+        # fixture path it can do so without changing the protocol.
+        del context_file
         return harness.run_ours(
             study_id=study_id,
             cell=cell,

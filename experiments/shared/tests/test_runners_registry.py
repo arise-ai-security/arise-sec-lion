@@ -73,40 +73,46 @@ def test_all_ids_returns_sorted_list(monkeypatch: pytest.MonkeyPatch) -> None:
     assert runners.all_ids() == ["alpha", "zeta"]
 
 
-def test_aris_dispatches_a_cell_to_run_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given: a sentinel UUID returned by a stubbed `run_baseline`.
+def test_aris_dispatches_a_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A-cells now flow through ``run_ours`` (i.e. ``main.py run``); the cell
+    config selects flat-mode via ``orchestration.mode: flat``. PR 4b removed
+    the legacy ``run_baseline`` short-circuit."""
+    # Given: a sentinel UUID returned by a stubbed `run_ours` and a guard
+    # against any accidental `run_baseline` call.
     sentinel = uuid4()
     captured: dict[str, object] = {}
 
-    def _fake_run_baseline(**kwargs):
+    def _fake_run_ours(**kwargs):
         captured.update(kwargs)
         return sentinel
 
-    def _fake_run_ours(**_kwargs):
-        pytest.fail("run_ours must not be called for A-cells")
+    def _fake_run_baseline(**_kwargs):
+        pytest.fail("run_baseline must not be called for A-cells anymore")
 
-    monkeypatch.setattr(harness, "run_baseline", _fake_run_baseline)
     monkeypatch.setattr(harness, "run_ours", _fake_run_ours)
+    monkeypatch.setattr(harness, "run_baseline", _fake_run_baseline)
 
     aris = runners.get("aris")
 
     # When: we dispatch an A1 cell.
+    config_path = Path("a1.yaml")
     result = aris.run(
         study_id="study-x",
         cell="A1",
         task="cve-a",
         replicate=0,
-        config=Path("ignored.yaml"),
+        config=config_path,
         context_file=Path("ignored.json"),
     )
 
-    # Then: the sentinel comes back and the harness call carried the expected
-    # legacy variant + replicate-as-attempt mapping.
+    # Then: the sentinel comes back and run_ours saw the resolved config and
+    # replicate-as-attempt mapping (the cell drives flat vs. hierarchical via
+    # orchestration.mode inside the config, not via the runner).
     assert result == sentinel
-    assert captured["variant"] == "claude-code-subagent"
     assert captured["cell"] == "A1"
-    assert captured["attempt"] == 0
     assert captured["task"] == "cve-a"
+    assert captured["attempt"] == 0
+    assert captured["config"] == config_path
 
 
 def test_aris_dispatches_b_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -144,28 +150,6 @@ def test_aris_dispatches_b_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> 
     assert captured["attempt"] == 2
 
 
-def test_aris_rejects_unknown_a_cell(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given: a stubbed run_baseline that should never be called.
-    monkeypatch.setattr(
-        harness,
-        "run_baseline",
-        lambda **_: pytest.fail("run_baseline must not be called for unknown A-cells"),
-    )
-
-    aris = runners.get("aris")
-
-    # When/Then: an A-cell without a legacy variant entry raises.
-    with pytest.raises(ValueError, match="legacy baseline variant"):
-        aris.run(
-            study_id="study-x",
-            cell="A99",
-            task="cve-a",
-            replicate=0,
-            config=Path("ignored.yaml"),
-            context_file=Path("ignored.json"),
-        )
-
-
 def test_aris_runner_implements_protocol() -> None:
     # Given/When/Then: the registered aris instance satisfies the runtime-checkable
     # Runner protocol (presence of id/label attrs and a `run` method).
@@ -173,9 +157,9 @@ def test_aris_runner_implements_protocol() -> None:
     assert isinstance(aris, runners.Runner)
 
 
-def test_aris_legacy_variants_table_matches_known_a_cells() -> None:
-    """A1/A2 must be present until PR 4b removes the legacy variant table."""
-    assert set(aris_module._LEGACY_VARIANTS) == {"A1", "A2"}
+def test_aris_module_no_longer_exposes_legacy_variants_table() -> None:
+    """PR 4b removes ``_LEGACY_VARIANTS``; A-cells route through main.py now."""
+    assert not hasattr(aris_module, "_LEGACY_VARIANTS")
 
 
 def test_aris_returns_uuid_from_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:

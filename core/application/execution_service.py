@@ -13,7 +13,7 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID, uuid4
 
 from core.application.agent_orchestrator import AgentOrchestrator
@@ -28,9 +28,10 @@ from core.application.services import (
     RetryPolicy,
     build_role_handlers,
 )
+from core.application.run_invariants import WorkerResult
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.events.events import ChildSpawned, DomainEvent
+from core.domain.events.events import ChildSpawned, DomainEvent, WorkCompleted, WorkFailed
 from core.domain.exceptions import ConcurrencyError
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
@@ -40,10 +41,48 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig
+    from core.application.run_invariants import (
+        TaskPromptSpec,
+        TimeoutBudget,
+        ToolPolicy,
+        WorkspaceSpec,
+    )
     from core.application.services import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStorePort
     from core.ports.runtime_ports import SharedContextPort, SiblingViewPort, SystemLimitsPort, Toolset
+    from core.ports.worker_port import WorkerPort
+
+
+@dataclass(frozen=True)
+class FlatModeBundle:
+    """Invariants assembled by bootstrap for a flat-mode run.
+
+    Bundles the four ``run_invariants`` value objects so the dispatcher can
+    pass them to ``WorkerPort.run_task`` without re-deriving them.
+    """
+
+    spec: "TaskPromptSpec"
+    tool_policy: "ToolPolicy"
+    timeouts: "TimeoutBudget"
+    workspace: "WorkspaceSpec"
+
+
+class FlatInvariantBuilder(Protocol):
+    """Callable that produces a ``FlatModeBundle`` for a single flat-mode run.
+
+    Bootstrap registers a closure that captures ``Settings`` and the active
+    domain plugin. The dispatcher invokes it once per run with the run-scoped
+    inputs (``task``, ``domain_context``, ``run_dir``).
+    """
+
+    def __call__(
+        self,
+        *,
+        task: str,
+        domain_context: object | None,
+        run_dir: Path,
+    ) -> FlatModeBundle: ...
 
 
 @dataclass(frozen=True)
@@ -56,6 +95,7 @@ class ServiceConfig:
     default_worker_tool: str
     boss_config: "BossConfig"
     manager_config: "ManagerConfig"
+    mode: Literal["hierarchical", "flat"] = "hierarchical"
 
 
 @dataclass(frozen=True)
@@ -73,6 +113,8 @@ class ExecutionServiceDependencies:
     prompt_builder: "PromptBuilder"
     domain_plugin: "DomainPlugin | None" = None
     recon_tool: "Toolset | None" = None
+    flat_worker: "WorkerPort | None" = None
+    flat_invariant_builder: FlatInvariantBuilder | None = None
 
 
 # =============================================================================
@@ -110,9 +152,15 @@ class AgentExecutionService:
         self._prompt_builder = dependencies.prompt_builder
         self._domain_plugin = dependencies.domain_plugin
         self._recon_tool = dependencies.recon_tool
+        self._flat_worker = dependencies.flat_worker
+        self._flat_invariant_builder = dependencies.flat_invariant_builder
 
         # Workspace state (inlined from WorkspaceContextProvider)
         self._working_directory: Path | None = None
+        # Flat-mode bookkeeping: captured at boss-creation so run_system_loop
+        # can dispatch directly to ``WorkerPort`` without re-resolving them.
+        self._current_task: str | None = None
+        self._current_domain_context: object | None = None
 
         # Worker concurrency control
         semaphore_limit = (
@@ -176,6 +224,8 @@ class AgentExecutionService:
         """Create root BOSS agent with task."""
         root_id = uuid4()
         self._reset_for_new_run(root_id, domain_context=domain_context)
+        self._current_task = task_description
+        self._current_domain_context = domain_context
 
         self._prompt_builder.set_run_context(
             user_prompt=task_description,
@@ -229,7 +279,17 @@ class AgentExecutionService:
                 raise
 
     async def run_system_loop(self, root_agent_id: UUID) -> None:
-        """Poll and execute active agents until all reach terminal state."""
+        """Poll and execute active agents until all reach terminal state.
+
+        In ``flat`` mode the BOSS itself is the worker: there is no decomposition,
+        no children, and no polling loop — we dispatch the task directly to
+        ``WorkerPort.run_task`` and finalize the run. In ``hierarchical`` mode
+        the original behaviour applies.
+        """
+        if self._config.mode == "flat":
+            await self._run_flat_mode(root_agent_id)
+            return
+
         start_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
@@ -271,6 +331,114 @@ class AgentExecutionService:
             start_time,
             status_override=run_status_override,
         )
+
+    async def _run_flat_mode(self, root_agent_id: UUID) -> None:
+        """Dispatch the task directly to ``WorkerPort.run_task`` and finalize.
+
+        Skips BOSS/MANAGER decomposition entirely. The BOSS aggregate created
+        by ``create_boss_agent`` is treated as the worker: it transitions
+        ANALYZING -> IN_PROGRESS -> COMPLETED via synthetic worker events
+        carrying the ``WorkerResult`` outcome.
+        """
+        if self._flat_worker is None or self._flat_invariant_builder is None:
+            raise RuntimeError(
+                "orchestration.mode='flat' requires a WorkerPort and a "
+                "FlatInvariantBuilder to be wired by bootstrap"
+            )
+        if self._current_task is None:
+            raise RuntimeError(
+                "_run_flat_mode invoked before create_boss_agent populated the run state"
+            )
+        if self._working_directory is None:
+            raise RuntimeError(
+                "_run_flat_mode requires output_directory to be configured so a "
+                "run-scoped workspace can be materialized"
+            )
+
+        start_time = time.monotonic()
+        bundle = self._flat_invariant_builder(
+            task=self._current_task,
+            domain_context=self._current_domain_context,
+            run_dir=self._working_directory,
+        )
+
+        boss = await self._repository.load(root_agent_id)
+        tool_name = self._config.default_worker_tool
+
+        # Mirror the hierarchical worker's progression so projections stay
+        # consistent (CodeGenerationStarted -> WorkCompleted/WorkFailed).
+        base_version = boss.version
+        boss.start_worker_execution(tool_name)
+        await self._repository.persist_events(boss, base_version, self._progress_callback)
+
+        try:
+            result = await self._flat_worker.run_task(
+                run_id=root_agent_id,
+                spec=bundle.spec,
+                tool_policy=bundle.tool_policy,
+                timeouts=bundle.timeouts,
+                workspace=bundle.workspace,
+            )
+        except Exception as error:
+            logger.exception("flat-mode worker raised; failing run")
+            reloaded = await self._repository.load(root_agent_id)
+            base_version = reloaded.version
+            reloaded.fail_with_reason(f"flat-mode worker error: {error!r}")
+            await self._repository.persist_events(
+                reloaded, base_version, self._progress_callback
+            )
+            await self._emit_run_completed(
+                root_agent_id,
+                start_time,
+                status_override="failed",
+            )
+            return
+
+        reloaded = await self._repository.load(root_agent_id)
+        base_version = reloaded.version
+        terminal_event = self._build_terminal_event(reloaded.agent_id, result)
+        reloaded.apply_worker_event(terminal_event)
+        await self._repository.persist_events(reloaded, base_version, self._progress_callback)
+
+        await self._emit_run_completed(
+            root_agent_id,
+            start_time,
+            status_override=self._classify_flat_run(result.exit_status),
+        )
+
+    @staticmethod
+    def _build_terminal_event(
+        agent_id: UUID,
+        result: WorkerResult,
+    ) -> DomainEvent:
+        """Translate a ``WorkerResult`` into a ``WorkCompleted``/``WorkFailed`` event.
+
+        Sequence number is 0 — ``apply_worker_event`` rewrites it with the
+        aggregate's actual next sequence at apply time.
+        """
+        if result.exit_status == "completed":
+            payload = result.output_summary or "Flat-mode worker completed."
+            return WorkCompleted(
+                aggregate_id=agent_id,
+                sequence_number=0,
+                result=payload,
+            )
+
+        reason = result.output_summary or f"Flat-mode worker exit_status={result.exit_status}"
+        return WorkFailed(
+            aggregate_id=agent_id,
+            sequence_number=0,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _classify_flat_run(exit_status: str) -> str:
+        """Translate ``WorkerResult.exit_status`` into the ``RunCompleted.status`` value."""
+        if exit_status == "completed":
+            return "completed"
+        if exit_status == "timeout":
+            return "timed_out"
+        return "failed"
 
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
         """Execute agent step with exception handling, jitter, and rate limiting."""

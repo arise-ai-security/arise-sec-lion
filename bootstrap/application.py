@@ -16,6 +16,7 @@ from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
     ExecutionServiceDependencies,
+    FlatInvariantBuilder,
     HierarchyLimitsRegistry,
     ProgressCallback,
     ServiceConfig,
@@ -38,9 +39,12 @@ from .realtime_adapter import RealtimeCallbackAdapter
 
 
 if TYPE_CHECKING:
+    from typing import Literal
+
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStoreReadPort
+    from core.ports.worker_port import WorkerPort
     from presentation.cli import CLI, CLIConfig
 
     from .infrastructure import Infrastructure
@@ -89,6 +93,9 @@ class ApplicationConfig:
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
     domain_key: str | None = None
+    mode: Literal["hierarchical", "flat"] = "hierarchical"
+    flat_worker: WorkerPort | None = None
+    flat_invariant_builder: FlatInvariantBuilder | None = None
 
 
 @dataclass
@@ -110,6 +117,7 @@ def get_application(
         default_worker_tool=config.default_worker_tool,
         boss_config=config.boss_config,
         manager_config=config.manager_config,
+        mode=config.mode,
     )
 
     # Create collaborators (composition root wiring)
@@ -197,6 +205,8 @@ def get_application(
         prompt_builder=prompt_builder,
         domain_plugin=config.domain_plugin,
         recon_tool=infrastructure.recon_tool,
+        flat_worker=config.flat_worker,
+        flat_invariant_builder=config.flat_invariant_builder,
     )
 
     system_limits = ExecutionLimitsBridge(
