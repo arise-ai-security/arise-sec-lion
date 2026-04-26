@@ -114,6 +114,33 @@ def test_register_run_accepts_legacy_attempt_kwarg(repo_root: Path) -> None:
     assert updated["attempt"] == 2
 
 
+def test_register_run_replicate_and_attempt_both_equal_succeeds(repo_root: Path) -> None:
+    # Given: a study + run.
+    study_id = "both-equal-study"
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
+    runs_pool = repo_root / "runs"
+    run_id = uuid4()
+    run_manifest = _seed_run_manifest(runs_pool, str(run_id))
+
+    # When: caller passes both `replicate=` and the legacy `attempt=` with the
+    # same value (a transitional callsite that uses both names interchangeably).
+    register_run(
+        study_id=study_id,
+        run_id=run_id,
+        cell="A1",
+        task="t",
+        replicate=2,
+        attempt=2,
+        output_directory=runs_pool,
+    )
+
+    # Then: no error raised, and replicate is stamped with the agreed value.
+    payload = json.loads(run_manifest.read_text())
+    assert payload["replicate"] == 2
+    # And: the legacy attempt alias is preserved alongside.
+    assert payload["attempt"] == 2
+
+
 def test_register_run_rejects_conflicting_replicate_and_attempt(repo_root: Path) -> None:
     # Given: a study + run.
     study_id = "conflict-study"

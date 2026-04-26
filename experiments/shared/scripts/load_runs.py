@@ -27,6 +27,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
+
 from experiments.shared.scripts._paths import get_repo_root
 
 
@@ -65,7 +67,7 @@ def _settings_output_directory() -> Path | None:
         from config import Settings  # local import: heavy + env-dependent
 
         settings = Settings.load()
-    except Exception as exc:
+    except (ValueError, ImportError, FileNotFoundError, yaml.YAMLError) as exc:
         logger.warning("could not load Settings to resolve output.directory: %s", exc)
         return None
 

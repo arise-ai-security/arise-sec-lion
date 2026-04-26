@@ -54,15 +54,10 @@ def _render(rows: list[dict[str, str]], manifest: dict, enrollment: list[dict]) 
         }
         for row in rows
     ]
-    legacy_count = sum(
-        1 for r in enrollment if str(r.get("legacy_migration", False)).lower() == "true"
-    )
     return template.render(
         hypothesis=manifest.get("hypothesis", ""),
         cells=cells,
         total_runs=len(enrollment),
-        legacy_runs=legacy_count,
-        live_runs=len(enrollment) - legacy_count,
         figure_path="figures/cells-overview.svg",
         table_rows=table_rows,
     )

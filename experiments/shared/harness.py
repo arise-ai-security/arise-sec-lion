@@ -338,6 +338,9 @@ def run_ours(
             run_id,
         )
 
+    # `attempt=` is the deprecated alias for `replicate=`; both call sites in
+    # this module retain it for one PR cycle. PR 6 (Task 7 in the experiments
+    # rearchitecture plan) drops the alias and switches to `replicate=`.
     register_run(
         study_id=study_id,
         run_id=run_id,
@@ -444,6 +447,8 @@ def run_baseline(
     tmp.write_text(json.dumps(baseline_payload, indent=2, sort_keys=True) + "\n")
     tmp.replace(manifest_path)
 
+    # See `run_ours` above: `attempt=` is the deprecated alias retained for
+    # one PR cycle (PR 6 / Task 7 drops it).
     register_run(
         study_id=study_id,
         run_id=run_id,
