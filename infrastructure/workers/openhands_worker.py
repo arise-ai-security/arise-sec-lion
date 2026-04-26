@@ -9,6 +9,11 @@ Note: container-session prep performed by ``SecurityDomainPlugin.prepare_worker_
 is NOT replayed here. Flat-mode OpenHands runs therefore start with the
 generic ``workspace.root`` as the working directory; mirroring the secbench
 container lifecycle to flat mode is a follow-up tracked alongside PR 6.
+
+Note: ``tool_policy`` is implicit at the OpenHands SDK level (no argv flags
+exposed); ``timeouts`` come from the wrapped adapter's construction-time
+config. Both invariants are accepted by ``run_task`` to satisfy the
+``WorkerPort`` contract but are not threaded through to the adapter today.
 """
 
 from __future__ import annotations
@@ -16,7 +21,6 @@ from __future__ import annotations
 import logging
 import time
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from core.application.run_invariants import WorkerResult
 from core.domain.events.events import WorkCompleted, WorkFailed
@@ -56,7 +60,7 @@ class OpenHandsWorker:
         del timeouts  # OpenHandsAdapter has its own timeout configured at construction time.
 
         task_context: dict[str, object] = {
-            "agent_id": uuid4(),
+            "agent_id": run_id,
             "task_description": spec.rendered_prompt,
             "tool_name": "openhands",
             "working_directory": str(workspace.root),

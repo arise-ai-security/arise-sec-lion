@@ -114,8 +114,8 @@ class ClaudeCodeWorker:
         ]
         if self._include_partial_messages:
             argv.append("--include-partial-messages")
-        if tool_policy.disallowed:
-            argv.extend(["--disallowedTools", ",".join(tool_policy.disallowed)])
+        for tool in tool_policy.disallowed:
+            argv.extend(["--disallowedTools", tool])
         argv.append(rendered_prompt)
         return argv
 

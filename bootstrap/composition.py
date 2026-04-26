@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from core.application.execution_service import FlatModeBundle
 from core.application.run_invariants import (
     build_task_prompt,
     build_timeouts,
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     from config import Settings
     from core.application.execution_service import (
         FlatInvariantBuilder,
-        FlatModeBundle,
         ProgressCallback,
     )
     from core.application.services import PromptStrategy
@@ -162,10 +162,6 @@ def _make_flat_invariant_builder(
         domain_context: object | None,
         run_dir: Path,
     ) -> FlatModeBundle:
-        # Local import keeps the closure decoupled from a runtime-time check
-        # against `core.application.execution_service` import-cycle worries.
-        from core.application.execution_service import FlatModeBundle
-
         cve_context_text: str | None = None
         cve_context: dict[str, object] | None = None
         cve_context_name = "context.json"

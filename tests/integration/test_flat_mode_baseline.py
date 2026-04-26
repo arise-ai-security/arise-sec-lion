@@ -347,6 +347,49 @@ async def test_flat_mode_translates_worker_timeout_to_failed_run(
 
 
 @pytest.mark.asyncio
+async def test_flat_mode_recovers_from_worker_exception(tmp_path: Path) -> None:
+    """When the WorkerPort raises, the service emits WorkFailed with the
+    error message and finalizes the run as failed."""
+
+    # Given: a worker that raises RuntimeError("boom").
+    class _RaisingWorker:
+        async def run_task(
+            self,
+            *,
+            run_id: UUID,
+            spec: TaskPromptSpec,
+            tool_policy: ToolPolicy,
+            timeouts: TimeoutBudget,
+            workspace: WorkspaceSpec,
+        ) -> WorkerResult:
+            del run_id, spec, tool_policy, timeouts, workspace
+            raise RuntimeError("boom")
+
+    service, event_store = _wire_flat_service(
+        flat_worker=_RaisingWorker(),
+        output_directory=tmp_path,
+    )
+
+    # When: invoking the service.
+    root_id = await service.create_boss_agent("solve cve")
+    await service.run_system_loop(root_id)
+
+    # Then: BOSS finishes in FAILED state with a WorkFailed event present.
+    boss_events = event_store.events_for(root_id)
+    failed_events = [e for e in boss_events if isinstance(e, WorkFailed)]
+    assert len(failed_events) == 1
+    # And: the failure reason references the flat-mode worker error or "boom".
+    reason = failed_events[0].reason
+    assert "flat-mode worker error" in reason or "boom" in reason
+
+    # And: RunCompleted.status == "failed" and no exception propagated.
+    run_completed = next(e for e in boss_events if isinstance(e, RunCompleted))
+    assert run_completed.status == "failed"
+    # And: WorkCompleted is absent — the failure path superseded the success path.
+    assert not any(isinstance(e, WorkCompleted) for e in boss_events)
+
+
+@pytest.mark.asyncio
 async def test_flat_mode_requires_worker_and_invariant_builder(
     tmp_path: Path,
 ) -> None:

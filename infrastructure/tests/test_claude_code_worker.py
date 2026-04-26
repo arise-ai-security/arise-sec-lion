@@ -105,7 +105,7 @@ def test_run_task_builds_expected_argv(
     """argv mirrors the legacy baseline's flag set and threads --disallowedTools.
 
     Verifies ``-p``, ``--output-format stream-json``, ``--include-partial-messages``
-    and the ``--disallowedTools <comma>`` mapping from ``ToolPolicy.disallowed``.
+    and one ``--disallowedTools`` flag per entry in ``ToolPolicy.disallowed``.
     """
     # Given: a stubbed `claude` binary path and a captured create_subprocess_exec.
     monkeypatch.setattr(
@@ -147,9 +147,11 @@ def test_run_task_builds_expected_argv(
     assert "--output-format" in argv
     assert "stream-json" in argv
     assert "--include-partial-messages" in argv
-    # Disallowed tools are joined by comma.
-    idx = argv.index("--disallowedTools")
-    assert argv[idx + 1] == "WebFetch,Browser"
+    # Disallowed tools are emitted one --disallowedTools flag per name,
+    # matching the legacy baseline runner's per-arg shape.
+    assert argv.count("--disallowedTools") == 2
+    assert argv.count("WebFetch") == 1
+    assert argv.count("Browser") == 1
     # Last argv arg is the prompt.
     assert argv[-1] == "task body"
     # And: result reflects the subprocess return code 0 -> "completed".
@@ -192,6 +194,94 @@ def test_run_task_strips_disallowed_flag_when_policy_empty(
     # Then: --disallowedTools is absent from argv.
     argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
     assert "--disallowedTools" not in argv
+
+
+def test_run_task_emits_one_disallowed_flag_per_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """argv contains one ['--disallowedTools', name] pair per disallowed tool,
+    matching the legacy baseline runner's shape."""
+    # Given: a stubbed `claude` binary path and a captured create_subprocess_exec.
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    policy = _make_policy(disallowed=("Task", "Foo"))
+
+    # When: capture argv with two disallowed tools.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=policy,
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    # Then: argv contains "--disallowedTools" twice, "Task" once, "Foo" once.
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert argv.count("--disallowedTools") == 2
+    assert argv.count("Task") == 1
+    assert argv.count("Foo") == 1
+    # And: each --disallowedTools flag is immediately followed by a tool name
+    # (no comma-joined fallback).
+    indices = [i for i, arg in enumerate(argv) if arg == "--disallowedTools"]
+    followers = [argv[i + 1] for i in indices]
+    assert sorted(followers) == ["Foo", "Task"]
+
+
+def test_run_task_emits_single_disallowed_flag_when_policy_has_one_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """A single-tool exclusion (the A2 case today) emits one --disallowedTools pair."""
+    # Given: a stubbed `claude` binary path and a captured create_subprocess_exec.
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    policy = _make_policy(disallowed=("Task",))
+
+    # When: running with exactly one disallowed tool.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=policy,
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    # Then: argv has exactly one --disallowedTools flag followed by "Task".
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert argv.count("--disallowedTools") == 1
+    idx = argv.index("--disallowedTools")
+    assert argv[idx + 1] == "Task"
 
 
 def test_run_task_env_strips_secrets_and_injects_scratch_config_dir(
