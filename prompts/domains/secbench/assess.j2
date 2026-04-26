@@ -41,6 +41,8 @@ A single worker attempting an entire phase will run out of iterations or time. D
 
 ### Sub-phase tasks — EXECUTE is MANDATORY for these role names
 
+**How to classify your task**: Look ONLY at the bracketed prefix in your task description — e.g., `[PoC-Researcher]`, `[Patch-Creator]`. Do NOT classify by task content. A task that describes security analysis is NOT an `[Exploiter]` task unless the prefix is literally `[Exploiter]`. A task prefixed `[PoC-Researcher]` is a leaf worker inside the Exploiter phase, not an Exploiter phase itself.
+
 If your task description starts with ANY of these bracketed role names, you **MUST choose `"action": "execute"`**. Choosing DECOMPOSE for these roles is **FORBIDDEN** — they are atomic leaf workers by design:
 
 `[PoC-Researcher]`, `[Data-Flow-Analyst]`, `[PoC-Tester]`, `[Repro-Creator]`, `[Exploit-Validator]`, `[Root-Cause-Analyst]`, `[Candidate-Reviewer]`, `[Patch-Creator]`, `[Patch-Validator]`, `[Fix-Aggregator]`, `[Build-Setup]`, `[Build-Compiler]`, `[Build-Verifier]`, `[Instrumented-Builder]`, `[Reporter]`
