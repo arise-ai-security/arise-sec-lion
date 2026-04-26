@@ -217,6 +217,23 @@ async def _run_task(args: argparse.Namespace) -> None:
             result.status,
         )
 
+    # Snapshot the resolved Settings into the run directory so future
+    # researchers can reproduce the exact config that produced this run.
+    # Best-effort: a snapshot failure must not block run completion.
+    from infrastructure.snapshot import snapshot_effective_config
+
+    try:
+        snapshot_effective_config(
+            run_id=result.root_id,
+            settings=settings,
+            run_dir=Path(settings.output.directory) / str(result.root_id),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to snapshot effective config for %s; manifest still written",
+            result.root_id,
+        )
+
     # Preserve pre-change behavior: a non-success run exits non-zero so
     # automation (study harness, CI) can distinguish passing from failing runs.
     if result.status != "success":

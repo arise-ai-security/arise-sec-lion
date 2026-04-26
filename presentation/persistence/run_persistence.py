@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
+from config._paths import get_repo_root
 from presentation.persistence.invocation_hash import compute_invocation_sha256
 
 
@@ -22,6 +24,9 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+EFFECTIVE_CONFIG_FILENAME = "effective_config.yaml"
 
 
 class _CostView(Protocol):
@@ -100,6 +105,20 @@ def _current_git_sha() -> str | None:
         logger.warning("git rev-parse HEAD failed; omitting git_sha from run manifest")
         return None
     return result.stdout.strip() or None
+
+
+def _compute_uv_lock_sha256() -> str | None:
+    """Return sha256 of the repo's ``uv.lock``, or None when absent.
+
+    Recorded alongside ``git_sha`` so a run can be traced back to the exact
+    dependency graph used at execution time. Missing lockfiles (e.g. on
+    contributors not using uv) downgrade gracefully to ``None`` rather than
+    failing the manifest write.
+    """
+    lock = get_repo_root() / "uv.lock"
+    if not lock.is_file():
+        return None
+    return hashlib.sha256(lock.read_bytes()).hexdigest()
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -195,6 +214,8 @@ class RunPersistence:
             "ended_at": _to_iso(wall_ended_at),
             "exit_status": exit_status,
             "git_sha": _current_git_sha(),
+            "uv_lock_sha256": _compute_uv_lock_sha256(),
+            "effective_config_path": EFFECTIVE_CONFIG_FILENAME,
             "invocation_sha256": compute_invocation_sha256(
                 settings=settings,
                 task=task,

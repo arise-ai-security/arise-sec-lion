@@ -128,12 +128,21 @@ def _load_enrolled_record(
         )
         return
 
-    entry = {
+    entry: dict[str, Any] = {
         "run_id": run_id,
         "cell": cell,
         "task": task,
         "replicate": _replicate_of(record),
     }
+    # Optional provenance (PR 6): downstream tooling (validate_reports,
+    # drift checks) can spot lockfile or config drift between enrolled
+    # runs. Older manifests without these fields enroll fine.
+    uv_lock_sha = record.get("uv_lock_sha256")
+    if isinstance(uv_lock_sha, str):
+        entry["uv_lock_sha256"] = uv_lock_sha
+    effective_config_path = record.get("effective_config_path")
+    if isinstance(effective_config_path, str):
+        entry["effective_config_path"] = effective_config_path
 
     existing = enrolled_index.get(run_id)
     if existing is not None and existing != entry:
