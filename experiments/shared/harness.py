@@ -81,7 +81,7 @@ def _load_dataset(study_id: str, manifest: dict[str, Any] | None = None) -> dict
     return _load_yaml(dataset_path)
 
 
-def _ensure_task_coverage(dataset: dict[str, Any]) -> dict[str, Path]:
+def ensure_task_coverage(dataset: dict[str, Any]) -> dict[str, Path]:
     """Pre-flight: every task the harness might run must have a source.paths entry.
 
     The "task set" is the union of ``default_cves`` and every
@@ -160,7 +160,7 @@ def _match_path_for_task(task: str, paths: list[str]) -> str | None:
     return None
 
 
-def _resolve_effective_cves(dataset: dict[str, Any], cell: str) -> list[str]:
+def resolve_effective_cves(dataset: dict[str, Any], cell: str) -> list[str]:
     defaults: list[str] = list(dataset.get("default_cves") or [])
     overrides = dataset.get("per_cell_overrides") or {}
     cell_override = overrides.get(cell) or {}
@@ -267,8 +267,8 @@ def run_ours(
     _validate_cell_declared(manifest, cell)
     dataset = _load_dataset(study_id, manifest=manifest)
 
-    coverage = _ensure_task_coverage(dataset)
-    effective = _resolve_effective_cves(dataset, cell)
+    coverage = ensure_task_coverage(dataset)
+    effective = resolve_effective_cves(dataset, cell)
     if task not in effective:
         raise ValueError(
             f"task {task!r} is not in the effective CVE set for cell {cell!r}: {effective}"

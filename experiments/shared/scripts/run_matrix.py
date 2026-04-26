@@ -164,7 +164,7 @@ def _enumerate_jobs(
     for cell_name in sorted(cells):
         if cells_filter is not None and cell_name not in cells_filter:
             continue
-        cell_tasks = harness._resolve_effective_cves(dataset, cell_name)
+        cell_tasks = harness.resolve_effective_cves(dataset, cell_name)
         for task in cell_tasks:
             if tasks_filter is not None and task not in tasks_filter:
                 continue
@@ -188,7 +188,7 @@ def _dispatch_jobs(
     capped at ``parallel``. ``continue_on_error`` captures exceptions and
     keeps going; otherwise the first raised error propagates.
     """
-    coverage = harness._ensure_task_coverage(dataset)
+    coverage = harness.ensure_task_coverage(dataset)
 
     if parallel <= 1:
         return [_run_one(j, manifest, coverage, repo_root, continue_on_error) for j in jobs]

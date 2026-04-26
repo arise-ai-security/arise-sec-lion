@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,6 +21,11 @@ from experiments.shared.scripts import collect, run_matrix
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class _FakeRunnerState(TypedDict):
+    calls: list[dict[str, Any]]
+    fail_for: set[tuple[str, str, int]]
 
 
 # -----------------------------
@@ -104,14 +109,14 @@ def _seed_study(
 
 
 @pytest.fixture
-def fake_runner(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+def fake_runner(monkeypatch: pytest.MonkeyPatch) -> _FakeRunnerState:
     """Register a fake runner that records dispatched jobs and returns a UUID.
 
     The matrix driver calls ``runners.get(cell.runner)``; this fixture swaps
     the registry's lookup so the test never imports ``aris`` (which would
     drag in the real subprocess path).
     """
-    state: dict[str, object] = {
+    state: _FakeRunnerState = {
         "calls": [],
         "fail_for": set(),  # set of (cell, task, replicate) that should raise
     }
@@ -179,7 +184,7 @@ def stub_pipeline(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
 
 def test_run_matrix_dispatches_full_matrix_default_filters(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study with 2 cells x 2 cves x 1 replicate (4 jobs).
@@ -190,9 +195,7 @@ def test_run_matrix_dispatches_full_matrix_default_filters(
 
     # Then: every (cell, task) pair was dispatched exactly once.
     assert rc == 0
-    pairs = sorted(
-        (call["cell"], call["task"], call["replicate"]) for call in fake_runner["calls"]
-    )
+    pairs = sorted((call["cell"], call["task"], call["replicate"]) for call in fake_runner["calls"])
     assert pairs == [
         ("A1", "cve-a", 0),
         ("A1", "cve-b", 0),
@@ -203,7 +206,7 @@ def test_run_matrix_dispatches_full_matrix_default_filters(
 
 def test_run_matrix_respects_cells_filter(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study with two cells.
@@ -220,7 +223,7 @@ def test_run_matrix_respects_cells_filter(
 
 def test_run_matrix_respects_tasks_filter(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study with two CVEs.
@@ -237,7 +240,7 @@ def test_run_matrix_respects_tasks_filter(
 
 def test_run_matrix_replicates_arg_overrides_manifest(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study whose manifest declares 1 replicate.
@@ -255,7 +258,7 @@ def test_run_matrix_replicates_arg_overrides_manifest(
 
 def test_run_matrix_unknown_cell_filter_raises(
     repo_root: Path,
-    fake_runner: dict[str, object],  # noqa: ARG001
+    fake_runner: _FakeRunnerState,  # noqa: ARG001
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study with only A1 and B2.
@@ -273,7 +276,7 @@ def test_run_matrix_unknown_cell_filter_raises(
 
 def test_run_matrix_continue_on_error_captures_failures(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study where one specific job is forced to fail.
@@ -290,7 +293,7 @@ def test_run_matrix_continue_on_error_captures_failures(
 
 def test_run_matrix_continue_on_error_false_raises_on_first_failure(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a forced failure on the first dispatched job.
@@ -304,7 +307,7 @@ def test_run_matrix_continue_on_error_false_raises_on_first_failure(
 
 def test_run_matrix_returns_zero_on_all_success(
     repo_root: Path,
-    fake_runner: dict[str, object],  # noqa: ARG001
+    fake_runner: _FakeRunnerState,  # noqa: ARG001
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: no failures injected.
@@ -319,7 +322,7 @@ def test_run_matrix_returns_zero_on_all_success(
 
 def test_run_matrix_returns_one_on_any_failure(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: one forced failure.
@@ -340,7 +343,7 @@ def test_run_matrix_returns_one_on_any_failure(
 
 def test_run_matrix_validates_manifest_before_dispatch(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     stub_pipeline: dict[str, list[str]],  # noqa: ARG001
 ) -> None:
     # Given: a study whose manifest references a missing config file.
@@ -357,7 +360,7 @@ def test_run_matrix_validates_manifest_before_dispatch(
 
 def test_run_matrix_invokes_collect_render_validate_in_order(
     repo_root: Path,
-    fake_runner: dict[str, object],  # noqa: ARG001
+    fake_runner: _FakeRunnerState,  # noqa: ARG001
     stub_pipeline: dict[str, list[str]],
 ) -> None:
     # Given: a clean study.
@@ -377,7 +380,7 @@ def test_run_matrix_invokes_collect_render_validate_in_order(
 
 def test_run_matrix_no_render_skips_render_step(
     repo_root: Path,
-    fake_runner: dict[str, object],  # noqa: ARG001
+    fake_runner: _FakeRunnerState,  # noqa: ARG001
     stub_pipeline: dict[str, list[str]],
 ) -> None:
     # Given: a clean study.
@@ -450,7 +453,7 @@ def test_run_matrix_parallel_dispatches_concurrently(
 
 def test_run_matrix_writes_matrix_summary(
     repo_root: Path,
-    fake_runner: dict[str, object],
+    fake_runner: _FakeRunnerState,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: a study where one job is forced to fail so the summary has both

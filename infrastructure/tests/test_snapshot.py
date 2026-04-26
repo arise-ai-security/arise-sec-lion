@@ -46,8 +46,8 @@ def test_snapshot_writes_effective_config(tmp_path: Path) -> None:
     assert "database" in payload
 
     # And: the sensitive postgres password is redacted.
-    assert payload["database"]["password"] == "***"
-    assert payload["database"]["password"] != "test_pw"
+    assert payload["database"]["password"] == "***"  # noqa: S105 - redaction sentinel
+    assert payload["database"]["password"] != "test_pw"  # noqa: S105 - test fixture
 
 
 def test_snapshot_creates_run_dir_if_missing(tmp_path: Path) -> None:
@@ -56,9 +56,7 @@ def test_snapshot_creates_run_dir_if_missing(tmp_path: Path) -> None:
     assert not run_dir.exists()
 
     # When: snapshot is called.
-    snapshot_effective_config(
-        run_id=uuid4(), settings=_make_settings(), run_dir=run_dir
-    )
+    snapshot_effective_config(run_id=uuid4(), settings=_make_settings(), run_dir=run_dir)
 
     # Then: the directory was created and the file is there.
     assert run_dir.is_dir()
@@ -71,9 +69,7 @@ def test_snapshot_atomic_write_overwrites_existing(tmp_path: Path) -> None:
     target.write_text("stale: true\n", encoding="utf-8")
 
     # When: snapshot writes a fresh payload.
-    snapshot_effective_config(
-        run_id=uuid4(), settings=_make_settings(), run_dir=tmp_path
-    )
+    snapshot_effective_config(run_id=uuid4(), settings=_make_settings(), run_dir=tmp_path)
 
     # Then: the content has been replaced with the new YAML.
     fresh = yaml.safe_load(target.read_text(encoding="utf-8"))

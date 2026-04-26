@@ -15,6 +15,7 @@ from uuid import UUID
 
 from config import Settings
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from infrastructure.snapshot import snapshot_effective_config
 
 from .composition import (
     create_runtime_cli,
@@ -220,8 +221,6 @@ async def _run_task(args: argparse.Namespace) -> None:
     # Snapshot the resolved Settings into the run directory so future
     # researchers can reproduce the exact config that produced this run.
     # Best-effort: a snapshot failure must not block run completion.
-    from infrastructure.snapshot import snapshot_effective_config
-
     try:
         snapshot_effective_config(
             run_id=result.root_id,
