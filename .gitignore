@@ -690,6 +690,7 @@ FodyWeavers.xsd
 !.claude/docs/*.md
 !experiments/**/reports/**/*.md
 !experiments/**/reports/*.md
+!experiments/*.md
 !prompts/**/*.md
 
 # Tooling scratch dirs
