@@ -83,9 +83,7 @@ class TestProcessBlock:
         """TextBlock maps to output type."""
         block = MockTextBlock("Hello world")
 
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
-        ):
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result == ("Hello world", "output")
@@ -94,9 +92,7 @@ class TestProcessBlock:
         """Empty TextBlock is skipped."""
         block = MockTextBlock("   ")
 
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
-        ):
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result is None
@@ -307,14 +303,11 @@ class TestAdapterIntegration:
             mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client_class.__aexit__ = AsyncMock(return_value=None)
 
-            with patch.object(
-                claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class
-            ), patch.object(
-                claude_sdk_adapter, "AssistantMessage", MockAssistantMessage
-            ), patch.object(
-                claude_sdk_adapter, "ResultMessage", MockResultMessage
-            ), patch.object(
-                claude_sdk_adapter, "TextBlock", MockTextBlock
+            with (
+                patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class),
+                patch.object(claude_sdk_adapter, "AssistantMessage", MockAssistantMessage),
+                patch.object(claude_sdk_adapter, "ResultMessage", MockResultMessage),
+                patch.object(claude_sdk_adapter, "TextBlock", MockTextBlock),
             ):
                 events = []
                 async for event in adapter.run_session(
@@ -360,18 +353,15 @@ class TestAdapterIntegration:
 
             mock_client = AsyncMock()
             mock_client.query = AsyncMock()
-            mock_client.receive_response = MagicMock(
-                return_value=async_iter([result_msg])
-            )
+            mock_client.receive_response = MagicMock(return_value=async_iter([result_msg]))
 
             mock_client_class = MagicMock()
             mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client_class.__aexit__ = AsyncMock(return_value=None)
 
-            with patch.object(
-                claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class
-            ), patch.object(
-                claude_sdk_adapter, "ResultMessage", MockResultMessage
+            with (
+                patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class),
+                patch.object(claude_sdk_adapter, "ResultMessage", MockResultMessage),
             ):
                 events = []
                 async for event in adapter.run_session(
@@ -385,3 +375,83 @@ class TestAdapterIntegration:
                 assert len(events) == 1
                 assert isinstance(events[0], WorkFailed)
                 assert "file not found" in events[0].reason
+
+
+class TestMCPServersWiring:
+    """Verify task_context['mcp_servers'] reaches ClaudeAgentOptions."""
+
+    def test_extract_mcp_servers_returns_none_when_absent(self) -> None:
+        # Given/When/Then
+        assert ClaudeAgentSDKAdapter._extract_mcp_servers({}) is None
+        assert ClaudeAgentSDKAdapter._extract_mcp_servers({"mcp_servers": {}}) is None
+
+    def test_extract_mcp_servers_adds_stdio_type_per_entry(self) -> None:
+        # Given: a raw stdio spec keyed by server name.
+        raw = {
+            "security_tools": {
+                "command": "python",
+                "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                "env": {"ARISE_SECBENCH_CONTAINER_ID": "abc"},
+            }
+        }
+
+        # When
+        result = ClaudeAgentSDKAdapter._extract_mcp_servers({"mcp_servers": raw})
+
+        # Then: the SDK-shaped mapping carries type=stdio.
+        assert result is not None
+        assert result["security_tools"]["type"] == "stdio"
+        assert result["security_tools"]["command"] == "python"
+        assert result["security_tools"]["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc"
+
+    def test_build_options_passes_mcp_servers_to_claude_agent_options(self) -> None:
+        """``mcp_servers`` keyword reaches ``ClaudeAgentOptions`` constructor."""
+        # Given: an adapter and a captured ClaudeAgentOptions stub.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+                mcp_servers={
+                    "security_tools": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                        "env": {},
+                    }
+                },
+            )
+
+        # Then: ClaudeAgentOptions received a mcp_servers kwarg with the spec.
+        assert "mcp_servers" in captured
+        assert "security_tools" in captured["mcp_servers"]  # type: ignore[index]
+        assert captured["mcp_servers"]["security_tools"]["command"] == "python"  # type: ignore[index]
+
+    def test_build_options_omits_mcp_servers_when_unset(self) -> None:
+        """No ``mcp_servers`` kwarg when not provided."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        assert "mcp_servers" not in captured

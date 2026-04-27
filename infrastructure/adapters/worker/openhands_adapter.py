@@ -18,7 +18,7 @@ from core.domain.events.events import (
 )
 
 from .base import WorkerAdapterBase
-from .shared import ContainerSessionContext, EventSequencer
+from .shared import ContainerSessionContext, EventSequencer, to_openhands_mcp_config
 
 
 # Suppress verbose OpenHands logging
@@ -167,8 +167,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 auto_shell=False,
             )
 
+        mcp_servers = self._extract_mcp_servers(task_context)
         try:
-            conversation = cast("_ConversationLike", self._build_conversation(working_dir))
+            conversation = cast(
+                "_ConversationLike",
+                self._build_conversation(working_dir, mcp_servers),
+            )
         except ImportError as error:
             yield sequencer.failed(
                 "OpenHands packages not installed. "
@@ -194,9 +198,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             except TimeoutError:
                 self._request_shutdown(conversation)
                 await self._await_thread_exit(future)
-                yield sequencer.failed(
-                    f"Task timed out after {self.timeout_seconds} seconds"
-                )
+                yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
                 return
 
             finish_message: str | None = None
@@ -235,9 +237,14 @@ class OpenHandsAdapter(WorkerAdapterBase):
             self._request_shutdown(conversation)
             executor.shutdown(wait=False)
 
-    def _build_conversation(self, working_dir: str) -> Any:
+    def _build_conversation(
+        self,
+        working_dir: str,
+        mcp_servers: dict[str, dict[str, Any]] | None = None,
+    ) -> Any:
         """Create an OpenHands SDK conversation for the current task."""
         from openhands.sdk import LLM, Agent, Conversation, Tool
+        from openhands.sdk.mcp import create_mcp_tools
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.terminal import TerminalTool
 
@@ -294,6 +301,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
         if self._file_editor_allowed():
             tools.append(Tool(name=FileEditorTool.name))
+        if mcp_servers:
+            tools.extend(create_mcp_tools(to_openhands_mcp_config(mcp_servers)))
 
         agent = Agent(llm=llm, tools=tools)
         return Conversation(
@@ -301,6 +310,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
             workspace=working_dir,
             max_iteration_per_run=self.max_iterations_per_run,
         )
+
+    @staticmethod
+    def _extract_mcp_servers(
+        task_context: dict[str, Any],
+    ) -> dict[str, dict[str, Any]] | None:
+        """Return raw stdio specs from ``task_context['mcp_servers']`` or ``None``."""
+        servers = task_context.get("mcp_servers")
+        if not isinstance(servers, dict) or not servers:
+            return None
+        return dict(servers)
 
     def _tool_allowed(self, *names: str) -> bool:
         """Return whether any of ``names`` survives the global policy."""
@@ -418,8 +437,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 WorkerCostItem(
                     model=self._get_stat(cost, "model", "") or model or "",
                     cost_usd=float(
-                        self._get_stat(cost, "cost_usd", self._get_stat(cost, "cost", 0.0))
-                        or 0.0
+                        self._get_stat(cost, "cost_usd", self._get_stat(cost, "cost", 0.0)) or 0.0
                     ),
                     timestamp=self._maybe_float(self._get_stat(cost, "timestamp")),
                 )
@@ -437,18 +455,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 WorkerTokenUsageItem(
                     model=self._get_stat(token_usage, "model", "") or model or "",
                     prompt_tokens=int(self._get_stat(token_usage, "prompt_tokens", 0) or 0),
-                    completion_tokens=int(
-                        self._get_stat(token_usage, "completion_tokens", 0) or 0
-                    ),
-                    cache_read_tokens=int(
-                        self._get_stat(token_usage, "cache_read_tokens", 0) or 0
-                    ),
+                    completion_tokens=int(self._get_stat(token_usage, "completion_tokens", 0) or 0),
+                    cache_read_tokens=int(self._get_stat(token_usage, "cache_read_tokens", 0) or 0),
                     cache_write_tokens=int(
                         self._get_stat(token_usage, "cache_write_tokens", 0) or 0
                     ),
-                    reasoning_tokens=int(
-                        self._get_stat(token_usage, "reasoning_tokens", 0) or 0
-                    ),
+                    reasoning_tokens=int(self._get_stat(token_usage, "reasoning_tokens", 0) or 0),
                     context_window=int(self._get_stat(token_usage, "context_window", 0) or 0),
                     per_turn_token=int(self._get_stat(token_usage, "per_turn_token", 0) or 0),
                     response_id=str(self._get_stat(token_usage, "response_id", "") or ""),
@@ -458,7 +470,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
         )
 
     def _extract_accumulated_token_usage(
-        self, stats: Any,
+        self,
+        stats: Any,
     ) -> tuple[int | None, int | None, int | None, int | None, int | None]:
         """Extract aggregate token categories from metrics or legacy dicts."""
         accumulated = self._get_stat(stats, "accumulated_token_usage")
@@ -517,7 +530,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
     _EVENT_TEXT_LIMIT = 600
 
     def _extract_result(
-        self, conversation: Any, working_dir: str, finish_message: str | None = None,
+        self,
+        conversation: Any,
+        working_dir: str,
+        finish_message: str | None = None,
     ) -> str:
         """Build a compact command log from ALL conversation events.
 
@@ -587,11 +603,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         if len(text) <= limit:
             return text
         half = limit // 2
-        return (
-            f"{text[:half]}\n"
-            f"[...{len(text) - limit} chars truncated...]\n"
-            f"{text[-half:]}"
-        )
+        return f"{text[:half]}\n[...{len(text) - limit} chars truncated...]\n{text[-half:]}"
 
     @staticmethod
     def _try_extract_finish(event: Any) -> str | None:
@@ -619,7 +631,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                     )
 
     async def _await_thread_exit(
-        self, future: concurrent.futures.Future,  # type: ignore[type-arg]
+        self,
+        future: concurrent.futures.Future,  # type: ignore[type-arg]
     ) -> None:
         """Give the background thread a grace period to exit after shutdown."""
         if future.done():
@@ -674,14 +687,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
             if value:
                 payload[attr_name] = str(value)
         detail = (
-            payload
-            if payload
-            else {"repr": cls._truncate_text(str(action), cls._EVENT_TEXT_LIMIT)}
+            payload if payload else {"repr": cls._truncate_text(str(action), cls._EVENT_TEXT_LIMIT)}
         )
-        return (
-            f"Tool: {tool_name}\n"
-            f"Input: {json_dumps_for_event(detail)}"
-        )
+        return f"Tool: {tool_name}\nInput: {json_dumps_for_event(detail)}"
 
     @classmethod
     def _format_observation_event(cls, observation: Any) -> str:

@@ -22,5 +22,9 @@ overrides:
       output_format: stream-json
       include_partial_messages: true
       max_turns: 40
-      use_global_config: true
+      # Cell A now runs the agent inside the secb-tools container; the operator's
+      # ~/.claude config does not exist there, and bind-mounting it would leak
+      # operator credentials into the experiment. The in-container CLI
+      # authenticates via ANTHROPIC_API_KEY (allowlisted in the worker env).
+      use_global_config: false
   domain.plugin: security

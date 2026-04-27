@@ -101,6 +101,12 @@ class DockerSecBenchRuntime:
             f"{self._host_path(workspace.host_source_dir)}:{workspace.container_source_dir}",
             "-v",
             f"{self._host_path(workspace.host_testcase_dir)}:{workspace.container_testcase_dir}",
+            # Bind the workspace root so worker scratch files (e.g. mcp config,
+            # scratch CLAUDE_CONFIG_DIR) written on the host are reachable from
+            # inside the container — required when the agent process itself
+            # runs in-container (Cell A flat-mode docker-exec path).
+            "-v",
+            f"{self._host_path(workspace.host_root)}:{workspace.container_workspace_root}",
             workspace.image,
             "tail",
             "-f",

@@ -261,14 +261,64 @@ def _run_one(
             status="failed",
             error=str(exc),
         )
+
+    # ``harness.run_ours`` returns a run_id even when ``main.py run`` exits
+    # non-zero (so the failure is enrolled and discoverable). Reflect that real
+    # exit status in the matrix summary instead of falsely reporting success.
+    run_status, run_error = _read_run_status(repo_root, manifest["study_id"], run_id)
     return JobResult(
         cell=cell_name,
         task=task,
         replicate=replicate,
         run_id=run_id,
-        status="succeeded",
-        error=None,
+        status=run_status,
+        error=run_error,
     )
+
+
+def _read_run_status(
+    repo_root: Path, study_id: str, run_id: UUID
+) -> tuple[str, str | None]:
+    """Read the run's ``run_manifest.json`` and map ``exit_status`` → matrix status.
+
+    ``main.py run`` writes the manifest's ``exit_status`` after every run
+    (success or failure). Matrix-level ``succeeded`` requires a clean inner
+    exit; anything else is reported as ``failed`` with the manifest's status
+    string as the error.
+    """
+    del study_id  # reserved for future per-study pool overrides
+    import json as _json
+
+    from experiments.shared.scripts.load_runs import default_pool_roots
+
+    candidate: Path | None = None
+    for pool in default_pool_roots():
+        path = pool / str(run_id) / "run_manifest.json"
+        if path.is_file():
+            candidate = path
+            break
+    if candidate is None:
+        # Fall back to the conventional <repo>/runs/ pool.
+        path = repo_root / "runs" / str(run_id) / "run_manifest.json"
+        if path.is_file():
+            candidate = path
+    if candidate is None:
+        # Test fixtures and edge cases (run_id returned without a manifest on
+        # disk) trust the runner's UUID return as success. Real runs always
+        # produce run_manifest.json, so this only kicks in when the runner is
+        # stubbed or the file system isn't observable from this process.
+        return "succeeded", None
+
+    try:
+        record = _json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError) as exc:
+        return "failed", f"could not read run_manifest.json: {exc}"
+    raw_status = str(record.get("exit_status") or record.get("status") or "").lower()
+    if raw_status in {"completed", "succeeded", "success"}:
+        return "succeeded", None
+    if not raw_status:
+        return "failed", "run_manifest.json has no exit_status"
+    return "failed", f"inner run exit_status={raw_status}"
 
 
 # =============================================================================

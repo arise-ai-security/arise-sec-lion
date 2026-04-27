@@ -21,6 +21,7 @@ class ContainerSessionContext:
     container_testcase_dir: str
     container_working_directory: str
     helper_script: Path
+    container_workspace_root: str = "/arise-run"
 
     @classmethod
     def from_task_context(
@@ -41,7 +42,27 @@ class ContainerSessionContext:
             container_testcase_dir=str(raw["container_testcase_dir"]),
             container_working_directory=str(raw["container_working_directory"]),
             helper_script=Path(raw["helper_script"]),
+            container_workspace_root=str(raw.get("container_workspace_root", "/arise-run")),
         )
+
+    def host_to_container_path(self, host_path: Path) -> str:
+        """Translate a host path under ``workspace_root`` to its in-container path.
+
+        Used by the Cell A docker-exec runner to point the in-container CLI at
+        scratch files (mcp config, ``CLAUDE_CONFIG_DIR``) the host wrote under
+        ``workspace_root`` (which is bind-mounted at ``container_workspace_root``).
+        """
+        try:
+            rel = host_path.resolve().relative_to(self.workspace_root.resolve())
+        except ValueError as e:
+            raise ValueError(
+                f"{host_path} is not under workspace_root {self.workspace_root}; "
+                "cannot translate to container path"
+            ) from e
+        rel_str = rel.as_posix()
+        if rel_str in {"", "."}:
+            return self.container_workspace_root
+        return f"{self.container_workspace_root}/{rel_str}"
 
     def apply_task_prefix(self, task_description: str, *, auto_shell: bool) -> str:
         """Explain the host/container mapping to the worker."""

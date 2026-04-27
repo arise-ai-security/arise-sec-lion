@@ -618,3 +618,403 @@ def test_run_task_records_log_message_on_invocation(
         )
 
     assert any("claude" in record.getMessage() for record in caplog.records)
+
+
+def test_run_task_writes_mcp_config_and_threads_flag_when_extras_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """When ``workspace.extras['mcp_servers']`` is set, the worker writes
+    ``mcp_servers.json`` and threads ``--mcp-config <abs path>`` into argv."""
+    # Given: a stubbed `claude` binary path and captured argv.
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    workspace = WorkspaceSpec(
+        root=tmp_path,
+        extras={
+            "mcp_servers": {
+                "security_tools": {
+                    "command": "python",
+                    "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                    "env": {
+                        "ARISE_SECBENCH_CONTAINER_ID": "abc123",
+                        "ARISE_SECBENCH_HELPER_SCRIPT": "/run/secb-exec",
+                    },
+                }
+            }
+        },
+    )
+
+    # When: running the task with extras carrying an MCP server spec.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    # Then: argv contains --mcp-config <abs path>.
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert "--mcp-config" in argv
+    idx = argv.index("--mcp-config")
+    config_path = Path(argv[idx + 1])
+    assert config_path.is_absolute()
+    assert config_path.name == "mcp_servers.json"
+    # And: the JSON file is on disk wrapped in the camelCase envelope.
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "mcpServers" in payload
+    assert "security_tools" in payload["mcpServers"]
+    server_spec = payload["mcpServers"]["security_tools"]
+    assert server_spec["command"] == "python"
+    assert server_spec["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123"
+
+
+def test_run_task_omits_mcp_config_when_extras_lacks_servers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """Without ``workspace.extras['mcp_servers']``, ``--mcp-config`` is absent."""
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert "--mcp-config" not in argv
+    # And: no mcp_servers.json on disk in the run dir.
+    assert not (tmp_path / "mcp_servers.json").exists()
+
+
+def _container_session_extras(tmp_path: Path) -> dict[str, object]:
+    """Build a ``workspace.extras`` payload that selects the docker-exec path."""
+    return {
+        "container_session": {
+            "container_id": "abc123def456",
+            "container_name": "secbench-worker-demo",
+            "image": "secb-tools:demo",
+            "workspace_root": str(tmp_path),
+            "host_source_dir": str(tmp_path / "src"),
+            "host_testcase_dir": str(tmp_path / "testcase"),
+            "host_work_dir": str(tmp_path / "src" / "demo"),
+            "container_source_dir": "/src",
+            "container_testcase_dir": "/testcase",
+            "container_working_directory": "/src/demo",
+            "container_workspace_root": "/arise-run",
+            "helper_script": str(tmp_path / "secb-exec"),
+        }
+    }
+
+
+def test_run_task_uses_docker_exec_when_container_session_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """When ``workspace.extras`` carries a container session, the worker
+    invokes ``claude`` inside the container via ``docker exec``."""
+    # Given: a container session is plumbed through workspace.extras.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **kwargs):
+        captured["argv"] = args
+        captured["env"] = kwargs.get("env")
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    workspace = WorkspaceSpec(root=tmp_path, extras=_container_session_extras(tmp_path))
+
+    # When: running the task.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec("task body"),
+            tool_policy=_make_policy(disallowed=("Task",)),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    # Then: argv begins with ``docker exec -i -w <work_dir>`` and ``claude``
+    # runs inside the container (binary name only, no host PATH lookup).
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert argv[0] == "docker"
+    assert argv[1] == "exec"
+    assert "-i" in argv[:5]
+    work_idx = argv.index("-w")
+    assert argv[work_idx + 1] == "/src/demo"
+    # Container id appears immediately before the ``claude`` argv.
+    claude_idx = argv.index("claude")
+    assert argv[claude_idx - 1] == "abc123def456"
+    # And: argv ends with the prompt body (no host/container prefix).
+    assert argv[-1] == "task body"
+    # And: --disallowedTools Task survives across the wrapper.
+    assert "Task" in argv
+
+
+def test_run_task_in_container_does_not_probe_host_path_for_claude(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """In containerized mode, ``shutil.which("claude")`` is never consulted —
+    the binary lives inside the secb-tools image."""
+    # Given: shutil.which would return None (no host claude); env is set.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: None,
+    )
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    workspace = WorkspaceSpec(root=tmp_path, extras=_container_session_extras(tmp_path))
+
+    # When/Then: invocation does not raise ToolNotAvailableError.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+
+def test_run_task_in_container_emits_e_flags_for_narrow_env_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """Env vars are passed via ``-e KEY=VAL`` flags; host PATH/HOME/USER are
+    NOT forwarded so the container's base env is preserved."""
+    # Given: host env that includes things which must NOT leak into the container.
+    monkeypatch.setenv("PATH", "/host/usr/bin")
+    monkeypatch.setenv("HOME", "/host/home")
+    monkeypatch.setenv("USER", "operator")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")  # must be stripped
+    monkeypatch.setenv("POSTGRES_PASSWORD", "super-secret")  # must be stripped
+
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    workspace = WorkspaceSpec(root=tmp_path, extras=_container_session_extras(tmp_path))
+
+    # When: running the task.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    e_flags = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+    # Then: ANTHROPIC_API_KEY is forwarded via -e, host PATH/HOME/USER are NOT,
+    # and CLAUDE_CONFIG_DIR is remapped onto the container workspace mount.
+    forwarded_keys = {flag.split("=", 1)[0] for flag in e_flags}
+    assert "ANTHROPIC_API_KEY" in forwarded_keys
+    assert "PATH" not in forwarded_keys
+    assert "HOME" not in forwarded_keys
+    assert "USER" not in forwarded_keys
+    assert "OPENAI_API_KEY" not in forwarded_keys
+    assert "POSTGRES_PASSWORD" not in forwarded_keys
+    config_flag = next((flag for flag in e_flags if flag.startswith("CLAUDE_CONFIG_DIR=")), None)
+    assert config_flag is not None
+    assert config_flag.startswith("CLAUDE_CONFIG_DIR=/arise-run/")
+
+
+def test_run_task_in_container_drops_host_container_prompt_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """In containerized mode the agent IS inside the container, so the
+    host/container duality prompt prefix must NOT be appended."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    workspace = WorkspaceSpec(root=tmp_path, extras=_container_session_extras(tmp_path))
+
+    # When: running with a known prompt body.
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec("solve the bug"),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    # Then: argv ends with the raw prompt — no "## Container-backed workspace"
+    # / "ABSOLUTE RULE — TWO SEPARATE FILESYSTEMS" prefix.
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert argv[-1] == "solve the bug"
+
+
+def test_run_task_in_container_rewrites_mcp_config_for_in_container_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_id: UUID,
+) -> None:
+    """In containerized mode the host-side stdio config is rewritten so the
+    MCP server runs inside the same container as the agent: the command is
+    swapped to the bundled in-container Python, ``ARISE_SECBENCH_HELPER_SCRIPT``
+    is dropped (server takes the in-container code path), and
+    ``--mcp-config`` points at the container-side path."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    extras = dict(_container_session_extras(tmp_path))
+    extras["mcp_servers"] = {
+        "security_tools": {
+            "command": "python",
+            "args": ["-m", "plugins.security.mcp.security_tools_server"],
+            "env": {
+                "ARISE_SECBENCH_HELPER_SCRIPT": str(tmp_path / "secb-exec"),
+                "ARISE_SECBENCH_CONTAINER_ID": "abc123def456",
+                "ARISE_SECBENCH_WORK_DIR": "/src/demo",
+            },
+        },
+    }
+    workspace = WorkspaceSpec(root=tmp_path, extras=extras)
+
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert "--mcp-config" in argv
+    config_path = Path(argv[argv.index("--mcp-config") + 1])
+    # The path passed to claude must be the *container* path (absolute), not
+    # the host path under tmp_path.
+    assert config_path.is_absolute()
+    assert str(tmp_path) not in str(config_path)
+
+    # Verify the JSON written on the host has the rewritten command + env.
+    written = json.loads((tmp_path / "mcp_servers.in_container.json").read_text())
+    server = written["mcpServers"]["security_tools"]
+    assert server["command"] == "/opt/arise-mcp/venv/bin/python"
+    assert server["args"] == ["-m", "plugins.security.mcp.security_tools_server"]
+    assert "ARISE_SECBENCH_HELPER_SCRIPT" not in server["env"]
+    assert server["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
+    assert server["env"]["PYTHONPATH"] == "/opt/arise-mcp"
+
+
+def test_run_task_in_container_with_global_config_skips_scratch_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """``use_global_config=True`` in containerized mode passes no
+    ``CLAUDE_CONFIG_DIR`` env flag — the in-container CLI uses its own
+    default config location."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker(use_global_config=True)
+    workspace = WorkspaceSpec(root=tmp_path, extras=_container_session_extras(tmp_path))
+
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    e_flags = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+    forwarded_keys = {flag.split("=", 1)[0] for flag in e_flags}
+    assert "CLAUDE_CONFIG_DIR" not in forwarded_keys

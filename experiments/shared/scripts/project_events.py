@@ -22,6 +22,7 @@ from uuid import UUID
 
 from config import Settings
 from core.query.projections import ProjectionPipelineBuilder
+from infrastructure.adapters import sinks as _sinks  # noqa: F401 — registers @register_sink classes
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
 

@@ -30,7 +30,12 @@ from claude_agent_sdk.types import SyncHookJSONOutput
 from core.domain.events.events import DomainEvent, ThoughtCaptured
 
 from .base import WorkerAdapterBase
-from .shared import ContainerSessionContext, EventSequencer, format_tool_event
+from .shared import (
+    ContainerSessionContext,
+    EventSequencer,
+    format_tool_event,
+    to_sdk_mcp_servers,
+)
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
@@ -101,6 +106,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 working_dir,
                 tool_queue,
                 container_session,
+                mcp_servers=self._extract_mcp_servers(task_context),
             )
 
             async with ClaudeSDKClient(options=options) as client:
@@ -129,9 +135,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                         return
 
         except TimeoutError:
-            yield sequencer.failed(
-                f"Task timed out after {self.timeout_seconds} seconds"
-            )
+            yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
 
         except Exception as e:
             yield sequencer.failed(self._format_error(e))
@@ -141,6 +145,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         working_dir: str,
         tool_queue: asyncio.Queue[tuple[str, str]],
         container_session: ContainerSessionContext | None,
+        mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> ClaudeAgentOptions:
         """Build SDK options with PostToolUse hook for event capture."""
 
@@ -170,16 +175,29 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 )
             )
 
-        return ClaudeAgentOptions(
-            model=self.config.model,
-            cwd=working_dir,
-            allowed_tools=self._effective_allowed_tools(),
-            permission_mode=self.config.permission_mode,
-            can_use_tool=can_use_tool if container_session is not None else None,
-            hooks={
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "cwd": working_dir,
+            "allowed_tools": self._effective_allowed_tools(),
+            "permission_mode": self.config.permission_mode,
+            "can_use_tool": can_use_tool if container_session is not None else None,
+            "hooks": {
                 "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
             },
-        )
+        }
+        if mcp_servers:
+            kwargs["mcp_servers"] = mcp_servers
+        return ClaudeAgentOptions(**kwargs)
+
+    @staticmethod
+    def _extract_mcp_servers(
+        task_context: dict[str, Any],
+    ) -> dict[str, dict[str, Any]] | None:
+        """Translate ``task_context['mcp_servers']`` into the SDK-shaped mapping."""
+        servers = task_context.get("mcp_servers")
+        if not isinstance(servers, dict) or not servers:
+            return None
+        return to_sdk_mcp_servers(servers)
 
     def _effective_allowed_tools(self) -> list[str]:
         """Apply global allow/deny policy to Claude SDK tool names."""

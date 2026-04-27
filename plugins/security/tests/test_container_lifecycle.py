@@ -76,12 +76,24 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
     assert prepared is not None
     assert prepared.working_directory == str(tmp_path)
     runtime.prepare_workspace.assert_awaited_once()
-    assert runtime.prepare_workspace.await_args.kwargs["image"] == "secb-tools:demo.cve-2024-0001"
+    assert (
+        runtime.prepare_workspace.await_args.kwargs["image"]
+        == "secb-tools:demo.cve-2024-0001-patch"
+    )
 
     assert worker_context is not None
     container_session = worker_context.task_context["container_session"]
     assert container_session["container_id"] == "abc123def456"
     assert container_session["host_source_dir"] == str(tmp_path / "src")
+
+    mcp_servers = worker_context.task_context["mcp_servers"]
+    assert "security_tools" in mcp_servers
+    security_tools_spec = mcp_servers["security_tools"]
+    assert security_tools_spec["args"] == [
+        "-m",
+        "plugins.security.mcp.security_tools_server",
+    ]
+    assert security_tools_spec["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
 
     await plugin.cleanup_worker_execution(
         root_id=root_id,

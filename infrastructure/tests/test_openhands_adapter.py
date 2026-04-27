@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -155,7 +156,9 @@ class TestOpenHandsAdapter:
 
     @pytest.mark.asyncio
     async def test_successful_execution_uses_conversation_output(
-        self, monkeypatch, tmp_path: Path,
+        self,
+        monkeypatch,
+        tmp_path: Path,
     ) -> None:
         adapter = OpenHandsAdapter(timeout_seconds=1)
         conversation = _FakeConversation()
@@ -222,7 +225,10 @@ class TestOpenHandsAdapter:
 
     @pytest.mark.asyncio
     async def test_timeout_logs_warning_when_thread_outlives_grace_period(
-        self, monkeypatch, caplog, tmp_path: Path,
+        self,
+        monkeypatch,
+        caplog,
+        tmp_path: Path,
     ) -> None:
         monkeypatch.setattr(
             "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
@@ -231,7 +237,9 @@ class TestOpenHandsAdapter:
         adapter = OpenHandsAdapter(timeout_seconds=0.01)
         conversation = _StuckConversation()
         monkeypatch.setattr(
-            adapter, "_build_conversation", lambda *_args: conversation,
+            adapter,
+            "_build_conversation",
+            lambda *_args: conversation,
         )
 
         events = []
@@ -249,3 +257,103 @@ class TestOpenHandsAdapter:
         assert any("did not exit" in record.message for record in caplog.records)
 
         conversation.release()
+
+
+class TestMCPServersWiring:
+    """Verify ``task_context['mcp_servers']`` reaches ``create_mcp_tools``."""
+
+    def test_extract_mcp_servers_returns_none_when_absent(self) -> None:
+        # Given/When/Then
+        adapter = OpenHandsAdapter()
+        assert adapter._extract_mcp_servers({}) is None
+        assert adapter._extract_mcp_servers({"mcp_servers": {}}) is None
+
+    def test_extract_mcp_servers_returns_raw_dict_when_present(self) -> None:
+        # Given
+        adapter = OpenHandsAdapter()
+        raw = {"security_tools": {"command": "python", "args": [], "env": {}}}
+
+        # When
+        result = adapter._extract_mcp_servers({"mcp_servers": raw})
+
+        # Then
+        assert result == raw
+
+    def test_build_conversation_calls_create_mcp_tools_with_camelcase_envelope(
+        self,
+    ) -> None:
+        """create_mcp_tools is called with ``{"mcpServers": {...}}``."""
+        # Given: a minimal adapter and a fake create_mcp_tools.
+        adapter = OpenHandsAdapter(model="openai/gpt-4o", api_key="sk-test")
+        captured: dict[str, object] = {}
+
+        def _fake_create_mcp_tools(config, *_args, **_kwargs):
+            captured["config"] = config
+            return ["mcp-tool-stub-1", "mcp-tool-stub-2"]
+
+        # The other openhands SDK pieces are imported inside _build_conversation;
+        # we stub the entire openhands.sdk module surface used here.
+        import sys
+        from unittest.mock import MagicMock
+
+        fake_sdk = MagicMock()
+        fake_sdk.LLM = MagicMock(return_value="llm-stub")
+        fake_sdk.Agent = MagicMock(return_value="agent-stub")
+        fake_sdk.Conversation = MagicMock(return_value="conversation-stub")
+        fake_sdk.Tool = MagicMock(side_effect=lambda **kw: ("Tool", kw))
+        fake_mcp = MagicMock()
+        fake_mcp.create_mcp_tools = _fake_create_mcp_tools
+        fake_file_editor = MagicMock()
+        fake_file_editor.FileEditorTool = MagicMock(name="FileEditorTool")
+        fake_file_editor.FileEditorTool.name = "file_editor"
+        fake_terminal = MagicMock()
+        fake_terminal.TerminalTool = MagicMock(name="TerminalTool")
+        fake_terminal.TerminalTool.name = "execute_bash"
+
+        previous = {
+            name: sys.modules.get(name)
+            for name in (
+                "openhands.sdk",
+                "openhands.sdk.mcp",
+                "openhands.tools.file_editor",
+                "openhands.tools.terminal",
+            )
+        }
+        sys.modules["openhands.sdk"] = fake_sdk
+        sys.modules["openhands.sdk.mcp"] = fake_mcp
+        sys.modules["openhands.tools.file_editor"] = fake_file_editor
+        sys.modules["openhands.tools.terminal"] = fake_terminal
+        try:
+            from infrastructure.adapters.worker import openhands_adapter
+
+            with patch.object(
+                openhands_adapter,
+                "_patch_openhands_fn_converter",
+                lambda: None,
+            ):
+                conversation = adapter._build_conversation(
+                    working_dir="/work",
+                    mcp_servers={
+                        "security_tools": {
+                            "command": "python",
+                            "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                            "env": {"ARISE_SECBENCH_CONTAINER_ID": "abc"},
+                        }
+                    },
+                )
+        finally:
+            for name, mod in previous.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        # Then: create_mcp_tools received the camelCase MCPConfig envelope.
+        assert "config" in captured
+        config = captured["config"]
+        assert isinstance(config, dict)
+        assert "mcpServers" in config
+        assert "security_tools" in config["mcpServers"]
+        assert config["mcpServers"]["security_tools"]["command"] == "python"
+        # And: the conversation handle came back from the fake SDK.
+        assert conversation == "conversation-stub"

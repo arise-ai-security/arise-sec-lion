@@ -10,7 +10,13 @@ from plugins.security.cve_instance import CVEInstance
 
 @dataclass(frozen=True)
 class SecBenchWorkspace:
-    """Host workspace that mirrors the container filesystem."""
+    """Host workspace that mirrors the container filesystem.
+
+    ``container_workspace_root`` is the in-container mount point for
+    ``host_root``; the runtime bind-mounts the workspace root so worker
+    scratch files (e.g. ``mcp_servers.json``, scratch ``CLAUDE_CONFIG_DIR``)
+    written on the host are also reachable from inside the container.
+    """
 
     root_id: UUID
     image: str
@@ -22,6 +28,7 @@ class SecBenchWorkspace:
     container_testcase_dir: str
     container_working_directory: str
     helper_script: Path
+    container_workspace_root: str = "/arise-run"
 
 
 @dataclass(frozen=True)
@@ -46,6 +53,7 @@ class SecBenchContainerSession:
             "container_source_dir": self.workspace.container_source_dir,
             "container_testcase_dir": self.workspace.container_testcase_dir,
             "container_working_directory": self.workspace.container_working_directory,
+            "container_workspace_root": self.workspace.container_workspace_root,
             "helper_script": str(self.workspace.helper_script),
         }
 

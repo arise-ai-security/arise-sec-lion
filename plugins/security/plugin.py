@@ -15,6 +15,7 @@ from core.ports.domain_plugin_port import (
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.image_resolver import resolve_secbench_image
+from plugins.security.mcp.security_tools_server import build_stdio_config as build_mcp_stdio_config
 from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
 from plugins.security.security_tool import get_tools_for_phase
 
@@ -54,9 +55,7 @@ class SecurityDomainPlugin(DomainPlugin):
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
 
-    def set_container_runtime(
-        self, container_runtime: SecurityContainerRuntime | None
-    ) -> None:
+    def set_container_runtime(self, container_runtime: SecurityContainerRuntime | None) -> None:
         """Attach the runtime after bootstrap creates infrastructure."""
         self._container_runtime = container_runtime
 
@@ -91,12 +90,10 @@ class SecurityDomainPlugin(DomainPlugin):
             return prompt
 
         chain = cast("TemplateChain", chain_factory())
-        enrichment = (
-            chain.render(
-                "domains/secbench/tools.j2",
-                security_tools=[tool.model_dump() for tool in tools],
-            ).build()
-        )
+        enrichment = chain.render(
+            "domains/secbench/tools.j2",
+            security_tools=[tool.model_dump() for tool in tools],
+        ).build()
         return f"{prompt}\n\n{enrichment}"
 
     def get_run_metadata(self, domain_context: object) -> JsonObject:
@@ -194,7 +191,16 @@ class SecurityDomainPlugin(DomainPlugin):
 
         return WorkerExecutionContext(
             working_directory=str(workspace.host_root),
-            task_context={"container_session": session.to_task_context()},
+            task_context={
+                "container_session": session.to_task_context(),
+                "mcp_servers": {
+                    "security_tools": build_mcp_stdio_config(
+                        container_id=session.container_id,
+                        helper_script=str(workspace.helper_script),
+                        work_dir=workspace.container_working_directory,
+                    ),
+                },
+            },
         )
 
     async def cleanup_worker_execution(

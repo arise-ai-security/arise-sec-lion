@@ -47,6 +47,7 @@ testpaths = [
     "presentation/tests",
     "bootstrap/tests",
     "config/tests",
+    "plugins/security/tests",
     "tests/experiments",
 ]
 markers = [
