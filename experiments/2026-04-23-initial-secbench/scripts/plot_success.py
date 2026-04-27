@@ -38,7 +38,7 @@ def _render_svg(rows: list[dict[str, str]]) -> bytes:
         (
             f'<text x="{width // 2}" y="24" text-anchor="middle" fill="#f8fafc" '
             'font-family="sans-serif" font-size="16" font-weight="600">'
-            "Initial SEC-bench — runs per cell</text>"
+            "SEC-bench matrix — runs per cell</text>"
         ),
     ]
     x = padding

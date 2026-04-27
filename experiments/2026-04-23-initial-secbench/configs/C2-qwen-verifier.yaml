@@ -1,0 +1,21 @@
+# Cell C2 — our hierarchy with Qwen/OpenHands workers, verifier enabled.
+# CVE context is always passed. This is C1 plus the full verification pipeline.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: false
+  worker.tool: openhands
+  worker.model: ollama_chat/qwen3.5:397b-cloud
+  worker.allowed_tools: ["*"]
+  worker.disallowed_tools: []
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 40
+  output.directory: ./runs
+  worker.tool_params:
+    openhands:
+      image: openhands:latest
+      timeout_seconds: 5400
+      max_iterations_per_run: 40
+  domain.plugin: security

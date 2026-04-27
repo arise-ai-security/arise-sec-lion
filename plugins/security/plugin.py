@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
-from uuid import UUID
+from typing import TYPE_CHECKING, cast
 
-from core.domain.values.json_types import JsonObject
 from core.domain.values.prompt_trace import SectionProvenance
-from core.ports.domain_plugin_port import DomainPlugin, PreparedRunWorkspace, WorkerExecutionContext
-from plugins.security.container_runtime import (
-    SecBenchContainerSession,
-    SecBenchWorkspace,
-    SecurityContainerRuntime,
+from core.ports.domain_plugin_port import (
+    DomainPlugin,
+    PreparedRunWorkspace,
+    WorkerExecutionContext,
 )
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
@@ -24,7 +20,17 @@ from plugins.security.security_tool import get_tools_for_phase
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from uuid import UUID
+
     from core.application.services import PromptStrategy
+    from core.application.services.prompt.prompt_builder import TemplateChain
+    from core.domain.values.json_types import JsonObject
+    from plugins.security.container_runtime import (
+        SecBenchContainerSession,
+        SecBenchWorkspace,
+        SecurityContainerRuntime,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -84,7 +90,7 @@ class SecurityDomainPlugin(DomainPlugin):
         if not tools:
             return prompt
 
-        chain = chain_factory()  # type: ignore[assignment]
+        chain = cast("TemplateChain", chain_factory())
         enrichment = (
             chain.render(
                 "domains/secbench/tools.j2",

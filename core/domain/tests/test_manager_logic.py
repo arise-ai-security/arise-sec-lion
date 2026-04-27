@@ -526,7 +526,7 @@ async def test_child_evaluates_complex_complexity() -> None:
 
 @pytest.mark.asyncio
 async def test_complexity_evaluation_invalid_response() -> None:
-    """Test that invalid LLM response for task assessment fails gracefully."""
+    """Test invalid assessment falls back to worker when recovery is unavailable."""
 
     # Given: Create a child agent with PENDING role
     agent_id = uuid4()
@@ -544,13 +544,10 @@ async def test_complexity_evaluation_invalid_response() -> None:
     # When: Child attempts to assess task
     await orchestrator.assess_task(agent)
 
-    # Then: Agent transitions to FAILED status
-    assert agent.status == AgentStatus.FAILED, "Agent should fail when assessment fails"
+    # Then: Agent falls back to worker role and remains ready for execution.
+    assert agent.status == AgentStatus.ANALYZING
+    assert agent.role == AgentRole.WORKER
 
-    # And: WorkFailed event is recorded
+    # And: No WorkFailed event is recorded because recovery fallback kept it alive.
     work_failed_events = [e for e in agent.events if isinstance(e, WorkFailed)]
-    assert len(work_failed_events) == 1, "Should have 1 WorkFailed event"
-    assert "assessment" in work_failed_events[0].reason.lower()
-
-    # And: Role remains PENDING (never determined)
-    assert agent.role == AgentRole.PENDING
+    assert len(work_failed_events) == 0

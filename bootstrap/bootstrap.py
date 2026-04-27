@@ -10,10 +10,11 @@ import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from config import Settings
+from core.domain.events.events import RunStarted
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.snapshot import snapshot_effective_config
 
@@ -98,10 +99,11 @@ def _create_parser() -> argparse.ArgumentParser:
         help="Override worker execution tool (claude_code, openhands, google_adk)",
     )
 
-    for name, help_text, extra_args in [
+    projection_commands: list[tuple[str, str, list[tuple[str, dict[str, Any]]]]] = [
         ("events", "View events for a task run", [("--errors-only", {"action": "store_true"})]),
         ("summary", "Show summary projection for a task run", []),
-    ]:
+    ]
+    for name, help_text, extra_args in projection_commands:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--agent-id", type=UUID, help="Agent UUID (default: last run)")
         p.add_argument("-o", "--output", type=Path, help="Output file path")
@@ -337,10 +339,8 @@ async def _list_runs(args: argparse.Namespace) -> None:
             if evts[0].role != AgentRole.BOSS.value:
                 continue
 
-            task = next(
-                (e.task_description for e in evts if hasattr(e, "task_description")),
-                "N/A",
-            )
+            run_started = next((e for e in evts if isinstance(e, RunStarted)), None)
+            task = run_started.task_description if run_started is not None else "N/A"
             runs.append(
                 {
                     "boss_id": str(aid),
@@ -350,7 +350,7 @@ async def _list_runs(args: argparse.Namespace) -> None:
                     "status": type(evts[-1]).__name__,
                 }
             )
-        runs = sorted(runs, key=lambda x: x["started_at"], reverse=True)[:args.limit]
+        runs = sorted(runs, key=lambda x: str(x["started_at"]), reverse=True)[:args.limit]
 
         if args.format == "json":
             print(json.dumps(runs, indent=2))

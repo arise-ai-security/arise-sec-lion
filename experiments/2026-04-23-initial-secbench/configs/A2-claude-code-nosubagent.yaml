@@ -8,13 +8,17 @@ extends: config/config.yaml
 overrides:
   orchestration.mode: flat
   worker.tool: claude_code
+  worker.model: claude-sonnet-4-6
+  worker.allowed_tools: ["*"]
+  worker.disallowed_tools: ["Task"]
+  worker.timeout: 5400
+  output.directory: ./runs
   worker.tool_params:
     # Drop the inherited openhands slot so the tagged-union validator
     # only sees the active claude_code params (Settings._validate_worker_tool_params).
     openhands: null
     claude_code:
-      allowed_tools: ["*"]
-      disallowed_tools: ["Task"]
       output_format: stream-json
       include_partial_messages: true
-  domain.plugin: null
+      max_turns: 40
+  domain.plugin: security

@@ -94,6 +94,7 @@ def _load_enrolled_record(
     *,
     study_id: str,
     enrolled_index: dict[str, dict[str, Any]],
+    exclude_legacy_migration: bool = False,
 ) -> None:
     """Read one ``run_manifest.json`` and merge it into ``enrolled_index``.
 
@@ -112,6 +113,8 @@ def _load_enrolled_record(
         return
 
     if record.get("study_id") != study_id:
+        return
+    if exclude_legacy_migration and record.get("legacy_migration") is True:
         return
 
     run_id = record.get("run_id")
@@ -168,12 +171,20 @@ def build_enrollment_lock(
     The returned dict is serialization-ready: keys sort cleanly, values
     are JSON/YAML scalars only.
     """
+    study_manifest = (
+        yaml.safe_load(_study_manifest_path(study_id).read_text(encoding="utf-8")) or {}
+    )
+    exclude_legacy_migration = bool(
+        isinstance(study_manifest, dict)
+        and study_manifest.get("exclude_legacy_migration", False)
+    )
     enrolled_index: dict[str, dict[str, Any]] = {}
     for manifest_path in iter_run_manifests(pool_roots=pool_roots):
         _load_enrolled_record(
             manifest_path,
             study_id=study_id,
             enrolled_index=enrolled_index,
+            exclude_legacy_migration=exclude_legacy_migration,
         )
 
     enrolled = sorted(

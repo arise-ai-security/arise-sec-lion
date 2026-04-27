@@ -109,7 +109,7 @@ class AgentSummaryReadModel:
                 status = "in_progress"
             elif isinstance(event, WorkCompleted):
                 status = "completed"
-            elif isinstance(event, WorkFailed) or isinstance(event, VerificationFailed) or isinstance(event, DecisionInfeasible):
+            elif isinstance(event, (WorkFailed, VerificationFailed, DecisionInfeasible)):
                 status = "failed"
             elif isinstance(event, RetryScheduled):
                 # FAILED → ANALYZING: agent is retrying, no longer terminal
@@ -186,7 +186,7 @@ class AgentQueryService:
         failed = 0
         active = 0
 
-        for agent_id, events in all_events.items():
+        for events in all_events.values():
             summary = AgentSummaryReadModel.from_events(events)
             if summary is None:
                 continue
@@ -206,7 +206,7 @@ class AgentQueryService:
             active=active,
         )
 
-    async def get_active_agent_ids(
+    async def get_active_agent_ids(  # noqa: PLR0912
         self,
         root_id: UUID | None = None,
         sequential_workers: bool = False,
@@ -297,7 +297,7 @@ class AgentQueryService:
 
         # Sort by path and return only the leftmost eligible worker
         eligible_workers.sort(key=lambda x: x[1])
-        return non_workers + [eligible_workers[0][0]]
+        return [*non_workers, eligible_workers[0][0]]
 
     def _get_dag_ready_workers(
         self,
@@ -392,7 +392,7 @@ class AgentQueryService:
         This allows lexicographic sorting for left-to-right order.
         """
         path: list[int] = []
-        current_id = agent_id
+        current_id: UUID | None = agent_id
 
         while current_id is not None and current_id in summaries:
             summary = summaries[current_id]
@@ -481,7 +481,7 @@ class AgentQueryService:
         (lower sibling_index). For each left sibling, verifies the ENTIRE
         subtree is complete (all descendants terminal), not just the root.
         """
-        current_id = agent_id
+        current_id: UUID | None = agent_id
 
         while current_id is not None and current_id in summaries:
             summary = summaries[current_id]
@@ -491,12 +491,14 @@ class AgentQueryService:
                 # Check siblings via children_map
                 for sibling_id in children_map.get(parent_id, []):
                     sibling = summaries[sibling_id]
-                    if sibling.sibling_index < summary.sibling_index:
-                        # Check if ENTIRE subtree is complete, not just the root
-                        if not self._is_subtree_complete(
+                    # Check if ENTIRE subtree is complete, not just the root.
+                    if (
+                        sibling.sibling_index < summary.sibling_index
+                        and not self._is_subtree_complete(
                             sibling_id, summaries, children_map
-                        ):
-                            return True
+                        )
+                    ):
+                        return True
 
             current_id = parent_id
 
@@ -554,7 +556,7 @@ class AgentQueryService:
 
         O(depth) instead of O(n) per call since subtree completion is cached.
         """
-        current_id = agent_id
+        current_id: UUID | None = agent_id
 
         while current_id is not None and current_id in summaries:
             summary = summaries[current_id]
@@ -564,10 +566,12 @@ class AgentQueryService:
                 current_sibling_index = summary.sibling_index
                 for sibling_id in children_map.get(parent_id, []):
                     sibling = summaries[sibling_id]
-                    if sibling.sibling_index < current_sibling_index:
-                        # Use cached result instead of recursive computation
-                        if not subtree_complete_cache.get(sibling_id, True):
-                            return True
+                    # Use cached result instead of recursive computation.
+                    if (
+                        sibling.sibling_index < current_sibling_index
+                        and not subtree_complete_cache.get(sibling_id, True)
+                    ):
+                        return True
 
             current_id = parent_id
 
@@ -585,7 +589,7 @@ class AgentQueryService:
         """
         # Count depth first to pre-allocate
         depth = 0
-        current_id = agent_id
+        current_id: UUID | None = agent_id
         while current_id is not None and current_id in summaries:
             depth += 1
             current_id = summaries[current_id].parent_id

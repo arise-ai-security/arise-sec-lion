@@ -10,17 +10,30 @@
 
 ## Runs Summary
 
-Total runs enrolled: **{{ total_runs }}**.
+Total runs in the scripted summary: **{{ totals.runs }}**.
 
 ![Cells overview]({{ figure_path }})
 
-| Cell | Runs | Deliverables present |
-|------|-----:|:--------------------:|
-{%- for row in table_rows %}
-| {{ row.cell }} | {{ row.count }} | {{ row.deliverables }} |
-{%- endfor %}
+| Cell | Runs | Deliverables | Tool calls | Tool results | Thinking events | Thinking chars | Tokens | Cost USD | Duration s |
+|------|-----:|-------------:|-----------:|-------------:|----------------:|---------------:|-------:|---------:|-----------:|
+{% for row in table_rows %}
+| {{ row.cell }} | {{ row.runs }} | {{ row.deliverables }} | {{ row.tool_calls }} | {{ row.tool_results }} | {{ row.thinking_events }} | {{ row.thinking_chars }} | {{ row.tokens }} | {{ row.cost }} | {{ row.duration }} |
+{% endfor %}
 
 Raw table: [`reports/tables/summary.csv`](tables/summary.csv)
+Per-run metrics: [`reports/tables/run_metrics.csv`](tables/run_metrics.csv)
+Totals: [`reports/tables/totals.csv`](tables/totals.csv)
+
+## Artifact Archive
+
+Run traces and testcase deliverables copied by `scripts/collect.py` live under
+[`artifacts/`](../artifacts/), grouped by cell, task, replicate, and run id.
+
+## Qualitative Notes
+
+Use the archived `events.jsonl`, `stdout_stderr.log`, `run_manifest.json`, and
+testcase files for qualitative review. The numeric table above is generated
+from the same event traces.
 
 ## Reproducibility
 

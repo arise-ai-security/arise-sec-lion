@@ -25,12 +25,14 @@ dependencies = [
 [dependency-groups]
 dev = [
     "hypothesis>=6.100.0",
+    "mypy>=1.20.2",
     "pre-commit>=4.4.0",
     "pyright>=1.1.407",
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=6.0.0",
     "ruff>=0.14.5",
+    "types-pyyaml>=6.0.12.20260408",
 ]
 
 [tool.pytest.ini_options]
@@ -65,3 +67,17 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+files = [
+    "bootstrap",
+    "config",
+    "core",
+    "experiments",
+    "infrastructure",
+    "plugins",
+    "presentation",
+]
+exclude = '(^|/)(tests|runs|_legacy)/|^scripts/|^dataset-final/|^datasets-legacy/'
+ignore_missing_imports = true

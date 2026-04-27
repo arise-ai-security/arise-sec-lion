@@ -39,7 +39,12 @@ def _load_groups() -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()}
 
 
-def _render(rows: list[dict[str, str]], manifest: dict, enrollment: list[dict]) -> str:
+def _render(
+    rows: list[dict[str, str]],
+    totals: dict[str, str],
+    manifest: dict,
+    enrollment: list[dict],
+) -> str:
     template_dir = STUDY_DIR / "templates"
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(template_dir),
@@ -66,15 +71,24 @@ def _render(rows: list[dict[str, str]], manifest: dict, enrollment: list[dict]) 
     table_rows = [
         {
             "cell": row["cell"],
-            "count": row["runs"],
+            "runs": row["runs"],
             "deliverables": row["deliverables_present"],
+            "tool_calls": row["tool_call_count"],
+            "tool_results": row["tool_result_count"],
+            "thinking_events": row["thinking_event_count"],
+            "thinking_chars": row["thinking_chars"],
+            "tokens": row["tokens_total"],
+            "cost": row["total_cost_usd"],
+            "duration": row["run_duration_seconds"],
         }
         for row in rows
     ]
+    enrolled_count = str(len(enrollment))
     return template.render(
         hypothesis=manifest.get("hypothesis", ""),
         cells=cells,
-        total_runs=len(enrollment),
+        totals=totals,
+        enrolled_count=enrolled_count,
         figure_path="figures/cells-overview.svg",
         table_rows=table_rows,
     )
@@ -86,6 +100,8 @@ def main() -> int:
 
     manifest_rel = f"{rel_study}/manifest.yaml"
     table_rel = f"{rel_study}/reports/tables/summary.csv"
+    run_metrics_rel = f"{rel_study}/reports/tables/run_metrics.csv"
+    totals_rel = f"{rel_study}/reports/tables/totals.csv"
     figure_rel = f"{rel_study}/reports/figures/cells-overview.svg"
     enrollment_rel = f"{rel_study}/reports/{ENROLLMENT_LOCK_FILENAME}"
     template_rel = f"{rel_study}/templates/report.md.j2"
@@ -95,7 +111,8 @@ def main() -> int:
 
     manifest_abs = STUDY_DIR.parent.parent / manifest_rel
     table_abs = STUDY_DIR.parent.parent / table_rel
-    for required in (manifest_abs, table_abs):
+    totals_abs = STUDY_DIR.parent.parent / totals_rel
+    for required in (manifest_abs, table_abs, totals_abs):
         if not required.is_file():
             raise FileNotFoundError(
                 f"missing dependency {required.name}; run `collect.py` and `plot_success.py` first"
@@ -103,15 +120,25 @@ def main() -> int:
 
     manifest = yaml.safe_load(manifest_abs.read_text(encoding="utf-8"))
     rows = list(csv.DictReader(io.StringIO(table_abs.read_text(encoding="utf-8"))))
+    totals_rows = list(csv.DictReader(io.StringIO(totals_abs.read_text(encoding="utf-8"))))
+    totals = totals_rows[0] if totals_rows else {}
     enrollment_doc = load_enrollment_lock(STUDY_ID)
     enrollment = enrollment_doc.get("enrollment") or []
 
     write_md(
         path=output_rel,
-        content=_render(rows, manifest, enrollment),
+        content=_render(rows, totals, manifest, enrollment),
         script=script_rel,
         template=template_rel,
-        inputs=[manifest_rel, table_rel, figure_rel, enrollment_rel, groups_rel],
+        inputs=[
+            manifest_rel,
+            table_rel,
+            run_metrics_rel,
+            totals_rel,
+            figure_rel,
+            enrollment_rel,
+            groups_rel,
+        ],
     )
     logger.info("wrote %s", output_rel)
     return 0

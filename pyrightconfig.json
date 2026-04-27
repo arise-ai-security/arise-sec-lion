@@ -1,0 +1,24 @@
+{
+  "include": [
+    "bootstrap",
+    "config",
+    "core",
+    "experiments",
+    "infrastructure",
+    "plugins",
+    "presentation"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/tests",
+    ".claude",
+    ".venv",
+    "dataset-final",
+    "datasets-legacy",
+    "output",
+    "runs",
+    "scripts"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic"
+}

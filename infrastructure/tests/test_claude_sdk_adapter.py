@@ -157,12 +157,14 @@ class TestSDKAdapterConfig:
             model="claude-sonnet-4",
             timeout_seconds=600,
             allowed_tools=["Read", "Bash"],
+            disallowed_tools=["Write"],
             permission_mode="default",
         )
 
         assert config.model == "claude-sonnet-4"
         assert config.timeout_seconds == 600
         assert config.allowed_tools == ["Read", "Bash"]
+        assert config.disallowed_tools == ["Write"]
         assert config.permission_mode == "default"
 
 
@@ -190,6 +192,18 @@ class TestClaudeAgentSDKAdapter:
     def test_stream_name_constant(self) -> None:
         """Adapter uses consistent stream name."""
         assert ClaudeAgentSDKAdapter.STREAM_NAME == "claude_sdk"
+
+    def test_effective_allowed_tools_applies_disallowed_policy(self) -> None:
+        adapter = ClaudeAgentSDKAdapter(
+            SDKAdapterConfig(allowed_tools=["*"], disallowed_tools=["Write", "MultiEdit"])
+        )
+
+        allowed = adapter._effective_allowed_tools()
+
+        assert "Read" in allowed
+        assert "Bash" in allowed
+        assert "Write" not in allowed
+        assert "MultiEdit" not in allowed
 
     def test_format_error_cli_not_found(self) -> None:
         """CLI not found errors get helpful message."""

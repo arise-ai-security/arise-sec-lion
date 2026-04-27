@@ -4,6 +4,7 @@ Uses mocking to avoid requiring actual Google ADK installation and API calls.
 Tests verify correct event mapping, cost calculation, and error handling.
 """
 
+from typing import ClassVar
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -84,11 +85,13 @@ class TestADKAdapterConfig:
             model="gemini-3-flash",
             timeout_seconds=600,
             max_turns=100,
+            disallowed_tools=["write_file"],
         )
 
         assert config.model == "gemini-3-flash"
         assert config.timeout_seconds == 600
         assert config.max_turns == 100
+        assert config.disallowed_tools == ["write_file"]
 
 
 class TestGoogleADKAdapter:
@@ -124,6 +127,14 @@ class TestGoogleADKAdapter:
         assert "task execution agent" in instruction.lower()
         assert "filesystem" in instruction.lower()
         assert "shell" in instruction.lower()
+
+    def test_tool_policy_blocks_filesystem_when_write_is_denied(self) -> None:
+        adapter = GoogleADKAdapter(
+            ADKAdapterConfig(allowed_tools=["*"], disallowed_tools=["write_file"])
+        )
+
+        assert adapter._filesystem_tool_allowed() is False
+        assert adapter._tool_allowed("execute_command") is True
 
     def test_calculate_cost(self) -> None:
         """Cost calculation uses correct pricing."""
@@ -265,7 +276,7 @@ class TestEventProcessing:
             text = "Text from part"
 
         class MockContent:
-            parts = [MockPart()]
+            parts: ClassVar[list[MockPart]] = [MockPart()]
 
         mock_event = MagicMock()
         mock_event.content = MockContent()
@@ -288,7 +299,7 @@ class TestEventProcessing:
         # Create mock function call - part without text attribute
         class MockFunctionCall:
             name = "execute_command"
-            args = {"command": "gcc -o main main.c"}
+            args: ClassVar[dict[str, str]] = {"command": "gcc -o main main.c"}
 
         class MockPart:
             function_call = MockFunctionCall()
@@ -298,7 +309,7 @@ class TestEventProcessing:
                 pass
 
         class MockContent:
-            parts = [MockPart()]
+            parts: ClassVar[list[MockPart]] = [MockPart()]
 
         mock_event = MagicMock()
         mock_event.content = MockContent()
@@ -324,7 +335,7 @@ class TestEventProcessing:
             function_response = MockFunctionResponse()
 
         class MockContent:
-            parts = [MockPart()]
+            parts: ClassVar[list[MockPart]] = [MockPart()]
 
         mock_event = MagicMock()
         mock_event.content = MockContent()
@@ -349,10 +360,10 @@ class TestCreateShellTool:
         assert result["status"] == "success"
         assert str(tmp_path) in result["stdout"]
 
-    def test_shell_tool_respects_timeout(self) -> None:
+    def test_shell_tool_respects_timeout(self, tmp_path) -> None:
         """Shell tool respects timeout parameter."""
         adapter = GoogleADKAdapter(ADKAdapterConfig())
-        shell_tool = adapter._create_shell_tool("/tmp")
+        shell_tool = adapter._create_shell_tool(str(tmp_path))
 
         result = shell_tool("sleep 10", timeout=1)
 

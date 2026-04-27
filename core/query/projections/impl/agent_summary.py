@@ -3,6 +3,7 @@
 Builds AgentSummary read models from events with efficient child loading.
 """
 
+from typing import Any
 from uuid import UUID
 
 from core.domain.aggregates.agent_session import AgentSession
@@ -245,7 +246,7 @@ class AgentSummaryService:
         details = self._build_config_details(config, strategy)
         return strategy, details
 
-    def _build_config_details(self, config: object, strategy: str | None) -> dict:
+    def _build_config_details(self, config: Any, strategy: str | None) -> dict:
         """Build config details dict based on strategy type.
 
         Args:

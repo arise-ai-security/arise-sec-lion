@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
+from core.application.run_invariants import WorkerResult
 from core.application.services import (
     AgentQueryService,
     AgentRepository,
@@ -28,7 +29,6 @@ from core.application.services import (
     RetryPolicy,
     build_role_handlers,
 )
-from core.application.run_invariants import WorkerResult
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import ChildSpawned, DomainEvent, WorkCompleted, WorkFailed
@@ -50,7 +50,12 @@ if TYPE_CHECKING:
     from core.application.services import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStorePort
-    from core.ports.runtime_ports import SharedContextPort, SiblingViewPort, SystemLimitsPort, Toolset
+    from core.ports.runtime_ports import (
+        SharedContextPort,
+        SiblingViewPort,
+        SystemLimitsPort,
+        Toolset,
+    )
     from core.ports.worker_port import WorkerPort
 
 
@@ -356,11 +361,38 @@ class AgentExecutionService:
             )
 
         start_time = time.monotonic()
+        worker_context = None
+        if self._domain_plugin is not None:
+            worker_context = await self._domain_plugin.prepare_worker_execution(
+                root_id=root_agent_id,
+                agent_id=root_agent_id,
+                run_output_path=self._working_directory,
+                domain_context=self._current_domain_context,
+            )
+
         bundle = self._flat_invariant_builder(
             task=self._current_task,
             domain_context=self._current_domain_context,
-            run_dir=self._working_directory,
+            run_dir=(
+                Path(worker_context.working_directory)
+                if worker_context is not None and worker_context.working_directory
+                else self._working_directory
+            ),
         )
+        if worker_context is not None and worker_context.task_context:
+            bundle = FlatModeBundle(
+                spec=bundle.spec,
+                tool_policy=bundle.tool_policy,
+                timeouts=bundle.timeouts,
+                workspace=bundle.workspace.model_copy(
+                    update={
+                        "extras": {
+                            **dict(bundle.workspace.extras),
+                            **dict(worker_context.task_context),
+                        }
+                    }
+                ),
+            )
 
         boss = await self._repository.load(root_agent_id)
         tool_name = self._config.default_worker_tool
@@ -368,6 +400,11 @@ class AgentExecutionService:
         # Mirror the hierarchical worker's progression so projections stay
         # consistent (CodeGenerationStarted -> WorkCompleted/WorkFailed).
         base_version = boss.version
+        boss.emit_prompt_sent(
+            prompt=bundle.spec.rendered_prompt,
+            prompt_type="worker_execution",
+            target=tool_name,
+        )
         boss.start_worker_execution(tool_name)
         await self._repository.persist_events(boss, base_version, self._progress_callback)
 
@@ -392,10 +429,18 @@ class AgentExecutionService:
                 start_time,
                 status_override="failed",
             )
+            if self._domain_plugin is not None:
+                await self._domain_plugin.cleanup_worker_execution(
+                    root_id=root_agent_id,
+                    agent_id=root_agent_id,
+                    domain_context=self._current_domain_context,
+                )
             return
 
         reloaded = await self._repository.load(root_agent_id)
         base_version = reloaded.version
+        for event in result.events:
+            reloaded.apply_worker_event(event)
         terminal_event = self._build_terminal_event(reloaded.agent_id, result)
         reloaded.apply_worker_event(terminal_event)
         await self._repository.persist_events(reloaded, base_version, self._progress_callback)
@@ -405,6 +450,12 @@ class AgentExecutionService:
             start_time,
             status_override=self._classify_flat_run(result.exit_status),
         )
+        if self._domain_plugin is not None:
+            await self._domain_plugin.cleanup_worker_execution(
+                root_id=root_agent_id,
+                agent_id=root_agent_id,
+                domain_context=self._current_domain_context,
+            )
 
     @staticmethod
     def _build_terminal_event(
@@ -444,7 +495,7 @@ class AgentExecutionService:
         """Execute agent step with exception handling, jitter, and rate limiting."""
         try:
             if self._llm_jitter_max_ms > 0:
-                jitter_ms = random.randint(0, self._llm_jitter_max_ms)
+                jitter_ms = random.randint(0, self._llm_jitter_max_ms)  # noqa: S311
                 await asyncio.sleep(jitter_ms / 1000.0)
 
             async with self._llm_semaphore:

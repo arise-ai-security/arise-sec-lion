@@ -18,6 +18,8 @@ from uuid import UUID  # noqa: TC003 — Pydantic resolves field types at runtim
 
 from pydantic import BaseModel, Field
 
+from core.domain.events.events import DomainEvent  # noqa: TC001 - Pydantic resolves at runtime.
+
 
 if TYPE_CHECKING:
     from config.settings import Settings
@@ -105,6 +107,7 @@ class WorkerResult(BaseModel):
     tokens_used: int | None = None
     wall_time_seconds: float
     output_summary: str | None = None
+    events: tuple[DomainEvent, ...] = ()
 
 
 def build_task_prompt(
@@ -199,27 +202,26 @@ def build_task_prompt(
 def build_tool_policy(*, settings: Settings) -> ToolPolicy:
     """Extract allowed/disallowed tool names from settings.
 
-    Reads from ``settings.worker.tool_params.<active_tool>`` (the strict
-    schema guarantees the active slot is populated). For ``claude_code``
-    that's the explicit allowed/disallowed lists. For ``openhands`` and
-    ``google_adk`` the allowlist is implicit (all tools allowed); the
-    policy reflects that with ``allowed=("*",)`` and ``disallowed=()``.
+    Reads the global ``settings.worker.allowed_tools`` / ``disallowed_tools``
+    policy first so experiments apply the same allow/block list to every
+    backend. The legacy Claude-Code-specific slot is still honored as a
+    fallback for older overlays.
 
     ``allowed_bash_commands`` is derived from ``settings.security.tools``
     when security is enabled, else empty.
     """
-    tool = settings.worker.tool
-    if tool == "claude_code":
+    allowed = tuple(settings.worker.allowed_tools)
+    disallowed = tuple(settings.worker.disallowed_tools)
+
+    # Back-compat for pre-global-policy overlays that only populated the
+    # Claude-Code-specific params block.
+    if settings.worker.tool == "claude_code":
         params = settings.worker.tool_params.claude_code
-        if params is None:
-            raise ValueError(
-                "worker.tool_params.claude_code must be populated when worker.tool='claude_code'"
-            )
-        allowed = tuple(params.allowed_tools)
-        disallowed = tuple(params.disallowed_tools)
-    else:
-        allowed = ("*",)
-        disallowed = ()
+        if params is not None:
+            if allowed == ("*",) and params.allowed_tools != ["*"]:
+                allowed = tuple(params.allowed_tools)
+            if not disallowed and params.disallowed_tools:
+                disallowed = tuple(params.disallowed_tools)
 
     allowed_bash = tuple(settings.security.tools) if settings.security.enabled else ()
 

@@ -3,4 +3,5 @@
 # in every study's manifest.yaml. Unknown keys fail manifest validation.
 A: Claude Code CLI
 B: Our System
-# Add C, D, ... as new approaches are introduced.
+C: Our System + Qwen
+# Add D, E, ... as new approaches are introduced.

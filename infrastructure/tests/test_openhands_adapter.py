@@ -115,7 +115,31 @@ class _StuckConversation(_FakeConversation):
 
 
 class TestOpenHandsAdapter:
-    def test_extract_result_compacts_observations_before_core(self) -> None:
+    def test_tool_policy_blocks_file_editor_when_write_is_denied(self) -> None:
+        adapter = OpenHandsAdapter(allowed_tools=["*"], disallowed_tools=["Write"])
+
+        assert adapter._file_editor_allowed() is False
+        assert adapter._tool_allowed("Bash") is True
+
+    def test_action_and_observation_events_are_tool_events(self) -> None:
+        adapter = OpenHandsAdapter()
+        action = SimpleNamespace(command="echo hi")
+        observation = SimpleNamespace(
+            command="echo hi",
+            metadata=SimpleNamespace(exit_code=0),
+            content=[SimpleNamespace(text="hi")],
+        )
+
+        assert adapter._classify_event(SimpleNamespace(action=action)) == "tool_use"
+        assert adapter._classify_event(SimpleNamespace(observation=observation)) == "tool_result"
+        action_content = adapter._extract_event_content(SimpleNamespace(action=action))
+        assert action_content is not None
+        assert "Tool: SimpleNamespace" in action_content
+        assert "Tool result:" in adapter._extract_event_content(
+            SimpleNamespace(observation=observation)
+        )
+
+    def test_extract_result_compacts_observations_before_core(self, tmp_path: Path) -> None:
         adapter = OpenHandsAdapter()
         observation = SimpleNamespace(
             command="make test",
@@ -125,7 +149,7 @@ class TestOpenHandsAdapter:
         event = SimpleNamespace(observation=observation)
         conversation = SimpleNamespace(state=SimpleNamespace(events=[event]))
 
-        result = adapter._extract_result(conversation, "/tmp/workspace")
+        result = adapter._extract_result(conversation, str(tmp_path))
 
         assert result == "$ make test (exit 1)\nfailure output\nstack trace"
 

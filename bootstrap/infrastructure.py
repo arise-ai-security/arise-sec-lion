@@ -37,6 +37,8 @@ class InfrastructureConfig:
     default_worker_tool: WorkerToolType
     worker_tool_model: str
     worker_tool_timeout: int
+    worker_allowed_tools: list[str] | None = None
+    worker_disallowed_tools: list[str] | None = None
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
     format_repairer_enabled: bool = False
@@ -67,6 +69,8 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             SDKAdapterConfig(
                 timeout_seconds=config.worker_tool_timeout,
                 model=config.worker_tool_model,
+                allowed_tools=config.worker_allowed_tools or SDKAdapterConfig().allowed_tools,
+                disallowed_tools=config.worker_disallowed_tools or [],
             )
         )
     if config.default_worker_tool == "openhands":
@@ -75,12 +79,16 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             timeout_seconds=config.worker_tool_timeout,
             max_iterations_per_run=config.worker_tool_max_iterations,
             base_url=config.worker_tool_base_url,
+            allowed_tools=config.worker_allowed_tools,
+            disallowed_tools=config.worker_disallowed_tools,
         )
     if config.default_worker_tool == "google_adk":
         return GoogleADKAdapter(
             ADKAdapterConfig(
                 model=config.worker_tool_model,
                 timeout_seconds=config.worker_tool_timeout,
+                allowed_tools=config.worker_allowed_tools or ADKAdapterConfig().allowed_tools,
+                disallowed_tools=config.worker_disallowed_tools or [],
             )
         )
     raise ValueError(f"Unknown worker tool: {config.default_worker_tool}")

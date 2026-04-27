@@ -174,13 +174,26 @@ class SiblingViewPort(Protocol):
 class SystemLimitsPort(Protocol):
     """Execution limits for the orchestration system loop."""
 
-    max_depth: int
-    max_children_per_node: int
-    max_total_agents: int
-    max_concurrent_workers: int
-    max_concurrent_llm_calls: int
-    llm_jitter_max_ms: int
-    max_run_duration_seconds: float
+    @property
+    def max_depth(self) -> int: ...
+
+    @property
+    def max_children_per_node(self) -> int: ...
+
+    @property
+    def max_total_agents(self) -> int: ...
+
+    @property
+    def max_concurrent_workers(self) -> int: ...
+
+    @property
+    def max_concurrent_llm_calls(self) -> int: ...
+
+    @property
+    def llm_jitter_max_ms(self) -> int: ...
+
+    @property
+    def max_run_duration_seconds(self) -> float: ...
 
     def is_workers_limited(self) -> bool: ...
     def is_llm_limited(self) -> bool: ...

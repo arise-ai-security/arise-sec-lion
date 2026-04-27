@@ -14,8 +14,14 @@ from typing import Any
 import litellm
 
 from core.domain.exceptions import LLMError
-from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage, ToolCall
+from core.domain.values.llm_response import (
+    LLMResponse,
+    LLMToolResponse,
+    LLMUsage,
+    ToolCall,
+)
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
+
 
 logger = logging.getLogger(__name__)
 
@@ -493,26 +499,28 @@ def _match_single_tool_call(
     """
     # Shape 1: {"name": "<tool>", "arguments": {...}}
     if "name" in item and "arguments" in item and isinstance(item["arguments"], dict):
-        if item["name"] in tool_name_set:
+        name = item["name"]
+        if isinstance(name, str) and name in tool_name_set:
             return ToolCall(
                 id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-                name=item["name"],
+                name=name,
                 arguments=item["arguments"],
             )
 
     # Shape 1b: {"name": "<tool>", ...} — name matches a tool, no
     # "arguments" wrapper, and no "description" (which would indicate
     # a subtask rather than a tool call).
+    name = item.get("name")
     if (
-        "name" in item
-        and item["name"] in tool_name_set
+        isinstance(name, str)
+        and name in tool_name_set
         and "description" not in item
         and "arguments" not in item
     ):
         args = {k: v for k, v in item.items() if k != "name"}
         return ToolCall(
             id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-            name=item["name"],
+            name=name,
             arguments=args,
         )
 

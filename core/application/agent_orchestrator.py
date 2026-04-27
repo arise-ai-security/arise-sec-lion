@@ -14,22 +14,22 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from core.application.services import SubtaskScope, build_prompt_capabilities
+from core.application.services import (
+    LLMQueryExecutor,
+    SubtaskScope,
+    ToolsetPolicyResolver,
+    VerificationPipeline,
+    build_prompt_capabilities,
+)
 from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
 from core.domain.services import (
     AssessmentResult,
     parse_assessment_response_async,
     parse_subtasks_from_llm_async,
 )
-from core.domain.services.config_resolver import ConfigResolver
+from core.domain.services.config_resolver import ConfigResolver, OperationType
 from core.domain.values.enums import AgentRole, AgentStatus
 
-
-from core.application.services import (
-    LLMQueryExecutor,
-    ToolsetPolicyResolver,
-    VerificationPipeline,
-)
 
 _REAL_CONSTRAINT_FAILURE_KEYWORDS: tuple[str, ...] = (
     "constraints_unsatisfiable",
@@ -182,6 +182,7 @@ def _is_prose_misinterpreted_assessment(
 
 if TYPE_CHECKING:
     from core.application.services import (
+        ActiveToolContext,
         ChildAgentFactory,
         PromptBuilder,
     )
@@ -247,7 +248,7 @@ class AgentOrchestrator:
             agent.fail_with_reason(f"Expected PENDING role, got {agent.role}")
             return
 
-        op = "task_assessment"
+        op: OperationType = "task_assessment"
         with self._timed_operation(agent, op):
             try:
                 # Shortcut: when the parent's decomposition flagged this
@@ -441,7 +442,7 @@ class AgentOrchestrator:
             agent.fail_with_reason(f"Expected BOSS/MANAGER role, got {agent.role}")
             return
 
-        op = "task_decomposition"
+        op: OperationType = "task_decomposition"
         with self._timed_operation(agent, op):
             domain_context = self._get_domain_context(agent)
             tool_context = self._toolset_resolver.resolve(agent.role)
@@ -812,7 +813,7 @@ class AgentOrchestrator:
             self,
             agent: "AgentSession",
             prompt: str,
-            operation: str,
+            operation: OperationType,
             tool_context: "ActiveToolContext | None" = None,
     ) -> "LLMResponse":
         """Query the LLM with optional tool-calling context.
@@ -850,7 +851,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         response_content: str,
         original_prompt: str,
-        op: str,
+        op: OperationType,
     ) -> "list[Subtask] | None":
         """Parse decomposition, with one corrective re-prompt on failure.
 
@@ -935,7 +936,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         original_prompt: str,
         narrative: str,
-        op: str,
+        op: OperationType,
         parse_error: Exception | None,
     ) -> str | None:
         """One corrective LLM turn for a prose-style assessment response.
@@ -964,7 +965,7 @@ class AgentOrchestrator:
             "Your previous response was prose, not the required output. "
             "The output_format section of the original prompt requires a "
             "single JSON object with an ``action`` field set to either "
-            "``\"execute\"`` (single worker) or ``\"decompose\"`` (with a "
+            '``"execute"`` (single worker) or ``"decompose"`` (with a '
             "``subtasks`` array), or a ``constraints_unsatisfiable`` object "
             "if and only if the limits truly cannot be met. No preamble, "
             "no commentary, no tool calls in this turn. Begin your "
@@ -983,11 +984,17 @@ class AgentOrchestrator:
                 config_dict=config_dict,
                 tools=[],
             )
-        except Exception as call_exc:  # noqa: BLE001 — auxiliary recovery path
+        except Exception as call_exc:
             logger.warning(
                 "Assessment recovery call failed for agent=%s: %s",
                 agent.agent_id,
                 call_exc,
+            )
+            return None
+        if recovered is None:
+            logger.warning(
+                "Assessment recovery call returned no response for agent=%s",
+                agent.agent_id,
             )
             return None
 
@@ -1007,7 +1014,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         original_prompt: str,
         narrative: str,
-        op: str,
+        op: OperationType,
         parse_error: Exception,
     ) -> str | None:
         """One corrective LLM turn after a narrative-instead-of-JSON response.
@@ -1054,11 +1061,17 @@ class AgentOrchestrator:
                 config_dict=config_dict,
                 tools=[],
             )
-        except Exception as call_exc:  # noqa: BLE001 — auxiliary recovery path
+        except Exception as call_exc:
             logger.warning(
                 "Decomposition recovery call failed for agent=%s: %s",
                 agent.agent_id,
                 call_exc,
+            )
+            return None
+        if recovered is None:
+            logger.warning(
+                "Decomposition recovery call returned no response for agent=%s",
+                agent.agent_id,
             )
             return None
 

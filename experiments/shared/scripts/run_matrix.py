@@ -101,6 +101,11 @@ def main(argv: list[str] | None = None) -> int:
         replicates,
         args.parallel,
     )
+    if args.dry_run:
+        for cell, task, replicate in jobs:
+            logger.info("dry-run job: cell=%s task=%s replicate=%d", cell, task, replicate)
+        logger.info("dry-run complete: %d jobs would run", len(jobs))
+        return 0
 
     results = _dispatch_jobs(
         jobs,
@@ -469,6 +474,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--no-render",
         action="store_true",
         help="Skip the per-study render/validate step after dispatch.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and list selected jobs without dispatching workers.",
     )
     return parser
 

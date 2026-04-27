@@ -5,15 +5,9 @@ implements ``WorkerToolPort`` (event-streaming for hierarchical mode). This
 adapter wraps it so flat-mode dispatch can call ``run_task`` and receive a
 single ``WorkerResult``.
 
-Note: container-session prep performed by ``SecurityDomainPlugin.prepare_worker_execution``
-is NOT replayed here. Flat-mode OpenHands runs therefore start with the
-generic ``workspace.root`` as the working directory; mirroring the secbench
-container lifecycle to flat mode is a follow-up tracked alongside PR 6.
-
-Note: ``tool_policy`` is implicit at the OpenHands SDK level (no argv flags
-exposed); ``timeouts`` come from the wrapped adapter's construction-time
-config. Both invariants are accepted by ``run_task`` to satisfy the
-``WorkerPort`` contract but are not threaded through to the adapter today.
+Note: ``tool_policy`` and ``timeouts`` are applied when the wrapped
+``OpenHandsAdapter`` is constructed by the composition root. They remain part
+of ``run_task`` to satisfy the ``WorkerPort`` contract.
 """
 
 from __future__ import annotations
@@ -23,7 +17,7 @@ import time
 from typing import TYPE_CHECKING
 
 from core.application.run_invariants import WorkerResult
-from core.domain.events.events import WorkCompleted, WorkFailed
+from core.domain.events.events import DomainEvent, WorkCompleted, WorkFailed
 
 
 if TYPE_CHECKING:
@@ -70,9 +64,11 @@ class OpenHandsWorker:
         exit_status: str = "failed"
         last_completed: str | None = None
         last_failure: str | None = None
+        events: list[DomainEvent] = []
 
         try:
             async for event in self._adapter.run_session(task_context):
+                events.append(event)
                 if isinstance(event, WorkCompleted):
                     exit_status = "completed"
                     last_completed = event.result
@@ -87,6 +83,7 @@ class OpenHandsWorker:
                 exit_status="failed",
                 wall_time_seconds=wall,
                 output_summary=f"OpenHandsWorker error: {error!r}",
+                events=tuple(events),
             )
 
         wall = time.monotonic() - start
@@ -97,4 +94,7 @@ class OpenHandsWorker:
             exit_status=exit_status,  # type: ignore[arg-type]
             wall_time_seconds=wall,
             output_summary=truncated,
+            events=tuple(
+                event for event in events if not isinstance(event, (WorkCompleted, WorkFailed))
+            ),
         )

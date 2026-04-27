@@ -1,35 +1,57 @@
 {
   "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml": {
-    "generated_at": "2026-04-26T21:53:19.121968Z",
+    "generated_at": "2026-04-27T00:09:00.957647Z",
     "generated_by": "experiments/shared/scripts/collect.py",
     "inputs": [
       "experiments/2026-04-23-initial-secbench/manifest.yaml"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/manifest.yaml": "e439bd137d980a1d44daf0819d49314766f8d5ad8ba24c3f6b7409747db52a6b"
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
     },
-    "output_sha256": "429e477821c218ddba21806cf29739108f3acf371e7cdc22dc8855fbb37ea479"
+    "output_sha256": "453143a6652695487f5c41d6f7ac3bf1cb8ebeb0d5af781ad2056f0ee06e2504"
   },
   "experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg": {
-    "generated_at": "2026-04-23T19:44:31.912728Z",
+    "generated_at": "2026-04-27T00:09:05.903070Z",
     "generated_by": "experiments/2026-04-23-initial-secbench/scripts/plot_success.py",
     "inputs": [
       "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": "e7c3a6b2667498bda683f4368ec1e581a187788b194aa2dd44ebe7d7bdc83b63"
+      "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": "6985b62e3e8095f80336d0bc79fe726a4c473640e0416505aedaab61b85bd07d"
     },
-    "output_sha256": "690852336e7480a712b0c329f10426ea69599d7bd75d61d512dcb82516768609"
+    "output_sha256": "7613f02355ee4435c322bcf96b76600fcb7d454a76788e08a9417686a2f8d86e"
   },
-  "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": {
-    "generated_at": "2026-04-26T20:12:35.520182Z",
+  "experiments/2026-04-23-initial-secbench/reports/tables/run_metrics.csv": {
+    "generated_at": "2026-04-27T00:09:01.001730Z",
     "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
     "inputs": [
       "experiments/2026-04-23-initial-secbench/manifest.yaml"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/manifest.yaml": "e439bd137d980a1d44daf0819d49314766f8d5ad8ba24c3f6b7409747db52a6b"
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
     },
-    "output_sha256": "e7c3a6b2667498bda683f4368ec1e581a187788b194aa2dd44ebe7d7bdc83b63"
+    "output_sha256": "650bec1d7ce51e04249808d2e5b411ebb0876c1f433c8762407d788177e63f7f"
+  },
+  "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": {
+    "generated_at": "2026-04-27T00:09:01.000984Z",
+    "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
+    "inputs": [
+      "experiments/2026-04-23-initial-secbench/manifest.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
+    },
+    "output_sha256": "6985b62e3e8095f80336d0bc79fe726a4c473640e0416505aedaab61b85bd07d"
+  },
+  "experiments/2026-04-23-initial-secbench/reports/tables/totals.csv": {
+    "generated_at": "2026-04-27T00:09:01.002269Z",
+    "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
+    "inputs": [
+      "experiments/2026-04-23-initial-secbench/manifest.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
+    },
+    "output_sha256": "6ed0787a722de75afdf92a4ed327ae242b839449efbddd8c1c34a1932c44c967"
   }
 }

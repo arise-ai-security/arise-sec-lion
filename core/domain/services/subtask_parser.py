@@ -325,7 +325,7 @@ def _parse_json(response: str) -> Any:
     raise ValueError(f"LLM response is not valid JSON and repair failed: {clean[:200]}")
 
 
-def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
+def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:  # noqa: PLR0911
     """Normalize various LLM response formats to subtask list."""
     match data:
         case list() as items:
@@ -351,7 +351,7 @@ def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
             raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")
 
 
-def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
+def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:  # noqa: PLR0912
     """Normalize LLM-hallucinated values in a subtask dict.
 
     Fixes known hallucination patterns (invalid tool names, non-integer
@@ -464,7 +464,7 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
     # Resolve string depends_on references across all subtasks
     _resolve_depends_on(items)
 
-    config_adapter = TypeAdapter(AgentConfig)
+    config_adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
     subtasks: list[Subtask] = []
 
     for idx, item in enumerate(items):
@@ -587,7 +587,9 @@ def parse_assessment_response(response: str) -> AssessmentResult:
     if not action:
         raw_subtasks = data.get("subtasks") or data.get("tasks") or data.get("children")
         if raw_subtasks and isinstance(raw_subtasks, list):
-            logger.warning("Assessment missing 'action' field but has subtasks, inferring 'decompose'")
+            logger.warning(
+                "Assessment missing 'action' field but has subtasks, inferring 'decompose'"
+            )
             subtasks = _validate_subtasks(raw_subtasks)
             return AssessmentResult(
                 action="decompose",
@@ -626,7 +628,7 @@ async def _try_repair(
     """
     try:
         repaired = await repairer.repair(response, schema_hint)
-    except Exception as repair_exc:  # noqa: BLE001 — auxiliary, must not propagate
+    except Exception as repair_exc:
         logger.warning(
             "Format repairer raised (%s); falling back to mechanical-parser "
             "error: %s",

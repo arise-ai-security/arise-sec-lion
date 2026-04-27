@@ -4,7 +4,7 @@ Orchestrates event querying and prompt parsing to build a complete
 hierarchy trace. Uses ports for infrastructure abstraction.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.application.services.prompt.prompt_parser import PromptParser
@@ -110,7 +110,7 @@ class PromptTraceService:
         agent_data: dict[UUID, dict] = {}
 
         for agent_id, events in grouped_events.items():
-            data = {
+            data: dict[str, Any] = {
                 "role": "unknown",
                 "task": "",
                 "parent_id": None,
@@ -158,7 +158,7 @@ class PromptTraceService:
             children_map[parent_id].append(agent_id)
 
         # Sort children by sibling_index for left-to-right ordering
-        for parent_id, children in children_map.items():
+        for children in children_map.values():
             children.sort(key=lambda aid: agent_data[aid]["sibling_index"])
 
         return children_map

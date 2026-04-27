@@ -45,6 +45,7 @@ class SDKAdapterConfig:
     allowed_tools: list[str] = field(
         default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
     )
+    disallowed_tools: list[str] = field(default_factory=list)
     permission_mode: PermissionMode = "bypassPermissions"
 
 
@@ -172,13 +173,22 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         return ClaudeAgentOptions(
             model=self.config.model,
             cwd=working_dir,
-            allowed_tools=self.config.allowed_tools,
+            allowed_tools=self._effective_allowed_tools(),
             permission_mode=self.config.permission_mode,
             can_use_tool=can_use_tool if container_session is not None else None,
             hooks={
                 "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
             },
         )
+
+    def _effective_allowed_tools(self) -> list[str]:
+        """Apply global allow/deny policy to Claude SDK tool names."""
+        if self.config.allowed_tools == ["*"]:
+            allowed = ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"]
+        else:
+            allowed = list(self.config.allowed_tools)
+        blocked = set(self.config.disallowed_tools)
+        return [tool for tool in allowed if tool not in blocked]
 
     async def _drain_queue(
         self,

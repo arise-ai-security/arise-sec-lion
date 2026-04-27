@@ -126,8 +126,10 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
                 "with worker.tool='claude_code'"
             )
         return ClaudeCodeWorker(
+            model=settings.worker.model,
             output_format=params.output_format,
             include_partial_messages=params.include_partial_messages,
+            max_turns=params.max_turns,
         )
     if tool == "openhands":
         adapter = OpenHandsAdapter(
@@ -135,6 +137,8 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
             timeout_seconds=settings.worker.timeout,
             max_iterations_per_run=settings.worker.max_iterations_per_run,
             base_url=settings.worker.base_url,
+            allowed_tools=settings.worker.allowed_tools,
+            disallowed_tools=settings.worker.disallowed_tools,
         )
         return OpenHandsWorker(adapter=adapter)
     if tool == "google_adk":
@@ -215,6 +219,8 @@ def create_runtime_cli(
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
+            worker_allowed_tools=settings.worker.allowed_tools,
+            worker_disallowed_tools=settings.worker.disallowed_tools,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
             format_repairer_enabled=settings.format_repairer.enabled,

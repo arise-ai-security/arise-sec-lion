@@ -159,6 +159,47 @@ def test_run_task_builds_expected_argv(
     assert result.exit_status == "completed"
 
 
+def test_run_task_threads_model_max_turns_and_allowed_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """Global worker config is reflected in the Claude Code CLI invocation."""
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker(model="claude-sonnet-4-6", max_turns=40)
+
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(allowed=("Read", "Bash")),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    model_idx = argv.index("--model")
+    assert list(argv[model_idx : model_idx + 2]) == ["--model", "claude-sonnet-4-6"]
+    turns_idx = argv.index("--max-turns")
+    assert list(argv[turns_idx : turns_idx + 2]) == ["--max-turns", "40"]
+    assert argv.count("--allowedTools") == 2
+    assert "Read" in argv
+    assert "Bash" in argv
+
+
 def test_run_task_strips_disallowed_flag_when_policy_empty(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:

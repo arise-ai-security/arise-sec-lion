@@ -45,8 +45,7 @@ def _patch_openhands_fn_converter() -> None:
     ConversationRunError("...: 'content'"). Claude/GPT don't trigger this
     because they always include reasoning text before the tag.
     """
-    from openhands.sdk.llm.mixins import fn_call_converter as _fcc
-    from openhands.sdk.llm.mixins import non_native_fc as _nnfc
+    from openhands.sdk.llm.mixins import fn_call_converter as _fcc, non_native_fc as _nnfc
 
     if getattr(_fcc, "_arise_content_key_patched", False):
         return
@@ -67,20 +66,21 @@ def _patch_openhands_fn_converter() -> None:
     _fcc.convert_fncall_messages_to_non_fncall_messages = _patched
     # Also patch the reference imported by non_native_fc, which captures the
     # original function at import time and bypasses the module-level patch.
-    _nnfc.convert_fncall_messages_to_non_fncall_messages = _patched
+    converter_name = "convert_fncall_messages_to_non_fncall_messages"
+    setattr(_nnfc, converter_name, _patched)
     _fcc._arise_content_key_patched = True  # type: ignore[attr-defined]
 
 
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
-    "ActionEvent": "thinking",
+    "ActionEvent": "tool_use",
     "AgentThinkAction": "thinking",
     "MessageEvent": "output",
-    "ObservationEvent": "output",
-    "CmdRunObservation": "output",
+    "ObservationEvent": "tool_result",
+    "CmdRunObservation": "tool_result",
     "AgentErrorEvent": "output",
-    "FileReadAction": "progress",
-    "FileWriteAction": "progress",
-    "FileEditAction": "progress",
+    "FileReadAction": "tool_use",
+    "FileWriteAction": "tool_use",
+    "FileEditAction": "tool_use",
 }
 
 
@@ -110,14 +110,18 @@ class OpenHandsAdapter(WorkerAdapterBase):
         timeout_seconds: int = 300,
         max_iterations_per_run: int = DEFAULT_MAX_ITERATIONS_PER_RUN,
         base_url: str | None = None,
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
     ) -> None:
         """Initialize OpenHands adapter."""
         super().__init__(timeout_seconds=timeout_seconds)
-        self.model = model or os.getenv("LLM_MODEL", "openai/gpt-4o")
+        self.model: str = model or os.getenv("LLM_MODEL") or "openai/gpt-4o"
         self.api_key = api_key or self._detect_api_key()
-        self.max_iterations_per_run = max_iterations_per_run
+        self.max_iterations_per_run: int = max_iterations_per_run
         # None lets OpenHands/LiteLLM fall back to env vars (e.g. OLLAMA_API_BASE).
-        self.base_url = base_url
+        self.base_url: str | None = base_url
+        self.allowed_tools: list[str] = allowed_tools or ["*"]
+        self.disallowed_tools: list[str] = disallowed_tools or []
 
     def _detect_api_key(self) -> str | None:
         """Detect appropriate API key based on model name."""
@@ -266,27 +270,59 @@ class OpenHandsAdapter(WorkerAdapterBase):
             # param does NOT propagate to Ollama — must use extra_body.
             llm_kwargs["litellm_extra_body"] = {"think": False}
         llm = LLM(**llm_kwargs)
-        agent = Agent(
-            llm=llm,
-            tools=[
-                # Force subprocess-backed shell instead of the auto-detected tmux
-                # PTY: tmux streams commands character-by-character with
-                # bracketed-paste toggling per line, which stalls on complex
-                # nested quoting (e.g. ./run-cmd "... grep 'id=\"[^\"]*\"' ...").
-                # Subprocess sends the command as argv, bypassing terminal
-                # emulation entirely.
+        tools = []
+        if self._tool_allowed("Bash", "Terminal", "execute_command", "shell_execute"):
+            # Force subprocess-backed shell instead of the auto-detected tmux
+            # PTY: tmux streams commands character-by-character with
+            # bracketed-paste toggling per line, which stalls on complex
+            # nested quoting (e.g. ./run-cmd "... grep 'id=\"[^\"]*\"' ...").
+            # Subprocess sends the command as argv, bypassing terminal
+            # emulation entirely.
+            tools.append(
                 Tool(
                     name=TerminalTool.name,
                     params={"terminal_type": "subprocess"},
-                ),
-                Tool(name=FileEditorTool.name),
-            ],
-        )
+                )
+            )
+        if self._file_editor_allowed():
+            tools.append(Tool(name=FileEditorTool.name))
+
+        agent = Agent(llm=llm, tools=tools)
         return Conversation(
             agent=agent,
             workspace=working_dir,
             max_iteration_per_run=self.max_iterations_per_run,
         )
+
+    def _tool_allowed(self, *names: str) -> bool:
+        """Return whether any of ``names`` survives the global policy."""
+        blocked = set(self.disallowed_tools)
+        if any(name in blocked for name in names):
+            return False
+        if self.allowed_tools == ["*"]:
+            return True
+        allowed = set(self.allowed_tools)
+        return any(name in allowed for name in names)
+
+    def _file_editor_allowed(self) -> bool:
+        """Map global file-tool policy to OpenHands' coarse FileEditorTool.
+
+        OpenHands exposes read/write/edit through one SDK tool. If an
+        experiment blocks any mutating file operation, we disable the entire
+        file-editor surface rather than silently allowing writes.
+        """
+        mutating_aliases = {
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "NotebookEdit",
+            "write_file",
+            "create_directory",
+            "file_editor",
+        }
+        if mutating_aliases & set(self.disallowed_tools):
+            return False
+        return self._tool_allowed("Read", "Write", "Edit", "file_editor", "read_file")
 
     def _iter_conversation_events(self, conversation: Any) -> list[Any]:
         """Return the SDK events recorded for this conversation."""
@@ -484,7 +520,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         """
         entries: list[str] = []
         for event in self._iter_conversation_events(conversation):
-            if self._classify_event(event) != "output":
+            if self._classify_event(event) not in {"output", "tool_result"}:
                 continue
             summary = self._compact_observation(event)
             if summary:
@@ -598,20 +634,65 @@ class OpenHandsAdapter(WorkerAdapterBase):
     @staticmethod
     def _classify_event(event: Any) -> str:
         """Classify SDK event type to output_type."""
+        if getattr(event, "action", None) is not None:
+            return "tool_use"
+        if getattr(event, "observation", None) is not None:
+            return "tool_result"
         event_class_name = type(event).__name__
         return SDK_EVENT_TYPE_MAP.get(event_class_name, "output")
 
-    @staticmethod
-    def _extract_event_content(event: Any) -> str | None:
+    @classmethod
+    def _extract_event_content(cls, event: Any) -> str | None:
         """Extract content from SDK event."""
+        if hasattr(event, "action") and event.action:
+            return cls._format_action_event(event.action)
+        if hasattr(event, "observation") and event.observation:
+            return cls._format_observation_event(event.observation)
         if hasattr(event, "message") and event.message:
             return str(event.message)
         if hasattr(event, "content") and event.content:
             return str(event.content)
-        if hasattr(event, "action") and event.action:
-            return f"Action: {event.action}"
-        if hasattr(event, "observation") and event.observation:
-            return f"Observation: {event.observation}"
         if hasattr(event, "thought") and event.thought:
             return f"Thought: {event.thought}"
         return None
+
+    @classmethod
+    def _format_action_event(cls, action: Any) -> str:
+        """Format an OpenHands action as a canonical tool_use event."""
+        tool_name = type(action).__name__ or "OpenHandsAction"
+        payload: dict[str, Any] = {}
+        for attr_name in ("command", "path", "file_path", "thought", "content"):
+            value = getattr(action, attr_name, None)
+            if value:
+                payload[attr_name] = str(value)
+        detail = (
+            payload
+            if payload
+            else {"repr": cls._truncate_text(str(action), cls._EVENT_TEXT_LIMIT)}
+        )
+        return (
+            f"Tool: {tool_name}\n"
+            f"Input: {json_dumps_for_event(detail)}"
+        )
+
+    @classmethod
+    def _format_observation_event(cls, observation: Any) -> str:
+        """Format an OpenHands observation as a canonical tool_result event."""
+        command = getattr(observation, "command", "") or ""
+        metadata = getattr(observation, "metadata", None)
+        exit_code = getattr(metadata, "exit_code", None) if metadata else None
+        text = cls._truncate_text(cls._observation_text(observation), cls._EVENT_TEXT_LIMIT)
+        parts = []
+        if command:
+            parts.append(f"command={command}")
+        if exit_code is not None:
+            parts.append(f"exit_code={exit_code}")
+        header = "; ".join(parts) or type(observation).__name__
+        return f"Tool result: {header}\n{text}".rstrip()
+
+
+def json_dumps_for_event(payload: dict[str, Any]) -> str:
+    """JSON formatter for event payloads that may contain SDK objects."""
+    import json
+
+    return json.dumps(payload, sort_keys=True, default=str)

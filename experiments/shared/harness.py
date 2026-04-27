@@ -148,13 +148,13 @@ def _match_path_for_task(task: str, paths: list[str]) -> str | None:
 
     # First pass: exact stem match (dot-vs-dash drift tolerant).
     for path in paths:
-        stem = Path(path).stem.lower()
+        stem = Path(path).stem.lower().replace(".", "-")
         if normalized == stem:
             return path
 
     # Second pass: substring fallback, only if no exact match exists.
     for path in paths:
-        stem = Path(path).stem.lower()
+        stem = Path(path).stem.lower().replace(".", "-")
         if normalized in stem:
             return path
     return None
@@ -275,7 +275,7 @@ def run_ours(
         )
 
     context_file = coverage[task]
-    pool = runs_root or _runs_root()
+    pool = runs_root or _runs_root(config)
     # Capture the pointer state BEFORE the subprocess so we can tell the
     # difference between "this run advanced it" vs. "we're about to enroll a
     # stale pointer from a previous run" (codex review Phase 3 P1).
@@ -336,7 +336,23 @@ def run_ours(
     return run_id
 
 
-def _runs_root() -> Path:
+def _runs_root(config: Path | None = None) -> Path:
+    """Return the pool root that `main.py run` will write into."""
+    if config is None:
+        return get_repo_root() / "runs"
+    try:
+        from config.overlay import resolve_overlay
+
+        materialized = resolve_overlay(config, repo_root=get_repo_root())
+        raw_output = ((materialized.get("output") or {}).get("directory"))
+        if isinstance(raw_output, str) and raw_output.strip():
+            candidate = Path(raw_output)
+            return candidate if candidate.is_absolute() else get_repo_root() / candidate
+    except Exception:
+        logger.exception(
+            "failed to resolve output.directory from %s; falling back to runs/",
+            config,
+        )
     return get_repo_root() / "runs"
 
 

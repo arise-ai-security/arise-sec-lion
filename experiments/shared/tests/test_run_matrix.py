@@ -320,6 +320,23 @@ def test_run_matrix_returns_zero_on_all_success(
     assert rc == 0
 
 
+def test_run_matrix_dry_run_enumerates_without_dispatch(
+    repo_root: Path,
+    fake_runner: _FakeRunnerState,
+    stub_pipeline: dict[str, list[str]],
+) -> None:
+    # Given: a study with real jobs to enumerate.
+    _seed_study(repo_root, study_id="study-dry")
+
+    # When: --dry-run is passed.
+    rc = run_matrix.main(["--study", "study-dry", "--cells", "A1", "--dry-run"])
+
+    # Then: validation/enumeration succeeded but no runner or report pipeline fired.
+    assert rc == 0
+    assert fake_runner["calls"] == []
+    assert stub_pipeline["order"] == []
+
+
 def test_run_matrix_returns_one_on_any_failure(
     repo_root: Path,
     fake_runner: _FakeRunnerState,

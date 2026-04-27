@@ -54,6 +54,35 @@ if TYPE_CHECKING:
 class AgentSession:
     """Event-sourced aggregate for agent sessions. State derived from replaying events."""
 
+    agent_id: UUID
+    role: AgentRole
+    status: AgentStatus
+    parent_id: UUID | None
+    child_ids: list[UUID]
+    child_reports: dict[UUID, Report]
+    task_description: str
+    result: str | None
+    error_message: str | None
+    config: AgentConfig
+    version: int
+    hierarchy_limits: HierarchyLimits | None
+    briefing: Briefing | None
+    local_decisions: list[str]
+    local_artifacts: list[str]
+    sibling_index: int
+    success_criteria: str
+    target_paths: tuple[str, ...]
+    symbols: tuple[str, ...]
+    search_hints: tuple[str, ...]
+    estimated_complexity: str
+    retry_count: int
+    redecomposition_count: int
+    verification_feedback: str | None
+    verification_score: int | None
+    failed_children: set[UUID]
+    _changes: list[DomainEvent]
+    _sequence: int
+
     def __init__(self, agent_id: UUID) -> None:
         """Internal. Use AgentSession.create() or load_from_history() instead."""
         self._initialize_defaults(agent_id)
@@ -242,7 +271,7 @@ class AgentSession:
     def _(self, event: AgentCreated) -> None:
         self.role = AgentRole(event.role)
         self.parent_id = event.parent_id
-        adapter = TypeAdapter(AgentConfig)
+        adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
@@ -330,7 +359,7 @@ class AgentSession:
             config_dict = self.config.model_dump()
             if "base" in config_dict and isinstance(config_dict["base"], dict):
                 config_dict["base"]["model"] = event.escalated_model
-            adapter = TypeAdapter(AgentConfig)
+            adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
             self.config = adapter.validate_python(config_dict)
         self.version += 1
 
@@ -418,45 +447,44 @@ class AgentSession:
         self.version += 1
 
     def _initialize_defaults(self, agent_id: UUID) -> None:
-        self.agent_id: UUID = agent_id
-        self.role: AgentRole = AgentRole.BOSS
-        self.status: AgentStatus = AgentStatus.PENDING
-        self.parent_id: UUID | None = None
-        self.child_ids: list[UUID] = []
-        self.child_reports: dict[UUID, Report] = {}
-        self.task_description: str = ""
-        self.result: str | None = None
-        self.error_message: str | None = None
-        self.config: AgentConfig
-        self.version: int = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence: int = 0
+        self.agent_id = agent_id
+        self.role = AgentRole.BOSS
+        self.status = AgentStatus.PENDING
+        self.parent_id = None
+        self.child_ids = []
+        self.child_reports = {}
+        self.task_description = ""
+        self.result = None
+        self.error_message = None
+        self.version = 0
+        self._changes = []
+        self._sequence = 0
         # Hierarchy limits for limit enforcement (set by ExecutionService)
-        self.hierarchy_limits: HierarchyLimits | None = None
+        self.hierarchy_limits = None
         # Context passing: briefing received from parent and local state
-        self.briefing: Briefing | None = None
-        self.local_decisions: list[str] = []
-        self.local_artifacts: list[str] = []
+        self.briefing = None
+        self.local_decisions = []
+        self.local_artifacts = []
         # Position among siblings for ordering (0 = first/leftmost)
-        self.sibling_index: int = 0
+        self.sibling_index = 0
         # Verification criteria from subtask (used by verification pipeline)
-        self.success_criteria: str = ""
+        self.success_criteria = ""
         # Structured child scoping (from parent's subtask decomposition)
-        self.target_paths: tuple[str, ...] = ()
-        self.symbols: tuple[str, ...] = ()
-        self.search_hints: tuple[str, ...] = ()
+        self.target_paths = ()
+        self.symbols = ()
+        self.search_hints = ()
         # Parent's complexity hint from the Subtask. ``"simple"`` lets the
         # orchestrator skip the assessment LLM and execute directly.
         # ``"unknown"`` (default) preserves prior behaviour.
-        self.estimated_complexity: str = "unknown"
+        self.estimated_complexity = "unknown"
         # Retry tracking
-        self.retry_count: int = 0
-        self.redecomposition_count: int = 0
+        self.retry_count = 0
+        self.redecomposition_count = 0
         # Verification feedback for retry (populated on VerificationFailed)
-        self.verification_feedback: str | None = None
-        self.verification_score: int | None = None
+        self.verification_feedback = None
+        self.verification_score = None
         # Track failed children for partial-success aggregation
-        self.failed_children: set[UUID] = set()
+        self.failed_children = set()
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""

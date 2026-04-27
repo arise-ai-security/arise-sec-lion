@@ -70,8 +70,8 @@ class TemplateChain:
         self._parts.append(content)
         return self
 
-    def text_if(self, condition: Any, content: str) -> Self:
-        if condition:
+    def text_if(self, condition: Any, content: str | None) -> Self:
+        if condition and content is not None:
             self._parts.append(content)
         return self
 

@@ -5,13 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from config import (
-    BossConfig,
-    ConcurrencyConfig,
-    ManagerConfig,
-    ToolCallingConfig,
-    TopologyConfig,
-)
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
@@ -41,6 +34,13 @@ from .realtime_adapter import RealtimeCallbackAdapter
 if TYPE_CHECKING:
     from typing import Literal
 
+    from config import (
+        BossConfig,
+        ConcurrencyConfig,
+        ManagerConfig,
+        ToolCallingConfig,
+        TopologyConfig,
+    )
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStoreReadPort

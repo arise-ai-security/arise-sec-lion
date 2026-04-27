@@ -78,7 +78,10 @@ class BossConfig(BaseModel):
     max_tokens: int = Field(default=1000, gt=0, le=100000)
     api_base: str | None = Field(
         default=None,
-        description="Optional LiteLLM api_base override (e.g. https://ollama.com for Ollama Cloud).",
+        description=(
+            "Optional LiteLLM api_base override "
+            "(e.g. https://ollama.com for Ollama Cloud)."
+        ),
     )
 
 
@@ -92,7 +95,10 @@ class ManagerConfig(BaseModel):
     max_tokens: int = Field(default=1000, gt=0, le=100000)
     api_base: str | None = Field(
         default=None,
-        description="Optional LiteLLM api_base override (e.g. https://ollama.com for Ollama Cloud).",
+        description=(
+            "Optional LiteLLM api_base override "
+            "(e.g. https://ollama.com for Ollama Cloud)."
+        ),
     )
 
 
@@ -146,6 +152,8 @@ class WorkerConfig(BaseModel):
 
     model: str
     tool: Literal["claude_code", "openhands", "google_adk"]
+    allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
+    disallowed_tools: list[str] = Field(default_factory=list)
     timeout: int = Field(default=300, gt=0)
     max_iterations_per_run: int = Field(
         default=20,
@@ -154,7 +162,10 @@ class WorkerConfig(BaseModel):
     )
     base_url: str | None = Field(
         default=None,
-        description="Optional base URL for the worker LLM (e.g. https://ollama.com for Ollama Cloud).",
+        description=(
+            "Optional base URL for the worker LLM "
+            "(e.g. https://ollama.com for Ollama Cloud)."
+        ),
     )
     tool_params: WorkerToolParams = Field(default_factory=WorkerToolParams)
 
@@ -185,7 +196,7 @@ class FormatRepairerConfig(BaseModel):
     #   qwen3.5 reasoning model causes (the very thing we're repairing).
     # - Different model family from typical boss/manager/worker (qwen3.5
     #   or gpt-5.x) → independence from the source-of-the-bug model.
-    # - Only fires on parse failure (0–3× per run worst-case), so the
+    # - Only fires on parse failure (0-3x per run worst-case), so the
     #   accuracy/speed tradeoff favours accuracy over the smaller
     #   qwen3-coder-next:cloud preview.
     model: str = "ollama_chat/qwen3-coder:480b-cloud"
@@ -481,8 +492,9 @@ class Settings(BaseSettings):
         db_config["password"] = postgres_password
         if os.getenv("POSTGRES_HOST"):
             db_config["host"] = os.getenv("POSTGRES_HOST")
-        if os.getenv("POSTGRES_PORT"):
-            db_config["port"] = int(os.getenv("POSTGRES_PORT"))
+        postgres_port = os.getenv("POSTGRES_PORT")
+        if postgres_port:
+            db_config["port"] = int(postgres_port)
         if os.getenv("POSTGRES_USER"):
             db_config["user"] = os.getenv("POSTGRES_USER")
         if os.getenv("POSTGRES_DB"):

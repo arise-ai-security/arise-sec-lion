@@ -1,19 +1,22 @@
-# Cell B2 — ours-cybersec.
-#
-# TODO(Q1): The semantic deltas between B1 (naive), B2 (cybersec), and
-# B3 (full) are not yet defined. Until that research question is resolved,
-# all three B cells run the same treatment (our hierarchical pipeline with
-# the security domain plugin enabled). See `.claude/docs/experiments-rearchitecture.md`
-# §7 (Open Questions) and `.claude/docs/experiments-implementation-plan.md`
-# (PR 5 — pending Q1 resolution).
-#
-# When Q1 is answered, this file should encode the cell-specific deltas
-# from `config/config.yaml`. Until then, the overlay is intentionally a
-# pass-through.
+# Cell B2 — our hierarchy with Claude Code SDK workers, verifier enabled.
+# CVE context is always passed. This is B1 plus the full verification pipeline.
 
 extends: config/config.yaml
 
 overrides:
   orchestration.mode: hierarchical
-  worker.tool: openhands
+  orchestration.skip_judge: false
+  worker.tool: claude_code
+  worker.model: claude-sonnet-4-6
+  worker.allowed_tools: ["*"]
+  worker.disallowed_tools: []
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 40
+  output.directory: ./runs
+  worker.tool_params:
+    openhands: null
+    claude_code:
+      output_format: stream-json
+      include_partial_messages: true
+      max_turns: 40
   domain.plugin: security

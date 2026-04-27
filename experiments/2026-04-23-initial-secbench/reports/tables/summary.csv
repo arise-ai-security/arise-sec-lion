@@ -1,6 +1,7 @@
-cell,runs,deliverables_present
-A1,12,0
-A2,10,0
-B1,16,0
-B2,18,0
-B3,0,0
+cell,runs,deliverables_present,event_files,artifact_files_copied,event_count,prompt_sent_count,tool_call_count,tool_result_count,thinking_event_count,thinking_chars,worker_output_event_count,worker_cost_event_count,tokens_prompt,tokens_completion,tokens_total,tokens_reasoning,llm_cost_usd,worker_cost_usd,total_cost_usd,run_duration_seconds,tool_calls_by_type
+A1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}
+A2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}
+B1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}
+B2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}
+C1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}
+C2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}

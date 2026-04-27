@@ -1,0 +1,2 @@
+scope,runs,deliverables_present,event_files,artifact_files_copied,event_count,prompt_sent_count,tool_call_count,tool_result_count,thinking_event_count,thinking_chars,worker_output_event_count,worker_cost_event_count,tokens_prompt,tokens_completion,tokens_total,tokens_reasoning,llm_cost_usd,worker_cost_usd,total_cost_usd,run_duration_seconds,tool_calls_by_type
+all_cells,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.000000,0.000000,0.000000,0.000,{}

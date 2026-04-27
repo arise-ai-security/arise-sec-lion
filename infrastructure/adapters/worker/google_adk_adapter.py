@@ -38,6 +38,7 @@ class ADKAdapterConfig:
             "execute_command",
         ]
     )
+    disallowed_tools: list[str] = field(default_factory=list)
 
 
 def execute_command(
@@ -59,7 +60,7 @@ def execute_command(
         Dict with stdout, stderr, exit_code, and status
     """
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S602 - worker shell tool intentionally executes commands.
             command,
             check=False, shell=True,
             cwd=working_dir,
@@ -117,7 +118,22 @@ class GoogleADKAdapter(WorkerAdapterBase):
         """Return tool identifier for cost tracking."""
         return "google_adk"
 
-    async def _execute_task(
+    def _tool_allowed(self, *names: str) -> bool:
+        blocked = set(self.config.disallowed_tools)
+        if any(name in blocked for name in names):
+            return False
+        if self.config.allowed_tools == ["*"]:
+            return True
+        allowed = set(self.config.allowed_tools)
+        return any(name in allowed for name in names)
+
+    def _filesystem_tool_allowed(self) -> bool:
+        mutating_aliases = {"write_file", "create_directory", "Write", "Edit", "MultiEdit"}
+        if mutating_aliases & set(self.config.disallowed_tools):
+            return False
+        return self._tool_allowed("read_file", "write_file", "list_directory", "filesystem")
+
+    async def _execute_task(  # noqa: PLR0915
         self,
         task_description: str,
         agent_id: UUID,
@@ -147,16 +163,9 @@ class GoogleADKAdapter(WorkerAdapterBase):
             from google.genai import types as genai_types
             from mcp import StdioServerParameters
 
-            # Create shell tool bound to working directory
-            shell_tool = self._create_shell_tool(working_dir, container_session)
-
-            # Create agent with MCP filesystem + shell tools
-            agent = LlmAgent(
-                model=self.config.model,
-                name="worker_agent",
-                instruction=self._build_instruction(),
-                tools=[
-                    # MCP Filesystem tools
+            sdk_tools: list[Any] = []
+            if self._filesystem_tool_allowed():
+                sdk_tools.append(
                     McpToolset(
                         connection_params=StdioConnectionParams(
                             server_params=StdioServerParameters(
@@ -169,10 +178,17 @@ class GoogleADKAdapter(WorkerAdapterBase):
                             ),
                             timeout=30,
                         ),
-                    ),
-                    # Custom shell execution tool
-                    shell_tool,
-                ],
+                    )
+                )
+            if self._tool_allowed("execute_command", "shell_execute", "Bash"):
+                sdk_tools.append(self._create_shell_tool(working_dir, container_session))
+
+            # Create agent with MCP filesystem + shell tools
+            agent = LlmAgent(
+                model=self.config.model,
+                name="worker_agent",
+                instruction=self._build_instruction(),
+                tools=sdk_tools,
             )
 
             # Create session service and runner
@@ -189,6 +205,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
             total_input_tokens = 0
             total_output_tokens = 0
             result_text = ""
+            processed_events: list[DomainEvent] = []
 
             # Create the session first
             await session_service.create_session(
@@ -235,9 +252,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
                                     result_text = part.text
 
                     # Yield domain events
-                    for domain_event in self._process_adk_event(event, sequencer):
-                        # Events need to be yielded in the outer generator
-                        pass
+                    processed_events.extend(self._process_adk_event(event, sequencer))
 
             try:
                 await asyncio.wait_for(
@@ -251,6 +266,9 @@ class GoogleADKAdapter(WorkerAdapterBase):
                 return
 
             # Emit a summary thought event
+            for domain_event in processed_events:
+                yield domain_event
+
             if result_text:
                 yield sequencer.thought(result_text, "output")
 
@@ -316,7 +334,7 @@ Always explain your reasoning and provide clear output about what you're doing."
 
         return shell_execute
 
-    def _process_adk_event(
+    def _process_adk_event(  # noqa: PLR0912
         self, event: Any, sequencer: EventSequencer
     ) -> list[DomainEvent]:
         """Process ADK event and return domain events."""
