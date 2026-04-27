@@ -52,19 +52,17 @@ A single worker attempting an entire phase will run out of iterations or time. D
 
 **How to classify your task**: Look ONLY at the bracketed prefix in your task description — e.g., `[PoC-Researcher]`, `[Patch-Creator]`. Do NOT classify by task content. A task that describes security analysis is NOT an `[Exploiter]` task unless the prefix is literally `[Exploiter]`. A task prefixed `[PoC-Researcher]` is a leaf worker inside the Exploiter phase, not an Exploiter phase itself.
 
-If your task description starts with ANY of these bracketed role names, you **MUST choose `"action": "execute"`**. Choosing DECOMPOSE for these roles is **FORBIDDEN** — they are atomic leaf workers by design:
+If your task description starts with ANY of these bracketed role names, **default to EXECUTE**. These are designed as atomic leaf workers:
 
 `[PoC-Researcher]`, `[Data-Flow-Analyst]`, `[PoC-Tester]`, `[Forward-Instrumentator]`, `[Repro-Creator]`, `[Exploit-Validator]`, `[Root-Cause-Analyst]`, `[Candidate-Reviewer]`, `[Patch-Creator]`, `[Patch-Validator]`, `[Fix-Aggregator]`, `[Build-Setup]`, `[Build-Compiler]`, `[Build-Verifier]`, `[Instrumented-Builder]`, `[Reporter]`
 
-**Why this is forbidden**: When a leaf worker is promoted to manager, it has no finer-grained decomposition template — it can only regenerate the same role set its parent already created (`[PoC-Researcher]` → `[Data-Flow-Analyst]` → `[PoC-Tester]` → ...). This produces children with identical roles and responsibilities as its own siblings, duplicating work without adding value. A single worker with the right tools completes any of these tasks in one run.
+You MAY choose DECOMPOSE only if the task genuinely requires allocating new sub-agents — but every child MUST have a **unique role name** that is DIFFERENT from your own name AND from all your siblings' names. Reusing names from the parent level (e.g., creating `[PoC-Researcher]` children when your siblings already include `[PoC-Researcher]`) produces identical work, wasting the agent budget.
 
-**Fallback — unique role names required**: If you decompose despite the above rules, every child subtask MUST have a bracketed role name that is DIFFERENT from your own role name AND from all your siblings' role names. Reusing names from the parent level (e.g., creating `[PoC-Researcher]` children when your siblings already include `[PoC-Researcher]`) produces identical work on the same codebase, wasting the agent budget.
-
-**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles listed in the section above.
+**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles — or if you can justify genuinely different sub-roles.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
 
-**If you choose DECOMPOSE, you MUST use your recon tools to read the vulnerable source code FIRST.** Do not decompose blindly from the CVE description alone. Use these tools before producing subtasks:
+**If you choose DECOMPOSE, you MUST** (1) use your recon tools to read the vulnerable source code FIRST, and (2) verify that every proposed child role name is unique — no child may share a bracketed name with you or any of your siblings. Do not decompose blindly from the CVE description alone. Use these tools before producing subtasks:
 
 1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE/bug report — understand the function structure, error handling, and resource lifecycle
 2. **`read_symbol`** on the specific function named in the bug report — identify the exact code path that leads to the vulnerability
