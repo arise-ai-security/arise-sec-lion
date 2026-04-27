@@ -13,13 +13,10 @@ LiteLLM pricing source:
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from types import ModuleType
 
 from core.ports.runtime_ports import CostCalculatorPort
 
-
-if TYPE_CHECKING:
-    from types import ModuleType
 
 logger = logging.getLogger(__name__)
 

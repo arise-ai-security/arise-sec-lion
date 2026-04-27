@@ -112,6 +112,7 @@ class ClaudeCodeParams(BaseModel):
     output_format: Literal["stream-json", "text"] = "stream-json"
     include_partial_messages: bool = True
     max_turns: int = Field(default=40, gt=0)
+    use_global_config: bool = False
 
 
 class OpenHandsParams(BaseModel):
@@ -398,7 +399,7 @@ class SecurityConfig(BaseModel):
 
     enabled: bool = True  # Uses worker.timeout for secb commands
     tools: list[str] = Field(
-        default_factory=lambda: ["valgrind", "klee"],
+        default_factory=lambda: ["valgrind"],
         description="Security analysis tools to enable in SEC-bench containers",
     )
 

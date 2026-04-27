@@ -228,9 +228,17 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         if cost_usd is None and not usage:
             return None
 
-        total_tokens = None
+        prompt_tokens = self._usage_int(usage, "input_tokens")
+        completion_tokens = self._usage_int(usage, "output_tokens")
+        cache_read_tokens = self._usage_int(usage, "cache_read_input_tokens")
+        cache_write_tokens = self._usage_int(usage, "cache_creation_input_tokens")
+        reasoning_tokens = self._usage_int(usage, "reasoning_tokens") + self._usage_int(
+            usage,
+            "thinking_tokens",
+        )
+        total_tokens: int | None = None
         if usage:
-            total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            total_tokens = prompt_tokens + completion_tokens
 
         return sequencer.cost_recorded(
             tool_name=self._get_tool_name(),
@@ -238,7 +246,18 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             duration_seconds=self._get_duration(),
             model=self.config.model,
             tokens=total_tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
+
+    @staticmethod
+    def _usage_int(usage: Any, key: str) -> int:
+        """Read an integer token metric from dict-like or SDK usage objects."""
+        value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+        return int(value or 0)
 
     def _make_result_event(
         self,

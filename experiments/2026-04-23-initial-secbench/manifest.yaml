@@ -12,7 +12,7 @@ exclude_legacy_migration: true
 cells:
   A1: {group: A, runner: aris, config: configs/A1-claude-code-subagent.yaml}
   A2: {group: A, runner: aris, config: configs/A2-claude-code-nosubagent.yaml}
-  B1: {group: B, runner: aris, config: configs/B1-ours-naive.yaml}
-  B2: {group: B, runner: aris, config: configs/B2-ours-cybersec.yaml}
+  B1: {group: B, runner: aris, config: configs/B1-ours-claude-noverifier.yaml}
+  B2: {group: B, runner: aris, config: configs/B2-ours-claude-verifier.yaml}
   C1: {group: C, runner: aris, config: configs/C1-qwen-noverifier.yaml}
   C2: {group: C, runner: aris, config: configs/C2-qwen-verifier.yaml}

@@ -48,7 +48,12 @@ from core.application.services import (
 )
 from core.domain.events.events import (
     AgentCreated,
+    AgentExecutionFinished,
+    AgentExecutionStarted,
     CodeGenerationStarted,
+    OperationFinished,
+    OperationStarted,
+    PromptSent,
     RunCompleted,
     RunStarted,
     StatusChanged,
@@ -287,8 +292,13 @@ async def test_flat_mode_emits_expected_event_sequence(tmp_path: Path) -> None:
         AgentCreated.__name__,
         TaskAssigned.__name__,
         RunStarted.__name__,
+        AgentExecutionStarted.__name__,
+        OperationStarted.__name__,
         CodeGenerationStarted.__name__,
+        PromptSent.__name__,
         WorkCompleted.__name__,
+        OperationFinished.__name__,
+        AgentExecutionFinished.__name__,
         RunCompleted.__name__,
     ]
     # And: the WorkCompleted carries the worker's summary.

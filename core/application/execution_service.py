@@ -397,15 +397,19 @@ class AgentExecutionService:
         boss = await self._repository.load(root_agent_id)
         tool_name = self._config.default_worker_tool
 
-        # Mirror the hierarchical worker's progression so projections stay
-        # consistent (CodeGenerationStarted -> WorkCompleted/WorkFailed).
+        # Mirror the hierarchical worker's telemetry envelope and ordering so
+        # A-cell runs are comparable to B/C worker runs in metrics scripts.
         base_version = boss.version
+        execution_started_at = time.monotonic()
+        operation_started_at = execution_started_at
+        boss.emit_execution_started(role=AgentRole.WORKER.value, depth=0)
+        boss.emit_operation_started(operation_type="worker_execution")
+        boss.start_worker_execution(tool_name)
         boss.emit_prompt_sent(
             prompt=bundle.spec.rendered_prompt,
             prompt_type="worker_execution",
             target=tool_name,
         )
-        boss.start_worker_execution(tool_name)
         await self._repository.persist_events(boss, base_version, self._progress_callback)
 
         try:
@@ -421,6 +425,16 @@ class AgentExecutionService:
             reloaded = await self._repository.load(root_agent_id)
             base_version = reloaded.version
             reloaded.fail_with_reason(f"flat-mode worker error: {error!r}")
+            now = time.monotonic()
+            reloaded.emit_operation_finished(
+                operation_type="worker_execution",
+                duration_seconds=now - operation_started_at,
+            )
+            reloaded.emit_execution_finished(
+                role=AgentRole.WORKER.value,
+                status=reloaded.status.value,
+                duration_seconds=now - execution_started_at,
+            )
             await self._repository.persist_events(
                 reloaded, base_version, self._progress_callback
             )
@@ -443,6 +457,16 @@ class AgentExecutionService:
             reloaded.apply_worker_event(event)
         terminal_event = self._build_terminal_event(reloaded.agent_id, result)
         reloaded.apply_worker_event(terminal_event)
+        now = time.monotonic()
+        reloaded.emit_operation_finished(
+            operation_type="worker_execution",
+            duration_seconds=now - operation_started_at,
+        )
+        reloaded.emit_execution_finished(
+            role=AgentRole.WORKER.value,
+            status=reloaded.status.value,
+            duration_seconds=now - execution_started_at,
+        )
         await self._repository.persist_events(reloaded, base_version, self._progress_callback)
 
         await self._emit_run_completed(

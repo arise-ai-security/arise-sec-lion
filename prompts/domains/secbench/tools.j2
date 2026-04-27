@@ -21,9 +21,7 @@
     **For exploit development (Exploiter)**:
     - Use **Valgrind** to confirm memory errors, get detailed stack traces, and verify the sanitizer error matches
     the bug report
-    - Use **KLEE** on isolated vulnerability-relevant functions to generate inputs that trigger specific code paths
-    - KLEE requires LLVM bitcode: compile with `clang -emit-llvm -c -g -O0 -Xclang -disable-O0-optnone`
-    - Prefer Valgrind for quick validation; use KLEE when you need to discover trigger inputs systematically
+    - Do not assume KLEE is installed; use only the security tools listed above
 
     **For patch verification (Fixer)**:
     - Run **Valgrind** on the patched binary with the PoC to confirm the vulnerability is fixed
@@ -31,7 +29,6 @@
     - Compare Valgrind output before and after the patch to demonstrate the fix
 
     **General rules**:
-    - Set `--max-time=120` on KLEE to avoid runaway execution
     - Use `valgrind --error-exitcode=1` to get a non-zero exit code on errors (useful for scripted checks)
     - These tools are supplementary — they help you build better exploits and verify fixes, but the primary success
     criteria remain as defined above

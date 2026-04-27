@@ -49,9 +49,10 @@ _DEFAULT_OUTPUT_FORMAT = "stream-json"
 class ClaudeCodeWorker:
     """Adapter satisfying ``WorkerPort`` by invoking the ``claude`` CLI.
 
-    A scratch ``CLAUDE_CONFIG_DIR`` is materialized per call so the CLI reads
-    only the policy our ``ToolPolicy`` declares, never the operator's
-    ``~/.claude/settings.json``.
+    By default, a scratch ``CLAUDE_CONFIG_DIR`` is materialized per call so the
+    CLI reads only the policy our ``ToolPolicy`` declares. A-cells can opt into
+    the operator/global Claude config while still receiving the same
+    ``ToolPolicy`` CLI allow/deny flags as every other worker engine.
     """
 
     def __init__(
@@ -61,12 +62,14 @@ class ClaudeCodeWorker:
         output_format: str = _DEFAULT_OUTPUT_FORMAT,
         include_partial_messages: bool = True,
         max_turns: int | None = None,
+        use_global_config: bool = False,
         env_allowlist: frozenset[str] | None = None,
     ) -> None:
         self._model = model
         self._output_format = output_format
         self._include_partial_messages = include_partial_messages
         self._max_turns = max_turns
+        self._use_global_config = use_global_config
         self._env_allowlist = env_allowlist or build_env_policy()
 
     async def run_task(
@@ -88,6 +91,22 @@ class ClaudeCodeWorker:
         run_dir = Path(workspace.root)
         run_dir.mkdir(parents=True, exist_ok=True)
         transcript_path = run_dir / "stdout_stderr.log"
+
+        if self._use_global_config:
+            argv = self._build_argv(
+                claude_bin=claude_bin,
+                rendered_prompt=self._render_prompt(spec.rendered_prompt, workspace),
+                tool_policy=tool_policy,
+            )
+            env = self._build_env(scratch_dir=None)
+            return await self._exec(
+                argv=argv,
+                env=env,
+                cwd=run_dir,
+                transcript_path=transcript_path,
+                timeout_seconds=timeouts.per_worker_call,
+                run_id=run_id,
+            )
 
         with tempfile.TemporaryDirectory(prefix="claude-cfg-") as scratch:
             scratch_dir = Path(scratch)
@@ -145,14 +164,15 @@ class ClaudeCodeWorker:
         # prompt requires explicit helper usage for build/test commands.
         return container_session.apply_task_prefix(prompt, auto_shell=False)
 
-    def _build_env(self, *, scratch_dir: Path) -> dict[str, str]:
-        """Allowlist-only env, plus a scratch ``CLAUDE_CONFIG_DIR``."""
+    def _build_env(self, *, scratch_dir: Path | None) -> dict[str, str]:
+        """Allowlist-only env, optionally plus a scratch ``CLAUDE_CONFIG_DIR``."""
         env: dict[str, str] = {}
         for key in self._env_allowlist:
             value = os.environ.get(key)
             if value is not None:
                 env[key] = value
-        env["CLAUDE_CONFIG_DIR"] = str(scratch_dir)
+        if scratch_dir is not None:
+            env["CLAUDE_CONFIG_DIR"] = str(scratch_dir)
         return env
 
     def _write_settings(self, scratch_dir: Path, tool_policy: ToolPolicy) -> None:

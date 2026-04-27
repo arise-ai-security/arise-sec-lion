@@ -130,6 +130,7 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
             output_format=params.output_format,
             include_partial_messages=params.include_partial_messages,
             max_turns=params.max_turns,
+            use_global_config=params.use_global_config,
         )
     if tool == "openhands":
         adapter = OpenHandsAdapter(

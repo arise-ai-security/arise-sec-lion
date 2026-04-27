@@ -6,7 +6,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from core.domain.events.events import (
@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
+
+
+class _ConversationLike(Protocol):
+    """OpenHands SDK conversation surface used by this adapter."""
+
+    def send_message(self, message: str) -> None: ...
+
+    def run(self) -> object: ...
 
 
 def _patch_openhands_fn_converter() -> None:
@@ -160,7 +168,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
 
         try:
-            conversation = self._build_conversation(working_dir)
+            conversation = cast("_ConversationLike", self._build_conversation(working_dir))
         except ImportError as error:
             yield sequencer.failed(
                 "OpenHands packages not installed. "
@@ -175,8 +183,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
             max_workers=1, thread_name_prefix="openhands"
         )
         try:
-            conversation.send_message(task_description)
-            future = executor.submit(conversation.run)
+            conversation.send_message(task_description)  # pylint: disable=no-member
+            future = executor.submit(conversation.run)  # pylint: disable=no-member
 
             try:
                 await asyncio.wait_for(

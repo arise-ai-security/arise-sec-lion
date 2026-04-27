@@ -109,7 +109,11 @@ class PostgresEventStore(EventStorePort):
         if not event_class:
             raise EventStoreError(f"Unknown event type: {event_type}")
 
-        payload_dict = orjson.loads(payload) if isinstance(payload, str) else payload
+        payload_dict = (
+            orjson.loads(payload)  # pylint: disable=no-member
+            if isinstance(payload, str)
+            else payload
+        )
         return event_class(**payload_dict)
 
     @staticmethod
@@ -120,14 +124,14 @@ class PostgresEventStore(EventStorePort):
         Worker terminal output (large tool output, binary data)
         can contain these, so strip them before encoding.
         """
-        return orjson.dumps(v).decode("utf-8").replace("\\u0000", "")
+        return orjson.dumps(v).decode("utf-8").replace("\\u0000", "")  # pylint: disable=no-member
 
     async def connect(self) -> None:
         async def init_connection(conn: asyncpg.Connection) -> None:
             await conn.set_type_codec(
                 "jsonb",
                 encoder=self._encode_jsonb,
-                decoder=orjson.loads,
+                decoder=orjson.loads,  # pylint: disable=no-member
                 schema="pg_catalog",
             )
 
@@ -633,7 +637,10 @@ class PostgresEventStore(EventStorePort):
                                 e.payload->'domain_metadata',
                                 CASE
                                     WHEN e.payload ? 'instance_id'
-                                    THEN jsonb_build_object('instance_id', e.payload->>'instance_id')
+                                    THEN jsonb_build_object(
+                                        'instance_id',
+                                        e.payload->>'instance_id'
+                                    )
                                     ELSE NULL
                                 END
                             ) as domain_metadata

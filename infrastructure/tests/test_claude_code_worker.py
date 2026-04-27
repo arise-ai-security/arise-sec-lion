@@ -456,6 +456,50 @@ def test_run_task_emits_empty_allowlist_when_policy_has_no_bash_commands(
     assert captured == [{"permissions": {"allow": []}}]
 
 
+def test_run_task_can_use_global_claude_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """A-cells may use the operator/global Claude config while preserving CLI policy."""
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **kwargs):
+        captured["argv"] = args
+        captured["env"] = kwargs.get("env")
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker(use_global_config=True)
+
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(disallowed=("Task",)),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert env["ANTHROPIC_API_KEY"] == "sk-anthropic-test"
+
+    argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
+    assert "--disallowedTools" in argv
+    assert argv[argv.index("--disallowedTools") + 1] == "Task"
+
+
 def test_run_task_returns_failed_exit_status_when_subprocess_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:

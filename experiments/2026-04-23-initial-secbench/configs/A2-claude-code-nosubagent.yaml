@@ -21,4 +21,5 @@ overrides:
       output_format: stream-json
       include_partial_messages: true
       max_turns: 40
+      use_global_config: true
   domain.plugin: security

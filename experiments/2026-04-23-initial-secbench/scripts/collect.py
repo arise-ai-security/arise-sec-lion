@@ -182,6 +182,19 @@ def _metrics_for_run(run_dir: Path | None) -> tuple[dict[str, Any], str]:
     return metrics_from_events_jsonl(events_jsonl), events_jsonl.as_posix()
 
 
+def _repo_relative_existing(paths: set[Path]) -> list[str]:
+    """Return existing repo-relative file paths suitable for provenance metadata."""
+    rels: list[str] = []
+    for path in sorted(paths, key=lambda item: item.as_posix()):
+        if not path.is_file():
+            continue
+        try:
+            rels.append(path.resolve().relative_to(_REPO_ROOT).as_posix())
+        except ValueError:
+            logger.warning("omitting non-repo input from report provenance: %s", path)
+    return list(dict.fromkeys(rels))
+
+
 def _add_metric_totals(target: dict[str, Any], metrics: dict[str, Any]) -> None:
     for field in METRIC_FIELDS:
         current = target.get(field, 0)
@@ -231,12 +244,13 @@ def _filtered_runs(
 
 def _summarize(
     cells: list[str],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], set[Path]]:
     manifest = _load_manifest()
     dataset = _load_dataset(manifest)
     current_task_scope = _task_scope(dataset)
     exclude_legacy_migration = bool(manifest.get("exclude_legacy_migration", False))
     manifests_by_run_id = _run_manifest_index()
+    runtime_inputs: set[Path] = set()
 
     rows: list[dict[str, object]] = []
     run_rows: list[dict[str, object]] = []
@@ -268,8 +282,12 @@ def _summarize(
         for run in runs:
             run_id = str(run.get("run_id") or "")
             run_manifest = manifests_by_run_id.get(run_id)
+            if run_manifest is not None:
+                runtime_inputs.add(run_manifest)
             run_dir = run_manifest.parent if run_manifest is not None else None
             metrics, events_jsonl = _metrics_for_run(run_dir)
+            if events_jsonl:
+                runtime_inputs.add(Path(events_jsonl))
             artifact_rel, artifact_count = _copy_artifacts(run, run_dir)
             deliverables = _deliverable_count(run)
 
@@ -308,7 +326,7 @@ def _summarize(
         )
         rows.append(_finalize_row(row))
 
-    return rows, run_rows, _finalize_row(total_row)
+    return rows, run_rows, _finalize_row(total_row), runtime_inputs
 
 
 def _csv_bytes(rows: list[dict[str, object]], fieldnames: list[str]) -> bytes:
@@ -330,29 +348,37 @@ def main() -> int:
     if artifacts_root.is_dir():
         shutil.rmtree(artifacts_root)
     cells = _load_cells()
-    rows, run_rows, total_row = _summarize(cells)
+    rows, run_rows, total_row, runtime_inputs = _summarize(cells)
 
     rel_study = STUDY_DIR.relative_to(STUDY_DIR.parent.parent).as_posix()
     script_rel = f"{rel_study}/scripts/collect.py"
     manifest_rel = f"{rel_study}/manifest.yaml"
+    dataset_rel = f"{rel_study}/dataset.yaml"
+    enrollment_rel = f"{rel_study}/reports/{shared_collect.ENROLLMENT_LOCK_FILENAME}"
+    provenance_inputs = [
+        manifest_rel,
+        dataset_rel,
+        enrollment_rel,
+        *_repo_relative_existing(runtime_inputs),
+    ]
 
     write_binary(
         path=f"{rel_study}/reports/tables/summary.csv",
         content=_csv_bytes(rows, SUMMARY_FIELDS),
         script=script_rel,
-        inputs=[manifest_rel],
+        inputs=provenance_inputs,
     )
     write_binary(
         path=f"{rel_study}/reports/tables/run_metrics.csv",
         content=_csv_bytes(run_rows, RUN_FIELDS),
         script=script_rel,
-        inputs=[manifest_rel],
+        inputs=provenance_inputs,
     )
     write_binary(
         path=f"{rel_study}/reports/tables/totals.csv",
         content=_csv_bytes([total_row], TOTAL_FIELDS),
         script=script_rel,
-        inputs=[manifest_rel],
+        inputs=provenance_inputs,
     )
     logger.info("wrote summary/run metrics/totals for %d cells", len(rows))
     return 0

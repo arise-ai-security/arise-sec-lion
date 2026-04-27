@@ -369,7 +369,7 @@ class WorkerCostRecorded(DomainEvent):
         """Return the most accurate per-model cost breakdown available."""
         if self.usage_metrics:
             costs: dict[str, float] = {}
-            for usage in self.usage_metrics:
+            for usage in self.usage_metrics:  # pylint: disable=not-an-iterable
                 if not usage.model:
                     continue
                 costs[usage.model] = costs.get(usage.model, 0.0) + usage.accumulated_cost_usd

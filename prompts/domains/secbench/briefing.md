@@ -62,21 +62,16 @@ You MAY:
 
 ## 6. Available Security Tools
 
-Both Valgrind and KLEE are available via Bash. Use them as appropriate:
+Valgrind is available via Bash. Use it as appropriate:
 
 - **valgrind** — dynamic memory analyzer; detects heap overflows, use-after-free,
   memory leaks, uninitialized reads. Run your compiled target under valgrind and
   inspect the report. Example:
   `valgrind --error-exitcode=1 ./target <args>`
 
-- **klee** — symbolic execution engine; generates test inputs that explore
-  many program paths. Useful for crafting PoCs when the sanitizer error is
-  triggered by a specific input shape. Example:
-  `klee --only-output-states-covering-new target.bc`
-
 You MUST use valgrind to verify your exploit reproduces the memory error, and
-to verify your patch eliminates it. Use klee only if symbolic execution is
-warranted by the task.
+to verify your patch eliminates it. Do not assume KLEE is installed unless the
+task context explicitly lists it as an available security tool.
 
 ## 7. Working Approach
 

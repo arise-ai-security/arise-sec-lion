@@ -9,11 +9,17 @@ from uuid import uuid4
 
 import pytest
 
-from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events.events import (
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkerCostRecorded,
+    WorkFailed,
+)
 from infrastructure.adapters.worker.claude_sdk_adapter import (
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
 )
+from infrastructure.adapters.worker.shared import EventSequencer
 
 
 # Module path for patching (use actual implementation module)
@@ -51,9 +57,17 @@ class MockAssistantMessage:
 class MockResultMessage:
     """Mock ResultMessage from claude-agent-sdk."""
 
-    def __init__(self, result: str, is_error: bool = False) -> None:
+    def __init__(
+        self,
+        result: str,
+        is_error: bool = False,
+        usage: dict[str, int] | None = None,
+        total_cost_usd: float | None = None,
+    ) -> None:
         self.result = result
         self.is_error = is_error
+        self.usage = usage or {}
+        self.total_cost_usd = total_cost_usd
 
 
 async def async_iter(items):
@@ -222,6 +236,36 @@ class TestClaudeAgentSDKAdapter:
 
         assert "Claude SDK adapter error" in result
         assert "ValueError" in result
+
+    def test_make_cost_event_records_token_breakdown(self) -> None:
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        agent_id = uuid4()
+        message = MockResultMessage(
+            result="done",
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 25,
+                "cache_read_input_tokens": 10,
+                "cache_creation_input_tokens": 5,
+                "thinking_tokens": 7,
+            },
+            total_cost_usd=0.0123,
+        )
+
+        event = adapter._make_cost_event(
+            message,
+            sequencer=EventSequencer(agent_id, stream="claude_sdk"),
+        )
+
+        assert isinstance(event, WorkerCostRecorded)
+        assert event.model == "claude-sonnet-4-6"
+        assert event.tokens == 125
+        assert event.prompt_tokens == 100
+        assert event.completion_tokens == 25
+        assert event.cache_read_tokens == 10
+        assert event.cache_write_tokens == 5
+        assert event.reasoning_tokens == 7
+        assert event.cost_usd == 0.0123
 
 
 class TestAdapterIntegration:

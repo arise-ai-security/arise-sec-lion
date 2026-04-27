@@ -22,8 +22,8 @@ hierarchy, verifier use, and Qwen/OpenHands workers.
 
 ## Matrix
 
-- **A1**: Claude Code CLI, Task/subagents allowed.
-- **A2**: Claude Code CLI, `Task` blocked.
+- **A1**: Claude Code CLI, Task/subagents allowed, using global Claude config.
+- **A2**: Claude Code CLI, `Task` blocked, using global Claude config.
 - **B1**: Our hierarchy with Claude Code workers, judge disabled.
 - **B2**: Our hierarchy with Claude Code workers, judge enabled.
 - **C1**: Our hierarchy with Qwen via OpenHands, judge disabled.

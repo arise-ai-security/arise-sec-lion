@@ -1,17 +1,17 @@
 {
   "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml": {
-    "generated_at": "2026-04-27T00:09:00.957647Z",
+    "generated_at": "2026-04-27T01:05:33.559640Z",
     "generated_by": "experiments/shared/scripts/collect.py",
     "inputs": [
       "experiments/2026-04-23-initial-secbench/manifest.yaml"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "df1ddb5751a3e861541f3e083468e3ad2d41398adb2b1389089233b5874ea6bb"
     },
-    "output_sha256": "453143a6652695487f5c41d6f7ac3bf1cb8ebeb0d5af781ad2056f0ee06e2504"
+    "output_sha256": "48f503b4ea2b7bbd117331e653209fa0515ab17281f55e42782609dd9d570e94"
   },
   "experiments/2026-04-23-initial-secbench/reports/figures/cells-overview.svg": {
-    "generated_at": "2026-04-27T00:09:05.903070Z",
+    "generated_at": "2026-04-27T01:05:36.304506Z",
     "generated_by": "experiments/2026-04-23-initial-secbench/scripts/plot_success.py",
     "inputs": [
       "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv"
@@ -22,35 +22,47 @@
     "output_sha256": "7613f02355ee4435c322bcf96b76600fcb7d454a76788e08a9417686a2f8d86e"
   },
   "experiments/2026-04-23-initial-secbench/reports/tables/run_metrics.csv": {
-    "generated_at": "2026-04-27T00:09:01.001730Z",
+    "generated_at": "2026-04-27T01:05:33.597100Z",
     "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
     "inputs": [
-      "experiments/2026-04-23-initial-secbench/manifest.yaml"
+      "experiments/2026-04-23-initial-secbench/manifest.yaml",
+      "experiments/2026-04-23-initial-secbench/dataset.yaml",
+      "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
+      "experiments/2026-04-23-initial-secbench/dataset.yaml": "7a6e9a0cc8b18ead82d41214e5e6ad51d9ae3bcf5c47c7b5ccd7fd09395f4517",
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "df1ddb5751a3e861541f3e083468e3ad2d41398adb2b1389089233b5874ea6bb",
+      "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml": "48f503b4ea2b7bbd117331e653209fa0515ab17281f55e42782609dd9d570e94"
     },
     "output_sha256": "650bec1d7ce51e04249808d2e5b411ebb0876c1f433c8762407d788177e63f7f"
   },
   "experiments/2026-04-23-initial-secbench/reports/tables/summary.csv": {
-    "generated_at": "2026-04-27T00:09:01.000984Z",
+    "generated_at": "2026-04-27T01:05:33.596139Z",
     "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
     "inputs": [
-      "experiments/2026-04-23-initial-secbench/manifest.yaml"
+      "experiments/2026-04-23-initial-secbench/manifest.yaml",
+      "experiments/2026-04-23-initial-secbench/dataset.yaml",
+      "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
+      "experiments/2026-04-23-initial-secbench/dataset.yaml": "7a6e9a0cc8b18ead82d41214e5e6ad51d9ae3bcf5c47c7b5ccd7fd09395f4517",
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "df1ddb5751a3e861541f3e083468e3ad2d41398adb2b1389089233b5874ea6bb",
+      "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml": "48f503b4ea2b7bbd117331e653209fa0515ab17281f55e42782609dd9d570e94"
     },
     "output_sha256": "6985b62e3e8095f80336d0bc79fe726a4c473640e0416505aedaab61b85bd07d"
   },
   "experiments/2026-04-23-initial-secbench/reports/tables/totals.csv": {
-    "generated_at": "2026-04-27T00:09:01.002269Z",
+    "generated_at": "2026-04-27T01:05:33.598032Z",
     "generated_by": "experiments/2026-04-23-initial-secbench/scripts/collect.py",
     "inputs": [
-      "experiments/2026-04-23-initial-secbench/manifest.yaml"
+      "experiments/2026-04-23-initial-secbench/manifest.yaml",
+      "experiments/2026-04-23-initial-secbench/dataset.yaml",
+      "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml"
     ],
     "inputs_sha256": {
-      "experiments/2026-04-23-initial-secbench/manifest.yaml": "a9bd90d5fdb3d7ffa8c665c4b36206793a3159fbe9cd8315d904d3c0f9e74b2d"
+      "experiments/2026-04-23-initial-secbench/dataset.yaml": "7a6e9a0cc8b18ead82d41214e5e6ad51d9ae3bcf5c47c7b5ccd7fd09395f4517",
+      "experiments/2026-04-23-initial-secbench/manifest.yaml": "df1ddb5751a3e861541f3e083468e3ad2d41398adb2b1389089233b5874ea6bb",
+      "experiments/2026-04-23-initial-secbench/reports/enrollment.lock.yaml": "48f503b4ea2b7bbd117331e653209fa0515ab17281f55e42782609dd9d570e94"
     },
     "output_sha256": "6ed0787a722de75afdf92a4ed327ae242b839449efbddd8c1c34a1932c44c967"
   }
