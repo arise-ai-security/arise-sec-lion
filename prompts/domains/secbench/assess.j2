@@ -10,6 +10,15 @@ If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, y
 
 - **[Builder]** tasks involve: identifying base commit, running build scripts, fixing build errors, verifying deliverables — **exactly 3 workers** (setup → compile → verify). Builder is infrastructure work, not code analysis — keep it concise.
 - **[Exploiter]** tasks involve: static analysis, PoC research, exploit crafting, forward instrumentation, reproduction validation — **exactly 6 workers** with these EXACT role names (copy verbatim): `[PoC-Researcher]` → `[Data-Flow-Analyst]` → `[PoC-Tester]` → `[Forward-Instrumentator]` → `[Repro-Creator]` → `[Exploit-Validator]`. Do NOT paraphrase (no [Static-Analyst], [PoC-Generator], [Leak-Tester], etc.).
+
+  **⚠️ Exploiter-specific `security_insights` requirements (mandatory for key subtasks).**
+
+  1. **[PoC-Researcher]** `security_insights` MUST include: *"Map each PoC operation to its implementing C/C++ source function using search_codebase. Save the ordered mapping to /testcase/poc_operation_map.txt (one line per step: Step N: <PoC operation> → <function> in <file>). This mapping is required input for the Forward-Instrumentator."*
+
+  2. **[Forward-Instrumentator]** `security_insights` MUST include: *"The crash site shows where bad data is CONSUMED, not where it is PRODUCED. The PoC executes multiple operations before the crash — one of them constructs or transforms the data structure that the crashing function later reads. For each PoC operation BEFORE the crash, read /testcase/poc_operation_map.txt, then inject fprintf probes into each implementing C function to dump internal struct fields (pointers, sizes, lengths, reference counts) before and after. Find which operation first produces internally inconsistent fields. DO NOT instrument the crash-site function — that answers 'what value crashed' but not 'who produced the bad value'. Anti-pattern: do NOT describe this role as crash forensics, gdb backtraces, or addr2line mapping — those are backward tracing. This role does FORWARD tracing through PoC operations."*
+
+  3. **[Exploit-Validator]** `security_insights` MUST include: *"Include the Forward-Instrumentator's corruption-origin finding (from /testcase/forward_instrumentation.log) in your handoff summary for the Fixer phase."*
+
 - **[Fixer]** tasks involve: root cause analysis at code-block level, fix design, patch creation, multi-tool validation — **exactly 5 workers** with these EXACT role names (copy verbatim): `[Root-Cause-Analyst]` → `[Candidate-Reviewer]` → `[Patch-Creator]` → `[Patch-Validator]` → `[Fix-Aggregator]`. Patches developed from first principles (no external fix commits). Do NOT paraphrase (no [Patch-Author], [Patched-Builder], etc.).
 
   **⚠️ Fixer-specific `security_insights` requirements (mandatory for each Fixer subtask's justification).** A weak `security_insights` produces a shallow patch even with strong tools. Each Fixer subtask's `security_insights` MUST contain:
