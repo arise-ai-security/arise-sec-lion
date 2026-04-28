@@ -202,13 +202,6 @@ def test_marker_fixture_carries_substrings_into_cve_instance() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Cell A currently dumps the full CVE JSON, which embeds the gold "
-        "patch. W1 strips `patch` and `candidate_fixes` before the dump."
-    ),
-    strict=True,
-)
 def test_no_gold_patch_marker_anywhere() -> None:
     cve = _make_cve_with_markers()
     rendered = _all_rendered_prompts(cve)
@@ -216,10 +209,6 @@ def test_no_gold_patch_marker_anywhere() -> None:
     assert not leaks, f"Gold patch leaked into prompts: {sorted(leaks)}"
 
 
-@pytest.mark.xfail(
-    reason="Cell A dumps the JSON which carries `candidate_fixes`. W1 strips it.",
-    strict=True,
-)
 def test_no_candidate_fix_marker_anywhere() -> None:
     cve = _make_cve_with_markers()
     rendered = _all_rendered_prompts(cve)
@@ -227,10 +216,6 @@ def test_no_candidate_fix_marker_anywhere() -> None:
     assert not leaks, f"candidate_fixes leaked into prompts: {sorted(leaks)}"
 
 
-@pytest.mark.xfail(
-    reason="Cell A dumps the JSON which carries the unified-diff body verbatim.",
-    strict=True,
-)
 def test_no_diff_markers_in_any_prompt() -> None:
     cve = _make_cve_with_markers()
     rendered = _all_rendered_prompts(cve)

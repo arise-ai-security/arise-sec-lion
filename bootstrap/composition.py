@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.application.execution_service import FlatModeBundle
 from core.application.run_invariants import (
@@ -21,6 +23,57 @@ from presentation.cli import CLI, CLIConfig
 
 from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
+
+
+logger = logging.getLogger(__name__)
+
+# Fields that MUST NEVER reach a prompt. The gold patch and any candidate
+# fix bodies are evaluation-only artifacts — leaking them invalidates the
+# A/B/C comparison and tutors the model with the answer key.
+#
+# CVEInstance.to_template_context() already filters these from the
+# materialized-dict path. This helper covers the secondary path where a
+# raw JSON fixture file is embedded verbatim (legacy byte-identity path
+# in build_task_prompt) — that text never goes through CVEInstance, so
+# the strip must happen here before it crosses the prompt boundary.
+_FORBIDDEN_PROMPT_CONTEXT_FIELDS: frozenset[str] = frozenset({"patch", "candidate_fixes"})
+
+
+def _strip_forbidden_text(raw_text: str | None) -> str | None:
+    """Re-serialize CVE JSON with the forbidden fields removed.
+
+    Fast path: when no forbidden fields are present, return the input
+    verbatim so the legacy byte-identity contract still holds for benign
+    fixtures. Re-serialize only when a strip is actually needed.
+
+    Returns ``None`` when the input cannot be safely filtered (missing
+    or non-object JSON). Callers must NOT fall back to the raw text in
+    that case — it may still embed the gold patch.
+    """
+    if raw_text is None:
+        return None
+    try:
+        parsed: Any = json.loads(raw_text)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning(
+            "CVE context text is not valid JSON; refusing to embed it raw"
+            " — would risk leaking the gold patch."
+        )
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "CVE context is JSON but not an object (got %s); refusing to embed.",
+            type(parsed).__name__,
+        )
+        return None
+    if not _FORBIDDEN_PROMPT_CONTEXT_FIELDS.intersection(parsed):
+        return raw_text
+    for field in _FORBIDDEN_PROMPT_CONTEXT_FIELDS:
+        parsed.pop(field, None)
+    # ensure_ascii=False preserves non-ASCII content identically to the
+    # fast path, so the byte-identity contract holds for unicode bodies
+    # whose only difference from the fast-path output is the strip.
+    return json.dumps(parsed, indent=2, ensure_ascii=False)
 
 
 if TYPE_CHECKING:
@@ -167,14 +220,14 @@ def _make_flat_invariant_builder(
         domain_context: object | None,
         run_dir: Path,
     ) -> FlatModeBundle:
-        cve_context_text: str | None = None
+        raw_cve_text: str | None = None
         cve_context: dict[str, object] | None = None
         cve_context_name = "context.json"
         if context_file is not None:
             try:
-                cve_context_text = context_file.read_text(encoding="utf-8")
+                raw_cve_text = context_file.read_text(encoding="utf-8")
             except OSError:
-                cve_context_text = None
+                raw_cve_text = None
             cve_context_name = context_file.name
 
         if domain_context is not None and hasattr(domain_context, "to_template_context"):
@@ -184,6 +237,11 @@ def _make_flat_invariant_builder(
                 materialized = None
             if isinstance(materialized, dict):
                 cve_context = materialized
+
+        # Strip evaluation-only fields (gold patch, candidate fixes) from
+        # the raw-text path. The materialized-dict path is already
+        # filtered by CVEInstance.to_template_context().
+        cve_context_text = _strip_forbidden_text(raw_cve_text)
 
         spec = build_task_prompt(
             briefing_path=briefing_path,
