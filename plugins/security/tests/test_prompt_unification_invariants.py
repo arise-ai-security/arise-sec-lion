@@ -23,19 +23,16 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
-from core.application.run_invariants import build_task_prompt
 from core.application.services import PromptBuilder
 from core.domain.values.limits import HierarchyLimits
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy
-from plugins.security.prompt_strategy import render_input_block
+from plugins.security.prompt_strategy import render_input_block, render_single_agent_prompt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROMPTS_DIR = REPO_ROOT / "prompts"
-BRIEFING_PATH = PROMPTS_DIR / "domains" / "secbench" / "briefing.md"
+LEGACY_BRIEFING_PATH = PROMPTS_DIR / "domains" / "secbench" / "briefing.md"
 
 
 # Marker tokens chosen so the test can grep raw rendered output and assert
@@ -81,16 +78,14 @@ def _make_builder() -> PromptBuilder:
 
 
 def _render_cell_a_prompt(cve: CVEInstance) -> str:
-    """Render the prompt that Cell A's claude_code process currently receives.
+    """Render the prompt Cell A's claude_code process receives.
 
-    Mirrors ``bootstrap/composition._make_flat_invariant_builder``: the
-    briefing markdown + a JSON dump of the CVE fixture. TODO(W3): switch
-    to the unified ``inputs/*`` templates and remove the briefing+JSON
-    path entirely.
+    Calls the same plugin helper that ``bootstrap.composition`` uses in
+    production: ``system/single_agent.j2`` + the canonical input block.
     """
-    return build_task_prompt(
-        briefing_path=BRIEFING_PATH,
-        cve_context=cve.to_template_context(),
+    return render_single_agent_prompt(
+        template_dir=PROMPTS_DIR,
+        cve_instance=cve,
         task=cve.instance_id,
     ).rendered_prompt
 
@@ -254,14 +249,6 @@ def test_bug_report_is_present_in_b_boss_prompt() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Until W2 lands `prompts/inputs/{user,cve,control}.j2` and W3/W4 "
-        "rewire both A and B-BOSS through them, A and B-BOSS produce "
-        "different input blocks."
-    ),
-    strict=True,
-)
 def test_input_block_identical_for_a_and_boss() -> None:
     cve = _make_cve_with_markers()
     builder = _make_builder()
@@ -301,18 +288,36 @@ def test_anti_cheat_rules_present_in_b_boss_prompt() -> None:
 
 # ---------------------------------------------------------------------------
 # 5.3 — A's `system/single_agent.j2` locks to the union of the three
-#       manager personas. Render the file, strip a known preamble marker,
-#       and assert the remainder equals the concatenated manager templates.
+#       manager personas. Split on the structural </persona> tag (stable
+#       across preamble re-wording) and assert the remainder equals the
+#       concatenated manager templates.
 # ---------------------------------------------------------------------------
 
 
-PREAMBLE_END_MARKER = '"execute this step yourself"'
+PERSONA_CLOSE_TAG = "</persona>"
 
 
-@pytest.mark.xfail(
-    reason="prompts/system/single_agent.j2 does not exist yet (W3).",
-    strict=True,
-)
+def _normalize_section_whitespace(text: str) -> str:
+    """Collapse runs of blank lines and trim line-trailing whitespace.
+
+    Compares the substantive content of two render trees while ignoring
+    inter-template separator drift. The two paths produce different
+    blank-line counts but identical paragraphs:
+
+    - ``{% include %}`` in ``single_agent.j2`` emits each manager
+      template's literal content with whatever trailing whitespace the
+      file ends with (typically ``\\n``).
+    - ``chain.render(t1).render(t2).build()`` joins parts with the
+      ``TemplateChain.build`` separator (``\\n\\n``).
+
+    Tightening to byte-equality would require ugly compensation in
+    ``single_agent.j2`` rather than catching real drift; line-level
+    equality (this normalization) catches paragraph reordering and
+    content edits while tolerating the separator convention.
+    """
+    return "\n".join(line.rstrip() for line in text.splitlines() if line.strip())
+
+
 def test_single_agent_persona_locks_to_three_managers() -> None:
     cve = _make_cve_with_markers()
     builder = _make_builder()
@@ -320,15 +325,15 @@ def test_single_agent_persona_locks_to_three_managers() -> None:
 
     single_agent = builder.chain().render("system/single_agent.j2", **ctx).build()
 
-    # Strip the preamble — everything up to and including the trailing
-    # marker phrase. What remains should be the three manager templates
-    # rendered with the same context, in declared order.
-    marker_idx = single_agent.find(PREAMBLE_END_MARKER)
+    # Strip the preamble: everything up to and including </persona>.
+    # The remainder must contain the three manager templates rendered
+    # in declared order, modulo blank-line separators.
+    marker_idx = single_agent.find(PERSONA_CLOSE_TAG)
     assert marker_idx != -1, (
-        "single_agent.j2 preamble must end with the canonical marker "
-        f"phrase {PREAMBLE_END_MARKER!r}; got prompt:\n{single_agent[:400]}"
+        "system/single_agent.j2 must wrap its preamble in <persona>...</persona>; "
+        f"got prompt:\n{single_agent[:400]}"
     )
-    after_preamble = single_agent[marker_idx + len(PREAMBLE_END_MARKER) :]
+    after_preamble = single_agent[marker_idx + len(PERSONA_CLOSE_TAG) :]
 
     expected = (
         builder.chain()
@@ -338,12 +343,9 @@ def test_single_agent_persona_locks_to_three_managers() -> None:
         .build()
     )
 
-    # Allow whitespace differences at section boundaries (Jinja
-    # trim_blocks/lstrip_blocks setting may insert a leading newline);
-    # the substantive content must match.
-    assert after_preamble.strip() == expected.strip(), (
-        "single_agent.j2 must be exactly preamble + three manager personas. Drift detected."
-    )
+    assert _normalize_section_whitespace(after_preamble) == _normalize_section_whitespace(
+        expected
+    ), "single_agent.j2 must be exactly preamble + three manager personas. Drift detected."
 
 
 # ---------------------------------------------------------------------------
@@ -351,22 +353,12 @@ def test_single_agent_persona_locks_to_three_managers() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="briefing.md still exists and is referenced; W3 retires it.",
-    strict=True,
-)
 def test_briefing_md_is_removed() -> None:
-    assert not BRIEFING_PATH.exists(), (
-        f"briefing.md should be retired by W3; still present at {BRIEFING_PATH}"
+    assert not LEGACY_BRIEFING_PATH.exists(), (
+        f"Legacy briefing.md should be retired; still present at {LEGACY_BRIEFING_PATH}"
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "composition + run_invariants still reference the briefing path; W3 deletes the helpers."
-    ),
-    strict=True,
-)
 def test_no_python_references_to_briefing_helpers() -> None:
     # Word-boundary regex avoids false positives from substrings matching
     # unrelated identifiers. ``briefing_path`` is currently a parameter

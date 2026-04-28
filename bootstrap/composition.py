@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from core.application.execution_service import FlatModeBundle
 from core.application.run_invariants import (
-    build_task_prompt,
     build_timeouts,
     build_tool_policy,
     build_workspace_spec,
 )
 from infrastructure.adapters.worker import OpenHandsAdapter
 from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
-from plugins.security import SecurityDomainPlugin
+from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
+from plugins.security.prompt_strategy import render_single_agent_prompt
 from presentation.cli import CLI, CLIConfig
 
 from .application import ApplicationConfig, get_application
@@ -26,54 +25,6 @@ from .infrastructure import InfrastructureConfig, get_infrastructure
 
 
 logger = logging.getLogger(__name__)
-
-# Fields that MUST NEVER reach a prompt. The gold patch and any candidate
-# fix bodies are evaluation-only artifacts — leaking them invalidates the
-# A/B/C comparison and tutors the model with the answer key.
-#
-# CVEInstance.to_template_context() already filters these from the
-# materialized-dict path. This helper covers the secondary path where a
-# raw JSON fixture file is embedded verbatim (legacy byte-identity path
-# in build_task_prompt) — that text never goes through CVEInstance, so
-# the strip must happen here before it crosses the prompt boundary.
-_FORBIDDEN_PROMPT_CONTEXT_FIELDS: frozenset[str] = frozenset({"patch", "candidate_fixes"})
-
-
-def _strip_forbidden_text(raw_text: str | None) -> str | None:
-    """Re-serialize CVE JSON with the forbidden fields removed.
-
-    Fast path: when no forbidden fields are present, return the input
-    verbatim so the legacy byte-identity contract still holds for benign
-    fixtures. Re-serialize only when a strip is actually needed.
-
-    Returns ``None`` when the input cannot be safely filtered (missing
-    or non-object JSON). Callers must NOT fall back to the raw text in
-    that case — it may still embed the gold patch.
-    """
-    if raw_text is None:
-        return None
-    try:
-        parsed: Any = json.loads(raw_text)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning(
-            "CVE context text is not valid JSON; refusing to embed it raw"
-            " — would risk leaking the gold patch."
-        )
-        return None
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "CVE context is JSON but not an object (got %s); refusing to embed.",
-            type(parsed).__name__,
-        )
-        return None
-    if not _FORBIDDEN_PROMPT_CONTEXT_FIELDS.intersection(parsed):
-        return raw_text
-    for field in _FORBIDDEN_PROMPT_CONTEXT_FIELDS:
-        parsed.pop(field, None)
-    # ensure_ascii=False preserves non-ASCII content identically to the
-    # fast path, so the byte-identity contract holds for unicode bodies
-    # whose only difference from the fast-path output is the strip.
-    return json.dumps(parsed, indent=2, ensure_ascii=False)
 
 
 if TYPE_CHECKING:
@@ -152,16 +103,12 @@ def get_run_domain_components(
     return builder(settings) if builder is not None else DomainComponents()
 
 
-_BRIEFING_RELATIVE = Path("prompts/domains/secbench/briefing.md")
+_PROMPTS_RELATIVE = Path("prompts")
 
 
-def _resolve_briefing_path() -> Path:
-    """Locate the canonical SEC-bench briefing relative to the repo root.
-
-    The briefing markdown ships in ``prompts/domains/secbench/`` and is the
-    single source of task framing shared between flat and hierarchical modes.
-    """
-    return Path(__file__).resolve().parents[1] / _BRIEFING_RELATIVE
+def _resolve_template_dir() -> Path:
+    """Locate the canonical Jinja template root relative to the repo root."""
+    return Path(__file__).resolve().parents[1] / _PROMPTS_RELATIVE
 
 
 def _build_flat_worker(settings: Settings) -> WorkerPort:
@@ -207,12 +154,17 @@ def _make_flat_invariant_builder(
 ) -> FlatInvariantBuilder:
     """Return a ``FlatInvariantBuilder`` closure for the active run.
 
-    Bootstrap captures the static settings + the optional CVE fixture path and
-    materializes a ``FlatModeBundle`` per call. The plugin-supplied
-    ``domain_context`` (e.g. ``CVEInstance``) is passed through to
-    ``build_task_prompt`` for provenance.
+    The closure renders Cell A's prompt through the unified template
+    chain — ``system/single_agent.j2`` (persona) plus the canonical
+    input block (``inputs/user.j2`` + ``inputs/cve.j2`` +
+    ``inputs/control.j2``) — so A and B-BOSS receive byte-identical
+    user-message bytes for the same CVE.
     """
-    briefing_path = _resolve_briefing_path()
+    template_dir = _resolve_template_dir()
+    # ``context_file`` is retained on the closure so the caller can
+    # surface "fixture provided but plugin produced no CVEInstance"
+    # mistakes loudly, but it's no longer the source of prompt content.
+    _ = context_file
 
     def _build(
         *,
@@ -220,34 +172,15 @@ def _make_flat_invariant_builder(
         domain_context: object | None,
         run_dir: Path,
     ) -> FlatModeBundle:
-        raw_cve_text: str | None = None
-        cve_context: dict[str, object] | None = None
-        cve_context_name = "context.json"
-        if context_file is not None:
-            try:
-                raw_cve_text = context_file.read_text(encoding="utf-8")
-            except OSError:
-                raw_cve_text = None
-            cve_context_name = context_file.name
-
-        if domain_context is not None and hasattr(domain_context, "to_template_context"):
-            try:
-                materialized = domain_context.to_template_context()  # type: ignore[attr-defined]
-            except Exception:
-                materialized = None
-            if isinstance(materialized, dict):
-                cve_context = materialized
-
-        # Strip evaluation-only fields (gold patch, candidate fixes) from
-        # the raw-text path. The materialized-dict path is already
-        # filtered by CVEInstance.to_template_context().
-        cve_context_text = _strip_forbidden_text(raw_cve_text)
-
-        spec = build_task_prompt(
-            briefing_path=briefing_path,
-            cve_context=cve_context,
-            cve_context_text=cve_context_text,
-            cve_context_name=cve_context_name,
+        if not isinstance(domain_context, CVEInstance):
+            raise ValueError(
+                "Cell A flat-mode dispatch requires a CVEInstance domain "
+                f"context; got {type(domain_context).__name__}. Ensure the "
+                "security plugin's CVE inference resolved the task."
+            )
+        spec = render_single_agent_prompt(
+            template_dir=template_dir,
+            cve_instance=domain_context,
             task=task,
         )
         tool_policy = build_tool_policy(settings=settings)

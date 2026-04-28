@@ -1,8 +1,11 @@
 """SEC-bench prompt strategy implementation."""
 
+import hashlib
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.application.services import PromptContext
+from core.application.run_invariants import TaskPromptSpec
+from core.application.services import PromptBuilder, PromptContext
 from plugins.security.cve_instance import CVEInstance
 
 
@@ -108,6 +111,37 @@ def render_input_block(
     return chain.render("inputs/control.j2", **cve_ctx)
 
 
+def render_single_agent_prompt(
+    *,
+    template_dir: Path,
+    cve_instance: CVEInstance,
+    task: str,
+) -> TaskPromptSpec:
+    """Render Cell A's prompt: ``system/single_agent.j2`` + canonical input block.
+
+    Uses the same Jinja machinery and ``render_input_block`` helper that
+    the hierarchical BOSS path uses, so the user-message bytes are
+    identical between Cell A and Cell B-BOSS for the same CVE — the
+    experimental control variable the run matrix relies on.
+    """
+    builder = PromptBuilder(
+        template_dir=template_dir,
+        default_tool="claude_code",
+        strategy=SecBenchPromptStrategy(),
+    )
+    cve_ctx = cve_instance.to_template_context()
+    chain = builder.chain().render("system/single_agent.j2", **cve_ctx)
+    chain = render_input_block(chain, cve_instance)
+    rendered = chain.build()
+    prompt_sha = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+    return TaskPromptSpec(
+        rendered_prompt=rendered,
+        prompt_sha=prompt_sha,
+        cve_context=cve_ctx,
+        task=task,
+    )
+
+
 class SecBenchPromptStrategy:
     """SEC-bench specific prompt strategy."""
 
@@ -134,12 +168,13 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = cve_instance.to_template_context()
-        # The input block currently lands AFTER operations/decomposition.j2
-        # because that's where the strategy hook fires. decomposition.j2
-        # carries its own <task> block, so two <task> tags appear in the
-        # rendered prompt. Acceptable for now; W3 reorders so the input
-        # block precedes operations/decomposition.j2 and the duplicate
-        # disappears.
+        # The input block lands AFTER operations/decomposition.j2 because
+        # that's where the strategy hook fires. decomposition.j2 carries
+        # its own <task> block, so two <task> tags appear in the
+        # rendered BOSS prompt. Harmless to current models but a known
+        # cosmetic artifact — fixing it requires moving the strategy
+        # call into PromptBuilder.build_boss_delegation_prompt before
+        # operations/decomposition.j2 renders. Tracked as follow-up.
         chain = render_input_block(chain, cve_instance)
         return chain.render("domains/secbench/boss.j2", **cve_ctx)
 

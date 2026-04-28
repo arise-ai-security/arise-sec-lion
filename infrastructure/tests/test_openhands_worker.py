@@ -54,7 +54,7 @@ def _make_invocation(tmp_path: Path) -> dict:
         "run_id": uuid4(),
         "spec": TaskPromptSpec(
             rendered_prompt="rendered",
-            briefing_sha="0" * 64,
+            prompt_sha="0" * 64,
             cve_context=None,
             task="t",
         ),

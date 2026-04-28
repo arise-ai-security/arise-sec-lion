@@ -9,8 +9,6 @@ task framing, tool policy, timeouts, and workspace.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping  # noqa: TC003 — Pydantic resolves field types at runtime.
 from pathlib import Path  # noqa: TC003 — Pydantic resolves field types at runtime.
 from typing import TYPE_CHECKING, Literal
@@ -54,12 +52,18 @@ class TaskPromptSpec(BaseModel):
     Although ``cve_context`` is typed ``Mapping``, Pydantic v2 coerces inputs to a
     plain ``dict`` during validation; mutating its values is not supported and may
     produce undefined behavior. Treat as read-only.
+
+    ``prompt_sha`` is the sha256 hex digest of ``rendered_prompt`` itself — a
+    content-addressed fingerprint for run-level provenance. (The historical
+    ``briefing_sha`` field, which hashed ``briefing.md``, was retired when
+    Cell A's prompt switched to the unified ``inputs/*`` + ``system/*``
+    template chain.)
     """
 
     model_config = {"frozen": True}
 
     rendered_prompt: str
-    briefing_sha: str
+    prompt_sha: str
     cve_context: Mapping[str, object] | None = None
     task: str
 
@@ -108,95 +112,6 @@ class WorkerResult(BaseModel):
     wall_time_seconds: float
     output_summary: str | None = None
     events: tuple[DomainEvent, ...] = ()
-
-
-def build_task_prompt(
-    *,
-    briefing_path: Path,
-    cve_context: Mapping[str, object] | None,
-    task: str,
-    cve_context_text: str | None = None,
-    cve_context_name: str = "context.json",
-) -> TaskPromptSpec:
-    """Compose the briefing + CVE context + task slug.
-
-    The briefing is the canonical security-domain framing read from
-    ``prompts/domains/secbench/briefing.md``. Returns a frozen spec carrying
-    the rendered prompt and the briefing's content sha for provenance.
-
-    The prompt format mirrors what flat-mode dispatch built before
-    consolidation, so flat-mode baselines and hierarchical-mode workers see
-    byte-identical framing.
-
-    The CVE context can be supplied two ways:
-
-    - ``cve_context_text``: raw text from the fixture file. **When given,
-      this is embedded verbatim** — preserves byte-identity regardless of
-      fixture formatting (whitespace, key order, trailing newlines).
-      Production callers that have the fixture path on disk should pass
-      this.
-    - ``cve_context``: parsed mapping. Used for in-memory provenance fields
-      and as a fallback for embedding when text is not supplied
-      (re-serialized via ``json.dumps(parsed, indent=2)``). This path loses
-      byte-identity for fixtures whose formatting differs from
-      ``json.dumps(indent=2)`` output.
-
-    If both are supplied, ``cve_context_text`` wins for the embedded
-    content; ``cve_context`` populates ``TaskPromptSpec.cve_context`` for
-    provenance.
-
-    Args:
-        briefing_path: Absolute path to the briefing markdown file.
-        cve_context: Plugin-supplied structured context. Stored on the
-            returned spec for provenance and used as the fallback embed
-            source when ``cve_context_text`` is not supplied. ``None``
-            (with ``cve_context_text`` also ``None``) skips the context
-            block entirely (matching legacy ``context_file=None``).
-        task: The task slug provided by the caller.
-        cve_context_text: Raw fixture text. When given, embedded verbatim
-            for byte-identity with the legacy baseline runner.
-        cve_context_name: Filename label for the embedded JSON block. The
-            legacy runner uses ``context_file.name``; callers in the new
-            architecture pass the original fixture filename when they have
-            it, otherwise ``"context.json"`` is the safe default.
-    """
-    parts: list[str] = []
-
-    briefing_bytes = briefing_path.read_bytes()
-    briefing_sha = hashlib.sha256(briefing_bytes).hexdigest()
-    # Match legacy ``_compose_prompt``'s ``Path.read_text`` universal-newline
-    # behavior so a CRLF-encoded briefing (Windows editor, ``core.autocrlf=true``)
-    # produces a prompt byte-identical to the legacy runner. The SHA above is
-    # still computed over raw bytes for content-addressed provenance.
-    briefing_text = briefing_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
-    if briefing_text:
-        parts.append(briefing_text)
-
-    parts.append(f"Task: {task}")
-
-    if cve_context_text is not None:
-        # Embed verbatim — preserves byte-identity with the legacy runner
-        # regardless of fixture formatting (whitespace, key order, trailing
-        # newlines).
-        parts.append(
-            f"Task context (contents of `{cve_context_name}`):\n```json\n{cve_context_text}\n```"
-        )
-    elif cve_context is not None:
-        # Fallback: re-serialize the parsed mapping. Loses byte-identity
-        # for fixtures whose formatting differs from json.dumps(indent=2).
-        context_json = json.dumps(dict(cve_context), indent=2)
-        parts.append(
-            f"Task context (contents of `{cve_context_name}`):\n```json\n{context_json}\n```"
-        )
-
-    rendered = "\n\n".join(parts)
-
-    return TaskPromptSpec(
-        rendered_prompt=rendered,
-        briefing_sha=briefing_sha,
-        cve_context=cve_context,
-        task=task,
-    )
 
 
 def build_tool_policy(*, settings: Settings) -> ToolPolicy:

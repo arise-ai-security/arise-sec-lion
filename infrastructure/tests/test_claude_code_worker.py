@@ -31,7 +31,7 @@ from infrastructure.workers.claude_code_worker import ClaudeCodeWorker
 def _make_spec(prompt: str = "task body") -> TaskPromptSpec:
     return TaskPromptSpec(
         rendered_prompt=prompt,
-        briefing_sha="0" * 64,
+        prompt_sha="0" * 64,
         cve_context=None,
         task="t",
     )

@@ -9,6 +9,7 @@ fake worker) lives in ``tests/integration/test_flat_mode_baseline.py``.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
@@ -16,6 +17,10 @@ import yaml
 
 from experiments.shared import harness
 from experiments.shared.runners import aris as aris_module, get as get_runner
+
+
+if TYPE_CHECKING:
+    from plugins.security import CVEInstance
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +108,21 @@ def test_aris_module_no_longer_carries_legacy_variant_table() -> None:
     assert not hasattr(aris_module, "_LEGACY_VARIANTS")
 
 
+def _demo_cve_instance() -> CVEInstance:
+    from plugins.security import CVEInstance
+
+    return CVEInstance(
+        instance_id="demo.cve-9999-0001",
+        repo="demo/p",
+        project_name="demo",
+        lang="c",
+        work_dir="/src/demo",
+        sanitizer="address",
+        bug_description="Heap overflow in parse() at src/demo.c:42.",
+        base_commit="a" * 40,
+    )
+
+
 def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> None:
     """The bootstrap-side invariant builder picks up overlaid settings.
 
@@ -139,7 +159,7 @@ def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> Non
     # When: invoking the closure for a synthetic run.
     run_dir = tmp_path / "runs" / "abc"
     run_dir.mkdir(parents=True)
-    bundle = builder(task="t1", domain_context=None, run_dir=run_dir)
+    bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
 
     # Then: the bundle reflects the overridden settings.
     assert bundle.timeouts.per_worker_call == 450
@@ -147,40 +167,30 @@ def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> Non
     assert bundle.tool_policy.allowed == ("Bash",)
     assert bundle.tool_policy.disallowed == ("WebFetch",)
     assert bundle.workspace.root == run_dir
-    assert "Task: t1" in bundle.spec.rendered_prompt
+    # Prompt now flows through system/single_agent.j2 + inputs/*: assert the
+    # canonical persona + task-input markers, not the legacy "Task: t1" line.
+    assert "<persona>" in bundle.spec.rendered_prompt
+    assert "demo.cve-9999-0001" in bundle.spec.rendered_prompt
 
 
-def test_flat_invariant_builder_embeds_cve_context_text_verbatim(tmp_path: Path) -> None:
-    """When a context_file is provided, its raw text is embedded byte-for-byte.
+def test_flat_invariant_builder_rejects_missing_cve_instance(tmp_path: Path) -> None:
+    """Cell A's flat dispatch demands a CVEInstance domain_context.
 
-    This is the contract that ``test_invariants.py``'s real-fixture test
-    proves at the invariant-builder level; here we verify the closure threads
-    it through correctly.
+    Without it, the unified prompt renderer cannot produce the input
+    block. Fail fast at builder time rather than ship a context-free
+    prompt downstream.
     """
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
 
-    # Given: a CVE fixture whose on-disk text differs from json.dumps(indent=2)
-    # output (here we add a trailing newline + extra whitespace).
-    fixture = tmp_path / "fixture.json"
-    fixture.write_text('{"cve_id":"CVE-X","extra":"raw"}\n', encoding="utf-8")
-
-    settings_path = _settings_with(
-        tmp_path,
-        orchestration={"mode": "flat"},
-    )
+    settings_path = _settings_with(tmp_path, orchestration={"mode": "flat"})
     settings = Settings.from_yaml(settings_path)
-    builder = _make_flat_invariant_builder(settings=settings, context_file=fixture)
+    builder = _make_flat_invariant_builder(settings=settings, context_file=None)
 
-    # When: invoking the closure.
     run_dir = tmp_path / "runs" / "x"
     run_dir.mkdir(parents=True)
-    bundle = builder(task="task-1", domain_context=None, run_dir=run_dir)
-
-    # Then: the rendered prompt embeds the raw fixture verbatim and labels the
-    # filename with the fixture's basename.
-    assert '{"cve_id":"CVE-X","extra":"raw"}\n' in bundle.spec.rendered_prompt
-    assert "Task context (contents of `fixture.json`)" in bundle.spec.rendered_prompt
+    with pytest.raises(ValueError, match="CVEInstance"):
+        builder(task="task-1", domain_context=None, run_dir=run_dir)
 
 
 def test_build_flat_worker_picks_claude_code(tmp_path: Path) -> None:

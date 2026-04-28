@@ -121,7 +121,7 @@ def _make_invariant_builder() -> FlatInvariantBuilder:
         del domain_context
         spec = TaskPromptSpec(
             rendered_prompt=f"BRIEFING\n\nTask: {task}",
-            briefing_sha="abc123",
+            prompt_sha="abc123",
             cve_context=None,
             task=task,
         )
