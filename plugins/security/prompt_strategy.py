@@ -91,6 +91,23 @@ def _with_cve_display(
     return chain.render("inputs/cve.j2", cve=cve_display, phase=phase, **cve_ctx)
 
 
+def render_input_block(
+    chain: "TemplateChain",
+    cve_instance: CVEInstance,
+    *,
+    phase: str | None = None,
+) -> "TemplateChain":
+    """Append the canonical input block (user + cve + control) to a chain.
+
+    The same three templates render at every entry point that wants the
+    unified input — Cell A's flat-mode worker and Cell B/C/D's BOSS.
+    """
+    cve_ctx = cve_instance.to_template_context()
+    chain = chain.render("inputs/user.j2", **cve_ctx)
+    chain = _with_cve_display(chain, cve_instance, phase=phase)
+    return chain.render("inputs/control.j2", **cve_ctx)
+
+
 class SecBenchPromptStrategy:
     """SEC-bench specific prompt strategy."""
 
@@ -117,7 +134,14 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = cve_instance.to_template_context()
-        return _with_cve_display(chain, cve_instance).render("domains/secbench/boss.j2", **cve_ctx)
+        # The input block currently lands AFTER operations/decomposition.j2
+        # because that's where the strategy hook fires. decomposition.j2
+        # carries its own <task> block, so two <task> tags appear in the
+        # rendered prompt. Acceptable for now; W3 reorders so the input
+        # block precedes operations/decomposition.j2 and the duplicate
+        # disappears.
+        chain = render_input_block(chain, cve_instance)
+        return chain.render("domains/secbench/boss.j2", **cve_ctx)
 
     def extend_manager_prompt(
         self,
@@ -139,9 +163,12 @@ class SecBenchPromptStrategy:
         is_direct_boss_child = context.briefing is not None and len(context.briefing.ancestry) == 1
         if branch is not None and is_direct_boss_child:
             chain = (
-                chain
-                .render_if(branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx)
-                .render_if(branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx)
+                chain.render_if(
+                    branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx
+                )
+                .render_if(
+                    branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx
+                )
                 .render_if(branch == "fixer", "domains/secbench/manager/fixer.j2", **cve_ctx)
             )
 
@@ -166,8 +193,9 @@ class SecBenchPromptStrategy:
 
         if branch is not None:
             chain = (
-                chain
-                .render_if(branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx)
+                chain.render_if(
+                    branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx
+                )
                 .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
                 .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
                 .render_if(branch == "reporter", "domains/secbench/worker/reporter.j2", **cve_ctx)

@@ -30,6 +30,7 @@ from core.application.services import PromptBuilder
 from core.domain.values.limits import HierarchyLimits
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy
+from plugins.security.prompt_strategy import render_input_block
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -265,15 +266,9 @@ def test_input_block_identical_for_a_and_boss() -> None:
     cve = _make_cve_with_markers()
     builder = _make_builder()
 
-    # The canonical input block once W2 lands. The chain factory is the
-    # same one PromptBuilder uses internally for its strategy hooks.
-    input_block = (
-        builder.chain()
-        .render("inputs/user.j2", **cve.to_template_context())
-        .render("inputs/cve.j2", **cve.to_template_context())
-        .render("inputs/control.j2", **cve.to_template_context())
-        .build()
-    )
+    # The canonical input block. Use the strategy's own helper so the
+    # test bytes match the production rendering — single source of truth.
+    input_block = render_input_block(builder.chain(), cve).build()
 
     a_prompt = _render_cell_a_prompt(cve)
     b_boss_prompt = _render_b_boss_prompt(cve)
@@ -292,13 +287,6 @@ def test_input_block_identical_for_a_and_boss() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Until W4 wires inputs/control.j2 into the BOSS chain, B-BOSS "
-        "never sees the anti-cheat rules."
-    ),
-    strict=True,
-)
 def test_anti_cheat_rules_present_in_b_boss_prompt() -> None:
     cve = _make_cve_with_markers()
     boss_prompt = _render_b_boss_prompt(cve)
