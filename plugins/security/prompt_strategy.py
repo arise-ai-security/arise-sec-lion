@@ -21,6 +21,7 @@ _CVE_DISPLAY_FIELDS = (
     "base_commit",
     "work_dir",
     "bug_description",
+    "bug_report",
 )
 
 
@@ -87,7 +88,7 @@ def _with_cve_display(
 
     cve_ctx = cve_instance.to_template_context()
     cve_display = {k: v for k, v in cve_ctx.items() if k in _CVE_DISPLAY_FIELDS and v}
-    return chain.render("domains/secbench/cve.j2", cve=cve_display, phase=phase, **cve_ctx)
+    return chain.render("inputs/cve.j2", cve=cve_display, phase=phase, **cve_ctx)
 
 
 class SecBenchPromptStrategy:

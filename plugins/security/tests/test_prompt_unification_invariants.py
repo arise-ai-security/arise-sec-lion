@@ -237,13 +237,6 @@ def test_no_diff_markers_in_any_prompt() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "bug_report is not in _CVE_DISPLAY_FIELDS yet. W2 adds it to the "
-        "allowlist so workers see the upstream issue narrative."
-    ),
-    strict=True,
-)
 def test_bug_report_is_present_in_b_boss_prompt() -> None:
     cve = _make_cve_with_markers()
     boss_prompt = _render_b_boss_prompt(cve)

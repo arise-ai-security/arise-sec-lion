@@ -3,7 +3,10 @@
 <domain>
     <cve_instance>
         {% for key, value in cve.items() -%}
-            - {{ key | replace('_', ' ') | title }}: {{ value }}
+            {# Cap bug_report at 8 KiB so unusually long upstream-issue
+               narratives don't blow the prompt context budget. The other
+               allowlisted fields are short structured strings. #}
+            - {{ key | replace('_', ' ') | title }}: {{ (value | string | truncate(8000, killwords=False, end='… [truncated]')) if key == 'bug_report' else value }}
         {% endfor -%}
     </cve_instance>
 
