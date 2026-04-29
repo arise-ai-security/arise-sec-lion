@@ -521,10 +521,18 @@ class AgentExecutionService:
                 set_wd(str(self._working_directory))
                 logger.info("Recon tools targeting: %s", self._working_directory)
 
+    # Top-level directories that contain the target project source tree.
+    # Workers access source code inside their container, not via the
+    # workspace listing, so including these would bloat the prompt with
+    # tens of thousands of irrelevant paths.
+    _WORKSPACE_SKIP_DIRS: frozenset[str] = frozenset({"src"})
+
     def _get_workspace_context(self) -> str | None:
         """Return fresh file listing for workspace.
 
         Always scans fresh so workers can see files created by other workers.
+        Skips source-tree directories (``src/``) that are accessed inside
+        the container — only worker-produced artifacts matter here.
         """
         if self._working_directory is None or not self._working_directory.exists():
             return None
@@ -534,8 +542,10 @@ class AgentExecutionService:
             for item in self._working_directory.rglob("*"):
                 if any(part.startswith(".") for part in item.parts):
                     continue
+                rel_path = item.relative_to(self._working_directory)
+                if rel_path.parts and rel_path.parts[0] in self._WORKSPACE_SKIP_DIRS:
+                    continue
                 if item.is_file():
-                    rel_path = item.relative_to(self._working_directory)
                     files.append(str(rel_path))
 
             if not files:

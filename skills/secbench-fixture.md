@@ -8,6 +8,15 @@ allowed-tools: [Read, Write, Edit, Glob, Grep, Bash, Agent, WebFetch, WebSearch,
 
 An **optional shortcut** for the fresh-authoring fixture workflow: research the vulnerability, build an ASan-instrumented Docker image, push it to DockerHub, and write the fixture JSON. The same steps can be done by hand — this skill just chains them together.
 
+> **Non-negotiable invariant: the Docker image must contain NO fix.**
+> The image, the source tree it ships, the `.git` metadata, the DockerHub description, and the fixture JSON's free-text fields must give an agent **zero hints** about how to patch the bug. The agent under test is supposed to derive the fix from scratch by reading the code and the sanitizer report — anything that lets it shortcut that work counts as cheating.
+>
+> This invariant applies **whether or not an upstream fix exists yet**:
+> - Fix is public → strip `.git`, verify the fix commit/PR/branch is unreachable, and keep fix references out of all bundled text.
+> - No fix yet → still strip `.git` (a fix may land between image build and agent run; the cloned tree may also carry refs to draft fix branches or PRs), and do not write hint-laden TODO comments or fix sketches into the harness, build script, bug description, or DockerHub copy.
+>
+> If you cannot guarantee this, **do not push the image**. Re-build with the leak closed first.
+
 > **New to this repo?** Read `README.md` first — §6 shows the two paths for adding a CVE (dataset fetch vs. fresh authoring) and explicitly frames this skill as the optional shortcut on the fresh-authoring path. §7 explains the DockerHub image conventions the skill uses.
 >
 > **Output location:** This skill writes `plugins/security/tests/fixtures/<instance_id>.json`. That is the same path §4 of the README reads from — once the skill finishes, the fixture is immediately runnable by hand (`bash deployment/build-secbench-tools.sh <json>` + `docker exec arise-app python main.py run …`) or via the `/secbench-run` shortcut.
@@ -24,7 +33,9 @@ If no GitHub issue URL or CVE number is given, ask for one before proceeding.
    - Full bug description, PoC details, ASan/sanitizer output if available
    - Identify: project repo, vulnerable file/function, root cause
    - Find the vulnerable commit hash (pre-patch)
-   - Find the fix commit/PR (to verify we do NOT leak the patch into the image)
+   - Find the fix commit/PR **if one exists** (to verify we do NOT leak the patch into the image)
+   - **No upstream fix yet?** That is fine — many recently-filed issues have no patch. Record this explicitly (`fix_commit: none`) and skip the "verify the patch works" sub-step in Phase 3. The fixture is still valid: it only needs to reproduce the crash. The agent under test will be the first to produce a fix, which the harness will then judge by "does the rebuilt binary stop crashing without breaking compilation."
+   - **Patch-leakage hardening still applies even with no known fix.** Do not assume "no patch exists upstream" means there is nothing to leak — a patch may land between when you build the image and when an agent runs against it, and the cloned tree may already contain refs to fix branches/PRs. Strip `.git` regardless (Phase 2d).
 
 2. **Fetch the vulnerable source code** at the identified commit:
    - The vulnerable file (e.g., the `.c` file with the bug)
@@ -114,10 +125,13 @@ Key rules:
 - **Always set `ENV FUZZING_LANGUAGE=c`** (or appropriate language) — the base image's `compile` script requires it
 - **CRITICAL: Strip git history to prevent patch leakage** — after checking out the vulnerable commit,
   `rm -rf .git && git init && git add -A && git commit` to create a clean single-commit repo. Without this,
-  `git log --all` exposes the upstream fix commit, allowing agents to cheat.
+  `git log --all` exposes the upstream fix commit (or fix-branch hints, or refs to a draft PR), allowing agents to cheat.
+  **This step is mandatory regardless of whether a public fix exists today** — a patch may land upstream between image build time and agent run time, and even pre-fix repos may contain branches/tags/PR refs that hint at the eventual fix.
 - **Never include the upstream fix** — the image must reproduce the crash
 - Checkout the **pre-patch** commit only
-- After building, **verify** no fix is reachable: `git log --oneline --all | grep {fix_commit}` should return nothing
+- After building, **verify** no fix is reachable:
+  - If a fix commit is known: `git log --oneline --all | grep {fix_commit}` should return nothing
+  - If no fix exists yet: still confirm the repo collapses to a single commit (`git log --oneline --all | wc -l` should print `1`) and that no remote refs survived (`git remote -v` should be empty, `ls .git/refs/remotes` should not exist)
 
 ## Phase 3: Build and test the Docker image
 
@@ -153,17 +167,47 @@ chmod +x /src/build.sh
 docker run --rm <image> bash -c 'grep -n "DEFINE_VALUE" /src/{project}/include/header.h'
 ```
 
-### 3d. Verify no patch leakage
+### 3d. Verify no patch leakage (anti-cheat audit)
+
+Run this for **every** fixture, even when no upstream fix exists yet — the goal is to prove the cloned tree (and everything else shipped in the image) carries no metadata that hints at how to fix the bug. An agent must not be able to recover a fix from `git log`, branch names, remote refs, ASan-suppression files, comments planted in the harness, or text bundled in the fixture JSON.
+
 ```bash
 docker run --rm <image> bash -c '
 cd /src/{project_name}
-echo "=== Git log (should be single commit) ==="
+echo "=== Git log (should be exactly one commit) ==="
 git log --oneline --all
-echo "=== Search for fix commit ==="
-git log --oneline --all | grep -i "{fix_commit_short}" && echo "LEAK DETECTED!" || echo "Clean (good)"
+COMMITS=$(git log --oneline --all | wc -l)
+[ "$COMMITS" = "1" ] && echo "Single commit (good)" || echo "MULTIPLE COMMITS — LEAK RISK"
+
+echo "=== Remote refs (should be empty) ==="
+git remote -v
+ls .git/refs/remotes 2>/dev/null && echo "REMOTE REFS PRESENT — LEAK RISK" || echo "No remote refs (good)"
+
+echo "=== Branches/tags (should only be one local branch, no fix-* / patch-* / pr-*) ==="
+git branch -a
+git tag
+
+# Only run this block when a fix commit is known — skip for issues with no upstream patch.
+# echo "=== Search for fix commit ==="
+# git log --oneline --all | grep -i "{fix_commit_short}" && echo "LEAK DETECTED!" || echo "Clean (good)"
 '
 ```
-If the fix commit is visible, the Dockerfile must strip git history (see Phase 2d).
+
+**Also grep the bundled artifacts for fix-shaped hints:**
+
+```bash
+docker run --rm <image> bash -c '
+  echo "=== Hint-word scan in /src and /testcase ==="
+  # Common cheat-words that should NOT appear in the harness, build script, PoC, or any docs we ship.
+  # Whitelist legitimate uses (e.g. the literal word "patch" in the secb_sh template) by inspecting hits.
+  grep -RInE "TODO\\(fix\\)|FIXME|cheat|workaround|fix[-_ ]commit|pull/[0-9]+|PR ?#?[0-9]+|see commit [0-9a-f]{7,}" \
+       /src/harness* /src/build.sh /testcase 2>/dev/null \
+    && echo "POTENTIAL HINT LEAK — review hits above" \
+    || echo "No obvious hint words (good)"
+'
+```
+
+If any check fails, fix the Dockerfile / build artifacts (see Phase 2d) and rebuild — do **not** ship the image. **The fixture JSON's `bug_description`, `bug_report`, and `sanitizer_report` fields must also be reviewed by hand** for sentences like "the fix is to add a NULL check at line N" — paraphrase or remove them. State the symptom, not the remedy.
 
 ### 3e. Capture the ASan report
 
@@ -197,7 +241,7 @@ curl -s -X PATCH "https://hub.docker.com/v2/repositories/songtli/secb.eval.x86_6
   -H "Content-Type: application/json" \
   -d '{
     "description": "{CVE_ID}: {short_description} ({project_name})",
-    "full_description": "## {CVE_ID}\n\n{detailed_description}\n\n**GitHub Issue:** {issue_url}\n**Base image:** hwiwonlee/secb.base:latest\n**Vulnerable commit:** {commit}\n**Fix:** {fix_reference}"
+    "full_description": "## {CVE_ID}\n\n{detailed_description}\n\n**GitHub Issue:** {issue_url}\n**Base image:** hwiwonlee/secb.base:latest\n**Vulnerable commit:** {commit}\n**Fix:** {fix_reference_or_none_yet}"
   }'
 ```
 
