@@ -336,6 +336,7 @@ class LiteLLMAdapter(LLMPort):
 
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL | re.IGNORECASE)
+_TOOL_CALL_TAG = "<tool_call>"
 
 
 def _strip_llm_wrappers(text: str) -> str:
@@ -350,6 +351,42 @@ def _strip_llm_wrappers(text: str) -> str:
     if match:
         cleaned = match.group(1).strip()
     return cleaned
+
+
+def _extract_tool_call_tags(content: str) -> list[dict[str, Any]]:
+    """Extract parsed JSON objects from ``<tool_call>`` XML tags.
+
+    DeepSeek-v4-pro (and some other Ollama-served models) emit tool calls
+    as ``<tool_call>{"name": "…", "arguments": {…}}</tool_call>`` tags
+    embedded in conversational prose, rather than populating the API's
+    structured ``tool_calls`` field.  Uses ``json.JSONDecoder.raw_decode``
+    to find each JSON object robustly (handles nested braces).
+    """
+    if _TOOL_CALL_TAG not in content.lower():
+        return []
+    results: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    lower = content.lower()
+    pos = 0
+    while True:
+        idx = lower.find(_TOOL_CALL_TAG, pos)
+        if idx == -1:
+            break
+        json_start = idx + len(_TOOL_CALL_TAG)
+        # Skip whitespace between tag and JSON
+        while json_start < len(content) and content[json_start] in " \t\n\r":
+            json_start += 1
+        if json_start >= len(content) or content[json_start] != "{":
+            pos = json_start
+            continue
+        try:
+            obj, end = decoder.raw_decode(content, json_start)
+            if isinstance(obj, dict):
+                results.append(obj)
+            pos = json_start + end
+        except json.JSONDecodeError:
+            pos = json_start + 1
+    return results
 
 
 def _try_parse_content_tool_calls(
@@ -371,6 +408,8 @@ def _try_parse_content_tool_calls(
         above; all items must resolve to tool calls (if any item looks
         like a subtask — has a ``description`` field — we bail and let
         the subtask parser handle the whole array)
+    4.  ``<tool_call>{"name": "…", …}</tool_call>`` — DeepSeek-style XML
+        tag wrapping, often preceded by conversational prose.
 
     For shape (2) we match against the registered tool definitions: if the
     dict keys are a subset of exactly one tool's parameters, treat it as a
@@ -385,6 +424,25 @@ def _try_parse_content_tool_calls(
     # it here so tool-call-shaped content wrapped in think tags is
     # intercepted before it reaches the subtask parser.
     stripped = _strip_llm_wrappers(content)
+
+    # Shape 4: DeepSeek-v4-pro emits <tool_call>JSON</tool_call> tags
+    # embedded in prose. Extract these before the JSON-start check,
+    # since conversational preamble precedes the tag.
+    tagged_items = _extract_tool_call_tags(stripped)
+    if tagged_items:
+        tool_name_set = {t.get("function", {}).get("name") for t in tools}
+        tool_param_index = _build_tool_param_index(tools)
+        calls: list[ToolCall] = []
+        for item in tagged_items:
+            tc = _match_single_tool_call(item, tool_name_set, tool_param_index)
+            if tc is None:
+                return None  # not a tool call — bail to subtask parser
+            calls.append(tc)
+        if calls:
+            for tc in calls:
+                logger.info("Parsed <tool_call>-tagged tool call: %s", tc.name)
+            return calls
+
     if not stripped.startswith(("{", "[")):
         return None
 
