@@ -703,6 +703,7 @@ FodyWeavers.xsd
 
 # Run artifacts (generated code, exports, last run tracking)
 runs/
+output/
 
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm+all,visualstudio,git
 
