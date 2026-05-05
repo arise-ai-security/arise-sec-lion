@@ -206,6 +206,15 @@ class AgentQueryService:
             active=active,
         )
 
+    async def has_non_terminal_agents(self, root_id: UUID) -> bool:
+        """Return True if any agent in the hierarchy is not terminal."""
+        all_events = await self._repository.get_hierarchy_events_grouped(root_id)
+        for _agent_id, events in all_events.items():
+            summary = AgentSummaryReadModel.from_events(events)
+            if summary is not None and not summary.is_terminal:
+                return True
+        return False
+
     async def get_active_agent_ids(
         self,
         root_id: UUID | None = None,
@@ -241,6 +250,9 @@ class AgentQueryService:
         children_map = self._build_children_map(summaries)
 
         # Get non-terminal agents (single pass, combined filtering)
+        # Only include agents that are actionable (status=analyzing) to avoid
+        # scheduling no-op steps for WAITING/PENDING agents that would just
+        # acquire the LLM semaphore, load from DB, and return immediately.
         non_workers: list[UUID] = []
         workers: list[tuple[UUID, AgentSummaryReadModel]] = []
 
@@ -257,7 +269,11 @@ class AgentQueryService:
                         continue  # Skip worker - parent still spawning children
                 workers.append((agent_id, summary))
             else:
-                non_workers.append(agent_id)
+                # Only schedule non-workers that have work to do (ANALYZING).
+                # WAITING agents are just awaiting children — dispatching them
+                # wastes a semaphore slot and DB round-trip for a no-op.
+                if summary.status == "analyzing":
+                    non_workers.append(agent_id)
 
         if not sequential_workers:
             return non_workers + [agent_id for agent_id, _ in workers]

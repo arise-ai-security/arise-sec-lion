@@ -259,7 +259,15 @@ class AgentExecutionService:
                 )
 
             if not active_agents and not in_progress:
-                break
+                # Verify the run is truly done (all agents terminal), not just
+                # that all actionable agents are in-progress.  get_active_agent_ids
+                # now filters out WAITING non-workers, so an empty return only
+                # means "nothing to schedule" — children may still be running.
+                has_non_terminal = await self._query_service.has_non_terminal_agents(
+                    root_id=root_agent_id
+                )
+                if not has_non_terminal:
+                    break
 
             await asyncio.sleep(self._config.poll_interval)
 
