@@ -258,6 +258,44 @@ After the run completes (RunCompleted event):
 | 5   | 17     | 4/4         | ~43min   | First full success |
 | 6   | 17     | TBD         | TBD      | Scheduling bug found |
 
+### Phase 6: Draft upstream PR
+
+After a successful run with validated artifacts, draft a PR against the upstream project repository.
+
+1. **Clone the user's fork** of the target repo (check `gh repo list` for existing forks; fork if needed).
+2. **Create a fix branch** from upstream `main`/`master` (e.g., `fix/issue-<ID>-<short-desc>`).
+3. **Apply the patch** from `model_patch.diff` (adapt to current HEAD if line numbers shifted).
+4. **Commit** with a descriptive message referencing the issue (`Fixes #<ID>`).
+5. **Push** the branch to the user's fork.
+6. **Create the PR** using `gh pr create` with the **`--draft`** flag. PRs MUST always be created as drafts, never as open/ready-for-review.
+
+PR body template:
+```
+gh pr create --repo <upstream/repo> --head <user>:<branch> --base main --draft \
+  --title "fix: <short description>" --body "$(cat <<'EOF'
+## Summary
+
+Fixes #<issue-number>.
+
+<1-3 sentence root-cause explanation from security_report.md>
+
+## Fix
+
+<Description of the patch approach>
+
+## Verification
+
+Tested with <sanitizer>-instrumented build:
+- **Before**: <sanitizer error message>
+- **After**: No findings; clean exit
+
+Reproducer: <brief reproduction steps>
+EOF
+)"
+```
+
+**IMPORTANT**: Always use `--draft`. PRs are never opened as ready-for-review.
+
 ### Prompt Improvement Notes
 
 When diagnosing prompt-level issues from a run (e.g., judge rejecting valid work, workers using wrong tools),

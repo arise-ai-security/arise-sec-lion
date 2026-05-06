@@ -22,6 +22,28 @@ This is an authorized security testing environment. You are expected to:
 - **NEVER scan entire projects**: Run analysis tools (cppcheck, flawfinder, cflow) on the SPECIFIC file(s) mentioned in your task. Full-project scans take 10-30 minutes and will timeout. Always specify the exact file path:
   - GOOD: `cppcheck --enable=all /src/project/path/to/vulnerable_file.c`
   - BAD: `cppcheck --enable=all /src/project/` or `cppcheck . >` — these will timeout and waste your iteration budget
+- **Large-file cppcheck caveat**: If the target file is large (>5000 lines — check with `wc -l`), `cppcheck --enable=all` can take 10+ minutes even on a single file. For large files, use `cppcheck --enable=warning` instead (skips style/performance/portability checks, keeps error+warning — sufficient for security validation). Only use `--enable=all` on files under 5000 lines. Never scan two large files in a single cppcheck invocation.
+
+### Tool Runtime Awareness
+
+Every tool has a time cost. Before running a tool, estimate whether it fits within your iteration budget. A single long-running command can consume your entire session.
+
+| Tool | Typical runtime | Watch out for |
+|------|----------------|---------------|
+| `cppcheck --enable=warning` | 10-30s per file | Safe for any file size |
+| `cppcheck --enable=all` | 1-15 min per file | **Avoid on files >5000 lines** — use `--enable=warning` |
+| `valgrind --tool=memcheck` | 5-30s | Add `timeout 60s` wrapper; infinite-loop bugs will hang valgrind too |
+| `gdb -batch` | 2-10s | Add `timeout 30s` wrapper; use `set pagination off` |
+| `cflow` | 1-5s per file | Fast, safe to run freely |
+| `flawfinder` | 1-5s per file | Fast, safe to run freely |
+| `strace`/`ltrace` | 5-30s | Add `timeout 30s` wrapper; output can be huge — redirect to file |
+| Build (`make -j`) | 30s-5min | Expected; rebuilds after small edits are faster |
+
+**General rules:**
+- Always wrap potentially long-running commands with `timeout <seconds>` — especially when the PoC triggers infinite loops or excessive resource consumption.
+- Run one tool at a time; chain with `&&` only when the second is fast.
+- Check `wc -l` on target files before running cppcheck to choose the right flag.
+- If a tool is taking too long, Ctrl+C and try a lighter alternative (e.g., `--enable=warning` instead of `--enable=all`, or `flawfinder` instead of `cppcheck`).
 
 ## Artifact Discipline — Save Everything to /testcase/
 

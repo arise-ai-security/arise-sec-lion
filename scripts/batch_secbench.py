@@ -1,0 +1,772 @@
+#!/usr/bin/env python3
+"""
+Batch runner for SEC-bench CVE instances.
+
+Downloads 200 CVE instances from the HuggingFace SEC-bench dataset,
+generates fixture JSONs, builds Docker images, runs instances in
+configurable batch sizes, monitors for under-decomposition, retries
+up to --max-retries times, and records results to ~/secbench-all.csv.
+
+Supports resumption: reads ~/secbench-all.csv on startup and skips
+instances already marked 'success' or 'image_error'.
+
+Usage:
+    python scripts/batch_secbench.py [--batch-size 15] [--max-retries 3]
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import csv
+import json
+import logging
+import os
+import shlex
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("batch_secbench")
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FIXTURE_DIR = PROJECT_ROOT / "plugins" / "security" / "tests" / "fixtures"
+RUNS_DIR = PROJECT_ROOT / "runs"
+CSV_PATH = Path.home() / "secbench-all.csv"
+
+# Under-decomposition: if a run finishes (or has been running > DECOMP_GRACE_SEC)
+# with fewer than this many agents, treat it as under-decomposed.
+UNDER_DECOMP_THRESHOLD = 8
+# Structural check: boss must spawn at least this many manager children
+# (Builder, Exploiter, Fixer are always managers; Reporter may be worker).
+MIN_BOSS_MANAGERS = 3
+DECOMP_GRACE_SEC = 90  # 90s grace — boss children are typically evaluated by ~60s
+STALL_SEC = 450  # 7.5 min with no new events = stalled (1.5x for Qwen)
+POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
+RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
+
+CSV_FIELDS = [
+    "instance_id",
+    "status",
+    "boss_id",
+    "testcase_path",
+    "num_agents",
+    "duration_seconds",
+    "tries",
+    "error_message",
+    "started_at",
+    "completed_at",
+]
+
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+@dataclass
+class RunResult:
+    instance_id: str
+    status: str = "pending"
+    boss_id: str = ""
+    testcase_path: str = ""
+    num_agents: int = 0
+    duration_seconds: float = 0.0
+    tries: int = 0
+    error_message: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return {f: str(getattr(self, f)) for f in CSV_FIELDS}
+
+
+# ---------------------------------------------------------------------------
+# CSV helpers
+# ---------------------------------------------------------------------------
+def load_completed() -> dict[str, RunResult]:
+    """Load instances that should NOT be re-run from the CSV."""
+    done: dict[str, RunResult] = {}
+    if not CSV_PATH.exists():
+        return done
+    with open(CSV_PATH, newline="") as f:
+        for row in csv.DictReader(f):
+            if row.get("status") in ("success", "image_error"):
+                r = RunResult(instance_id=row["instance_id"])
+                for k in CSV_FIELDS:
+                    setattr(r, k, row.get(k, ""))
+                try:
+                    r.tries = int(r.tries)  # type: ignore[arg-type]
+                    r.num_agents = int(r.num_agents)  # type: ignore[arg-type]
+                    r.duration_seconds = float(r.duration_seconds)  # type: ignore[arg-type]
+                except (ValueError, TypeError):
+                    pass
+                done[r.instance_id] = r
+    return done
+
+
+def upsert_csv(result: RunResult) -> None:
+    """Insert or update a single result row in the CSV."""
+    rows: list[dict[str, str]] = []
+    if CSV_PATH.exists():
+        with open(CSV_PATH, newline="") as f:
+            rows = list(csv.DictReader(f))
+
+    updated = False
+    for i, row in enumerate(rows):
+        if row["instance_id"] == result.instance_id:
+            rows[i] = result.as_dict()
+            updated = True
+            break
+    if not updated:
+        rows.append(result.as_dict())
+
+    with open(CSV_PATH, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+
+
+# ---------------------------------------------------------------------------
+# Fixture generation
+# ---------------------------------------------------------------------------
+def generate_fixtures() -> list[str]:
+    """Download SEC-bench CVE split and write missing fixture JSONs.
+
+    Returns the ordered list of 200 CVE instance_ids.
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        logger.error("Install the 'datasets' package: pip install datasets")
+        sys.exit(1)
+
+    logger.info("Loading SEC-bench dataset …")
+    ds = load_dataset("SEC-bench/SEC-bench", split="eval")
+
+    ids: list[str] = []
+    created = 0
+    for i, row in enumerate(ds):
+        if i >= 200:  # CVE split is rows 0-199
+            break
+        iid: str = row["instance_id"]
+        ids.append(iid)
+
+        path = FIXTURE_DIR / f"{iid}.json"
+        if path.exists():
+            continue
+
+        fixture = {
+            "instance_id": iid,
+            "repo": row["repo"],
+            "project_name": row["project_name"],
+            "lang": row["lang"],
+            "work_dir": row["work_dir"],
+            "sanitizer": row["sanitizer"],
+            "bug_description": row["bug_description"],
+            "base_commit": row["base_commit"],
+            "build_sh": row.get("build_sh") or "",
+            "secb_sh": row.get("secb_sh") or "",
+            "dockerfile": row.get("dockerfile") or "",
+            "patch": row.get("patch") or "",
+            "exit_code": row.get("exit_code") or 0,
+            "sanitizer_report": row.get("sanitizer_report") or "",
+            "bug_report": row.get("bug_report") or "",
+        }
+        path.write_text(json.dumps(fixture, indent=2), encoding="utf-8")
+        created += 1
+
+    logger.info("Fixtures: %d total, %d newly created", len(ids), created)
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# Docker image resolution & build (no uv/venv dependency)
+# ---------------------------------------------------------------------------
+def _resolve_images(instance_id: str) -> tuple[str, str]:
+    """Resolve base and tools image names from fixture JSON.
+
+    Returns (base_image, target_image).
+    """
+    fixture_path = FIXTURE_DIR / f"{instance_id}.json"
+    with open(fixture_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    override = data.get("docker_image_override", "")
+    if override:
+        base = override
+    else:
+        project = data["project_name"]
+        cve_id = instance_id.split(".", 1)[1] if "." in instance_id else instance_id
+        base = f"hwiwonlee/secb.eval.x86_64.{project}.{cve_id}:patch"
+
+    # Mirror the logic from plugins/security/image_resolver.py
+    if ":" in base:
+        name, docker_tag = base.rsplit(":", 1)
+    else:
+        name, docker_tag = base, ""
+    parts = name.split(".")
+    suffix = ".".join(parts[3:]) if len(parts) >= 5 else name.replace("/", "-")
+    tag = f"{suffix}-{docker_tag}" if docker_tag else suffix
+    target = f"secb-tools:{tag}"
+
+    return base, target
+
+
+async def _run_cmd(cmd: list[str]) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+async def _kill_run(
+    proc: asyncio.subprocess.Process,
+    instance_id: str,
+    boss_id: str | None,
+) -> None:
+    """Kill a run: inner process inside arise-app, docker exec wrapper, and worker containers."""
+    # 1. Kill the python process inside arise-app (docker exec kill doesn't propagate)
+    await _run_cmd([
+        "docker", "exec", "arise-app", "bash", "-c",
+        f"for p in /proc/[0-9]*/cmdline; do "
+        f"if grep -q '{instance_id}' \"$p\" 2>/dev/null; then "
+        f"kill $(dirname $p | xargs basename) 2>/dev/null; fi; done",
+    ])
+
+    # 2. Kill the docker exec wrapper
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        pass
+
+    # 3. Remove worker containers for this run
+    if boss_id:
+        rc, stdout, _ = await _run_cmd([
+            "docker", "ps", "-q",
+            "--filter", f"label=arise.root_id={boss_id}",
+        ])
+        if rc == 0 and stdout.strip():
+            for cid in stdout.strip().split("\n"):
+                await _run_cmd(["docker", "rm", "-f", cid.strip()])
+
+
+async def build_image(instance_id: str) -> bool:
+    """Pull base image and build secb-tools image. No uv/venv required."""
+    base, target = _resolve_images(instance_id)
+
+    # Skip if target already exists
+    rc, _, _ = await _run_cmd(["docker", "image", "inspect", target])
+    if rc == 0:
+        logger.debug("[%s] image exists: %s", instance_id, target)
+        return True
+
+    # Pull base image
+    rc, _, err = await _run_cmd(["docker", "pull", base])
+    if rc != 0:
+        logger.warning("[%s] pull FAILED (%s): %s", instance_id, base, err.strip()[:120])
+        return False
+
+    # Build tools layer
+    dockerfile = str(PROJECT_ROOT / "deployment" / "secbench-tools.Dockerfile")
+    rc, _, err = await _run_cmd([
+        "docker", "build",
+        "-f", dockerfile,
+        "--build-arg", f"BASE_IMAGE={base}",
+        "-t", target,
+        str(PROJECT_ROOT),
+    ])
+    if rc != 0:
+        logger.warning("[%s] build FAILED: %s", instance_id, err.strip()[:120])
+        return False
+
+    logger.info("[%s] image built: %s", instance_id, target)
+    return True
+
+
+async def build_images_parallel(ids: list[str], concurrency: int = 5) -> dict[str, bool]:
+    """Build images with bounded parallelism."""
+    sem = asyncio.Semaphore(concurrency)
+    results: dict[str, bool] = {}
+
+    async def _build(iid: str) -> None:
+        async with sem:
+            results[iid] = await build_image(iid)
+
+    await asyncio.gather(*[_build(iid) for iid in ids])
+    return results
+
+
+# ---------------------------------------------------------------------------
+# DB helpers (via docker exec arise-db psql — no Python driver needed)
+# ---------------------------------------------------------------------------
+async def _psql(query: str) -> str:
+    """Execute a SQL query and return raw stdout."""
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "arise-db",
+        "psql", "-U", "arise", "-d", "arise_events", "-t", "-A", "-c", query,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return stdout.decode().strip()
+
+
+async def db_boss_id(instance_id: str, after_ts: str) -> str | None:
+    """Find the boss aggregate_id for a recent run of this instance."""
+    q = (
+        "SELECT aggregate_id FROM events "
+        "WHERE event_type='RunStarted' "
+        f"AND payload->'domain_metadata'->>'instance_id' = '{instance_id}' "
+        f"AND occurred_at > '{after_ts}'::timestamptz "
+        "ORDER BY occurred_at DESC LIMIT 1"
+    )
+    val = await _psql(q)
+    return val if val else None
+
+
+async def db_agent_count(boss_id: str) -> int:
+    """Count agents in the run hierarchy via recursive CTE."""
+    q = (
+        "WITH RECURSIVE h AS ("
+        f"  SELECT '{boss_id}'::uuid AS aid "
+        "  UNION "
+        "  SELECT (e.payload->>'child_id')::uuid "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  WHERE e.event_type = 'ChildSpawned'"
+        ") SELECT count(*) FROM h"
+    )
+    val = await _psql(q)
+    return int(val) if val else 0
+
+
+async def db_boss_manager_count(boss_id: str) -> tuple[int, int]:
+    """Count how many direct children of the boss were evaluated as managers.
+
+    Returns (total_children_evaluated, manager_count).
+    """
+    # Total boss children that have been evaluated
+    q_total = (
+        "SELECT count(*) FROM events ce "
+        "JOIN events se ON (se.payload->>'child_id')::uuid = ce.aggregate_id "
+        f"WHERE se.aggregate_id = '{boss_id}'::uuid "
+        "AND se.event_type = 'ChildSpawned' "
+        "AND ce.event_type = 'ComplexityEvaluated'"
+    )
+    # Of those, how many are managers
+    q_mgr = (
+        "SELECT count(*) FROM events ce "
+        "JOIN events se ON (se.payload->>'child_id')::uuid = ce.aggregate_id "
+        f"WHERE se.aggregate_id = '{boss_id}'::uuid "
+        "AND se.event_type = 'ChildSpawned' "
+        "AND ce.event_type = 'ComplexityEvaluated' "
+        "AND ce.payload->>'determined_role' = 'manager'"
+    )
+    total_str = await _psql(q_total)
+    mgr_str = await _psql(q_mgr)
+    total = int(total_str) if total_str else 0
+    mgr = int(mgr_str) if mgr_str else 0
+    return total, mgr
+
+
+async def db_boss_finished_spawning(boss_id: str) -> bool:
+    """Check if the boss has finished its initial execution (spawned children)."""
+    q = (
+        "SELECT count(*) FROM events "
+        f"WHERE aggregate_id = '{boss_id}'::uuid "
+        "AND event_type = 'AgentExecutionFinished'"
+    )
+    val = await _psql(q)
+    return int(val) > 0 if val else False
+
+
+async def _cleanup_db(boss_id: str) -> None:
+    """Delete all events for a run hierarchy (boss + children) to keep the DB clean."""
+    q = (
+        "WITH RECURSIVE h AS ("
+        f"  SELECT '{boss_id}'::uuid AS aid "
+        "  UNION "
+        "  SELECT (e.payload->>'child_id')::uuid "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  WHERE e.event_type = 'ChildSpawned'"
+        ") DELETE FROM events WHERE aggregate_id IN (SELECT aid FROM h)"
+    )
+    result = await _psql(q)
+    logger.debug("[%s] cleaned up DB: %s", boss_id, result)
+
+
+async def db_last_event_age(boss_id: str) -> float:
+    """Return seconds since the most recent event in this run's hierarchy."""
+    q = (
+        "WITH RECURSIVE h AS ("
+        f"  SELECT '{boss_id}'::uuid AS aid "
+        "  UNION "
+        "  SELECT (e.payload->>'child_id')::uuid "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  WHERE e.event_type = 'ChildSpawned'"
+        ") SELECT EXTRACT(epoch FROM (now() - max(e.occurred_at))) "
+        "FROM events e JOIN h ON e.aggregate_id = h.aid"
+    )
+    val = await _psql(q)
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+async def db_run_completed(boss_id: str) -> str | None:
+    """Return final_status if RunCompleted, else None."""
+    q = (
+        "SELECT payload->>'final_status' FROM events "
+        f"WHERE aggregate_id = '{boss_id}'::uuid "
+        "AND event_type = 'RunCompleted' "
+        "ORDER BY occurred_at DESC LIMIT 1"
+    )
+    val = await _psql(q)
+    return val if val else None
+
+
+# ---------------------------------------------------------------------------
+# Single-instance runner
+# ---------------------------------------------------------------------------
+async def run_instance(instance_id: str, attempt: int) -> RunResult:
+    """Launch one SEC-bench run, monitor it, return the result."""
+    result = RunResult(instance_id=instance_id, tries=attempt)
+    fixture_path = FIXTURE_DIR / f"{instance_id}.json"
+
+    with open(fixture_path, encoding="utf-8") as f:
+        fixture = json.load(f)
+
+    project = fixture["project_name"]
+    cve_id = instance_id.split(".", 1)[1] if "." in instance_id else instance_id
+    bug_short = fixture["bug_description"][:120].replace("'", "")
+    task = (
+        f"Analyze {cve_id} in {project}: {bug_short}, "
+        "perform static analysis, build the project, "
+        "reproduce the bug with the PoC, develop and verify a patch"
+    )
+
+    started = datetime.now(timezone.utc)
+    result.started_at = started.isoformat()
+
+    logger.info("[%s] attempt %d — launching", instance_id, attempt)
+
+    # Launch inside arise-app container
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "arise-app",
+        "python", "main.py", "run",
+        "--domain-context-file", f"plugins/security/tests/fixtures/{instance_id}.json",
+        "--domain", "security",
+        task,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    # Wait for boss_id to appear (up to 90s)
+    boss_id: str | None = None
+    for _ in range(90):
+        if proc.returncode is not None:
+            break
+        await asyncio.sleep(1)
+        boss_id = await db_boss_id(instance_id, result.started_at)
+        if boss_id:
+            break
+
+    if not boss_id:
+        # Process likely died immediately (missing image, config error, etc.)
+        try:
+            stdout_bytes = await asyncio.wait_for(proc.stdout.read(2000), timeout=5)  # type: ignore[union-attr]
+            err_tail = stdout_bytes.decode(errors="replace")[-200:]
+        except Exception:
+            err_tail = ""
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            await _kill_run(proc, instance_id, None)
+        result.status = "error"
+        result.error_message = f"No RunStarted event. {err_tail}".strip()
+        result.completed_at = datetime.now(timezone.utc).isoformat()
+        logger.warning("[%s] no boss_id found", instance_id)
+        return result
+
+    result.boss_id = boss_id
+    result.testcase_path = str(RUNS_DIR / boss_id / "testcase")
+
+    # ---- Monitor loop ----
+    while proc.returncode is None:
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+
+        # Hard timeout
+        if elapsed > RUN_TIMEOUT_SEC:
+            logger.warning("[%s] TIMEOUT after %.0fs", instance_id, elapsed)
+            await _kill_run(proc, instance_id, boss_id)
+            result.status = "timeout"
+            result.duration_seconds = elapsed
+            result.num_agents = await db_agent_count(boss_id)
+            result.completed_at = datetime.now(timezone.utc).isoformat()
+            return result
+
+        # Under-decomposition checks
+        if elapsed > DECOMP_GRACE_SEC:
+            agents = await db_agent_count(boss_id)
+
+            # 1. Structural check (aggressive): as soon as boss has finished
+            #    spawning, check if enough children are managers. Kill
+            #    immediately once it's impossible to reach MIN_BOSS_MANAGERS.
+            boss_done = await db_boss_finished_spawning(boss_id)
+            if boss_done:
+                total_eval, mgr_count = await db_boss_manager_count(boss_id)
+                # How many children haven't been evaluated yet?
+                q_total_children = (
+                    "SELECT count(*) FROM events "
+                    f"WHERE aggregate_id = '{boss_id}'::uuid "
+                    "AND event_type = 'ChildSpawned'"
+                )
+                total_children = int(await _psql(q_total_children) or 0)
+                unevaluated = total_children - total_eval
+                # Best case: all unevaluated become managers
+                max_possible_managers = mgr_count + unevaluated
+
+                if total_eval > 0 and max_possible_managers < MIN_BOSS_MANAGERS:
+                    status = await db_run_completed(boss_id)
+                    if status is not None:
+                        break
+                    logger.warning(
+                        "[%s] UNDER-DECOMPOSED (structural): %d/%d evaluated as managers, "
+                        "%d unevaluated, max possible %d < %d needed — killing at %.0fs",
+                        instance_id, mgr_count, total_eval,
+                        unevaluated, max_possible_managers,
+                        MIN_BOSS_MANAGERS, elapsed,
+                    )
+                    await _kill_run(proc, instance_id, boss_id)
+                    result.status = "under_decomposed"
+                    result.num_agents = agents
+                    result.duration_seconds = elapsed
+                    result.error_message = (
+                        f"structural: {mgr_count}/{total_eval} managers, "
+                        f"max possible {max_possible_managers} < {MIN_BOSS_MANAGERS}"
+                    )
+                    result.completed_at = datetime.now(timezone.utc).isoformat()
+                    return result
+
+            # 2. Raw agent count check (fallback)
+            if agents < UNDER_DECOMP_THRESHOLD:
+                status = await db_run_completed(boss_id)
+                if status is not None:
+                    break
+                logger.warning(
+                    "[%s] UNDER-DECOMPOSED (count): %d agents after %.0fs — killing",
+                    instance_id, agents, elapsed,
+                )
+                await _kill_run(proc, instance_id, boss_id)
+                result.status = "under_decomposed"
+                result.num_agents = agents
+                result.duration_seconds = elapsed
+                result.error_message = f"only {agents} agents (threshold={UNDER_DECOMP_THRESHOLD})"
+                result.completed_at = datetime.now(timezone.utc).isoformat()
+                return result
+
+        # Stall detection: no new events for STALL_SEC = hanging LLM call
+        if elapsed > DECOMP_GRACE_SEC:
+            stale_secs = await db_last_event_age(boss_id)
+            if stale_secs > STALL_SEC:
+                agents = await db_agent_count(boss_id)
+                logger.warning(
+                    "[%s] STALLED: no events for %.0fs (%d agents) — killing",
+                    instance_id, stale_secs, agents,
+                )
+                await _kill_run(proc, instance_id, boss_id)
+                result.status = "failed"
+                result.num_agents = agents
+                result.duration_seconds = elapsed
+                result.error_message = f"stalled {stale_secs:.0f}s"
+                result.completed_at = datetime.now(timezone.utc).isoformat()
+                return result
+
+        await asyncio.sleep(POLL_INTERVAL_SEC)
+
+    # ---- Process exited ----
+    await proc.wait()
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    result.duration_seconds = round(elapsed, 1)
+    result.completed_at = datetime.now(timezone.utc).isoformat()
+    result.num_agents = await db_agent_count(boss_id)
+
+    final = await db_run_completed(boss_id)
+    if proc.returncode == 0 and final == "success":
+        result.status = "success"
+    elif elapsed > 120:
+        # Structural under-decomposition: check boss manager children first
+        total_eval, mgr_count = await db_boss_manager_count(boss_id)
+        if total_eval >= 3 and mgr_count < MIN_BOSS_MANAGERS:
+            result.status = "under_decomposed"
+            result.error_message = (
+                f"structural: {mgr_count}/{total_eval} managers "
+                f"(need {MIN_BOSS_MANAGERS})"
+            )
+        elif result.num_agents < UNDER_DECOMP_THRESHOLD:
+            result.status = "under_decomposed"
+            result.error_message = f"only {result.num_agents} agents"
+        elif final:
+            result.status = "failed"
+            result.error_message = f"final_status={final}"
+        else:
+            result.status = "failed"
+            result.error_message = f"exit_code={proc.returncode}"
+    elif final:
+        result.status = "failed"
+        result.error_message = f"final_status={final}"
+    else:
+        result.status = "failed"
+        result.error_message = f"exit_code={proc.returncode}"
+
+    logger.info(
+        "[%s] %s — %d agents, %.0fs",
+        instance_id, result.status, result.num_agents, elapsed,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Concurrent execution with retry (semaphore-based)
+# ---------------------------------------------------------------------------
+async def _run_with_retry(
+    iid: str,
+    sem: asyncio.Semaphore,
+    max_retries: int,
+    stagger_delay: float,
+) -> RunResult:
+    """Run a single instance with retries, respecting the concurrency semaphore."""
+    if stagger_delay > 0:
+        await asyncio.sleep(stagger_delay)
+
+    result = RunResult(instance_id=iid)
+    for attempt in range(1, max_retries + 1):
+        async with sem:
+            try:
+                result = await run_instance(iid, attempt)
+            except Exception as exc:
+                result = RunResult(
+                    instance_id=iid,
+                    status="error",
+                    tries=attempt,
+                    error_message=str(exc)[:200],
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+
+        # Retry under-decomposed AND early failures (429, connection errors).
+        # Only "success", "timeout", and "image_error" are final on first try.
+        retryable = result.status in ("under_decomposed", "failed", "error")
+        early_death = result.duration_seconds < 120
+        if not retryable or attempt >= max_retries:
+            break
+        # Clean up DB events from the failed attempt before retrying
+        if result.boss_id:
+            await _cleanup_db(result.boss_id)
+        logger.info("[%s] will retry (%d/%d)", iid, attempt + 1, max_retries)
+        cooldown = 30 if early_death else 5
+        await asyncio.sleep(cooldown)
+
+    result.tries = attempt  # noqa: F821 (loop variable)
+    upsert_csv(result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+async def async_main(args: argparse.Namespace) -> None:
+    # 1. Generate fixtures
+    logger.info("═══ Phase 1: Generate fixtures ═══")
+    all_ids = generate_fixtures()
+
+    # 2. Load resume state
+    completed = load_completed()
+    remaining = [iid for iid in all_ids if iid not in completed]
+    logger.info(
+        "%d total · %d already done · %d remaining",
+        len(all_ids), len(completed), len(remaining),
+    )
+    if not remaining:
+        logger.info("All instances already processed. Nothing to do.")
+        return
+
+    if args.limit > 0:
+        remaining = remaining[:args.limit]
+        logger.info("Limited to first %d instance(s)", args.limit)
+
+    # 3. Build all images first (avoids blocking run slots)
+    logger.info("═══ Phase 2: Build Docker images (5 concurrent) ═══")
+    img_ok = await build_images_parallel(remaining)
+    runnable: list[str] = []
+    for iid in remaining:
+        if img_ok.get(iid):
+            runnable.append(iid)
+        else:
+            r = RunResult(
+                instance_id=iid,
+                status="image_error",
+                error_message="Docker image build/pull failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            upsert_csv(r)
+            logger.warning("[%s] image unavailable — skipped", iid)
+
+    if not runnable:
+        logger.info("No runnable instances.")
+        return
+
+    # 4. Run all instances concurrently, bounded by semaphore
+    logger.info(
+        "═══ Phase 3: Running %d instances (%d concurrent) ═══",
+        len(runnable), args.batch_size,
+    )
+    sem = asyncio.Semaphore(args.batch_size)
+    tasks = [
+        asyncio.create_task(
+            _run_with_retry(iid, sem, args.max_retries, stagger_delay=i * 2),
+        )
+        for i, iid in enumerate(runnable)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 5. Summary
+    status_counts: dict[str, int] = {}
+    for r in results:
+        if isinstance(r, RunResult):
+            status_counts[r.status] = status_counts.get(r.status, 0) + 1
+        else:
+            status_counts["error"] = status_counts.get("error", 0) + 1
+
+    logger.info("═══ All instances complete ═══")
+    for s, cnt in sorted(status_counts.items()):
+        logger.info("  %-20s %d", s, cnt)
+    logger.info("Results: %s", CSV_PATH)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Batch SEC-bench runner")
+    parser.add_argument("--batch-size", type=int, default=15)
+    parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Process only the first N remaining instances (0=all)")
+    args = parser.parse_args()
+    asyncio.run(async_main(args))
+
+
+if __name__ == "__main__":
+    main()

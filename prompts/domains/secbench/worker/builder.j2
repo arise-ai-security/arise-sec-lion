@@ -60,7 +60,7 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - `/src/build.sh`
 
 10. **Run quick static analysis** (optional but recommended):
-   - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
+   - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase. If the file is >5000 lines (check with `wc -l`), use `--enable=warning` instead of `--enable=all` to avoid 10+ minute timeouts
    - Note any findings in context-update for exploiter/fixer workers
 
 ### Peer Validation
