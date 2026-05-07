@@ -157,10 +157,10 @@
     },
     "config": {
     "strategy": "heuristic",
-    "base": {"model": "o3", "temperature": 0.5, "max_tokens": 4000},
+    "base": {"model": "default", "temperature": 0.5, "max_tokens": 4000},
     "tool": "{{ default_tool }}"
     },
-    "depends_on": [],  // 0-indexed INTEGER positions of sibling subtasks this depends on (e.g. [0, 1]), NOT string names
+    "depends_on": [],  // 0-indexed positions of sibling subtasks this depends on — MUST NOT include the subtask's own index
     "estimated_complexity": "simple | complex | unknown",
     "success_criteria": "observable, verifiable outcome — file exists, command exits 0, output contains pattern (NOT build tools or project internals)",
     "task_type": "general | research | implementation | testing | analysis",

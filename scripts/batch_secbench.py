@@ -49,7 +49,7 @@ UNDER_DECOMP_THRESHOLD = 8
 # Structural check: boss must spawn at least this many manager children
 # (Builder, Exploiter, Fixer are always managers; Reporter may be worker).
 MIN_BOSS_MANAGERS = 3
-DECOMP_GRACE_SEC = 90  # 90s grace — boss children are typically evaluated by ~60s
+DECOMP_GRACE_SEC = 300  # 5 min grace — Qwen boss calls take ~120s+ before spawning
 STALL_SEC = 450  # 7.5 min with no new events = stalled (1.5x for Qwen)
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
@@ -563,8 +563,8 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
                     result.completed_at = datetime.now(timezone.utc).isoformat()
                     return result
 
-            # 2. Raw agent count check (fallback)
-            if agents < UNDER_DECOMP_THRESHOLD:
+            # 2. Raw agent count check (fallback) — only after boss finished spawning
+            if boss_done and agents < UNDER_DECOMP_THRESHOLD:
                 status = await db_run_completed(boss_id)
                 if status is not None:
                     break
@@ -668,18 +668,17 @@ async def _run_with_retry(
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
 
-        # Retry under-decomposed AND early failures (429, connection errors).
-        # Only "success", "timeout", and "image_error" are final on first try.
-        retryable = result.status in ("under_decomposed", "failed", "error")
-        early_death = result.duration_seconds < 120
+        # Do not retry on early failures (under-decomp or quick crashes).
+        # Only retry late-stage transient failures (long-running runs that errored after real progress).
+        early_death = result.duration_seconds < 600  # under 10 min = "early"
+        retryable = result.status in ("failed", "error") and not early_death
         if not retryable or attempt >= max_retries:
             break
         # Clean up DB events from the failed attempt before retrying
         if result.boss_id:
             await _cleanup_db(result.boss_id)
         logger.info("[%s] will retry (%d/%d)", iid, attempt + 1, max_retries)
-        cooldown = 30 if early_death else 5
-        await asyncio.sleep(cooldown)
+        await asyncio.sleep(5)
 
     result.tries = attempt  # noqa: F821 (loop variable)
     upsert_csv(result)

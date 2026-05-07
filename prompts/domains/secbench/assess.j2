@@ -53,14 +53,14 @@ A single worker attempting an entire phase will run out of iterations or time. D
 
 If your task description starts with ANY of these bracketed role names, **default to EXECUTE**. These are designed as atomic leaf workers:
 
-`[PoC-Researcher]`, `[Data-Flow-Analyst]`, `[PoC-Tester]`, `[Forward-Instrumentator]`, `[Repro-Creator]`, `[Exploit-Validator]`, `[Root-Cause-Analyst]`, `[Candidate-Reviewer]`, `[Regression-Tester]`, `[Patch-Creator]`, `[Patch-Validator]`, `[Fix-Aggregator]`, `[Build-Setup]`, `[Build-Compiler]`, `[Build-Verifier]`, `[Instrumented-Builder]`, `[Reporter]`
+`[PoC-Researcher]`, `[Data-Flow-Analyst]`, `[PoC-Tester]`,`[Forward-Instrumentator]`, `[Repro-Creator]`, `[Exploit-Validator]`, `[Root-Cause-Analyst]`, `[Candidate-Reviewer]`, `[Regression-Tester]`, `[Patch-Creator]`, `[Patch-Validator]`, `[Fix-Aggregator]`, `[Build-Setup]`, `[Build-Compiler]`, `[Build-Verifier]`, `[Instrumented-Builder]`, `[Reporter]`
 
 You MAY choose DECOMPOSE only if the task genuinely requires allocating new sub-agents — but every child MUST have a **unique role name** that is DIFFERENT from your own name AND from all your siblings' names. Reusing names from the parent level (e.g., creating `[PoC-Researcher]` children when your siblings already include `[PoC-Researcher]`) produces identical work, wasting the agent budget.
 
 **General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles — or if you can justify genuinely different sub-roles.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
-
+ 
 **If you choose DECOMPOSE, you MUST** (1) use your recon tools to read the vulnerable source code FIRST, and (2) verify that every proposed child role name is unique — no child may share a bracketed name with you or any of your siblings. Do not decompose blindly from the CVE description alone. Use these tools before producing subtasks:
 
 1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE/bug report — understand the function structure, error handling, and resource lifecycle
