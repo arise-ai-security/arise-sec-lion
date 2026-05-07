@@ -33,42 +33,13 @@ _SHUTDOWN_GRACE_SECONDS = 5
 
 
 def _patch_openhands_fn_converter() -> None:
-    """Tolerate assistant messages that lost their 'content' key.
+    """No-op: content-key bug fixed in openhands-sdk ≥1.20.0.
 
-    Why: Qwen via Ollama frequently emits a function call with no preceding
-    prose. OpenHands' prompt-mocked converter strips the <function=...> tag,
-    leaving content="". On the next turn, Message.to_chat_dict calls
-    _remove_content_if_empty which drops the content key for assistant
-    messages with tool_calls. The next pass through
-    convert_fncall_messages_to_non_fncall_messages then crashes with
-    KeyError('content') at fn_call_converter.py:705 — surfaced as
-    ConversationRunError("...: 'content'"). Claude/GPT don't trigger this
-    because they always include reasoning text before the tag.
+    Previously patched fn_call_converter to tolerate assistant messages
+    missing their 'content' key (Qwen via Ollama omits reasoning text
+    before function calls). SDK 1.20.0 uses .get("content") or ""
+    natively, so the patch is no longer needed.
     """
-    from openhands.sdk.llm.mixins import fn_call_converter as _fcc
-    from openhands.sdk.llm.mixins import non_native_fc as _nnfc
-
-    if getattr(_fcc, "_arise_content_key_patched", False):
-        return
-    _orig = _fcc.convert_fncall_messages_to_non_fncall_messages
-
-    def _patched(
-        messages: list[dict[str, Any]],
-        tools: list[Any],
-        *args: Any,
-        **kwargs: Any,
-    ) -> list[dict[str, Any]]:
-        for msg in messages:
-            if "content" not in msg:
-                msg["content"] = ""
-        return _orig(messages, tools, *args, **kwargs)
-
-    # Patch the canonical definition in fn_call_converter
-    _fcc.convert_fncall_messages_to_non_fncall_messages = _patched
-    # Also patch the reference imported by non_native_fc, which captures the
-    # original function at import time and bypasses the module-level patch.
-    _nnfc.convert_fncall_messages_to_non_fncall_messages = _patched
-    _fcc._arise_content_key_patched = True  # type: ignore[attr-defined]
 
 
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
@@ -225,11 +196,19 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     def _build_conversation(self, working_dir: str) -> Any:
         """Create an OpenHands SDK conversation for the current task."""
-        from openhands.sdk import LLM, Agent, Conversation, Tool
+        import warnings
+
+        # Suppress authlib.jose deprecation from openhands.sdk.llm.auth.openai
+        # — upstream issue, cannot fix on our side.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="authlib.jose module is deprecated",
+                category=DeprecationWarning,
+            )
+            from openhands.sdk import LLM, Agent, Conversation, Tool
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.terminal import TerminalTool
-
-        _patch_openhands_fn_converter()
 
         llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
         if self.base_url:
