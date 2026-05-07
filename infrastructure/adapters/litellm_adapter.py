@@ -66,16 +66,21 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _ollama_overrides(model: str) -> dict[str, Any]:
-        """Return extra kwargs for Ollama models (disable thinking mode).
+        """Return extra kwargs for Ollama models.
 
-        Ollama reasoning models (qwen3.5, deepseek-v4-flash, etc.) emit
-        their reasoning either as inline ``<think>`` tags (Qwen) or in a
-        separate ``thinking`` field (DeepSeek), often at the cost of
-        leaving ``content`` empty or near-empty on long structured
-        prompts. Ollama's chat API recognises a top-level ``think: false``
-        flag that disables both behaviours; the older ``options.think``
-        form is ignored by DeepSeek (and by recent Ollama Cloud builds),
-        so we send the flag at the top level only.
+        Applies two critical overrides for Ollama reasoning models
+        (qwen3.5, deepseek-v4-flash, etc.):
+
+        1. **Disable thinking mode** — these models emit reasoning as
+           inline ``<think>`` tags (Qwen) or in a separate ``thinking``
+           field (DeepSeek), often leaving ``content`` empty on long
+           structured prompts.
+
+        2. **Set num_ctx** — Ollama defaults to num_ctx=2048 which
+           truncates prompts longer than ~1500 tokens. Our decomposition
+           prompts are 6-8K tokens; without explicit num_ctx the model
+           cannot see domain-specific rules (e.g. "Builder MUST decompose")
+           buried later in the prompt, causing systematic failures.
 
         litellm's ``reasoning_effort`` param does NOT propagate to Ollama.
         """
@@ -86,7 +91,10 @@ class LiteLLMAdapter(LLMPort):
         # ``data["think"]`` (see litellm/llms/ollama_chat.py). Passing it
         # as a direct kwarg avoids the extra_body merge logic, which
         # behaves differently across providers.
-        return {"think": False}
+        return {
+            "think": False,
+            "num_ctx": 65536,
+        }
 
     _LLM_TIMEOUT_SECONDS = 180  # Hard timeout for a single LLM call
     _RATE_LIMIT_RETRIES = 3

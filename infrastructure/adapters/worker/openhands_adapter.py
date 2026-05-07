@@ -264,7 +264,14 @@ class OpenHandsAdapter(WorkerAdapterBase):
             # `options.think` form is silently ignored by deepseek and
             # recent Ollama Cloud builds. litellm's `reasoning_effort`
             # param does NOT propagate to Ollama — must use extra_body.
-            llm_kwargs["litellm_extra_body"] = {"think": False}
+            llm_kwargs["litellm_extra_body"] = {
+                "think": False,
+                "num_ctx": 65536,
+            }
+            # Qwen official docs recommend top_p=0.95, top_k=20 for
+            # non-thinking mode. DO NOT use temperature=0 (greedy) —
+            # explicitly warned against in Qwen3 docs.
+            llm_kwargs["top_p"] = 0.95
         llm = LLM(**llm_kwargs)
         agent = Agent(
             llm=llm,

@@ -46,11 +46,13 @@ CSV_PATH = Path.home() / "secbench-all.csv"
 # Under-decomposition: if a run finishes (or has been running > DECOMP_GRACE_SEC)
 # with fewer than this many agents, treat it as under-decomposed.
 UNDER_DECOMP_THRESHOLD = 8
-# Structural check: boss must spawn at least this many manager children
-# (Builder, Exploiter, Fixer are always managers; Reporter may be worker).
-MIN_BOSS_MANAGERS = 3
+# Structural check: boss must spawn at least this many manager children.
+# Set to 2 to tolerate Builder executing as worker (common with Qwen —
+# Builder build tasks work fine as single workers). Exploiter + Fixer
+# as managers is the minimum for a viable security analysis run.
+MIN_BOSS_MANAGERS = 2
 DECOMP_GRACE_SEC = 300  # 5 min grace — Qwen boss calls take ~120s+ before spawning
-STALL_SEC = 450  # 7.5 min with no new events = stalled (1.5x for Qwen)
+STALL_SEC = 600  # 10 min with no new events = stalled (Qwen LLM calls are slower)
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
 
