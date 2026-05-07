@@ -47,6 +47,13 @@ conftest.py
 # Claude/AI
 .claude
 
+# Run output (large artifacts)
+output/
+runs/
+
+# Node modules
+node_modules
+
 # Misc
 .DS_Store
 *.log
