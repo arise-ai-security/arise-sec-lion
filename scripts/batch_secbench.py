@@ -52,7 +52,7 @@ UNDER_DECOMP_THRESHOLD = 8
 # as managers is the minimum for a viable security analysis run.
 MIN_BOSS_MANAGERS = 2
 DECOMP_GRACE_SEC = 300  # 5 min grace — Qwen boss calls take ~120s+ before spawning
-STALL_SEC = 600  # 10 min with no new events = stalled (Qwen LLM calls are slower)
+STALL_SEC = 1800  # 30 min with no new events = stalled (Qwen workers can run 10+ min without events)
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
 
@@ -646,6 +646,14 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
 # ---------------------------------------------------------------------------
 # Concurrent execution with retry (semaphore-based)
 # ---------------------------------------------------------------------------
+async def _remove_image(iid: str) -> None:
+    """Remove the secb-tools image for a fixture to free disk space."""
+    _, target = _resolve_images(iid)
+    rc, _, _ = await _run_cmd(["docker", "rmi", "-f", target])
+    if rc == 0:
+        logger.debug("[%s] removed image %s", iid, target)
+
+
 async def _run_with_retry(
     iid: str,
     sem: asyncio.Semaphore,
@@ -655,6 +663,18 @@ async def _run_with_retry(
     """Run a single instance with retries, respecting the concurrency semaphore."""
     if stagger_delay > 0:
         await asyncio.sleep(stagger_delay)
+
+    # Build image on-demand (just before running, not all upfront)
+    img_ok = await build_image(iid)
+    if not img_ok:
+        r = RunResult(
+            instance_id=iid,
+            status="image_error",
+            error_message="Docker image build/pull failed",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+        )
+        upsert_csv(r)
+        return r
 
     result = RunResult(instance_id=iid)
     for attempt in range(1, max_retries + 1):
@@ -676,14 +696,19 @@ async def _run_with_retry(
         retryable = result.status in ("failed", "error") and not early_death
         if not retryable or attempt >= max_retries:
             break
-        # Clean up DB events from the failed attempt before retrying
-        if result.boss_id:
-            await _cleanup_db(result.boss_id)
+        # NOTE: Do NOT clean up DB events — past run data is irreplaceable.
+        # Previously called _cleanup_db(result.boss_id) here, removed to preserve
+        # failed-attempt event data for post-mortem analysis.
         logger.info("[%s] will retry (%d/%d)", iid, attempt + 1, max_retries)
         await asyncio.sleep(5)
 
     result.tries = attempt  # noqa: F821 (loop variable)
     upsert_csv(result)
+
+    # Clean up image after all retries are done to free disk space.
+    # Image will be rebuilt if this fixture is re-run in a future batch.
+    await _remove_image(iid)
+
     return result
 
 
@@ -710,28 +735,12 @@ async def async_main(args: argparse.Namespace) -> None:
         remaining = remaining[:args.limit]
         logger.info("Limited to first %d instance(s)", args.limit)
 
-    # 3. Build all images first (avoids blocking run slots)
-    logger.info("═══ Phase 2: Build Docker images (5 concurrent) ═══")
-    img_ok = await build_images_parallel(remaining)
-    runnable: list[str] = []
-    for iid in remaining:
-        if img_ok.get(iid):
-            runnable.append(iid)
-        else:
-            r = RunResult(
-                instance_id=iid,
-                status="image_error",
-                error_message="Docker image build/pull failed",
-                completed_at=datetime.now(timezone.utc).isoformat(),
-            )
-            upsert_csv(r)
-            logger.warning("[%s] image unavailable — skipped", iid)
+    # Images are now built on-demand inside _run_with_retry (and cleaned up
+    # after each run completes). This keeps at most batch_size images on disk
+    # instead of pre-building all 200+.
+    runnable = remaining
 
-    if not runnable:
-        logger.info("No runnable instances.")
-        return
-
-    # 4. Run all instances concurrently, bounded by semaphore
+    # 3. Run all instances concurrently, bounded by semaphore
     logger.info(
         "═══ Phase 3: Running %d instances (%d concurrent) ═══",
         len(runnable), args.batch_size,

@@ -43,7 +43,7 @@ orchestration:
   topology:
     max_depth: 3               # BOSS(0) → children(1) → grandchildren(2) → forced-workers(3)
     max_children_per_node: 7   # Deeper levels produce more fine-grained workers (3-5 per node)
-    max_total_agents: 40       # Accommodates deeper trees with more workers per phase
+    max_total_agents: 60       # Qwen decomposes more aggressively than GPT (~6 workers/manager)
 
   concurrency:
     max_concurrent_workers: 1  # Sequential execution so sibling context is populated
