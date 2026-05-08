@@ -132,6 +132,8 @@ class AgentExecutionService:
             else 10000
         )
         self._llm_semaphore = asyncio.Semaphore(llm_limit)
+        self._llm_semaphore_holders: set[UUID] = set()
+        self._worker_semaphore_holders: set[UUID] = set()
         self._llm_jitter_max_ms = system_limits.llm_jitter_max_ms
 
         # Progress callback
@@ -149,6 +151,7 @@ class AgentExecutionService:
                 orchestrator=self._orchestrator,
                 sibling_view_port=self._sibling_view_port,
                 worker_semaphore=self._worker_semaphore,
+                worker_semaphore_holders=self._worker_semaphore_holders,
                 domain_plugin=self._domain_plugin,
                 get_agent_depth=self._get_agent_depth,
                 get_root_id=self._limits_registry.get_root_id,
@@ -354,7 +357,11 @@ class AgentExecutionService:
     async def _run_step_with_semaphore(self, agent_id: UUID) -> None:
         """Acquire LLM semaphore then execute the step."""
         async with self._llm_semaphore:
-            await self.run_agent_step(agent_id)
+            self._llm_semaphore_holders.add(agent_id)
+            try:
+                await self.run_agent_step(agent_id)
+            finally:
+                self._llm_semaphore_holders.discard(agent_id)
 
     async def _emit_run_completed(
             self,
@@ -434,6 +441,7 @@ class AgentExecutionService:
                 aid, timeout,
             )
             tasks[aid].cancel()
+            self._force_release_semaphores(aid)
             try:
                 await self._mark_agent_silently_failed(aid, timeout)
             except Exception:
@@ -460,6 +468,27 @@ class AgentExecutionService:
             agent, agent.version, self._progress_callback,
         )
         await self._parent_notifier.notify_if_failed(agent)
+
+    def _force_release_semaphores(self, agent_id: UUID) -> None:
+        """Release semaphores held by a leaked (uncancellable) task.
+
+        When asyncio.wait_for cannot cancel a task blocked on a C-level
+        operation (Docker API, socket read), the task continues running
+        and holds its semaphores indefinitely.  This starves subsequent
+        tasks.  Force-releasing restores capacity so the DAG can advance.
+        """
+        if agent_id in self._llm_semaphore_holders:
+            self._llm_semaphore.release()
+            self._llm_semaphore_holders.discard(agent_id)
+            logger.warning(
+                "Force-released LLM semaphore for leaked task %s", agent_id,
+            )
+        if agent_id in self._worker_semaphore_holders:
+            self._worker_semaphore.release()
+            self._worker_semaphore_holders.discard(agent_id)
+            logger.warning(
+                "Force-released worker semaphore for leaked task %s", agent_id,
+            )
 
     def _is_stalled(self, last_progress_time: float) -> bool:
         """Return True when no scheduling progress for stall_timeout_seconds."""

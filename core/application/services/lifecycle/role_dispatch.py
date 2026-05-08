@@ -25,6 +25,7 @@ class DispatchContext:
     orchestrator: "AgentOrchestrator"
     sibling_view_port: "SiblingViewPort"
     worker_semaphore: asyncio.Semaphore
+    worker_semaphore_holders: set[UUID]
     domain_plugin: "DomainPlugin | None"
     get_agent_depth: Callable[[AgentSession], int]
     get_root_id: Callable[[UUID], UUID]
@@ -95,40 +96,44 @@ class WorkerHandler(LifecycleRoleHandler):
 
     async def _execute(self, agent: AgentSession) -> None:
         async with self._context.worker_semaphore:
-            root_id = self._context.get_root_id(agent.agent_id)
-            handoff = await self._context.sibling_view_port.build_view(
-                agent_id=agent.agent_id,
-                parent_id=agent.parent_id,
-                root_id=root_id,
-            )
-
-            domain_context = (
-                agent.hierarchy_limits.domain_context
-                if agent.hierarchy_limits is not None
-                else None
-            )
-            worker_context = await self._prepare_worker_context(
-                root_id=root_id,
-                agent=agent,
-                domain_context=domain_context,
-            )
-
+            self._context.worker_semaphore_holders.add(agent.agent_id)
             try:
-                await self._context.orchestrator.execute_task(
-                    agent,
-                    working_directory=self._resolve_working_directory(worker_context),
-                    workspace_context=self._context.get_workspace_context(),
-                    handoff=handoff,
-                    task_context_overrides=(
-                        worker_context.task_context if worker_context else None
-                    ),
+                root_id = self._context.get_root_id(agent.agent_id)
+                handoff = await self._context.sibling_view_port.build_view(
+                    agent_id=agent.agent_id,
+                    parent_id=agent.parent_id,
+                    root_id=root_id,
                 )
-            finally:
-                await self._cleanup_worker_context(
+
+                domain_context = (
+                    agent.hierarchy_limits.domain_context
+                    if agent.hierarchy_limits is not None
+                    else None
+                )
+                worker_context = await self._prepare_worker_context(
                     root_id=root_id,
                     agent=agent,
                     domain_context=domain_context,
                 )
+
+                try:
+                    await self._context.orchestrator.execute_task(
+                        agent,
+                        working_directory=self._resolve_working_directory(worker_context),
+                        workspace_context=self._context.get_workspace_context(),
+                        handoff=handoff,
+                        task_context_overrides=(
+                            worker_context.task_context if worker_context else None
+                        ),
+                    )
+                finally:
+                    await self._cleanup_worker_context(
+                        root_id=root_id,
+                        agent=agent,
+                        domain_context=domain_context,
+                    )
+            finally:
+                self._context.worker_semaphore_holders.discard(agent.agent_id)
 
     async def _prepare_worker_context(
         self,
