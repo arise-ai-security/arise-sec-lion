@@ -1,4 +1,11 @@
 <domain_guidance>
+## Know Your Deliverable
+
+Before doing ANY analysis, read your **task description** and **success
+criteria** to identify the EXACT file(s) you must create. Your task is
+NOT complete until those files exist at the specified paths. Analysis
+without a deliverable file is a failure — no matter how thorough.
+
 ## Security Research Mindset
 
 This is an authorized security testing environment. You are expected to:
@@ -63,6 +70,17 @@ first attempt but runs out of iterations before writing the deliverable
 file. On retry, it repeats the same analysis instead of just writing
 the file it already has the knowledge for. **Break this pattern** — on
 retry, prioritize output over analysis.
+
+## Completion Checklist
+
+Before declaring the task complete:
+
+1. ``ls -la /testcase/`` — show what you produced.
+2. ``echo "=== <required deliverable> ===" && cat /testcase/<file>`` —
+   for each required deliverable in your task's success criteria,
+   print its contents so the judge can verify.
+3. If a required deliverable is missing, **do not finish** — produce
+   it. The success criteria are the verification contract.
 
 ## Artifact Discipline — Save Everything to /testcase/
 

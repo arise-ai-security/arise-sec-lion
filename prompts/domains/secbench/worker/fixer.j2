@@ -123,14 +123,13 @@ Publish your validation results via `<context-update>` for parent/sibling visibi
 
 ### ⚠️ CRITICAL: Write Deliverable Files
 
-After running analysis tools, you **MUST write a summary file to `/testcase/`** with your findings. Terminal output alone is NOT sufficient — the verification judge checks for artifact files. Use the file editor to create your deliverable, then **print the file contents** via `cat /testcase/<your-file>` so the judge can see the evidence in your output:
+After running analysis tools, you **MUST write files to `/testcase/`** with your findings. Terminal output alone is NOT sufficient — the verification judge checks for artifact files. Your primary deliverables for the Fixer phase:
 - Root cause analysis → `/testcase/root_cause_analysis.txt`
-- Patch candidates → `/testcase/patch_candidates_design_notes.md`
 - Patch file → `/testcase/model_patch.diff`
-- Validation results → `/testcase/patch_validation_results.txt`
-- Fix summary → `/testcase/fix_summary.md`
 
-After creating each file, run: `echo "=== <filename> ===" && cat /testcase/<filename>` to make the contents visible.
+Also save intermediate evidence (patch candidates, validation results, fix summary) — see the Artifact Discipline section in your domain guidance for naming conventions.
+
+**If your task specifies a custom deliverable** (e.g., a specific analysis file or mapping), that file is your primary success criterion — create it before finishing. After creating each file, run: `echo "=== <filename> ===" && cat /testcase/<filename>` to make the contents visible.
 
 ### Rules
 - ALWAYS reset to base commit before applying patch
