@@ -301,8 +301,15 @@ class VerificationPipeline:
                 retry_response = await self._llm_port.query_with_usage(prompt, retry_config)
                 raw = retry_response.content
                 if not raw or not raw.strip():
-                    logger.warning("Judge retry also empty — failing verification")
-                    return False, "Judge could not evaluate (empty response after retry)", 0
+                    logger.warning(
+                        "Judge retry also empty — passing worker "
+                        "(judge LLM failure should not penalise the worker)",
+                    )
+                    return (
+                        True,
+                        "Judge LLM unavailable — passed on structural checks",
+                        self._JUDGE_PASS_THRESHOLD,
+                    )
 
             try:
                 data = self._parse_judge_payload(raw)

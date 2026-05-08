@@ -58,7 +58,7 @@ class ServiceConfig:
     manager_config: "ManagerConfig"
     step_timeout_seconds: float = 600.0  # Hard cap per agent step; prevents hung LLM/worker calls from blocking the loop
     stall_timeout_seconds: float = 600.0  # No-progress watchdog; kills run when scheduler produces no work
-    worker_silence_timeout_seconds: float = 1200.0  # Per-worker watchdog; kills tasks that produce no events for this long
+    worker_silence_timeout_seconds: float = 600.0  # Per-worker watchdog; must be well below batch STALL_SEC (1200)
 
 
 @dataclass(frozen=True)

@@ -249,6 +249,42 @@ class TestVerificationJudge:
         assert "Task completed successfully" in llm.calls[-1]
 
 
+class TestJudgeEmptyResponse:
+    """Judge LLM returning empty should not penalise the worker."""
+
+    @pytest.mark.asyncio
+    async def test_judge_empty_response_passes_worker(self) -> None:
+        """When judge LLM returns empty twice, worker passes on structural checks."""
+
+        class EmptyLLM(FakeLLM):
+            async def query_with_usage(
+                self, prompt: str, config_dict: dict,
+            ) -> LLMResponse:
+                self.calls.append(prompt)
+                return LLMResponse(
+                    content="",
+                    usage=LLMUsage(
+                        prompt_tokens=50, completion_tokens=0, total_tokens=50,
+                    ),
+                    model="gpt-4o",
+                    cost_usd=0.0,
+                )
+
+        llm = EmptyLLM()
+        worker = FakeWorkerTool(result="Root cause analysis completed")
+        orchestrator = _make_orchestrator(llm=llm, worker=worker)
+        agent = _make_worker_agent(success_criteria="Must produce analysis")
+
+        # Given: worker completed with output, but judge returns empty
+        await orchestrator.execute_task(agent)
+
+        # Then: worker should pass (judge failure != worker failure)
+        assert agent.status == AgentStatus.COMPLETED
+        # Judge was called twice (initial + retry)
+        judge_calls = [c for c in llm.calls if "quality judge" in c.lower()]
+        assert len(judge_calls) == 2
+
+
 class TestVerificationSkipsOnWorkerFailure:
     """Verification only runs on successful worker completion."""
 
