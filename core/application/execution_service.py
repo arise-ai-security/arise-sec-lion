@@ -323,17 +323,21 @@ class AgentExecutionService:
         cannot block the system loop indefinitely.  When the timeout fires the
         agent is marked FAILED and its parent is notified, freeing the
         ``in_progress`` slot so subsequent workers can be scheduled.
+
+        The timeout wraps BOTH the semaphore acquire and the step itself.
+        Previously the timeout only covered run_agent_step (inside the
+        semaphore), so a hung HTTP read that blocked asyncio cancellation
+        could survive past step_timeout indefinitely.
         """
         try:
             if self._llm_jitter_max_ms > 0:
                 jitter_ms = random.randint(0, self._llm_jitter_max_ms)
                 await asyncio.sleep(jitter_ms / 1000.0)
 
-            async with self._llm_semaphore:
-                await asyncio.wait_for(
-                    self.run_agent_step(agent_id),
-                    timeout=self._config.step_timeout_seconds,
-                )
+            await asyncio.wait_for(
+                self._run_step_with_semaphore(agent_id),
+                timeout=self._config.step_timeout_seconds,
+            )
         except asyncio.TimeoutError:
             logger.error(
                 "Agent %s step timed out after %.0fs — marking failed",
@@ -346,6 +350,11 @@ class AgentExecutionService:
             raise
         except Exception:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
+
+    async def _run_step_with_semaphore(self, agent_id: UUID) -> None:
+        """Acquire LLM semaphore then execute the step."""
+        async with self._llm_semaphore:
+            await self.run_agent_step(agent_id)
 
     async def _emit_run_completed(
             self,
