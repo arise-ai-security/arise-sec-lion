@@ -12,6 +12,7 @@ import re
 import uuid
 from typing import Any
 
+import httpx
 import litellm
 
 from core.domain.exceptions import LLMError
@@ -110,6 +111,14 @@ class LiteLLMAdapter(LLMPort):
         2. Rate-limit retry — 429 / ServiceUnavailable with exponential backoff.
         3. Hard timeout — asyncio.wait_for per attempt.
 
+        Ollama-specific hardening:
+        - litellm defaults to aiohttp transport which bypasses httpx's
+          Timeout handling.  We force ``litellm.use_aiohttp_transport = False``
+          before Ollama calls so httpx's read timeout fires on dead sockets
+          (CLOSE_WAIT from Ollama Cloud dropping TCP keepalives).
+        - Each call is atomic: on connection drop, the full request is
+          re-sent (no half-context resume).
+
         Args:
             model: Model identifier (e.g., 'gpt-4', 'claude-3-opus').
             **kwargs: Passed directly to litellm.acompletion (messages, tools, etc.).
@@ -120,7 +129,10 @@ class LiteLLMAdapter(LLMPort):
         Raises:
             LLMError: On any API failure, with specific error messages.
         """
-        # Inject explicit timeout for Ollama to prevent TCP keep-alive hangs
+        # For Ollama: inject explicit timeout.  The aiohttp transport
+        # toggle is scoped to Ollama calls only (saved/restored around
+        # the call) so OpenAI/Anthropic keep using aiohttp's higher
+        # throughput path.
         if self._is_ollama(model) and "timeout" not in kwargs:
             kwargs["timeout"] = self._LLM_TIMEOUT_SECONDS
 
@@ -180,29 +192,59 @@ class LiteLLMAdapter(LLMPort):
     async def _call_with_connection_retry(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with connection-level retry for transient errors.
 
-        Retries on ConnectionError, ConnectionResetError, and OSError (broken
-        pipe, EOF). These indicate Ollama Cloud dropped the TCP session but the
-        server is likely still alive — a fresh connection usually succeeds.
+        Retries on ConnectionError, ConnectionResetError, OSError (broken pipe,
+        EOF), and httpx.TimeoutException (read timeout on dead CLOSE_WAIT
+        sockets from Ollama Cloud dropping TCP keepalives).
+
+        Each retry is a full atomic request — no half-context resume.  If the
+        connection drops mid-response, the partial data is discarded and the
+        complete prompt is re-sent on the next attempt.
+
+        For Ollama models: temporarily disables aiohttp transport so httpx's
+        read timeout fires on dead sockets.  Restored after the call so
+        OpenAI/Anthropic keep using aiohttp's higher-throughput path.
         """
         last_conn_error: Exception | None = None
+        _RETRYABLE = (
+            ConnectionError,
+            ConnectionResetError,
+            OSError,
+            httpx.TimeoutException,
+            httpx.RemoteProtocolError,
+        )
+        is_ollama = self._is_ollama(model)
 
         for conn_attempt in range(self._CONNECTION_RETRIES + 1):
             try:
-                return await asyncio.wait_for(
-                    litellm.acompletion(model=model, **kwargs),
-                    timeout=self._LLM_TIMEOUT_SECONDS,
+                result = await self._acompletion_with_transport(
+                    model, is_ollama, **kwargs,
                 )
+                return result
             except asyncio.TimeoutError as e:
-                raise LLMError(
-                    f"LLM request timed out after {self._LLM_TIMEOUT_SECONDS}s "
-                    f"for model '{model}'",
-                    original_error=e,
-                ) from e
-            except (ConnectionError, ConnectionResetError, OSError) as e:
+                # asyncio.wait_for fired — treat as retryable (stale socket)
                 last_conn_error = e
                 if conn_attempt < self._CONNECTION_RETRIES:
                     logger.warning(
-                        "Connection error to %s (attempt %d/%d): %s — retrying in %ds",
+                        "Timeout waiting for %s (attempt %d/%d) — "
+                        "retrying with fresh connection in %ds",
+                        model,
+                        conn_attempt + 1,
+                        self._CONNECTION_RETRIES + 1,
+                        self._CONNECTION_RETRY_DELAY,
+                    )
+                    await asyncio.sleep(self._CONNECTION_RETRY_DELAY)
+                    continue
+                raise LLMError(
+                    f"LLM request timed out after {self._LLM_TIMEOUT_SECONDS}s "
+                    f"for model '{model}' ({conn_attempt + 1} attempts)",
+                    original_error=e,
+                ) from e
+            except _RETRYABLE as e:
+                last_conn_error = e
+                if conn_attempt < self._CONNECTION_RETRIES:
+                    logger.warning(
+                        "Connection error to %s (attempt %d/%d): %s "
+                        "— retrying with fresh connection in %ds",
                         model,
                         conn_attempt + 1,
                         self._CONNECTION_RETRIES + 1,
@@ -221,6 +263,26 @@ class LiteLLMAdapter(LLMPort):
             f"Connection retry exhausted for '{model}': {last_conn_error}",
             original_error=last_conn_error,
         )
+
+    async def _acompletion_with_transport(
+            self, model: str, is_ollama: bool, **kwargs: Any,
+    ) -> Any:
+        """Call litellm.acompletion with transport-scoped to the provider.
+
+        For Ollama: temporarily disables aiohttp transport so httpx's read
+        timeout fires on dead CLOSE_WAIT sockets.  Restored after the call
+        so OpenAI/Anthropic keep using aiohttp's higher-throughput path.
+        """
+        saved = getattr(litellm, "use_aiohttp_transport", True)
+        if is_ollama:
+            litellm.use_aiohttp_transport = False
+        try:
+            return await asyncio.wait_for(
+                litellm.acompletion(model=model, **kwargs),
+                timeout=self._LLM_TIMEOUT_SECONDS,
+            )
+        finally:
+            litellm.use_aiohttp_transport = saved
 
     def _extract_usage(self, model: str, response: Any) -> tuple[LLMUsage, float]:
         """Extract token usage and cost from a raw LiteLLM response.
