@@ -387,18 +387,14 @@ class AgentQueryService:
         If any ancestor has unsatisfied sibling dependencies, this worker
         cannot run yet — its parent's phase hasn't been unblocked.
 
-        Exception: WAITING ancestors have already decomposed and spawned
-        children. Their descendants should execute regardless of the
-        ancestor's own sibling deps — the work IS ready.
+        This is required for cross-phase dependencies: e.g. Fixer's
+        descendants must wait for Exploiter (and all its descendants) to
+        terminate, since Fixer consumes artifacts produced by Exploiter's
+        leaf workers.
         """
         current_id = summary.parent_id
         while current_id is not None and current_id in summaries:
             ancestor = summaries[current_id]
-            # WAITING ancestors already decomposed — their children are
-            # ready to run regardless of the ancestor's own sibling deps.
-            if ancestor.status == "waiting":
-                current_id = ancestor.parent_id
-                continue
             if ancestor.depends_on:
                 ancestor_parent = ancestor.parent_id
                 if ancestor_parent is not None:
