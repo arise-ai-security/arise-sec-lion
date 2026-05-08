@@ -346,42 +346,17 @@ class AgentExecutionService:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
 
     async def _run_step_with_semaphore(self, agent_id: UUID) -> None:
-        """Run the step, acquiring the LLM semaphore only when needed.
+        """Acquire LLM semaphore, then run the step under a hard timeout.
 
-        Worker EXECUTION steps (WORKER + ANALYZING) run inside a Docker
-        sandbox — the LLM calls are made by the sandbox process, not our
-        adapter.  These steps skip the LLM semaphore so they can run
-        concurrently with pending assessments on the right side of the
-        tree.  All other steps (assessment, evaluation) use our LLM
-        adapter and must acquire the semaphore.
-
-        If the step hangs on an uncancellable C-level operation,
-        asyncio.wait_for itself blocks — the silence watchdog
+        The timeout and silence-watchdog clock start AFTER the semaphore
+        is acquired so that time spent queuing behind other agents is
+        not counted.  If the step hangs on an uncancellable C-level
+        operation, asyncio.wait_for itself blocks — the silence watchdog
         (system-loop level) handles that by force-releasing semaphores.
         """
-        needs_llm = await self._step_needs_llm_semaphore(agent_id)
-
-        if needs_llm:
-            async with self._llm_semaphore:
-                self._llm_semaphore_holders.add(agent_id)
-                if agent_id in self._task_started_at:
-                    self._task_started_at[agent_id] = time.monotonic()
-                try:
-                    await asyncio.wait_for(
-                        self.run_agent_step(agent_id),
-                        timeout=self._config.step_timeout_seconds,
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(
-                        "Agent %s step timed out after %.0fs — marking failed",
-                        agent_id,
-                        self._config.step_timeout_seconds,
-                    )
-                    await self._handle_step_timeout(agent_id)
-                finally:
-                    self._llm_semaphore_holders.discard(agent_id)
-        else:
-            # Worker execution — only needs worker_semaphore (in handler)
+        async with self._llm_semaphore:
+            self._llm_semaphore_holders.add(agent_id)
+            # Reset clocks: semaphore wait ≠ silence / step time.
             if agent_id in self._task_started_at:
                 self._task_started_at[agent_id] = time.monotonic()
             try:
@@ -396,19 +371,8 @@ class AgentExecutionService:
                     self._config.step_timeout_seconds,
                 )
                 await self._handle_step_timeout(agent_id)
-
-    async def _step_needs_llm_semaphore(self, agent_id: UUID) -> bool:
-        """Return False for worker execution steps (run in Docker sandbox).
-
-        Worker EXECUTION dispatches to the sandbox process which makes
-        its own LLM calls — our adapter is not involved.  All other
-        steps (PENDING assessment, BOSS/MANAGER evaluation) call our
-        LLM adapter and need the semaphore.
-        """
-        summary = await self._query_service.get_agent_summary(agent_id)
-        if summary is None:
-            return True
-        return not (summary.role == "worker" and summary.status == "analyzing")
+            finally:
+                self._llm_semaphore_holders.discard(agent_id)
 
     async def _emit_run_completed(
             self,
