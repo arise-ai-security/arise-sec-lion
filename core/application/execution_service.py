@@ -58,6 +58,7 @@ class ServiceConfig:
     manager_config: "ManagerConfig"
     step_timeout_seconds: float = 600.0  # Hard cap per agent step; prevents hung LLM/worker calls from blocking the loop
     stall_timeout_seconds: float = 600.0  # No-progress watchdog; kills run when scheduler produces no work
+    worker_silence_timeout_seconds: float = 1200.0  # Per-worker watchdog; kills tasks that produce no events for this long
 
 
 @dataclass(frozen=True)
@@ -243,10 +244,13 @@ class AgentExecutionService:
         last_progress_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
+        task_started_at: dict[UUID, float] = {}
         run_status_override: str | None = None
 
         while True:
-            reaped = self._reap_completed_tasks(tasks, in_progress)
+            reaped = self._reap_completed_tasks(tasks, in_progress, task_started_at)
+
+            silenced = await self._reap_silent_workers(tasks, in_progress, task_started_at)
 
             if self._is_run_timed_out(start_time):
                 run_status_override = "timed_out"
@@ -262,14 +266,16 @@ class AgentExecutionService:
             )
             new_agents = [aid for aid in active_agents if aid not in in_progress]
 
+            now = time.monotonic()
             for agent_id in new_agents:
                 in_progress.add(agent_id)
+                task_started_at[agent_id] = now
                 tasks[agent_id] = asyncio.create_task(
                     self._run_agent_step_safe(agent_id)
                 )
 
             # Track progress for stall detection
-            if reaped > 0 or new_agents:
+            if reaped > 0 or silenced > 0 or new_agents:
                 last_progress_time = time.monotonic()
 
             if not active_agents and not in_progress:
@@ -373,12 +379,15 @@ class AgentExecutionService:
             self,
             tasks: dict[UUID, asyncio.Task],
             in_progress: set[UUID],
+            task_started_at: dict[UUID, float] | None = None,
     ) -> int:
         """Remove completed tasks, log their terminal state, return count."""
         completed = [aid for aid, task in tasks.items() if task.done()]
         for aid in completed:
             in_progress.discard(aid)
             task = tasks.pop(aid)
+            if task_started_at is not None:
+                task_started_at.pop(aid, None)
             if task.cancelled():
                 logger.warning("Agent %s task was cancelled", aid)
                 continue
@@ -386,6 +395,62 @@ class AgentExecutionService:
             if exc is not None:
                 logger.error("Agent %s failed with exception", aid, exc_info=exc)
         return len(completed)
+
+    async def _reap_silent_workers(
+            self,
+            tasks: dict[UUID, asyncio.Task],
+            in_progress: set[UUID],
+            task_started_at: dict[UUID, float],
+    ) -> int:
+        """Cancel and fail tasks that have been running silently for too long.
+
+        A worker is "silent" when its asyncio task has been alive longer than
+        worker_silence_timeout_seconds without completing — meaning step_timeout
+        either failed to fire or the failure handler hung. Cancels the task,
+        force-marks the agent failed, and notifies the parent so the DAG can
+        advance.
+        """
+        now = time.monotonic()
+        timeout = self._config.worker_silence_timeout_seconds
+        stale = [
+            aid for aid, started in task_started_at.items()
+            if (now - started) > timeout and not tasks[aid].done()
+        ]
+        if not stale:
+            return 0
+
+        for aid in stale:
+            logger.error(
+                "Agent %s silent for >%.0fs — cancelling and marking failed",
+                aid, timeout,
+            )
+            tasks[aid].cancel()
+            try:
+                await self._mark_agent_silently_failed(aid, timeout)
+            except Exception:
+                logger.exception(
+                    "Failed to mark silent agent %s as failed", aid,
+                )
+            tasks.pop(aid, None)
+            task_started_at.pop(aid, None)
+            in_progress.discard(aid)
+        return len(stale)
+
+    async def _mark_agent_silently_failed(
+            self, agent_id: UUID, timeout_seconds: float,
+    ) -> None:
+        """Mark agent failed for silence and notify parent."""
+        agent = await self._repository.load_if_exists(agent_id)
+        if agent is None or agent.is_terminal():
+            return
+        agent.fail_with_reason(
+            f"Worker silent for >{timeout_seconds:.0f}s with no events — "
+            f"forcing failure to advance DAG",
+        )
+        await self._repository.persist_events(
+            agent, agent.version, self._progress_callback,
+        )
+        await self._parent_notifier.notify_if_failed(agent)
 
     def _is_stalled(self, last_progress_time: float) -> bool:
         """Return True when no scheduling progress for stall_timeout_seconds."""
