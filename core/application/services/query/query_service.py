@@ -215,6 +215,15 @@ class AgentQueryService:
                 return True
         return False
 
+    async def get_agent_summary(
+        self, agent_id: UUID,
+    ) -> AgentSummaryReadModel | None:
+        """Return lightweight summary for a single agent."""
+        events = await self._repository.get_events(agent_id)
+        if not events:
+            return None
+        return AgentSummaryReadModel.from_events(events)
+
     async def get_active_agent_ids(
         self,
         root_id: UUID | None = None,
