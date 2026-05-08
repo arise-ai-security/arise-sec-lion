@@ -219,10 +219,19 @@ class AgentQueryService:
         self, agent_id: UUID,
     ) -> AgentSummaryReadModel | None:
         """Return lightweight summary for a single agent."""
-        events = await self._repository.get_events(agent_id)
-        if not events:
+        agent = await self._repository.load_if_exists(agent_id)
+        if agent is None:
             return None
-        return AgentSummaryReadModel.from_events(events)
+        return AgentSummaryReadModel(
+            agent_id=agent.agent_id,
+            role=agent.role.value,
+            status=agent.status.value,
+            parent_id=agent.parent_id,
+            task_summary=agent.task_description or "",
+            is_terminal=agent.is_terminal(),
+            sibling_index=0,
+            depends_on=(),
+        )
 
     async def get_active_agent_ids(
         self,
