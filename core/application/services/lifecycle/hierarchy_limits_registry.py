@@ -95,6 +95,12 @@ class HierarchyLimitsRegistry:
             if cid != agent_id and cid in self._agent_role_prefix
         }
 
+    def get_tree_role_prefixes(self, agent_id: UUID) -> set[str]:
+        """Get ALL role prefixes used anywhere in the agent's execution tree."""
+        limits = self._limits.get(agent_id)
+        root_id = limits.root_id if limits else agent_id
+        return set(self._used_roles.get(root_id, set()))
+
     def get_agent_role_prefix(self, agent_id: UUID) -> str | None:
         """Get the [Role-Name] prefix for a specific agent."""
         return self._agent_role_prefix.get(agent_id)

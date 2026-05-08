@@ -241,6 +241,13 @@ class ChildAgentFactory:
 
         self._limits_registry.propagate_to_child(parent_id, event.child_id)
 
+        # Register role prefix for cross-tree dedup
+        m = _BRACKET_PREFIX.match(event.subtask.description.strip())
+        if m:
+            self._limits_registry.register_role(
+                event.child_id, m.group(1), parent_id=parent_id,
+            )
+
         # Persist the new agent (parallel DB write)
         await self._repository.save_new_agent(child)
 

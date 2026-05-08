@@ -57,6 +57,7 @@ class ServiceConfig:
     boss_config: "BossConfig"
     manager_config: "ManagerConfig"
     step_timeout_seconds: float = 600.0  # Hard cap per agent step; prevents hung LLM/worker calls from blocking the loop
+    stall_timeout_seconds: float = 600.0  # No-progress watchdog; kills run when scheduler produces no work
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,13 @@ class AgentExecutionService:
                 agent = await self._load_agent_with_context(agent_id)
                 current_version = agent.version
 
+                # Emit early heartbeat for workers so the stall detector
+                # sees DB activity even if the step takes a long time.
+                if agent.role == AgentRole.WORKER and agent.status == AgentStatus.ANALYZING:
+                    current_version = await self._emit_early_heartbeat(
+                        agent, current_version,
+                    )
+
                 await self._dispatch_agent_action(agent)
                 uncommitted = await self._persist_agent_events(agent, current_version)
                 await self._handle_post_step(agent, uncommitted)
@@ -232,12 +240,13 @@ class AgentExecutionService:
     async def run_system_loop(self, root_agent_id: UUID) -> None:
         """Poll and execute active agents until all reach terminal state."""
         start_time = time.monotonic()
+        last_progress_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
         run_status_override: str | None = None
 
         while True:
-            self._reap_completed_tasks(tasks, in_progress)
+            reaped = self._reap_completed_tasks(tasks, in_progress)
 
             if self._is_run_timed_out(start_time):
                 run_status_override = "timed_out"
@@ -259,6 +268,10 @@ class AgentExecutionService:
                     self._run_agent_step_safe(agent_id)
                 )
 
+            # Track progress for stall detection
+            if reaped > 0 or new_agents:
+                last_progress_time = time.monotonic()
+
             if not active_agents and not in_progress:
                 # Verify the run is truly done (all agents terminal), not just
                 # that all actionable agents are in-progress.  get_active_agent_ids
@@ -268,6 +281,22 @@ class AgentExecutionService:
                     root_id=root_agent_id
                 )
                 if not has_non_terminal:
+                    break
+                # Non-terminal agents exist but nothing is schedulable
+                if self._is_stalled(last_progress_time):
+                    logger.error(
+                        "Scheduling stall detected for run %s: "
+                        "non-terminal agents exist but no work schedulable "
+                        "for %.0fs",
+                        root_agent_id,
+                        self._config.stall_timeout_seconds,
+                    )
+                    run_status_override = "scheduling_deadlock"
+                    await self._handle_run_timeout(
+                        root_agent_id=root_agent_id,
+                        tasks=tasks,
+                        in_progress=in_progress,
+                    )
                     break
 
             await asyncio.sleep(self._config.poll_interval)
@@ -344,8 +373,8 @@ class AgentExecutionService:
             self,
             tasks: dict[UUID, asyncio.Task],
             in_progress: set[UUID],
-    ) -> None:
-        """Remove completed tasks and log their terminal state."""
+    ) -> int:
+        """Remove completed tasks, log their terminal state, return count."""
         completed = [aid for aid, task in tasks.items() if task.done()]
         for aid in completed:
             in_progress.discard(aid)
@@ -356,6 +385,13 @@ class AgentExecutionService:
             exc = task.exception()
             if exc is not None:
                 logger.error("Agent %s failed with exception", aid, exc_info=exc)
+        return len(completed)
+
+    def _is_stalled(self, last_progress_time: float) -> bool:
+        """Return True when no scheduling progress for stall_timeout_seconds."""
+        return (
+            time.monotonic() - last_progress_time
+        ) > self._config.stall_timeout_seconds
 
     def _is_run_timed_out(self, start_time: float) -> bool:
         """Return True when the global orchestration deadline has elapsed."""
@@ -740,6 +776,24 @@ class AgentExecutionService:
         if context.events:
             await self._shared_context_port.save(context, expected_version=current_version)
             context.mark_changes_as_committed()
+
+    async def _emit_early_heartbeat(
+            self, agent: AgentSession, base_version: int,
+    ) -> int:
+        """Persist an AgentExecutionStarted event before the step runs.
+
+        This ensures the DB has recent activity so external stall detectors
+        do not kill the process while a long-running step is in progress.
+        Returns the updated version after persistence.
+        """
+        agent.emit_execution_started(
+            role=agent.role.value,
+            depth=self._get_agent_depth(agent),
+        )
+        events = await self._repository.persist_events(
+            agent, base_version, self._progress_callback,
+        )
+        return base_version + len(events)
 
     async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
         """Handle execution failure by persisting error state and notifying parent."""

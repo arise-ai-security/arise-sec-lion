@@ -718,12 +718,16 @@ class AgentOrchestrator:
 
         # Collect uncle role names (siblings of the current agent)
         uncle_roles = self._get_sibling_role_prefixes(agent)
-        if not uncle_roles:
-            return subtasks  # No siblings or no role info — skip check
+
+        # Collect tree-wide role names to catch cross-subtree duplication
+        tree_roles = self._get_tree_role_prefixes(agent)
+
+        if not uncle_roles and not tree_roles:
+            return subtasks  # No siblings or role info — skip check
 
         # Also include the agent's own role as off-limits for children
         own_role = self._extract_role_prefix(agent.task_description or "")
-        forbidden = uncle_roles | ({own_role} if own_role else set())
+        forbidden = uncle_roles | tree_roles | ({own_role} if own_role else set())
 
         kept: list["Subtask"] = []
         for st in subtasks:
@@ -756,6 +760,13 @@ class AgentOrchestrator:
         if registry is None:
             return set()
         return registry.get_sibling_role_prefixes(agent.agent_id, agent.parent_id)
+
+    def _get_tree_role_prefixes(self, agent: "AgentSession") -> set[str]:
+        """Get ALL [Role-Name] prefixes used anywhere in the execution tree."""
+        registry = getattr(self._child_factory, "_limits_registry", None)
+        if registry is None:
+            return set()
+        return registry.get_tree_role_prefixes(agent.agent_id)
 
     def _apply_assessment_result(
             self,

@@ -311,9 +311,20 @@ class AgentQueryService:
         if not eligible_workers:
             return non_workers
 
-        # Sort by path and return only the leftmost eligible worker
-        eligible_workers.sort(key=lambda x: x[1])
-        return non_workers + [eligible_workers[0][0]]
+        # Group eligible workers by parent and return the leftmost from each.
+        # This enables parallel execution across independent subtrees while
+        # maintaining sequential ordering within each parent.
+        per_parent: dict[UUID | None, list[tuple[UUID, tuple[int, ...]]]] = {}
+        for agent_id, path in eligible_workers:
+            pid = summaries[agent_id].parent_id
+            per_parent.setdefault(pid, []).append((agent_id, path))
+
+        selected: list[UUID] = []
+        for group in per_parent.values():
+            group.sort(key=lambda x: x[1])
+            selected.append(group[0][0])
+
+        return non_workers + selected
 
     def _get_dag_ready_workers(
         self,
@@ -375,10 +386,19 @@ class AgentQueryService:
 
         If any ancestor has unsatisfied sibling dependencies, this worker
         cannot run yet — its parent's phase hasn't been unblocked.
+
+        Exception: WAITING ancestors have already decomposed and spawned
+        children. Their descendants should execute regardless of the
+        ancestor's own sibling deps — the work IS ready.
         """
         current_id = summary.parent_id
         while current_id is not None and current_id in summaries:
             ancestor = summaries[current_id]
+            # WAITING ancestors already decomposed — their children are
+            # ready to run regardless of the ancestor's own sibling deps.
+            if ancestor.status == "waiting":
+                current_id = ancestor.parent_id
+                continue
             if ancestor.depends_on:
                 ancestor_parent = ancestor.parent_id
                 if ancestor_parent is not None:

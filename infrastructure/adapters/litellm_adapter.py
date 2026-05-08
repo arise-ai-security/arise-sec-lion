@@ -99,14 +99,16 @@ class LiteLLMAdapter(LLMPort):
     _LLM_TIMEOUT_SECONDS = 180  # Hard timeout for a single LLM call
     _RATE_LIMIT_RETRIES = 3
     _RATE_LIMIT_BASE_DELAY = 10  # seconds; doubles each retry
+    _CONNECTION_RETRIES = 2  # Extra retries for transient connection failures
+    _CONNECTION_RETRY_DELAY = 5  # seconds between connection retries
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
-        """Call litellm.acompletion with timeout, 429 retry, and exception handling.
+        """Call litellm.acompletion with timeout, retry, and exception handling.
 
-        Retries rate-limit (429) errors with exponential backoff up to
-        _RATE_LIMIT_RETRIES times. Applies a hard timeout of
-        _LLM_TIMEOUT_SECONDS to each individual attempt to prevent
-        indefinite hangs when the endpoint is overwhelmed.
+        Three retry layers (innermost to outermost):
+        1. Connection retry — transient TCP/socket errors (reset, EOF, read timeout).
+        2. Rate-limit retry — 429 / ServiceUnavailable with exponential backoff.
+        3. Hard timeout — asyncio.wait_for per attempt.
 
         Args:
             model: Model identifier (e.g., 'gpt-4', 'claude-3-opus').
@@ -118,20 +120,15 @@ class LiteLLMAdapter(LLMPort):
         Raises:
             LLMError: On any API failure, with specific error messages.
         """
+        # Inject explicit timeout for Ollama to prevent TCP keep-alive hangs
+        if self._is_ollama(model) and "timeout" not in kwargs:
+            kwargs["timeout"] = self._LLM_TIMEOUT_SECONDS
+
         last_error: Exception | None = None
 
         for attempt in range(self._RATE_LIMIT_RETRIES + 1):
             try:
-                return await asyncio.wait_for(
-                    litellm.acompletion(model=model, **kwargs),
-                    timeout=self._LLM_TIMEOUT_SECONDS,
-                )
-
-            except asyncio.TimeoutError as e:
-                raise LLMError(
-                    f"LLM request timed out after {self._LLM_TIMEOUT_SECONDS}s for model '{model}'",
-                    original_error=e,
-                ) from e
+                return await self._call_with_connection_retry(model, **kwargs)
 
             except (litellm.exceptions.RateLimitError, litellm.exceptions.ServiceUnavailableError) as e:
                 last_error = e
@@ -166,6 +163,9 @@ class LiteLLMAdapter(LLMPort):
                     original_error=e,
                 ) from e
 
+            except LLMError:
+                raise  # Already wrapped — re-raise as-is
+
             except Exception as e:
                 raise LLMError(
                     f"Unexpected LLM error for model '{model}': {e}",
@@ -175,6 +175,51 @@ class LiteLLMAdapter(LLMPort):
         raise LLMError(
             f"LLM call failed after retries for model '{model}': {last_error}",
             original_error=last_error,
+        )
+
+    async def _call_with_connection_retry(self, model: str, **kwargs: Any) -> Any:
+        """Call litellm.acompletion with connection-level retry for transient errors.
+
+        Retries on ConnectionError, ConnectionResetError, and OSError (broken
+        pipe, EOF). These indicate Ollama Cloud dropped the TCP session but the
+        server is likely still alive — a fresh connection usually succeeds.
+        """
+        last_conn_error: Exception | None = None
+
+        for conn_attempt in range(self._CONNECTION_RETRIES + 1):
+            try:
+                return await asyncio.wait_for(
+                    litellm.acompletion(model=model, **kwargs),
+                    timeout=self._LLM_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError as e:
+                raise LLMError(
+                    f"LLM request timed out after {self._LLM_TIMEOUT_SECONDS}s "
+                    f"for model '{model}'",
+                    original_error=e,
+                ) from e
+            except (ConnectionError, ConnectionResetError, OSError) as e:
+                last_conn_error = e
+                if conn_attempt < self._CONNECTION_RETRIES:
+                    logger.warning(
+                        "Connection error to %s (attempt %d/%d): %s — retrying in %ds",
+                        model,
+                        conn_attempt + 1,
+                        self._CONNECTION_RETRIES + 1,
+                        e,
+                        self._CONNECTION_RETRY_DELAY,
+                    )
+                    await asyncio.sleep(self._CONNECTION_RETRY_DELAY)
+                    continue
+                raise LLMError(
+                    f"Connection to '{model}' failed after "
+                    f"{conn_attempt + 1} attempts: {last_conn_error}",
+                    original_error=last_conn_error,
+                ) from last_conn_error
+
+        raise LLMError(
+            f"Connection retry exhausted for '{model}': {last_conn_error}",
+            original_error=last_conn_error,
         )
 
     def _extract_usage(self, model: str, response: Any) -> tuple[LLMUsage, float]:
