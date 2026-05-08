@@ -45,6 +45,25 @@ Every tool has a time cost. Before running a tool, estimate whether it fits with
 - Check `wc -l` on target files before running cppcheck to choose the right flag.
 - If a tool is taking too long, Ctrl+C and try a lighter alternative (e.g., `--enable=warning` instead of `--enable=all`, or `flawfinder` instead of `cppcheck`).
 
+## Handling Verification Retries
+
+If you are on a **retry** (the prompt includes "Previous Attempt Feedback"),
+the verifier already told you what went wrong. Your workflow MUST change:
+
+1. **Read the feedback first** — identify the specific deliverable or
+   criterion that was missing or incorrect
+2. **Write / fix the deliverable immediately** — your FIRST tool call
+   on a retry should create or update the required file. Do NOT repeat
+   the same analysis workflow that failed last time.
+3. **Then verify** — confirm the file exists and meets the stated
+   success criteria before finishing
+
+A common failure pattern is: the worker does thorough analysis on the
+first attempt but runs out of iterations before writing the deliverable
+file. On retry, it repeats the same analysis instead of just writing
+the file it already has the knowledge for. **Break this pattern** — on
+retry, prioritize output over analysis.
+
 ## Artifact Discipline — Save Everything to /testcase/
 
 **Why this matters**: downstream sibling workers can only consume what is

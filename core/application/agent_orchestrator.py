@@ -541,8 +541,11 @@ class AgentOrchestrator:
                     "Your previous attempt was rejected by the verifier:\n"
                     f"> {agent.verification_feedback}\n"
                     f"{criteria_block}\n"
-                    "You MUST address this feedback in your current attempt. "
-                    "Produce all required artifacts and evidence explicitly."
+                    "**IMMEDIATE ACTION REQUIRED**: Do NOT repeat the same "
+                    "analysis workflow. Your FIRST action must be to write "
+                    "or update the required deliverable file based on the "
+                    "feedback above. Fix what was missing or wrong, then "
+                    "verify the file exists and meets the success criteria."
                 )
 
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
