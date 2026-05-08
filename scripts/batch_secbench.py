@@ -52,7 +52,7 @@ UNDER_DECOMP_THRESHOLD = 8
 # as managers is the minimum for a viable security analysis run.
 MIN_BOSS_MANAGERS = 2
 DECOMP_GRACE_SEC = 300  # 5 min grace — Qwen boss calls take ~120s+ before spawning
-STALL_SEC = 1800  # 30 min with no new events = stalled (Qwen workers can run 10+ min without events)
+STALL_SEC = 1200  # 20 min with no new events = stalled
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
 

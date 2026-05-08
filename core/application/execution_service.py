@@ -56,6 +56,7 @@ class ServiceConfig:
     default_worker_tool: str
     boss_config: "BossConfig"
     manager_config: "ManagerConfig"
+    step_timeout_seconds: float = 600.0  # Hard cap per agent step; prevents hung LLM/worker calls from blocking the loop
 
 
 @dataclass(frozen=True)
@@ -281,14 +282,30 @@ class AgentExecutionService:
         )
 
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
-        """Execute agent step with exception handling, jitter, and rate limiting."""
+        """Execute agent step with exception handling, jitter, and rate limiting.
+
+        Wraps the step in a hard timeout so that a hung LLM / OpenHands call
+        cannot block the system loop indefinitely.  When the timeout fires the
+        agent is marked FAILED and its parent is notified, freeing the
+        ``in_progress`` slot so subsequent workers can be scheduled.
+        """
         try:
             if self._llm_jitter_max_ms > 0:
                 jitter_ms = random.randint(0, self._llm_jitter_max_ms)
                 await asyncio.sleep(jitter_ms / 1000.0)
 
             async with self._llm_semaphore:
-                await self.run_agent_step(agent_id)
+                await asyncio.wait_for(
+                    self.run_agent_step(agent_id),
+                    timeout=self._config.step_timeout_seconds,
+                )
+        except asyncio.TimeoutError:
+            logger.error(
+                "Agent %s step timed out after %.0fs — marking failed",
+                agent_id,
+                self._config.step_timeout_seconds,
+            )
+            await self._handle_step_timeout(agent_id)
         except asyncio.CancelledError:
             logger.warning("Agent %s step cancelled", agent_id)
             raise
@@ -741,3 +758,29 @@ class AgentExecutionService:
             raise RuntimeError(
                 f"Failed to persist error state for agent {agent_id}: {persist_error!r}"
             ) from error
+
+    async def _handle_step_timeout(self, agent_id: UUID) -> None:
+        """Mark agent failed after step timeout and notify parent.
+
+        Loads the agent fresh from DB (the in-memory state was lost with the
+        cancelled task), marks it FAILED, persists, and propagates so the
+        system loop can schedule subsequent workers.
+        """
+        try:
+            agent = await self._repository.load_if_exists(agent_id)
+            if agent is None or agent.is_terminal:
+                return
+
+            current_version = agent.version
+            agent.fail_with_reason(
+                f"Step timed out after {self._config.step_timeout_seconds:.0f}s "
+                "(possible Ollama Cloud hang)"
+            )
+            await self._repository.persist_events(
+                agent, current_version, self._progress_callback
+            )
+            await self._parent_notifier.notify_if_failed(agent)
+        except Exception:
+            logger.exception(
+                "Failed to handle step timeout for agent %s", agent_id
+            )

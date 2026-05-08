@@ -8,6 +8,7 @@ Handles the three orchestration operations as direct method calls:
 
 import json
 import logging
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -648,6 +649,27 @@ class AgentOrchestrator:
         if failure:
             return failure
 
+        # --- Cross-tree role dedup -------------------------------------------
+        # Prevent managers from re-decomposing into roles that already exist
+        # as their own siblings (uncle duplication).  Prescribed top-level
+        # roles (Builder, Exploiter, Fixer, Reporter) are always allowed;
+        # additional / generated roles must be unique across branches.
+        subtasks = self._dedup_subtasks_against_siblings(agent, subtasks)
+        if not subtasks:
+            # Every proposed subtask was a duplicate → force direct execution
+            logger.warning(
+                "Agent %s: all subtasks duplicate sibling roles — "
+                "forcing direct execution",
+                agent.agent_id,
+            )
+            agent.apply_complexity_result(
+                complexity="simple",
+                reasoning="All proposed subtasks duplicate sibling roles; executing directly",
+                determined_role=AgentRole.WORKER,
+            )
+            return None
+        # ---------------------------------------------------------------------
+
         limits = agent.hierarchy_limits
         force_worker = False
         if limits is not None and not limits.can_spawn_child():
@@ -667,6 +689,73 @@ class AgentOrchestrator:
             briefing=agent.build_briefing_for_child(),
         )
         return None
+
+    # Role-prefix pattern: "[Build-Setup]" → "Build-Setup"
+    _BRACKET_PREFIX = re.compile(r"^\[([^\]]+)\]")
+
+    @classmethod
+    def _extract_role_prefix(cls, description: str) -> str | None:
+        """Extract [Bracketed-Role-Name] from a task description."""
+        m = cls._BRACKET_PREFIX.match(description.strip())
+        return m.group(1) if m else None
+
+    def _dedup_subtasks_against_siblings(
+            self,
+            agent: "AgentSession",
+            subtasks: list["Subtask"],
+    ) -> list["Subtask"]:
+        """Remove subtasks whose role names duplicate the agent's own siblings.
+
+        When a manager re-decomposes into the exact same roles as its
+        siblings, all those workers are redundant — the siblings already
+        cover them.  This is a common Qwen failure mode.
+
+        Returns:
+            Filtered subtask list (may be empty).
+        """
+        if agent.parent_id is None:
+            return subtasks  # Boss-level decomposition — no siblings to clash with
+
+        # Collect uncle role names (siblings of the current agent)
+        uncle_roles = self._get_sibling_role_prefixes(agent)
+        if not uncle_roles:
+            return subtasks  # No siblings or no role info — skip check
+
+        # Also include the agent's own role as off-limits for children
+        own_role = self._extract_role_prefix(agent.task_description or "")
+        forbidden = uncle_roles | ({own_role} if own_role else set())
+
+        kept: list["Subtask"] = []
+        for st in subtasks:
+            prefix = self._extract_role_prefix(st.description)
+            if prefix and prefix in forbidden:
+                logger.info(
+                    "Agent %s: stripping duplicate subtask [%s] "
+                    "(already covered by sibling/self)",
+                    agent.agent_id,
+                    prefix,
+                )
+                continue
+            kept.append(st)
+
+        if kept and len(kept) < len(subtasks):
+            logger.info(
+                "Agent %s: kept %d/%d subtasks after dedup",
+                agent.agent_id,
+                len(kept),
+                len(subtasks),
+            )
+
+        return kept
+
+    def _get_sibling_role_prefixes(self, agent: "AgentSession") -> set[str]:
+        """Get [Role-Name] prefixes of the agent's siblings (same parent)."""
+        if agent.parent_id is None:
+            return set()
+        registry = getattr(self._child_factory, "_limits_registry", None)
+        if registry is None:
+            return set()
+        return registry.get_sibling_role_prefixes(agent.agent_id, agent.parent_id)
 
     def _apply_assessment_result(
             self,
