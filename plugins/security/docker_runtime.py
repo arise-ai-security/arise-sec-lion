@@ -83,6 +83,7 @@ class DockerSecBenchRuntime:
         container_name = (
             f"{self._container_prefix}-{workspace.root_id.hex[:8]}-{agent_id.hex[:8]}"
         )
+        await self._remove_stale_named_container(container_name)
         cmd = [
             "docker",
             "run",
@@ -125,6 +126,21 @@ class DockerSecBenchRuntime:
         )
         self._write_exec_helper(session)
         return session
+
+    async def _remove_stale_named_container(self, container_name: str) -> None:
+        """Delete an existing same-name container to avoid name conflicts on retry."""
+        inspect_cmd = ["docker", "container", "inspect", container_name]
+        exit_code, _, _ = await self._run_command(inspect_cmd, timeout=5)
+        if exit_code != 0:
+            return
+        logger.warning(
+            "Removing stale container with reused worker name before restart: %s",
+            container_name,
+        )
+        await self._run_best_effort(
+            ["docker", "rm", "-f", container_name],
+            timeout=10,
+        )
 
     async def stop_session(self, session: SecBenchContainerSession) -> None:
         """Stop and remove a worker container."""
