@@ -3,7 +3,7 @@
 Handles statistics, results, and active agent queries.
 """
 
-
+import logging
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -130,6 +130,9 @@ class AgentSummaryReadModel:
             sibling_index=sibling_index,
             depends_on=depends_on,
         )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentQueryService:
@@ -375,16 +378,57 @@ class AgentQueryService:
         Without check (2), a grandchild task under a blocked nested manager
         would execute before its parent's dependencies complete (e.g. sibling
         managers not yet finished).
+
+        If no workers are eligible but non-terminal workers exist, detects
+        deadlock cycles per-parent and forces the leftmost blocked worker
+        to start (breaks the cycle).
         """
         eligible = []
+        blocked_by_siblings: list[tuple[UUID, AgentSummaryReadModel]] = []
 
         for agent_id, summary in workers:
             if not self._sibling_deps_satisfied(summary, summaries, children_map):
+                blocked_by_siblings.append((agent_id, summary))
                 continue
             if not self._ancestors_deps_satisfied(summary, summaries, children_map):
                 continue
             path = self._compute_hierarchical_path_optimized(agent_id, summaries)
             eligible.append((agent_id, path))
+
+        if eligible or not blocked_by_siblings:
+            return eligible
+
+        # Cycle-breaking: group blocked workers by parent, force leftmost
+        # in each deadlocked parent group to start.
+        per_parent: dict[UUID | None, list[tuple[UUID, AgentSummaryReadModel]]] = {}
+        for agent_id, summary in blocked_by_siblings:
+            per_parent.setdefault(summary.parent_id, []).append((agent_id, summary))
+
+        for parent_id, group in per_parent.items():
+            # Check: are ALL non-terminal siblings under this parent blocked?
+            # If so, it's a deadlock — force the leftmost to proceed.
+            all_sibling_ids = children_map.get(parent_id, [])
+            non_terminal_siblings = [
+                sid for sid in all_sibling_ids
+                if sid in summaries and not summaries[sid].is_terminal
+            ]
+            blocked_ids = {aid for aid, _ in group}
+            if non_terminal_siblings and blocked_ids.issuperset(
+                sid for sid in non_terminal_siblings
+                if summaries[sid].role == "worker"
+            ):
+                # All non-terminal workers are blocked — cycle detected.
+                # Force the leftmost (lowest sibling_index) to start.
+                group.sort(key=lambda x: x[1].sibling_index)
+                forced_id, forced_summary = group[0]
+                if self._ancestors_deps_satisfied(forced_summary, summaries, children_map):
+                    path = self._compute_hierarchical_path_optimized(forced_id, summaries)
+                    eligible.append((forced_id, path))
+                    logger.warning(
+                        "DAG cycle detected under parent %s — forcing worker %s "
+                        "(sibling_index=%d) to break deadlock",
+                        parent_id, forced_id, forced_summary.sibling_index,
+                    )
 
         return eligible
 
@@ -394,7 +438,13 @@ class AgentQueryService:
         summaries: dict[UUID, "AgentSummaryReadModel"],
         children_map: dict[UUID | None, list[UUID]],
     ) -> bool:
-        """Check if an agent's own sibling dependencies are all terminal."""
+        """Check if an agent's own sibling dependencies are all terminal.
+
+        Sanitizes depends_on before checking: drops self-references
+        (agent depends on its own sibling_index) and references to
+        non-existent sibling indices.  Both are common LLM hallucinations
+        that would otherwise cause permanent deadlock.
+        """
         if not summary.depends_on:
             return True
         parent_id = summary.parent_id
@@ -406,8 +456,15 @@ class AgentQueryService:
             if sib_id in summaries:
                 sib = summaries[sib_id]
                 sibling_status[sib.sibling_index] = sib.is_terminal
+        # Drop self-deps and deps on non-existent siblings
+        effective_deps = [
+            dep_idx for dep_idx in summary.depends_on
+            if dep_idx != summary.sibling_index and dep_idx in sibling_status
+        ]
+        if not effective_deps:
+            return True
         return all(
-            sibling_status.get(dep_idx, False) for dep_idx in summary.depends_on
+            sibling_status.get(dep_idx, False) for dep_idx in effective_deps
         )
 
     @staticmethod
