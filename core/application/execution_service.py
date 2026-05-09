@@ -11,6 +11,7 @@ import asyncio
 import logging
 import random
 import time
+from datetime import UTC, datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,7 +31,12 @@ from core.application.services import (
 )
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.events.events import ChildSpawned, DomainEvent, RetryScheduled
+from core.domain.events.events import (
+    AgentExecutionStarted,
+    ChildSpawned,
+    DomainEvent,
+    RetryScheduled,
+)
 from core.domain.exceptions import ConcurrencyError
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
@@ -60,6 +66,7 @@ class ServiceConfig:
     stall_timeout_seconds: float = 600.0  # No-progress watchdog; kills run when scheduler produces no work
     worker_silence_timeout_seconds: float = 600.0  # Per-worker watchdog; must be well below batch STALL_SEC (1200)
     no_progress_grace_seconds: float = 180.0  # Manager-level: restart workers with 0 thoughts after this many seconds
+    no_progress_initial_grace_seconds: float = 300.0  # First worker attempt gets extra model cold-start headroom
     no_progress_check_interval: float = 60.0  # How often to run the no-progress check
 
 
@@ -542,9 +549,10 @@ class AgentExecutionService:
         Force-fails and retries the worker so it gets a fresh LLM attempt.
         """
         logger.info(
-            "Running no-progress worker scan for root %s (grace=%.0fs, max_retries=%d)",
+            "Running no-progress worker scan for root %s (grace=%.0fs, initial_grace=%.0fs, max_retries=%d)",
             root_agent_id,
             self._config.no_progress_grace_seconds,
+            self._config.no_progress_initial_grace_seconds,
             self._no_progress_max_retries,
         )
 
@@ -584,15 +592,37 @@ class AgentExecutionService:
                 tasks.pop(aid, None)
                 task_started_at.pop(aid, None)
                 in_progress.discard(aid)
+            # No-progress cancellation can leave an orphaned runtime session
+            # (e.g., shielded step_task still holding a docker container).
+            # Best-effort cleanup before scheduling retry avoids deterministic
+            # container-name conflicts on restart.
+            await self._cleanup_domain_worker_runtime(aid)
 
             try:
                 agent = await self._repository.load_if_exists(aid)
                 if agent is None or agent.is_terminal():
                     continue
                 no_progress_retry_count = await self._get_no_progress_retry_count(aid)
+                exec_started_at = await self._get_last_execution_started_at(aid)
+                effective_grace = self._config.no_progress_grace_seconds
+                if agent.retry_count == 0:
+                    effective_grace = max(
+                        self._config.no_progress_grace_seconds,
+                        self._config.no_progress_initial_grace_seconds,
+                    )
+                if exec_started_at is not None:
+                    elapsed = (datetime.now(UTC) - exec_started_at).total_seconds()
+                    if elapsed < effective_grace:
+                        logger.info(
+                            "Skipping no-progress restart for agent %s: elapsed %.0fs < effective grace %.0fs",
+                            aid,
+                            elapsed,
+                            effective_grace,
+                        )
+                        continue
                 current_version = agent.version
                 no_progress_reason = (
-                    f"Zero thoughts after {self._config.no_progress_grace_seconds:.0f}s "
+                    f"Zero thoughts after {effective_grace:.0f}s "
                     f"— LLM likely unresponsive"
                 )
                 agent.fail_with_reason(
@@ -637,6 +667,33 @@ class AgentExecutionService:
             if isinstance(event, RetryScheduled)
             and event.reason.startswith(self._NO_PROGRESS_REASON_PREFIX)
         )
+
+    async def _get_last_execution_started_at(self, agent_id: UUID) -> datetime | None:
+        """Return timestamp of the most recent AgentExecutionStarted event."""
+        events = await self._repository.get_events(agent_id)
+        for event in reversed(events):
+            if isinstance(event, AgentExecutionStarted):
+                return event.occurred_at
+        return None
+
+    async def _cleanup_domain_worker_runtime(self, agent_id: UUID) -> None:
+        """Best-effort domain-specific worker runtime cleanup."""
+        if self._domain_plugin is None:
+            return
+        limits = self._limits_registry.get(agent_id)
+        if limits is None:
+            return
+        try:
+            await self._domain_plugin.cleanup_worker_execution(
+                root_id=limits.root_id,
+                agent_id=agent_id,
+                domain_context=limits.domain_context,
+            )
+        except Exception:
+            logger.exception(
+                "Failed domain worker cleanup for no-progress restart on agent %s",
+                agent_id,
+            )
 
     async def _mark_agent_silently_failed(
             self, agent_id: UUID, timeout_seconds: float,

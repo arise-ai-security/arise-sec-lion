@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import shlex
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -140,6 +141,18 @@ class DockerSecBenchRuntime:
         await self._run_best_effort(
             ["docker", "rm", "-f", container_name],
             timeout=10,
+        )
+        # Docker can acknowledge rm -f before name release is visible.
+        # Wait briefly so immediate retries don't race on reused names.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            exit_code, _, _ = await self._run_command(inspect_cmd, timeout=2)
+            if exit_code != 0:
+                return
+            await asyncio.sleep(0.1)
+        logger.warning(
+            "Container name still reserved after stale cleanup wait: %s",
+            container_name,
         )
 
     async def stop_session(self, session: SecBenchContainerSession) -> None:

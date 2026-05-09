@@ -1,6 +1,7 @@
 """Tests for auto-healing and retry logic (Phase 4)."""
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -35,6 +36,7 @@ from core.application.services import (
 )
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
+    AgentExecutionStarted,
     CodeGenerationStarted,
     DomainEvent,
     RetryScheduled,
@@ -133,6 +135,7 @@ def _wire_service(
     llm: FakeLLM,
     worker: Any,
     system_limits: ExecutionLimitsBridge | None = None,
+    domain_plugin: Any = None,
 ) -> AgentExecutionService:
     """Wire execution service with retry-aware configuration."""
     config = ServiceConfig(
@@ -173,6 +176,7 @@ def _wire_service(
         sibling_view_port=FakeSiblingViewPort(),
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
+        domain_plugin=domain_plugin,
     )
 
     return AgentExecutionService(
@@ -441,3 +445,92 @@ class TestNoProgressRestart:
         retry_events = [e for e in events if isinstance(e, RetryScheduled)]
         assert len(retry_events) == 3
         assert retry_events[-1].reason.startswith("Zero thoughts after")
+
+    @pytest.mark.asyncio
+    async def test_no_progress_restart_runs_domain_cleanup_before_retry(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+
+        domain_plugin = AsyncMock()
+        svc = _wire_service(event_store, llm, worker, domain_plugin=domain_plugin)
+
+        worker_id = uuid4()
+        domain_context = {"instance_id": "demo"}
+        svc._limits_registry.create_root(
+            worker_id,
+            max_depth=-1,
+            max_children_per_node=-1,
+            max_retries=3,
+            domain_context=domain_context,
+        )
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker")
+        await svc._repository.save_new_agent(agent)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=worker_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 1
+        domain_plugin.cleanup_worker_execution.assert_awaited_once_with(
+            root_id=worker_id,
+            agent_id=worker_id,
+            domain_context=domain_context,
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_progress_skips_first_attempt_within_initial_grace(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker")
+        await svc._repository.save_new_agent(agent)
+        # Simulate zero-thought execution that is >180s old but <300s old.
+        exec_started = AgentExecutionStarted(
+            aggregate_id=worker_id,
+            sequence_number=3,
+            role=AgentRole.WORKER.value,
+            depth=1,
+            occurred_at=datetime.now(UTC) - timedelta(seconds=200),
+        )
+        await event_store.append(exec_started, expected_version=2)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=worker_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 0
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 0
+        assert not any(
+            isinstance(e, RetryScheduled) for e in event_store.events_for(worker_id)
+        )
