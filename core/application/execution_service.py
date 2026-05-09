@@ -971,7 +971,7 @@ class AgentExecutionService:
         """
         try:
             agent = await self._repository.load_if_exists(agent_id)
-            if agent is None or agent.is_terminal:
+            if agent is None or agent.is_terminal():
                 return
 
             current_version = agent.version

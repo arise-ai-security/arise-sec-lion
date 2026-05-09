@@ -31,9 +31,7 @@ async def test_step_timeout_marks_agent_failed() -> None:
     mock_agent.role.value = "worker"
     mock_agent.status.value = "analyzing"
     mock_agent.version = 5
-    # _handle_step_timeout checks `agent.is_terminal` (attribute access,
-    # not a call), so we set the attribute to a falsy value directly.
-    mock_agent.is_terminal = False
+    mock_agent.is_terminal.return_value = False
 
     repository = AsyncMock()
     repository.load_if_exists = AsyncMock(return_value=mock_agent)
