@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -218,6 +219,8 @@ async def test_worker_execution_includes_domain_plugin_task_context(tmp_path: Pa
     ]
 
     await execution_service.run_agent_step(agent_id)
+    # Let fire-and-forget cleanup task complete
+    await asyncio.sleep(0)
 
     assert worker_port.called is True
     assert worker_port.last_task_context is not None

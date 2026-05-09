@@ -1,6 +1,7 @@
 """Role-specific execution handlers for agent step dispatch."""
 
 import asyncio
+import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -10,6 +11,8 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -127,10 +130,16 @@ class WorkerHandler(LifecycleRoleHandler):
                         ),
                     )
                 finally:
-                    await self._cleanup_worker_context(
-                        root_id=root_id,
-                        agent=agent,
-                        domain_context=domain_context,
+                    # Fire-and-forget: cleanup must not block CancelledError.
+                    # If the step was cancelled (timeout), blocking here prevents
+                    # asyncio.wait_for from raising TimeoutError, which prevents
+                    # _handle_step_timeout from marking the agent failed.
+                    asyncio.create_task(
+                        self._safe_cleanup_worker_context(
+                            root_id=root_id,
+                            agent=agent,
+                            domain_context=domain_context,
+                        )
                     )
             finally:
                 self._context.worker_semaphore_holders.discard(agent.agent_id)
@@ -171,6 +180,36 @@ class WorkerHandler(LifecycleRoleHandler):
             agent_id=agent.agent_id,
             domain_context=domain_context,
         )
+
+    _CLEANUP_TIMEOUT: float = 30  # seconds
+
+    async def _safe_cleanup_worker_context(
+        self,
+        *,
+        root_id: UUID,
+        agent: AgentSession,
+        domain_context: object | None,
+    ) -> None:
+        """Best-effort cleanup with timeout. Runs as a detached task."""
+        try:
+            await asyncio.wait_for(
+                self._cleanup_worker_context(
+                    root_id=root_id,
+                    agent=agent,
+                    domain_context=domain_context,
+                ),
+                timeout=self._CLEANUP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Worker cleanup timed out after %.0fs for agent %s",
+                self._CLEANUP_TIMEOUT,
+                agent.agent_id,
+            )
+        except Exception:
+            logger.exception(
+                "Worker cleanup failed for agent %s", agent.agent_id,
+            )
 
     def _resolve_working_directory(
         self,
