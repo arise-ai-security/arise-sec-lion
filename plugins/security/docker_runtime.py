@@ -249,19 +249,39 @@ chmod +x /usr/local/bin/secb
             raise RuntimeError(stderr.strip() or stdout.strip() or "Command failed")
         return stdout
 
-    async def _run_best_effort(self, cmd: list[str]) -> None:
-        exit_code, _, stderr = await self._run_command(cmd)
+    _CLEANUP_TIMEOUT: float = 15  # seconds; cleanup must not block CancelledError handling
+
+    async def _run_best_effort(self, cmd: list[str], timeout: float | None = None) -> None:
+        exit_code, _, stderr = await self._run_command(cmd, timeout=timeout)
         if exit_code != 0 and stderr.strip():
             logger.warning("Command failed during cleanup: %s", stderr.strip())
 
-    async def _run_command(self, cmd: list[str]) -> tuple[int, str, str]:
+    async def _run_command(
+        self, cmd: list[str], timeout: float | None = None,
+    ) -> tuple[int, str, str]:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=os.environ.copy(),
         )
-        stdout, stderr = await process.communicate()
+        effective_timeout = timeout if timeout is not None else self._CLEANUP_TIMEOUT
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=effective_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Command timed out after %.0fs, killing: %s",
+                effective_timeout,
+                " ".join(cmd[:4]),
+            )
+            try:
+                process.kill()
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                pass
+            return -1, "", f"timed out after {effective_timeout}s"
         return (
             process.returncode or 0,
             stdout.decode("utf-8", errors="replace"),
