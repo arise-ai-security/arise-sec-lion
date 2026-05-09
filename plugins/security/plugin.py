@@ -177,7 +177,16 @@ class SecurityDomainPlugin(DomainPlugin):
             workspace = self._workspaces[root_id]
 
         if root_id in self._sessions:
-            raise RuntimeError(f"SEC-bench container already active for run {root_id}")
+            # Previous worker was cancelled (step timeout) and cleanup ran
+            # as fire-and-forget — the old container may still be alive.
+            # Clean it up before starting the new one.
+            logger.warning(
+                "Stale SEC-bench container for run %s — cleaning up before restart",
+                root_id,
+            )
+            await self.cleanup_worker_execution(
+                root_id=root_id, agent_id=agent_id, domain_context=domain_context,
+            )
 
         session = await self._container_runtime.start_session(
             cve=cve_instance,
