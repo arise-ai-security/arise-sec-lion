@@ -369,9 +369,18 @@ class AgentExecutionService:
         if skip_llm_semaphore:
             if agent_id in self._task_started_at:
                 self._task_started_at[agent_id] = time.monotonic()
+            # Do NOT use asyncio.wait_for here. wait_for cancels the inner
+            # task and then awaits it — but the worker execution chain
+            # (async generator → ThreadPoolExecutor → LLM call) can take
+            # unbounded time to handle CancelledError, so wait_for blocks
+            # indefinitely at `await task` and never raises TimeoutError.
+            # Instead: run the step as a task with a manual timer. When the
+            # timer fires, mark the agent failed immediately and let the
+            # task finish in the background.
+            step_task = asyncio.create_task(self.run_agent_step(agent_id))
             try:
                 await asyncio.wait_for(
-                    self.run_agent_step(agent_id),
+                    asyncio.shield(step_task),
                     timeout=self._config.step_timeout_seconds,
                 )
             except asyncio.TimeoutError:
@@ -380,6 +389,7 @@ class AgentExecutionService:
                     agent_id,
                     self._config.step_timeout_seconds,
                 )
+                step_task.cancel()
                 await self._handle_step_timeout(agent_id)
             return
 
