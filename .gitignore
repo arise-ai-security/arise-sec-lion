@@ -699,6 +699,7 @@ FodyWeavers.xsd
 .worktree
 .worktrees/
 .worktrees
+docs/superpowers/
 !skills/*.md
 
 # Run artifacts (generated code, exports, last run tracking)

@@ -3,9 +3,11 @@
 These tests verify the orchestration logic using mocked ports.
 """
 
+import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -849,3 +851,41 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
     # Then: Only the active agent should be returned
     assert len(active_ids) == 1
     assert active_ids[0] == active_agent_id
+
+
+@pytest.mark.asyncio
+async def test_silence_watchdog_skips_semaphore_waiters(execution_service):
+    """Agents waiting for the LLM semaphore must not be killed by the silence watchdog."""
+    # Given: An agent registered as a semaphore waiter
+    agent_id = uuid4()
+    execution_service._llm_semaphore_waiters.add(agent_id)
+
+    tasks: dict[UUID, asyncio.Task] = {}
+    in_progress: set[UUID] = set()
+    task_started_at: dict[UUID, float] = {}
+
+    # Simulate a task that has been "running" for longer than silence timeout
+    long_ago = time.monotonic() - execution_service._config.worker_silence_timeout_seconds - 100
+    task_started_at[agent_id] = long_ago
+    in_progress.add(agent_id)
+
+    async def _never_completes():
+        await asyncio.sleep(3600)
+
+    tasks[agent_id] = asyncio.create_task(_never_completes())
+
+    # When: The silence watchdog runs
+    silenced = await execution_service._reap_silent_workers(tasks, in_progress, task_started_at)
+
+    # Then: The waiter should NOT have been reaped
+    assert silenced == 0
+    assert agent_id in in_progress
+    assert agent_id in task_started_at
+
+    # Cleanup
+    tasks[agent_id].cancel()
+    try:
+        await tasks[agent_id]
+    except asyncio.CancelledError:
+        pass
+    execution_service._llm_semaphore_waiters.discard(agent_id)

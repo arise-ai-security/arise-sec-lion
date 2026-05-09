@@ -458,3 +458,30 @@ class TestSequentialWorkerOrdering:
         # Then: Both workers are returned
         assert w1_id in active
         assert w2_id in active
+
+    @pytest.mark.asyncio
+    async def test_llm_skip_set_contains_returned_workers(self, mock_repository) -> None:
+        """Workers returned by get_active_agent_ids should be in llm_skip_agents."""
+        from core.application.services import AgentQueryService
+        from core.domain.events.events import WorkCompleted
+
+        repository, create_events = mock_repository
+
+        # Given: A boss (waiting) with one worker child
+        root_id = uuid4()
+        w1_id = uuid4()
+
+        repository.get_all_events_grouped.return_value = {
+            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            w1_id: create_events(w1_id, "worker", root_id, 0),
+        }
+
+        # When: Getting active agents
+        service = AgentQueryService(repository)
+        active = await service.get_active_agent_ids(sequential_workers=True)
+
+        # Then: Worker should be in the skip set
+        assert w1_id in active
+        assert w1_id in service.llm_skip_agents
+        # Boss (non-worker) should NOT be in skip set
+        assert root_id not in service.llm_skip_agents

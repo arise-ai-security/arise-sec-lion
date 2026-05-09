@@ -146,6 +146,7 @@ class AgentQueryService:
     ) -> None:
         self._repository = repository
         self._shared_context_port = shared_context_port
+        self._llm_skip_set: set[UUID] = set()
 
     async def get_result(self, agent_id: UUID) -> AgentResultDTO:
         """Get agent result as DTO.
@@ -294,9 +295,12 @@ class AgentQueryService:
                     non_workers.append(agent_id)
 
         if not sequential_workers:
-            return non_workers + [agent_id for agent_id, _ in workers]
+            worker_ids = [agent_id for agent_id, _ in workers]
+            self._llm_skip_set = set(worker_ids)
+            return non_workers + worker_ids
 
         if not workers:
+            self._llm_skip_set = set()
             return non_workers
 
         # DAG-aware scheduling: check if workers' dependencies are satisfied
@@ -327,6 +331,7 @@ class AgentQueryService:
                     eligible_workers.append((agent_id, path))
 
         if not eligible_workers:
+            self._llm_skip_set = set()
             return non_workers
 
         # Group eligible workers by parent and return the leftmost from each.
@@ -342,7 +347,18 @@ class AgentQueryService:
             group.sort(key=lambda x: x[1])
             selected.append(group[0][0])
 
+        self._llm_skip_set = set(selected)
         return non_workers + selected
+
+    @property
+    def llm_skip_agents(self) -> set[UUID]:
+        """Agent IDs that don't need the LLM semaphore (worker execution steps).
+
+        Populated by the most recent ``get_active_agent_ids`` call.
+        Worker execution steps run inside Docker sandboxes that make
+        their own LLM calls — our LLM adapter is not involved.
+        """
+        return self._llm_skip_set
 
     def _get_dag_ready_workers(
         self,

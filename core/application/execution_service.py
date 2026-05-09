@@ -133,6 +133,7 @@ class AgentExecutionService:
         )
         self._llm_semaphore = asyncio.Semaphore(llm_limit)
         self._llm_semaphore_holders: set[UUID] = set()
+        self._llm_semaphore_waiters: set[UUID] = set()
         self._worker_semaphore_holders: set[UUID] = set()
         # Shared with the system loop so tasks can reset their own clock
         # after acquiring the semaphore (semaphore wait ≠ silence).
@@ -273,12 +274,16 @@ class AgentExecutionService:
             )
             new_agents = [aid for aid in active_agents if aid not in in_progress]
 
+            llm_skip = self._query_service.llm_skip_agents
             now = time.monotonic()
             for agent_id in new_agents:
                 in_progress.add(agent_id)
                 task_started_at[agent_id] = now
                 tasks[agent_id] = asyncio.create_task(
-                    self._run_agent_step_safe(agent_id)
+                    self._run_agent_step_safe(
+                        agent_id,
+                        skip_llm_semaphore=agent_id in llm_skip,
+                    )
                 )
 
             # Track progress for stall detection
@@ -323,7 +328,9 @@ class AgentExecutionService:
             status_override=run_status_override,
         )
 
-    async def _run_agent_step_safe(self, agent_id: UUID) -> None:
+    async def _run_agent_step_safe(
+        self, agent_id: UUID, *, skip_llm_semaphore: bool = False,
+    ) -> None:
         """Execute agent step with exception handling, jitter, and rate limiting.
 
         The step timeout and silence-watchdog clock both start AFTER the
@@ -338,25 +345,28 @@ class AgentExecutionService:
                 jitter_ms = random.randint(0, self._llm_jitter_max_ms)
                 await asyncio.sleep(jitter_ms / 1000.0)
 
-            await self._run_step_with_semaphore(agent_id)
+            await self._run_step_with_semaphore(agent_id, skip_llm_semaphore=skip_llm_semaphore)
         except asyncio.CancelledError:
             logger.warning("Agent %s step cancelled", agent_id)
             raise
         except Exception:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
 
-    async def _run_step_with_semaphore(self, agent_id: UUID) -> None:
-        """Acquire LLM semaphore, then run the step under a hard timeout.
+    async def _run_step_with_semaphore(
+        self, agent_id: UUID, *, skip_llm_semaphore: bool = False,
+    ) -> None:
+        """Acquire LLM semaphore (unless skipped), then run the step under a hard timeout.
 
         The timeout and silence-watchdog clock start AFTER the semaphore
         is acquired so that time spent queuing behind other agents is
-        not counted.  If the step hangs on an uncancellable C-level
-        operation, asyncio.wait_for itself blocks — the silence watchdog
-        (system-loop level) handles that by force-releasing semaphores.
+        not counted.  Agents waiting for the semaphore are tracked in
+        ``_llm_semaphore_waiters`` so the silence watchdog skips them.
+
+        Worker execution steps set ``skip_llm_semaphore=True`` because
+        they run inside Docker sandboxes that make their own LLM calls —
+        our adapter is not involved.
         """
-        async with self._llm_semaphore:
-            self._llm_semaphore_holders.add(agent_id)
-            # Reset clocks: semaphore wait ≠ silence / step time.
+        if skip_llm_semaphore:
             if agent_id in self._task_started_at:
                 self._task_started_at[agent_id] = time.monotonic()
             try:
@@ -371,8 +381,31 @@ class AgentExecutionService:
                     self._config.step_timeout_seconds,
                 )
                 await self._handle_step_timeout(agent_id)
-            finally:
-                self._llm_semaphore_holders.discard(agent_id)
+            return
+
+        self._llm_semaphore_waiters.add(agent_id)
+        try:
+            async with self._llm_semaphore:
+                self._llm_semaphore_waiters.discard(agent_id)
+                self._llm_semaphore_holders.add(agent_id)
+                if agent_id in self._task_started_at:
+                    self._task_started_at[agent_id] = time.monotonic()
+                try:
+                    await asyncio.wait_for(
+                        self.run_agent_step(agent_id),
+                        timeout=self._config.step_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Agent %s step timed out after %.0fs — marking failed",
+                        agent_id,
+                        self._config.step_timeout_seconds,
+                    )
+                    await self._handle_step_timeout(agent_id)
+                finally:
+                    self._llm_semaphore_holders.discard(agent_id)
+        finally:
+            self._llm_semaphore_waiters.discard(agent_id)
 
     async def _emit_run_completed(
             self,
@@ -441,7 +474,9 @@ class AgentExecutionService:
         timeout = self._config.worker_silence_timeout_seconds
         stale = [
             aid for aid, started in task_started_at.items()
-            if (now - started) > timeout and not tasks[aid].done()
+            if (now - started) > timeout
+            and not tasks[aid].done()
+            and aid not in self._llm_semaphore_waiters
         ]
         if not stale:
             return 0
