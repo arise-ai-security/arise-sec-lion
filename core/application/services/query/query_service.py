@@ -6,6 +6,7 @@ Handles statistics, results, and active agent queries.
 import logging
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -724,6 +725,54 @@ class AgentQueryService:
             idx -= 1
 
         return tuple(result)
+
+    async def get_no_progress_workers(
+        self,
+        root_id: UUID,
+        grace_seconds: float = 180,
+    ) -> list[UUID]:
+        """Find workers that started execution but produced zero thoughts.
+
+        A worker is 'no-progress' when:
+        1. It has an AgentExecutionStarted event (execution began)
+        2. It has zero ThoughtCaptured events (LLM never responded)
+        3. The AgentExecutionStarted event is older than grace_seconds
+        4. It is not yet terminal
+
+        This is a manager-level observation: the manager's children are
+        checked for progress regardless of system-level watchdogs.
+        """
+        from core.domain.events.events import (
+            AgentExecutionStarted,
+            ThoughtCaptured,
+        )
+
+        all_events = await self._repository.get_hierarchy_events_grouped(root_id)
+        now = datetime.now(UTC)
+        stalled: list[UUID] = []
+
+        for agent_id, events in all_events.items():
+            summary = AgentSummaryReadModel.from_events(events)
+            if summary is None or summary.is_terminal or summary.role != "worker":
+                continue
+
+            # Check: has execution started?
+            exec_started_at: datetime | None = None
+            thought_count = 0
+            for event in events:
+                if isinstance(event, AgentExecutionStarted):
+                    exec_started_at = event.occurred_at
+                elif isinstance(event, ThoughtCaptured):
+                    thought_count += 1
+
+            if exec_started_at is None or thought_count > 0:
+                continue
+
+            elapsed = (now - exec_started_at).total_seconds()
+            if elapsed > grace_seconds:
+                stalled.append(agent_id)
+
+        return stalled
 
     async def is_hierarchy_complete(self, root_id: UUID) -> bool:
         """Check if all agents in hierarchy have reached terminal state."""

@@ -59,6 +59,8 @@ class ServiceConfig:
     step_timeout_seconds: float = 600.0  # Hard cap per agent step; prevents hung LLM/worker calls from blocking the loop
     stall_timeout_seconds: float = 600.0  # No-progress watchdog; kills run when scheduler produces no work
     worker_silence_timeout_seconds: float = 600.0  # Per-worker watchdog; must be well below batch STALL_SEC (1200)
+    no_progress_grace_seconds: float = 180.0  # Manager-level: restart workers with 0 thoughts after this many seconds
+    no_progress_check_interval: float = 60.0  # How often to run the no-progress check
 
 
 @dataclass(frozen=True)
@@ -255,10 +257,22 @@ class AgentExecutionService:
         task_started_at.clear()
         run_status_override: str | None = None
 
+        last_no_progress_check = time.monotonic()
+
         while True:
             reaped = self._reap_completed_tasks(tasks, in_progress, task_started_at)
 
             silenced = await self._reap_silent_workers(tasks, in_progress, task_started_at)
+
+            # Manager-level check: restart workers with zero thoughts
+            now_mono = time.monotonic()
+            if (now_mono - last_no_progress_check) > self._config.no_progress_check_interval:
+                last_no_progress_check = now_mono
+                restarted = await self._restart_no_progress_workers(
+                    root_agent_id, tasks, in_progress, task_started_at
+                )
+                if restarted > 0:
+                    last_progress_time = time.monotonic()
 
             if self._is_run_timed_out(start_time):
                 run_status_override = "timed_out"
@@ -508,6 +522,72 @@ class AgentExecutionService:
             task_started_at.pop(aid, None)
             in_progress.discard(aid)
         return len(stale)
+
+    async def _restart_no_progress_workers(
+            self,
+            root_agent_id: UUID,
+            tasks: dict[UUID, asyncio.Task],
+            in_progress: set[UUID],
+            task_started_at: dict[UUID, float],
+    ) -> int:
+        """Restart workers that started execution but produced zero thoughts.
+
+        Manager-level observation: checks all workers in the hierarchy for
+        the no-progress pattern (AgentExecutionStarted but 0 ThoughtCaptured).
+        Force-fails and retries the worker so it gets a fresh LLM attempt.
+        """
+        try:
+            stalled = await self._query_service.get_no_progress_workers(
+                root_id=root_agent_id,
+                grace_seconds=self._config.no_progress_grace_seconds,
+            )
+        except Exception:
+            logger.debug("No-progress check failed", exc_info=True)
+            return 0
+
+        if not stalled:
+            return 0
+
+        restarted = 0
+        for aid in stalled:
+            logger.warning(
+                "Agent %s has zero thoughts after %.0fs — "
+                "force-failing for retry (manager-level check)",
+                aid,
+                self._config.no_progress_grace_seconds,
+            )
+            # Cancel in-flight task if it exists
+            if aid in tasks and not tasks[aid].done():
+                tasks[aid].cancel()
+                self._force_release_semaphores(aid)
+                tasks.pop(aid, None)
+                task_started_at.pop(aid, None)
+                in_progress.discard(aid)
+
+            try:
+                agent = await self._repository.load_if_exists(aid)
+                if agent is None or agent.is_terminal():
+                    continue
+                current_version = agent.version
+                agent.fail_with_reason(
+                    f"Zero thoughts after {self._config.no_progress_grace_seconds:.0f}s "
+                    f"— LLM likely unresponsive, restarting"
+                )
+                await self._repository.persist_events(
+                    agent, current_version, self._progress_callback,
+                )
+                # Schedule retry via the retry policy (respects retry limits)
+                retried = await self._retry_policy.maybe_schedule_retry(agent)
+                if retried:
+                    logger.info("Agent %s scheduled for retry", aid)
+                else:
+                    await self._parent_notifier.notify_if_failed(agent)
+                    logger.info("Agent %s failed permanently (retry limit reached)", aid)
+                restarted += 1
+            except Exception:
+                logger.exception("Failed to restart no-progress agent %s", aid)
+
+        return restarted
 
     async def _mark_agent_silently_failed(
             self, agent_id: UUID, timeout_seconds: float,
