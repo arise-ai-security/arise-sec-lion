@@ -142,8 +142,14 @@ class OpenHandsAdapter(WorkerAdapterBase):
             max_workers=1, thread_name_prefix="openhands"
         )
         try:
-            conversation.send_message(task_description)
-            future = executor.submit(conversation.run)
+            # Keep all potentially blocking SDK calls off the asyncio event loop.
+            # If send_message/run blocks in SDK internals, the system loop and
+            # watchdog timers must still keep running.
+            def _send_and_run() -> None:
+                conversation.send_message(task_description)
+                conversation.run()
+
+            future = executor.submit(_send_and_run)
 
             try:
                 await asyncio.wait_for(

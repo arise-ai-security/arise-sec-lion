@@ -114,6 +114,21 @@ class _StuckConversation(_FakeConversation):
         self._gate.set()
 
 
+class _StuckSendMessageConversation(_FakeConversation):
+    """Conversation whose send_message blocks until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._gate = threading.Event()
+
+    def send_message(self, message: str) -> None:
+        del message
+        self._gate.wait(timeout=30)
+
+    def release(self) -> None:
+        self._gate.set()
+
+
 class TestOpenHandsAdapter:
     def test_extract_result_compacts_observations_before_core(self) -> None:
         adapter = OpenHandsAdapter()
@@ -224,4 +239,29 @@ class TestOpenHandsAdapter:
         assert isinstance(events[-1], WorkFailed)
         assert any("did not exit" in record.message for record in caplog.records)
 
+        conversation.release()
+
+    @pytest.mark.asyncio
+    async def test_timeout_when_send_message_blocks(
+        self, monkeypatch, tmp_path: Path,
+    ) -> None:
+        adapter = OpenHandsAdapter(timeout_seconds=0.01)
+        conversation = _StuckSendMessageConversation()
+        monkeypatch.setattr(
+            adapter, "_build_conversation", lambda *_args: conversation,
+        )
+
+        events = []
+        async for event in adapter.run_session(
+            {
+                "task_description": "Stuck send_message task",
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+            }
+        ):
+            events.append(event)
+
+        assert isinstance(events[-1], WorkFailed)
+        assert "timed out" in events[-1].reason
+        # Cleanup the background thread to avoid cross-test leakage.
         conversation.release()

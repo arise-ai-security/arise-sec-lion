@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -313,3 +314,130 @@ class TestRetryScheduledEvent:
         agent.schedule_retry(reason="error", escalated_model="gpt-4o-mini")
 
         assert agent.config.base.model == "gpt-4o-mini"
+
+
+class TestNoProgressRestart:
+    """No-progress restarts should use dedicated retry budget."""
+
+    @pytest.mark.asyncio
+    async def test_no_progress_schedules_retry_with_dedicated_budget(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker")
+        await svc._repository.save_new_agent(agent)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=worker_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 1
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 1
+        assert any(
+            isinstance(e, RetryScheduled) for e in event_store.events_for(worker_id)
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_progress_honors_retry_budget_and_fails_permanently(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker")
+        # Exhaust dedicated no-progress budget (default=2)
+        no_progress_reason = "Zero thoughts after 180s — LLM likely unresponsive"
+        agent.fail_with_reason("prior")
+        agent.schedule_retry(reason=no_progress_reason)
+        agent.fail_with_reason("prior")
+        agent.schedule_retry(reason=no_progress_reason)
+        await svc._repository.save_new_agent(agent)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=worker_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 1
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.FAILED
+        assert updated.retry_count == 2
+
+        events = event_store.events_for(worker_id)
+        assert isinstance(events[-1], WorkFailed)
+        assert "restarting" not in (events[-1].reason or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_no_progress_budget_is_independent_of_verification_retries(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker")
+        # Simulate prior verification retries using shared retry_count.
+        agent.fail_with_reason("Verification failed (judge): attempt 1")
+        agent.schedule_retry(reason="Verification failed (judge): attempt 1")
+        agent.fail_with_reason("Verification failed (judge): attempt 2")
+        agent.schedule_retry(reason="Verification failed (judge): attempt 2")
+        await svc._repository.save_new_agent(agent)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=worker_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 1
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        # shared retry_count still increments, but budget decision is independent
+        assert updated.retry_count == 3
+
+        events = event_store.events_for(worker_id)
+        retry_events = [e for e in events if isinstance(e, RetryScheduled)]
+        assert len(retry_events) == 3
+        assert retry_events[-1].reason.startswith("Zero thoughts after")

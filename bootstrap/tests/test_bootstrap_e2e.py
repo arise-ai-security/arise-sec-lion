@@ -24,7 +24,7 @@ from bootstrap import (
     get_cli,
     get_infrastructure,
 )
-from config import ConcurrencyConfig, ToolCallingConfig, TopologyConfig
+from config import ConcurrencyConfig, RetryConfig, ToolCallingConfig, TopologyConfig
 from presentation.cli import CLI, CLIConfig, RunResult
 
 
@@ -101,6 +101,18 @@ class TestApplicationWiring:
         app = get_application(infra, make_app_config())
 
         assert app.execution_service is not None
+
+    def test_wires_retry_config_into_execution_service(self) -> None:
+        """Retry settings from ApplicationConfig must be visible to ExecutionService."""
+        infra = get_infrastructure(make_infra_config())
+        retry_cfg = RetryConfig(
+            model_escalation_chain=["openai/gpt-4o"],
+            no_progress_max_retries=3,
+        )
+        app = get_application(infra, make_app_config(retry=retry_cfg))
+
+        assert app.execution_service._retry_config is not None
+        assert app.execution_service._retry_config.no_progress_max_retries == 3
 
 
 class TestPresentationWiring:

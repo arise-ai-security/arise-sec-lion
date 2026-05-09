@@ -30,7 +30,7 @@ from core.application.services import (
 )
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.events.events import ChildSpawned, DomainEvent
+from core.domain.events.events import ChildSpawned, DomainEvent, RetryScheduled
 from core.domain.exceptions import ConcurrencyError
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
@@ -151,6 +151,11 @@ class AgentExecutionService:
             repository=self._repository,
             retry_config=self._retry_config,
             progress_callback=self._progress_callback,
+        )
+        self._no_progress_max_retries = (
+            getattr(self._retry_config, "no_progress_max_retries", 2)
+            if self._retry_config is not None
+            else 2
         )
         self._role_handlers = build_role_handlers(
             DispatchContext(
@@ -536,23 +541,39 @@ class AgentExecutionService:
         the no-progress pattern (AgentExecutionStarted but 0 ThoughtCaptured).
         Force-fails and retries the worker so it gets a fresh LLM attempt.
         """
+        logger.info(
+            "Running no-progress worker scan for root %s (grace=%.0fs, max_retries=%d)",
+            root_agent_id,
+            self._config.no_progress_grace_seconds,
+            self._no_progress_max_retries,
+        )
+
         try:
             stalled = await self._query_service.get_no_progress_workers(
                 root_id=root_agent_id,
                 grace_seconds=self._config.no_progress_grace_seconds,
             )
         except Exception:
-            logger.debug("No-progress check failed", exc_info=True)
+            logger.warning(
+                "No-progress check failed for root %s", root_agent_id, exc_info=True
+            )
             return 0
 
         if not stalled:
+            logger.info("No-progress worker scan found 0 stalled workers")
             return 0
+
+        logger.warning(
+            "No-progress worker scan found %d stalled worker(s): %s",
+            len(stalled),
+            ", ".join(str(aid) for aid in stalled),
+        )
 
         restarted = 0
         for aid in stalled:
             logger.warning(
                 "Agent %s has zero thoughts after %.0fs — "
-                "force-failing for retry (manager-level check)",
+                "force-failing via manager-level check",
                 aid,
                 self._config.no_progress_grace_seconds,
             )
@@ -568,26 +589,54 @@ class AgentExecutionService:
                 agent = await self._repository.load_if_exists(aid)
                 if agent is None or agent.is_terminal():
                     continue
+                no_progress_retry_count = await self._get_no_progress_retry_count(aid)
                 current_version = agent.version
-                agent.fail_with_reason(
+                no_progress_reason = (
                     f"Zero thoughts after {self._config.no_progress_grace_seconds:.0f}s "
-                    f"— LLM likely unresponsive, restarting"
+                    f"— LLM likely unresponsive"
+                )
+                agent.fail_with_reason(
+                    no_progress_reason
                 )
                 await self._repository.persist_events(
                     agent, current_version, self._progress_callback,
                 )
-                # Schedule retry via the retry policy (respects retry limits)
-                retried = await self._retry_policy.maybe_schedule_retry(agent)
-                if retried:
-                    logger.info("Agent %s scheduled for retry", aid)
+
+                # Use dedicated no-progress retry budget; this is independent
+                # of model-escalation-chain retries.
+                if no_progress_retry_count < self._no_progress_max_retries:
+                    agent.schedule_retry(reason=no_progress_reason, escalated_model=None)
+                    await self._repository.persist_events(
+                        agent, agent.version - 1, self._progress_callback
+                    )
+                    logger.info(
+                        "Agent %s scheduled for no-progress retry %d/%d",
+                        aid,
+                        no_progress_retry_count + 1,
+                        self._no_progress_max_retries,
+                    )
                 else:
                     await self._parent_notifier.notify_if_failed(agent)
-                    logger.info("Agent %s failed permanently (retry limit reached)", aid)
+                    logger.info(
+                        "Agent %s failed permanently (no-progress retry budget exhausted: %d)",
+                        aid,
+                        self._no_progress_max_retries,
+                    )
                 restarted += 1
             except Exception:
                 logger.exception("Failed to restart no-progress agent %s", aid)
 
         return restarted
+
+    async def _get_no_progress_retry_count(self, agent_id: UUID) -> int:
+        """Count prior retries scheduled specifically by no-progress recovery."""
+        events = await self._repository.get_events(agent_id)
+        return sum(
+            1
+            for event in events
+            if isinstance(event, RetryScheduled)
+            and event.reason.startswith(self._NO_PROGRESS_REASON_PREFIX)
+        )
 
     async def _mark_agent_silently_failed(
             self, agent_id: UUID, timeout_seconds: float,
@@ -1077,3 +1126,4 @@ class AgentExecutionService:
             logger.exception(
                 "Failed to handle step timeout for agent %s", agent_id
             )
+    _NO_PROGRESS_REASON_PREFIX = "Zero thoughts after"

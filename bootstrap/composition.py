@@ -125,6 +125,7 @@ def create_runtime_cli(
             manager_config=settings.manager,
             output_directory=settings.output.directory,
             default_worker_tool=settings.worker.tool,
+            retry=settings.orchestration.retry,
             domain_plugin=plugin,
             prompt_strategy=active_domain_components.prompt_strategy,
             progress_callback=progress_callback,

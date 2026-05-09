@@ -186,6 +186,10 @@ class AgentRepository:
         """
         return await self._event_store.get_all_events_grouped()
 
+    async def get_events(self, agent_id: UUID) -> list[DomainEvent]:
+        """Get raw event history for a single aggregate."""
+        return await self._event_store.get_events(agent_id)
+
     async def get_children_events_grouped(
         self, parent_id: UUID
     ) -> dict[UUID, list[DomainEvent]]:

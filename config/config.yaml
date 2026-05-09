@@ -50,6 +50,16 @@ orchestration:
     max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
     llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
 
+  retry:
+    # Model escalation chain controls generic worker retries. Leave empty to
+    # disable model-escalation retries.
+    model_escalation_chain: []
+    circuit_breaker_threshold: 3
+    circuit_breaker_reset_seconds: 300
+    # Dedicated budget for workers that started execution but emitted zero thoughts.
+    # Independent of model_escalation_chain length.
+    no_progress_max_retries: 2
+
   tool_calling:
     # Iterations control how many tool-calling rounds an agent gets.
     # Context management layers (truncation, condensation, budget gate)

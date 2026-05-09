@@ -255,6 +255,14 @@ class RetryConfig(BaseModel):
         ge=0,
         description="Seconds before circuit breaker resets",
     )
+    no_progress_max_retries: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "Max retries for workers that emit zero thoughts after execution starts. "
+            "Independent of model escalation chain."
+        ),
+    )
 
 
 class OrchestrationConfig(BaseModel):

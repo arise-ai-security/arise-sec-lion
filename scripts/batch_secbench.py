@@ -411,8 +411,8 @@ async def _cleanup_db(boss_id: str) -> None:
     logger.debug("[%s] cleaned up DB: %s", boss_id, result)
 
 
-async def db_last_event_age(boss_id: str) -> float:
-    """Return seconds since the most recent event in this run's hierarchy."""
+async def db_last_event_snapshot(boss_id: str) -> tuple[float, str, str]:
+    """Return (seconds_since_last_event, agent_id, event_type) for run hierarchy."""
     q = (
         "WITH RECURSIVE h AS ("
         f"  SELECT '{boss_id}'::uuid AS aid "
@@ -420,14 +420,29 @@ async def db_last_event_age(boss_id: str) -> float:
         "  SELECT (e.payload->>'child_id')::uuid "
         "  FROM events e JOIN h ON e.aggregate_id = h.aid "
         "  WHERE e.event_type = 'ChildSpawned'"
-        ") SELECT EXTRACT(epoch FROM (now() - max(e.occurred_at))) "
-        "FROM events e JOIN h ON e.aggregate_id = h.aid"
+        "), last AS ("
+        "  SELECT e.aggregate_id, e.event_type, e.occurred_at "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  ORDER BY e.occurred_at DESC "
+        "  LIMIT 1"
+        ") SELECT "
+        "COALESCE(EXTRACT(epoch FROM (now() - occurred_at)), 0), "
+        "COALESCE(aggregate_id::text, ''), "
+        "COALESCE(event_type, '') "
+        "FROM last"
     )
     val = await _psql(q)
+    if not val:
+        return 0.0, "", ""
+    parts = val.split("|")
+    if len(parts) != 3:
+        return 0.0, "", ""
+    age_s, agent_id, event_type = parts
     try:
-        return float(val)
+        age = float(age_s)
     except (ValueError, TypeError):
-        return 0.0
+        age = 0.0
+    return age, agent_id, event_type
 
 
 async def db_run_completed(boss_id: str) -> str | None:
@@ -584,12 +599,16 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
 
         # Stall detection: no new events for STALL_SEC = hanging LLM call
         if elapsed > DECOMP_GRACE_SEC:
-            stale_secs = await db_last_event_age(boss_id)
+            stale_secs, last_agent_id, last_event_type = await db_last_event_snapshot(boss_id)
             if stale_secs > STALL_SEC:
                 agents = await db_agent_count(boss_id)
                 logger.warning(
-                    "[%s] STALLED: no events for %.0fs (%d agents) — killing",
-                    instance_id, stale_secs, agents,
+                    "[%s] STALLED: no events for %.0fs (%d agents), last=%s/%s — killing",
+                    instance_id,
+                    stale_secs,
+                    agents,
+                    last_agent_id[:8] if last_agent_id else "unknown",
+                    last_event_type or "unknown",
                 )
                 await _kill_run(proc, instance_id, boss_id)
                 result.status = "failed"

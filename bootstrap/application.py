@@ -9,6 +9,7 @@ from config import (
     BossConfig,
     ConcurrencyConfig,
     ManagerConfig,
+    RetryConfig,
     ToolCallingConfig,
     TopologyConfig,
 )
@@ -61,6 +62,7 @@ class ExecutionLimitsBridge:
     max_concurrent_llm_calls: int = 5
     llm_jitter_max_ms: int = 500
     max_run_duration_seconds: float = 1800
+    retry: RetryConfig | None = None
 
     def is_workers_limited(self) -> bool:
         return self.max_concurrent_workers > 0
@@ -89,6 +91,7 @@ class ApplicationConfig:
     prompt_strategy: PromptStrategy | None = None
     progress_callback: ProgressCallback | None = None
     domain_key: str | None = None
+    retry: RetryConfig | None = None
 
 
 @dataclass
@@ -207,6 +210,7 @@ def get_application(
         max_concurrent_llm_calls=config.concurrency.max_concurrent_llm_calls,
         llm_jitter_max_ms=config.concurrency.llm_jitter_max_ms,
         max_run_duration_seconds=config.max_run_duration_seconds,
+        retry=config.retry,
     )
 
     execution_service = AgentExecutionService(
