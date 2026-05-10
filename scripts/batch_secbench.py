@@ -728,10 +728,22 @@ async def _run_with_retry(
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
 
-        # Do not retry on early failures (under-decomp or quick crashes).
-        # Only retry late-stage transient failures (long-running runs that errored after real progress).
+        # Retry policy:
+        # - Generic failed/error runs retry only after meaningful progress
+        #   (late-stage failures), to avoid hot-looping deterministic early crashes.
+        # - Hang signatures must be retried even when "early" because they are
+        #   often transient provider/runtime stalls.
         early_death = result.duration_seconds < 600  # under 10 min = "early"
-        retryable = result.status in ("failed", "error") and not early_death
+        is_hang_signature = (
+            result.status == "timeout"
+            or (
+                result.status == "failed"
+                and "stalled" in (result.error_message or "").lower()
+            )
+        )
+        retryable = is_hang_signature or (
+            result.status in ("failed", "error") and not early_death
+        )
         if not retryable or attempt >= max_retries:
             break
         # NOTE: Do NOT clean up DB events — past run data is irreplaceable.

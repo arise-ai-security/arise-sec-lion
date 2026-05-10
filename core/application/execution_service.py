@@ -435,6 +435,23 @@ class AgentExecutionService:
             # timer fires, mark the agent failed immediately and let the
             # task finish in the background.
             step_task = asyncio.create_task(self.run_agent_step(agent_id))
+            # If the timed-out task eventually exits with an exception and no
+            # one awaits it, asyncio logs "Task exception was never retrieved".
+            # Consume the terminal result here so byzantine runs don't hide
+            # background failures behind noisy warnings.
+            def _consume_background_result(task: asyncio.Task) -> None:
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    logger.warning(
+                        "Background timed-out step task for agent %s exited with error",
+                        agent_id,
+                        exc_info=True,
+                    )
+
+            step_task.add_done_callback(_consume_background_result)
             try:
                 await asyncio.wait_for(
                     asyncio.shield(step_task),
