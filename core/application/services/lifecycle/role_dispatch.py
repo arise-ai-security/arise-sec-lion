@@ -35,6 +35,8 @@ class DispatchContext:
     get_run_output_path: Callable[[], Path | None]
     get_working_directory: Callable[[], str | None]
     get_workspace_context: Callable[[], str | None]
+    worker_prepare_timeout_seconds: float = 120.0
+    worker_execute_timeout_seconds: float = 600.0
 
 
 class RoleHandler(ABC):
@@ -113,22 +115,39 @@ class WorkerHandler(LifecycleRoleHandler):
                     if agent.hierarchy_limits is not None
                     else None
                 )
-                worker_context = await self._prepare_worker_context(
-                    root_id=root_id,
-                    agent=agent,
-                    domain_context=domain_context,
-                )
+                try:
+                    worker_context = await asyncio.wait_for(
+                        self._prepare_worker_context(
+                            root_id=root_id,
+                            agent=agent,
+                            domain_context=domain_context,
+                        ),
+                        timeout=self._context.worker_prepare_timeout_seconds,
+                    )
+                except TimeoutError as exc:
+                    raise RuntimeError(
+                        "Worker context preparation timed out after "
+                        f"{self._context.worker_prepare_timeout_seconds:.0f}s"
+                    ) from exc
 
                 try:
-                    await self._context.orchestrator.execute_task(
-                        agent,
-                        working_directory=self._resolve_working_directory(worker_context),
-                        workspace_context=self._context.get_workspace_context(),
-                        handoff=handoff,
-                        task_context_overrides=(
-                            worker_context.task_context if worker_context else None
+                    await asyncio.wait_for(
+                        self._context.orchestrator.execute_task(
+                            agent,
+                            working_directory=self._resolve_working_directory(worker_context),
+                            workspace_context=self._context.get_workspace_context(),
+                            handoff=handoff,
+                            task_context_overrides=(
+                                worker_context.task_context if worker_context else None
+                            ),
                         ),
+                        timeout=self._context.worker_execute_timeout_seconds,
                     )
+                except TimeoutError as exc:
+                    raise RuntimeError(
+                        "Worker execution timed out after "
+                        f"{self._context.worker_execute_timeout_seconds:.0f}s"
+                    ) from exc
                 finally:
                     # Fire-and-forget: cleanup must not block CancelledError.
                     # If the step was cancelled (timeout), blocking here prevents
@@ -200,7 +219,7 @@ class WorkerHandler(LifecycleRoleHandler):
                 ),
                 timeout=self._CLEANUP_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Worker cleanup timed out after %.0fs for agent %s",
                 self._CLEANUP_TIMEOUT,

@@ -68,6 +68,8 @@ class ServiceConfig:
     no_progress_grace_seconds: float = 180.0  # Manager-level: restart workers with 0 thoughts after this many seconds
     no_progress_initial_grace_seconds: float = 300.0  # First worker attempt gets extra model cold-start headroom
     no_progress_check_interval: float = 60.0  # How often to run the no-progress check
+    worker_prepare_timeout_seconds: float = 120.0  # Hard cap for domain-plugin worker context setup
+    worker_execute_timeout_seconds: float = 600.0  # Hard cap for orchestrator.execute_task (worker role)
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,11 @@ class ExecutionServiceDependencies:
 
 class AgentExecutionService:
     """Orchestrates agent workflow using composed services."""
+
+    _MAX_VERIFICATION_RETRIES = 2
+    _NO_PROGRESS_REASON_PREFIX = "Zero thoughts after"
+    _STEP_TIMEOUT_REASON_PREFIX = "Step timed out after"
+    _SILENT_WORKER_REASON_PREFIX = "Worker silent for >"
 
     def __init__(
             self,
@@ -164,6 +171,16 @@ class AgentExecutionService:
             if self._retry_config is not None
             else 2
         )
+        self._step_timeout_max_retries = (
+            getattr(self._retry_config, "step_timeout_max_retries", 2)
+            if self._retry_config is not None
+            else 2
+        )
+        self._silent_worker_max_retries = (
+            getattr(self._retry_config, "silent_worker_max_retries", 2)
+            if self._retry_config is not None
+            else 2
+        )
         self._role_handlers = build_role_handlers(
             DispatchContext(
                 orchestrator=self._orchestrator,
@@ -176,6 +193,8 @@ class AgentExecutionService:
                 get_run_output_path=lambda: self._working_directory,
                 get_working_directory=self._get_working_directory_str,
                 get_workspace_context=self._get_workspace_context,
+                worker_prepare_timeout_seconds=self._config.worker_prepare_timeout_seconds,
+                worker_execute_timeout_seconds=self._config.worker_execute_timeout_seconds,
             )
         )
 
@@ -658,14 +677,23 @@ class AgentExecutionService:
 
         return restarted
 
-    async def _get_no_progress_retry_count(self, agent_id: UUID) -> int:
-        """Count prior retries scheduled specifically by no-progress recovery."""
+    async def _get_retry_count_for_reason_prefix(
+        self, agent_id: UUID, reason_prefix: str,
+    ) -> int:
+        """Count prior retries scheduled for a specific failure reason prefix."""
         events = await self._repository.get_events(agent_id)
         return sum(
             1
             for event in events
             if isinstance(event, RetryScheduled)
-            and event.reason.startswith(self._NO_PROGRESS_REASON_PREFIX)
+            and event.reason
+            and event.reason.startswith(reason_prefix)
+        )
+
+    async def _get_no_progress_retry_count(self, agent_id: UUID) -> int:
+        """Count prior retries scheduled specifically by no-progress recovery."""
+        return await self._get_retry_count_for_reason_prefix(
+            agent_id, self._NO_PROGRESS_REASON_PREFIX,
         )
 
     async def _get_last_execution_started_at(self, agent_id: UUID) -> datetime | None:
@@ -698,18 +726,43 @@ class AgentExecutionService:
     async def _mark_agent_silently_failed(
             self, agent_id: UUID, timeout_seconds: float,
     ) -> None:
-        """Mark agent failed for silence and notify parent."""
+        """Fail silent worker, then retry-first with a dedicated silent budget."""
         agent = await self._repository.load_if_exists(agent_id)
         if agent is None or agent.is_terminal():
             return
-        agent.fail_with_reason(
+
+        reason = (
             f"Worker silent for >{timeout_seconds:.0f}s with no events — "
-            f"forcing failure to advance DAG",
+            f"forcing failure to advance DAG"
         )
+        current_version = agent.version
+        agent.fail_with_reason(reason)
         await self._repository.persist_events(
-            agent, agent.version, self._progress_callback,
+            agent, current_version, self._progress_callback,
         )
+
+        silent_retry_count = await self._get_retry_count_for_reason_prefix(
+            agent_id, self._SILENT_WORKER_REASON_PREFIX,
+        )
+        if silent_retry_count < self._silent_worker_max_retries:
+            agent.schedule_retry(reason=reason, escalated_model=None)
+            await self._repository.persist_events(
+                agent, agent.version - 1, self._progress_callback,
+            )
+            logger.info(
+                "Agent %s scheduled for silent-worker retry %d/%d",
+                agent_id,
+                silent_retry_count + 1,
+                self._silent_worker_max_retries,
+            )
+            return
+
         await self._parent_notifier.notify_if_failed(agent)
+        logger.info(
+            "Agent %s failed permanently (silent-worker retry budget exhausted: %d)",
+            agent_id,
+            self._silent_worker_max_retries,
+        )
 
     def _force_release_semaphores(self, agent_id: UUID) -> None:
         """Release semaphores held by a leaked (uncancellable) task.
@@ -1055,8 +1108,6 @@ class AgentExecutionService:
 
             await self._parent_notifier.notify_if_failed(agent)
 
-    _MAX_VERIFICATION_RETRIES = 2
-
     async def _maybe_retry_verification(self, agent: AgentSession) -> bool:
         """Retry a worker that failed verification, up to _MAX_VERIFICATION_RETRIES.
 
@@ -1159,7 +1210,7 @@ class AgentExecutionService:
             ) from error
 
     async def _handle_step_timeout(self, agent_id: UUID) -> None:
-        """Mark agent failed after step timeout and notify parent.
+        """Fail timed-out step, then retry-first with dedicated timeout budget.
 
         Loads the agent fresh from DB (the in-memory state was lost with the
         cancelled task), marks it FAILED, persists, and propagates so the
@@ -1170,17 +1221,39 @@ class AgentExecutionService:
             if agent is None or agent.is_terminal():
                 return
 
+            step_retry_count = await self._get_retry_count_for_reason_prefix(
+                agent_id, self._STEP_TIMEOUT_REASON_PREFIX,
+            )
             current_version = agent.version
-            agent.fail_with_reason(
+            reason = (
                 f"Step timed out after {self._config.step_timeout_seconds:.0f}s "
                 "(possible Ollama Cloud hang)"
             )
+            agent.fail_with_reason(reason)
             await self._repository.persist_events(
                 agent, current_version, self._progress_callback
             )
+
+            if step_retry_count < self._step_timeout_max_retries:
+                agent.schedule_retry(reason=reason, escalated_model=None)
+                await self._repository.persist_events(
+                    agent, agent.version - 1, self._progress_callback,
+                )
+                logger.info(
+                    "Agent %s scheduled for step-timeout retry %d/%d",
+                    agent_id,
+                    step_retry_count + 1,
+                    self._step_timeout_max_retries,
+                )
+                return
+
             await self._parent_notifier.notify_if_failed(agent)
+            logger.info(
+                "Agent %s failed permanently (step-timeout retry budget exhausted: %d)",
+                agent_id,
+                self._step_timeout_max_retries,
+            )
         except Exception:
             logger.exception(
                 "Failed to handle step timeout for agent %s", agent_id
             )
-    _NO_PROGRESS_REASON_PREFIX = "Zero thoughts after"

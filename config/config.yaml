@@ -59,6 +59,8 @@ orchestration:
     # Dedicated budget for workers that started execution but emitted zero thoughts.
     # Independent of model_escalation_chain length.
     no_progress_max_retries: 2
+    step_timeout_max_retries: 2
+    silent_worker_max_retries: 2
 
   tool_calling:
     # Iterations control how many tool-calling rounds an agent gets.

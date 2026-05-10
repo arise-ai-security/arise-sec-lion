@@ -534,3 +534,71 @@ class TestNoProgressRestart:
         assert not any(
             isinstance(e, RetryScheduled) for e in event_store.events_for(worker_id)
         )
+
+
+class TestTimeoutRecovery:
+    """Step-timeout and silence watchdog should retry before permanent failure."""
+
+    @pytest.mark.asyncio
+    async def test_step_timeout_schedules_retry_with_dedicated_budget(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("timeout worker")
+        await svc._repository.save_new_agent(agent)
+
+        await svc._handle_step_timeout(worker_id)
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 1
+        retry_events = [
+            e for e in event_store.events_for(worker_id)
+            if isinstance(e, RetryScheduled)
+        ]
+        assert len(retry_events) == 1
+        assert retry_events[0].reason.startswith("Step timed out after")
+
+    @pytest.mark.asyncio
+    async def test_silent_worker_schedules_retry_with_dedicated_budget(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("silent worker")
+        await svc._repository.save_new_agent(agent)
+
+        await svc._mark_agent_silently_failed(worker_id, timeout_seconds=600)
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 1
+        retry_events = [
+            e for e in event_store.events_for(worker_id)
+            if isinstance(e, RetryScheduled)
+        ]
+        assert len(retry_events) == 1
+        assert retry_events[0].reason.startswith("Worker silent for >")

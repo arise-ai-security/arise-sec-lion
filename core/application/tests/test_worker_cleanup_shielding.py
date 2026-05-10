@@ -27,6 +27,8 @@ async def test_cancellation_propagates_despite_slow_cleanup() -> None:
     context.get_workspace_context = MagicMock(return_value=None)
     context.get_working_directory = MagicMock(return_value="/tmp")
     context.get_run_output_path = MagicMock(return_value=None)
+    context.worker_prepare_timeout_seconds = 120.0
+    context.worker_execute_timeout_seconds = 600.0
     # execute_task must block long enough for us to cancel
     async def blocking_execute(*args, **kwargs):
         await asyncio.sleep(60)

@@ -263,6 +263,16 @@ class RetryConfig(BaseModel):
             "Independent of model escalation chain."
         ),
     )
+    step_timeout_max_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Max retries for worker step-timeout failures.",
+    )
+    silent_worker_max_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Max retries for worker silence watchdog failures.",
+    )
 
 
 class OrchestrationConfig(BaseModel):
