@@ -4,6 +4,7 @@ Provides endpoints for querying agent hierarchy and individual agents.
 """
 
 from typing import Annotated
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -54,6 +55,10 @@ def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
 
 def _agent_node_to_schema(
     node: AgentNode,
+    *,
+    last_event_times: dict[UUID, datetime],
+    now_utc: datetime,
+    stale_threshold_seconds: int,
     max_depth: int | None = None,
     current_depth: int = 0,
 ) -> AgentNodeSchema:
@@ -69,6 +74,13 @@ def _agent_node_to_schema(
     """
     # Check if we should include children
     include_children = max_depth is None or current_depth < max_depth
+    last_event_at = last_event_times.get(node.id)
+    idle_seconds: int | None = None
+    is_stale = False
+    if last_event_at is not None:
+        idle_seconds = int((now_utc - last_event_at).total_seconds())
+        is_terminal = node.status in {"completed", "failed"}
+        is_stale = (not is_terminal) and idle_seconds > stale_threshold_seconds
 
     return AgentNodeSchema(
         id=str(node.id),
@@ -80,8 +92,18 @@ def _agent_node_to_schema(
         was_restarted=node.was_restarted,
         hang_restart_count=node.hang_restart_count,
         was_hang_restarted=node.was_hang_restarted,
+        last_event_at=last_event_at,
+        idle_seconds=idle_seconds,
+        is_stale=is_stale,
         children=[
-            _agent_node_to_schema(child, max_depth, current_depth + 1)
+            _agent_node_to_schema(
+                child,
+                last_event_times=last_event_times,
+                now_utc=now_utc,
+                stale_threshold_seconds=stale_threshold_seconds,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
+            )
             for child in node.children
         ] if include_children else [],
     )
@@ -260,8 +282,23 @@ async def get_agent_hierarchy(
     except KeyError as err:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found") from err
 
+    # Annotate nodes with per-agent idle/stale signal from latest event timestamps.
+    stale_threshold_seconds = 300
+    now_utc = datetime.now(UTC)
+    last_event_times = {
+        aid: evts[-1].occurred_at
+        for aid, evts in hierarchy_events.items()
+        if evts
+    }
+
     return AgentHierarchySchema(
-        root=_agent_node_to_schema(hierarchy.root, max_depth=max_depth),
+        root=_agent_node_to_schema(
+            hierarchy.root,
+            last_event_times=last_event_times,
+            now_utc=now_utc,
+            stale_threshold_seconds=stale_threshold_seconds,
+            max_depth=max_depth,
+        ),
         total_agents=hierarchy.total_agents,
         depth=hierarchy.depth,
     )

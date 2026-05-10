@@ -43,6 +43,9 @@ export interface AgentNode {
   was_restarted: boolean;
   hang_restart_count: number;
   was_hang_restarted: boolean;
+  last_event_at: string | null;
+  idle_seconds: number | null;
+  is_stale: boolean;
   children: AgentNode[];
 }
 

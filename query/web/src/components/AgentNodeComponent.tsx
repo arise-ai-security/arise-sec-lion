@@ -13,6 +13,8 @@ export interface AgentNodeData {
   was_restarted?: boolean;
   hang_restart_count?: number;
   was_hang_restarted?: boolean;
+  idle_seconds?: number | null;
+  is_stale?: boolean;
   [key: string]: unknown; // Required for React Flow compatibility
 }
 
@@ -46,6 +48,9 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
   const wasRestarted = data.was_restarted ?? restartCount > 0;
   const hangRestartCount = data.hang_restart_count ?? 0;
   const wasHangRestarted = data.was_hang_restarted ?? hangRestartCount > 0;
+  const idleSeconds = typeof data.idle_seconds === 'number' ? data.idle_seconds : null;
+  const isStale = data.is_stale === true;
+  const idleMinutes = idleSeconds !== null ? Math.floor(idleSeconds / 60) : null;
 
   return (
     <div
@@ -83,6 +88,14 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
               title={`Hang-recovery restart ${hangRestartCount} time${hangRestartCount === 1 ? '' : 's'}`}
             >
               HANG-RECOVERED ×{hangRestartCount}
+            </span>
+          )}
+          {isStale && idleMinutes !== null && (
+            <span
+              className="inline-flex items-center rounded-full border border-orange-200 bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-900"
+              title={`No events for ${idleSeconds}s while non-terminal`}
+            >
+              STALE {idleMinutes}m
             </span>
           )}
         </div>

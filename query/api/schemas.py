@@ -27,6 +27,18 @@ class AgentNodeSchema(BaseModel):
         False,
         description="Whether this agent had at least one hang/no-progress recovery restart",
     )
+    last_event_at: datetime | None = Field(
+        None,
+        description="Timestamp of the latest event for this agent",
+    )
+    idle_seconds: int | None = Field(
+        None,
+        description="Seconds since latest event for this agent",
+    )
+    is_stale: bool = Field(
+        False,
+        description="Whether the agent appears stale (non-terminal and idle beyond threshold)",
+    )
     children: list["AgentNodeSchema"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
