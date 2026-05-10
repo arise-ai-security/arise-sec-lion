@@ -26,6 +26,8 @@ class AgentListItem:
     child_ids: tuple[UUID, ...] = field(default_factory=tuple)
     restart_count: int = 0
     was_restarted: bool = False
+    hang_restart_count: int = 0
+    was_hang_restarted: bool = False
 
     @classmethod
     def empty(cls, agent_id: UUID) -> "AgentListItem":
@@ -41,6 +43,8 @@ class AgentListItem:
             child_ids=(),
             restart_count=0,
             was_restarted=False,
+            hang_restart_count=0,
+            was_hang_restarted=False,
         )
 
 

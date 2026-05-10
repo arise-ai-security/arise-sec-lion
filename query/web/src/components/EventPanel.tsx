@@ -160,14 +160,30 @@ function EventCard({ event, outputTypeFilter }: { event: DomainEvent; outputType
     const attempt = data?.attempt as number || 0;
     const reason = (data?.reason as string) || '';
     const escalatedModel = data?.escalated_model as string || '';
+    const normalizedReason = reason.toLowerCase();
+    const isHangRecovery = [
+      'zero thoughts after',
+      'step timed out after',
+      'worker silent for >',
+      'pending assessment timed out after',
+      'no-progress',
+      'llm likely unresponsive',
+    ].some(marker => normalizedReason.includes(marker));
 
     return (
-      <div className="rounded-lg mb-2 overflow-hidden border-l-4 border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/20">
+      <div
+        className={`rounded-lg mb-2 overflow-hidden border-l-4 ${
+          isHangRecovery
+            ? 'border-l-red-500 bg-red-50/50 dark:bg-red-900/20'
+            : 'border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/20'
+        }`}
+      >
         <div className="px-3 py-2">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
               <span className={`px-2 py-0.5 text-xs rounded ${colorClass}`}>
-                🔄 Retry #{attempt}{escalatedModel ? ` → ${escalatedModel}` : ''}
+                {isHangRecovery ? '🛟 Hang Recovery' : '🔄 Retry'} #{attempt}
+                {escalatedModel ? ` → ${escalatedModel}` : ''}
               </span>
             </div>
             <span className="text-xs text-gray-400">
@@ -175,7 +191,13 @@ function EventCard({ event, outputTypeFilter }: { event: DomainEvent; outputType
             </span>
           </div>
           {reason && (
-            <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap">
+            <p
+              className={`text-sm whitespace-pre-wrap ${
+                isHangRecovery
+                  ? 'text-red-700 dark:text-red-300'
+                  : 'text-amber-700 dark:text-amber-300'
+              }`}
+            >
               {reason}
             </p>
           )}

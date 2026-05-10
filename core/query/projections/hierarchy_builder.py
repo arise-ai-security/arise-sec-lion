@@ -20,6 +20,8 @@ class AgentNode:
     parent_id: UUID | None
     restart_count: int = 0
     was_restarted: bool = False
+    hang_restart_count: int = 0
+    was_hang_restarted: bool = False
     children: list["AgentNode"] = field(default_factory=list)
 
 
@@ -134,5 +136,7 @@ class HierarchyBuilder:
             parent_id=agent.parent_id,
             restart_count=agent.restart_count,
             was_restarted=agent.was_restarted,
+            hang_restart_count=agent.hang_restart_count,
+            was_hang_restarted=agent.was_hang_restarted,
             children=children,
         )

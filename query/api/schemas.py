@@ -19,6 +19,14 @@ class AgentNodeSchema(BaseModel):
     parent_id: str | None = Field(None, description="Parent agent UUID")
     restart_count: int = Field(0, description="How many retries/restarts were scheduled")
     was_restarted: bool = Field(False, description="Whether this agent has been restarted at least once")
+    hang_restart_count: int = Field(
+        0,
+        description="How many retries were triggered by hang/no-progress watchdog recovery",
+    )
+    was_hang_restarted: bool = Field(
+        False,
+        description="Whether this agent had at least one hang/no-progress recovery restart",
+    )
     children: list["AgentNodeSchema"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
@@ -70,6 +78,8 @@ class AgentListItemSchema(BaseModel):
     domain_metadata: dict[str, str | int | float | bool | None] | None = None
     restart_count: int = 0
     was_restarted: bool = False
+    hang_restart_count: int = 0
+    was_hang_restarted: bool = False
 
     model_config = {"from_attributes": True}
 

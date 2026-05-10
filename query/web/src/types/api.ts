@@ -17,6 +17,8 @@ export interface AgentListItem {
   domain_metadata: Record<string, DomainMetadataValue> | null;
   restart_count: number;
   was_restarted: boolean;
+  hang_restart_count: number;
+  was_hang_restarted: boolean;
 }
 
 export interface PaginationMeta {
@@ -39,6 +41,8 @@ export interface AgentNode {
   parent_id: string | null;
   restart_count: number;
   was_restarted: boolean;
+  hang_restart_count: number;
+  was_hang_restarted: boolean;
   children: AgentNode[];
 }
 

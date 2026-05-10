@@ -88,6 +88,14 @@ docker compose exec app python main.py run "your task"
                   restarted ×{agent.restart_count}
                 </span>
               )}
+              {agent.was_hang_restarted && (
+                <span
+                  className="text-[10px] font-semibold rounded px-1.5 py-0.5 bg-red-100 text-red-900 dark:bg-red-900/30 dark:text-red-300"
+                  title={`Hang-recovery restart ${agent.hang_restart_count} time${agent.hang_restart_count === 1 ? '' : 's'}`}
+                >
+                  hang-recovered ×{agent.hang_restart_count}
+                </span>
+              )}
             </div>
             <p className="text-sm text-gray-800 dark:text-gray-200 line-clamp-2">
               {agent.task_description || 'No description'}

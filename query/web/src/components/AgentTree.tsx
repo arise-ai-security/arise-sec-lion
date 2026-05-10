@@ -56,6 +56,8 @@ function buildNodesAndEdges(root: AgentNodeType): { nodes: AgentFlowNode[]; edge
           task_description: node.task_description,
           restart_count: node.restart_count,
           was_restarted: node.was_restarted,
+          hang_restart_count: node.hang_restart_count,
+          was_hang_restarted: node.was_hang_restarted,
         },
       });
       return 1;
@@ -88,6 +90,8 @@ function buildNodesAndEdges(root: AgentNodeType): { nodes: AgentFlowNode[]; edge
         task_description: node.task_description,
         restart_count: node.restart_count,
         was_restarted: node.was_restarted,
+        hang_restart_count: node.hang_restart_count,
+        was_hang_restarted: node.was_hang_restarted,
       },
     });
 

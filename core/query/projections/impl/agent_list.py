@@ -66,6 +66,7 @@ class AgentListProjection:
         domain_metadata = None
         child_ids: list[UUID] = []
         restart_count = 0
+        hang_restart_count = 0
 
         for event in events:
             if isinstance(event, TaskAssigned):
@@ -95,6 +96,8 @@ class AgentListProjection:
                 # FAILED → ANALYZING: agent is retrying, no longer terminal
                 status = "analyzing"
                 restart_count += 1
+                if self._is_hang_recovery_reason(event.reason):
+                    hang_restart_count += 1
 
             elif isinstance(event, RedecompositionTriggered):
                 # WAITING → ANALYZING: parent re-decomposes after child infeasible
@@ -114,6 +117,26 @@ class AgentListProjection:
             child_ids=tuple(child_ids),
             restart_count=restart_count,
             was_restarted=restart_count > 0,
+            hang_restart_count=hang_restart_count,
+            was_hang_restarted=hang_restart_count > 0,
+        )
+
+    @staticmethod
+    def _is_hang_recovery_reason(reason: str) -> bool:
+        """Classify retry reasons that represent hang/no-progress recovery."""
+        if not reason:
+            return False
+        normalized = reason.lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "zero thoughts after",
+                "step timed out after",
+                "worker silent for >",
+                "pending assessment timed out after",
+                "no-progress",
+                "llm likely unresponsive",
+            )
         )
 
     def project_all(
