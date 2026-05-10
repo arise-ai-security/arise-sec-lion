@@ -87,6 +87,8 @@ function explainWatchdogAction(nextAction: string | null | undefined): string {
       return 'Try provider reconnect first; if unresolved, restart this agent; if retries are exhausted, fail this agent and notify parent.';
     case 'retry_or_fail':
       return 'Restart this agent when retry budget is available; otherwise mark it failed and notify parent so DAG can advance.';
+    case 'wait_for_dependencies_or_parent_recovery':
+      return 'Wait for prerequisite siblings to complete; parent/recovery logic handles escalation if dependencies fail.';
     default:
       return 'No recovery action currently expected.';
   }
