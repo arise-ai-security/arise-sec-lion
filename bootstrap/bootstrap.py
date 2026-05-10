@@ -48,6 +48,7 @@ def main(args: list[str] | None = None) -> None:
         "list": _list_runs,
         "prompts": _trace_prompts,
         "retry-stale-child": _retry_stale_child,
+        "abandon-stale-child": _abandon_stale_child,
     }
 
     try:
@@ -136,6 +137,18 @@ def _create_parser() -> argparse.ArgumentParser:
         type=str,
         default="Batch pre-kill rescue: stale analyzing child",
         help="Reason recorded on WorkFailed/RetryScheduled",
+    )
+
+    p = sub.add_parser(
+        "abandon-stale-child",
+        help="Mark a stale child permanently failed and notify parent (safe skip)",
+    )
+    p.add_argument("--agent-id", type=UUID, required=True, help="Child agent UUID to abandon")
+    p.add_argument(
+        "--reason",
+        type=str,
+        default="Batch skip: stale child unrescuable after rescue budget",
+        help="Reason recorded on WorkFailed",
     )
 
     return parser
@@ -403,6 +416,30 @@ async def _retry_stale_child(args: argparse.Namespace) -> None:
         agent.schedule_retry(reason=reason, escalated_model=None)
         await repository.persist_events(agent, current_version)
         print(f"Rescued agent {args.agent_id}: fail+retry scheduled.")
+
+
+async def _abandon_stale_child(args: argparse.Namespace) -> None:
+    """Domain-safe skip: fail child terminally and notify parent."""
+    from core.application.services import AgentRepository, ParentNotificationService
+
+    settings = _load_settings(args.config)
+    async with _event_store(settings) as store:
+        repository = AgentRepository(event_store=store, max_retries=3)
+        parent_notifier = ParentNotificationService(repository=repository)
+        agent = await repository.load_if_exists(args.agent_id)
+        if agent is None:
+            print(f"Agent {args.agent_id} not found.")
+            sys.exit(1)
+        if agent.is_terminal():
+            print(f"Agent {args.agent_id} already terminal: {agent.status.value}")
+            return
+
+        current_version = agent.version
+        reason = args.reason or "Batch skip: stale child unrescuable after rescue budget"
+        agent.fail_with_reason(reason)
+        await repository.persist_events(agent, current_version)
+        await parent_notifier.notify_if_failed(agent)
+        print(f"Abandoned agent {args.agent_id}: failed and parent notified.")
 
 
 def _resolve_agent_id(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 from pathlib import Path
+import random
 import sys
 
 import pytest
@@ -382,3 +383,257 @@ async def test_rescue_child_retry_treats_zero_exit_code_as_success(
         last_event_type="RetryScheduled",
     )
     assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_run_instance_abandons_child_after_rescue_budget_exhausted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """If rescue keeps failing, batch should safe-skip (abandon) the child."""
+    batch = _load_batch_module()
+
+    instance_id = "demo.cve-abandon-0001"
+    fixture = tmp_path / f"{instance_id}.json"
+    fixture.write_text(
+        (
+            "{\n"
+            '  "project_name": "demo",\n'
+            '  "bug_description": "rescue budget exhaustion path"\n'
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(batch, "FIXTURE_DIR", tmp_path)
+    monkeypatch.setattr(batch, "DECOMP_GRACE_SEC", 0)
+    monkeypatch.setattr(batch, "CHILD_RESCUE_SEC", 1)
+    monkeypatch.setattr(batch, "CHILD_RESCUE_GRACE_SEC", 0)
+    monkeypatch.setattr(batch, "CHILD_RESCUE_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(batch, "STALL_SEC", 99999)
+    monkeypatch.setattr(batch, "POLL_INTERVAL_SEC", 0)
+    monkeypatch.setattr(batch, "RUN_TIMEOUT_SEC", 99999)
+
+    class _Stdout:
+        async def read(self, _n: int) -> bytes:
+            return b""
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.stdout = _Stdout()
+            self.ticks = 0
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+    proc = _Proc()
+
+    async def _fake_spawn(*_args, **_kwargs):
+        return proc
+
+    async def _fake_sleep(_secs: float) -> None:
+        proc.ticks += 1
+        # Exit once abandon path has had a chance to execute.
+        if proc.ticks >= 4:
+            proc.returncode = 0
+        return
+
+    rescue_calls: list[str] = []
+    abandon_calls: list[str] = []
+
+    async def _fake_rescue(*, instance_id: str, agent_id: str, stale_seconds: float, last_event_type: str) -> bool:
+        rescue_calls.append(agent_id)
+        return False
+
+    async def _fake_abandon(*, instance_id: str, agent_id: str, stale_seconds: float, last_event_type: str) -> bool:
+        abandon_calls.append(agent_id)
+        return True
+
+    async def _db_boss_id(_iid: str, _after_ts: str):
+        return "boss-abandon"
+
+    async def _db_agent_count(_boss_id: str):
+        return 6
+
+    async def _db_boss_finished_spawning(_boss_id: str):
+        return False
+
+    async def _db_boss_manager_count(_boss_id: str):
+        return (0, 0)
+
+    async def _db_last_event_snapshot(_boss_id: str):
+        return (2.5, "child-abandon", "RetryScheduled")
+
+    async def _db_stale_analyzing_children(_boss_id: str, stale_seconds: float, limit: int = 5):
+        return [("child-abandon-uuid", 1200.0, "RetryScheduled")]
+
+    async def _db_run_completed(_boss_id: str):
+        return "success"
+
+    monkeypatch.setattr(batch.asyncio, "create_subprocess_exec", _fake_spawn)
+    monkeypatch.setattr(batch.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(batch, "_rescue_stale_child_retry", _fake_rescue)
+    monkeypatch.setattr(batch, "_abandon_stale_child", _fake_abandon)
+    monkeypatch.setattr(batch, "db_boss_id", _db_boss_id)
+    monkeypatch.setattr(batch, "db_agent_count", _db_agent_count)
+    monkeypatch.setattr(batch, "db_boss_finished_spawning", _db_boss_finished_spawning)
+    monkeypatch.setattr(batch, "db_boss_manager_count", _db_boss_manager_count)
+    monkeypatch.setattr(batch, "db_last_event_snapshot", _db_last_event_snapshot)
+    monkeypatch.setattr(batch, "db_stale_analyzing_children", _db_stale_analyzing_children)
+    monkeypatch.setattr(batch, "db_run_completed", _db_run_completed)
+
+    result = await batch.run_instance(instance_id, attempt=1)
+
+    assert result.status == "success"
+    assert rescue_calls == ["child-abandon-uuid", "child-abandon-uuid"]
+    assert abandon_calls == ["child-abandon-uuid"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seed", [7, 11, 19, 23, 31, 47, 59, 71])
+async def test_run_instance_randomized_byzantine_subprocess_lifecycle_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    seed: int,
+) -> None:
+    """Randomized batch lifecycle fuzz for subprocess + rescue behavior.
+
+    Simulates flaky rescue outcomes and stale analyzing children while the
+    run subprocess remains alive. The invariant is bounded termination:
+    ``run_instance`` must return (success/failed/etc.) rather than loop forever.
+    """
+    batch = _load_batch_module()
+    rng = random.Random(seed)
+
+    instance_id = f"demo.cve-rand-{seed}"
+    fixture = tmp_path / f"{instance_id}.json"
+    fixture.write_text(
+        (
+            "{\n"
+            '  "project_name": "demo",\n'
+            '  "bug_description": "randomized byzantine subprocess lifecycle"\n'
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(batch, "FIXTURE_DIR", tmp_path)
+    monkeypatch.setattr(batch, "DECOMP_GRACE_SEC", 0)
+    monkeypatch.setattr(batch, "CHILD_RESCUE_SEC", 2)
+    monkeypatch.setattr(batch, "CHILD_RESCUE_GRACE_SEC", 0)
+    monkeypatch.setattr(batch, "STALL_SEC", 6)
+    monkeypatch.setattr(batch, "POLL_INTERVAL_SEC", 0)
+    monkeypatch.setattr(batch, "RUN_TIMEOUT_SEC", 99999)
+
+    class _Stdout:
+        async def read(self, _n: int) -> bytes:
+            return b""
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.stdout = _Stdout()
+            self.ticks = 0
+
+        async def wait(self) -> int:
+            if self.returncode is None:
+                self.returncode = 0
+            return self.returncode
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            if self.returncode is None:
+                self.returncode = 0
+            return (b"ok", b"")
+
+    proc = _Proc()
+
+    async def _fake_spawn(*_args, **_kwargs):
+        return proc
+
+    async def _fake_sleep(_secs: float) -> None:
+        proc.ticks += 1
+        # Optional "natural" completion branch for some seeds.
+        if proc.ticks == 4 and rng.random() < 0.25:
+            proc.returncode = 0
+        return
+
+    kill_calls: list[tuple[str, str | None]] = []
+
+    async def _fake_kill(_proc, iid: str, boss_id: str | None) -> None:
+        kill_calls.append((iid, boss_id))
+        _proc.returncode = -9
+
+    rescue_calls: list[str] = []
+    rescue_successes: list[str] = []
+    rescue_outcomes: list[bool] = []
+    completed_status: str | None = None
+
+    async def _fake_rescue(
+        *,
+        instance_id: str,
+        agent_id: str,
+        stale_seconds: float,
+        last_event_type: str,
+    ) -> bool:
+        nonlocal completed_status
+        rescue_calls.append(agent_id)
+        # Flaky subprocess-like outcome.
+        ok = rng.random() < 0.55
+        rescue_outcomes.append(ok)
+        if ok:
+            rescue_successes.append(agent_id)
+            # Some successes actually recover and let run complete.
+            if rng.random() < 0.35:
+                proc.returncode = 0
+                completed_status = "success"
+        return ok
+
+    async def _db_boss_id(_iid: str, _after_ts: str):
+        return "boss-rand"
+
+    async def _db_agent_count(_boss_id: str):
+        return 12
+
+    async def _db_boss_finished_spawning(_boss_id: str):
+        return False
+
+    async def _db_boss_manager_count(_boss_id: str):
+        return (0, 0)
+
+    async def _db_last_event_snapshot(_boss_id: str):
+        # Event stream looks stale and worsening over time.
+        return (float(proc.ticks + 2), "child-rand", "RetryScheduled")
+
+    async def _db_stale_analyzing_children(_boss_id: str, stale_seconds: float, limit: int = 5):
+        assert stale_seconds == 2
+        assert limit == 5
+        return [("child-rand-uuid", float(proc.ticks + 2), "RetryScheduled")]
+
+    async def _db_run_completed(_boss_id: str):
+        return completed_status
+
+    monkeypatch.setattr(batch.asyncio, "create_subprocess_exec", _fake_spawn)
+    monkeypatch.setattr(batch.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(batch, "_kill_run", _fake_kill)
+    monkeypatch.setattr(batch, "_rescue_stale_child_retry", _fake_rescue)
+    monkeypatch.setattr(batch, "db_boss_id", _db_boss_id)
+    monkeypatch.setattr(batch, "db_agent_count", _db_agent_count)
+    monkeypatch.setattr(batch, "db_boss_finished_spawning", _db_boss_finished_spawning)
+    monkeypatch.setattr(batch, "db_boss_manager_count", _db_boss_manager_count)
+    monkeypatch.setattr(batch, "db_last_event_snapshot", _db_last_event_snapshot)
+    monkeypatch.setattr(batch, "db_stale_analyzing_children", _db_stale_analyzing_children)
+    monkeypatch.setattr(batch, "db_run_completed", _db_run_completed)
+
+    result = await asyncio.wait_for(batch.run_instance(instance_id, attempt=1), timeout=2)
+
+    # Bounded termination invariant
+    assert result.status in {"success", "failed", "under_decomposed", "timeout", "error"}
+    # Dedupe invariant: repeated attempts are allowed before first success,
+    # but after first success no further rescue calls should happen.
+    if rescue_successes:
+        first_success_idx = rescue_outcomes.index(True)
+        assert rescue_calls.count("child-rand-uuid") == first_success_idx + 1
+    # If run ended via stall kill, kill path should be exercised.
+    if result.status == "failed" and "stalled" in (result.error_message or ""):
+        assert kill_calls == [(instance_id, "boss-rand")]

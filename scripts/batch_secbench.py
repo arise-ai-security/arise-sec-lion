@@ -58,6 +58,7 @@ UNDER_DECOMP_COUNT_GRACE_SEC = 900
 STALL_SEC = 1200  # 20 min with no new events = stalled
 CHILD_RESCUE_SEC = 600  # pre-kill rescue threshold for forever-analyzing child
 CHILD_RESCUE_GRACE_SEC = 120  # wait for fresh events after child rescue
+CHILD_RESCUE_MAX_ATTEMPTS = 2  # then safe-skip the child as unrescuable
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
 
@@ -562,6 +563,46 @@ async def _rescue_stale_child_retry(
     return True
 
 
+async def _abandon_stale_child(
+    *,
+    instance_id: str,
+    agent_id: str,
+    stale_seconds: float,
+    last_event_type: str,
+) -> bool:
+    """Permanently fail stale child (no retry), then notify parent."""
+    reason = (
+        "Batch skip: stale child unrescuable after rescue budget "
+        f"(idle={stale_seconds:.0f}s, last_event={last_event_type or 'unknown'})"
+    )
+    logger.warning(
+        "[%s] ABANDON child=%s idle=%.0fs last=%s — marking failed and notifying parent",
+        instance_id,
+        agent_id[:8],
+        stale_seconds,
+        last_event_type or "unknown",
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "arise-app",
+        "python", "main.py", "abandon-stale-child",
+        "--agent-id", agent_id,
+        "--reason", reason,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    return_code = proc.returncode if proc.returncode is not None else 1
+    if return_code != 0:
+        logger.warning(
+            "[%s] ABANDON failed for child=%s: %s",
+            instance_id,
+            agent_id[:8],
+            out.decode(errors="replace").strip()[-240:],
+        )
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Single-instance runner
 # ---------------------------------------------------------------------------
@@ -628,6 +669,8 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
     result.boss_id = boss_id
     result.testcase_path = str(RUNS_DIR / boss_id / "testcase")
     rescued_children: set[str] = set()
+    abandoned_children: set[str] = set()
+    rescue_attempts: dict[str, int] = {}
     last_rescue_at_elapsed: float = -1.0
 
     # ---- Monitor loop ----
@@ -734,6 +777,19 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
                 )
                 if candidate is not None:
                     aid, child_stale, child_last_event = candidate
+                    rescue_attempts[aid] = rescue_attempts.get(aid, 0) + 1
+                    if rescue_attempts[aid] > CHILD_RESCUE_MAX_ATTEMPTS and aid not in abandoned_children:
+                        abandoned = await _abandon_stale_child(
+                            instance_id=instance_id,
+                            agent_id=aid,
+                            stale_seconds=child_stale,
+                            last_event_type=child_last_event,
+                        )
+                        if abandoned:
+                            abandoned_children.add(aid)
+                            last_rescue_at_elapsed = elapsed
+                            await asyncio.sleep(CHILD_RESCUE_GRACE_SEC)
+                            continue
                     rescued = await _rescue_stale_child_retry(
                         instance_id=instance_id,
                         agent_id=aid,
