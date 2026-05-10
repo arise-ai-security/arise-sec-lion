@@ -550,7 +550,8 @@ async def _rescue_stale_child_retry(
         stderr=asyncio.subprocess.STDOUT,
     )
     out, _ = await proc.communicate()
-    if (proc.returncode or 1) != 0:
+    return_code = proc.returncode if proc.returncode is not None else 1
+    if return_code != 0:
         logger.warning(
             "[%s] RESCUE failed for child=%s: %s",
             instance_id,

@@ -356,3 +356,29 @@ async def test_run_instance_attempts_child_rescue_before_stall_kill(
 
     assert result.status == "success"
     assert rescued == ["child-stale-uuid"]
+
+
+@pytest.mark.asyncio
+async def test_rescue_child_retry_treats_zero_exit_code_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: subprocess returncode=0 must not be interpreted as failure."""
+    batch = _load_batch_module()
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return (b"Rescued agent ...", b"")
+
+    async def _fake_spawn(*_args, **_kwargs):
+        return _Proc()
+
+    monkeypatch.setattr(batch.asyncio, "create_subprocess_exec", _fake_spawn)
+    ok = await batch._rescue_stale_child_retry(
+        instance_id="demo.cve-1234-0001",
+        agent_id="11111111-2222-3333-4444-555555555555",
+        stale_seconds=777.0,
+        last_event_type="RetryScheduled",
+    )
+    assert ok is True
