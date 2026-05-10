@@ -257,3 +257,102 @@ async def test_run_with_retry_still_skips_non_hang_early_failure(
 
     assert result.tries == 1
     assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_run_instance_attempts_child_rescue_before_stall_kill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Pre-kill rescue should target stale analyzing child before run kill."""
+    batch = _load_batch_module()
+
+    instance_id = "demo.cve-0000-0099"
+    fixture = tmp_path / f"{instance_id}.json"
+    fixture.write_text(
+        (
+            "{\n"
+            '  "project_name": "demo",\n'
+            '  "bug_description": "child analyzing forever"\n'
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(batch, "FIXTURE_DIR", tmp_path)
+    monkeypatch.setattr(batch, "DECOMP_GRACE_SEC", 0)
+    monkeypatch.setattr(batch, "STALL_SEC", 99999)  # avoid run kill path in this test
+    monkeypatch.setattr(batch, "CHILD_RESCUE_SEC", 1)
+    monkeypatch.setattr(batch, "CHILD_RESCUE_GRACE_SEC", 0)
+    monkeypatch.setattr(batch, "POLL_INTERVAL_SEC", 0)
+    monkeypatch.setattr(batch, "RUN_TIMEOUT_SEC", 99999)
+
+    class _Stdout:
+        async def read(self, _n: int) -> bytes:
+            return b""
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.stdout = _Stdout()
+            self._ticks = 0
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+    proc = _Proc()
+
+    async def _fake_spawn(*_args, **_kwargs):
+        return proc
+
+    async def _fake_sleep(_secs: float) -> None:
+        proc._ticks += 1
+        # Exit after giving rescue path one loop to run.
+        if proc._ticks >= 2:
+            proc.returncode = 0
+        return
+
+    rescued: list[str] = []
+
+    async def _fake_rescue(*, instance_id: str, agent_id: str, stale_seconds: float, last_event_type: str) -> bool:
+        rescued.append(agent_id)
+        return True
+
+    async def _db_boss_id(_iid: str, _after_ts: str):
+        return "boss-xyz"
+
+    async def _db_agent_count(_boss_id: str):
+        return 4
+
+    async def _db_boss_finished_spawning(_boss_id: str):
+        return False
+
+    async def _db_boss_manager_count(_boss_id: str):
+        return (0, 0)
+
+    async def _db_last_event_snapshot(_boss_id: str):
+        return (2.5, "child-stale", "AgentExecutionStarted")
+
+    async def _db_stale_analyzing_children(_boss_id: str, stale_seconds: float, limit: int = 5):
+        assert stale_seconds == 1
+        assert limit == 5
+        return [("child-stale-uuid", 1200.0, "AgentExecutionStarted")]
+
+    async def _db_run_completed(_boss_id: str):
+        return "success"
+
+    monkeypatch.setattr(batch.asyncio, "create_subprocess_exec", _fake_spawn)
+    monkeypatch.setattr(batch.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(batch, "_rescue_stale_child_retry", _fake_rescue)
+    monkeypatch.setattr(batch, "db_boss_id", _db_boss_id)
+    monkeypatch.setattr(batch, "db_agent_count", _db_agent_count)
+    monkeypatch.setattr(batch, "db_boss_finished_spawning", _db_boss_finished_spawning)
+    monkeypatch.setattr(batch, "db_boss_manager_count", _db_boss_manager_count)
+    monkeypatch.setattr(batch, "db_last_event_snapshot", _db_last_event_snapshot)
+    monkeypatch.setattr(batch, "db_stale_analyzing_children", _db_stale_analyzing_children)
+    monkeypatch.setattr(batch, "db_run_completed", _db_run_completed)
+
+    result = await batch.run_instance(instance_id, attempt=1)
+
+    assert result.status == "success"
+    assert rescued == ["child-stale-uuid"]

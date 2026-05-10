@@ -56,6 +56,8 @@ DECOMP_GRACE_SEC = 300  # 5 min grace before structural under-decomp checks
 # false-fire while pending children are still being assessed. Defer it.
 UNDER_DECOMP_COUNT_GRACE_SEC = 900
 STALL_SEC = 1200  # 20 min with no new events = stalled
+CHILD_RESCUE_SEC = 600  # pre-kill rescue threshold for forever-analyzing child
+CHILD_RESCUE_GRACE_SEC = 120  # wait for fresh events after child rescue
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
 
@@ -460,6 +462,105 @@ async def db_run_completed(boss_id: str) -> str | None:
     return val if val else None
 
 
+async def db_stale_analyzing_children(
+    boss_id: str, stale_seconds: float, limit: int = 5,
+) -> list[tuple[str, float, str]]:
+    """Return stale analyzing descendants as (agent_id, stale_sec, last_event_type)."""
+    q = (
+        "WITH RECURSIVE h AS ("
+        f"  SELECT '{boss_id}'::uuid AS aid "
+        "  UNION "
+        "  SELECT (e.payload->>'child_id')::uuid "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  WHERE e.event_type = 'ChildSpawned'"
+        "), state_events AS ("
+        "  SELECT e.aggregate_id, e.sequence_number, e.event_type, e.payload "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  WHERE e.event_type IN ('StatusChanged','WorkCompleted','WorkFailed','RetryScheduled')"
+        "), latest_state AS ("
+        "  SELECT DISTINCT ON (aggregate_id) aggregate_id, event_type, payload "
+        "  FROM state_events ORDER BY aggregate_id, sequence_number DESC"
+        "), mapped AS ("
+        "  SELECT aggregate_id, "
+        "    CASE "
+        "      WHEN event_type='StatusChanged' THEN COALESCE(payload->>'new_status','unknown') "
+        "      WHEN event_type='WorkCompleted' THEN 'completed' "
+        "      WHEN event_type='WorkFailed' THEN 'failed' "
+        "      WHEN event_type='RetryScheduled' THEN 'analyzing' "
+        "      ELSE 'unknown' "
+        "    END AS status "
+        "  FROM latest_state"
+        "), last_event AS ("
+        "  SELECT DISTINCT ON (e.aggregate_id) e.aggregate_id, e.event_type, e.occurred_at "
+        "  FROM events e JOIN h ON e.aggregate_id = h.aid "
+        "  ORDER BY e.aggregate_id, e.sequence_number DESC"
+        ") "
+        "SELECT le.aggregate_id::text, "
+        "       EXTRACT(epoch FROM (now() - le.occurred_at)), "
+        "       le.event_type "
+        "FROM mapped m "
+        "JOIN last_event le ON le.aggregate_id = m.aggregate_id "
+        f"WHERE m.status = 'analyzing' AND m.aggregate_id <> '{boss_id}'::uuid "
+        f"  AND EXTRACT(epoch FROM (now() - le.occurred_at)) > {int(stale_seconds)} "
+        "ORDER BY 2 DESC "
+        f"LIMIT {int(limit)}"
+    )
+    out = await _psql(q)
+    if not out:
+        return []
+    rows: list[tuple[str, float, str]] = []
+    for line in out.splitlines():
+        parts = line.split("|")
+        if len(parts) != 3:
+            continue
+        aid, stale_s, event_type = parts
+        try:
+            stale = float(stale_s)
+        except (ValueError, TypeError):
+            continue
+        rows.append((aid, stale, event_type))
+    return rows
+
+
+async def _rescue_stale_child_retry(
+    *,
+    instance_id: str,
+    agent_id: str,
+    stale_seconds: float,
+    last_event_type: str,
+) -> bool:
+    """Ask the app to fail+retry a stale child before escalating to run kill."""
+    reason = (
+        f"Batch pre-kill rescue: stale analyzing child "
+        f"(idle={stale_seconds:.0f}s, last_event={last_event_type or 'unknown'})"
+    )
+    logger.warning(
+        "[%s] RESCUE child=%s idle=%.0fs last=%s — scheduling fail+retry",
+        instance_id,
+        agent_id[:8],
+        stale_seconds,
+        last_event_type or "unknown",
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "arise-app",
+        "python", "main.py", "retry-stale-child",
+        "--agent-id", agent_id,
+        "--reason", reason,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    if (proc.returncode or 1) != 0:
+        logger.warning(
+            "[%s] RESCUE failed for child=%s: %s",
+            instance_id,
+            agent_id[:8],
+            out.decode(errors="replace").strip()[-240:],
+        )
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Single-instance runner
 # ---------------------------------------------------------------------------
@@ -525,6 +626,8 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
 
     result.boss_id = boss_id
     result.testcase_path = str(RUNS_DIR / boss_id / "testcase")
+    rescued_children: set[str] = set()
+    last_rescue_at_elapsed: float = -1.0
 
     # ---- Monitor loop ----
     while proc.returncode is None:
@@ -619,7 +722,35 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
         # Stall detection: no new events for STALL_SEC = hanging LLM call
         if elapsed > DECOMP_GRACE_SEC:
             stale_secs, last_agent_id, last_event_type = await db_last_event_snapshot(boss_id)
+            # Pre-kill rescue at child granularity (smaller blast radius than run kill).
+            if stale_secs > CHILD_RESCUE_SEC:
+                candidates = await db_stale_analyzing_children(
+                    boss_id, stale_seconds=CHILD_RESCUE_SEC, limit=5,
+                )
+                candidate = next(
+                    ((aid, s, ev) for (aid, s, ev) in candidates if aid not in rescued_children),
+                    None,
+                )
+                if candidate is not None:
+                    aid, child_stale, child_last_event = candidate
+                    rescued = await _rescue_stale_child_retry(
+                        instance_id=instance_id,
+                        agent_id=aid,
+                        stale_seconds=child_stale,
+                        last_event_type=child_last_event,
+                    )
+                    if rescued:
+                        rescued_children.add(aid)
+                        last_rescue_at_elapsed = elapsed
+                        await asyncio.sleep(CHILD_RESCUE_GRACE_SEC)
+                        continue
             if stale_secs > STALL_SEC:
+                if (
+                    last_rescue_at_elapsed >= 0
+                    and (elapsed - last_rescue_at_elapsed) < CHILD_RESCUE_GRACE_SEC
+                ):
+                    await asyncio.sleep(POLL_INTERVAL_SEC)
+                    continue
                 agents = await db_agent_count(boss_id)
                 logger.warning(
                     "[%s] STALLED: no events for %.0fs (%d agents), last=%s/%s — killing",

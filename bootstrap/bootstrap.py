@@ -47,6 +47,7 @@ def main(args: list[str] | None = None) -> None:
         "summary": lambda a: _query_projection(a, "summary"),
         "list": _list_runs,
         "prompts": _trace_prompts,
+        "retry-stale-child": _retry_stale_child,
     }
 
     try:
@@ -124,6 +125,18 @@ def _create_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("prompts", help="Trace prompts through agent hierarchy")
     p.add_argument("--agent-id", type=UUID, help="Agent UUID (default: last run)")
     p.add_argument("--format", choices=["tree", "json"], default="tree", help="Output format")
+
+    p = sub.add_parser(
+        "retry-stale-child",
+        help="Force fail+retry for a stale analyzing child agent (batch rescue)",
+    )
+    p.add_argument("--agent-id", type=UUID, required=True, help="Child agent UUID to rescue")
+    p.add_argument(
+        "--reason",
+        type=str,
+        default="Batch pre-kill rescue: stale analyzing child",
+        help="Reason recorded on WorkFailed/RetryScheduled",
+    )
 
     return parser
 
@@ -367,6 +380,29 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
         renderer = get_renderer(args.format)
         output = renderer.render(trace, RenderOptions())
         print(output)
+
+
+async def _retry_stale_child(args: argparse.Namespace) -> None:
+    """Domain-safe child rescue: fail current attempt then schedule retry."""
+    from core.application.services import AgentRepository
+
+    settings = _load_settings(args.config)
+    async with _event_store(settings) as store:
+        repository = AgentRepository(event_store=store, max_retries=3)
+        agent = await repository.load_if_exists(args.agent_id)
+        if agent is None:
+            print(f"Agent {args.agent_id} not found.")
+            sys.exit(1)
+        if agent.is_terminal():
+            print(f"Agent {args.agent_id} already terminal: {agent.status.value}")
+            return
+
+        current_version = agent.version
+        reason = args.reason or "Batch pre-kill rescue: stale analyzing child"
+        agent.fail_with_reason(reason)
+        agent.schedule_retry(reason=reason, escalated_model=None)
+        await repository.persist_events(agent, current_version)
+        print(f"Rescued agent {args.agent_id}: fail+retry scheduled.")
 
 
 def _resolve_agent_id(
