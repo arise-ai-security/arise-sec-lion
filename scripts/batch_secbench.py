@@ -11,7 +11,8 @@ Supports resumption: reads ~/secbench-all.csv on startup and skips
 instances already marked 'success' or 'image_error'.
 
 Usage:
-    python scripts/batch_secbench.py [--batch-size 15] [--max-retries 3]
+    python scripts/batch_secbench.py [--batch-size 1] [--max-retries 3]
+    python scripts/batch_secbench.py --batch-size 4 --allow-parallel-batch
 """
 
 from __future__ import annotations
@@ -954,6 +955,26 @@ async def _run_with_retry(
 # Main
 # ---------------------------------------------------------------------------
 async def async_main(args: argparse.Namespace) -> None:
+    # Safety guard: force single-instance concurrency to avoid provider
+    # rate-limit spikes and duplicate-pressure on external services.
+    requested_batch_size = max(1, args.batch_size)
+    if args.allow_parallel_batch:
+        effective_batch_size = requested_batch_size
+        if effective_batch_size > 1:
+            logger.warning(
+                "Parallel batch explicitly enabled: running with %d concurrent instances",
+                effective_batch_size,
+            )
+    else:
+        effective_batch_size = 1
+        if requested_batch_size != effective_batch_size:
+            logger.warning(
+                "Requested --batch-size=%d, but forcing %d for safe mode. "
+                "Use --allow-parallel-batch to override.",
+                requested_batch_size,
+                effective_batch_size,
+            )
+
     # 1. Generate fixtures
     logger.info("═══ Phase 1: Generate fixtures ═══")
     all_ids = generate_fixtures()
@@ -981,9 +1002,9 @@ async def async_main(args: argparse.Namespace) -> None:
     # 3. Run all instances concurrently, bounded by semaphore
     logger.info(
         "═══ Phase 3: Running %d instances (%d concurrent) ═══",
-        len(runnable), args.batch_size,
+        len(runnable), effective_batch_size,
     )
-    sem = asyncio.Semaphore(args.batch_size)
+    sem = asyncio.Semaphore(effective_batch_size)
     tasks = [
         asyncio.create_task(
             _run_with_retry(iid, sem, args.max_retries, stagger_delay=i * 2),
@@ -1008,7 +1029,12 @@ async def async_main(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Batch SEC-bench runner")
-    parser.add_argument("--batch-size", type=int, default=15)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--allow-parallel-batch",
+        action="store_true",
+        help="Allow >1 concurrent instances (unsafe for rate limits; default is forced single-instance mode)",
+    )
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--limit", type=int, default=0,
                         help="Process only the first N remaining instances (0=all)")
