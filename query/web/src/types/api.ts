@@ -46,6 +46,11 @@ export interface AgentNode {
   last_event_at: string | null;
   idle_seconds: number | null;
   is_stale: boolean;
+  watchdog_phase: string | null;
+  watchdog_timeout_seconds: number | null;
+  watchdog_elapsed_seconds: number | null;
+  watchdog_overdue: boolean;
+  watchdog_next_action: string | null;
   children: AgentNode[];
 }
 

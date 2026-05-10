@@ -60,6 +60,11 @@ function buildNodesAndEdges(root: AgentNodeType): { nodes: AgentFlowNode[]; edge
           was_hang_restarted: node.was_hang_restarted,
           idle_seconds: node.idle_seconds,
           is_stale: node.is_stale,
+          watchdog_phase: node.watchdog_phase,
+          watchdog_timeout_seconds: node.watchdog_timeout_seconds,
+          watchdog_elapsed_seconds: node.watchdog_elapsed_seconds,
+          watchdog_overdue: node.watchdog_overdue,
+          watchdog_next_action: node.watchdog_next_action,
         },
       });
       return 1;
@@ -96,6 +101,11 @@ function buildNodesAndEdges(root: AgentNodeType): { nodes: AgentFlowNode[]; edge
         was_hang_restarted: node.was_hang_restarted,
         idle_seconds: node.idle_seconds,
         is_stale: node.is_stale,
+        watchdog_phase: node.watchdog_phase,
+        watchdog_timeout_seconds: node.watchdog_timeout_seconds,
+        watchdog_elapsed_seconds: node.watchdog_elapsed_seconds,
+        watchdog_overdue: node.watchdog_overdue,
+        watchdog_next_action: node.watchdog_next_action,
       },
     });
 

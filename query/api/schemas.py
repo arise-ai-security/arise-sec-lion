@@ -39,6 +39,26 @@ class AgentNodeSchema(BaseModel):
         False,
         description="Whether the agent appears stale (non-terminal and idle beyond threshold)",
     )
+    watchdog_phase: str | None = Field(
+        None,
+        description="Current watchdog phase driving timeout/recovery logic for this agent",
+    )
+    watchdog_timeout_seconds: int | None = Field(
+        None,
+        description="Timeout budget for the active watchdog phase",
+    )
+    watchdog_elapsed_seconds: int | None = Field(
+        None,
+        description="Elapsed seconds for the active watchdog phase",
+    )
+    watchdog_overdue: bool = Field(
+        False,
+        description="Whether elapsed time exceeded the active watchdog timeout",
+    )
+    watchdog_next_action: str | None = Field(
+        None,
+        description="Expected next recovery action when watchdog expires",
+    )
     children: list["AgentNodeSchema"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}

@@ -16,7 +16,83 @@ import { PromptTracePage } from './pages/PromptTracePage';
 import { useSSE } from './hooks/useSSE';
 import { useSummarySSE } from './hooks/useSummarySSE';
 import * as api from './api/client';
-import type { AgentListItem, AgentHierarchy, AgentPrompt, AgentSummary, CategorizedEvents, DomainEvent } from './types/api';
+import type {
+  AgentListItem,
+  AgentHierarchy,
+  AgentNode,
+  AgentPrompt,
+  AgentSummary,
+  CategorizedEvents,
+  DomainEvent,
+} from './types/api';
+
+function findNodeById(node: AgentNode, targetId: string): AgentNode | null {
+  if (node.id === targetId) return node;
+  for (const child of node.children) {
+    const found = findNodeById(child, targetId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function formatWatchdogPhase(phase: string | null | undefined): string {
+  switch (phase) {
+    case 'healthy_completed':
+      return 'Healthy (Completed)';
+    case 'terminal_failed':
+      return 'Failed (Terminal)';
+    case 'blocked_dependencies':
+      return 'Blocked On Dependencies';
+    case 'pending_assessment':
+      return 'Pending Assessment Watchdog';
+    case 'no_progress_zero_thoughts':
+      return 'No-Progress (Zero Thoughts) Watchdog';
+    case 'step_timeout':
+      return 'Step Timeout Watchdog';
+    case 'silent_worker':
+      return 'Silent Worker Watchdog';
+    default:
+      return phase || 'No Active Watchdog';
+  }
+}
+
+function explainWatchdogCondition(phase: string | null | undefined): string {
+  switch (phase) {
+    case 'healthy_completed':
+      return 'Agent reached terminal COMPLETED state within watchdog expectations.';
+    case 'terminal_failed':
+      return 'Agent reached terminal FAILED state. Automatic watchdog recovery has already ended for this attempt.';
+    case 'blocked_dependencies':
+      return 'Agent has not entered execution yet because one or more depends_on sibling prerequisites are not completed.';
+    case 'pending_assessment':
+      return 'A PENDING agent is still in ANALYZING and role assessment did not finish within the pending-assessment timeout.';
+    case 'no_progress_zero_thoughts':
+      return 'Worker execution started in this attempt, but ThoughtCaptured count stayed at 0 beyond the no-progress grace window.';
+    case 'step_timeout':
+      return 'Worker is executing, but the step-level execution window exceeded step_timeout_seconds.';
+    case 'silent_worker':
+      return 'Agent remained non-terminal with no fresh events for longer than worker_silence_timeout_seconds.';
+    default:
+      return 'No watchdog condition currently applies to this agent.';
+  }
+}
+
+function explainWatchdogAction(nextAction: string | null | undefined): string {
+  switch (nextAction) {
+    case 'none_completed':
+      return 'No recovery required. Agent already completed successfully.';
+    case 'none_failed':
+      return 'No further automatic restart for this terminal agent; parent/run-level logic proceeds based on failure handling.';
+    case 'wait_for_dependencies_or_parent_recovery':
+      return 'Wait for dependency siblings to complete or fail; if dependencies fail, parent-level failure/recovery determines next step.';
+    case 'provider_reconnect_then_retry_or_fail':
+      return 'Try provider reconnect first; if unresolved, restart this agent; if retries are exhausted, fail this agent and notify parent.';
+    case 'retry_or_fail':
+      return 'Restart this agent when retry budget is available; otherwise mark it failed and notify parent so DAG can advance.';
+    default:
+      return 'No recovery action currently expected.';
+  }
+}
 
 function Dashboard() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
@@ -55,6 +131,8 @@ function Dashboard() {
   const [nodePrompts, setNodePrompts] = useState<AgentPrompt[]>([]);
   const [nodePromptsTotal, setNodePromptsTotal] = useState(0);
   const [loadingPrompts, setLoadingPrompts] = useState(false);
+  const [watchdogTickMs, setWatchdogTickMs] = useState(() => Date.now());
+  const [isHealthPanelOpen, setIsHealthPanelOpen] = useState(true);
 
   // Use refs for values needed in callbacks to avoid dependency loops
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -95,6 +173,12 @@ function Dashboard() {
 
     return () => clearInterval(pollInterval);
   }, [loadAgents]);
+
+  // Keep watchdog UI progress moving between API refreshes.
+  useEffect(() => {
+    const id = window.setInterval(() => setWatchdogTickMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Fetch hierarchy when agent is selected
   useEffect(() => {
@@ -242,6 +326,91 @@ function Dashboard() {
 
     return merged;
   }, [events, selectedNodeId, nodeSSEEvents]);
+
+  const selectedHierarchyNode = useMemo(() => {
+    if (!hierarchy?.root || !selectedNodeId) return null;
+    return findNodeById(hierarchy.root, selectedNodeId);
+  }, [hierarchy, selectedNodeId]);
+
+  const watchdogView = useMemo(() => {
+    if (!selectedHierarchyNode) return null;
+    if (selectedHierarchyNode.status === 'completed') {
+      return {
+        progress: 100,
+        colorClass: 'bg-emerald-500',
+        timeout: 0,
+        elapsed: 0,
+        snapshotAtMs: Date.now(),
+        phase: 'healthy_completed',
+        overdue: false,
+        nextAction: 'none_completed',
+        isStale: false,
+        idleSeconds: selectedHierarchyNode.idle_seconds,
+        lastEventAt: selectedHierarchyNode.last_event_at,
+      };
+    }
+    if (selectedHierarchyNode.status === 'failed') {
+      return {
+        progress: 100,
+        colorClass: 'bg-red-500',
+        timeout: 0,
+        elapsed: 0,
+        snapshotAtMs: Date.now(),
+        phase: 'terminal_failed',
+        overdue: false,
+        nextAction: 'none_failed',
+        isStale: false,
+        idleSeconds: selectedHierarchyNode.idle_seconds,
+        lastEventAt: selectedHierarchyNode.last_event_at,
+      };
+    }
+    const timeout = selectedHierarchyNode.watchdog_timeout_seconds;
+    const elapsed = selectedHierarchyNode.watchdog_elapsed_seconds;
+    if (timeout == null || elapsed == null || timeout <= 0) return null;
+
+    const progress = Math.min(100, Math.floor((elapsed / timeout) * 100));
+    const colorClass = selectedHierarchyNode.watchdog_overdue
+      ? 'bg-red-500'
+      : progress >= 75 ? 'bg-amber-500' : 'bg-emerald-500';
+    return {
+      progress,
+      colorClass,
+      timeout,
+      elapsed,
+      snapshotAtMs: Date.now(),
+      phase: selectedHierarchyNode.watchdog_phase,
+      overdue: selectedHierarchyNode.watchdog_overdue,
+      nextAction: selectedHierarchyNode.watchdog_next_action,
+      isStale: selectedHierarchyNode.is_stale,
+      idleSeconds: selectedHierarchyNode.idle_seconds,
+      lastEventAt: selectedHierarchyNode.last_event_at,
+    };
+  }, [selectedHierarchyNode]);
+
+  const liveWatchdogView = useMemo(() => {
+    if (!watchdogView) return null;
+    if (watchdogView.phase === 'healthy_completed' || watchdogView.phase === 'terminal_failed') {
+      return watchdogView;
+    }
+    if (watchdogView.phase === 'blocked_dependencies') {
+      return {
+        ...watchdogView,
+        colorClass: 'bg-sky-500',
+      };
+    }
+    const extra = Math.max(0, Math.floor((watchdogTickMs - watchdogView.snapshotAtMs) / 1000));
+    const elapsed = watchdogView.elapsed + extra;
+    const progress = Math.min(100, Math.floor((elapsed / watchdogView.timeout) * 100));
+    const overdue = elapsed > watchdogView.timeout;
+    const colorClass = overdue ? 'bg-red-500' : progress >= 75 ? 'bg-amber-500' : 'bg-emerald-500';
+    return {
+      ...watchdogView,
+      elapsed,
+      progress,
+      overdue,
+      colorClass,
+    };
+  }, [watchdogView, watchdogTickMs]);
 
   // Fetch prompts for selected node
   const loadNodePrompts = useCallback(async () => {
@@ -588,6 +757,101 @@ function Dashboard() {
 
         {/* Tab content */}
         <div className="h-[calc(100vh-3.5rem)] overflow-hidden">
+          {selectedHierarchyNode && (
+            <div className="border-b dark:border-gray-700 px-4 py-3 bg-gray-50 dark:bg-gray-900/30">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-xs text-gray-600 dark:text-gray-300">
+                  Health for selected agent
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsHealthPanelOpen((v) => !v)}
+                  className="text-[11px] px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  title={isHealthPanelOpen ? 'Collapse health panel' : 'Expand health panel'}
+                >
+                  {isHealthPanelOpen ? 'Collapse' : 'Expand'}
+                </button>
+              </div>
+              {isHealthPanelOpen && (
+                <>
+              <div className="flex flex-wrap gap-1 mb-2">
+                {selectedHierarchyNode.was_restarted && (
+                  <span
+                    className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
+                    title={`Restarted ${selectedHierarchyNode.restart_count} time${selectedHierarchyNode.restart_count === 1 ? '' : 's'}`}
+                  >
+                    RESTARTED ×{selectedHierarchyNode.restart_count}
+                  </span>
+                )}
+                {selectedHierarchyNode.was_hang_restarted && (
+                  <span
+                    className="inline-flex items-center rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-900"
+                    title={`Hang-recovery restart ${selectedHierarchyNode.hang_restart_count} time${selectedHierarchyNode.hang_restart_count === 1 ? '' : 's'}`}
+                  >
+                    HANG-RECOVERED ×{selectedHierarchyNode.hang_restart_count}
+                  </span>
+                )}
+                {liveWatchdogView?.isStale && liveWatchdogView.idleSeconds !== null && (
+                  <span
+                    className="inline-flex items-center rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-900"
+                    title={`No events for ${liveWatchdogView.idleSeconds}s while non-terminal`}
+                  >
+                    STALE {Math.floor(liveWatchdogView.idleSeconds / 60)}m
+                  </span>
+                )}
+                {liveWatchdogView?.overdue && (
+                  <span
+                    className="inline-flex items-center rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-900"
+                    title={liveWatchdogView.nextAction ? `Expected recovery: ${liveWatchdogView.nextAction}` : 'Watchdog timeout exceeded'}
+                  >
+                    WATCHDOG OVERDUE
+                  </span>
+                )}
+              </div>
+              {liveWatchdogView?.phase && (
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[11px] text-gray-700 dark:text-gray-300">
+                    <span className="font-semibold">{formatWatchdogPhase(liveWatchdogView.phase)}</span>
+                    <span>
+                      {liveWatchdogView.phase === 'healthy_completed' || liveWatchdogView.phase === 'terminal_failed'
+                        ? 'No active watchdog'
+                        : `${liveWatchdogView.elapsed}s / ${liveWatchdogView.timeout}s`}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full rounded bg-gray-200 dark:bg-gray-700">
+                    <div
+                      className={`h-2 rounded transition-[width] duration-700 ease-linear ${liveWatchdogView.colorClass}`}
+                      style={{ width: `${liveWatchdogView.progress}%` }}
+                      title={liveWatchdogView.nextAction ? `next: ${liveWatchdogView.nextAction}` : undefined}
+                    />
+                  </div>
+                  <div className="mt-2 space-y-1 text-[11px] text-gray-700 dark:text-gray-300">
+                    <div>
+                      <span className="font-semibold">Stuck Condition:</span>{' '}
+                      {explainWatchdogCondition(liveWatchdogView.phase)}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Evidence:</span>{' '}
+                      last_event_at={liveWatchdogView.lastEventAt || 'n/a'}
+                      {liveWatchdogView.idleSeconds !== null ? `, idle=${liveWatchdogView.idleSeconds}s` : ''}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Recovery Path:</span>{' '}
+                      {explainWatchdogAction(liveWatchdogView.nextAction)}
+                    </div>
+                    {liveWatchdogView.phase === 'terminal_failed' && summary?.error_message && (
+                      <div>
+                        <span className="font-semibold">Failure Reason:</span>{' '}
+                        {summary.error_message}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+                </>
+              )}
+            </div>
+          )}
           {rightPanelView === 'summary' ? (
             <SummaryPanel
               summary={summary}

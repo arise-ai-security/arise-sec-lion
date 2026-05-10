@@ -3,12 +3,23 @@
 Provides endpoints for querying agent hierarchy and individual agents.
 """
 
+from collections.abc import Sequence
 from typing import Annotated
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
+from core.application.execution_service import ServiceConfig
+from core.domain.events.events import (
+    AgentExecutionStarted,
+    ChildSpawned,
+    DomainEvent,
+    RetryScheduled,
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkFailed,
+)
 from core.domain.aggregates.agent_session import AgentRole
 from core.query.projections.hierarchy_builder import AgentNode, HierarchyBuilder
 from core.query.projections.hierarchy_collector import HierarchyCollector
@@ -37,6 +48,172 @@ from query.api.schemas import (
 router = APIRouter()
 
 
+def _watchdog_defaults() -> dict[str, int]:
+    fields = ServiceConfig.__dataclass_fields__
+    return {
+        "pending_assessment_timeout_seconds": int(fields["pending_assessment_timeout_seconds"].default),
+        "step_timeout_seconds": int(fields["step_timeout_seconds"].default),
+        "worker_silence_timeout_seconds": int(fields["worker_silence_timeout_seconds"].default),
+        "no_progress_grace_seconds": int(fields["no_progress_grace_seconds"].default),
+        "no_progress_initial_grace_seconds": int(fields["no_progress_initial_grace_seconds"].default),
+    }
+
+
+def _no_progress_retry_count(events: Sequence[DomainEvent]) -> int:
+    return sum(
+        1
+        for e in events
+        if isinstance(e, RetryScheduled)
+        and e.reason
+        and e.reason.startswith("Zero thoughts after")
+    )
+
+
+def _attempt_boundary_index(events: Sequence[DomainEvent]) -> int:
+    boundary = -1
+    for idx, event in enumerate(events):
+        if isinstance(event, RetryScheduled | WorkCompleted | WorkFailed):
+            boundary = idx
+    return boundary
+
+
+def _first_exec_started_after_boundary(events: Sequence[DomainEvent], boundary: int) -> datetime | None:
+    for event in events[boundary + 1:]:
+        if isinstance(event, AgentExecutionStarted):
+            return event.occurred_at
+    return None
+
+
+def _thought_count_after_boundary(events: Sequence[DomainEvent], boundary: int) -> int:
+    return sum(1 for event in events[boundary + 1:] if isinstance(event, ThoughtCaptured))
+
+
+def _derive_agent_status(events: Sequence[DomainEvent]) -> str:
+    status = "analyzing"
+    for event in events:
+        if isinstance(event, WorkCompleted):
+            status = "completed"
+        elif isinstance(event, WorkFailed):
+            status = "failed"
+        elif isinstance(event, RetryScheduled):
+            status = "analyzing"
+    return status
+
+
+def _has_unmet_dependencies(
+    *,
+    node: AgentNode,
+    hierarchy_events: dict[UUID, list[DomainEvent]],
+) -> bool:
+    if node.parent_id is None:
+        return False
+
+    parent_events = hierarchy_events.get(node.parent_id, [])
+    if not parent_events:
+        return False
+
+    child_spawn_events = [e for e in parent_events if isinstance(e, ChildSpawned)]
+    if not child_spawn_events:
+        return False
+
+    current_spawn = next((e for e in child_spawn_events if e.child_id == node.id), None)
+    if current_spawn is None:
+        return False
+
+    depends_on = list(current_spawn.subtask.depends_on or [])
+    if not depends_on:
+        return False
+
+    sibling_by_index = {e.sibling_index: e.child_id for e in child_spawn_events}
+    for dep_idx in depends_on:
+        dep_child_id = sibling_by_index.get(dep_idx)
+        if dep_child_id is None:
+            return True
+        dep_events = hierarchy_events.get(dep_child_id, [])
+        dep_status = _derive_agent_status(dep_events)
+        if dep_status != "completed":
+            return True
+    return False
+
+
+def _compute_watchdog(
+    *,
+    node: AgentNode,
+    events: Sequence[DomainEvent],
+    hierarchy_events: dict[UUID, list[DomainEvent]],
+    now_utc: datetime,
+    idle_seconds: int | None,
+    watchdog_cfg: dict[str, int],
+) -> tuple[str | None, int | None, int | None, bool, str | None]:
+    if node.status in {"completed", "failed"}:
+        return None, None, None, False, None
+
+    pending_timeout = watchdog_cfg["pending_assessment_timeout_seconds"]
+    step_timeout = watchdog_cfg["step_timeout_seconds"]
+    silent_timeout = watchdog_cfg["worker_silence_timeout_seconds"]
+    no_progress = watchdog_cfg["no_progress_grace_seconds"]
+    no_progress_initial = watchdog_cfg["no_progress_initial_grace_seconds"]
+
+    boundary = _attempt_boundary_index(events)
+    exec_started_at = _first_exec_started_after_boundary(events, boundary)
+
+    if node.role.lower() == "pending" and node.status == "analyzing":
+        if exec_started_at is None:
+            return "pending_assessment", pending_timeout, idle_seconds, False, "retry_or_fail"
+        elapsed = int((now_utc - exec_started_at).total_seconds())
+        return (
+            "pending_assessment",
+            pending_timeout,
+            elapsed,
+            elapsed > pending_timeout,
+            "retry_or_fail",
+        )
+
+    if node.role.lower() == "worker" and node.status == "analyzing" and exec_started_at is not None:
+        thought_count = _thought_count_after_boundary(events, boundary)
+        if thought_count == 0:
+            retries = _no_progress_retry_count(events)
+            timeout = max(no_progress, no_progress_initial) if retries == 0 else no_progress
+            elapsed = int((now_utc - exec_started_at).total_seconds())
+            return (
+                "no_progress_zero_thoughts",
+                timeout,
+                elapsed,
+                elapsed > timeout,
+                "provider_reconnect_then_retry_or_fail",
+            )
+        elapsed = int((now_utc - exec_started_at).total_seconds())
+        return (
+            "step_timeout",
+            step_timeout,
+            elapsed,
+            elapsed > step_timeout,
+            "retry_or_fail",
+        )
+
+    if node.role.lower() == "worker" and node.status == "analyzing" and exec_started_at is None:
+        if _has_unmet_dependencies(node=node, hierarchy_events=hierarchy_events):
+            elapsed = idle_seconds if idle_seconds is not None else 0
+            return (
+                "blocked_dependencies",
+                silent_timeout,
+                elapsed,
+                False,
+                "wait_for_dependencies_or_parent_recovery",
+            )
+
+    if idle_seconds is not None:
+        return (
+            "silent_worker",
+            silent_timeout,
+            idle_seconds,
+            idle_seconds > silent_timeout,
+            "retry_or_fail",
+        )
+
+    return None, None, None, False, None
+
+
 def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
     """Convert AgentListItem read model to API schema."""
     return AgentListItemSchema(
@@ -56,9 +233,11 @@ def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
 def _agent_node_to_schema(
     node: AgentNode,
     *,
+    hierarchy_events: dict[UUID, list[DomainEvent]],
     last_event_times: dict[UUID, datetime],
     now_utc: datetime,
     stale_threshold_seconds: int,
+    watchdog_cfg: dict[str, int],
     max_depth: int | None = None,
     current_depth: int = 0,
 ) -> AgentNodeSchema:
@@ -81,6 +260,21 @@ def _agent_node_to_schema(
         idle_seconds = int((now_utc - last_event_at).total_seconds())
         is_terminal = node.status in {"completed", "failed"}
         is_stale = (not is_terminal) and idle_seconds > stale_threshold_seconds
+    events = hierarchy_events.get(node.id, [])
+    (
+        watchdog_phase,
+        watchdog_timeout_seconds,
+        watchdog_elapsed_seconds,
+        watchdog_overdue,
+        watchdog_next_action,
+    ) = _compute_watchdog(
+        node=node,
+        events=events,
+        hierarchy_events=hierarchy_events,
+        now_utc=now_utc,
+        idle_seconds=idle_seconds,
+        watchdog_cfg=watchdog_cfg,
+    )
 
     return AgentNodeSchema(
         id=str(node.id),
@@ -95,12 +289,19 @@ def _agent_node_to_schema(
         last_event_at=last_event_at,
         idle_seconds=idle_seconds,
         is_stale=is_stale,
+        watchdog_phase=watchdog_phase,
+        watchdog_timeout_seconds=watchdog_timeout_seconds,
+        watchdog_elapsed_seconds=watchdog_elapsed_seconds,
+        watchdog_overdue=watchdog_overdue,
+        watchdog_next_action=watchdog_next_action,
         children=[
             _agent_node_to_schema(
                 child,
+                hierarchy_events=hierarchy_events,
                 last_event_times=last_event_times,
                 now_utc=now_utc,
                 stale_threshold_seconds=stale_threshold_seconds,
+                watchdog_cfg=watchdog_cfg,
                 max_depth=max_depth,
                 current_depth=current_depth + 1,
             )
@@ -282,8 +483,8 @@ async def get_agent_hierarchy(
     except KeyError as err:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found") from err
 
-    # Annotate nodes with per-agent idle/stale signal from latest event timestamps.
-    stale_threshold_seconds = 300
+    watchdog_cfg = _watchdog_defaults()
+    stale_threshold_seconds = watchdog_cfg["worker_silence_timeout_seconds"]
     now_utc = datetime.now(UTC)
     last_event_times = {
         aid: evts[-1].occurred_at
@@ -294,9 +495,11 @@ async def get_agent_hierarchy(
     return AgentHierarchySchema(
         root=_agent_node_to_schema(
             hierarchy.root,
+            hierarchy_events=hierarchy_events,
             last_event_times=last_event_times,
             now_utc=now_utc,
             stale_threshold_seconds=stale_threshold_seconds,
+            watchdog_cfg=watchdog_cfg,
             max_depth=max_depth,
         ),
         total_agents=hierarchy.total_agents,

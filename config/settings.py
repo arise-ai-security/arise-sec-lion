@@ -293,6 +293,36 @@ class OrchestrationConfig(BaseModel):
 
     max_retries: int = Field(ge=0, le=10)
     poll_interval: float = Field(ge=0.01)
+    step_timeout_seconds: float = Field(
+        default=420.0,
+        gt=0,
+        description="Hard cap for one agent step before forced timeout recovery.",
+    )
+    worker_silence_timeout_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description="Per-worker no-event watchdog timeout.",
+    )
+    no_progress_grace_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="Grace for zero-thought workers before no-progress recovery.",
+    )
+    no_progress_initial_grace_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        description="Initial-attempt grace for zero-thought workers (cold start headroom).",
+    )
+    no_progress_check_interval: float = Field(
+        default=20.0,
+        gt=0,
+        description="Interval between manager-level no-progress scans.",
+    )
+    pending_assessment_timeout_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        description="Timeout for pending-role assessment before retry/fail recovery.",
+    )
     max_run_duration_seconds: float = Field(
         default=1800,
         gt=0,

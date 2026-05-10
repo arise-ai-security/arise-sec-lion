@@ -15,6 +15,11 @@ export interface AgentNodeData {
   was_hang_restarted?: boolean;
   idle_seconds?: number | null;
   is_stale?: boolean;
+  watchdog_phase?: string | null;
+  watchdog_timeout_seconds?: number | null;
+  watchdog_elapsed_seconds?: number | null;
+  watchdog_overdue?: boolean;
+  watchdog_next_action?: string | null;
   [key: string]: unknown; // Required for React Flow compatibility
 }
 
@@ -44,13 +49,6 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
   const normalizedRole = data.role.toUpperCase() as AgentRole;
   const colorClass = roleColors[normalizedRole] || 'bg-gray-500 border-gray-600';
   const statusIcon = statusIcons[data.status] || '❓';
-  const restartCount = data.restart_count ?? 0;
-  const wasRestarted = data.was_restarted ?? restartCount > 0;
-  const hangRestartCount = data.hang_restart_count ?? 0;
-  const wasHangRestarted = data.was_hang_restarted ?? hangRestartCount > 0;
-  const idleSeconds = typeof data.idle_seconds === 'number' ? data.idle_seconds : null;
-  const isStale = data.is_stale === true;
-  const idleMinutes = idleSeconds !== null ? Math.floor(idleSeconds / 60) : null;
 
   return (
     <div
@@ -74,32 +72,6 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
       </div>
 
       <p className="text-xs opacity-90 line-clamp-2">{data.task_description || 'No task'}</p>
-      {wasRestarted && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          <span
-            className="inline-flex items-center rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
-            title={`Restarted ${restartCount} time${restartCount === 1 ? '' : 's'}`}
-          >
-            RESTARTED ×{restartCount}
-          </span>
-          {wasHangRestarted && (
-            <span
-              className="inline-flex items-center rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-900"
-              title={`Hang-recovery restart ${hangRestartCount} time${hangRestartCount === 1 ? '' : 's'}`}
-            >
-              HANG-RECOVERED ×{hangRestartCount}
-            </span>
-          )}
-          {isStale && idleMinutes !== null && (
-            <span
-              className="inline-flex items-center rounded-full border border-orange-200 bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-900"
-              title={`No events for ${idleSeconds}s while non-terminal`}
-            >
-              STALE {idleMinutes}m
-            </span>
-          )}
-        </div>
-      )}
 
       <Handle
         type="source"

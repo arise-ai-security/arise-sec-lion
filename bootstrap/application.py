@@ -84,6 +84,12 @@ class ApplicationConfig:
     manager_config: ManagerConfig
     output_directory: str
     default_worker_tool: str
+    step_timeout_seconds: float = 420.0
+    worker_silence_timeout_seconds: float = 300.0
+    no_progress_grace_seconds: float = 120.0
+    no_progress_initial_grace_seconds: float = 180.0
+    no_progress_check_interval: float = 20.0
+    pending_assessment_timeout_seconds: float = 180.0
     max_run_duration_seconds: float = 1800
     max_redecompositions: int = 2
     skip_judge: bool = False
@@ -113,6 +119,12 @@ def get_application(
         default_worker_tool=config.default_worker_tool,
         boss_config=config.boss_config,
         manager_config=config.manager_config,
+        step_timeout_seconds=config.step_timeout_seconds,
+        worker_silence_timeout_seconds=config.worker_silence_timeout_seconds,
+        no_progress_grace_seconds=config.no_progress_grace_seconds,
+        no_progress_initial_grace_seconds=config.no_progress_initial_grace_seconds,
+        no_progress_check_interval=config.no_progress_check_interval,
+        pending_assessment_timeout_seconds=config.pending_assessment_timeout_seconds,
     )
 
     # Create collaborators (composition root wiring)

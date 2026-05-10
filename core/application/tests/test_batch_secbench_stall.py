@@ -637,3 +637,32 @@ async def test_run_instance_randomized_byzantine_subprocess_lifecycle_is_bounded
     # If run ended via stall kill, kill path should be exercised.
     if result.status == "failed" and "stalled" in (result.error_message or ""):
         assert kill_calls == [(instance_id, "boss-rand")]
+
+
+@pytest.mark.asyncio
+async def test_db_stale_analyzing_children_includes_agent_execution_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: stale-child query must include AgentExecutionStarted.
+
+    A worker can be stuck right after execution starts, before any
+    StatusChanged/RetryScheduled event appears.
+    """
+    batch = _load_batch_module()
+
+    captured_sql: dict[str, str] = {}
+
+    async def _fake_psql(sql: str) -> str:
+        captured_sql["text"] = sql
+        return "child-abc|901.5|AgentExecutionStarted"
+
+    monkeypatch.setattr(batch, "_psql", _fake_psql)
+
+    rows = await batch.db_stale_analyzing_children(
+        "00000000-0000-0000-0000-000000000001",
+        stale_seconds=600,
+        limit=5,
+    )
+
+    assert rows == [("child-abc", 901.5, "AgentExecutionStarted")]
+    assert "AgentExecutionStarted" in captured_sql["text"]
