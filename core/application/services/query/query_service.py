@@ -744,7 +744,10 @@ class AgentQueryService:
         """
         from core.domain.events.events import (
             AgentExecutionStarted,
+            RetryScheduled,
             ThoughtCaptured,
+            WorkCompleted,
+            WorkFailed,
         )
 
         all_events = await self._repository.get_hierarchy_events_grouped(root_id)
@@ -756,11 +759,21 @@ class AgentQueryService:
             if summary is None or summary.is_terminal or summary.role != "worker":
                 continue
 
-            # Check: has execution started?
+            # Attempt-scoped check:
+            # - Boundary = latest RetryScheduled / WorkCompleted / WorkFailed
+            # - Use FIRST AgentExecutionStarted after boundary so repeated
+            #   start heartbeats do not reset grace indefinitely
+            # - Count thoughts only within current attempt so prior attempts
+            #   do not mask current zero-thought hangs
+            boundary = -1
+            for idx, event in enumerate(events):
+                if isinstance(event, RetryScheduled | WorkCompleted | WorkFailed):
+                    boundary = idx
+
             exec_started_at: datetime | None = None
             thought_count = 0
-            for event in events:
-                if isinstance(event, AgentExecutionStarted):
+            for event in events[boundary + 1:]:
+                if isinstance(event, AgentExecutionStarted) and exec_started_at is None:
                     exec_started_at = event.occurred_at
                 elif isinstance(event, ThoughtCaptured):
                     thought_count += 1

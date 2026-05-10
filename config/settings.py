@@ -273,6 +273,11 @@ class RetryConfig(BaseModel):
         ge=0,
         description="Max retries for worker silence watchdog failures.",
     )
+    pending_assessment_max_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Max retries for stalled pending-assessment failures.",
+    )
 
 
 class OrchestrationConfig(BaseModel):

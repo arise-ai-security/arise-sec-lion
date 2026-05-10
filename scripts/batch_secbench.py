@@ -51,7 +51,10 @@ UNDER_DECOMP_THRESHOLD = 8
 # Builder build tasks work fine as single workers). Exploiter + Fixer
 # as managers is the minimum for a viable security analysis run.
 MIN_BOSS_MANAGERS = 2
-DECOMP_GRACE_SEC = 300  # 5 min grace — Qwen boss calls take ~120s+ before spawning
+DECOMP_GRACE_SEC = 300  # 5 min grace before structural under-decomp checks
+# Count-based under-decomposition is noisier than structural checks and can
+# false-fire while pending children are still being assessed. Defer it.
+UNDER_DECOMP_COUNT_GRACE_SEC = 900
 STALL_SEC = 1200  # 20 min with no new events = stalled
 POLL_INTERVAL_SEC = 15  # poll frequently for early underdecomp detection
 RUN_TIMEOUT_SEC = 10800  # 3 hours hard cap per instance (1.5x for Qwen)
@@ -580,22 +583,38 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
                     result.completed_at = datetime.now(timezone.utc).isoformat()
                     return result
 
-            # 2. Raw agent count check (fallback) — only after boss finished spawning
-            if boss_done and agents < UNDER_DECOMP_THRESHOLD:
-                status = await db_run_completed(boss_id)
-                if status is not None:
-                    break
-                logger.warning(
-                    "[%s] UNDER-DECOMPOSED (count): %d agents after %.0fs — killing",
-                    instance_id, agents, elapsed,
+            # 2. Raw agent-count fallback (conservative):
+            #    Only when boss finished spawning, ALL direct children were
+            #    assessed, and an extended grace elapsed. This avoids killing
+            #    runs that are still in pending-assessment warmup.
+            if boss_done and elapsed > UNDER_DECOMP_COUNT_GRACE_SEC:
+                total_eval, _mgr_count = await db_boss_manager_count(boss_id)
+                q_total_children = (
+                    "SELECT count(*) FROM events "
+                    f"WHERE aggregate_id = '{boss_id}'::uuid "
+                    "AND event_type = 'ChildSpawned'"
                 )
-                await _kill_run(proc, instance_id, boss_id)
-                result.status = "under_decomposed"
-                result.num_agents = agents
-                result.duration_seconds = elapsed
-                result.error_message = f"only {agents} agents (threshold={UNDER_DECOMP_THRESHOLD})"
-                result.completed_at = datetime.now(timezone.utc).isoformat()
-                return result
+                total_children = int(await _psql(q_total_children) or 0)
+                all_children_assessed = total_children > 0 and total_eval >= total_children
+                if all_children_assessed and agents < UNDER_DECOMP_THRESHOLD:
+                    status = await db_run_completed(boss_id)
+                    if status is not None:
+                        break
+                    logger.warning(
+                        "[%s] UNDER-DECOMPOSED (count): %d agents after %.0fs "
+                        "(%d/%d children assessed) — killing",
+                        instance_id, agents, elapsed, total_eval, total_children,
+                    )
+                    await _kill_run(proc, instance_id, boss_id)
+                    result.status = "under_decomposed"
+                    result.num_agents = agents
+                    result.duration_seconds = elapsed
+                    result.error_message = (
+                        f"only {agents} agents (threshold={UNDER_DECOMP_THRESHOLD}, "
+                        f"children_assessed={total_eval}/{total_children})"
+                    )
+                    result.completed_at = datetime.now(timezone.utc).isoformat()
+                    return result
 
         # Stall detection: no new events for STALL_SEC = hanging LLM call
         if elapsed > DECOMP_GRACE_SEC:

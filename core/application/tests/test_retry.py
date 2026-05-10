@@ -1,5 +1,7 @@
 """Tests for auto-healing and retry logic (Phase 4)."""
 
+import asyncio
+import random
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -520,13 +522,16 @@ class TestNoProgressRestart:
         await event_store.append(exec_started, expected_version=2)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        task = AsyncMock()
+        task.done.return_value = False
         restarted = await svc._restart_no_progress_workers(
             root_agent_id=worker_id,
-            tasks={},
+            tasks={worker_id: task},
             in_progress=set(),
             task_started_at={},
         )
         assert restarted == 0
+        task.cancel.assert_not_called()
 
         updated = await svc._repository.load(worker_id)
         assert updated.status == AgentStatus.ANALYZING
@@ -534,6 +539,56 @@ class TestNoProgressRestart:
         assert not any(
             isinstance(e, RetryScheduled) for e in event_store.events_for(worker_id)
         )
+
+    @pytest.mark.asyncio
+    async def test_no_progress_uses_first_exec_of_attempt_not_latest_start(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker start-loop")
+        await svc._repository.save_new_agent(agent)
+
+        # Simulate repeated AgentExecutionStarted heartbeats in one attempt.
+        # First start is older than initial grace (300s), later starts are recent.
+        first = datetime.now(UTC) - timedelta(seconds=380)
+        second = datetime.now(UTC) - timedelta(seconds=120)
+        third = datetime.now(UTC) - timedelta(seconds=40)
+        for seq, ts in enumerate((first, second, third), start=3):
+            exec_started = AgentExecutionStarted(
+                aggregate_id=worker_id,
+                sequence_number=seq,
+                role=AgentRole.WORKER.value,
+                depth=1,
+                occurred_at=ts,
+            )
+            await event_store.append(exec_started, expected_version=seq - 1)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=worker_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 1
+
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 1
+        events = event_store.events_for(worker_id)
+        assert any(isinstance(e, RetryScheduled) for e in events)
 
 
 class TestTimeoutRecovery:
@@ -602,3 +657,76 @@ class TestTimeoutRecovery:
         ]
         assert len(retry_events) == 1
         assert retry_events[0].reason.startswith("Worker silent for >")
+
+    @pytest.mark.asyncio
+    async def test_pending_assessment_timeout_schedules_retry(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        pending_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=pending_id,
+            role=AgentRole.PENDING,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("pending assessment task")
+        await svc._repository.save_new_agent(agent)
+
+        await svc._mark_pending_assessment_timed_out(pending_id, timeout_seconds=300)
+
+        updated = await svc._repository.load(pending_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 1
+        retry_events = [
+            e for e in event_store.events_for(pending_id)
+            if isinstance(e, RetryScheduled)
+        ]
+        assert len(retry_events) == 1
+        assert retry_events[0].reason.startswith("Pending assessment timed out after")
+
+    @pytest.mark.asyncio
+    async def test_fault_injection_recovery_handlers_are_bounded(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        rng = random.Random(7)
+        handlers = ("step", "silent", "pending")
+        for _ in range(24):
+            mode = rng.choice(handlers)
+            role = AgentRole.WORKER if mode in ("step", "silent") else AgentRole.PENDING
+            aid = uuid4()
+            agent = AgentSession.create(
+                agent_id=aid,
+                role=role,
+                config={
+                    "strategy": "heuristic",
+                    "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                    "tool": "claude_code",
+                },
+            )
+            agent.assign_task(f"{mode} fault injection")
+            await svc._repository.save_new_agent(agent)
+
+            if mode == "step":
+                await asyncio.wait_for(svc._handle_step_timeout(aid), timeout=1.0)
+            elif mode == "silent":
+                await asyncio.wait_for(
+                    svc._mark_agent_silently_failed(aid, timeout_seconds=600),
+                    timeout=1.0,
+                )
+            else:
+                await asyncio.wait_for(
+                    svc._mark_pending_assessment_timed_out(aid, timeout_seconds=300),
+                    timeout=1.0,
+                )
+
+            updated = await svc._repository.load(aid)
+            assert updated.status in (AgentStatus.ANALYZING, AgentStatus.FAILED)

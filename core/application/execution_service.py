@@ -36,6 +36,8 @@ from core.domain.events.events import (
     ChildSpawned,
     DomainEvent,
     RetryScheduled,
+    WorkCompleted,
+    WorkFailed,
 )
 from core.domain.exceptions import ConcurrencyError
 from core.domain.services.context_update_parser import parse_context_update
@@ -70,6 +72,7 @@ class ServiceConfig:
     no_progress_check_interval: float = 60.0  # How often to run the no-progress check
     worker_prepare_timeout_seconds: float = 120.0  # Hard cap for domain-plugin worker context setup
     worker_execute_timeout_seconds: float = 600.0  # Hard cap for orchestrator.execute_task (worker role)
+    pending_assessment_timeout_seconds: float = 300.0  # Pending-role assessment watchdog
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,7 @@ class AgentExecutionService:
     _NO_PROGRESS_REASON_PREFIX = "Zero thoughts after"
     _STEP_TIMEOUT_REASON_PREFIX = "Step timed out after"
     _SILENT_WORKER_REASON_PREFIX = "Worker silent for >"
+    _PENDING_ASSESS_TIMEOUT_REASON_PREFIX = "Pending assessment timed out after"
 
     def __init__(
             self,
@@ -178,6 +182,11 @@ class AgentExecutionService:
         )
         self._silent_worker_max_retries = (
             getattr(self._retry_config, "silent_worker_max_retries", 2)
+            if self._retry_config is not None
+            else 2
+        )
+        self._pending_assessment_max_retries = (
+            getattr(self._retry_config, "pending_assessment_max_retries", 2)
             if self._retry_config is not None
             else 2
         )
@@ -294,6 +303,9 @@ class AgentExecutionService:
             reaped = self._reap_completed_tasks(tasks, in_progress, task_started_at)
 
             silenced = await self._reap_silent_workers(tasks, in_progress, task_started_at)
+            stalled_pending = await self._reap_stalled_pending_assessments(
+                tasks, in_progress, task_started_at,
+            )
 
             # Manager-level check: restart workers with zero thoughts
             now_mono = time.monotonic()
@@ -332,7 +344,7 @@ class AgentExecutionService:
                 )
 
             # Track progress for stall detection
-            if reaped > 0 or silenced > 0 or new_agents:
+            if reaped > 0 or silenced > 0 or stalled_pending > 0 or new_agents:
                 last_progress_time = time.monotonic()
 
             if not active_agents and not in_progress:
@@ -554,6 +566,58 @@ class AgentExecutionService:
             in_progress.discard(aid)
         return len(stale)
 
+    async def _reap_stalled_pending_assessments(
+            self,
+            tasks: dict[UUID, asyncio.Task],
+            in_progress: set[UUID],
+            task_started_at: dict[UUID, float],
+    ) -> int:
+        """Cancel and recover pending-role assessment tasks that stall.
+
+        This closes a pre-worker gap where PENDING assessment can hang without
+        producing role-resolution events, preventing manager/worker spawn.
+        """
+        now = time.monotonic()
+        timeout = self._config.pending_assessment_timeout_seconds
+        stale = [
+            aid for aid, started in task_started_at.items()
+            if (now - started) > timeout
+            and not tasks[aid].done()
+            and aid not in self._llm_semaphore_waiters
+        ]
+        if not stale:
+            return 0
+
+        recovered = 0
+        for aid in stale:
+            try:
+                agent = await self._repository.load_if_exists(aid)
+            except Exception:
+                logger.exception("Failed to load candidate stalled pending agent %s", aid)
+                continue
+            if agent is None or agent.is_terminal():
+                continue
+            if agent.role != AgentRole.PENDING or agent.status != AgentStatus.ANALYZING:
+                continue
+
+            logger.error(
+                "Pending agent %s assessment stalled for >%.0fs — cancelling and retrying/failing",
+                aid, timeout,
+            )
+            tasks[aid].cancel()
+            self._force_release_semaphores(aid)
+            try:
+                await self._mark_pending_assessment_timed_out(aid, timeout)
+            except Exception:
+                logger.exception(
+                    "Failed to recover stalled pending assessment for agent %s", aid,
+                )
+            tasks.pop(aid, None)
+            task_started_at.pop(aid, None)
+            in_progress.discard(aid)
+            recovered += 1
+        return recovered
+
     async def _restart_no_progress_workers(
             self,
             root_agent_id: UUID,
@@ -604,27 +668,14 @@ class AgentExecutionService:
                 aid,
                 self._config.no_progress_grace_seconds,
             )
-            # Cancel in-flight task if it exists
-            if aid in tasks and not tasks[aid].done():
-                tasks[aid].cancel()
-                self._force_release_semaphores(aid)
-                tasks.pop(aid, None)
-                task_started_at.pop(aid, None)
-                in_progress.discard(aid)
-            # No-progress cancellation can leave an orphaned runtime session
-            # (e.g., shielded step_task still holding a docker container).
-            # Best-effort cleanup before scheduling retry avoids deterministic
-            # container-name conflicts on restart.
-            await self._cleanup_domain_worker_runtime(aid)
-
             try:
                 agent = await self._repository.load_if_exists(aid)
                 if agent is None or agent.is_terminal():
                     continue
                 no_progress_retry_count = await self._get_no_progress_retry_count(aid)
-                exec_started_at = await self._get_last_execution_started_at(aid)
+                exec_started_at = await self._get_current_attempt_first_execution_started_at(aid)
                 effective_grace = self._config.no_progress_grace_seconds
-                if agent.retry_count == 0:
+                if no_progress_retry_count == 0:
                     effective_grace = max(
                         self._config.no_progress_grace_seconds,
                         self._config.no_progress_initial_grace_seconds,
@@ -639,6 +690,21 @@ class AgentExecutionService:
                             effective_grace,
                         )
                         continue
+                # Cancel in-flight task only when the effective grace has passed.
+                # Cancelling earlier can create a start/cancel loop that keeps
+                # refreshing AgentExecutionStarted and prevents no-progress
+                # recovery from ever triggering.
+                if aid in tasks and not tasks[aid].done():
+                    tasks[aid].cancel()
+                    self._force_release_semaphores(aid)
+                    tasks.pop(aid, None)
+                    task_started_at.pop(aid, None)
+                    in_progress.discard(aid)
+                # No-progress cancellation can leave an orphaned runtime session
+                # (e.g., shielded step_task still holding a docker container).
+                # Best-effort cleanup before scheduling retry avoids deterministic
+                # container-name conflicts on restart.
+                await self._cleanup_domain_worker_runtime(aid)
                 current_version = agent.version
                 no_progress_reason = (
                     f"Zero thoughts after {effective_grace:.0f}s "
@@ -696,10 +762,21 @@ class AgentExecutionService:
             agent_id, self._NO_PROGRESS_REASON_PREFIX,
         )
 
-    async def _get_last_execution_started_at(self, agent_id: UUID) -> datetime | None:
-        """Return timestamp of the most recent AgentExecutionStarted event."""
+    async def _get_current_attempt_first_execution_started_at(
+        self, agent_id: UUID,
+    ) -> datetime | None:
+        """Return first AgentExecutionStarted timestamp of the current attempt.
+
+        Current-attempt boundary is the latest RetryScheduled/WorkCompleted/
+        WorkFailed event. This prevents repeated AgentExecutionStarted heartbeats
+        from continuously resetting no-progress grace windows.
+        """
         events = await self._repository.get_events(agent_id)
-        for event in reversed(events):
+        boundary = -1
+        for idx, event in enumerate(events):
+            if isinstance(event, RetryScheduled | WorkCompleted | WorkFailed):
+                boundary = idx
+        for event in events[boundary + 1:]:
             if isinstance(event, AgentExecutionStarted):
                 return event.occurred_at
         return None
@@ -762,6 +839,49 @@ class AgentExecutionService:
             "Agent %s failed permanently (silent-worker retry budget exhausted: %d)",
             agent_id,
             self._silent_worker_max_retries,
+        )
+
+    async def _mark_pending_assessment_timed_out(
+            self, agent_id: UUID, timeout_seconds: float,
+    ) -> None:
+        """Fail stalled pending assessment, then retry-first with dedicated budget."""
+        agent = await self._repository.load_if_exists(agent_id)
+        if agent is None or agent.is_terminal():
+            return
+        if agent.role != AgentRole.PENDING:
+            return
+
+        reason = (
+            f"Pending assessment timed out after {timeout_seconds:.0f}s "
+            "(possible LLM hang)"
+        )
+        current_version = agent.version
+        agent.fail_with_reason(reason)
+        await self._repository.persist_events(
+            agent, current_version, self._progress_callback,
+        )
+
+        retry_count = await self._get_retry_count_for_reason_prefix(
+            agent_id, self._PENDING_ASSESS_TIMEOUT_REASON_PREFIX,
+        )
+        if retry_count < self._pending_assessment_max_retries:
+            agent.schedule_retry(reason=reason, escalated_model=None)
+            await self._repository.persist_events(
+                agent, agent.version - 1, self._progress_callback,
+            )
+            logger.info(
+                "Agent %s scheduled for pending-assessment retry %d/%d",
+                agent_id,
+                retry_count + 1,
+                self._pending_assessment_max_retries,
+            )
+            return
+
+        await self._parent_notifier.notify_if_failed(agent)
+        logger.info(
+            "Agent %s failed permanently (pending-assessment retry budget exhausted: %d)",
+            agent_id,
+            self._pending_assessment_max_retries,
         )
 
     def _force_release_semaphores(self, agent_id: UUID) -> None:

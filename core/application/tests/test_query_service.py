@@ -1,5 +1,6 @@
 """Test cases for AgentQueryService sequential worker ordering."""
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -258,7 +259,207 @@ class TestSequentialWorkerOrdering:
 
         # Then: Only w1 (leftmost) should be returned
         assert w1_id in active
-        assert w2_id not in active
+
+
+class TestNoProgressQuery:
+    """Tests for attempt-scoped no-progress detection."""
+
+    @pytest.fixture
+    def mock_repository(self):
+        """Create a mock repository that returns predefined events."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.domain.events.events import AgentCreated, TaskAssigned
+
+        def create_events_for_agent(
+            agent_id: UUID,
+            role: str,
+            parent_id: UUID | None,
+            sibling_index: int,
+            status: str = "analyzing",
+        ) -> list:
+            from core.domain.events.events import StatusChanged
+
+            events = [
+                AgentCreated(
+                    aggregate_id=agent_id,
+                    sequence_number=1,
+                    role=role,
+                    parent_id=parent_id,
+                    config={},
+                    sibling_index=sibling_index,
+                ),
+                TaskAssigned(
+                    aggregate_id=agent_id,
+                    sequence_number=2,
+                    task_description="test task",
+                ),
+            ]
+            if status != "analyzing":
+                events.append(
+                    StatusChanged(
+                        aggregate_id=agent_id,
+                        sequence_number=3,
+                        old_status="analyzing",
+                        new_status=status,
+                    )
+                )
+            return events
+
+        repository = MagicMock()
+        repository.get_all_events_grouped = AsyncMock()
+        return repository, create_events_for_agent
+
+    @pytest.mark.asyncio
+    async def test_no_progress_uses_first_start_in_attempt_not_latest(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.application.services import AgentQueryService
+        from core.domain.events.events import AgentCreated, AgentExecutionStarted, TaskAssigned
+
+        root_id = uuid4()
+        worker_id = uuid4()
+        now = datetime.now(UTC)
+
+        repository = MagicMock()
+        repository.get_hierarchy_events_grouped = AsyncMock(return_value={
+            root_id: [
+                AgentCreated(
+                    aggregate_id=root_id,
+                    sequence_number=1,
+                    role="boss",
+                    parent_id=None,
+                    config={},
+                    sibling_index=0,
+                ),
+                TaskAssigned(
+                    aggregate_id=root_id,
+                    sequence_number=2,
+                    task_description="root",
+                ),
+            ],
+            worker_id: [
+                AgentCreated(
+                    aggregate_id=worker_id,
+                    sequence_number=1,
+                    role="worker",
+                    parent_id=root_id,
+                    config={},
+                    sibling_index=0,
+                ),
+                TaskAssigned(
+                    aggregate_id=worker_id,
+                    sequence_number=2,
+                    task_description="worker",
+                ),
+                AgentExecutionStarted(
+                    aggregate_id=worker_id,
+                    sequence_number=3,
+                    role="worker",
+                    depth=1,
+                    occurred_at=now - timedelta(seconds=400),
+                ),
+                AgentExecutionStarted(
+                    aggregate_id=worker_id,
+                    sequence_number=4,
+                    role="worker",
+                    depth=1,
+                    occurred_at=now - timedelta(seconds=20),
+                ),
+            ],
+        })
+
+        service = AgentQueryService(repository)
+        stalled = await service.get_no_progress_workers(root_id, grace_seconds=180)
+        assert worker_id in stalled
+
+    @pytest.mark.asyncio
+    async def test_no_progress_ignores_thoughts_from_previous_attempt(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.application.services import AgentQueryService
+        from core.domain.events.events import (
+            AgentCreated,
+            AgentExecutionStarted,
+            RetryScheduled,
+            TaskAssigned,
+            ThoughtCaptured,
+            WorkFailed,
+        )
+
+        root_id = uuid4()
+        worker_id = uuid4()
+        now = datetime.now(UTC)
+
+        repository = MagicMock()
+        repository.get_hierarchy_events_grouped = AsyncMock(return_value={
+            root_id: [
+                AgentCreated(
+                    aggregate_id=root_id,
+                    sequence_number=1,
+                    role="boss",
+                    parent_id=None,
+                    config={},
+                    sibling_index=0,
+                ),
+                TaskAssigned(
+                    aggregate_id=root_id,
+                    sequence_number=2,
+                    task_description="root",
+                ),
+            ],
+            worker_id: [
+                AgentCreated(
+                    aggregate_id=worker_id,
+                    sequence_number=1,
+                    role="worker",
+                    parent_id=root_id,
+                    config={},
+                    sibling_index=0,
+                ),
+                TaskAssigned(
+                    aggregate_id=worker_id,
+                    sequence_number=2,
+                    task_description="worker",
+                ),
+                # Attempt 1 (had thoughts)
+                AgentExecutionStarted(
+                    aggregate_id=worker_id,
+                    sequence_number=3,
+                    role="worker",
+                    depth=1,
+                    occurred_at=now - timedelta(seconds=600),
+                ),
+                ThoughtCaptured(
+                    aggregate_id=worker_id,
+                    sequence_number=4,
+                    content="first attempt thought",
+                ),
+                WorkFailed(
+                    aggregate_id=worker_id,
+                    sequence_number=5,
+                    reason="attempt1 failed",
+                ),
+                RetryScheduled(
+                    aggregate_id=worker_id,
+                    sequence_number=6,
+                    attempt=1,
+                    reason="retry",
+                ),
+                # Attempt 2 (zero-thought; should be detected)
+                AgentExecutionStarted(
+                    aggregate_id=worker_id,
+                    sequence_number=7,
+                    role="worker",
+                    depth=1,
+                    occurred_at=now - timedelta(seconds=300),
+                ),
+            ],
+        })
+
+        service = AgentQueryService(repository)
+        stalled = await service.get_no_progress_workers(root_id, grace_seconds=180)
+        assert worker_id in stalled
 
     @pytest.mark.asyncio
     async def test_non_workers_returned_in_parallel(self, mock_repository) -> None:
@@ -290,9 +491,8 @@ class TestSequentialWorkerOrdering:
         service = AgentQueryService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
-        # Then: Root (non-worker) is returned plus only leftmost worker
-        # Manager is terminal so not in active list
-        assert root_id in active
+        # Then: only leftmost worker is returned (root is WAITING and not actionable)
+        assert root_id not in active
         assert m1_id not in active  # Manager completed
         assert w1_id in active
         assert w2_id not in active
@@ -318,7 +518,7 @@ class TestSequentialWorkerOrdering:
         w_right_id = uuid4()  # Worker under right manager
 
         repository.get_all_events_grouped.return_value = {
-            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            root_id: create_events(root_id, "boss", None, 0, "analyzing"),
             m_left_id: create_events(m_left_id, "manager", root_id, 0),  # Not terminal
             m_right_id: create_events(m_right_id, "manager", root_id, 1, "completed"),
             w_right_id: create_events(w_right_id, "worker", m_right_id, 0),
@@ -357,7 +557,7 @@ class TestSequentialWorkerOrdering:
         w_right_id = uuid4()
 
         repository.get_all_events_grouped.return_value = {
-            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            root_id: create_events(root_id, "boss", None, 0, "analyzing"),
             m_left_id: create_events(m_left_id, "manager", root_id, 0, "completed"),
             m_right_id: create_events(m_right_id, "manager", root_id, 1, "completed"),
             w_right_id: create_events(w_right_id, "worker", m_right_id, 0),
@@ -403,7 +603,7 @@ class TestSequentialWorkerOrdering:
         w_right_id = uuid4()  # Right worker
 
         repository.get_all_events_grouped.return_value = {
-            root_id: create_events(root_id, "boss", None, 0, "waiting"),
+            root_id: create_events(root_id, "boss", None, 0, "analyzing"),
             m_left_id: create_events(m_left_id, "manager", root_id, 0, "completed"),
             m_left_child_id: create_events(
                 m_left_child_id, "manager", m_left_id, 0
