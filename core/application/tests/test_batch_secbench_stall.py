@@ -666,3 +666,5 @@ async def test_db_stale_analyzing_children_includes_agent_execution_started(
 
     assert rows == [("child-abc", 901.5, "AgentExecutionStarted")]
     assert "AgentExecutionStarted" in captured_sql["text"]
+    assert "OperationFinished" in captured_sql["text"]
+    assert "TaskAssigned" in captured_sql["text"]

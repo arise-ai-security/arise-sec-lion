@@ -679,6 +679,27 @@ class AgentExecutionService:
             logger.info("No-progress worker scan found 0 stalled workers")
             return 0
 
+        # No-progress recovery should only target workers that are currently
+        # runnable in sequential mode (leftmost unblocked worker). This avoids
+        # restarting dependency-blocked siblings that are expected to wait.
+        try:
+            active_now = await self._query_service.get_active_agent_ids(
+                root_id=root_agent_id,
+                sequential_workers=True,
+            )
+            active_set = set(active_now)
+            stalled = [aid for aid in stalled if aid in active_set]
+        except Exception:
+            logger.warning(
+                "Failed to scope no-progress workers to active set for root %s",
+                root_agent_id,
+                exc_info=True,
+            )
+
+        if not stalled:
+            logger.info("No-progress worker scan found 0 active stalled workers")
+            return 0
+
         logger.warning(
             "No-progress worker scan found %d stalled worker(s): %s",
             len(stalled),

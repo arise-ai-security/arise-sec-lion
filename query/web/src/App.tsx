@@ -83,8 +83,6 @@ function explainWatchdogAction(nextAction: string | null | undefined): string {
       return 'No recovery required. Agent already completed successfully.';
     case 'none_failed':
       return 'No further automatic restart for this terminal agent; parent/run-level logic proceeds based on failure handling.';
-    case 'wait_for_dependencies_or_parent_recovery':
-      return 'Wait for dependency siblings to complete or fail; if dependencies fail, parent-level failure/recovery determines next step.';
     case 'provider_reconnect_then_retry_or_fail':
       return 'Try provider reconnect first; if unresolved, restart this agent; if retries are exhausted, fail this agent and notify parent.';
     case 'retry_or_fail':
@@ -133,6 +131,7 @@ function Dashboard() {
   const [loadingPrompts, setLoadingPrompts] = useState(false);
   const [watchdogTickMs, setWatchdogTickMs] = useState(() => Date.now());
   const [isHealthPanelOpen, setIsHealthPanelOpen] = useState(true);
+  const watchdogAnchorsRef = useRef<Map<string, { baseElapsed: number; anchorMs: number }>>(new Map());
 
   // Use refs for values needed in callbacks to avoid dependency loops
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -398,8 +397,24 @@ function Dashboard() {
         colorClass: 'bg-sky-500',
       };
     }
-    const extra = Math.max(0, Math.floor((watchdogTickMs - watchdogView.snapshotAtMs) / 1000));
-    const elapsed = watchdogView.elapsed + extra;
+    const anchorKey = `${selectedNodeId || 'none'}:${watchdogView.phase}:${watchdogView.timeout}`;
+    const anchors = watchdogAnchorsRef.current;
+    const nowMs = watchdogTickMs;
+    const existing = anchors.get(anchorKey);
+
+    if (!existing) {
+      anchors.set(anchorKey, { baseElapsed: watchdogView.elapsed, anchorMs: nowMs });
+    } else if (watchdogView.elapsed > existing.baseElapsed) {
+      // Server progressed; re-anchor from the fresher backend snapshot.
+      anchors.set(anchorKey, { baseElapsed: watchdogView.elapsed, anchorMs: nowMs });
+    } else if (watchdogView.elapsed + 5 < existing.baseElapsed) {
+      // New attempt/reset (e.g., retry) — allow timer to reset intentionally.
+      anchors.set(anchorKey, { baseElapsed: watchdogView.elapsed, anchorMs: nowMs });
+    }
+
+    const active = anchors.get(anchorKey)!;
+    const extra = Math.max(0, Math.floor((nowMs - active.anchorMs) / 1000));
+    const elapsed = active.baseElapsed + extra;
     const progress = Math.min(100, Math.floor((elapsed / watchdogView.timeout) * 100));
     const overdue = elapsed > watchdogView.timeout;
     const colorClass = overdue ? 'bg-red-500' : progress >= 75 ? 'bg-amber-500' : 'bg-emerald-500';
@@ -410,7 +425,7 @@ function Dashboard() {
       overdue,
       colorClass,
     };
-  }, [watchdogView, watchdogTickMs]);
+  }, [watchdogView, watchdogTickMs, selectedNodeId]);
 
   // Fetch prompts for selected node
   const loadNodePrompts = useCallback(async () => {

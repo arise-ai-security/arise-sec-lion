@@ -113,8 +113,8 @@ def test_compute_watchdog_marks_blocked_dependencies_when_exec_not_started() -> 
     assert phase == "blocked_dependencies"
     assert timeout_s == watchdog_cfg["worker_silence_timeout_seconds"]
     assert elapsed_s == 1200
-    assert overdue is False
-    assert next_action == "wait_for_dependencies_or_parent_recovery"
+    assert overdue is True
+    assert next_action == "retry_or_fail"
 
 
 def test_compute_watchdog_falls_back_to_silent_when_dependencies_met() -> None:

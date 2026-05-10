@@ -198,8 +198,8 @@ def _compute_watchdog(
                 "blocked_dependencies",
                 silent_timeout,
                 elapsed,
-                False,
-                "wait_for_dependencies_or_parent_recovery",
+                elapsed > silent_timeout,
+                "retry_or_fail",
             )
 
     if idle_seconds is not None:

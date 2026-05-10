@@ -346,6 +346,7 @@ class TestNoProgressRestart:
         await svc._repository.save_new_agent(agent)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         restarted = await svc._restart_no_progress_workers(
             root_agent_id=worker_id,
             tasks={},
@@ -388,6 +389,7 @@ class TestNoProgressRestart:
         await svc._repository.save_new_agent(agent)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         restarted = await svc._restart_no_progress_workers(
             root_agent_id=worker_id,
             tasks={},
@@ -430,6 +432,7 @@ class TestNoProgressRestart:
         await svc._repository.save_new_agent(agent)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         restarted = await svc._restart_no_progress_workers(
             root_agent_id=worker_id,
             tasks={},
@@ -479,6 +482,7 @@ class TestNoProgressRestart:
         await svc._repository.save_new_agent(agent)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         restarted = await svc._restart_no_progress_workers(
             root_agent_id=worker_id,
             tasks={},
@@ -522,6 +526,7 @@ class TestNoProgressRestart:
         await event_store.append(exec_started, expected_version=2)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         task = AsyncMock()
         task.done.return_value = False
         restarted = await svc._restart_no_progress_workers(
@@ -576,6 +581,7 @@ class TestNoProgressRestart:
             await event_store.append(exec_started, expected_version=seq - 1)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         restarted = await svc._restart_no_progress_workers(
             root_agent_id=worker_id,
             tasks={},
@@ -627,11 +633,12 @@ class TestNoProgressRestart:
         await event_store.append(exec_started, expected_version=agent.version)
 
         svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
         reconnect = AsyncMock(return_value=True)
         svc._orchestrator._llm_port = type("ReconnectLLM", (), {"reconnect": reconnect})()
 
         restarted = await svc._restart_no_progress_workers(
-            root_agent_id=uuid4(),
+            root_agent_id=worker_id,
             tasks={},
             in_progress=set(),
             task_started_at={},
@@ -644,7 +651,7 @@ class TestNoProgressRestart:
         # Next scan (same attempt) should escalate to restart because reconnect
         # budget for this attempt is already consumed.
         restarted2 = await svc._restart_no_progress_workers(
-            root_agent_id=uuid4(),
+            root_agent_id=worker_id,
             tasks={},
             in_progress=set(),
             task_started_at={},
@@ -653,6 +660,41 @@ class TestNoProgressRestart:
         updated2 = await svc._repository.load(worker_id)
         assert updated2.status == AgentStatus.ANALYZING
         assert updated2.retry_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_progress_skips_stalled_workers_not_in_active_sequential_set(self) -> None:
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        stalled_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=stalled_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("dependency-blocked worker")
+        await svc._repository.save_new_agent(agent)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[stalled_id])  # type: ignore[method-assign]
+        svc._query_service.get_active_agent_ids = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=stalled_id,
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+
+        assert restarted == 0
+        updated = await svc._repository.load(stalled_id)
+        assert updated.status == AgentStatus.ANALYZING
+        assert updated.retry_count == 0
 
 
 class TestTimeoutRecovery:

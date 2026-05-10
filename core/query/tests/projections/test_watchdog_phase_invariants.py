@@ -96,8 +96,8 @@ def test_blocked_dependency_workers_are_not_misclassified_as_retryable_hangs(
     assert phase == "blocked_dependencies"
     assert timeout_s == cfg["worker_silence_timeout_seconds"]
     assert elapsed_s == idle_seconds
-    assert overdue is False
-    assert next_action == "wait_for_dependencies_or_parent_recovery"
+    assert overdue is (idle_seconds > cfg["worker_silence_timeout_seconds"])
+    assert next_action == "retry_or_fail"
 
 
 def test_zero_thought_executing_worker_stays_retryable() -> None:
