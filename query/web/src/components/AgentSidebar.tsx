@@ -80,6 +80,14 @@ docker compose exec app python main.py run "your task"
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 {agent.status}
               </span>
+              {agent.was_restarted && (
+                <span
+                  className="text-[10px] font-semibold rounded px-1.5 py-0.5 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300"
+                  title={`Restarted ${agent.restart_count} time${agent.restart_count === 1 ? '' : 's'}`}
+                >
+                  restarted ×{agent.restart_count}
+                </span>
+              )}
             </div>
             <p className="text-sm text-gray-800 dark:text-gray-200 line-clamp-2">
               {agent.task_description || 'No description'}

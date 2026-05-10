@@ -9,6 +9,8 @@ export interface AgentNodeData {
   role: AgentRole;
   status: AgentStatus;
   task_description: string;
+  restart_count?: number;
+  was_restarted?: boolean;
   [key: string]: unknown; // Required for React Flow compatibility
 }
 
@@ -38,6 +40,8 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
   const normalizedRole = data.role.toUpperCase() as AgentRole;
   const colorClass = roleColors[normalizedRole] || 'bg-gray-500 border-gray-600';
   const statusIcon = statusIcons[data.status] || '❓';
+  const restartCount = data.restart_count ?? 0;
+  const wasRestarted = data.was_restarted ?? restartCount > 0;
 
   return (
     <div
@@ -61,6 +65,16 @@ export function AgentNodeComponent({ data }: AgentNodeComponentProps) {
       </div>
 
       <p className="text-xs opacity-90 line-clamp-2">{data.task_description || 'No task'}</p>
+      {wasRestarted && (
+        <div className="mt-2">
+          <span
+            className="inline-flex items-center rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
+            title={`Restarted ${restartCount} time${restartCount === 1 ? '' : 's'}`}
+          >
+            RESTARTED ×{restartCount}
+          </span>
+        </div>
+      )}
 
       <Handle
         type="source"

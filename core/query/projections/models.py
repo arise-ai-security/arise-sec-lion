@@ -24,6 +24,8 @@ class AgentListItem:
     created_at: datetime | None
     domain_metadata: JsonObject | None = None
     child_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    restart_count: int = 0
+    was_restarted: bool = False
 
     @classmethod
     def empty(cls, agent_id: UUID) -> "AgentListItem":
@@ -37,6 +39,8 @@ class AgentListItem:
             created_at=None,
             domain_metadata=None,
             child_ids=(),
+            restart_count=0,
+            was_restarted=False,
         )
 
 

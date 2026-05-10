@@ -45,6 +45,8 @@ def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
         task_description=item.task_description or "",
         created_at=item.created_at,
         domain_metadata=item.domain_metadata,
+        restart_count=item.restart_count,
+        was_restarted=item.was_restarted,
     )
 
 
@@ -72,6 +74,8 @@ def _agent_node_to_schema(
         status=node.status,
         task_description=node.task_description,
         parent_id=str(node.parent_id) if node.parent_id else None,
+        restart_count=node.restart_count,
+        was_restarted=node.was_restarted,
         children=[
             _agent_node_to_schema(child, max_depth, current_depth + 1)
             for child in node.children
@@ -175,6 +179,8 @@ async def list_boss_agents(
             task_description=s["task_description"] or "",
             created_at=s["created_at"],
             domain_metadata=s.get("domain_metadata"),
+            restart_count=0,
+            was_restarted=False,
         )
         for s in summaries
     ]

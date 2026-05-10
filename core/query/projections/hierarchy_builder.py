@@ -3,7 +3,7 @@
 Builds a complete tree structure from projected agent data.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from core.query.projections.models import AgentListItem
@@ -18,7 +18,9 @@ class AgentNode:
     status: str
     task_description: str
     parent_id: UUID | None
-    children: list["AgentNode"]
+    restart_count: int = 0
+    was_restarted: bool = False
+    children: list["AgentNode"] = field(default_factory=list)
 
 
 @dataclass
@@ -130,5 +132,7 @@ class HierarchyBuilder:
             status=agent.status,
             task_description=agent.task_description or "",
             parent_id=agent.parent_id,
+            restart_count=agent.restart_count,
+            was_restarted=agent.was_restarted,
             children=children,
         )
