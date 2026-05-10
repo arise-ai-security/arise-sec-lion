@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -692,16 +692,54 @@ class TestTimeoutRecovery:
 
     @pytest.mark.asyncio
     async def test_fault_injection_recovery_handlers_are_bounded(self) -> None:
+        """Property test: under any random sequence of recovery-handler
+        invocations across mixed agent roles and reused agents, the system
+        maintains the following invariants on every fire:
+
+        - Bounded latency: every handler returns within 1s.
+        - Status invariant: agents stay in {ANALYZING, FAILED}.
+        - Terminal idempotence: fires on FAILED agents are pure no-ops.
+        - Role guard: pending handler no-ops on non-PENDING agents
+          (step/silent handlers have no role guard by design).
+        - Monotonic budget: per-mode retry count grows by 0 or 1 per fire.
+        - Reason-prefix integrity: each scheduled retry's reason starts
+          with the mode's configured prefix. RetryPolicy budget counting
+          relies on exact prefix match — a typo here silently breaks
+          accounting (this is what e166ded-style regressions look like).
+        - Budget enforcement: once prior_count == budget, no further retry
+          is scheduled and the agent transitions to FAILED.
+
+        Coverage assertions (verify the workload actually exercised the
+        recovery surface, not just trivially passed):
+
+        - All three modes (step / silent / pending) fired.
+        - At least one budget exhaustion observed (FAILED transition).
+        - At least one role-mismatch fire on the pending handler.
+        """
         event_store = InMemoryEventStore()
         llm = FakeLLM()
         worker = AlwaysFailWorker()
         svc = _wire_service(event_store, llm, worker)
 
-        rng = random.Random(7)
-        handlers = ("step", "silent", "pending")
-        for _ in range(24):
-            mode = rng.choice(handlers)
-            role = AgentRole.WORKER if mode in ("step", "silent") else AgentRole.PENDING
+        # Read budgets from the service so the test stays correct if
+        # defaults change in config.
+        budget = {
+            "step": svc._step_timeout_max_retries,
+            "silent": svc._silent_worker_max_retries,
+            "pending": svc._pending_assessment_max_retries,
+        }
+        prefix = {
+            "step": "Step timed out after",
+            "silent": "Worker silent for >",
+            "pending": "Pending assessment timed out after",
+        }
+        native_role = {
+            "step": AgentRole.WORKER,
+            "silent": AgentRole.WORKER,
+            "pending": AgentRole.PENDING,
+        }
+
+        async def make_agent(role: AgentRole, label: str) -> UUID:
             aid = uuid4()
             agent = AgentSession.create(
                 agent_id=aid,
@@ -712,9 +750,12 @@ class TestTimeoutRecovery:
                     "tool": "claude_code",
                 },
             )
-            agent.assign_task(f"{mode} fault injection")
+            agent.assign_task(f"fault-injection {label}")
             await svc._repository.save_new_agent(agent)
+            return aid
 
+        async def fire(mode: str, aid: UUID) -> None:
+            # 1.0s wait_for guarantees the handler itself is bounded.
             if mode == "step":
                 await asyncio.wait_for(svc._handle_step_timeout(aid), timeout=1.0)
             elif mode == "silent":
@@ -728,5 +769,126 @@ class TestTimeoutRecovery:
                     timeout=1.0,
                 )
 
+        rng = random.Random(7)
+        modes_seen: set[str] = set()
+        budget_exhaustions = 0
+        pending_role_guard_hits = 0
+        pool: list[UUID] = []
+
+        num_events = 80
+        for i in range(num_events):
+            mode = rng.choice(["step", "silent", "pending"])
+            modes_seen.add(mode)
+
+            # 50% reuse (drives budget exhaustion), 25% fresh-matched,
+            # 25% fresh-mismatched (exercises pending role guard).
+            choice = rng.random()
+            if pool and choice < 0.50:
+                aid = rng.choice(pool)
+            elif choice < 0.75:
+                aid = await make_agent(native_role[mode], f"i={i} matched")
+                pool.append(aid)
+            else:
+                wrong = (
+                    AgentRole.PENDING
+                    if native_role[mode] == AgentRole.WORKER
+                    else AgentRole.WORKER
+                )
+                aid = await make_agent(wrong, f"i={i} mismatched")
+                pool.append(aid)
+
+            # Snapshot before firing
+            prior_agent = await svc._repository.load(aid)
+            prior_status = prior_agent.status
+            prior_role = prior_agent.role
+            prior_events = list(event_store.events_for(aid))
+            prior_mode_retries = sum(
+                1
+                for e in prior_events
+                if isinstance(e, RetryScheduled)
+                and e.reason
+                and e.reason.startswith(prefix[mode])
+            )
+
+            await fire(mode, aid)
+
             updated = await svc._repository.load(aid)
-            assert updated.status in (AgentStatus.ANALYZING, AgentStatus.FAILED)
+            events = event_store.events_for(aid)
+            retry_events = [e for e in events if isinstance(e, RetryScheduled)]
+            mode_retries_now = sum(
+                1
+                for e in retry_events
+                if e.reason and e.reason.startswith(prefix[mode])
+            )
+
+            ctx = f"i={i} mode={mode} aid={aid}"
+
+            # (1) Status invariant
+            assert updated.status in (AgentStatus.ANALYZING, AgentStatus.FAILED), (
+                f"{ctx}: invalid status {updated.status}"
+            )
+
+            # (2) Terminal idempotence: fires on FAILED agents are no-ops
+            if prior_status == AgentStatus.FAILED:
+                assert updated.status == AgentStatus.FAILED, (
+                    f"{ctx}: fire on terminal agent mutated status to {updated.status}"
+                )
+                assert mode_retries_now == prior_mode_retries, (
+                    f"{ctx}: fire on terminal agent added retries"
+                )
+                continue
+
+            # (3) Role guard: pending handler must no-op on non-PENDING role
+            if mode == "pending" and prior_role != AgentRole.PENDING:
+                assert updated.status == prior_status, (
+                    f"{ctx}: pending handler mutated non-PENDING agent (role={prior_role})"
+                )
+                assert mode_retries_now == prior_mode_retries, (
+                    f"{ctx}: pending handler scheduled retry on non-PENDING agent"
+                )
+                pending_role_guard_hits += 1
+                continue
+
+            # (4) Monotonic budget: retries grow by 0 or 1 per fire
+            delta = mode_retries_now - prior_mode_retries
+            assert delta in (0, 1), (
+                f"{ctx}: retry count delta {delta} (prior={prior_mode_retries}, "
+                f"now={mode_retries_now})"
+            )
+
+            if delta == 1:
+                # (5) On retry: ANALYZING with correct reason prefix
+                assert updated.status == AgentStatus.ANALYZING, (
+                    f"{ctx}: retried but status is {updated.status}"
+                )
+                assert retry_events[-1].reason.startswith(prefix[mode]), (
+                    f"{ctx}: latest retry reason wrong: {retry_events[-1].reason!r}"
+                )
+                # (6) Budget never exceeded
+                assert mode_retries_now <= budget[mode], (
+                    f"{ctx}: retries={mode_retries_now} > budget={budget[mode]}"
+                )
+            else:
+                # (7) No new retry => budget was at the limit on entry
+                # AND status transitioned to FAILED
+                assert prior_mode_retries == budget[mode], (
+                    f"{ctx}: no retry but prior {prior_mode_retries} != budget {budget[mode]}"
+                )
+                assert updated.status == AgentStatus.FAILED, (
+                    f"{ctx}: budget exhausted but status is {updated.status}"
+                )
+                budget_exhaustions += 1
+
+        # Coverage assertions — prove the workload actually hit the surface
+        assert modes_seen == {"step", "silent", "pending"}, (
+            f"all modes must be exercised, missing: "
+            f"{ {'step', 'silent', 'pending'} - modes_seen }"
+        )
+        assert budget_exhaustions > 0, (
+            "workload must drive at least one budget exhaustion "
+            "(increase num_events or reuse probability)"
+        )
+        assert pending_role_guard_hits > 0, (
+            "workload must exercise pending-handler role guard "
+            "(increase mismatch probability)"
+        )
