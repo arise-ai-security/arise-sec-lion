@@ -49,6 +49,21 @@ class LLMPort(Protocol):
         """
         ...
 
+    async def reconnect(
+        self,
+        *,
+        model: str | None = None,
+        config_dict: dict[str, Any] | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Best-effort provider/session reconnect.
+
+        This is an infrastructure recovery hook. It must not mutate
+        agent/task semantics; callers use it before escalating to
+        agent-level retries.
+        """
+        ...
+
 
 # =============================================================================
 # Output Format Repairer (LLM-backed fallback for malformed model output)

@@ -62,6 +62,7 @@ orchestration:
     step_timeout_max_retries: 2
     silent_worker_max_retries: 2
     pending_assessment_max_retries: 2
+    provider_reconnect_max_retries: 1
 
   tool_calling:
     # Iterations control how many tool-calling rounds an agent gets.

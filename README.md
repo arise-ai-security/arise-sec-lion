@@ -22,6 +22,7 @@ New to this repo? Read this file top-to-bottom once — it walks you from a fres
 12. [Troubleshooting cheat sheet](#12-troubleshooting-cheat-sheet)
 13. [Use Ollama Cloud models (optional)](#13-use-ollama-cloud-models-optional)
 14. [Project structure and docs index](#14-project-structure-and-docs-index)
+15. [Multi-layer reliability architecture (unreliable server defense)](#15-multi-layer-reliability-architecture-unreliable-server-defense)
 
 ---
 
@@ -576,3 +577,92 @@ Deep dives in [`agent-docs/`](agent-docs/):
 - **Storage**: PostgreSQL 16 (event store)
 - **API**: FastAPI, SSE streaming
 - **Frontend**: React 19 + Vite + TailwindCSS
+
+---
+
+## 15. Multi-layer reliability architecture (unreliable server defense)
+
+When the model server is unreliable (dropped TCP keepalives, dead sockets, partial streams, cancellation not honored), Arise uses a layered escalation strategy designed to preserve progress and avoid infinite hangs.
+
+### Escalation order (smallest blast radius first)
+
+1. **Provider reconnect (transport/session reset)**  
+   Clear provider transport caches and force fresh connections before mutating agent state.
+2. **Agent restart (same task, new attempt)**  
+   If reconnect does not recover progress, fail+retry the affected agent attempt (budgeted).
+3. **Run-level termination / relaunch**  
+   If orchestration itself stops advancing (no events globally), kill the run and retry at batch level.
+
+### Active protection layers
+
+- **LLM transport hardening** (`infrastructure/adapters/litellm_adapter.py`)
+  - provider-scoped transport control for Ollama paths
+  - hard timeout + connection retry + rate-limit retry
+  - explicit reconnect hook (`reconnect`) for pre-restart recovery
+
+- **In-run watchdogs** (`core/application/execution_service.py`)
+  - step timeout watchdog
+  - silent-worker watchdog
+  - no-progress (zero-thought) watchdog
+  - pending-assessment watchdog
+  - dedicated per-failure retry budgets
+  - reconnect-before-restart in no-progress path
+
+- **Run boundary watchdog** (`scripts/batch_secbench.py`)
+  - stale-event stall detector for process-alive/no-event freezes
+  - run kill + retry policy for hang signatures (`stalled`, `timeout`)
+
+- **Test harness coverage**
+  - handler and budget invariants (`test_retry.py`)
+  - byzantine loop-level scenarios (`test_byzantine_recovery.py`)
+  - end-to-end fake byzantine LLM server simulation (`test_byzantine_llm_server_e2e.py`)
+    - randomized connection drops
+    - randomized slow token-like transmission
+    - cancellation-resistant hangs (server ignores cancel)
+    - bounded wall-clock assertions so runs always terminate quickly
+  - batch boundary stall/retry semantics (`test_batch_secbench_stall.py`)
+
+### Diagram (end-to-end reliability flow)
+
+```text
+                       +----------------------------------+
+                       |   External Model Server (LLM)    |
+                       |  (Ollama/OpenAI/compatible)      |
+                       +-----------------+----------------+
+                                         |
+                                         v
+                    +--------------------------------------+
+                    | L0: Transport Layer (LiteLLMAdapter) |
+                    | - timeout / conn retry / rate retry  |
+                    | - reconnect() cache/session reset     |
+                    +-----------------+--------------------+
+                                      |
+                                      v
+                  +-------------------------------------------+
+                  | L1: Agent Execution Watchdogs             |
+                  | step/silent/no-progress/pending watchdogs |
+                  +-----------------+-------------------------+
+                                    |
+                no progress         | recovered
+              +---------------------+------------------+
+              |                                        |
+              v                                        v
+   +------------------------------+         +---------------------------+
+   | L1a: Provider Reconnect      |  yes    | Continue same attempt     |
+   | (smallest granularity)       +-------->+ (no semantic mutation)    |
+   +--------------+---------------+         +---------------------------+
+                  |
+                  | no recovery / budget exhausted
+                  v
+   +------------------------------+
+   | L1b: Agent Restart           |
+   | fail+retry same task attempt |
+   +--------------+---------------+
+                  |
+                  | run loop stalls globally
+                  v
+   +------------------------------+
+   | L2: Batch Stall Watchdog     |
+   | kill run -> relaunch attempt |
+   +------------------------------+
+```

@@ -590,6 +590,70 @@ class TestNoProgressRestart:
         events = event_store.events_for(worker_id)
         assert any(isinstance(e, RetryScheduled) for e in events)
 
+    @pytest.mark.asyncio
+    async def test_no_progress_attempts_provider_reconnect_before_restart(self) -> None:
+        """Reconnect is the first escalation step before restart scheduling."""
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+        svc._provider_reconnect_max_retries = 1
+
+        worker_id = uuid4()
+        agent = AgentSession.create(
+            agent_id=worker_id,
+            role=AgentRole.WORKER,
+            config={
+                "strategy": "heuristic",
+                "base": {
+                    "model": "ollama_chat/qwen3.5:397b-cloud",
+                    "temperature": 0.5,
+                    "max_tokens": 1000,
+                },
+                "tool": "claude_code",
+            },
+        )
+        agent.assign_task("stalled worker reconnect-first")
+        await svc._repository.save_new_agent(agent)
+
+        started = datetime.now(UTC) - timedelta(seconds=360)
+        exec_started = AgentExecutionStarted(
+            aggregate_id=worker_id,
+            sequence_number=agent.version + 1,
+            role=AgentRole.WORKER.value,
+            depth=1,
+            occurred_at=started,
+        )
+        await event_store.append(exec_started, expected_version=agent.version)
+
+        svc._query_service.get_no_progress_workers = AsyncMock(return_value=[worker_id])  # type: ignore[method-assign]
+        reconnect = AsyncMock(return_value=True)
+        svc._orchestrator._llm_port = type("ReconnectLLM", (), {"reconnect": reconnect})()
+
+        restarted = await svc._restart_no_progress_workers(
+            root_agent_id=uuid4(),
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted == 0
+        updated = await svc._repository.load(worker_id)
+        assert updated.status == AgentStatus.ANALYZING
+        reconnect.assert_awaited_once()
+
+        # Next scan (same attempt) should escalate to restart because reconnect
+        # budget for this attempt is already consumed.
+        restarted2 = await svc._restart_no_progress_workers(
+            root_agent_id=uuid4(),
+            tasks={},
+            in_progress=set(),
+            task_started_at={},
+        )
+        assert restarted2 == 1
+        updated2 = await svc._repository.load(worker_id)
+        assert updated2.status == AgentStatus.ANALYZING
+        assert updated2.retry_count == 1
+
 
 class TestTimeoutRecovery:
     """Step-timeout and silence watchdog should retry before permanent failure."""

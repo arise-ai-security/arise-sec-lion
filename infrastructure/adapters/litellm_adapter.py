@@ -103,6 +103,55 @@ class LiteLLMAdapter(LLMPort):
     _CONNECTION_RETRIES = 2  # Extra retries for transient connection failures
     _CONNECTION_RETRY_DELAY = 5  # seconds between connection retries
 
+    @staticmethod
+    def _clear_transport_caches() -> int:
+        """Best-effort clear of LiteLLM/http transport caches.
+
+        LiteLLM keeps provider clients/sessions in module-level caches.
+        Clearing them forces fresh sockets on the next call.
+        """
+        cleared = 0
+        for name in (
+            "in_memory_llm_clients_cache",
+            "in_memory_client_cache",
+            "aiohttp_session_cache",
+            "client_session_cache",
+            "model_alias_map",
+        ):
+            cache = getattr(litellm, name, None)
+            if isinstance(cache, dict):
+                cache.clear()
+                cleared += 1
+        return cleared
+
+    async def reconnect(
+        self,
+        *,
+        model: str | None = None,
+        config_dict: dict[str, Any] | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Best-effort provider reconnect (transport/session reset).
+
+        This is a transport-layer operation only. It never changes
+        agent prompts/history/retry counters.
+        """
+        # Scope reconnect to Ollama-backed models when model is known.
+        if model is not None and not self._is_ollama(model):
+            return False
+        merged = {**self.default_config, **(config_dict or {})}
+        api_base = merged.get("api_base")
+        cleared = self._clear_transport_caches()
+        logger.warning(
+            "LLM reconnect requested (model=%s, api_base=%s, reason=%s) — "
+            "cleared %d transport cache(s)",
+            model or "unknown",
+            api_base or "default",
+            reason or "unspecified",
+            cleared,
+        )
+        return True
+
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with timeout, retry, and exception handling.
 

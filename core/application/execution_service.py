@@ -14,7 +14,7 @@ import time
 from datetime import UTC, datetime
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from core.application.agent_orchestrator import AgentOrchestrator
@@ -190,6 +190,14 @@ class AgentExecutionService:
             if self._retry_config is not None
             else 2
         )
+        self._provider_reconnect_max_retries = (
+            getattr(self._retry_config, "provider_reconnect_max_retries", 1)
+            if self._retry_config is not None
+            else 1
+        )
+        # Per agent-attempt reconnect budget:
+        # key=(agent_id, first_exec_started_at_iso|none)
+        self._provider_reconnect_attempts: dict[tuple[UUID, str], int] = {}
         self._role_handlers = build_role_handlers(
             DispatchContext(
                 orchestrator=self._orchestrator,
@@ -707,6 +715,19 @@ class AgentExecutionService:
                             effective_grace,
                         )
                         continue
+                # Escalation ladder (smallest to largest):
+                # provider reconnect -> agent restart -> run-level termination.
+                reconnected = await self._attempt_provider_reconnect_before_restart(
+                    agent=agent,
+                    exec_started_at=exec_started_at,
+                    trigger_reason="no_progress",
+                )
+                if reconnected:
+                    logger.warning(
+                        "Agent %s stalled with zero thoughts; provider reconnect attempted before restart",
+                        aid,
+                    )
+                    continue
                 # Cancel in-flight task only when the effective grace has passed.
                 # Cancelling earlier can create a start/cancel loop that keeps
                 # refreshing AgentExecutionStarted and prevents no-progress
@@ -796,6 +817,76 @@ class AgentExecutionService:
         for event in events[boundary + 1:]:
             if isinstance(event, AgentExecutionStarted):
                 return event.occurred_at
+        return None
+
+    async def _attempt_provider_reconnect_before_restart(
+        self,
+        *,
+        agent: AgentSession,
+        exec_started_at: datetime | None,
+        trigger_reason: str,
+    ) -> bool:
+        """Try transport/session reconnect before agent-level restart."""
+        if self._provider_reconnect_max_retries <= 0:
+            return False
+
+        llm_port = getattr(self._orchestrator, "_llm_port", None)
+        reconnect_fn = getattr(llm_port, "reconnect", None)
+        if reconnect_fn is None or not callable(reconnect_fn):
+            return False
+
+        attempt_marker = (
+            exec_started_at.isoformat() if exec_started_at is not None else "none"
+        )
+        key = (agent.agent_id, attempt_marker)
+        used = self._provider_reconnect_attempts.get(key, 0)
+        if used >= self._provider_reconnect_max_retries:
+            return False
+
+        model = self._extract_agent_model(agent)
+        config_dict = self._extract_agent_llm_config(agent)
+        self._provider_reconnect_attempts[key] = used + 1
+
+        try:
+            ok = await reconnect_fn(
+                model=model,
+                config_dict=config_dict,
+                reason=trigger_reason,
+            )
+        except Exception:
+            logger.warning(
+                "Provider reconnect hook failed for agent %s",
+                agent.agent_id,
+                exc_info=True,
+            )
+            return False
+
+        if not ok:
+            return False
+        logger.info(
+            "Provider reconnect attempt %d/%d issued for agent %s (attempt=%s, model=%s)",
+            used + 1,
+            self._provider_reconnect_max_retries,
+            agent.agent_id,
+            attempt_marker,
+            model or "unknown",
+        )
+        return True
+
+    @staticmethod
+    def _extract_agent_llm_config(agent: AgentSession) -> dict[str, Any]:
+        config = agent.config if isinstance(agent.config, dict) else {}
+        base = config.get("base")
+        if isinstance(base, dict):
+            return dict(base)
+        return {}
+
+    @staticmethod
+    def _extract_agent_model(agent: AgentSession) -> str | None:
+        base = AgentExecutionService._extract_agent_llm_config(agent)
+        model = base.get("model")
+        if isinstance(model, str) and model.strip():
+            return model
         return None
 
     async def _cleanup_domain_worker_runtime(self, agent_id: UUID) -> None:

@@ -278,6 +278,14 @@ class RetryConfig(BaseModel):
         ge=0,
         description="Max retries for stalled pending-assessment failures.",
     )
+    provider_reconnect_max_retries: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Max reconnect attempts per agent-attempt before escalating to "
+            "agent-level retry."
+        ),
+    )
 
 
 class OrchestrationConfig(BaseModel):
