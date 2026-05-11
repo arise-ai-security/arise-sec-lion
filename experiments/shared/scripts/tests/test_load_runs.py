@@ -64,15 +64,3 @@ def test_load_runs_filters_by_study_and_cell(repo_root: Path) -> None:
     assert [row["run_id"] for row in rows] == ["keep"]
 
 
-def test_load_runs_excludes_legacy_when_requested(repo_root: Path) -> None:
-    runs_pool = repo_root / "runs"
-    _write_manifest(runs_pool, "pool-1")
-    _write_manifest(runs_pool / "_legacy", "legacy-1")
-
-    with_legacy = {r["run_id"] for r in load_runs(output_directory=runs_pool)}
-    without_legacy = {
-        r["run_id"] for r in load_runs(output_directory=runs_pool, include_legacy=False)
-    }
-
-    assert with_legacy == {"pool-1", "legacy-1"}
-    assert without_legacy == {"pool-1"}

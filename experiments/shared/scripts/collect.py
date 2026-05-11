@@ -94,7 +94,6 @@ def _load_enrolled_record(
     *,
     study_id: str,
     enrolled_index: dict[str, dict[str, Any]],
-    exclude_legacy_migration: bool = False,
 ) -> None:
     """Read one ``run_manifest.json`` and merge it into ``enrolled_index``.
 
@@ -113,8 +112,6 @@ def _load_enrolled_record(
         return
 
     if record.get("study_id") != study_id:
-        return
-    if exclude_legacy_migration and record.get("legacy_migration") is True:
         return
     # Audit N-2: runs whose event projection failed are stamped with
     # projection_status="failed" by the harness; excluding them here is
@@ -173,27 +170,19 @@ def build_enrollment_lock(
     """Build the enrollment lockfile dict for ``study_id`` from the runs pool.
 
     Walks every pool root (``runs/`` + ``settings.output.directory`` by
-    default; ``runs/_legacy/`` is included). Deduplicates on ``run_id``
-    and raises ``DuplicateRunIdError`` if the same run_id surfaces with
-    different (cell, task, replicate) values.
+    default). Deduplicates on ``run_id`` and raises ``DuplicateRunIdError``
+    if the same run_id surfaces with different (cell, task, replicate)
+    values.
 
     The returned dict is serialization-ready: keys sort cleanly, values
     are JSON/YAML scalars only.
     """
-    study_manifest = (
-        yaml.safe_load(_study_manifest_path(study_id).read_text(encoding="utf-8")) or {}
-    )
-    exclude_legacy_migration = bool(
-        isinstance(study_manifest, dict)
-        and study_manifest.get("exclude_legacy_migration", False)
-    )
     enrolled_index: dict[str, dict[str, Any]] = {}
     for manifest_path in iter_run_manifests(pool_roots=pool_roots):
         _load_enrolled_record(
             manifest_path,
             study_id=study_id,
             enrolled_index=enrolled_index,
-            exclude_legacy_migration=exclude_legacy_migration,
         )
 
     enrolled = sorted(

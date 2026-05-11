@@ -8,7 +8,6 @@ hypothesis: Next SEC-bench matrix after removing no-CVE-context treatments.
   shared artifact and event metrics scripts.
 dataset: dataset.yaml
 replicates: 1
-exclude_legacy_migration: true
 cells:
   A1: {group: A, runner: aris, config: configs/A1-claude-code-subagent.yaml}
   A2: {group: A, runner: aris, config: configs/A2-claude-code-nosubagent.yaml}

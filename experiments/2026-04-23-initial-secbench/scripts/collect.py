@@ -253,8 +253,6 @@ def _finalize_row(row: dict[str, Any]) -> dict[str, Any]:
 def _filtered_runs(
     cell: str,
     task_scope: set[str],
-    *,
-    exclude_legacy_migration: bool,
 ) -> list[dict[str, Any]]:
     runs = load_runs(study_id=STUDY_ID, cells=[cell])
     # Audit N-2 completion: mirror collect.build_enrollment_lock's exclusion
@@ -263,8 +261,6 @@ def _filtered_runs(
     # (events.jsonl absent → empty_metrics()), so the two artifacts disagreed
     # on cohort size. Silent zero is worse than dropped row.
     runs = [run for run in runs if run.get("projection_status") != "failed"]
-    if exclude_legacy_migration:
-        runs = [run for run in runs if run.get("legacy_migration") is not True]
     if not task_scope:
         return runs
     return [run for run in runs if run.get("task") in task_scope]
@@ -276,7 +272,6 @@ def _summarize(
     manifest = _load_manifest()
     dataset = _load_dataset(manifest)
     current_task_scope = _task_scope(dataset)
-    exclude_legacy_migration = bool(manifest.get("exclude_legacy_migration", False))
     manifests_by_run_id = _run_manifest_index()
     runtime_inputs: set[Path] = set()
 
@@ -293,11 +288,7 @@ def _summarize(
     }
 
     for cell in cells:
-        runs = _filtered_runs(
-            cell,
-            current_task_scope,
-            exclude_legacy_migration=exclude_legacy_migration,
-        )
+        runs = _filtered_runs(cell, current_task_scope)
         row: dict[str, Any] = {
             "cell": cell,
             "runs": len(runs),

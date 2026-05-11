@@ -3,8 +3,7 @@
 A "pool root" is any directory that holds `<run_id>/run_manifest.json`
 subdirectories. By default this loader walks ``<repo_root>/runs`` and the
 configured ``settings.output.directory`` (defaulting to ``./output`` under
-the repo root); ``runs/_legacy/`` is also scanned so historical runs stay
-discoverable. Tests can override the search by passing explicit
+the repo root). Tests can override the search by passing explicit
 ``pool_roots`` and bypass the Settings dependency.
 
 Returns plain ``list[dict]`` so study-specific scripts can adopt pandas
@@ -97,30 +96,18 @@ def _resolve_pool_roots(
     return default_pool_roots()
 
 
-def _iter_manifest_paths_for_root(root: Path, include_legacy: bool) -> Iterator[Path]:
-    """Yield every `run_manifest.json` directly beneath the pool root.
-
-    Legacy runs namespaced under ``runs/_legacy/`` are included unless
-    ``include_legacy=False`` so callers can scope away noise once they no
-    longer want to see migration leftovers.
-    """
+def _iter_manifest_paths_for_root(root: Path) -> Iterator[Path]:
+    """Yield every `run_manifest.json` directly beneath the pool root."""
     if not root.is_dir():
         return
 
     for manifest in root.glob("*/run_manifest.json"):
         yield manifest
 
-    if include_legacy:
-        legacy_root = root / "_legacy"
-        if legacy_root.is_dir():
-            for manifest in legacy_root.glob("*/run_manifest.json"):
-                yield manifest
-
 
 def iter_run_manifests(
     pool_roots: Iterable[Path] | None = None,
     *,
-    include_legacy: bool = True,
     output_directory: str | Path | None = None,
 ) -> Iterator[Path]:
     """Yield every `run_manifest.json` under the resolved pool roots.
@@ -130,7 +117,7 @@ def iter_run_manifests(
     """
     resolved = _resolve_pool_roots(pool_roots=pool_roots, output_directory=output_directory)
     for root in resolved:
-        yield from _iter_manifest_paths_for_root(root, include_legacy=include_legacy)
+        yield from _iter_manifest_paths_for_root(root)
 
 
 def _matches(record: dict[str, Any], **filters: Any) -> bool:
@@ -162,7 +149,6 @@ def load_runs(
     tasks: Iterable[str] | None = None,
     exit_status: str | None = None,
     kind: str | None = None,
-    include_legacy: bool = True,
     output_directory: str | Path | None = None,
     pool_roots: Iterable[Path] | None = None,
 ) -> list[dict[str, Any]]:
@@ -181,7 +167,6 @@ def load_runs(
     seen_run_ids: set[str] = set()
     for manifest_path in iter_run_manifests(
         pool_roots=pool_roots,
-        include_legacy=include_legacy,
         output_directory=output_directory,
     ):
         try:

@@ -33,7 +33,6 @@ def _stub_run(
     cell: str = "A1",
     task: str = "t1",
     projection_status: str | None = None,
-    legacy_migration: bool = False,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "run_id": run_id,
@@ -43,27 +42,23 @@ def _stub_run(
     }
     if projection_status is not None:
         record["projection_status"] = projection_status
-    if legacy_migration:
-        record["legacy_migration"] = True
     return record
 
 
 def test_filtered_runs_excludes_projection_failed_rows(monkeypatch) -> None:
-    # Given: load_runs returns a mix of ok, failed, and legacy-unstamped runs
+    # Given: load_runs returns a mix of ok, failed, and unstamped runs
     runs = [
         _stub_run(run_id="ok", projection_status="ok"),
         _stub_run(run_id="failed", projection_status="failed"),
-        _stub_run(run_id="legacy-unstamped"),
+        _stub_run(run_id="no-status"),
     ]
     monkeypatch.setattr(_COLLECT_MODULE, "load_runs", lambda **kwargs: list(runs))
 
     # When
-    result = _COLLECT_MODULE._filtered_runs(
-        "A1", set(), exclude_legacy_migration=False
-    )
+    result = _COLLECT_MODULE._filtered_runs("A1", set())
 
-    # Then: ok + legacy-unstamped survive; failed is dropped
-    assert [run["run_id"] for run in result] == ["ok", "legacy-unstamped"]
+    # Then: ok + unstamped survive; failed is dropped
+    assert [run["run_id"] for run in result] == ["ok", "no-status"]
 
 
 def test_add_metric_totals_sentinel_propagates_for_run_duration() -> None:

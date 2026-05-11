@@ -48,14 +48,6 @@ def _seed_design_manifest(repo_root: Path, study_id: str) -> None:
     )
 
 
-def _seed_design_manifest_excluding_legacy(repo_root: Path, study_id: str) -> None:
-    _seed_design_manifest(repo_root, study_id)
-    path = repo_root / "experiments" / study_id / "manifest.yaml"
-    payload = yaml.safe_load(path.read_text())
-    payload["exclude_legacy_migration"] = True
-    path.write_text(yaml.safe_dump(payload, sort_keys=False))
-
-
 def _seed_run_manifest(
     pool: Path,
     run_id: str,
@@ -83,12 +75,6 @@ def _seed_run_manifest(
     path = run_dir / "run_manifest.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
-
-
-def _mark_legacy(manifest_path: Path) -> None:
-    payload = json.loads(manifest_path.read_text())
-    payload["legacy_migration"] = True
-    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def test_lockfile_excludes_other_studies(repo_root: Path) -> None:
@@ -232,35 +218,6 @@ def test_legacy_attempt_field_resolves_to_replicate(repo_root: Path) -> None:
 
     # Then: the lockfile carries the new field name.
     assert lock["enrollment"][0]["replicate"] == 7
-
-
-def test_lockfile_can_exclude_legacy_migration_runs(repo_root: Path) -> None:
-    study_id = "exclude-legacy-study"
-    _seed_design_manifest_excluding_legacy(repo_root, study_id)
-    pool = repo_root / "runs"
-    legacy_manifest = _seed_run_manifest(
-        pool,
-        "11111111-1111-1111-1111-111111111111",
-        study_id=study_id,
-        cell="A1",
-        task="cve-a",
-        replicate=0,
-    )
-    _mark_legacy(legacy_manifest)
-    _seed_run_manifest(
-        pool,
-        "22222222-2222-2222-2222-222222222222",
-        study_id=study_id,
-        cell="B2",
-        task="cve-a",
-        replicate=0,
-    )
-
-    lock = build_enrollment_lock(study_id, pool_roots=[pool])
-
-    assert [r["run_id"] for r in lock["enrollment"]] == [
-        "22222222-2222-2222-2222-222222222222"
-    ]
 
 
 def test_collect_study_writes_lockfile_and_sidecar(repo_root: Path) -> None:
