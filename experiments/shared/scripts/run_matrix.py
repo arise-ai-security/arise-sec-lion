@@ -313,7 +313,7 @@ def _read_run_status(
         record = _json.loads(candidate.read_text(encoding="utf-8"))
     except (OSError, _json.JSONDecodeError) as exc:
         return "failed", f"could not read run_manifest.json: {exc}"
-    raw_status = str(record.get("exit_status") or record.get("status") or "").lower()
+    raw_status = str(record.get("exit_status") or "").lower()
     if raw_status in {"completed", "succeeded", "success"}:
         return "succeeded", None
     if not raw_status:

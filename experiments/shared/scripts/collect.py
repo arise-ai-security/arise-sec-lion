@@ -79,14 +79,8 @@ def _git_sha_of(path: Path) -> str | None:
 
 
 def _replicate_of(record: dict[str, Any]) -> int:
-    """Pull the replicate index from a run manifest, falling back to attempt.
-
-    The PR 1 rename keeps ``attempt`` as a one-cycle alias so historical
-    manifests that still carry the old field stay enrollable.
-    """
-    if "replicate" in record:
-        return int(record["replicate"])
-    return int(record.get("attempt", 0))
+    """Pull the replicate index from a run manifest."""
+    return int(record.get("replicate", 0))
 
 
 def _load_enrolled_record(

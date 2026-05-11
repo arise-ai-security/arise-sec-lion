@@ -48,7 +48,7 @@ class _Aris:
             study_id=study_id,
             cell=cell,
             task=task,
-            attempt=replicate,
+            replicate=replicate,
             config=config,
         )
 

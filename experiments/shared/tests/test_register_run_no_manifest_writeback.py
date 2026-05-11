@@ -94,11 +94,9 @@ def test_register_run_still_stamps_per_run_manifest(repo_root: Path) -> None:
         output_directory=runs_pool,
     )
 
-    # Then: the per-run manifest carries the experiment fields including
-    # both the new replicate and the legacy attempt alias.
+    # Then: the per-run manifest carries the experiment fields.
     payload = json.loads(run_manifest.read_text())
     assert payload["study_id"] == study_id
     assert payload["cell"] == "A1"
     assert payload["task"] == "cve-x"
     assert payload["replicate"] == 3
-    assert payload["attempt"] == 3

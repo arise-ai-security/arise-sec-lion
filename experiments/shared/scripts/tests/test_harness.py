@@ -112,7 +112,7 @@ def test_run_ours_reads_run_id_from_per_invocation_result_file(
         study_id=study["study_id"],
         cell=study["cell"],
         task=study["task"],
-        attempt=0,
+        replicate=0,
         config=study["config"],
     )
 
@@ -138,7 +138,7 @@ def test_run_ours_raises_when_subprocess_does_not_write_result_file(
             study_id=study["study_id"],
             cell=study["cell"],
             task=study["task"],
-            attempt=0,
+            replicate=0,
             config=study["config"],
         )
 
@@ -178,7 +178,7 @@ def test_run_ours_concurrent_invocations_do_not_misattribute_run_ids(
             study_id=study["study_id"],
             cell=study["cell"],
             task=study["task"],
-            attempt=0,
+            replicate=0,
             config=study["config"],
         )
         results[threading.get_ident()] = returned

@@ -555,16 +555,6 @@ def validate_study(study_id: str) -> list[str]:
                     f"run_id {run_id!r}: run_manifest.json is not a JSON object"
                 )
                 continue
-            # Replicate keys vary across legacy manifests; treat absence as -1
-            # so the tuple-compare still surfaces drift when one side has it
-            # and the other doesn't.
-            manifest_replicate = record.get("replicate")
-            if manifest_replicate is None:
-                manifest_replicate = record.get("attempt")
-            # Backward-compat: legacy lockfiles built before audit N-10
-            # don't carry per-entry study_id, only the top-level one.
-            # Fall back to the validated study_id for the tuple compare
-            # so legacy data keeps validating cleanly.
             expected = (
                 entry.get("study_id", study_id),
                 entry.get("cell"),
@@ -575,7 +565,7 @@ def validate_study(study_id: str) -> list[str]:
                 record.get("study_id"),
                 record.get("cell"),
                 record.get("task"),
-                manifest_replicate,
+                record.get("replicate"),
             )
             if expected != actual:
                 errors.append(

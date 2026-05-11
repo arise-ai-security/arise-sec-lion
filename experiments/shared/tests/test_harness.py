@@ -144,7 +144,7 @@ def test_run_ours_enrolls_run_into_study(
         study_id=study_id,
         cell="B2",
         task="gpac.cve-2021-40575",
-        attempt=0,
+        replicate=0,
         config=repo_root / "fake-config.yaml",
     )
 
@@ -157,8 +157,6 @@ def test_run_ours_enrolls_run_into_study(
     assert run_manifest["cell"] == "B2"
     assert run_manifest["task"] == "gpac.cve-2021-40575"
     assert run_manifest["replicate"] == 0
-    # And: the legacy attempt alias is preserved for one rename cycle.
-    assert run_manifest["attempt"] == 0
 
     # And: the study manifest is design-only — register_run no longer writes
     # a `runs:` list back into it (PR 1: enrollment moved to the lockfile).
@@ -216,7 +214,7 @@ def test_run_ours_rejects_subprocess_that_never_wrote_result(
             study_id=study_id,
             cell="B2",
             task="gpac.cve-2021-40575",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
@@ -241,7 +239,7 @@ def test_run_ours_aborts_on_task_not_in_cell_scope(
             study_id=study_id,
             cell="B2",
             task="cve-b",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
@@ -291,7 +289,7 @@ def test_run_ours_aborts_when_source_path_missing(
             study_id=study_id,
             cell="B2",
             task="gpac.cve-2021-40575",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
@@ -387,7 +385,7 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
         study_id=study_id,
         cell="B2",
         task="gpac.cve-2021-40575",
-        attempt=0,
+        replicate=0,
         config=config_path,
     )
 
@@ -440,7 +438,7 @@ def test_run_ours_aborts_when_subset_references_unknown_cve(
             study_id=study_id,
             cell="B2",
             task="cve-a",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
@@ -470,6 +468,6 @@ def test_run_ours_aborts_when_cell_not_declared(
             study_id=study_id,
             cell="Z9",
             task="cve-a",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )

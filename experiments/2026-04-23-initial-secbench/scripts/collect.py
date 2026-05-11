@@ -159,7 +159,7 @@ def _copy_artifacts(run: dict[str, Any], run_dir: Path | None) -> tuple[str, int
 
     cell = str(run.get("cell") or "unknown-cell")
     task = str(run.get("task") or "unknown-task")
-    replicate = int(run.get("replicate", run.get("attempt", 0)) or 0)
+    replicate = int(run.get("replicate", 0) or 0)
     destination = STUDY_DIR / "artifacts" / cell / task / f"replicate-{replicate}" / run_id
 
     if destination.exists():
@@ -319,7 +319,7 @@ def _summarize(
             run_row: dict[str, Any] = {
                 "cell": cell,
                 "task": run.get("task") or "",
-                "replicate": run.get("replicate", run.get("attempt", 0)),
+                "replicate": run.get("replicate", 0),
                 "run_id": run_id,
                 "exit_status": run.get("exit_status") or "",
                 "events_jsonl": events_jsonl,

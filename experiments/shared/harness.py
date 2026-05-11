@@ -17,7 +17,7 @@ Usage::
         --study 2026-04-22-demo \\
         --cell B2 \\
         --task gpac.cve-2021-40575 \\
-        --attempt 0 \\
+        --replicate 0 \\
         --config experiments/2026-04-22-demo/configs/B2.yaml
 """
 
@@ -265,7 +265,7 @@ def run_ours(
     study_id: str,
     cell: str,
     task: str,
-    attempt: int,
+    replicate: int,
     config: Path,
     runs_root: Path | None = None,
 ) -> UUID:
@@ -336,15 +336,12 @@ def run_ours(
             run_id,
         )
 
-    # `attempt=` is the deprecated alias for `replicate=`; both call sites in
-    # this module retain it for one PR cycle. PR 6 (Task 7 in the experiments
-    # rearchitecture plan) drops the alias and switches to `replicate=`.
     register_run(
         study_id=study_id,
         run_id=run_id,
         cell=cell,
         task=task,
-        attempt=attempt,
+        replicate=replicate,
         output_directory=pool,
         projection_status=projection_status,
     )
@@ -387,7 +384,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ours.add_argument("--study", required=True)
     ours.add_argument("--cell", required=True)
     ours.add_argument("--task", required=True)
-    ours.add_argument("--attempt", type=int, required=True)
+    ours.add_argument("--replicate", type=int, required=True)
     ours.add_argument("--config", type=Path, required=True)
 
     return parser
@@ -403,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
                 study_id=args.study,
                 cell=args.cell,
                 task=args.task,
-                attempt=args.attempt,
+                replicate=args.replicate,
                 config=args.config,
             )
         else:

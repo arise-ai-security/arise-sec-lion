@@ -86,8 +86,6 @@ def test_register_run_stamps_run_manifest_with_replicate(repo_root: Path) -> Non
     assert updated["cell"] == "B2"
     assert updated["task"] == "gpac.cve-2021-40575"
     assert updated["replicate"] == 0
-    # And: the legacy attempt alias is preserved for one cycle.
-    assert updated["attempt"] == 0
     # And: projection_status defaults to "ok" (audit N-2).
     assert updated["projection_status"] == "ok"
 
@@ -119,78 +117,6 @@ def test_register_run_stamps_projection_failed_when_passed(repo_root: Path) -> N
     # Then: the field surfaces in the manifest so collect.py can exclude it.
     updated = json.loads(run_manifest.read_text())
     assert updated["projection_status"] == "failed"
-
-
-def test_register_run_accepts_legacy_attempt_kwarg(repo_root: Path) -> None:
-    # Given: a study + run.
-    study_id = "2026-04-22-attempt-alias"
-    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
-    runs_pool = repo_root / "runs"
-    run_id = uuid4()
-    run_manifest = _seed_run_manifest(runs_pool, str(run_id))
-
-    # When: caller still uses the old `attempt=` keyword.
-    register_run(
-        study_id=study_id,
-        run_id=run_id,
-        cell="A1",
-        task="t",
-        attempt=2,
-        output_directory=runs_pool,
-    )
-
-    # Then: replicate is set to the same value, and attempt is preserved.
-    updated = json.loads(run_manifest.read_text())
-    assert updated["replicate"] == 2
-    assert updated["attempt"] == 2
-
-
-def test_register_run_replicate_and_attempt_both_equal_succeeds(repo_root: Path) -> None:
-    # Given: a study + run.
-    study_id = "both-equal-study"
-    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
-    runs_pool = repo_root / "runs"
-    run_id = uuid4()
-    run_manifest = _seed_run_manifest(runs_pool, str(run_id))
-
-    # When: caller passes both `replicate=` and the legacy `attempt=` with the
-    # same value (a transitional callsite that uses both names interchangeably).
-    register_run(
-        study_id=study_id,
-        run_id=run_id,
-        cell="A1",
-        task="t",
-        replicate=2,
-        attempt=2,
-        output_directory=runs_pool,
-    )
-
-    # Then: no error raised, and replicate is stamped with the agreed value.
-    payload = json.loads(run_manifest.read_text())
-    assert payload["replicate"] == 2
-    # And: the legacy attempt alias is preserved alongside.
-    assert payload["attempt"] == 2
-
-
-def test_register_run_rejects_conflicting_replicate_and_attempt(repo_root: Path) -> None:
-    # Given: a study + run.
-    study_id = "conflict-study"
-    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x", "harness": "ours"}})
-    runs_pool = repo_root / "runs"
-    run_id = uuid4()
-    _seed_run_manifest(runs_pool, str(run_id))
-
-    # When/Then: the alias and the new field disagree.
-    with pytest.raises(ValueError, match="conflicting"):
-        register_run(
-            study_id=study_id,
-            run_id=run_id,
-            cell="A1",
-            task="t",
-            replicate=0,
-            attempt=1,
-            output_directory=runs_pool,
-        )
 
 
 def test_register_run_rejects_unknown_cell(repo_root: Path) -> None:

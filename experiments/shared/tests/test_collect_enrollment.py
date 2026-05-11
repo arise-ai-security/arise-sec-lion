@@ -7,8 +7,7 @@ the rearchitecture, so the walker must:
 * sort deterministically (cell, task, replicate, run_id),
 * see runs in BOTH ``runs/`` and ``settings.output.directory``,
 * refuse to silently merge two run_manifest.json files claiming the
-  same run_id with conflicting fields,
-* tolerate the legacy ``attempt`` field by treating it as ``replicate``.
+  same run_id with conflicting fields.
 """
 
 from __future__ import annotations
@@ -55,8 +54,7 @@ def _seed_run_manifest(
     study_id: str,
     cell: str,
     task: str,
-    replicate: int | None = None,
-    attempt: int | None = None,
+    replicate: int,
 ) -> Path:
     run_dir = pool / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -67,11 +65,8 @@ def _seed_run_manifest(
         "task": task,
         "kind": "ours",
         "exit_status": "success",
+        "replicate": replicate,
     }
-    if replicate is not None:
-        payload["replicate"] = replicate
-    if attempt is not None:
-        payload["attempt"] = attempt
     path = run_dir / "run_manifest.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
@@ -197,27 +192,6 @@ def test_duplicate_run_id_across_roots_raises(repo_root: Path) -> None:
     # When/Then
     with pytest.raises(DuplicateRunIdError, match=run_id):
         build_enrollment_lock(study_id, pool_roots=[runs_pool, output_pool])
-
-
-def test_legacy_attempt_field_resolves_to_replicate(repo_root: Path) -> None:
-    # Given: a run manifest that pre-dates the rename (only `attempt`).
-    study_id = "legacy-field-study"
-    _seed_design_manifest(repo_root, study_id)
-    pool = repo_root / "runs"
-    _seed_run_manifest(
-        pool,
-        "ffffffff-ffff-ffff-ffff-ffffffffffff",
-        study_id=study_id,
-        cell="A1",
-        task="cve-a",
-        attempt=7,
-    )
-
-    # When
-    lock = build_enrollment_lock(study_id, pool_roots=[pool])
-
-    # Then: the lockfile carries the new field name.
-    assert lock["enrollment"][0]["replicate"] == 7
 
 
 def test_collect_study_writes_lockfile_and_sidecar(repo_root: Path) -> None:

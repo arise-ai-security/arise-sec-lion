@@ -101,12 +101,12 @@ def test_aris_dispatches_a_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     # Then: the sentinel comes back and run_ours saw the resolved config and
-    # replicate-as-attempt mapping (the cell drives flat vs. hierarchical via
+    # replicate (the cell drives flat vs. hierarchical via
     # orchestration.mode inside the config, not via the runner).
     assert result == sentinel
     assert captured["cell"] == "A1"
     assert captured["task"] == "cve-a"
-    assert captured["attempt"] == 0
+    assert captured["replicate"] == 0
     assert captured["config"] == config_path
 
 
@@ -134,11 +134,11 @@ def test_aris_dispatches_b_cell_to_run_ours(monkeypatch: pytest.MonkeyPatch) -> 
         context_file=Path("/tmp/ctx.json"),  # noqa: S108
     )
 
-    # Then: run_ours was called with the resolved config and replicate-as-attempt.
+    # Then: run_ours was called with the resolved config and replicate.
     assert result == sentinel
     assert captured["config"] == config_path
     assert captured["cell"] == "B1"
-    assert captured["attempt"] == 2
+    assert captured["replicate"] == 2
 
 
 def test_aris_runner_implements_protocol() -> None:
