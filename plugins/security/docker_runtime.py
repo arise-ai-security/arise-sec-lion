@@ -155,6 +155,13 @@ class DockerSecBenchRuntime:
             container_name,
         )
 
+    async def is_session_alive(self, session: SecBenchContainerSession) -> bool:
+        """Return True if the container is still running."""
+        exit_code, stdout, _ = await self._run_command(
+            ["docker", "container", "inspect", "-f", "{{.State.Running}}", session.container_name]
+        )
+        return exit_code == 0 and stdout.strip().lower() == "true"
+
     async def stop_session(self, session: SecBenchContainerSession) -> None:
         """Stop and remove a worker container."""
         await self._run_best_effort(["docker", "rm", "-f", session.container_id])

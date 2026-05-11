@@ -176,10 +176,26 @@ class SecurityDomainPlugin(DomainPlugin):
                 return None
             workspace = self._workspaces[root_id]
 
-        if root_id in self._sessions:
-            # Previous worker was cancelled (step timeout) and cleanup ran
-            # as fire-and-forget — the old container may still be alive.
-            # Clean it up before starting the new one.
+        existing_session = self._sessions.get(root_id)
+        if existing_session is not None:
+            # Check if the existing container is still alive — if so, reuse it.
+            # This avoids paying the full cold-start penalty on verification
+            # retries and other restarts where build artifacts are already present.
+            still_alive = await self._container_runtime.is_session_alive(
+                existing_session
+            )
+            if still_alive:
+                logger.info(
+                    "Reusing existing SEC-bench container %s for run %s (agent %s)",
+                    existing_session.container_name, root_id, agent_id,
+                )
+                return WorkerExecutionContext(
+                    working_directory=str(workspace.host_root),
+                    task_context={
+                        "container_session": existing_session.to_task_context()
+                    },
+                )
+            # Container is dead — clean up the stale session reference
             logger.warning(
                 "Stale SEC-bench container for run %s — cleaning up before restart",
                 root_id,

@@ -72,6 +72,10 @@ class SecurityContainerRuntime(Protocol):
         """Start a container bound to the prepared workspace."""
         ...
 
+    async def is_session_alive(self, session: SecBenchContainerSession) -> bool:
+        """Return True if the container is still running."""
+        ...
+
     async def stop_session(self, session: SecBenchContainerSession) -> None:
         """Stop and remove the active worker container."""
         ...
