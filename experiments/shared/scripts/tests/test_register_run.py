@@ -273,6 +273,43 @@ def test_write_run_manifest_uses_unique_tmp_filename(repo_root: Path) -> None:
     assert json.loads(manifest_path.read_text())["v"] == 2
 
 
+def test_write_run_manifest_fsyncs_before_replace(repo_root: Path) -> None:
+    # Given: a finished run manifest. Atomic-write helpers in this repo
+    # uniformly flush + fsync before the rename so a power loss between the
+    # write and durable storage cannot leave the old manifest visible after
+    # rename returned. register_run used mkstemp + replace without fsync
+    # pre-fix; this test pins the fsync into the contract.
+    from experiments.shared.scripts.register_run import _write_run_manifest
+
+    study_id = "fsync-study"
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x"}})
+    runs_pool = repo_root / "runs"
+    runs_pool.mkdir(parents=True, exist_ok=True)
+    run_id = uuid4()
+    _seed_run_manifest(runs_pool, str(run_id))
+    manifest_path = runs_pool / str(run_id) / "run_manifest.json"
+
+    fsync_calls: list[int] = []
+    import os as _os
+
+    real_fsync = _os.fsync
+
+    def _spy(fd: int) -> None:
+        fsync_calls.append(fd)
+        real_fsync(fd)
+
+    import experiments.shared.scripts.register_run as register_module
+
+    register_module.os.fsync = _spy
+    try:
+        _write_run_manifest(manifest_path, {"run_id": str(run_id), "v": 1})
+    finally:
+        register_module.os.fsync = real_fsync
+
+    # Then: fsync was invoked at least once during the staging write.
+    assert fsync_calls, "expected fsync before tmp->target replace"
+
+
 def test_register_run_enforces_task_in_cell_scope(repo_root: Path) -> None:
     # Given: a study that declares a dataset.yaml with a per-cell CVE subset.
     study_id = "scoped-study"

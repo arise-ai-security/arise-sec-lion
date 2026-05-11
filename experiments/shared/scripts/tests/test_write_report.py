@@ -211,6 +211,91 @@ def test_write_binary_concurrent_upserts_are_serialized(repo_root: Path) -> None
         assert key in data
 
 
+def test_write_binary_pre_flight_read_is_lock_protected(repo_root: Path) -> None:
+    """Audit N-9 completion: the pre-flight sidecar read must run UNDER
+    the sidecar lock so a concurrent corrupting writer cannot slip in
+    between the read and the binary write, orphaning the new binary
+    when the lock-protected upsert re-read raises.
+
+    Strategy: hold the lock externally, fire write_binary in a worker
+    thread (which will block on the lock), corrupt the sidecar from the
+    main thread, release the lock. The blocked write_binary must then
+    fail the pre-flight read with no orphan binary on disk.
+    """
+    import fcntl
+    import os
+    import threading
+
+    from experiments.shared.scripts.write_report import _lock_path_for
+
+    _write_input(repo_root, CSV_PATH, b"col\n1\n")
+    _write_input(
+        repo_root, "experiments/2026-01-01-fake-study/scripts/plot.py", b"# plot\n"
+    )
+    # Seed one good entry so the sidecar starts non-empty.
+    write_binary(
+        path="experiments/2026-01-01-fake-study/reports/figures/a.png",
+        content=b"A",
+        script="experiments/2026-01-01-fake-study/scripts/plot.py",
+        inputs=[CSV_PATH],
+    )
+    sidecar_path = (
+        repo_root / "experiments/2026-01-01-fake-study/reports" / GENERATED_JSON
+    )
+    target_binary = (
+        repo_root / "experiments/2026-01-01-fake-study/reports/figures/b.png"
+    )
+    lock_path = _lock_path_for(sidecar_path)
+
+    # Hold the sidecar lock from the main thread.
+    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    writer_error: list[Exception] = []
+    writer_started = threading.Event()
+    writer_done = threading.Event()
+
+    def _writer() -> None:
+        writer_started.set()
+        try:
+            write_binary(
+                path="experiments/2026-01-01-fake-study/reports/figures/b.png",
+                content=b"B",
+                script="experiments/2026-01-01-fake-study/scripts/plot.py",
+                inputs=[CSV_PATH],
+            )
+        except Exception as exc:  # noqa: BLE001 — capture for the assertion
+            writer_error.append(exc)
+        finally:
+            writer_done.set()
+
+    thread = threading.Thread(target=_writer)
+    thread.start()
+    writer_started.wait(timeout=2.0)
+    # Give the writer a moment to actually attempt the lock.
+    writer_done.wait(timeout=0.5)
+    assert not writer_done.is_set(), (
+        "writer should block on the sidecar lock until the main thread releases it"
+    )
+
+    # Corrupt the sidecar while the writer is blocked.
+    sidecar_path.write_bytes(b"not json{")
+
+    # Release the lock — the writer's pre-flight read now runs against a
+    # corrupt sidecar.
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    os.close(lock_fd)
+    thread.join(timeout=5.0)
+
+    # Then: the writer raised (corrupt sidecar surfaced via pre-flight) and
+    # no orphan binary landed on disk.
+    assert writer_error, "expected ValueError from corrupt sidecar pre-flight"
+    assert isinstance(writer_error[0], ValueError)
+    assert "not valid JSON" in str(writer_error[0])
+    assert not target_binary.exists(), (
+        "binary must not land when pre-flight sidecar read fails under the lock"
+    )
+
+
 def test_write_md_rejects_outside_repo(repo_root: Path) -> None:
     # Given: a valid input inside the repo.
     _write_input(repo_root, CSV_PATH, b"a\n1\n")

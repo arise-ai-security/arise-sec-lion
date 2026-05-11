@@ -150,6 +150,41 @@ def test_validate_study_detects_replicate_drift(repo_root: Path) -> None:
     assert any("enrollment tuple drift" in e for e in errors), errors
 
 
+def test_validate_study_detects_lock_entry_for_wrong_study(repo_root: Path) -> None:
+    # Given: a happy study, then drop a stray lock entry that points at a
+    # different study_id. Pre-fix `entry.get("study_id", study_id)` silently
+    # masked this (the default fell back to the study being validated), so
+    # the tuple compare passed and the regression slipped through.
+    study_id = "wrong-study-id-study"
+    _write_manifest(repo_root, study_id)
+    runs_pool = repo_root / "runs"
+    _seed_run(runs_pool, "run-aaaa", study_id=study_id, cell="A1", task="t")
+    collect_study(study_id, pool_roots=[runs_pool])
+
+    lock_path = (
+        repo_root / "experiments" / study_id / "reports" / "enrollment.lock.yaml"
+    )
+    lock = yaml.safe_load(lock_path.read_text())
+    # Mutate the lock entry so it claims a different study_id (the actual
+    # text reuses the same run_id+cell+task tuple, just under a different
+    # study). Skip the validator's binary-tampering check by replacing the
+    # sidecar entry for the lockfile too.
+    lock["enrollment"][0]["study_id"] = "some-other-study"
+    lock_path.write_text(yaml.safe_dump(lock, sort_keys=False))
+    sidecar_path = lock_path.parent / ".generated.json"
+    if sidecar_path.is_file():
+        sidecar_path.unlink()
+
+    # When
+    errors = validate_study(study_id)
+
+    # Then: the wrong study_id surfaces (either via tuple-drift or the
+    # explicit study_id mismatch check — both signal correctly).
+    assert any(
+        "some-other-study" in e or "enrollment tuple drift" in e for e in errors
+    ), errors
+
+
 def test_validate_study_unresolved_run_id(repo_root: Path) -> None:
     # Given: a lockfile listing a run_id that no longer has a run_manifest.json
     # in any pool root (the run dir was deleted or never made it across).

@@ -561,6 +561,10 @@ def validate_study(study_id: str) -> list[str]:
             manifest_replicate = record.get("replicate")
             if manifest_replicate is None:
                 manifest_replicate = record.get("attempt")
+            # Backward-compat: legacy lockfiles built before audit N-10
+            # don't carry per-entry study_id, only the top-level one.
+            # Fall back to the validated study_id for the tuple compare
+            # so legacy data keeps validating cleanly.
             expected = (
                 entry.get("study_id", study_id),
                 entry.get("cell"),
@@ -578,6 +582,19 @@ def validate_study(study_id: str) -> list[str]:
                     f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
                     f"run_id {run_id!r}: enrollment tuple drift "
                     f"lock={expected} manifest={actual}"
+                )
+                continue
+            # Audit N-10 completion: the manifest itself must claim the
+            # study being validated. Pre-fix a stale (cell, task) tuple
+            # whose underlying manifest pointed at a different study slipped
+            # through because the tuple compare used the same fallback on
+            # both sides. Checking record.study_id against the function
+            # arg surfaces drift even when entry has no per-entry study_id.
+            if record.get("study_id") != study_id:
+                errors.append(
+                    f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
+                    f"run_id {run_id!r}: manifest study_id "
+                    f"{record.get('study_id')!r} differs from validated {study_id!r}"
                 )
 
     return errors

@@ -34,15 +34,16 @@ import hashlib
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
+
+import yaml
 
 from experiments.shared.scripts._paths import resolve_repo_path, to_repo_relative
 
@@ -211,17 +212,18 @@ def write_binary(
         "output_sha256": _sha256_of_bytes(content),
     }
 
-    # Audit N-9: validate the existing sidecar BEFORE writing the binary.
-    # Pre-fix order was write-binary then upsert; with the new hard-fail
-    # `_read_generated_json` that order would leave the new binary on disk
-    # with no provenance entry if the sidecar was corrupted out-of-band.
-    # A pre-flight parse forces the corruption to surface before any new
-    # file lands. `_upsert_generated_json` re-reads the sidecar under the
-    # lock for race safety; the double-read is cheap and ensures the
-    # provenance merge sees the latest state.
-    _read_generated_json(sidecar_dir / GENERATED_JSON)
-    _atomic_write_bytes(output_abs, content)
-    _upsert_generated_json(sidecar_dir / GENERATED_JSON, output_rel, entry)
+    # Audit N-9 + completion: hold the sidecar lock for the full pre-flight
+    # read + binary write + sidecar upsert sequence. Pre-fix the pre-flight
+    # read was unlocked; a concurrent corrupting writer could slip a bad
+    # sidecar into the gap between the read and `_upsert_generated_json`'s
+    # own LOCK_EX, which would leave the new binary on disk with no
+    # provenance entry (the lock-protected re-read would raise after
+    # `_atomic_write_bytes` already landed the file).
+    sidecar_path = sidecar_dir / GENERATED_JSON
+    with _sidecar_lock(sidecar_path):
+        _read_generated_json(sidecar_path)
+        _atomic_write_bytes(output_abs, content)
+        _upsert_generated_json_locked(sidecar_path, output_rel, entry)
     return output_abs
 
 
@@ -249,28 +251,38 @@ def _lock_path_for(index_path: Path) -> Path:
     return Path(tempfile.gettempdir()) / f"arise-sec-lion.generated-json.{digest}.lock"
 
 
-def _upsert_generated_json(index_path: Path, key: str, entry: dict[str, Any]) -> None:
-    """Merge `entry` into the sidecar under `key`, taking an exclusive lock.
+@contextmanager
+def _sidecar_lock(index_path: Path) -> Iterator[None]:
+    """Hold an exclusive `fcntl.LOCK_EX` on the sidecar's lock file.
 
-    Serialization on the same file is guaranteed by `fcntl.LOCK_EX` on a
-    stable lock file in the system temp dir (never in `reports/`). The
-    on-disk write of the sidecar itself uses tmp + rename so we never leave
-    a partial file.
+    Used by ``write_binary`` to bracket the pre-flight read + binary write +
+    sidecar upsert so a concurrent corrupting writer cannot orphan the new
+    binary by slipping into the gap between the pre-flight parse and the
+    sidecar merge.
     """
     index_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _lock_path_for(index_path)
     lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        existing = _read_generated_json(index_path)
-        existing[key] = entry
-        payload = json.dumps(existing, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-        _atomic_write_bytes(index_path, payload)
+        yield
     finally:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
         finally:
             os.close(lock_fd)
+
+
+def _upsert_generated_json_locked(
+    index_path: Path, key: str, entry: dict[str, Any]
+) -> None:
+    """Merge ``entry`` into the sidecar under ``key``. Assumes the caller
+    already holds the sidecar lock (see :func:`_sidecar_lock`).
+    """
+    existing = _read_generated_json(index_path)
+    existing[key] = entry
+    payload = json.dumps(existing, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    _atomic_write_bytes(index_path, payload)
 
 
 def _read_generated_json(index_path: Path) -> dict[str, Any]:

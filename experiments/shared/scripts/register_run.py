@@ -114,7 +114,10 @@ def _write_run_manifest(run_manifest_path: Path, payload: dict[str, Any]) -> Non
 
     Audit N-11: use ``tempfile.mkstemp`` instead of a deterministic
     ``<name>.tmp`` so two concurrent callers targeting the same run_id
-    cannot stomp on each other's staging file.
+    cannot stomp on each other's staging file. Flush+fsync before rename so
+    a power loss between write and durable storage cannot leave the old
+    manifest visible after the rename returned (matches the durability
+    contract enforced in `project_events._atomic_write_events_jsonl`).
     """
     fd, tmp_name = tempfile.mkstemp(
         prefix=run_manifest_path.name + ".",
@@ -125,6 +128,8 @@ def _write_run_manifest(run_manifest_path: Path, payload: dict[str, Any]) -> Non
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         tmp_path.replace(run_manifest_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
