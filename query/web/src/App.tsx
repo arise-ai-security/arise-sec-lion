@@ -37,9 +37,10 @@ function findNodeById(node: AgentNode, targetId: string): AgentNode | null {
 
 function formatWatchdogPhase(
   phase: string | null | undefined,
-  options?: { overdue?: boolean },
+  options?: { overdue?: boolean; promptSentAt?: string | null },
 ): string {
   const overdue = options?.overdue ?? false;
+  const promptSentAt = options?.promptSentAt ?? null;
   switch (phase) {
     case 'healthy_completed':
       return 'Healthy (Completed)';
@@ -50,6 +51,11 @@ function formatWatchdogPhase(
     case 'pending_assessment':
       return 'Pending Assessment Watchdog';
     case 'no_progress_zero_thoughts':
+      if (!promptSentAt) {
+        return overdue
+          ? 'Pre-Execution Setup Overdue (Prompt Not Sent)'
+          : 'Pre-Execution Setup (Awaiting Prompt Dispatch)';
+      }
       return overdue
         ? 'No-Progress (Zero Thoughts Overdue) Watchdog'
         : 'Warming Up (Awaiting First Thought)';
@@ -64,11 +70,12 @@ function formatWatchdogPhase(
 
 function explainWatchdogCondition(
   phase: string | null | undefined,
-  options?: { overdue?: boolean; elapsed?: number; timeout?: number },
+  options?: { overdue?: boolean; elapsed?: number; timeout?: number; promptSentAt?: string | null },
 ): string {
   const overdue = options?.overdue ?? false;
   const elapsed = options?.elapsed;
   const timeout = options?.timeout;
+  const promptSentAt = options?.promptSentAt ?? null;
   switch (phase) {
     case 'healthy_completed':
       return 'Agent reached terminal COMPLETED state within watchdog expectations.';
@@ -79,6 +86,12 @@ function explainWatchdogCondition(
     case 'pending_assessment':
       return 'A PENDING agent is still in ANALYZING and role assessment did not finish within the pending-assessment timeout.';
     case 'no_progress_zero_thoughts':
+      if (!promptSentAt) {
+        if (!overdue) {
+          return 'Worker attempt has started, but PromptSent has not been emitted yet. This indicates pre-execution setup/dispatch work before first model turn.';
+        }
+        return 'Worker attempt remained in pre-execution setup (no PromptSent and no ThoughtCaptured) beyond the no-progress grace window.';
+      }
       if (!overdue) {
         if (typeof elapsed === 'number' && typeof timeout === 'number') {
           const remaining = Math.max(0, timeout - elapsed);
@@ -375,6 +388,9 @@ function Dashboard() {
         isStale: false,
         idleSeconds: selectedHierarchyNode.idle_seconds,
         lastEventAt: selectedHierarchyNode.last_event_at,
+        promptSentAt: selectedHierarchyNode.prompt_sent_at,
+        attemptExecStartedCount: selectedHierarchyNode.attempt_exec_started_count,
+        attemptPromptSentCount: selectedHierarchyNode.attempt_prompt_sent_count,
       };
     }
     if (selectedHierarchyNode.status === 'failed') {
@@ -390,6 +406,9 @@ function Dashboard() {
         isStale: false,
         idleSeconds: selectedHierarchyNode.idle_seconds,
         lastEventAt: selectedHierarchyNode.last_event_at,
+        promptSentAt: selectedHierarchyNode.prompt_sent_at,
+        attemptExecStartedCount: selectedHierarchyNode.attempt_exec_started_count,
+        attemptPromptSentCount: selectedHierarchyNode.attempt_prompt_sent_count,
       };
     }
     const timeout = selectedHierarchyNode.watchdog_timeout_seconds;
@@ -412,6 +431,9 @@ function Dashboard() {
       isStale: selectedHierarchyNode.is_stale,
       idleSeconds: selectedHierarchyNode.idle_seconds,
       lastEventAt: selectedHierarchyNode.last_event_at,
+      promptSentAt: selectedHierarchyNode.prompt_sent_at,
+      attemptExecStartedCount: selectedHierarchyNode.attempt_exec_started_count,
+      attemptPromptSentCount: selectedHierarchyNode.attempt_prompt_sent_count,
     };
   }, [selectedHierarchyNode]);
 
@@ -424,6 +446,12 @@ function Dashboard() {
       return {
         ...watchdogView,
         colorClass: 'bg-sky-500',
+      };
+    }
+    if (watchdogView.phase === 'no_progress_zero_thoughts' && !watchdogView.promptSentAt) {
+      return {
+        ...watchdogView,
+        colorClass: watchdogView.overdue ? 'bg-red-500' : 'bg-sky-500',
       };
     }
     const anchorKey = `${selectedNodeId || 'none'}:${watchdogView.phase}:${watchdogView.timeout}`;
@@ -800,9 +828,9 @@ function Dashboard() {
         </div>
 
         {/* Tab content */}
-        <div className="h-[calc(100vh-3.5rem)] overflow-hidden">
+        <div className="h-[calc(100vh-3.5rem)] overflow-hidden flex flex-col min-h-0">
           {selectedHierarchyNode && (
-            <div className="border-b dark:border-gray-700 px-4 py-3 bg-gray-50 dark:bg-gray-900/30">
+            <div className="shrink-0 border-b dark:border-gray-700 px-4 py-3 bg-gray-50 dark:bg-gray-900/30">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-xs text-gray-600 dark:text-gray-300">
                   Health for selected agent
@@ -856,7 +884,10 @@ function Dashboard() {
                 <div>
                   <div className="mb-1 flex items-center justify-between text-[11px] text-gray-700 dark:text-gray-300">
                     <span className="font-semibold">
-                      {formatWatchdogPhase(liveWatchdogView.phase, { overdue: liveWatchdogView.overdue })}
+                      {formatWatchdogPhase(liveWatchdogView.phase, {
+                        overdue: liveWatchdogView.overdue,
+                        promptSentAt: liveWatchdogView.promptSentAt,
+                      })}
                     </span>
                     <span>
                       {liveWatchdogView.phase === 'healthy_completed' || liveWatchdogView.phase === 'terminal_failed'
@@ -878,12 +909,16 @@ function Dashboard() {
                         overdue: liveWatchdogView.overdue,
                         elapsed: liveWatchdogView.elapsed,
                         timeout: liveWatchdogView.timeout,
+                        promptSentAt: liveWatchdogView.promptSentAt,
                       })}
                     </div>
                     <div>
                       <span className="font-semibold">Evidence:</span>{' '}
                       last_event_at={liveWatchdogView.lastEventAt || 'n/a'}
                       {liveWatchdogView.idleSeconds !== null ? `, idle=${liveWatchdogView.idleSeconds}s` : ''}
+                      {liveWatchdogView.phase === 'no_progress_zero_thoughts'
+                        ? `, exec_started=${liveWatchdogView.attemptExecStartedCount}, prompt_sent=${liveWatchdogView.attemptPromptSentCount}`
+                        : ''}
                     </div>
                     <div>
                       <span className="font-semibold">Recovery Path:</span>{' '}
@@ -905,29 +940,31 @@ function Dashboard() {
               )}
             </div>
           )}
-          {rightPanelView === 'summary' ? (
-            <SummaryPanel
-              summary={summary}
-              loading={loadingSummary}
-              workerOutput={mergedEvents?.thinking || []}
-              producedEvents={mergedEvents?.produced || []}
-            />
-          ) : rightPanelView === 'events' ? (
-            <EventPanel events={mergedEvents} loading={loadingEvents} />
-          ) : rightPanelView === 'costs' ? (
-            <CostPanel
-              summary={executionSummary}
-              loading={!executionSummary && !!selectedAgentId}
-              isConnected={isSummaryConnected}
-            />
-          ) : (
-            <PromptsPanel
-              prompts={nodePrompts}
-              total={nodePromptsTotal}
-              loading={loadingPrompts}
-              onRefresh={loadNodePrompts}
-            />
-          )}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {rightPanelView === 'summary' ? (
+              <SummaryPanel
+                summary={summary}
+                loading={loadingSummary}
+                workerOutput={mergedEvents?.thinking || []}
+                producedEvents={mergedEvents?.produced || []}
+              />
+            ) : rightPanelView === 'events' ? (
+              <EventPanel events={mergedEvents} loading={loadingEvents} />
+            ) : rightPanelView === 'costs' ? (
+              <CostPanel
+                summary={executionSummary}
+                loading={!executionSummary && !!selectedAgentId}
+                isConnected={isSummaryConnected}
+              />
+            ) : (
+              <PromptsPanel
+                prompts={nodePrompts}
+                total={nodePromptsTotal}
+                loading={loadingPrompts}
+                onRefresh={loadNodePrompts}
+              />
+            )}
+          </div>
         </div>
       </div>
 

@@ -51,6 +51,9 @@ export interface AgentNode {
   watchdog_elapsed_seconds: number | null;
   watchdog_overdue: boolean;
   watchdog_next_action: string | null;
+  attempt_exec_started_count: number;
+  attempt_prompt_sent_count: number;
+  prompt_sent_at: string | null;
   children: AgentNode[];
 }
 

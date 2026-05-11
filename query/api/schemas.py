@@ -59,6 +59,18 @@ class AgentNodeSchema(BaseModel):
         None,
         description="Expected next recovery action when watchdog expires",
     )
+    attempt_exec_started_count: int = Field(
+        0,
+        description="How many AgentExecutionStarted events occurred in the current attempt window",
+    )
+    attempt_prompt_sent_count: int = Field(
+        0,
+        description="How many PromptSent events occurred in the current attempt window",
+    )
+    prompt_sent_at: datetime | None = Field(
+        None,
+        description="First PromptSent timestamp in the current attempt window",
+    )
     children: list["AgentNodeSchema"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}

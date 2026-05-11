@@ -15,6 +15,7 @@ from core.domain.events.events import (
     AgentExecutionStarted,
     ChildSpawned,
     DomainEvent,
+    PromptSent,
     RetryScheduled,
     ThoughtCaptured,
     WorkCompleted,
@@ -86,6 +87,21 @@ def _first_exec_started_after_boundary(events: Sequence[DomainEvent], boundary: 
 
 def _thought_count_after_boundary(events: Sequence[DomainEvent], boundary: int) -> int:
     return sum(1 for event in events[boundary + 1:] if isinstance(event, ThoughtCaptured))
+
+
+def _exec_started_count_after_boundary(events: Sequence[DomainEvent], boundary: int) -> int:
+    return sum(1 for event in events[boundary + 1:] if isinstance(event, AgentExecutionStarted))
+
+
+def _prompt_sent_count_after_boundary(events: Sequence[DomainEvent], boundary: int) -> int:
+    return sum(1 for event in events[boundary + 1:] if isinstance(event, PromptSent))
+
+
+def _first_prompt_sent_after_boundary(events: Sequence[DomainEvent], boundary: int) -> datetime | None:
+    for event in events[boundary + 1:]:
+        if isinstance(event, PromptSent):
+            return event.occurred_at
+    return None
 
 
 def _derive_agent_status(events: Sequence[DomainEvent]) -> str:
@@ -275,6 +291,10 @@ def _agent_node_to_schema(
         idle_seconds=idle_seconds,
         watchdog_cfg=watchdog_cfg,
     )
+    boundary = _attempt_boundary_index(events)
+    prompt_sent_at = _first_prompt_sent_after_boundary(events, boundary)
+    attempt_exec_started_count = _exec_started_count_after_boundary(events, boundary)
+    attempt_prompt_sent_count = _prompt_sent_count_after_boundary(events, boundary)
 
     return AgentNodeSchema(
         id=str(node.id),
@@ -294,6 +314,9 @@ def _agent_node_to_schema(
         watchdog_elapsed_seconds=watchdog_elapsed_seconds,
         watchdog_overdue=watchdog_overdue,
         watchdog_next_action=watchdog_next_action,
+        attempt_exec_started_count=attempt_exec_started_count,
+        attempt_prompt_sent_count=attempt_prompt_sent_count,
+        prompt_sent_at=prompt_sent_at,
         children=[
             _agent_node_to_schema(
                 child,
