@@ -178,15 +178,21 @@ class RunPersistence:
         task: str,
         status: str,
     ) -> None:
-        """Save last run info to disk."""
+        """Save last run info to disk atomically.
+
+        Atomic write so interactive consumers (``main.py last``,
+        ``main.py prompts --last``) never see a half-written pointer
+        even if the writer is interrupted or two CLI invocations land
+        on the file at the same moment.
+        """
         self._output_dir.mkdir(parents=True, exist_ok=True)
         info = LastRunInfo(
             boss_id=boss_id,
             task=task,
-            started_at=datetime.now(),
+            started_at=datetime.now(UTC),
             status=status,
         )
-        self._path.write_text(json.dumps(info.to_dict(), indent=2))
+        _atomic_write_json(self._path, info.to_dict())
 
     def get_last_run_id(self) -> UUID | None:
         """Get boss_id from last run, if available."""

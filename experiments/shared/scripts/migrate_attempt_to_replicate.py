@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,9 +50,24 @@ def _migrate_one(manifest_path: Path) -> bool:
 
     record["replicate"] = record["attempt"]
 
-    tmp = manifest_path.with_name(manifest_path.name + ".tmp")
-    tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(manifest_path)
+    # Audit N-11 sibling: use ``tempfile.mkstemp`` instead of a deterministic
+    # ``<name>.tmp`` so two concurrent migration runs targeting the same
+    # manifest cannot stomp on each other's staging file.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=manifest_path.name + ".",
+        suffix=".tmp",
+        dir=str(manifest_path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.replace(manifest_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
     return True
 
 

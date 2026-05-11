@@ -109,6 +109,48 @@ def test_migrate_one_skips_malformed_json_without_crashing(repo_root: Path) -> N
     assert manifest.read_bytes() == before
 
 
+def test_migrate_one_uses_unique_tmp_filename(repo_root: Path) -> None:
+    """Two consecutive ``_migrate_one`` calls against the same manifest must
+    never reuse the same staging path. Pre-fix the script used a
+    deterministic ``<name>.tmp`` filename; if two concurrent migration
+    processes hit the same manifest, one's write could be overwritten by
+    the other's rename mid-flight (audit N-11 sibling).
+    """
+    import tempfile as _tempfile
+
+    import experiments.shared.scripts.migrate_attempt_to_replicate as migrate_module
+
+    manifest = _write_manifest(
+        repo_root / "runs" / "run-staging",
+        {"run_id": "run-staging", "attempt": 7, "kind": "ours"},
+    )
+
+    captured: list[str] = []
+    real_mkstemp = _tempfile.mkstemp
+
+    def _capture(*args, **kwargs):
+        fd, name = real_mkstemp(*args, **kwargs)
+        captured.append(name)
+        return fd, name
+
+    original = migrate_module.tempfile.mkstemp
+    migrate_module.tempfile.mkstemp = _capture
+    try:
+        _migrate_one(manifest)
+        # Reset the manifest so the second call also has work to do.
+        manifest.write_text(
+            json.dumps({"run_id": "run-staging", "attempt": 7, "kind": "ours"}, sort_keys=True)
+            + "\n"
+        )
+        _migrate_one(manifest)
+    finally:
+        migrate_module.tempfile.mkstemp = original
+
+    # Then: each call got a distinct tmp path (mkstemp guarantees uniqueness).
+    assert len(captured) == 2
+    assert captured[0] != captured[1]
+
+
 def test_migrate_one_skips_non_object_json(repo_root: Path) -> None:
     # Given: a manifest that's a JSON list, not an object.
     run_dir = repo_root / "runs" / "run-list"

@@ -28,6 +28,49 @@ class TestRunPersistence:
     def test_get_last_run_id_returns_none_when_not_found(self, tmp_path: Path) -> None:
         assert RunPersistence(tmp_path).get_last_run_id() is None
 
+    def test_save_last_run_writes_atomically(self, tmp_path: Path) -> None:
+        """A successful save_last_run must leave NO leftover .tmp file in the
+        target directory. The atomic-write helper writes to mkstemp then
+        renames so an interrupted writer can't leave a half-written pointer
+        visible to interactive consumers (``main.py last``).
+        """
+        persistence = RunPersistence(tmp_path)
+        persistence.save_last_run(uuid4(), "task", "completed")
+
+        leftovers = list(tmp_path.glob(".last_run.json.*"))
+        assert leftovers == []
+
+    def test_save_last_run_preserves_previous_file_on_writer_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """If the writer raises mid-stream, the previous .last_run.json must
+        survive intact. Pre-fix `write_text` could leave a truncated file
+        visible to readers.
+        """
+        from unittest.mock import patch
+
+        persistence = RunPersistence(tmp_path)
+        first_id = uuid4()
+        persistence.save_last_run(first_id, "first", "completed")
+        previous_bytes = (tmp_path / ".last_run.json").read_bytes()
+
+        # Force the second write to raise after creating the tmp file by
+        # patching json.dump (called by _atomic_write_json) to blow up.
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("simulated mid-write kill")
+
+        with patch(
+            "presentation.persistence.run_persistence.json.dump", _boom
+        ):
+            try:
+                persistence.save_last_run(uuid4(), "second", "completed")
+            except RuntimeError:
+                pass
+
+        # Then: the original file is byte-identical, no .tmp leftover.
+        assert (tmp_path / ".last_run.json").read_bytes() == previous_bytes
+        assert list(tmp_path.glob(".last_run.json.*")) == []
+
 
 class TestCLIArgumentParser:
     def test_parser_run_command(self) -> None:
