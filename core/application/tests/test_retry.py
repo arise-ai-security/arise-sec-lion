@@ -39,12 +39,15 @@ from core.application.services import (
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     AgentExecutionStarted,
+    ChildFailed,
+    ChildSpawned,
     CodeGenerationStarted,
     DomainEvent,
     RetryScheduled,
     WorkCompleted,
     WorkFailed,
 )
+from core.domain.values.subtask import Subtask
 
 
 def _make_limits() -> ExecutionLimitsBridge:
@@ -997,4 +1000,235 @@ class TestTimeoutRecovery:
         assert pending_role_guard_hits > 0, (
             "workload must exercise pending-handler role guard "
             "(increase mismatch probability)"
+        )
+
+
+class FailNthPersistEventStore(InMemoryEventStore):
+    """Event store that raises on the Nth persist call for a given agent.
+
+    Intercepts both ``append`` and ``append_batch`` to cover single-event
+    persists (used by ``persist_events`` for one-event batches) and
+    multi-event batches. Used to simulate production OCC/DB failures that
+    InMemoryEventStore cannot reproduce.
+    """
+
+    def __init__(self, fail_agent_id: UUID, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_agent_id = fail_agent_id
+        self._fail_on_call = fail_on_call
+        self._call_counts: dict[UUID, int] = {}
+
+    def _check_fail(self, agent_id: UUID) -> None:
+        if agent_id == self._fail_agent_id:
+            self._call_counts[agent_id] = (
+                self._call_counts.get(agent_id, 0) + 1
+            )
+            if self._call_counts[agent_id] == self._fail_on_call:
+                raise RuntimeError("Simulated persist failure")
+
+    async def append(self, event: DomainEvent, expected_version: int) -> None:
+        self._check_fail(event.aggregate_id)
+        await super().append(event, expected_version)
+
+    async def append_batch(
+        self, events: list[DomainEvent], expected_version: int
+    ) -> None:
+        if events:
+            self._check_fail(events[0].aggregate_id)
+        await super().append_batch(events, expected_version)
+
+
+class TestWatchdogRetryFailurePropagation:
+    """When a watchdog retry persist fails, parent must still be notified.
+
+    Regression tests for the production bug where _mark_agent_silently_failed
+    persisted WorkFailed but the subsequent RetryScheduled persist raised,
+    leaving the agent in FAILED limbo with no parent notification.
+    """
+
+    @staticmethod
+    def _make_parent_and_child(
+        event_store: InMemoryEventStore,
+        child_id: UUID,
+    ) -> tuple[AgentSession, AgentSession]:
+        """Create a manager parent in WAITING state with one worker child.
+
+        Emits proper ChildSpawned + StatusChanged events so the parent
+        round-trips through the event store correctly.
+        """
+        parent_id = uuid4()
+        config = {
+            "strategy": "heuristic",
+            "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+            "tool": "claude_code",
+        }
+        parent = AgentSession.create(
+            agent_id=parent_id,
+            role=AgentRole.MANAGER,
+            config=config,
+        )
+        parent.assign_task("parent task")
+
+        # Emit ChildSpawned so parent knows about child after reload
+        spawn_event = ChildSpawned(
+            aggregate_id=parent_id,
+            sequence_number=parent._next_sequence(),
+            child_id=child_id,
+            child_role="worker",
+            subtask=Subtask(
+                description="child task",
+                config=config,
+            ),
+            child_config=config,
+            sibling_index=0,
+        )
+        parent._emit(spawn_event)
+        parent._emit_waiting_for_children()
+
+        child = AgentSession.create(
+            agent_id=child_id,
+            role=AgentRole.WORKER,
+            config=config,
+            parent_id=parent_id,
+            sibling_index=0,
+        )
+        child.assign_task("child task")
+
+        return parent, child
+
+    @pytest.mark.asyncio
+    async def test_silent_worker_retry_persist_failure_notifies_parent(self) -> None:
+        """If RetryScheduled persist fails, parent must get ChildFailed."""
+        # Given: worker with a parent, event store that fails on 4th persist
+        # for the child (1=AgentCreated, 2=TaskAssigned, 3=WorkFailed, 4=RetryScheduled)
+        child_id = uuid4()
+        event_store = FailNthPersistEventStore(
+            fail_agent_id=child_id, fail_on_call=4
+        )
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        parent, child = self._make_parent_and_child(event_store, child_id)
+        await svc._repository.save_new_agent(parent)
+        await svc._repository.save_new_agent(child)
+
+        # When: silent worker watchdog fires
+        await svc._mark_agent_silently_failed(child_id, timeout_seconds=300)
+
+        # Then: child is FAILED
+        updated_child = await svc._repository.load(child_id)
+        assert updated_child.status == AgentStatus.FAILED
+
+        # Then: parent received ChildFailed despite retry persist failure
+        parent_events = event_store.events_for(parent.agent_id)
+        child_failed_events = [
+            e for e in parent_events if isinstance(e, ChildFailed)
+        ]
+        assert len(child_failed_events) == 1, (
+            f"Parent must receive ChildFailed when retry persist fails; "
+            f"got events: {[type(e).__name__ for e in parent_events]}"
+        )
+        assert child_failed_events[0].child_id == child_id
+
+    @pytest.mark.asyncio
+    async def test_step_timeout_retry_persist_failure_notifies_parent(self) -> None:
+        """If step-timeout RetryScheduled persist fails, parent gets ChildFailed."""
+        child_id = uuid4()
+        event_store = FailNthPersistEventStore(
+            fail_agent_id=child_id, fail_on_call=4
+        )
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        parent, child = self._make_parent_and_child(event_store, child_id)
+        await svc._repository.save_new_agent(parent)
+        await svc._repository.save_new_agent(child)
+
+        # When: step timeout handler fires
+        await svc._handle_step_timeout(child_id)
+
+        # Then: parent received ChildFailed
+        parent_events = event_store.events_for(parent.agent_id)
+        child_failed_events = [
+            e for e in parent_events if isinstance(e, ChildFailed)
+        ]
+        assert len(child_failed_events) == 1, (
+            f"Parent must receive ChildFailed when step-timeout retry fails; "
+            f"got events: {[type(e).__name__ for e in parent_events]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pending_timeout_retry_persist_failure_notifies_parent(self) -> None:
+        """If pending-assessment RetryScheduled persist fails, parent gets ChildFailed."""
+        child_id = uuid4()
+        event_store = FailNthPersistEventStore(
+            fail_agent_id=child_id, fail_on_call=4
+        )
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        parent, child = self._make_parent_and_child(event_store, child_id)
+        # Override child role to PENDING (handler has role guard)
+        child = AgentSession.create(
+            agent_id=child_id,
+            role=AgentRole.PENDING,
+            config={
+                "strategy": "heuristic",
+                "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+                "tool": "claude_code",
+            },
+            parent_id=parent.agent_id,
+            sibling_index=0,
+        )
+        child.assign_task("pending child task")
+
+        await svc._repository.save_new_agent(parent)
+        await svc._repository.save_new_agent(child)
+
+        # When: pending assessment timeout fires
+        await svc._mark_pending_assessment_timed_out(child_id, timeout_seconds=300)
+
+        # Then: parent received ChildFailed
+        parent_events = event_store.events_for(parent.agent_id)
+        child_failed_events = [
+            e for e in parent_events if isinstance(e, ChildFailed)
+        ]
+        assert len(child_failed_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_silent_worker_budget_exhausted_notifies_parent(self) -> None:
+        """When silent-worker retry budget is exhausted, parent gets ChildFailed.
+
+        This is the existing happy path but was previously only tested
+        with orphan workers (no parent).
+        """
+        child_id = uuid4()
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = AlwaysFailWorker()
+        svc = _wire_service(event_store, llm, worker)
+
+        parent, child = self._make_parent_and_child(event_store, child_id)
+        await svc._repository.save_new_agent(parent)
+        await svc._repository.save_new_agent(child)
+
+        # When: exhaust the silent-worker retry budget
+        for _ in range(svc._silent_worker_max_retries + 1):
+            await svc._mark_agent_silently_failed(child_id, timeout_seconds=300)
+
+        # Then: child is permanently FAILED
+        updated_child = await svc._repository.load(child_id)
+        assert updated_child.status == AgentStatus.FAILED
+
+        # Then: parent received ChildFailed
+        parent_events = event_store.events_for(parent.agent_id)
+        child_failed_events = [
+            e for e in parent_events if isinstance(e, ChildFailed)
+        ]
+        assert len(child_failed_events) == 1, (
+            f"Parent must receive ChildFailed after budget exhaustion; "
+            f"got events: {[type(e).__name__ for e in parent_events]}"
         )

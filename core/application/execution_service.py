@@ -783,18 +783,29 @@ class AgentExecutionService:
 
                 # Use dedicated no-progress retry budget; this is independent
                 # of model-escalation-chain retries.
+                retried = False
                 if no_progress_retry_count < self._no_progress_max_retries:
-                    agent.schedule_retry(reason=no_progress_reason, escalated_model=None)
-                    await self._repository.persist_events(
-                        agent, agent.version - 1, self._progress_callback
-                    )
-                    logger.info(
-                        "Agent %s scheduled for no-progress retry %d/%d",
-                        aid,
-                        no_progress_retry_count + 1,
-                        self._no_progress_max_retries,
-                    )
-                else:
+                    try:
+                        agent.schedule_retry(reason=no_progress_reason, escalated_model=None)
+                        await self._repository.persist_events(
+                            agent, agent.version - 1, self._progress_callback
+                        )
+                        logger.info(
+                            "Agent %s scheduled for no-progress retry %d/%d",
+                            aid,
+                            no_progress_retry_count + 1,
+                            self._no_progress_max_retries,
+                        )
+                        retried = True
+                    except Exception:
+                        logger.exception(
+                            "Failed to persist no-progress retry for agent %s; "
+                            "falling through to parent notification",
+                            aid,
+                        )
+                        agent = await self._repository.load(aid)
+
+                if not retried:
                     await self._notify_parent_failed_with_timeout(
                         agent,
                         source="no_progress_exhausted",
@@ -1011,17 +1022,25 @@ class AgentExecutionService:
             agent_id, self._SILENT_WORKER_REASON_PREFIX,
         )
         if silent_retry_count < self._silent_worker_max_retries:
-            agent.schedule_retry(reason=reason, escalated_model=None)
-            await self._repository.persist_events(
-                agent, agent.version - 1, self._progress_callback,
-            )
-            logger.info(
-                "Agent %s scheduled for silent-worker retry %d/%d",
-                agent_id,
-                silent_retry_count + 1,
-                self._silent_worker_max_retries,
-            )
-            return
+            try:
+                agent.schedule_retry(reason=reason, escalated_model=None)
+                await self._repository.persist_events(
+                    agent, agent.version - 1, self._progress_callback,
+                )
+                logger.info(
+                    "Agent %s scheduled for silent-worker retry %d/%d",
+                    agent_id,
+                    silent_retry_count + 1,
+                    self._silent_worker_max_retries,
+                )
+                return
+            except Exception:
+                logger.exception(
+                    "Failed to persist silent-worker retry for agent %s; "
+                    "falling through to parent notification",
+                    agent_id,
+                )
+                agent = await self._repository.load(agent_id)
 
         await self._notify_parent_failed_with_timeout(
             agent,
@@ -1057,17 +1076,25 @@ class AgentExecutionService:
             agent_id, self._PENDING_ASSESS_TIMEOUT_REASON_PREFIX,
         )
         if retry_count < self._pending_assessment_max_retries:
-            agent.schedule_retry(reason=reason, escalated_model=None)
-            await self._repository.persist_events(
-                agent, agent.version - 1, self._progress_callback,
-            )
-            logger.info(
-                "Agent %s scheduled for pending-assessment retry %d/%d",
-                agent_id,
-                retry_count + 1,
-                self._pending_assessment_max_retries,
-            )
-            return
+            try:
+                agent.schedule_retry(reason=reason, escalated_model=None)
+                await self._repository.persist_events(
+                    agent, agent.version - 1, self._progress_callback,
+                )
+                logger.info(
+                    "Agent %s scheduled for pending-assessment retry %d/%d",
+                    agent_id,
+                    retry_count + 1,
+                    self._pending_assessment_max_retries,
+                )
+                return
+            except Exception:
+                logger.exception(
+                    "Failed to persist pending-assessment retry for agent %s; "
+                    "falling through to parent notification",
+                    agent_id,
+                )
+                agent = await self._repository.load(agent_id)
 
         await self._notify_parent_failed_with_timeout(
             agent,
@@ -1562,17 +1589,25 @@ class AgentExecutionService:
             )
 
             if step_retry_count < self._step_timeout_max_retries:
-                agent.schedule_retry(reason=reason, escalated_model=None)
-                await self._repository.persist_events(
-                    agent, agent.version - 1, self._progress_callback,
-                )
-                logger.info(
-                    "Agent %s scheduled for step-timeout retry %d/%d",
-                    agent_id,
-                    step_retry_count + 1,
-                    self._step_timeout_max_retries,
-                )
-                return
+                try:
+                    agent.schedule_retry(reason=reason, escalated_model=None)
+                    await self._repository.persist_events(
+                        agent, agent.version - 1, self._progress_callback,
+                    )
+                    logger.info(
+                        "Agent %s scheduled for step-timeout retry %d/%d",
+                        agent_id,
+                        step_retry_count + 1,
+                        self._step_timeout_max_retries,
+                    )
+                    return
+                except Exception:
+                    logger.exception(
+                        "Failed to persist step-timeout retry for agent %s; "
+                        "falling through to parent notification",
+                        agent_id,
+                    )
+                    agent = await self._repository.load(agent_id)
 
             await self._notify_parent_failed_with_timeout(
                 agent,
