@@ -43,6 +43,9 @@ export interface AgentNode {
   was_restarted: boolean;
   hang_restart_count: number;
   was_hang_restarted: boolean;
+  retry_budget_total: number;
+  retry_budget_used: number;
+  retry_budget_exhausted: boolean;
   last_event_at: string | null;
   idle_seconds: number | null;
   is_stale: boolean;

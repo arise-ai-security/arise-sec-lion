@@ -134,7 +134,7 @@ function explainWatchdogAction(
     case 'provider_reconnect_then_retry_or_fail':
       return 'Try provider reconnect first; if unresolved, restart this agent; if retries are exhausted, fail this agent and notify parent.';
     case 'retry_or_fail':
-      return 'Restart this agent when retry budget is available; otherwise mark it failed and notify parent so DAG can advance.';
+      return 'Restart this agent when retry budget is available (max 3 across all sources); otherwise mark it permanently failed and notify parent so downstream DAG dependencies unblock.';
     case 'wait_for_dependencies_or_parent_recovery':
       return 'Wait for prerequisite siblings to complete; parent/recovery logic handles escalation if dependencies fail.';
     case 'wait_for_children':
@@ -883,6 +883,19 @@ function Dashboard() {
                     title={`Hang-recovery restart ${selectedHierarchyNode.hang_restart_count} time${selectedHierarchyNode.hang_restart_count === 1 ? '' : 's'}`}
                   >
                     HANG-RECOVERED ×{selectedHierarchyNode.hang_restart_count}
+                  </span>
+                )}
+                {selectedHierarchyNode.was_restarted && (
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                      selectedHierarchyNode.retry_budget_exhausted
+                        ? 'border-red-400 bg-red-100 text-red-900'
+                        : 'border-blue-300 bg-blue-100 text-blue-900'
+                    }`}
+                    title={`Retry budget: ${selectedHierarchyNode.retry_budget_used}/${selectedHierarchyNode.retry_budget_total} used${selectedHierarchyNode.retry_budget_exhausted ? ' (EXHAUSTED — next failure is permanent)' : ''}`}
+                  >
+                    RETRY {selectedHierarchyNode.retry_budget_used}/{selectedHierarchyNode.retry_budget_total}
+                    {selectedHierarchyNode.retry_budget_exhausted ? ' EXHAUSTED' : ''}
                   </span>
                 )}
                 {liveWatchdogView?.isStale && liveWatchdogView.idleSeconds !== null && (

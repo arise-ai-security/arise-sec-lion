@@ -27,6 +27,18 @@ class AgentNodeSchema(BaseModel):
         False,
         description="Whether this agent had at least one hang/no-progress recovery restart",
     )
+    retry_budget_total: int = Field(
+        3,
+        description="Total retry budget across all retry sources (orchestrator + batch)",
+    )
+    retry_budget_used: int = Field(
+        0,
+        description="How many retries consumed so far (from agent.retry_count)",
+    )
+    retry_budget_exhausted: bool = Field(
+        False,
+        description="Whether retry budget is fully consumed (next failure is permanent)",
+    )
     last_event_at: datetime | None = Field(
         None,
         description="Timestamp of the latest event for this agent",
