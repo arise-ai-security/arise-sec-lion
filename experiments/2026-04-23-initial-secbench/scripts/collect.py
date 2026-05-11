@@ -208,6 +208,19 @@ def _add_metric_totals(target: dict[str, Any], metrics: dict[str, Any]) -> None:
     for field in METRIC_FIELDS:
         current = target.get(field, 0)
         value = metrics.get(field, 0)
+        # Audit N-7 completion: run_duration_seconds carries a -1.0 sentinel
+        # at the per-run level when no RunCompleted was observed. Summing it
+        # blindly poisons cell totals (e.g. 3 ok runs at 60s + 1 missing
+        # produces 179.0 instead of "180.0 with one unknown"). Sticky-propagate
+        # the sentinel: once any run is unmeasured, the cell total is unknown.
+        if field == "run_duration_seconds":
+            current_f = float(current)
+            value_f = float(value)
+            if current_f == -1.0 or value_f == -1.0:
+                target[field] = -1.0
+            else:
+                target[field] = round(current_f + value_f, 6)
+            continue
         if isinstance(current, float) or isinstance(value, float):
             target[field] = round(float(current) + float(value), 6)
         else:

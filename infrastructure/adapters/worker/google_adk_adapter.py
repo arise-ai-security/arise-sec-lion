@@ -277,12 +277,18 @@ class GoogleADKAdapter(WorkerAdapterBase):
             if total_tokens > 0:
                 pricing = get_model_pricing(self.config.model)
                 cost_usd = pricing.calculate_cost(total_input_tokens, total_output_tokens)
+                # Audit N-3 completion: pass the prompt/completion breakdown
+                # alongside the total so the metrics rollup's per-bucket
+                # tokens_prompt / tokens_completion columns are non-zero for
+                # ADK cells (matching the SDK/CLI/OpenHands adapters).
                 yield sequencer.cost_recorded(
                     tool_name=self._get_tool_name(),
                     cost_usd=cost_usd,
                     duration_seconds=self._get_duration(),
                     model=self.config.model,
                     tokens=total_tokens,
+                    prompt_tokens=total_input_tokens,
+                    completion_tokens=total_output_tokens,
                 )
 
             # Emit terminal event

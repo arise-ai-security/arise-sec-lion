@@ -1018,3 +1018,86 @@ def test_run_task_in_container_with_global_config_skips_scratch_dir(
     e_flags = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
     forwarded_keys = {flag.split("=", 1)[0] for flag in e_flags}
     assert "CLAUDE_CONFIG_DIR" not in forwarded_keys
+
+
+# ---------------------------------------------------------------------------
+# Audit N-3 completion: _cost_event must sum cache + reasoning into tokens so
+# cross-adapter token comparisons stay symmetric with the SDK adapter (which
+# already does this) and OpenHands (which sums all five buckets).
+# Pre-fix the CLI-side worker preferred `payload.total_tokens` (prompt +
+# completion only) and silently dropped cache + reasoning.
+# ---------------------------------------------------------------------------
+
+
+def _make_cost_event(worker: ClaudeCodeWorker, payload: dict[str, object]):
+    """Drive ``_cost_event`` with a minimal sequencer and assert it returns."""
+    from infrastructure.adapters.worker.shared import EventSequencer
+
+    sequencer = EventSequencer(agent_id=uuid4(), stream="claude_code")
+    event = worker._cost_event(payload, sequencer, wall_time_seconds=1.0)
+    assert event is not None, "expected a WorkerCostRecorded event"
+    return event
+
+
+def test_cost_event_sums_cache_and_reasoning_into_total() -> None:
+    """All five buckets feed `tokens`; `payload.total_tokens` is ignored when
+    a breakdown is reported (it under-counts cache + reasoning)."""
+    worker = ClaudeCodeWorker()
+    payload: dict[str, object] = {
+        "type": "result",
+        "total_cost_usd": 0.01,
+        "total_tokens": 125,  # CLI under-reports; breakdown is the source of truth
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "cache_read_input_tokens": 10,
+            "cache_creation_input_tokens": 5,
+            "thinking_tokens": 7,
+        },
+    }
+
+    event = _make_cost_event(worker, payload)
+
+    assert event.prompt_tokens == 100
+    assert event.completion_tokens == 25
+    assert event.cache_read_tokens == 10
+    assert event.cache_write_tokens == 5
+    assert event.reasoning_tokens == 7
+    # 100 + 25 + 10 + 5 + 7 — NOT 125
+    assert event.tokens == 147
+
+
+def test_cost_event_falls_back_to_payload_total_when_no_breakdown() -> None:
+    """When no breakdown bucket is reported, fall back to the payload's
+    `total_tokens` so legacy CLI outputs that only carry the aggregate
+    don't lose token accounting entirely."""
+    worker = ClaudeCodeWorker()
+    payload: dict[str, object] = {
+        "type": "result",
+        "total_cost_usd": 0.005,
+        "total_tokens": 80,
+        "usage": {},
+    }
+
+    event = _make_cost_event(worker, payload)
+
+    assert event.prompt_tokens is None
+    assert event.completion_tokens is None
+    assert event.reasoning_tokens is None
+    assert event.tokens == 80
+
+
+def test_cost_event_aliases_reasoning_to_thinking() -> None:
+    """``reasoning_tokens`` is the canonical key; ``thinking_tokens`` is the
+    CLI's spelling. Either should populate the reasoning field."""
+    worker = ClaudeCodeWorker()
+    payload_with_reasoning: dict[str, object] = {
+        "type": "result",
+        "total_cost_usd": 0.001,
+        "usage": {"input_tokens": 10, "output_tokens": 5, "reasoning_tokens": 3},
+    }
+
+    event = _make_cost_event(worker, payload_with_reasoning)
+
+    assert event.reasoning_tokens == 3
+    assert event.tokens == 18

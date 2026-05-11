@@ -66,6 +66,37 @@ def test_filtered_runs_excludes_projection_failed_rows(monkeypatch) -> None:
     assert [run["run_id"] for run in result] == ["ok", "legacy-unstamped"]
 
 
+def test_add_metric_totals_sentinel_propagates_for_run_duration() -> None:
+    """Audit N-7 completion: blindly summing -1.0 sentinels poisons
+    cell-level run_duration_seconds. A missing RunCompleted on any
+    enrolled run must mark the cell-level duration as the sentinel
+    rather than corrupting an otherwise valid sum.
+    """
+    # Given: a cell-level accumulator already populated with one good run
+    cell: dict[str, Any] = {"run_duration_seconds": 60.0}
+
+    # When: a second run with -1.0 sentinel is added
+    _COLLECT_MODULE._add_metric_totals(cell, {"run_duration_seconds": -1.0})
+
+    # Then: the cell-level duration is the sentinel, not 59.0
+    assert cell["run_duration_seconds"] == -1.0
+
+
+def test_add_metric_totals_sentinel_is_sticky_across_subsequent_adds() -> None:
+    """Once a sentinel has been written into the cell total, later good
+    runs must NOT silently "recover" the cell to a partial sum — the
+    cell is still missing at least one duration measurement.
+    """
+    # Given: a sentinel-poisoned cell total
+    cell: dict[str, Any] = {"run_duration_seconds": -1.0}
+
+    # When: a good run is added
+    _COLLECT_MODULE._add_metric_totals(cell, {"run_duration_seconds": 30.0})
+
+    # Then: the cell still reports the sentinel
+    assert cell["run_duration_seconds"] == -1.0
+
+
 def test_filtered_runs_failed_row_does_not_reach_summary(monkeypatch) -> None:
     # Given: a failed-projection run alongside one ok run. Summary aggregation
     # must NOT pick up the failed row even as a zero contribution.

@@ -593,14 +593,25 @@ class ClaudeCodeWorker:
         )
         cache_read_tokens = _int_value(usage_dict.get("cache_read_input_tokens"))
         cache_write_tokens = _int_value(usage_dict.get("cache_creation_input_tokens"))
-        total_tokens = _int_value(payload.get("total_tokens"))
-        if total_tokens is None:
-            parts = (prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens)
-            total_tokens = (
-                sum(part or 0 for part in parts)
-                if any(part is not None for part in parts)
-                else None
-            )
+        reasoning_tokens = _int_value(
+            usage_dict.get("reasoning_tokens") or usage_dict.get("thinking_tokens")
+        )
+        # Audit N-3 completion: always sum from the breakdown when ANY bucket
+        # is reported. The Claude CLI's `total_tokens` is prompt+completion
+        # only and drops cache + reasoning, mirroring the same undercount the
+        # SDK adapter had pre-fix. Falling back to `payload.total_tokens`
+        # would re-introduce the asymmetry against OpenHands.
+        breakdown_parts = (
+            prompt_tokens,
+            completion_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
+        )
+        if any(part is not None for part in breakdown_parts):
+            total_tokens: int | None = sum(part or 0 for part in breakdown_parts)
+        else:
+            total_tokens = _int_value(payload.get("total_tokens"))
         cost_usd = _float_value(payload.get("total_cost_usd") or payload.get("cost_usd"))
         if cost_usd is None and total_tokens is None:
             return None
@@ -615,6 +626,7 @@ class ClaudeCodeWorker:
             completion_tokens=completion_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
             cost_usd=cost_usd or 0.0,
             duration_seconds=duration_seconds,
         )

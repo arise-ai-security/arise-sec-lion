@@ -166,8 +166,8 @@ def metrics_from_events(  # noqa: PLR0915
             # diverge — Claude-SDK historically set `tokens = prompt+completion`
             # only, while OpenHands sums all five buckets. We prefer the
             # breakdown sum whenever any breakdown field is present so the
-            # cross-cell total is symmetric. `_token_or_none` distinguishes
-            # `None` ("field not reported") from `0` ("reported as zero").
+            # cross-cell total is symmetric. The `is not None` check
+            # distinguishes "field not reported" from a real zero.
             _incr(metrics, "worker_cost_event_count")
             prompt = _int(_get(event, "prompt_tokens"))
             completion = _int(_get(event, "completion_tokens"))
