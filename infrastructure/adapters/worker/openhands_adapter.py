@@ -205,9 +205,15 @@ class OpenHandsAdapter(WorkerAdapterBase):
             for event in self._iter_conversation_events(conversation):
                 content = self._extract_event_content(event)
                 if content and content.strip():
+                    output_type = self._classify_event(event)
                     yield sequencer.thought(
                         content.strip(),
-                        self._classify_event(event),
+                        output_type,
+                        tool_name=(
+                            self._extract_tool_name(event)
+                            if output_type == "tool_use"
+                            else None
+                        ),
                     )
                 # Capture finish message during iteration
                 if finish_message is None:
@@ -676,6 +682,14 @@ class OpenHandsAdapter(WorkerAdapterBase):
         if hasattr(event, "thought") and event.thought:
             return f"Thought: {event.thought}"
         return None
+
+    @staticmethod
+    def _extract_tool_name(event: Any) -> str | None:
+        """Return the canonical action class name for a tool_use event."""
+        action = getattr(event, "action", None)
+        if action is None:
+            return None
+        return type(action).__name__ or "OpenHandsAction"
 
     @classmethod
     def _format_action_event(cls, action: Any) -> str:

@@ -596,11 +596,10 @@ class ClaudeCodeWorker:
         reasoning_tokens = _int_value(
             usage_dict.get("reasoning_tokens") or usage_dict.get("thinking_tokens")
         )
-        # Audit N-3 completion: always sum from the breakdown when ANY bucket
-        # is reported. The Claude CLI's `total_tokens` is prompt+completion
-        # only and drops cache + reasoning, mirroring the same undercount the
-        # SDK adapter had pre-fix. Falling back to `payload.total_tokens`
-        # would re-introduce the asymmetry against OpenHands.
+        # Audit N-3 completion: always sum from the breakdown. The Claude
+        # CLI's `total_tokens` is prompt+completion only and drops cache +
+        # reasoning, mirroring the same undercount the SDK adapter had
+        # pre-fix.
         breakdown_parts = (
             prompt_tokens,
             completion_tokens,
@@ -608,10 +607,11 @@ class ClaudeCodeWorker:
             cache_write_tokens,
             reasoning_tokens,
         )
-        if any(part is not None for part in breakdown_parts):
-            total_tokens: int | None = sum(part or 0 for part in breakdown_parts)
-        else:
-            total_tokens = _int_value(payload.get("total_tokens"))
+        total_tokens: int | None = (
+            sum(part or 0 for part in breakdown_parts)
+            if any(part is not None for part in breakdown_parts)
+            else None
+        )
         cost_usd = _float_value(payload.get("total_cost_usd") or payload.get("cost_usd"))
         if cost_usd is None and total_tokens is None:
             return None

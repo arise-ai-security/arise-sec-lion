@@ -1067,10 +1067,12 @@ def test_cost_event_sums_cache_and_reasoning_into_total() -> None:
     assert event.tokens == 147
 
 
-def test_cost_event_falls_back_to_payload_total_when_no_breakdown() -> None:
-    """When no breakdown bucket is reported, fall back to the payload's
-    `total_tokens` so legacy CLI outputs that only carry the aggregate
-    don't lose token accounting entirely."""
+def test_cost_event_returns_none_total_when_no_breakdown_reported() -> None:
+    """When no breakdown bucket is reported, `tokens` is None rather than
+    silently falling back to the CLI's `total_tokens` aggregate (which is
+    prompt+completion only and would re-introduce the audit N-3
+    undercount asymmetry).
+    """
     worker = ClaudeCodeWorker()
     payload: dict[str, object] = {
         "type": "result",
@@ -1084,7 +1086,7 @@ def test_cost_event_falls_back_to_payload_total_when_no_breakdown() -> None:
     assert event.prompt_tokens is None
     assert event.completion_tokens is None
     assert event.reasoning_tokens is None
-    assert event.tokens == 80
+    assert event.tokens is None
 
 
 def test_cost_event_aliases_reasoning_to_thinking() -> None:

@@ -14,13 +14,31 @@ from experiments.shared.scripts.run_metrics import (
 
 def test_metrics_from_raw_events_counts_tools_and_thinking() -> None:
     events = [
-        {"prompt": "do work", "prompt_type": "worker_execution", "target": "claude_code"},
-        {"content": "Tool: Bash\nInput: {}", "output_type": "tool_use"},
-        {"content": "Tool result: ok", "output_type": "tool_result"},
-        {"content": "visible reasoning", "output_type": "thinking"},
         {
+            "event_type": "PromptSent",
+            "prompt": "do work",
+            "prompt_type": "worker_execution",
+            "target": "claude_code",
+        },
+        {
+            "event_type": "ThoughtCaptured",
+            "content": "ls -la",
+            "output_type": "tool_use",
+            "tool_name": "Bash",
+        },
+        {
+            "event_type": "ThoughtCaptured",
+            "content": "Tool result: ok",
+            "output_type": "tool_result",
+        },
+        {
+            "event_type": "ThoughtCaptured",
+            "content": "visible reasoning",
+            "output_type": "thinking",
+        },
+        {
+            "event_type": "WorkerCostRecorded",
             "tool_name": "claude_code",
-            "tokens": 12,
             "prompt_tokens": 5,
             "completion_tokens": 6,
             "reasoning_tokens": 1,
@@ -28,6 +46,7 @@ def test_metrics_from_raw_events_counts_tools_and_thinking() -> None:
             "duration_seconds": 2.5,
         },
         {
+            "event_type": "RunCompleted",
             "status": "completed",
             "duration_seconds": 10.1254,
             "total_agents": 1,
@@ -44,10 +63,7 @@ def test_metrics_from_raw_events_counts_tools_and_thinking() -> None:
     assert metrics["tool_result_count"] == 1
     assert metrics["thinking_event_count"] == 1
     assert metrics["thinking_chars"] == len("visible reasoning")
-    # Audit N-3: breakdown is present (prompt=5, completion=6, reasoning=1)
-    # so total = 5+6+0+0+1 = 12 — the prior `tokens=12` short-circuit happens
-    # to match here because the legacy adapter set tokens=prompt+completion+
-    # reasoning. The post-fix path computes it from the breakdown directly.
+    # Audit N-3: total comes from the breakdown sum (5 + 6 + 0 + 0 + 1).
     assert metrics["tokens_total"] == 12
     assert metrics["worker_cost_usd"] == pytest.approx(0.123457)
     assert metrics["total_cost_usd"] == pytest.approx(0.123457)
@@ -58,13 +74,10 @@ def test_metrics_from_raw_events_counts_tools_and_thinking() -> None:
 
 def test_worker_cost_recorded_includes_cache_tokens() -> None:
     # Given: a WorkerCostRecorded-shaped event with all five token buckets.
-    # The audit's N-3 root cause is that the pre-fix path used either
-    # `tokens` verbatim (Claude SDK undercounts) or `prompt+completion+
-    # reasoning` (still missing cache_read/cache_write).
     events = [
         {
+            "event_type": "WorkerCostRecorded",
             "tool_name": "claude_code",
-            "tokens": 10 + 5,  # adapter-reported, missing cache+reasoning
             "prompt_tokens": 10,
             "completion_tokens": 5,
             "cache_read_tokens": 1000,
@@ -78,36 +91,22 @@ def test_worker_cost_recorded_includes_cache_tokens() -> None:
     # When
     metrics = metrics_from_events(events)
 
-    # Then: total uses the breakdown sum, ignoring the under-counted `tokens`
+    # Then: total is the breakdown sum (audit N-3)
     assert metrics["tokens_total"] == 10 + 5 + 1000 + 200 + 3
     # And: cache buckets surface as their own columns for cross-adapter audit
     assert metrics["tokens_cache_read"] == 1000
     assert metrics["tokens_cache_write"] == 200
 
 
-def test_worker_cost_recorded_falls_back_to_tokens_when_no_breakdown() -> None:
-    # Given: a worker event with only the aggregate `tokens` (no breakdown
-    # fields reported at all — older adapters, PTY tools).
-    events = [
-        {
-            "tool_name": "pty_only",
-            "tokens": 42,
-            "cost_usd": 0.0,
-            "duration_seconds": 1.0,
-        }
-    ]
-
-    # When
-    metrics = metrics_from_events(events)
-
-    # Then: fallback path uses `tokens` directly
-    assert metrics["tokens_total"] == 42
-
-
 def test_run_duration_seconds_missing_run_completed_returns_sentinel() -> None:
     # Given: events without a RunCompleted
     events = [
-        {"content": "Tool: ls", "output_type": "tool_use"},
+        {
+            "event_type": "ThoughtCaptured",
+            "content": "ls",
+            "output_type": "tool_use",
+            "tool_name": "Bash",
+        },
     ]
 
     # When
@@ -122,8 +121,9 @@ def test_float_coerces_nan_to_zero() -> None:
     # Given: an event whose cost_usd is NaN
     events = [
         {
+            "event_type": "WorkerCostRecorded",
             "tool_name": "claude_code",
-            "tokens": 1,
+            "prompt_tokens": 1,
             "cost_usd": float("nan"),
             "duration_seconds": 1.0,
         }
@@ -143,8 +143,9 @@ def test_float_coerces_inf_to_zero() -> None:
     # Given: an event whose cost_usd is +Infinity
     events = [
         {
+            "event_type": "WorkerCostRecorded",
             "tool_name": "claude_code",
-            "tokens": 1,
+            "prompt_tokens": 1,
             "cost_usd": float("inf"),
             "duration_seconds": 1.0,
         }
@@ -159,14 +160,12 @@ def test_float_coerces_inf_to_zero() -> None:
     assert metrics["worker_cost_usd"] == 0.0
 
 
-def test_event_type_prefers_explicit_discriminator() -> None:
+def test_event_type_uses_explicit_discriminator_for_dict_input() -> None:
     # Given: a dict event with an explicit ``event_type`` discriminator
-    # that disagrees with the dict-pattern inference. Pre-N-5 the
-    # explicit field was consulted ONLY in the unmatched fallback string;
-    # post-fix it short-circuits the inference for projected JSONL.
+    # (the post-N-5 on-disk format).
     events = [
         {
-            "event_type": "AgentCreated",  # not in inferred_types tuple
+            "event_type": "AgentCreated",
             "role": "BOSS",
         },
     ]
@@ -178,14 +177,12 @@ def test_event_type_prefers_explicit_discriminator() -> None:
     assert metrics["event_count"] == 1
 
 
-def test_tool_calls_by_type_prefers_structured_tool_name() -> None:
-    # Given: a tool_use event with a structured `tool_name` field whose
-    # content prefix would be mislabeled by the legacy parser (Claude SDK
-    # emits "Running: ls" for the Bash tool — pre-N-6 metrics got
-    # `tool_calls_by_type = {"Running": 1}`).
+def test_tool_calls_by_type_uses_structured_tool_name() -> None:
+    # Given: a tool_use event with a structured `tool_name` field.
     events = [
         {
-            "content": "Running: ls -la",
+            "event_type": "ThoughtCaptured",
+            "content": "ls -la",
             "output_type": "tool_use",
             "tool_name": "Bash",
         },
@@ -194,15 +191,17 @@ def test_tool_calls_by_type_prefers_structured_tool_name() -> None:
     # When
     metrics = metrics_from_events(events)
 
-    # Then: the canonical name wins, not the formatter prefix
+    # Then: the canonical name is recorded.
     assert metrics["tool_calls_by_type"] == {"Bash": 1}
 
 
-def test_tool_calls_by_type_falls_back_to_legacy_parser() -> None:
-    # Given: a legacy event with no structured tool_name and the
-    # OpenHands-style "Tool: <name>" content prefix
+def test_tool_calls_by_type_unlabeled_tool_use_records_unknown() -> None:
+    # Given: a tool_use event with no structured tool_name field. Adapters
+    # are expected to emit `tool_name=` post-audit; missing values bucket
+    # as "unknown" so analysts can spot the gap.
     events = [
         {
+            "event_type": "ThoughtCaptured",
             "content": "Tool: Read\nargs: {}",
             "output_type": "tool_use",
         },
@@ -211,8 +210,8 @@ def test_tool_calls_by_type_falls_back_to_legacy_parser() -> None:
     # When
     metrics = metrics_from_events(events)
 
-    # Then: legacy parser correctly extracts the name
-    assert metrics["tool_calls_by_type"] == {"Read": 1}
+    # Then: unlabeled tool calls bucket as "unknown"
+    assert metrics["tool_calls_by_type"] == {"unknown": 1}
 
 
 def test_metrics_from_events_jsonl_rejects_malformed_lines(tmp_path) -> None:
@@ -224,9 +223,18 @@ def test_metrics_from_events_jsonl_rejects_malformed_lines(tmp_path) -> None:
     path.write_text(
         "\n".join(
             [
-                json.dumps({"content": "Tool: Read", "output_type": "tool_use"}),
+                json.dumps({
+                    "event_type": "ThoughtCaptured",
+                    "content": "ls",
+                    "output_type": "tool_use",
+                    "tool_name": "Bash",
+                }),
                 "not-json",
-                json.dumps({"content": "Tool result: contents", "output_type": "tool_result"}),
+                json.dumps({
+                    "event_type": "ThoughtCaptured",
+                    "content": "ok",
+                    "output_type": "tool_result",
+                }),
             ]
         ),
         encoding="utf-8",

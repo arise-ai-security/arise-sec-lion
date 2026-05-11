@@ -127,15 +127,12 @@ def metrics_from_events(  # noqa: PLR0915
             _incr(metrics, "worker_output_event_count")
             if output_type == "tool_use":
                 _incr(metrics, "tool_call_count")
-                # Audit N-6: prefer the structured `tool_name` field when
-                # present (Claude SDK / Google ADK emit it post-fix); fall
-                # back to parsing the human-formatted content prefix for
-                # legacy events (e.g. OpenHands still emits `Tool: <name>`).
                 structured = _get(event, "tool_name")
-                if isinstance(structured, str) and structured.strip():
-                    tool_name = structured.strip()
-                else:
-                    tool_name = _tool_name_from_thought(content)
+                tool_name = (
+                    structured.strip()
+                    if isinstance(structured, str) and structured.strip()
+                    else "unknown"
+                )
                 tool_calls_by_type[tool_name] = tool_calls_by_type.get(tool_name, 0) + 1
             elif output_type == "tool_result":
                 _incr(metrics, "tool_result_count")
@@ -162,32 +159,16 @@ def metrics_from_events(  # noqa: PLR0915
             _add_float(metrics, "llm_cost_usd", cost)
 
         elif event_type == "WorkerCostRecorded":
-            # Audit N-3: include cache buckets in the total. Worker adapters
-            # diverge — Claude-SDK historically set `tokens = prompt+completion`
-            # only, while OpenHands sums all five buckets. We prefer the
-            # breakdown sum whenever any breakdown field is present so the
-            # cross-cell total is symmetric. The `is not None` check
-            # distinguishes "field not reported" from a real zero.
+            # Audit N-3: sum breakdown buckets so Claude-SDK and OpenHands
+            # cells compare symmetrically (Claude-SDK historically set
+            # `tokens = prompt+completion` only).
             _incr(metrics, "worker_cost_event_count")
             prompt = _int(_get(event, "prompt_tokens"))
             completion = _int(_get(event, "completion_tokens"))
             cache_read = _int(_get(event, "cache_read_tokens"))
             cache_write = _int(_get(event, "cache_write_tokens"))
             reasoning = _int(_get(event, "reasoning_tokens"))
-            has_breakdown = any(
-                _get(event, field) is not None
-                for field in (
-                    "prompt_tokens",
-                    "completion_tokens",
-                    "cache_read_tokens",
-                    "cache_write_tokens",
-                    "reasoning_tokens",
-                )
-            )
-            if has_breakdown:
-                total = prompt + completion + cache_read + cache_write + reasoning
-            else:
-                total = _int(_get(event, "tokens"))
+            total = prompt + completion + cache_read + cache_write + reasoning
             cost = _float(_get(event, "cost_usd"))
             _incr(metrics, "tokens_prompt", prompt)
             _incr(metrics, "tokens_completion", completion)
@@ -241,29 +222,14 @@ def _add_float(metrics: dict[str, MetricValue], key: str, amount: float) -> None
 
 
 def _event_type(event: DomainEvent | dict[str, Any]) -> str:
-    # Audit N-5: prefer the explicit ``event_type`` discriminator stamped
-    # by the projector. The dict-pattern inference is kept as a fallback
-    # so already-projected events.jsonl files (pre-fix) keep working —
-    # they don't carry the discriminator and there's no value in
-    # re-projecting historical artifacts.
+    """Return the event class name, preferring the typed instance over the
+    on-disk ``event_type`` discriminator (audit N-5).
+    """
     if isinstance(event, DomainEvent):
         return type(event).__name__
-    explicit = event.get("event_type") or event.get("type")
+    explicit = event.get("event_type")
     if isinstance(explicit, str) and explicit:
         return explicit
-    inferred_types = (
-        ("ThoughtCaptured", ("output_type", "content")),
-        ("PromptSent", ("prompt", "prompt_type")),
-        ("WorkerCostRecorded", ("tool_name", "duration_seconds")),
-        ("TokensConsumed", ("operation", "total_tokens")),
-        ("ProbeCompleted", ("probe_type", "result_summary")),
-        ("RunCompleted", ("total_agents", "duration_seconds")),
-    )
-    for event_type, required_keys in inferred_types:
-        if all(key in event for key in required_keys):
-            return event_type
-    if "probe_type" in event:
-        return "ProbeStarted"
     return "Unknown"
 
 
@@ -302,15 +268,6 @@ def _float(value: Any) -> float:
         logger.warning("dropped non-finite float input: %r", value)
         return 0.0
     return result
-
-
-def _tool_name_from_thought(content: str) -> str:
-    first = content.splitlines()[0] if content else ""
-    if first.startswith("Tool: "):
-        return first.removeprefix("Tool: ").strip() or "unknown"
-    if ":" in first:
-        return first.split(":", 1)[0].strip() or "unknown"
-    return first.strip() or "unknown"
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
