@@ -33,6 +33,7 @@ from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
     AgentExecutionStarted,
+    ChildFailed,
     ChildSpawned,
     DomainEvent,
     RetryScheduled,
@@ -311,6 +312,11 @@ class AgentExecutionService:
         run_status_override: str | None = None
 
         last_no_progress_check = time.monotonic()
+
+        # Startup recovery: notify parents of orphaned failed children.
+        # After a crash, some agents may be stuck in WorkFailed without
+        # RetryScheduled or parent notification — blocking the entire DAG.
+        await self._recover_orphaned_failures(root_agent_id)
 
         while True:
             reaped = self._reap_completed_tasks(tasks, in_progress, task_started_at)
@@ -998,6 +1004,73 @@ class AgentExecutionService:
                 "Parent failure notify failed for child %s (source=%s)",
                 child.agent_id,
                 source,
+            )
+
+    async def _recover_orphaned_failures(self, root_agent_id: UUID) -> None:
+        """Notify parents of failed children left orphaned by a prior crash.
+
+        After a process crash, some agents may be in FAILED state without
+        a subsequent RetryScheduled event and without parent notification.
+        These orphans block downstream DAG dependencies indefinitely because
+        the parent never learns the child is terminal.
+
+        Called once at the start of each system loop to recover from prior
+        crashes without requiring manual intervention.
+        """
+        try:
+            all_events = await self._repository.get_hierarchy_events_grouped(root_agent_id)
+        except Exception:
+            logger.warning(
+                "Orphan recovery scan failed for root %s", root_agent_id, exc_info=True
+            )
+            return
+
+        recovered = 0
+        for agent_id, events in all_events.items():
+            if not events:
+                continue
+            # Check if the last event is WorkFailed (no retry after it)
+            last_event = events[-1]
+            if not isinstance(last_event, WorkFailed):
+                continue
+            # Verify no RetryScheduled follows the WorkFailed
+            has_retry_after = any(
+                isinstance(e, RetryScheduled) and e.sequence_number > last_event.sequence_number
+                for e in events
+            )
+            if has_retry_after:
+                continue
+            # This agent is terminally failed. Check if parent was notified.
+            agent = await self._repository.load_if_exists(agent_id)
+            if agent is None or not agent.is_terminal():
+                continue
+            if agent.parent_id is None:
+                continue
+            # Check parent for ChildFailed referencing this agent
+            parent_events = all_events.get(agent.parent_id, [])
+            parent_already_notified = any(
+                isinstance(e, ChildFailed) and getattr(e, 'child_id', None) == agent_id
+                for e in parent_events
+            )
+            if parent_already_notified:
+                continue
+            # Orphan found — notify parent
+            logger.warning(
+                "Orphan recovery: agent %s is terminally failed but parent %s was not notified — sending ChildFailed",
+                agent_id, agent.parent_id,
+            )
+            try:
+                await self._notify_parent_failed_with_timeout(
+                    agent, source="orphan_recovery",
+                )
+                recovered += 1
+            except Exception:
+                logger.exception(
+                    "Orphan recovery: failed to notify parent for agent %s", agent_id,
+                )
+        if recovered > 0:
+            logger.info(
+                "Orphan recovery: notified parents for %d orphaned failed agent(s)", recovered,
             )
 
     async def _mark_agent_silently_failed(
