@@ -60,7 +60,7 @@ orchestration:
   poll_interval: 0.5  # seconds between orchestration loop iterations
   # Aggressive watchdog defaults to reduce long “looks stuck” windows.
   step_timeout_seconds: 420
-  worker_silence_timeout_seconds: 300
+  worker_silence_timeout_seconds: 600  # p99 max gap for successful workers; 300s killed 2.9% of completable workers
   # More headroom for large Alibaba-hosted models to emit first token.
   no_progress_grace_seconds: 240
   no_progress_initial_grace_seconds: 300

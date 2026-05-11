@@ -776,13 +776,16 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
                     boss_id, stale_seconds=CHILD_RESCUE_SEC, limit=5,
                 )
                 candidate = next(
-                    ((aid, s, ev) for (aid, s, ev) in candidates if aid not in rescued_children),
+                    (
+                        (aid, s, ev) for (aid, s, ev) in candidates
+                        if aid not in rescued_children and aid not in abandoned_children
+                    ),
                     None,
                 )
                 if candidate is not None:
                     aid, child_stale, child_last_event = candidate
                     rescue_attempts[aid] = rescue_attempts.get(aid, 0) + 1
-                    if rescue_attempts[aid] > CHILD_RESCUE_MAX_ATTEMPTS and aid not in abandoned_children:
+                    if rescue_attempts[aid] > CHILD_RESCUE_MAX_ATTEMPTS:
                         abandoned = await _abandon_stale_child(
                             instance_id=instance_id,
                             agent_id=aid,
@@ -791,9 +794,9 @@ async def run_instance(instance_id: str, attempt: int) -> RunResult:
                         )
                         if abandoned:
                             abandoned_children.add(aid)
-                            last_rescue_at_elapsed = elapsed
-                            await asyncio.sleep(CHILD_RESCUE_GRACE_SEC)
-                            continue
+                        last_rescue_at_elapsed = elapsed
+                        await asyncio.sleep(CHILD_RESCUE_GRACE_SEC)
+                        continue
                     rescued = await _rescue_stale_child_retry(
                         instance_id=instance_id,
                         agent_id=aid,

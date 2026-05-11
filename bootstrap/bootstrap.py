@@ -396,8 +396,16 @@ async def _trace_prompts(args: argparse.Namespace) -> None:
 
 
 async def _retry_stale_child(args: argparse.Namespace) -> None:
-    """Domain-safe child rescue: fail current attempt then schedule retry."""
-    from core.application.services import AgentRepository
+    """Domain-safe child rescue: fail current attempt then schedule retry.
+
+    Respects total retry budget: if the agent has already been retried
+    MAX_TOTAL_RETRIES times (across orchestrator + batch rescues), abandons
+    instead of retrying to prevent perpetual retry-limbo that blocks
+    downstream DAG dependencies.
+    """
+    from core.application.services import AgentRepository, ParentNotificationService
+
+    MAX_TOTAL_RETRIES = 3  # combined budget across all retry sources
 
     settings = _load_settings(args.config)
     async with _event_store(settings) as store:
@@ -412,10 +420,26 @@ async def _retry_stale_child(args: argparse.Namespace) -> None:
 
         current_version = agent.version
         reason = args.reason or "Batch pre-kill rescue: stale analyzing child"
+
+        if agent.retry_count >= MAX_TOTAL_RETRIES:
+            agent.fail_with_reason(
+                f"Retry budget exhausted ({agent.retry_count}/{MAX_TOTAL_RETRIES}) — "
+                f"abandoning to unblock DAG. Last reason: {reason}"
+            )
+            await repository.persist_events(agent, current_version)
+            parent_notifier = ParentNotificationService(repository=repository)
+            await parent_notifier.notify_if_failed(agent)
+            print(
+                f"Agent {args.agent_id} retry budget exhausted "
+                f"({agent.retry_count}/{MAX_TOTAL_RETRIES}): "
+                f"failed permanently and parent notified."
+            )
+            return
+
         agent.fail_with_reason(reason)
         agent.schedule_retry(reason=reason, escalated_model=None)
         await repository.persist_events(agent, current_version)
-        print(f"Rescued agent {args.agent_id}: fail+retry scheduled.")
+        print(f"Rescued agent {args.agent_id}: fail+retry scheduled ({agent.retry_count}/{MAX_TOTAL_RETRIES}).")
 
 
 async def _abandon_stale_child(args: argparse.Namespace) -> None:
