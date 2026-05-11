@@ -244,6 +244,12 @@ def _filtered_runs(
     exclude_legacy_migration: bool,
 ) -> list[dict[str, Any]]:
     runs = load_runs(study_id=STUDY_ID, cells=[cell])
+    # Audit N-2 completion: mirror collect.build_enrollment_lock's exclusion
+    # of projection_status="failed" rows. Pre-fix the lockfile excluded the
+    # failed row but summary.csv / run_metrics.csv still saw a clean zero
+    # (events.jsonl absent → empty_metrics()), so the two artifacts disagreed
+    # on cohort size. Silent zero is worse than dropped row.
+    runs = [run for run in runs if run.get("projection_status") != "failed"]
     if exclude_legacy_migration:
         runs = [run for run in runs if run.get("legacy_migration") is not True]
     if not task_scope:

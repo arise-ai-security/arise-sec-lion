@@ -114,19 +114,29 @@ def _atomic_write_events_jsonl(output_path: Path, events: list[DomainEvent]) -> 
             handle.flush()
             os.fsync(handle.fileno())
         tmp_path.replace(output_path)
-        # Best-effort directory fsync so the rename is durable across a kernel
-        # panic. Skipped on platforms (e.g. Windows) that reject O_DIRECTORY.
-        try:
-            dir_fd = os.open(str(output_path.parent), os.O_DIRECTORY)
-        except (OSError, AttributeError):
-            return
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
+    # Best-effort directory fsync so the rename is durable across a kernel
+    # panic. Outside the outer try/except because the replace already
+    # succeeded: the file IS on disk, so a fsync failure must not stamp
+    # projection_status=failed on a healthy run.
+    try:
+        dir_fd = os.open(str(output_path.parent), os.O_DIRECTORY)
+    except (OSError, AttributeError):
+        return
+    try:
+        try:
+            os.fsync(dir_fd)
+        except OSError as exc:
+            logger.warning(
+                "directory fsync failed for %s: %s; file written but rename "
+                "may not survive a kernel panic",
+                output_path.parent,
+                exc,
+            )
+    finally:
+        os.close(dir_fd)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
