@@ -142,21 +142,64 @@ class OpenHandsAdapter(WorkerAdapterBase):
             max_workers=1, thread_name_prefix="openhands"
         )
         try:
+            # Stream events live via on_event callback → thread-safe queue.
+            # Without this, ALL events are batch-flushed after run() returns,
+            # causing watchdogs to see "zero thoughts" for the entire 5-25 min
+            # execution and prematurely killing the worker.
+            import queue as _queue
+            live_event_queue: _queue.Queue = _queue.Queue()
+            _SENTINEL = object()
+
+            def _on_live_event(event: Any) -> None:
+                live_event_queue.put(event)
+
+            # Wire the callback on the conversation state (SDK fires it from
+            # inside session_update as ACP tool-call updates arrive).
+            state = getattr(conversation, "state", None)
+            if state is not None and hasattr(state, "on_event"):
+                state.on_event = _on_live_event
+
             # Keep all potentially blocking SDK calls off the asyncio event loop.
-            # If send_message/run blocks in SDK internals, the system loop and
-            # watchdog timers must still keep running.
             def _send_and_run() -> None:
-                conversation.send_message(task_description)
-                conversation.run()
+                try:
+                    conversation.send_message(task_description)
+                    conversation.run()
+                finally:
+                    live_event_queue.put(_SENTINEL)
 
             future = executor.submit(_send_and_run)
 
-            try:
-                await asyncio.wait_for(
-                    asyncio.wrap_future(future),
-                    timeout=self.timeout_seconds,
-                )
-            except TimeoutError:
+            # Drain the live event queue while the thread is running.
+            # Yields ThoughtCaptured events incrementally so watchdogs see
+            # progress and don't kill the worker.
+            finish_message: str | None = None
+            timed_out = False
+            while True:
+                try:
+                    event = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: live_event_queue.get(timeout=5.0),
+                    )
+                except Exception:
+                    # Queue.get timeout — check if thread finished
+                    if future.done():
+                        break
+                    # Check overall timeout
+                    if self._get_duration() > self.timeout_seconds:
+                        timed_out = True
+                        break
+                    continue
+                if event is _SENTINEL:
+                    break
+                content = self._extract_event_content(event)
+                if content and content.strip():
+                    yield sequencer.thought(
+                        content.strip(),
+                        self._classify_event(event),
+                    )
+                if finish_message is None:
+                    finish_message = self._try_extract_finish(event)
+
+            if timed_out:
                 self._request_shutdown(conversation)
                 await self._await_thread_exit(future)
                 yield sequencer.failed(
@@ -164,7 +207,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 )
                 return
 
-            finish_message: str | None = None
+            # Drain any remaining events not captured by the live queue
+            # (the final batch after run() returns).
             for event in self._iter_conversation_events(conversation):
                 content = self._extract_event_content(event)
                 if content and content.strip():
@@ -172,7 +216,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
                         content.strip(),
                         self._classify_event(event),
                     )
-                # Capture finish message during iteration
                 if finish_message is None:
                     finish_message = self._try_extract_finish(event)
 

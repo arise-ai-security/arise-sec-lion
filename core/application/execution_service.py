@@ -729,6 +729,18 @@ class AgentExecutionService:
                 agent = await self._repository.load_if_exists(aid)
                 if agent is None or agent.is_terminal():
                     continue
+                # Skip no-progress check for verification retries: the agent
+                # already proved it can produce output (WorkCompleted on prior
+                # attempt). The retry just needs more time — OpenHands batches
+                # events until conversation.run() returns, so the watchdog
+                # sees "zero thoughts" even though the worker is active.
+                if agent.verification_feedback and agent.retry_count > 0:
+                    logger.info(
+                        "Skipping no-progress check for agent %s: "
+                        "verification retry (attempt %d, has prior feedback)",
+                        aid, agent.retry_count,
+                    )
+                    continue
                 no_progress_retry_count = await self._get_no_progress_retry_count(aid)
                 exec_started_at = await self._get_current_attempt_first_execution_started_at(aid)
                 effective_grace = self._config.no_progress_grace_seconds

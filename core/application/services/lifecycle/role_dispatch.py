@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from core.domain.aggregates.agent_session import AgentRole, AgentSession
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -149,17 +149,24 @@ class WorkerHandler(LifecycleRoleHandler):
                         f"{self._context.worker_execute_timeout_seconds:.0f}s"
                     ) from exc
                 finally:
-                    # Fire-and-forget: cleanup must not block CancelledError.
-                    # If the step was cancelled (timeout), blocking here prevents
-                    # asyncio.wait_for from raising TimeoutError, which prevents
-                    # _handle_step_timeout from marking the agent failed.
-                    asyncio.create_task(
-                        self._safe_cleanup_worker_context(
-                            root_id=root_id,
-                            agent=agent,
-                            domain_context=domain_context,
-                        )
+                    # Skip cleanup if the worker completed and may get a
+                    # verification retry — keeps the container alive so the
+                    # retry reuses it (with all build artifacts, deliverables,
+                    # and filesystem state from the prior attempt).
+                    # The plugin's prepare_worker_execution checks
+                    # is_session_alive and reuses if alive.
+                    may_retry = (
+                        agent.status == AgentStatus.COMPLETED
+                        or (agent.status == AgentStatus.FAILED and agent.verification_feedback)
                     )
+                    if not may_retry:
+                        asyncio.create_task(
+                            self._safe_cleanup_worker_context(
+                                root_id=root_id,
+                                agent=agent,
+                                domain_context=domain_context,
+                            )
+                        )
             finally:
                 self._context.worker_semaphore_holders.discard(agent.agent_id)
 
