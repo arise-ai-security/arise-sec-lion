@@ -105,10 +105,12 @@ def _atomic_write_events_jsonl(output_path: Path, events: list[DomainEvent]) -> 
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             for event in events:
-                payload = {
-                    "event_type": type(event).__name__,
-                    **event.model_dump(mode="json"),
-                }
+                # Build the payload then overwrite the discriminator last so a
+                # future DomainEvent subclass that happens to declare its own
+                # ``event_type`` field cannot shadow the class name we need
+                # for downstream dispatch.
+                payload = event.model_dump(mode="json")
+                payload["event_type"] = type(event).__name__
                 handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True))
                 handle.write("\n")
             handle.flush()
