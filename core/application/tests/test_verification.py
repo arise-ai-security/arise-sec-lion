@@ -198,20 +198,9 @@ class TestVerificationJudge:
         assert agent.status == AgentStatus.FAILED
 
     @pytest.mark.asyncio
-    async def test_judge_backward_compat_passed_true(self) -> None:
-        """Old-style {"passed": true} response maps to score 100."""
-        llm = FakeLLM(judge_response={"passed": True, "feedback": "looks good"})
-        orchestrator = _make_orchestrator(llm=llm)
-        agent = _make_worker_agent(success_criteria="Output must be valid")
-
-        await orchestrator.execute_task(agent)
-
-        assert agent.status == AgentStatus.COMPLETED
-
-    @pytest.mark.asyncio
     async def test_no_criteria_skips_judge(self) -> None:
         """Without success_criteria, judge stage is skipped entirely."""
-        llm = FakeLLM(judge_response={"passed": False, "feedback": "fail"})
+        llm = FakeLLM(judge_response={"score": 0, "feedback": "fail"})
         orchestrator = _make_orchestrator(llm=llm)
         agent = _make_worker_agent(success_criteria="")
 
@@ -236,7 +225,7 @@ class TestVerificationJudge:
 
     @pytest.mark.asyncio
     async def test_judge_prompt_strips_ansi_sequences(self) -> None:
-        llm = FakeLLM(judge_response={"passed": True, "feedback": "clean output"})
+        llm = FakeLLM(judge_response={"score": 100, "feedback": "clean output"})
         worker = FakeWorkerTool(result="\x1b[31mTask completed successfully\x1b[0m\nnext line")
         orchestrator = _make_orchestrator(llm=llm, worker=worker)
         agent = _make_worker_agent(success_criteria="Must report task completion")

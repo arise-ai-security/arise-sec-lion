@@ -333,9 +333,6 @@ class VerificationPipeline:
                 data = self._parse_judge_payload(repaired)
 
             score = int(data.get("score", 0))
-            # Backward compat: if old-style "passed" key present but no "score"
-            if "passed" in data and "score" not in data:
-                score = 100 if data["passed"] else 0
             feedback = data.get("feedback", "")
             passed = score >= self._JUDGE_PASS_THRESHOLD
             return passed, feedback, min(100, max(0, score))
@@ -345,23 +342,12 @@ class VerificationPipeline:
                 e, raw,
             )
             feedback_match = re.search(r'"feedback"\s*:\s*"([^"]*)"', raw)
-            # Try score-based extraction first
             score_match = re.search(r'"score"\s*:\s*(\d+)', raw)
             if score_match:
                 score = min(100, max(0, int(score_match.group(1))))
                 feedback = feedback_match.group(1) if feedback_match else ""
                 passed = score >= self._JUDGE_PASS_THRESHOLD
                 fallback_msg = f"Judge score {score} (extracted)"
-                return passed, feedback or fallback_msg, score
-            # Fall back to old passed/feedback extraction
-            passed_match = re.search(
-                r'"passed"\s*:\s*(true|false)', raw, re.IGNORECASE,
-            )
-            if passed_match:
-                passed = passed_match.group(1).lower() == "true"
-                score = 100 if passed else 0
-                feedback = feedback_match.group(1) if feedback_match else ""
-                fallback_msg = "Judge passed (extracted)" if passed else "Judge failed (extracted)"
                 return passed, feedback or fallback_msg, score
             logger.warning(
                 "Regex fallback also failed, failing verification. Raw length=%d",

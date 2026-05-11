@@ -118,32 +118,16 @@ def build_tool_policy(*, settings: Settings) -> ToolPolicy:
     """Extract allowed/disallowed tool names from settings.
 
     Reads the global ``settings.worker.allowed_tools`` / ``disallowed_tools``
-    policy first so experiments apply the same allow/block list to every
-    backend. The legacy Claude-Code-specific slot is still honored as a
-    fallback for older overlays.
-
+    policy so experiments apply the same allow/block list to every backend.
     ``allowed_bash_commands`` is derived from ``settings.security.tools``
     when security is enabled, else empty.
     """
-    allowed = tuple(settings.worker.allowed_tools)
-    disallowed = tuple(settings.worker.disallowed_tools)
-
-    # Back-compat for pre-global-policy overlays that only populated the
-    # Claude-Code-specific params block.
-    if settings.worker.tool == "claude_code":
-        params = settings.worker.tool_params.claude_code
-        if params is not None:
-            if allowed == ("*",) and params.allowed_tools != ["*"]:
-                allowed = tuple(params.allowed_tools)
-            if not disallowed and params.disallowed_tools:
-                disallowed = tuple(params.disallowed_tools)
-
-    allowed_bash = tuple(settings.security.tools) if settings.security.enabled else ()
-
     return ToolPolicy(
-        allowed=allowed,
-        disallowed=disallowed,
-        allowed_bash_commands=allowed_bash,
+        allowed=tuple(settings.worker.allowed_tools),
+        disallowed=tuple(settings.worker.disallowed_tools),
+        allowed_bash_commands=(
+            tuple(settings.security.tools) if settings.security.enabled else ()
+        ),
     )
 
 
