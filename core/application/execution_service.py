@@ -73,6 +73,7 @@ class ServiceConfig:
     worker_prepare_timeout_seconds: float = 120.0  # Hard cap for domain-plugin worker context setup
     worker_execute_timeout_seconds: float = 600.0  # Hard cap for orchestrator.execute_task (worker role)
     pending_assessment_timeout_seconds: float = 300.0  # Pending-role assessment watchdog
+    parent_notify_timeout_seconds: float = 20.0  # Timeout guard for parent failure propagation
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ class AgentExecutionService:
     _STEP_TIMEOUT_REASON_PREFIX = "Step timed out after"
     _SILENT_WORKER_REASON_PREFIX = "Worker silent for >"
     _PENDING_ASSESS_TIMEOUT_REASON_PREFIX = "Pending assessment timed out after"
+    _NO_PROGRESS_CLEANUP_TIMEOUT_SECONDS = 20.0
 
     def __init__(
             self,
@@ -122,6 +124,9 @@ class AgentExecutionService:
         # Configuration
         self._config = config
         self._system_limits = system_limits
+        self._parent_notify_timeout_seconds = max(
+            1.0, float(getattr(config, "parent_notify_timeout_seconds", 20.0)),
+        )
 
         # Injected collaborators
         self._repository = dependencies.repository
@@ -790,7 +795,10 @@ class AgentExecutionService:
                         self._no_progress_max_retries,
                     )
                 else:
-                    await self._parent_notifier.notify_if_failed(agent)
+                    await self._notify_parent_failed_with_timeout(
+                        agent,
+                        source="no_progress_exhausted",
+                    )
                     logger.info(
                         "Agent %s failed permanently (no-progress retry budget exhausted: %d)",
                         aid,
@@ -918,15 +926,67 @@ class AgentExecutionService:
         if limits is None:
             return
         try:
-            await self._domain_plugin.cleanup_worker_execution(
-                root_id=limits.root_id,
-                agent_id=agent_id,
-                domain_context=limits.domain_context,
+            await asyncio.wait_for(
+                self._domain_plugin.cleanup_worker_execution(
+                    root_id=limits.root_id,
+                    agent_id=agent_id,
+                    domain_context=limits.domain_context,
+                ),
+                timeout=self._NO_PROGRESS_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Domain worker cleanup timed out after %.0fs for agent %s",
+                self._NO_PROGRESS_CLEANUP_TIMEOUT_SECONDS,
+                agent_id,
             )
         except Exception:
             logger.exception(
                 "Failed domain worker cleanup for no-progress restart on agent %s",
                 agent_id,
+            )
+
+    async def _notify_parent_failed_with_timeout(
+            self,
+            child: AgentSession,
+            *,
+            source: str,
+    ) -> None:
+        """Bound parent failure propagation so watchdog loops cannot freeze."""
+        try:
+            await asyncio.wait_for(
+                self._parent_notifier.notify_if_failed(child),
+                timeout=self._parent_notify_timeout_seconds,
+            )
+        except TimeoutError:
+            logger.error(
+                "Parent failure notify timed out after %.0fs for child %s (source=%s); "
+                "continuing and retrying in background",
+                self._parent_notify_timeout_seconds,
+                child.agent_id,
+                source,
+            )
+            background = asyncio.create_task(self._parent_notifier.notify_if_failed(child))
+
+            def _consume_result(task: asyncio.Task) -> None:
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    logger.warning(
+                        "Background parent notify failed for child %s (source=%s)",
+                        child.agent_id,
+                        source,
+                        exc_info=True,
+                    )
+
+            background.add_done_callback(_consume_result)
+        except Exception:
+            logger.exception(
+                "Parent failure notify failed for child %s (source=%s)",
+                child.agent_id,
+                source,
             )
 
     async def _mark_agent_silently_failed(
@@ -963,7 +1023,10 @@ class AgentExecutionService:
             )
             return
 
-        await self._parent_notifier.notify_if_failed(agent)
+        await self._notify_parent_failed_with_timeout(
+            agent,
+            source="silent_worker_exhausted",
+        )
         logger.info(
             "Agent %s failed permanently (silent-worker retry budget exhausted: %d)",
             agent_id,
@@ -1006,7 +1069,10 @@ class AgentExecutionService:
             )
             return
 
-        await self._parent_notifier.notify_if_failed(agent)
+        await self._notify_parent_failed_with_timeout(
+            agent,
+            source="pending_assessment_exhausted",
+        )
         logger.info(
             "Agent %s failed permanently (pending-assessment retry budget exhausted: %d)",
             agent_id,
@@ -1140,7 +1206,10 @@ class AgentExecutionService:
                 current_version,
                 self._progress_callback,
             )
-            await self._parent_notifier.notify_if_failed(agent)
+            await self._notify_parent_failed_with_timeout(
+                agent,
+                source="run_timeout_fail_agent",
+            )
         except ConcurrencyError:
             reloaded = await self._repository.load_if_exists(agent.agent_id)
             if reloaded is None or reloaded.is_terminal():
@@ -1153,7 +1222,10 @@ class AgentExecutionService:
                 current_version,
                 self._progress_callback,
             )
-            await self._parent_notifier.notify_if_failed(reloaded)
+            await self._notify_parent_failed_with_timeout(
+                reloaded,
+                source="run_timeout_fail_agent_reload",
+            )
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
         """Get agent execution result."""
@@ -1355,7 +1427,10 @@ class AgentExecutionService:
             if retried:
                 return  # Agent re-queued for execution, don't notify parent
 
-            await self._parent_notifier.notify_if_failed(agent)
+            await self._notify_parent_failed_with_timeout(
+                agent,
+                source="post_step_failed",
+            )
 
     async def _maybe_retry_verification(self, agent: AgentSession) -> bool:
         """Retry a worker that failed verification, up to _MAX_VERIFICATION_RETRIES.
@@ -1452,7 +1527,10 @@ class AgentExecutionService:
                 agent, agent.version, self._progress_callback
             )
 
-            await self._parent_notifier.notify_if_failed(agent)
+            await self._notify_parent_failed_with_timeout(
+                agent,
+                source="step_failure",
+            )
         except Exception as persist_error:
             raise RuntimeError(
                 f"Failed to persist error state for agent {agent_id}: {persist_error!r}"
@@ -1496,7 +1574,10 @@ class AgentExecutionService:
                 )
                 return
 
-            await self._parent_notifier.notify_if_failed(agent)
+            await self._notify_parent_failed_with_timeout(
+                agent,
+                source="step_timeout_exhausted",
+            )
             logger.info(
                 "Agent %s failed permanently (step-timeout retry budget exhausted: %d)",
                 agent_id,

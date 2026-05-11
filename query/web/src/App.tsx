@@ -35,7 +35,11 @@ function findNodeById(node: AgentNode, targetId: string): AgentNode | null {
   return null;
 }
 
-function formatWatchdogPhase(phase: string | null | undefined): string {
+function formatWatchdogPhase(
+  phase: string | null | undefined,
+  options?: { overdue?: boolean },
+): string {
+  const overdue = options?.overdue ?? false;
   switch (phase) {
     case 'healthy_completed':
       return 'Healthy (Completed)';
@@ -46,7 +50,9 @@ function formatWatchdogPhase(phase: string | null | undefined): string {
     case 'pending_assessment':
       return 'Pending Assessment Watchdog';
     case 'no_progress_zero_thoughts':
-      return 'No-Progress (Zero Thoughts) Watchdog';
+      return overdue
+        ? 'No-Progress (Zero Thoughts Overdue) Watchdog'
+        : 'Warming Up (Awaiting First Thought)';
     case 'step_timeout':
       return 'Step Timeout Watchdog';
     case 'silent_worker':
@@ -56,7 +62,13 @@ function formatWatchdogPhase(phase: string | null | undefined): string {
   }
 }
 
-function explainWatchdogCondition(phase: string | null | undefined): string {
+function explainWatchdogCondition(
+  phase: string | null | undefined,
+  options?: { overdue?: boolean; elapsed?: number; timeout?: number },
+): string {
+  const overdue = options?.overdue ?? false;
+  const elapsed = options?.elapsed;
+  const timeout = options?.timeout;
   switch (phase) {
     case 'healthy_completed':
       return 'Agent reached terminal COMPLETED state within watchdog expectations.';
@@ -67,6 +79,13 @@ function explainWatchdogCondition(phase: string | null | undefined): string {
     case 'pending_assessment':
       return 'A PENDING agent is still in ANALYZING and role assessment did not finish within the pending-assessment timeout.';
     case 'no_progress_zero_thoughts':
+      if (!overdue) {
+        if (typeof elapsed === 'number' && typeof timeout === 'number') {
+          const remaining = Math.max(0, timeout - elapsed);
+          return `Worker execution has started and is awaiting first ThoughtCaptured event. Grace window is active (${remaining}s remaining before overdue).`;
+        }
+        return 'Worker execution has started and is awaiting first ThoughtCaptured event. Grace window is still active.';
+      }
       return 'Worker execution started in this attempt, but ThoughtCaptured count stayed at 0 beyond the no-progress grace window.';
     case 'step_timeout':
       return 'Worker is executing, but the step-level execution window exceeded step_timeout_seconds.';
@@ -77,7 +96,15 @@ function explainWatchdogCondition(phase: string | null | undefined): string {
   }
 }
 
-function explainWatchdogAction(nextAction: string | null | undefined): string {
+function explainWatchdogAction(
+  nextAction: string | null | undefined,
+  options?: { phase?: string | null; overdue?: boolean },
+): string {
+  const phase = options?.phase ?? null;
+  const overdue = options?.overdue ?? false;
+  if (phase === 'no_progress_zero_thoughts' && !overdue) {
+    return 'No restart yet. Continue waiting for first thought until grace timeout; if overdue, provider reconnect/restart policy applies.';
+  }
   switch (nextAction) {
     case 'none_completed':
       return 'No recovery required. Agent already completed successfully.';
@@ -828,7 +855,9 @@ function Dashboard() {
               {liveWatchdogView?.phase && (
                 <div>
                   <div className="mb-1 flex items-center justify-between text-[11px] text-gray-700 dark:text-gray-300">
-                    <span className="font-semibold">{formatWatchdogPhase(liveWatchdogView.phase)}</span>
+                    <span className="font-semibold">
+                      {formatWatchdogPhase(liveWatchdogView.phase, { overdue: liveWatchdogView.overdue })}
+                    </span>
                     <span>
                       {liveWatchdogView.phase === 'healthy_completed' || liveWatchdogView.phase === 'terminal_failed'
                         ? 'No active watchdog'
@@ -845,7 +874,11 @@ function Dashboard() {
                   <div className="mt-2 space-y-1 text-[11px] text-gray-700 dark:text-gray-300">
                     <div>
                       <span className="font-semibold">Stuck Condition:</span>{' '}
-                      {explainWatchdogCondition(liveWatchdogView.phase)}
+                      {explainWatchdogCondition(liveWatchdogView.phase, {
+                        overdue: liveWatchdogView.overdue,
+                        elapsed: liveWatchdogView.elapsed,
+                        timeout: liveWatchdogView.timeout,
+                      })}
                     </div>
                     <div>
                       <span className="font-semibold">Evidence:</span>{' '}
@@ -854,7 +887,10 @@ function Dashboard() {
                     </div>
                     <div>
                       <span className="font-semibold">Recovery Path:</span>{' '}
-                      {explainWatchdogAction(liveWatchdogView.nextAction)}
+                      {explainWatchdogAction(liveWatchdogView.nextAction, {
+                        phase: liveWatchdogView.phase,
+                        overdue: liveWatchdogView.overdue,
+                      })}
                     </div>
                     {liveWatchdogView.phase === 'terminal_failed' && summary?.error_message && (
                       <div>

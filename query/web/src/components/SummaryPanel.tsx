@@ -364,9 +364,14 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
           e => e.event_type === 'VerificationPassed' || e.event_type === 'VerificationFailed'
         );
         const retryEvents = producedEvents.filter(e => e.event_type === 'RetryScheduled');
+        const executionStartEvents = producedEvents.filter(e => e.event_type === 'AgentExecutionStarted');
         if (verificationEvents.length === 0) return null;
 
         const lastVerification = verificationEvents[verificationEvents.length - 1];
+        const lastVerificationTs = new Date(lastVerification.occurred_at).getTime();
+        const verificationStaleForCurrentAttempt = executionStartEvents.some(
+          e => new Date(e.occurred_at).getTime() > lastVerificationTs,
+        );
         const passed = lastVerification.event_type === 'VerificationPassed';
         const feedback = (lastVerification.data as Record<string, unknown>)?.feedback as string || '';
         const failedStage = (lastVerification.data as Record<string, unknown>)?.failed_stage as string || '';
@@ -374,18 +379,40 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
         const lastScore = (lastVerification.data as Record<string, unknown>)?.score as number | undefined;
 
         return (
-          <Section title={`Verification ${passed ? 'Passed' : 'Failed'}${retryEvents.length > 0 ? ` (${retryEvents.length} retries)` : ''}`}>
+          <Section title={`${verificationStaleForCurrentAttempt ? 'Verification Pending (Current Attempt)' : `Verification ${passed ? 'Passed' : 'Failed'}`}${retryEvents.length > 0 ? ` (${retryEvents.length} retries)` : ''}`}>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {/* Current status */}
-              <div className={`p-3 rounded border-l-2 ${passed ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500' : 'bg-red-50 dark:bg-red-900/20 border-red-500'}`}>
+              <div className={`p-3 rounded border-l-2 ${
+                verificationStaleForCurrentAttempt
+                  ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500'
+                  : passed
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500'
+                    : 'bg-red-50 dark:bg-red-900/20 border-red-500'
+              }`}>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-lg ${passed ? 'text-emerald-600' : 'text-red-600'}`}>
-                    {passed ? '✅' : '❌'}
+                  <span className={`text-lg ${
+                    verificationStaleForCurrentAttempt
+                      ? 'text-blue-600'
+                      : passed
+                        ? 'text-emerald-600'
+                        : 'text-red-600'
+                  }`}>
+                    {verificationStaleForCurrentAttempt ? '⏳' : passed ? '✅' : '❌'}
                   </span>
-                  <span className={`text-sm font-medium ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                    {passed ? 'Verification Passed' : `Failed at stage: ${failedStage}`}
+                  <span className={`text-sm font-medium ${
+                    verificationStaleForCurrentAttempt
+                      ? 'text-blue-700 dark:text-blue-300'
+                      : passed
+                        ? 'text-emerald-700 dark:text-emerald-300'
+                        : 'text-red-700 dark:text-red-300'
+                  }`}>
+                    {verificationStaleForCurrentAttempt
+                      ? 'Current attempt is running; waiting for verification result'
+                      : passed
+                        ? 'Verification Passed'
+                        : `Failed at stage: ${failedStage}`}
                   </span>
-                  {lastScore != null && (
+                  {!verificationStaleForCurrentAttempt && lastScore != null && (
                     <span className={`ml-auto text-xs font-mono px-2 py-0.5 rounded-full ${
                       lastScore >= 90 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' :
                       lastScore >= 60 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300' :
@@ -397,7 +424,7 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                   )}
                 </div>
 
-                {!passed && stagesPassed.length > 0 && (
+                {!verificationStaleForCurrentAttempt && !passed && stagesPassed.length > 0 && (
                   <div className="mb-2">
                     <span className="text-xs text-gray-500">Stages passed: </span>
                     {stagesPassed.map((stage: string) => (
@@ -408,9 +435,21 @@ export function SummaryPanel({ summary, loading, workerOutput = [], producedEven
                   </div>
                 )}
 
-                <div className={`text-sm ${passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                  <span className="font-medium">{passed ? 'Evidence: ' : 'Reason: '}</span>
-                  <span className="whitespace-pre-wrap">{feedback || (passed ? 'All verification stages passed' : 'No details available')}</span>
+                <div className={`text-sm ${
+                  verificationStaleForCurrentAttempt
+                    ? 'text-blue-700 dark:text-blue-300'
+                    : passed
+                      ? 'text-emerald-700 dark:text-emerald-300'
+                      : 'text-red-700 dark:text-red-300'
+                }`}>
+                  <span className="font-medium">
+                    {verificationStaleForCurrentAttempt ? 'Status: ' : passed ? 'Evidence: ' : 'Reason: '}
+                  </span>
+                  <span className="whitespace-pre-wrap">
+                    {verificationStaleForCurrentAttempt
+                      ? `A newer execution attempt started after the last verification result (${new Date(lastVerification.occurred_at).toLocaleTimeString()}).`
+                      : feedback || (passed ? 'All verification stages passed' : 'No details available')}
+                  </span>
                 </div>
               </div>
 
