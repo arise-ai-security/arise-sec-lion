@@ -126,6 +126,38 @@ def test_write_binary_creates_sidecar_entry(repo_root: Path) -> None:
     assert entry["generated_at"].endswith("Z")
 
 
+def test_write_binary_raises_on_corrupt_sidecar(repo_root: Path) -> None:
+    # Given: a sidecar that has been corrupted out-of-band after a prior write.
+    _write_input(repo_root, CSV_PATH, b"a\n1\n")
+    _write_input(repo_root, "experiments/2026-01-01-fake-study/scripts/plot.py", b"# plot\n")
+    write_binary(
+        path="experiments/2026-01-01-fake-study/reports/figures/a.png",
+        content=b"A",
+        script="experiments/2026-01-01-fake-study/scripts/plot.py",
+        inputs=[CSV_PATH],
+    )
+    sidecar_path = (
+        repo_root / "experiments/2026-01-01-fake-study/reports" / GENERATED_JSON
+    )
+    sidecar_path.write_bytes(b"not json{")
+    new_binary = repo_root / "experiments/2026-01-01-fake-study/reports/figures/b.png"
+    assert not new_binary.exists()
+
+    # When/Then: the next write fails closed (audit N-9 — pre-fix the sidecar
+    # would silently reset, orphaning the prior entry).
+    with pytest.raises(ValueError, match="not valid JSON"):
+        write_binary(
+            path="experiments/2026-01-01-fake-study/reports/figures/b.png",
+            content=b"B",
+            script="experiments/2026-01-01-fake-study/scripts/plot.py",
+            inputs=[CSV_PATH],
+        )
+
+    # And: the new binary did NOT land on disk (write order ensures the
+    # sidecar check happens BEFORE the binary write).
+    assert not new_binary.exists()
+
+
 def test_write_binary_upserts_without_dropping_prior_entries(repo_root: Path) -> None:
     # Given: a CSV + an existing PNG entry in the sidecar.
     _write_input(repo_root, CSV_PATH, b"a\n1\n")

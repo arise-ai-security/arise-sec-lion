@@ -109,6 +109,47 @@ def test_validate_study_manifest_has_runs_key(repo_root: Path) -> None:
     assert any("contains a `runs:` key" in e for e in errors), errors
 
 
+def test_validate_study_detects_cell_drift_between_lock_and_manifest(repo_root: Path) -> None:
+    # Given: a study with the lockfile enrolling run-aaaa @ (A1, t, 0), but
+    # someone mutates the run's manifest in place to claim a different cell
+    # WITHOUT re-running collect.
+    study_id = "cell-drift-study"
+    _write_manifest(repo_root, study_id)
+    runs_pool = repo_root / "runs"
+    manifest = _seed_run(runs_pool, "run-aaaa", study_id=study_id, cell="A1", task="t")
+    collect_study(study_id, pool_roots=[runs_pool])
+
+    # Drift the manifest after the lockfile captured (A1, t, 0).
+    record = json.loads(manifest.read_text())
+    record["cell"] = "B2"  # claims a different cell now
+    manifest.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+    # When
+    errors = validate_study(study_id)
+
+    # Then: drift is flagged with the offending tuple inline.
+    assert any("enrollment tuple drift" in e for e in errors), errors
+
+
+def test_validate_study_detects_replicate_drift(repo_root: Path) -> None:
+    # Given: the same setup with replicate mutated instead of cell.
+    study_id = "replicate-drift-study"
+    _write_manifest(repo_root, study_id)
+    runs_pool = repo_root / "runs"
+    manifest = _seed_run(runs_pool, "run-cccc", study_id=study_id, cell="A1", task="t")
+    collect_study(study_id, pool_roots=[runs_pool])
+
+    record = json.loads(manifest.read_text())
+    record["replicate"] = 99
+    manifest.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+    # When
+    errors = validate_study(study_id)
+
+    # Then: drift is flagged.
+    assert any("enrollment tuple drift" in e for e in errors), errors
+
+
 def test_validate_study_unresolved_run_id(repo_root: Path) -> None:
     # Given: a lockfile listing a run_id that no longer has a run_manifest.json
     # in any pool root (the run dir was deleted or never made it across).

@@ -404,16 +404,26 @@ def _validate_binary(
 
 
 def _load_sidecar(reports_dir: Path) -> dict[str, dict[str, Any]]:
-    """Load `<reports_dir>/.generated.json` as a mapping of rel-path → entry."""
+    """Load `<reports_dir>/.generated.json` as a mapping of rel-path → entry.
+
+    Audit N-9: raises on parse failure / non-dict instead of silently
+    treating a corrupt sidecar as empty (which would flag every binary
+    in the directory as "no entry" and mask the actual corruption).
+    """
     index = reports_dir / GENERATED_JSON
     if not index.is_file():
         return {}
     try:
         data = json.loads(index.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"sidecar {index} is not valid JSON; cannot validate the binaries "
+            "it covers — repair or remove the file"
+        ) from exc
     if not isinstance(data, dict):
-        return {}
+        raise ValueError(
+            f"sidecar {index} is not a JSON object; cannot validate the binaries it covers"
+        )
     typed: dict[str, dict[str, Any]] = {}
     for key, value in data.items():
         if isinstance(key, str) and isinstance(value, dict):
@@ -512,17 +522,62 @@ def validate_study(study_id: str) -> list[str]:
             return errors
 
         enrolled = lock.get("enrollment") or []
-        # Build the set of every run_id present anywhere in the pool, then
-        # cross-check enrollment without re-walking the filesystem per row.
-        pool_run_ids: set[str] = set()
+        # Audit N-10: build a run_id → manifest-path index so we can
+        # compare the full (study_id, cell, task, replicate) tuple against
+        # each enrolled row, not just the run_id's presence. Pre-fix, a
+        # manifest re-stamped under a different study/cell silently
+        # passed validation because only run-id presence was checked.
+        pool_manifests: dict[str, Path] = {}
         for path in iter_run_manifests():
-            pool_run_ids.add(path.parent.name)
+            pool_manifests[path.parent.name] = path
         for entry in enrolled:
-            run_id = entry.get("run_id") if isinstance(entry, dict) else None
-            if not isinstance(run_id, str) or run_id not in pool_run_ids:
+            if not isinstance(entry, dict):
+                continue
+            run_id = entry.get("run_id")
+            if not isinstance(run_id, str) or run_id not in pool_manifests:
                 errors.append(
                     f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
                     f"run_id {run_id!r} has no run_manifest.json in any pool root"
+                )
+                continue
+            manifest_path = pool_manifests[run_id]
+            try:
+                record = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(
+                    f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
+                    f"run_id {run_id!r}: run_manifest.json unreadable: {exc}"
+                )
+                continue
+            if not isinstance(record, dict):
+                errors.append(
+                    f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
+                    f"run_id {run_id!r}: run_manifest.json is not a JSON object"
+                )
+                continue
+            # Replicate keys vary across legacy manifests; treat absence as -1
+            # so the tuple-compare still surfaces drift when one side has it
+            # and the other doesn't.
+            manifest_replicate = record.get("replicate")
+            if manifest_replicate is None:
+                manifest_replicate = record.get("attempt")
+            expected = (
+                entry.get("study_id", study_id),
+                entry.get("cell"),
+                entry.get("task"),
+                entry.get("replicate"),
+            )
+            actual = (
+                record.get("study_id"),
+                record.get("cell"),
+                record.get("task"),
+                manifest_replicate,
+            )
+            if expected != actual:
+                errors.append(
+                    f"experiments/{study_id}/reports/{ENROLLMENT_LOCK_FILENAME}: "
+                    f"run_id {run_id!r}: enrollment tuple drift "
+                    f"lock={expected} manifest={actual}"
                 )
 
     return errors

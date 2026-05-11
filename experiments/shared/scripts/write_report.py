@@ -211,6 +211,15 @@ def write_binary(
         "output_sha256": _sha256_of_bytes(content),
     }
 
+    # Audit N-9: validate the existing sidecar BEFORE writing the binary.
+    # Pre-fix order was write-binary then upsert; with the new hard-fail
+    # `_read_generated_json` that order would leave the new binary on disk
+    # with no provenance entry if the sidecar was corrupted out-of-band.
+    # A pre-flight parse forces the corruption to surface before any new
+    # file lands. `_upsert_generated_json` re-reads the sidecar under the
+    # lock for race safety; the double-read is cheap and ensures the
+    # provenance merge sees the latest state.
+    _read_generated_json(sidecar_dir / GENERATED_JSON)
     _atomic_write_bytes(output_abs, content)
     _upsert_generated_json(sidecar_dir / GENERATED_JSON, output_rel, entry)
     return output_abs
@@ -265,12 +274,26 @@ def _upsert_generated_json(index_path: Path, key: str, entry: dict[str, Any]) ->
 
 
 def _read_generated_json(index_path: Path) -> dict[str, Any]:
+    """Read and parse the `.generated.json` sidecar.
+
+    Audit N-9: raises on parse failure / non-dict instead of silently
+    resetting to ``{}``. The pre-fix swallow would orphan every prior
+    entry on the next ``write_binary`` because the upsert merge starts
+    from an empty dict. ``_upsert_generated_json`` reads through this
+    BEFORE writing the new binary so a corrupt sidecar fails the call
+    closed (no orphan artifact landed on disk).
+    """
     if not index_path.exists():
         return {}
     try:
         data = json.loads(index_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"sidecar {index_path} is not valid JSON; refusing to overwrite — "
+            "repair or remove the file manually before re-running"
+        ) from exc
     if not isinstance(data, dict):
-        return {}
+        raise ValueError(
+            f"sidecar {index_path} is not a JSON object; refusing to overwrite"
+        )
     return data
