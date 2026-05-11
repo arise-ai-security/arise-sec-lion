@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -54,6 +55,13 @@ class SecurityDomainPlugin(DomainPlugin):
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
+        # Audit §13#9: per-root asyncio.Lock around the
+        # `_sessions[root_id]` check-and-set in prepare_worker_execution.
+        # With the orchestrator's default `max_concurrent_workers=1` the
+        # lock is never contended; raising that knob without the lock
+        # would let two sibling workers in the same run race past the
+        # check-and-start and create two containers.
+        self._session_locks: dict[UUID, asyncio.Lock] = {}
 
     def set_container_runtime(self, container_runtime: SecurityContainerRuntime | None) -> None:
         """Attach the runtime after bootstrap creates infrastructure."""
@@ -179,15 +187,23 @@ class SecurityDomainPlugin(DomainPlugin):
                 return None
             workspace = self._workspaces[root_id]
 
-        if root_id in self._sessions:
-            raise RuntimeError(f"SEC-bench container already active for run {root_id}")
+        # Audit §13#9: serialize the check-and-start under a per-root lock
+        # so two concurrent prepare_worker_execution calls for the same
+        # root_id can't both pass the membership check and race to
+        # start_session.
+        lock = self._session_locks.setdefault(root_id, asyncio.Lock())
+        async with lock:
+            if root_id in self._sessions:
+                raise RuntimeError(
+                    f"SEC-bench container already active for run {root_id}"
+                )
 
-        session = await self._container_runtime.start_session(
-            cve=cve_instance,
-            workspace=workspace,
-            agent_id=agent_id,
-        )
-        self._sessions[root_id] = session
+            session = await self._container_runtime.start_session(
+                cve=cve_instance,
+                workspace=workspace,
+                agent_id=agent_id,
+            )
+            self._sessions[root_id] = session
 
         return WorkerExecutionContext(
             working_directory=str(workspace.host_root),

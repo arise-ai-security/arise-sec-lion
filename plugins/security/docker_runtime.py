@@ -114,14 +114,24 @@ class DockerSecBenchRuntime:
         ]
         container_id = (await self._run_checked(cmd)).strip()[:12]
 
-        if cve.secb_sh:
-            await self._install_secb(container_id, cve.secb_sh)
+        # Audit BUG-B: the container is already running after `docker run`;
+        # the post-run setup (`_install_secb`, etc.) may raise. Without a
+        # cleanup wrapper an exception leaks a detached container the
+        # caller never sees (the session object is never returned, so the
+        # plugin's `cleanup_worker_execution` pops nothing). Force-remove
+        # the container before re-raising so no orphan survives.
+        try:
+            if cve.secb_sh:
+                await self._install_secb(container_id, cve.secb_sh)
 
-        await self._add_git_safe_directory(container_id, cve.work_dir)
-        # Ensure build.sh is executable inside the container (DooD uid mismatch)
-        await self._run_best_effort(
-            ["docker", "exec", container_id, "chmod", "+x", "/src/build.sh"]
-        )
+            await self._add_git_safe_directory(container_id, cve.work_dir)
+            # Ensure build.sh is executable inside the container (DooD uid mismatch)
+            await self._run_best_effort(
+                ["docker", "exec", container_id, "chmod", "+x", "/src/build.sh"]
+            )
+        except Exception:
+            await self._run_best_effort(["docker", "rm", "-f", container_id])
+            raise
 
         session = SecBenchContainerSession(
             workspace=workspace,

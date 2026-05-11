@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -101,3 +102,92 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
         domain_context=cve,
     )
     runtime.stop_session.assert_awaited_once_with(session)
+
+
+@pytest.mark.asyncio
+async def test_prepare_worker_execution_serializes_concurrent_calls_per_root(
+    tmp_path: Path,
+) -> None:
+    """Audit §13#9: two concurrent prepare_worker_execution calls for the
+    same root_id MUST NOT both reach start_session. Pre-fix the check
+    ``if root_id in self._sessions`` and the assignment
+    ``self._sessions[root_id] = session`` were not under any lock, so two
+    coroutines could both pass the membership check and race to create
+    two containers for the same run.
+    """
+    root_id = uuid4()
+    cve = _sample_cve()
+    workspace = SecBenchWorkspace(
+        root_id=root_id,
+        image="secb-tools:demo.cve-2024-0001",
+        host_root=tmp_path,
+        host_source_dir=tmp_path / "src",
+        host_testcase_dir=tmp_path / "testcase",
+        host_work_dir=tmp_path / "src" / "demo",
+        container_source_dir="/src",
+        container_testcase_dir="/testcase",
+        container_working_directory="/src/demo",
+        helper_script=tmp_path / "secb-exec",
+    )
+
+    start_calls = 0
+    in_flight = 0
+    max_in_flight = 0
+
+    async def _start_session(**_kwargs) -> SecBenchContainerSession:
+        nonlocal start_calls, in_flight, max_in_flight
+        start_calls += 1
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        # Yield long enough that an unlocked second caller could win the
+        # check-and-set race if the lock were missing.
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return SecBenchContainerSession(
+            workspace=workspace,
+            container_id=f"abc{start_calls:08x}",
+            container_name=f"secbench-worker-{start_calls}",
+            image=workspace.image,
+        )
+
+    runtime = AsyncMock()
+    runtime.prepare_workspace.return_value = workspace
+    runtime.start_session.side_effect = _start_session
+
+    plugin = SecurityDomainPlugin(
+        enabled_tools=["valgrind"],
+        container_runtime=runtime,
+    )
+    await plugin.prepare_run(
+        root_id=root_id,
+        run_output_path=tmp_path,
+        domain_context=cve,
+    )
+
+    results = await asyncio.gather(
+        plugin.prepare_worker_execution(
+            root_id=root_id,
+            agent_id=uuid4(),
+            run_output_path=tmp_path,
+            domain_context=cve,
+        ),
+        plugin.prepare_worker_execution(
+            root_id=root_id,
+            agent_id=uuid4(),
+            run_output_path=tmp_path,
+            domain_context=cve,
+        ),
+        return_exceptions=True,
+    )
+
+    # Exactly one start_session call (the second coroutine sees the
+    # session already in the dict under the lock and raises).
+    assert start_calls == 1
+    # Never more than one concurrent start_session under the lock.
+    assert max_in_flight == 1
+    # One success, one RuntimeError — order is asyncio-dependent.
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, RuntimeError)]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert "already active" in str(failures[0])
