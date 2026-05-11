@@ -76,13 +76,17 @@ def _prepare_run_manifest_payload(
     cell: str,
     task: str,
     replicate: int,
+    projection_status: str,
 ) -> dict[str, Any]:
     """Load the run manifest and merge experiment-level fields in memory.
 
     Does not write anything. Raises FileNotFoundError if the run manifest is
     absent so callers can fail fast. ``attempt`` is preserved alongside
     ``replicate`` for one rename cycle so consumers that still read the old
-    field keep working.
+    field keep working. ``projection_status`` (audit N-2) carries forward
+    whether `events.jsonl` was generated successfully (``"ok"``) or the
+    projection raised (``"failed"``); `collect.py` excludes failed rows so
+    a missing/empty events.jsonl no longer masquerades as a clean zero.
     """
     if not run_manifest_path.is_file():
         raise FileNotFoundError(
@@ -97,6 +101,7 @@ def _prepare_run_manifest_payload(
             "task": task,
             "replicate": replicate,
             "attempt": replicate,
+            "projection_status": projection_status,
         }
     )
     return payload
@@ -158,6 +163,7 @@ def register_run(
     replicate: int | None = None,
     attempt: int | None = None,
     output_directory: str | Path | None = None,
+    projection_status: str = "ok",
 ) -> None:
     """Stamp experiment-level fields onto ``run_id``'s run_manifest.json.
 
@@ -168,6 +174,9 @@ def register_run(
 
     ``replicate`` is the canonical name; ``attempt`` is accepted as an alias
     for one rename cycle. Exactly one of them must be provided.
+    ``projection_status`` defaults to ``"ok"``; the harness passes
+    ``"failed"`` when event projection raised so downstream rollups can
+    exclude the row (audit N-2).
     """
     if replicate is not None and attempt is not None and replicate != attempt:
         raise ValueError(
@@ -195,6 +204,7 @@ def register_run(
         cell=cell,
         task=task,
         replicate=effective_replicate,
+        projection_status=projection_status,
     )
     _write_run_manifest(run_manifest_path, run_manifest_payload)
 

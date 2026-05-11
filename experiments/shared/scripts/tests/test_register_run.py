@@ -88,6 +88,37 @@ def test_register_run_stamps_run_manifest_with_replicate(repo_root: Path) -> Non
     assert updated["replicate"] == 0
     # And: the legacy attempt alias is preserved for one cycle.
     assert updated["attempt"] == 0
+    # And: projection_status defaults to "ok" (audit N-2).
+    assert updated["projection_status"] == "ok"
+
+
+def test_register_run_stamps_projection_failed_when_passed(repo_root: Path) -> None:
+    # Given: a finished run whose event projection raised in the harness.
+    study_id = "2026-04-22-failed-projection"
+    _write_study_manifest(
+        repo_root,
+        study_id,
+        cells={"A1": {"config": "configs/A1.yaml", "harness": "ours"}},
+    )
+    runs_pool = repo_root / "runs"
+    runs_pool.mkdir(parents=True, exist_ok=True)
+    run_id = uuid4()
+    run_manifest = _seed_run_manifest(runs_pool, str(run_id))
+
+    # When: register_run is called with projection_status="failed"
+    register_run(
+        study_id=study_id,
+        run_id=run_id,
+        cell="A1",
+        task="t",
+        replicate=0,
+        output_directory=runs_pool,
+        projection_status="failed",
+    )
+
+    # Then: the field surfaces in the manifest so collect.py can exclude it.
+    updated = json.loads(run_manifest.read_text())
+    assert updated["projection_status"] == "failed"
 
 
 def test_register_run_accepts_legacy_attempt_kwarg(repo_root: Path) -> None:

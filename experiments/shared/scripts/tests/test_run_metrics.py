@@ -51,7 +51,11 @@ def test_metrics_from_raw_events_counts_tools_and_thinking() -> None:
     assert metrics["tool_calls_by_type"] == {"Bash": 1}
 
 
-def test_metrics_from_events_jsonl_skips_bad_lines(tmp_path) -> None:
+def test_metrics_from_events_jsonl_rejects_malformed_lines(tmp_path) -> None:
+    # Given: a JSONL file with one corrupted line between valid ones.
+    # Pre-N-1, the reader silently skipped the bad line and produced a
+    # downcounted row; post-N-1 the writer is atomic so any corrupted line
+    # represents out-of-band damage and the reader must refuse.
     path = tmp_path / "events.jsonl"
     path.write_text(
         "\n".join(
@@ -64,8 +68,6 @@ def test_metrics_from_events_jsonl_skips_bad_lines(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    metrics = metrics_from_events_jsonl(path)
-
-    assert metrics["event_count"] == 2
-    assert metrics["tool_call_count"] == 1
-    assert metrics["tool_result_count"] == 1
+    # When/Then: the reader raises with the offending line number
+    with pytest.raises(ValueError, match=r":2: malformed JSON line"):
+        metrics_from_events_jsonl(path)

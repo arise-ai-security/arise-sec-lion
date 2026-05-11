@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -73,13 +75,47 @@ async def project_events_to_jsonl(
         raise ValueError(f"no events found for run_id={run_id}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
-        for event in events:
-            handle.write(event.model_dump_json())
-            handle.write("\n")
-
+    _atomic_write_events_jsonl(output_path, events)
     logger.info("wrote %d events to %s", len(events), output_path)
     return len(events)
+
+
+def _atomic_write_events_jsonl(output_path: Path, events: list[DomainEvent]) -> None:
+    """Write events to a tmp file with fsync, then atomically replace target.
+
+    Crash-safety contract: a reader sees either the full new file or the
+    previous file (or no file). A killed harness mid-write cannot leave a
+    truncated `events.jsonl` that the reader silently skips lines from
+    (audit N-1). Mirrors the tmp+fsync+replace pattern in
+    ``presentation/persistence/run_persistence.py:_atomic_write_json``.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=output_path.name + ".",
+        suffix=".tmp",
+        dir=str(output_path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(event.model_dump_json())
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.replace(output_path)
+        # Best-effort directory fsync so the rename is durable across a kernel
+        # panic. Skipped on platforms (e.g. Windows) that reject O_DIRECTORY.
+        try:
+            dir_fd = os.open(str(output_path.parent), os.O_DIRECTORY)
+        except (OSError, AttributeError):
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

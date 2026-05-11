@@ -42,17 +42,30 @@ async def query_run_metrics(
 
 
 def metrics_from_events_jsonl(path: Path) -> dict[str, MetricValue]:
-    """Read projected JSONL events and return the same metric schema."""
+    """Read projected JSONL events and return the same metric schema.
+
+    Raises ``ValueError`` on a malformed non-empty line (audit N-1). The
+    writer is atomic (`project_events._atomic_write_events_jsonl`) so a
+    half-written file is impossible under normal operation; if a line is
+    malformed here, something corrupted the file out-of-band and silently
+    summing what's left would produce a wrong row. Use strict UTF-8 for
+    the same reason — `errors="replace"` would mask non-text corruption.
+    """
     rows: list[dict[str, Any]] = []
     if not path.is_file():
         return empty_metrics()
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for lineno, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         if not line.strip():
             continue
         try:
             row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{path}:{lineno}: malformed JSON line — refusing to silently "
+                "skip; events.jsonl is written atomically by project_events"
+            ) from exc
         if isinstance(row, dict):
             rows.append(row)
     return metrics_from_events(rows)

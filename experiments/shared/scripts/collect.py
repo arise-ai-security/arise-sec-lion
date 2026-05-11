@@ -116,6 +116,15 @@ def _load_enrolled_record(
         return
     if exclude_legacy_migration and record.get("legacy_migration") is True:
         return
+    # Audit N-2: runs whose event projection failed are stamped with
+    # projection_status="failed" by the harness; excluding them here is
+    # what makes a missing events.jsonl loud (a row dropped from the
+    # enrollment list) instead of silent (a clean-looking zero row).
+    if record.get("projection_status") == "failed":
+        logger.warning(
+            "excluding run %s: projection_status=failed", manifest_path.parent.name
+        )
+        return
 
     run_id = record.get("run_id")
     if not isinstance(run_id, str):
