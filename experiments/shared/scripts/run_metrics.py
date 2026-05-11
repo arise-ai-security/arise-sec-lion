@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,9 @@ from config import Settings
 from core.domain.events.events import DomainEvent
 from core.query.projections import ProjectionPipelineBuilder
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+
+
+logger = logging.getLogger(__name__)
 
 
 MetricValue = int | float | str | dict[str, int]
@@ -72,6 +77,12 @@ def metrics_from_events_jsonl(path: Path) -> dict[str, MetricValue]:
 
 
 def empty_metrics() -> dict[str, MetricValue]:
+    # `run_duration_seconds = -1.0` is the audit-N-7 sentinel for "no
+    # RunCompleted event observed". Loud (negative in CSV) vs the old
+    # silent `0.0` indistinguishable from a real zero-second run.
+    # `tokens_cache_read` / `tokens_cache_write` are surfaced as their
+    # own columns (audit N-3) so cross-cell token comparisons stay
+    # symmetric between Claude-SDK and OpenHands worker adapters.
     return {
         "event_count": 0,
         "prompt_sent_count": 0,
@@ -85,10 +96,13 @@ def empty_metrics() -> dict[str, MetricValue]:
         "tokens_completion": 0,
         "tokens_total": 0,
         "tokens_reasoning": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_write": 0,
         "llm_cost_usd": 0.0,
         "worker_cost_usd": 0.0,
         "total_cost_usd": 0.0,
-        "run_duration_seconds": 0.0,
+        "run_duration_seconds": -1.0,
+        "run_completed_count": 0,
         "tool_calls_by_type": {},
     }
 
@@ -140,31 +154,72 @@ def metrics_from_events(  # noqa: PLR0915
             _add_float(metrics, "llm_cost_usd", cost)
 
         elif event_type == "WorkerCostRecorded":
+            # Audit N-3: include cache buckets in the total. Worker adapters
+            # diverge — Claude-SDK historically set `tokens = prompt+completion`
+            # only, while OpenHands sums all five buckets. We prefer the
+            # breakdown sum whenever any breakdown field is present so the
+            # cross-cell total is symmetric. `_token_or_none` distinguishes
+            # `None` ("field not reported") from `0` ("reported as zero").
             _incr(metrics, "worker_cost_event_count")
             prompt = _int(_get(event, "prompt_tokens"))
             completion = _int(_get(event, "completion_tokens"))
+            cache_read = _int(_get(event, "cache_read_tokens"))
+            cache_write = _int(_get(event, "cache_write_tokens"))
             reasoning = _int(_get(event, "reasoning_tokens"))
-            total = _int(_get(event, "tokens")) or (prompt + completion + reasoning)
+            has_breakdown = any(
+                _get(event, field) is not None
+                for field in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                    "reasoning_tokens",
+                )
+            )
+            if has_breakdown:
+                total = prompt + completion + cache_read + cache_write + reasoning
+            else:
+                total = _int(_get(event, "tokens"))
             cost = _float(_get(event, "cost_usd"))
             _incr(metrics, "tokens_prompt", prompt)
             _incr(metrics, "tokens_completion", completion)
             _incr(metrics, "tokens_reasoning", reasoning)
+            _incr(metrics, "tokens_cache_read", cache_read)
+            _incr(metrics, "tokens_cache_write", cache_write)
             _incr(metrics, "tokens_total", total)
             _add_float(metrics, "worker_cost_usd", cost)
 
         elif event_type == "RunCompleted":
+            # Audit N-7: track count + assign duration. Post-loop fixup
+            # sets the sentinel when count==0 and warns on count>1.
+            _incr(metrics, "run_completed_count")
             metrics["run_duration_seconds"] = _float(_get(event, "duration_seconds"))
 
+    # Audit N-12: round components first, then sum the rounded values, so
+    # the invariant `total == round(llm + worker, 6)` holds after rounding.
+    metrics["llm_cost_usd"] = round(_float(metrics.get("llm_cost_usd")), 6)
+    metrics["worker_cost_usd"] = round(_float(metrics.get("worker_cost_usd")), 6)
     metrics["total_cost_usd"] = round(
         _float(metrics.get("llm_cost_usd")) + _float(metrics.get("worker_cost_usd")),
         6,
     )
-    metrics["llm_cost_usd"] = round(_float(metrics.get("llm_cost_usd")), 6)
-    metrics["worker_cost_usd"] = round(_float(metrics.get("worker_cost_usd")), 6)
-    metrics["run_duration_seconds"] = round(
-        _float(metrics.get("run_duration_seconds")),
-        3,
-    )
+    # Audit N-7: emit a distinct sentinel when no RunCompleted was observed
+    # (silently reporting 0.0 was indistinguishable from a real zero-second
+    # run). Last-write-wins is logged so duplicate RunCompleted is loud.
+    run_completed_count = _int(metrics.get("run_completed_count"))
+    if run_completed_count == 0:
+        metrics["run_duration_seconds"] = -1.0
+    else:
+        if run_completed_count > 1:
+            logger.warning(
+                "metrics_from_events: %d RunCompleted events observed; "
+                "last-write-wins on run_duration_seconds",
+                run_completed_count,
+            )
+        metrics["run_duration_seconds"] = round(
+            _float(metrics.get("run_duration_seconds")),
+            3,
+        )
     metrics["tool_calls_by_type"] = dict(sorted(tool_calls_by_type.items()))
     return metrics
 
@@ -203,21 +258,34 @@ def _get(event: DomainEvent | dict[str, Any], field: str) -> Any:
 
 
 def _int(value: Any) -> int:
+    # Audit N-8: reject non-finite floats before `int(...)`. `int(float("inf"))`
+    # raises OverflowError; the pre-fix code caught only TypeError/ValueError,
+    # so a `cost_usd: Infinity` line in events.jsonl would propagate.
     if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, float) and not math.isfinite(value):
+        logger.warning("dropped non-finite int input: %r", value)
         return 0
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
 def _float(value: Any) -> float:
+    # Audit N-8: `float("nan")` and `float("inf")` both parse cleanly; one
+    # bad cost_usd value would otherwise propagate via `_add_float` and
+    # poison every rollup (`nan + anything == nan`).
     if isinstance(value, bool) or value is None:
         return 0.0
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return 0.0
+    if not math.isfinite(result):
+        logger.warning("dropped non-finite float input: %r", value)
+        return 0.0
+    return result
 
 
 def _tool_name_from_thought(content: str) -> str:

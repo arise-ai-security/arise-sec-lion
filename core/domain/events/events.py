@@ -348,10 +348,14 @@ class WorkerCostRecorded(DomainEvent):
 
     @property
     def total_recorded_tokens(self) -> int | None:
-        """Return the best available total token count for this worker event."""
-        if self.tokens is not None:
-            return self.tokens
+        """Return the best available total token count for this worker event.
 
+        Audit N-3: prefer the breakdown sum whenever any breakdown field is
+        reported (`prompt + completion + cache_read + cache_write + reasoning`)
+        because some adapters (notably the Claude SDK adapter) historically
+        set ``tokens = prompt + completion`` and dropped cache + reasoning.
+        Falls back to ``self.tokens`` only when no breakdown is reported.
+        """
         token_parts = (
             self.prompt_tokens,
             self.completion_tokens,
@@ -359,10 +363,9 @@ class WorkerCostRecorded(DomainEvent):
             self.cache_write_tokens,
             self.reasoning_tokens,
         )
-        if not any(part is not None for part in token_parts):
-            return None
-
-        return sum(part or 0 for part in token_parts)
+        if any(part is not None for part in token_parts):
+            return sum(part or 0 for part in token_parts)
+        return self.tokens
 
     @property
     def model_costs(self) -> dict[str, float]:

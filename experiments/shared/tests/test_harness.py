@@ -1,7 +1,8 @@
 """Integration tests for the study harness (spec §8 + §11).
 
 Uses a stubbed ``_invoke_main_py`` that emulates ``python main.py run``
-writing to `.last_run.json` and a manifest. No real subprocesses are
+writing to its per-invocation result file (audit N-4 replaces the shared
+``.last_run.json`` pointer) and a manifest. No real subprocesses are
 spawned.
 """
 
@@ -81,21 +82,16 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     state: dict[str, object] = {"boss_id": None}
 
-    def _fake_invoke(*, config, task, context_file, python_bin=None) -> int:  # noqa: ARG001
+    def _fake_invoke(*, config, task, context_file, result_path, python_bin=None) -> int:  # noqa: ARG001
         runs_root = harness._runs_root()
         runs_root.mkdir(parents=True, exist_ok=True)
         boss_id = uuid4()
         state["boss_id"] = boss_id
-        # Simulate the runtime writing `.last_run.json` and a minimal manifest.
-        (runs_root / ".last_run.json").write_text(
-            json.dumps(
-                {
-                    "boss_id": str(boss_id),
-                    "task": task,
-                    "started_at": "2026-04-22T00:00:00",
-                    "status": "success",
-                }
-            )
+        # Simulate the runtime writing the per-invocation result file
+        # (audit N-4) and a minimal manifest.
+        result_path.write_text(
+            json.dumps({"boss_id": str(boss_id), "status": "success"}),
+            encoding="utf-8",
         )
         run_dir = runs_root / str(boss_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -175,13 +171,16 @@ def test_run_ours_enrolls_run_into_study(
     assert (repo_root / "runs" / str(run_id) / "events.jsonl").exists()
 
 
-def test_run_ours_rejects_stale_last_run_pointer(
+def test_run_ours_rejects_subprocess_that_never_wrote_result(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If `main.py run` exits non-zero without touching `.last_run.json`,
-    the harness refuses to enroll the previous run's boss_id (codex P1)."""
-    # Given: a study, and a pre-existing `.last_run.json` from an unrelated run.
+    """If `main.py run` exits non-zero without writing its per-invocation
+    result file, the harness refuses to enroll (audit N-4 replaces the
+    `.last_run.json` stale-pointer detection — the new contract is that
+    each subprocess MUST write its result file)."""
+    # Given: a study, and a pre-existing `.last_run.json` from an unrelated run
+    # (which the harness must now ignore entirely — it only reads result_path).
     study_id = "2026-04-22-stale-test"
     _write_study(
         repo_root,
@@ -203,14 +202,16 @@ def test_run_ours_rejects_stale_last_run_pointer(
         )
     )
 
-    def _fake_invoke_that_fails(*, config, task, context_file, python_bin=None) -> int:  # noqa: ARG001
-        # Subprocess fails before RunPersistence.save_last_run() runs.
+    def _fake_invoke_that_fails(*, config, task, context_file, result_path,  # noqa: ARG001
+                                python_bin=None) -> int:  # noqa: ARG001
+        # Subprocess fails before cli.py.maybe_write_run_result runs.
+        # The pre-created empty result file remains; the harness must refuse.
         return 1
 
     monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke_that_fails)
 
-    # When/Then: harness detects the stale pointer and aborts.
-    with pytest.raises(RuntimeError, match="was not advanced"):
+    # When/Then: harness aborts because the result file is empty.
+    with pytest.raises(FileNotFoundError, match="run-result"):
         harness.run_ours(
             study_id=study_id,
             cell="B2",
@@ -345,16 +346,19 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
 
     captured: dict[str, object] = {}
 
-    def _fake_subprocess_run(cmd, *, check, cwd):  # noqa: ARG001
+    def _fake_subprocess_run(cmd, *, check, cwd, env):  # noqa: ARG001
         captured["cmd"] = list(cmd)
         captured["cwd"] = cwd
-        # Simulate the runtime writing `.last_run.json` + run_manifest.
+        # The harness now passes the per-invocation result path via env var.
+        result_path = harness.Path(env[harness.RUN_RESULT_ENV_VAR])
         runs_root = harness._runs_root()
         runs_root.mkdir(parents=True, exist_ok=True)
         boss_id = uuid4()
         captured["boss_id"] = boss_id
-        (runs_root / ".last_run.json").write_text(
-            json.dumps({"boss_id": str(boss_id), "status": "success"})
+        # Simulate cli.py writing its per-invocation result file.
+        result_path.write_text(
+            json.dumps({"boss_id": str(boss_id), "status": "success"}),
+            encoding="utf-8",
         )
         run_dir = runs_root / str(boss_id)
         run_dir.mkdir(parents=True, exist_ok=True)

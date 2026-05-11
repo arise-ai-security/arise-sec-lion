@@ -253,9 +253,12 @@ class TestClaudeAgentSDKAdapter:
             sequencer=EventSequencer(agent_id, stream="claude_sdk"),
         )
 
+        # Audit N-3: `tokens` is the INCLUSIVE total across all five buckets,
+        # not just prompt+completion (which historically undercounted cache
+        # and reasoning and made cross-cell token comparisons asymmetric).
         assert isinstance(event, WorkerCostRecorded)
         assert event.model == "claude-sonnet-4-6"
-        assert event.tokens == 125
+        assert event.tokens == 100 + 25 + 10 + 5 + 7
         assert event.prompt_tokens == 100
         assert event.completion_tokens == 25
         assert event.cache_read_tokens == 10

@@ -254,9 +254,19 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             usage,
             "thinking_tokens",
         )
+        # Audit N-3: include cache + reasoning in the total so cross-adapter
+        # token comparisons stay symmetric with OpenHands (which already sums
+        # all five buckets). The Claude usage block reports cache and
+        # reasoning separately; `prompt + completion` alone undercounts.
         total_tokens: int | None = None
         if usage:
-            total_tokens = prompt_tokens + completion_tokens
+            total_tokens = (
+                prompt_tokens
+                + completion_tokens
+                + cache_read_tokens
+                + cache_write_tokens
+                + reasoning_tokens
+            )
 
         return sequencer.cost_recorded(
             tool_name=self._get_tool_name(),

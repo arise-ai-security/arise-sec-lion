@@ -52,10 +52,19 @@ METRIC_FIELDS = [
     "tokens_completion",
     "tokens_total",
     "tokens_reasoning",
+    # Audit N-3: cache token buckets surface as their own columns so
+    # cross-adapter (Claude-SDK vs OpenHands) token comparisons stay
+    # symmetric and auditable.
+    "tokens_cache_read",
+    "tokens_cache_write",
     "llm_cost_usd",
     "worker_cost_usd",
     "total_cost_usd",
     "run_duration_seconds",
+    # Audit N-7: number of RunCompleted events observed. 0 means we used
+    # the -1.0 sentinel for run_duration_seconds; >1 signals an upstream
+    # bug emitting duplicate completion events.
+    "run_completed_count",
 ]
 
 SUMMARY_FIELDS = [
