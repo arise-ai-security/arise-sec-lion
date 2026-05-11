@@ -54,6 +54,10 @@ export interface AgentNode {
   attempt_exec_started_count: number;
   attempt_prompt_sent_count: number;
   prompt_sent_at: string | null;
+  last_verification_failed_at: string | null;
+  last_verification_failed_stage: string | null;
+  last_verification_feedback: string | null;
+  last_verification_score: number | null;
   children: AgentNode[];
 }
 

@@ -48,6 +48,8 @@ function formatWatchdogPhase(
       return 'Failed (Terminal)';
     case 'blocked_dependencies':
       return 'Blocked On Dependencies';
+    case 'waiting_for_children':
+      return 'Waiting For Children';
     case 'pending_assessment':
       return 'Pending Assessment Watchdog';
     case 'no_progress_zero_thoughts':
@@ -83,6 +85,8 @@ function explainWatchdogCondition(
       return 'Agent reached terminal FAILED state. Automatic watchdog recovery has already ended for this attempt.';
     case 'blocked_dependencies':
       return 'Agent has not entered execution yet because one or more depends_on sibling prerequisites are not completed.';
+    case 'waiting_for_children':
+      return 'Parent agent is waiting for child agents to complete before it can continue.';
     case 'pending_assessment':
       return 'A PENDING agent is still in ANALYZING and role assessment did not finish within the pending-assessment timeout.';
     case 'no_progress_zero_thoughts':
@@ -111,11 +115,15 @@ function explainWatchdogCondition(
 
 function explainWatchdogAction(
   nextAction: string | null | undefined,
-  options?: { phase?: string | null; overdue?: boolean },
+  options?: { phase?: string | null; overdue?: boolean; promptSentAt?: string | null },
 ): string {
   const phase = options?.phase ?? null;
   const overdue = options?.overdue ?? false;
+  const promptSentAt = options?.promptSentAt ?? null;
   if (phase === 'no_progress_zero_thoughts' && !overdue) {
+    if (!promptSentAt) {
+      return 'No restart yet. Continue pre-execution setup and prompt dispatch. If PromptSent remains absent past grace timeout, provider reconnect/restart policy applies.';
+    }
     return 'No restart yet. Continue waiting for first thought until grace timeout; if overdue, provider reconnect/restart policy applies.';
   }
   switch (nextAction) {
@@ -129,6 +137,8 @@ function explainWatchdogAction(
       return 'Restart this agent when retry budget is available; otherwise mark it failed and notify parent so DAG can advance.';
     case 'wait_for_dependencies_or_parent_recovery':
       return 'Wait for prerequisite siblings to complete; parent/recovery logic handles escalation if dependencies fail.';
+    case 'wait_for_children':
+      return 'No restart expected. Continue waiting while child agents run, retry, or fail forward.';
     default:
       return 'No recovery action currently expected.';
   }
@@ -391,6 +401,10 @@ function Dashboard() {
         promptSentAt: selectedHierarchyNode.prompt_sent_at,
         attemptExecStartedCount: selectedHierarchyNode.attempt_exec_started_count,
         attemptPromptSentCount: selectedHierarchyNode.attempt_prompt_sent_count,
+        lastVerificationFailedAt: selectedHierarchyNode.last_verification_failed_at,
+        lastVerificationFailedStage: selectedHierarchyNode.last_verification_failed_stage,
+        lastVerificationFeedback: selectedHierarchyNode.last_verification_feedback,
+        lastVerificationScore: selectedHierarchyNode.last_verification_score,
       };
     }
     if (selectedHierarchyNode.status === 'failed') {
@@ -409,6 +423,10 @@ function Dashboard() {
         promptSentAt: selectedHierarchyNode.prompt_sent_at,
         attemptExecStartedCount: selectedHierarchyNode.attempt_exec_started_count,
         attemptPromptSentCount: selectedHierarchyNode.attempt_prompt_sent_count,
+        lastVerificationFailedAt: selectedHierarchyNode.last_verification_failed_at,
+        lastVerificationFailedStage: selectedHierarchyNode.last_verification_failed_stage,
+        lastVerificationFeedback: selectedHierarchyNode.last_verification_feedback,
+        lastVerificationScore: selectedHierarchyNode.last_verification_score,
       };
     }
     const timeout = selectedHierarchyNode.watchdog_timeout_seconds;
@@ -434,6 +452,10 @@ function Dashboard() {
       promptSentAt: selectedHierarchyNode.prompt_sent_at,
       attemptExecStartedCount: selectedHierarchyNode.attempt_exec_started_count,
       attemptPromptSentCount: selectedHierarchyNode.attempt_prompt_sent_count,
+      lastVerificationFailedAt: selectedHierarchyNode.last_verification_failed_at,
+      lastVerificationFailedStage: selectedHierarchyNode.last_verification_failed_stage,
+      lastVerificationFeedback: selectedHierarchyNode.last_verification_feedback,
+      lastVerificationScore: selectedHierarchyNode.last_verification_score,
     };
   }, [selectedHierarchyNode]);
 
@@ -925,8 +947,29 @@ function Dashboard() {
                       {explainWatchdogAction(liveWatchdogView.nextAction, {
                         phase: liveWatchdogView.phase,
                         overdue: liveWatchdogView.overdue,
+                        promptSentAt: liveWatchdogView.promptSentAt,
                       })}
                     </div>
+                    {liveWatchdogView.lastVerificationFailedAt && (
+                      <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                        <div>
+                          <span className="font-semibold">Last Verification Failure:</span>{' '}
+                          at {liveWatchdogView.lastVerificationFailedAt}
+                          {liveWatchdogView.lastVerificationFailedStage
+                            ? ` (${liveWatchdogView.lastVerificationFailedStage})`
+                            : ''}
+                          {typeof liveWatchdogView.lastVerificationScore === 'number'
+                            ? ` score=${liveWatchdogView.lastVerificationScore}`
+                            : ''}
+                        </div>
+                        {liveWatchdogView.lastVerificationFeedback && (
+                          <div className="mt-1">
+                            <span className="font-semibold">Verifier Feedback:</span>{' '}
+                            {liveWatchdogView.lastVerificationFeedback}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {liveWatchdogView.phase === 'terminal_failed' && summary?.error_message && (
                       <div>
                         <span className="font-semibold">Failure Reason:</span>{' '}

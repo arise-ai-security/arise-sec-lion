@@ -18,6 +18,7 @@ from core.domain.events.events import (
     PromptSent,
     RetryScheduled,
     ThoughtCaptured,
+    VerificationFailed,
     WorkCompleted,
     WorkFailed,
 )
@@ -163,6 +164,8 @@ def _compute_watchdog(
 ) -> tuple[str | None, int | None, int | None, bool, str | None]:
     if node.status in {"completed", "failed"}:
         return None, None, None, False, None
+    if node.status == "waiting":
+        return "waiting_for_children", None, idle_seconds, False, "wait_for_children"
 
     pending_timeout = watchdog_cfg["pending_assessment_timeout_seconds"]
     step_timeout = watchdog_cfg["step_timeout_seconds"]
@@ -230,6 +233,18 @@ def _compute_watchdog(
     return None, None, None, False, None
 
 
+def _latest_verification_failed(
+    events: Sequence[DomainEvent],
+) -> tuple[datetime | None, str | None, str | None, int | None]:
+    latest: VerificationFailed | None = None
+    for event in events:
+        if isinstance(event, VerificationFailed):
+            latest = event
+    if latest is None:
+        return None, None, None, None
+    return latest.occurred_at, latest.failed_stage, latest.feedback, latest.score
+
+
 def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
     """Convert AgentListItem read model to API schema."""
     return AgentListItemSchema(
@@ -275,7 +290,11 @@ def _agent_node_to_schema(
     if last_event_at is not None:
         idle_seconds = int((now_utc - last_event_at).total_seconds())
         is_terminal = node.status in {"completed", "failed"}
-        is_stale = (not is_terminal) and idle_seconds > stale_threshold_seconds
+        can_be_stale = node.role.lower() == AgentRole.WORKER.value.lower() and node.status in {
+            "analyzing",
+            "in_progress",
+        }
+        is_stale = (not is_terminal) and can_be_stale and idle_seconds > stale_threshold_seconds
     events = hierarchy_events.get(node.id, [])
     (
         watchdog_phase,
@@ -295,6 +314,12 @@ def _agent_node_to_schema(
     prompt_sent_at = _first_prompt_sent_after_boundary(events, boundary)
     attempt_exec_started_count = _exec_started_count_after_boundary(events, boundary)
     attempt_prompt_sent_count = _prompt_sent_count_after_boundary(events, boundary)
+    (
+        last_verification_failed_at,
+        last_verification_failed_stage,
+        last_verification_feedback,
+        last_verification_score,
+    ) = _latest_verification_failed(events)
 
     return AgentNodeSchema(
         id=str(node.id),
@@ -317,6 +342,10 @@ def _agent_node_to_schema(
         attempt_exec_started_count=attempt_exec_started_count,
         attempt_prompt_sent_count=attempt_prompt_sent_count,
         prompt_sent_at=prompt_sent_at,
+        last_verification_failed_at=last_verification_failed_at,
+        last_verification_failed_stage=last_verification_failed_stage,
+        last_verification_feedback=last_verification_feedback,
+        last_verification_score=last_verification_score,
         children=[
             _agent_node_to_schema(
                 child,

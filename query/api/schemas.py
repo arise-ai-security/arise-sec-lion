@@ -71,6 +71,22 @@ class AgentNodeSchema(BaseModel):
         None,
         description="First PromptSent timestamp in the current attempt window",
     )
+    last_verification_failed_at: datetime | None = Field(
+        None,
+        description="Timestamp of the most recent VerificationFailed event for this agent",
+    )
+    last_verification_failed_stage: str | None = Field(
+        None,
+        description="Verification stage from the most recent VerificationFailed event",
+    )
+    last_verification_feedback: str | None = Field(
+        None,
+        description="Verifier feedback from the most recent VerificationFailed event",
+    )
+    last_verification_score: int | None = Field(
+        None,
+        description="Verifier score from the most recent VerificationFailed event",
+    )
     children: list["AgentNodeSchema"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
