@@ -12,6 +12,7 @@ import io
 import logging
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -51,9 +52,13 @@ def _render_svg(rows: list[dict[str, str]]) -> bytes:
             'fill="#38bdf8"/>'
         )
         label_y = height - padding + 18
+        # Audit N-13: escape the cell label before embedding into SVG.
+        # Cell slugs are domain-constrained today (`A1`, `B2`, ...) so the
+        # practical risk is zero, but the path is XML-injection-shaped.
+        cell_label = xml_escape(str(row.get("cell") or ""))
         parts.append(
             f'<text x="{x + bar_width // 2}" y="{label_y}" text-anchor="middle" '
-            f'fill="#f8fafc" font-family="sans-serif" font-size="12">{row["cell"]}</text>'
+            f'fill="#f8fafc" font-family="sans-serif" font-size="12">{cell_label}</text>'
         )
         parts.append(
             f'<text x="{x + bar_width // 2}" y="{y - 4}" text-anchor="middle" '

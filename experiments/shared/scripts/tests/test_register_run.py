@@ -232,6 +232,47 @@ def test_register_run_requires_existing_run_manifest(repo_root: Path) -> None:
         )
 
 
+def test_write_run_manifest_uses_unique_tmp_filename(repo_root: Path) -> None:
+    # Given: a finished run manifest. Two consecutive _write_run_manifest
+    # calls should never reuse the same staging path; pre-fix they used
+    # the deterministic `<name>.tmp` which races under N-4 + N-11.
+    from experiments.shared.scripts.register_run import _write_run_manifest
+
+    study_id = "tmp-name-study"
+    _write_study_manifest(repo_root, study_id, cells={"A1": {"config": "x"}})
+    runs_pool = repo_root / "runs"
+    runs_pool.mkdir(parents=True, exist_ok=True)
+    run_id = uuid4()
+    _seed_run_manifest(runs_pool, str(run_id))
+    manifest_path = runs_pool / str(run_id) / "run_manifest.json"
+
+    captured: list[str] = []
+    import tempfile as _tempfile
+
+    real_mkstemp = _tempfile.mkstemp
+
+    def _capture(*args, **kwargs):
+        fd, name = real_mkstemp(*args, **kwargs)
+        captured.append(name)
+        return fd, name
+
+    import experiments.shared.scripts.register_run as register_module
+
+    original = register_module.tempfile.mkstemp
+    register_module.tempfile.mkstemp = _capture
+    try:
+        _write_run_manifest(manifest_path, {"run_id": str(run_id), "v": 1})
+        _write_run_manifest(manifest_path, {"run_id": str(run_id), "v": 2})
+    finally:
+        register_module.tempfile.mkstemp = original
+
+    # Then: two distinct tmp paths were used.
+    assert len(captured) == 2
+    assert captured[0] != captured[1]
+    # And: the final manifest reflects the last write.
+    assert json.loads(manifest_path.read_text())["v"] == 2
+
+
 def test_register_run_enforces_task_in_cell_scope(repo_root: Path) -> None:
     # Given: a study that declares a dataset.yaml with a per-cell CVE subset.
     study_id = "scoped-study"

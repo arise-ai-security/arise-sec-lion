@@ -28,7 +28,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -108,10 +110,25 @@ def _prepare_run_manifest_payload(
 
 
 def _write_run_manifest(run_manifest_path: Path, payload: dict[str, Any]) -> None:
-    """Atomically overwrite ``run_manifest_path`` with ``payload`` (tmp + rename)."""
-    tmp = run_manifest_path.with_name(run_manifest_path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(run_manifest_path)
+    """Atomically overwrite ``run_manifest_path`` with ``payload`` (tmp + rename).
+
+    Audit N-11: use ``tempfile.mkstemp`` instead of a deterministic
+    ``<name>.tmp`` so two concurrent callers targeting the same run_id
+    cannot stomp on each other's staging file.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=run_manifest_path.name + ".",
+        suffix=".tmp",
+        dir=str(run_manifest_path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        tmp_path.replace(run_manifest_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _validate_cell_declared(study: dict[str, Any], cell: str) -> None:
