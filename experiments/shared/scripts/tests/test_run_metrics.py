@@ -159,6 +159,62 @@ def test_float_coerces_inf_to_zero() -> None:
     assert metrics["worker_cost_usd"] == 0.0
 
 
+def test_event_type_prefers_explicit_discriminator() -> None:
+    # Given: a dict event with an explicit ``event_type`` discriminator
+    # that disagrees with the dict-pattern inference. Pre-N-5 the
+    # explicit field was consulted ONLY in the unmatched fallback string;
+    # post-fix it short-circuits the inference for projected JSONL.
+    events = [
+        {
+            "event_type": "AgentCreated",  # not in inferred_types tuple
+            "role": "BOSS",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: event_count is incremented (the event was classified, not unknown)
+    assert metrics["event_count"] == 1
+
+
+def test_tool_calls_by_type_prefers_structured_tool_name() -> None:
+    # Given: a tool_use event with a structured `tool_name` field whose
+    # content prefix would be mislabeled by the legacy parser (Claude SDK
+    # emits "Running: ls" for the Bash tool — pre-N-6 metrics got
+    # `tool_calls_by_type = {"Running": 1}`).
+    events = [
+        {
+            "content": "Running: ls -la",
+            "output_type": "tool_use",
+            "tool_name": "Bash",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: the canonical name wins, not the formatter prefix
+    assert metrics["tool_calls_by_type"] == {"Bash": 1}
+
+
+def test_tool_calls_by_type_falls_back_to_legacy_parser() -> None:
+    # Given: a legacy event with no structured tool_name and the
+    # OpenHands-style "Tool: <name>" content prefix
+    events = [
+        {
+            "content": "Tool: Read\nargs: {}",
+            "output_type": "tool_use",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: legacy parser correctly extracts the name
+    assert metrics["tool_calls_by_type"] == {"Read": 1}
+
+
 def test_metrics_from_events_jsonl_rejects_malformed_lines(tmp_path) -> None:
     # Given: a JSONL file with one corrupted line between valid ones.
     # Pre-N-1, the reader silently skipped the bad line and produced a

@@ -61,11 +61,13 @@ def test_atomic_write_cleans_up_tmp_on_failure(tmp_path: Path) -> None:
     target = tmp_path / "events.jsonl"
     target.write_text("PREVIOUS", encoding="utf-8")
 
-    # Patch model_dump_json to raise so the write loop fails after creating the tmp file.
-    def _boom(self: Any) -> str:
+    # Patch model_dump to raise so the write loop fails after creating the tmp file.
+    # The atomic writer now uses model_dump(mode="json") + an event_type wrap
+    # (audit N-5), so model_dump is the right hook point.
+    def _boom(self: Any, **_kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("simulated mid-write kill")
 
-    with patch.object(RunCompleted, "model_dump_json", _boom):
+    with patch.object(RunCompleted, "model_dump", _boom):
         # When: the write is attempted
         with pytest.raises(RuntimeError, match="simulated mid-write kill"):
             project_events._atomic_write_events_jsonl(target, _fake_events(3))

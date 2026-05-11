@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import tempfile
@@ -88,6 +89,12 @@ def _atomic_write_events_jsonl(output_path: Path, events: list[DomainEvent]) -> 
     truncated `events.jsonl` that the reader silently skips lines from
     (audit N-1). Mirrors the tmp+fsync+replace pattern in
     ``presentation/persistence/run_persistence.py:_atomic_write_json``.
+
+    Each line is the event's `model_dump(mode="json")` payload extended with
+    an explicit ``event_type`` discriminator (audit N-5). The base
+    ``DomainEvent`` schema declares no class-name field, so without the
+    discriminator the metrics reader has to infer the type from a brittle
+    set of field-tuple heuristics that miss 25 of 32 subclasses.
     """
     fd, tmp_name = tempfile.mkstemp(
         prefix=output_path.name + ".",
@@ -98,7 +105,11 @@ def _atomic_write_events_jsonl(output_path: Path, events: list[DomainEvent]) -> 
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             for event in events:
-                handle.write(event.model_dump_json())
+                payload = {
+                    "event_type": type(event).__name__,
+                    **event.model_dump(mode="json"),
+                }
+                handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True))
                 handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

@@ -93,7 +93,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         Uses PostToolUse hooks to capture tool invocations.
         """
         self._start_timing()
-        tool_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -143,7 +143,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     def _build_options(
         self,
         working_dir: str,
-        tool_queue: asyncio.Queue[tuple[str, str]],
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]],
         container_session: ContainerSessionContext | None,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> ClaudeAgentOptions:
@@ -158,7 +158,10 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             tool_name = getattr(input_data, "tool_name", "unknown")
             tool_input = getattr(input_data, "tool_input", {})
             content = format_tool_event(tool_name, tool_input)
-            await tool_queue.put((content, "tool_use"))
+            # Audit N-6: pass the canonical tool_name through so the
+            # downstream ThoughtCaptured event has a structured field
+            # instead of forcing offline metrics to parse the human prefix.
+            await tool_queue.put((content, "tool_use", tool_name))
             return SyncHookJSONOutput()
 
         async def can_use_tool(
@@ -210,13 +213,13 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
 
     async def _drain_queue(
         self,
-        queue: asyncio.Queue[tuple[str, str]],
+        queue: asyncio.Queue[tuple[str, str, str | None]],
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
         """Drain all pending events from queue."""
         while not queue.empty():
-            content, output_type = queue.get_nowait()
-            yield sequencer.thought(content, output_type)
+            content, output_type, tool_name = queue.get_nowait()
+            yield sequencer.thought(content, output_type, tool_name=tool_name)
 
     async def _process_message(
         self,

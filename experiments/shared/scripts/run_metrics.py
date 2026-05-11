@@ -127,7 +127,15 @@ def metrics_from_events(  # noqa: PLR0915
             _incr(metrics, "worker_output_event_count")
             if output_type == "tool_use":
                 _incr(metrics, "tool_call_count")
-                tool_name = _tool_name_from_thought(content)
+                # Audit N-6: prefer the structured `tool_name` field when
+                # present (Claude SDK / Google ADK emit it post-fix); fall
+                # back to parsing the human-formatted content prefix for
+                # legacy events (e.g. OpenHands still emits `Tool: <name>`).
+                structured = _get(event, "tool_name")
+                if isinstance(structured, str) and structured.strip():
+                    tool_name = structured.strip()
+                else:
+                    tool_name = _tool_name_from_thought(content)
                 tool_calls_by_type[tool_name] = tool_calls_by_type.get(tool_name, 0) + 1
             elif output_type == "tool_result":
                 _incr(metrics, "tool_result_count")
@@ -233,8 +241,16 @@ def _add_float(metrics: dict[str, MetricValue], key: str, amount: float) -> None
 
 
 def _event_type(event: DomainEvent | dict[str, Any]) -> str:
+    # Audit N-5: prefer the explicit ``event_type`` discriminator stamped
+    # by the projector. The dict-pattern inference is kept as a fallback
+    # so already-projected events.jsonl files (pre-fix) keep working —
+    # they don't carry the discriminator and there's no value in
+    # re-projecting historical artifacts.
     if isinstance(event, DomainEvent):
         return type(event).__name__
+    explicit = event.get("event_type") or event.get("type")
+    if isinstance(explicit, str) and explicit:
+        return explicit
     inferred_types = (
         ("ThoughtCaptured", ("output_type", "content")),
         ("PromptSent", ("prompt", "prompt_type")),
@@ -248,7 +264,7 @@ def _event_type(event: DomainEvent | dict[str, Any]) -> str:
             return event_type
     if "probe_type" in event:
         return "ProbeStarted"
-    return str(event.get("event_type") or event.get("type") or "Unknown")
+    return "Unknown"
 
 
 def _get(event: DomainEvent | dict[str, Any], field: str) -> Any:

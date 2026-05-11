@@ -377,7 +377,10 @@ Always explain your reasoning and provide clear output about what you're doing."
                     else:
                         tool_input = dict(tool_args) if tool_args else {}
                     content_str = format_tool_event(tool_name, tool_input)
-                    events.append(sequencer.thought(content_str, "tool_use"))
+                    # Audit N-6: pass tool_name through as a structured field.
+                    events.append(
+                        sequencer.thought(content_str, "tool_use", tool_name=tool_name)
+                    )
 
                 # Function response part
                 elif hasattr(part, "function_response"):

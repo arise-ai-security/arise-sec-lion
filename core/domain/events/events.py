@@ -217,11 +217,18 @@ class CodeGenerationStarted(DomainEvent):
 
 
 class ThoughtCaptured(DomainEvent):
-    """Worker tool output captured (thinking, progress, output, debug)."""
+    """Worker tool output captured (thinking, progress, output, debug).
+
+    Audit N-6: ``tool_name`` carries the canonical tool identifier when
+    ``output_type == "tool_use"``. Without it, downstream metric pipelines
+    have to parse the human-formatted ``content`` prefix (``Running:``,
+    ``Reading:``, ...) which is lossy and adapter-specific.
+    """
 
     content: str
     stream: str = "tool"
     output_type: str = "output"
+    tool_name: str | None = None
 
 
 class PromptSent(DomainEvent):
