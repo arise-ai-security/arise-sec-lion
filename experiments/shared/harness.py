@@ -5,9 +5,11 @@ in ``experiments/shared/scripts``. No import of core/, plugins/, or
 infrastructure/ — the harness is pure orchestration around ``main.py run``
 (spec §8).
 
-Run the A/B cells sequentially by default: the harness relies on
-``runs/.last_run.json`` to learn the boss_id emitted by ``main.py run``,
-and that file is inherently a single-slot pointer (spec §12).
+Each ``main.py run`` subprocess receives a unique per-invocation result file
+via the ``ARISE_RUN_RESULT_PATH`` env var so the harness can recover its
+``boss_id`` without racing on the shared ``.last_run.json`` pointer (which
+remains in use for interactive UI workflows only). This makes the matrix
+runner safe under ``--parallel >1`` (spec §12 + N-4 audit fix).
 
 Usage::
 
@@ -25,8 +27,10 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -36,6 +40,12 @@ import yaml
 from experiments.shared.scripts._paths import get_repo_root
 from experiments.shared.scripts.project_events import project_events_to_jsonl
 from experiments.shared.scripts.register_run import register_run
+
+
+# The harness passes a unique result-file path to each subprocess via this env
+# var so concurrent `main.py run` invocations cannot misattribute each other's
+# run_id. See `presentation/persistence/run_persistence.py:RUN_RESULT_ENV_VAR`.
+RUN_RESULT_ENV_VAR = "ARISE_RUN_RESULT_PATH"
 
 
 logger = logging.getLogger(__name__)
@@ -187,39 +197,30 @@ def _validate_cell_declared(manifest: dict[str, Any], cell: str) -> None:
 # =============================================================================
 
 
-def _read_last_run_id(runs_root: Path) -> UUID:
-    pointer = runs_root / ".last_run.json"
-    if not pointer.is_file():
+def _read_run_result(result_path: Path) -> UUID:
+    """Read the per-invocation run-result JSON written by ``cli.py``.
+
+    The path is unique per ``main.py run`` invocation (created by the harness
+    via ``tempfile.mkstemp``) so concurrent matrix dispatches cannot stomp
+    on each other's run_id — the shared ``.last_run.json`` pointer suffers
+    exactly that race under ``--parallel >1``. The harness pre-creates the
+    file as an empty placeholder so the subprocess can atomically replace
+    it; an empty payload therefore means the subprocess never wrote.
+    """
+    if not result_path.is_file():
         raise FileNotFoundError(
-            f"missing {pointer}; `main.py run` must have failed before writing it"
+            f"missing {result_path}; `main.py run` must have failed before writing it"
         )
-    data = json.loads(pointer.read_text(encoding="utf-8"))
+    text = result_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise FileNotFoundError(
+            f"empty run-result at {result_path}; `main.py run` exited before writing it"
+        )
+    data = json.loads(text)
     try:
         return UUID(data["boss_id"])
     except (KeyError, ValueError) as exc:
-        raise ValueError(f".last_run.json is missing or has an invalid boss_id: {data}") from exc
-
-
-def _last_run_snapshot(runs_root: Path) -> tuple[str | None, float | None]:
-    """Return (boss_id, mtime) for the current `.last_run.json`, if present.
-
-    Used as a before/after check so we never enroll a stale pointer when
-    `main.py run` dies before it can update the file (spec §8 + codex
-    review Phase 3 P1).
-    """
-    pointer = runs_root / ".last_run.json"
-    if not pointer.is_file():
-        return None, None
-    try:
-        data = json.loads(pointer.read_text(encoding="utf-8"))
-        boss_id = data.get("boss_id")
-    except (OSError, json.JSONDecodeError):
-        return None, None
-    try:
-        mtime = pointer.stat().st_mtime
-    except OSError:
-        mtime = None
-    return boss_id, mtime
+        raise ValueError(f"{result_path} has invalid/missing boss_id: {data}") from exc
 
 
 def _invoke_main_py(
@@ -227,12 +228,15 @@ def _invoke_main_py(
     config: Path,
     task: str,
     context_file: Path,
+    result_path: Path,
     python_bin: str | None = None,
 ) -> int:
     """Run ``python main.py -c <config> run <task> --domain security --domain-context-file <path>``.
 
     `-c` MUST come BEFORE the `run` subcommand (top-level flag, see
-    bootstrap/bootstrap.py:67). Returns the subprocess exit code.
+    bootstrap/bootstrap.py:67). The subprocess inherits ``ARISE_RUN_RESULT_PATH``
+    pointing at ``result_path`` so the CLI can emit a per-invocation
+    ``{boss_id, status}`` payload there. Returns the subprocess exit code.
     """
     python = python_bin or sys.executable
     main_py = get_repo_root() / "main.py"
@@ -248,8 +252,11 @@ def _invoke_main_py(
         "--domain-context-file",
         str(context_file),
     ]
+    env = {**os.environ, RUN_RESULT_ENV_VAR: str(result_path)}
     logger.info("invoking: %s", " ".join(cmd))
-    completed = subprocess.run(cmd, check=False, cwd=get_repo_root())  # noqa: S603
+    completed = subprocess.run(  # noqa: S603
+        cmd, check=False, cwd=get_repo_root(), env=env
+    )
     return completed.returncode
 
 
@@ -276,32 +283,35 @@ def run_ours(
 
     context_file = coverage[task]
     pool = runs_root or _runs_root(config)
-    # Capture the pointer state BEFORE the subprocess so we can tell the
-    # difference between "this run advanced it" vs. "we're about to enroll a
-    # stale pointer from a previous run" (codex review Phase 3 P1).
-    prev_boss_id, prev_mtime = _last_run_snapshot(pool)
-
-    exit_code = _invoke_main_py(config=config, task=task, context_file=context_file)
-    # `main.py run` exits non-zero on failed/timeout runs, but the run manifest
-    # still carries the outcome. We do NOT bail out here — enroll the run so
-    # its exit_status is discoverable. A raise happens only if .last_run.json
-    # wasn't advanced by this subprocess (meaning the run died before any
-    # artifacts landed on disk).
-    if exit_code != 0:
-        logger.warning("`main.py run` exited with %d; continuing enrollment", exit_code)
-
-    curr_boss_id, curr_mtime = _last_run_snapshot(pool)
-    if curr_boss_id is None:
-        raise FileNotFoundError("`main.py run` produced no `.last_run.json`; refusing to enroll")
-    pointer_advanced = (curr_boss_id != prev_boss_id) or (
-        prev_mtime is not None and curr_mtime is not None and curr_mtime > prev_mtime
+    pool.mkdir(parents=True, exist_ok=True)
+    # Per-invocation result file: a unique path per `main.py run` subprocess
+    # so concurrent matrix jobs cannot misattribute each other's run_id.
+    # `mkstemp` atomically creates the file; the subprocess overwrites it
+    # via the atomic-write helper in run_persistence.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".run-result-{cell}-{task}-", suffix=".json", dir=str(pool)
     )
-    if not pointer_advanced:
-        raise RuntimeError(
-            "`.last_run.json` was not advanced by the subprocess (boss_id="
-            f"{curr_boss_id!r}); refusing to enroll a stale pointer."
+    os.close(fd)
+    result_path = Path(tmp_name)
+
+    try:
+        exit_code = _invoke_main_py(
+            config=config,
+            task=task,
+            context_file=context_file,
+            result_path=result_path,
         )
-    run_id = UUID(curr_boss_id)
+        # `main.py run` exits non-zero on failed/timeout runs, but the run manifest
+        # still carries the outcome. We do NOT bail out here — enroll the run so
+        # its exit_status is discoverable. A raise happens only if the result
+        # file wasn't written by this subprocess (meaning the run died before any
+        # artifacts landed on disk).
+        if exit_code != 0:
+            logger.warning("`main.py run` exited with %d; continuing enrollment", exit_code)
+
+        run_id = _read_run_result(result_path)
+    finally:
+        result_path.unlink(missing_ok=True)
 
     # Write events.jsonl + stamp the per-run manifest with cell/task/replicate.
     # Pass the pinned config so the projection queries the same Postgres

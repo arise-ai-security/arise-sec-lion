@@ -210,6 +210,7 @@ class CLI:
             self._renderer.print_error(f"Orchestration loop failed: {e}")
         finally:
             self._persistence.save_last_run(root_id, task_description, status)
+            self._persistence.maybe_write_run_result(root_id, status)
             await self._cleanup()
 
         return RunResult(root_id=root_id, status=status)

@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 EFFECTIVE_CONFIG_FILENAME = "effective_config.yaml"
 
+# Per-invocation run-result file path (set by the harness for parallel matrix
+# dispatch). The shared `.last_run.json` pointer races between concurrent
+# `main.py run` invocations because it is a single-slot file; a unique path
+# per invocation cannot. When this env var is set, the CLI writes the same
+# `boss_id`/`status` payload to that path as well, atomically.
+RUN_RESULT_ENV_VAR = "ARISE_RUN_RESULT_PATH"
+
 
 class _CostView(Protocol):
     """Shape of the cost block the manifest writer needs from a summary.
@@ -185,6 +192,23 @@ class RunPersistence:
         """Get boss_id from last run, if available."""
         info = self.get_last_run()
         return info.boss_id if info else None
+
+    @staticmethod
+    def maybe_write_run_result(boss_id: UUID, status: str) -> None:
+        """Write a per-invocation run-result JSON if ``ARISE_RUN_RESULT_PATH`` is set.
+
+        The harness sets the env var to a unique path per ``main.py run``
+        subprocess so it can recover the ``boss_id`` without relying on the
+        shared, race-prone ``.last_run.json`` pointer. No-op when the env var
+        is unset (e.g. interactive ``main.py run`` from a terminal).
+        """
+        result_path = os.environ.get(RUN_RESULT_ENV_VAR)
+        if not result_path:
+            return
+        _atomic_write_json(
+            Path(result_path),
+            {"boss_id": str(boss_id), "status": status},
+        )
 
     async def write_run_manifest(
         self,
