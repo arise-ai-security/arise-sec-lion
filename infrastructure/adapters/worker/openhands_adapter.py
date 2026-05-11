@@ -596,7 +596,13 @@ class OpenHandsAdapter(WorkerAdapterBase):
         return str(msg).strip() if msg and str(msg).strip() else None
 
     def _request_shutdown(self, conversation: Any) -> None:
-        """Best-effort SDK-native cleanup for the conversation."""
+        """Best-effort SDK-native cleanup for the conversation.
+
+        Also kills orphaned child processes (bash -i shells) that the
+        OpenHands SDK spawns but doesn't clean up when cancelled. Without
+        this, each retry leaves 2 zombie threads + 1 orphaned bash process,
+        whose pipe buffers fill and cause a classic subprocess pipe deadlock.
+        """
         for method_name in ("pause", "close"):
             method = getattr(conversation, method_name, None)
             if callable(method):
@@ -608,6 +614,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                         method_name,
                         exc_info=True,
                     )
+        # Kill orphaned bash -i child processes left by the SDK.
+        self._kill_orphaned_bash_children()
 
     async def _await_thread_exit(
         self, future: concurrent.futures.Future,  # type: ignore[type-arg]
@@ -629,6 +637,58 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
         except Exception:
             logger.debug("OpenHands thread exit wait failed", exc_info=True)
+
+    @staticmethod
+    def _kill_orphaned_bash_children() -> None:
+        """Kill orphaned bash -i processes spawned by the OpenHands SDK.
+
+        The SDK spawns ``bash -i`` as an interactive shell for tool execution.
+        When a worker step is cancelled (timeout, no-progress), the bash
+        process persists because Python threads can't be interrupted. Each
+        retry adds a new bash + 2 threads, and the old bash's stdout pipe
+        fills up (64KB), causing a pipe_write deadlock that blocks ALL
+        subsequent retries.
+
+        We kill all ``bash -i`` children of the current process. This is safe
+        because the orchestrator owns all bash shells — they only exist for
+        OpenHands tool execution.
+        """
+        import os
+        import signal
+
+        try:
+            current_pid = os.getpid()
+            children_dir = f"/proc/{current_pid}/task"
+            # Find child PIDs via /proc
+            killed = 0
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                try:
+                    stat_path = f"/proc/{entry}/stat"
+                    with open(stat_path) as f:
+                        stat_line = f.read()
+                    # Format: pid (comm) state ppid ...
+                    parts = stat_line.split(")")
+                    if len(parts) < 2:
+                        continue
+                    fields = parts[1].strip().split()
+                    ppid = int(fields[1])  # 4th field overall, 2nd after comm
+                    comm = parts[0].split("(")[1] if "(" in parts[0] else ""
+                    if ppid == current_pid and "bash" in comm:
+                        pid = int(entry)
+                        os.kill(pid, signal.SIGKILL)
+                        killed += 1
+                        logger.info(
+                            "Killed orphaned bash child PID %d (ppid=%d)",
+                            pid, current_pid,
+                        )
+                except (OSError, ValueError, IndexError):
+                    continue
+            if killed > 0:
+                logger.info("Cleaned up %d orphaned bash child process(es)", killed)
+        except Exception:
+            logger.debug("Failed to clean up orphaned bash children", exc_info=True)
 
     @staticmethod
     def _classify_event(event: Any) -> str:

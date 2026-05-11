@@ -433,3 +433,62 @@ class TestOrphanRecovery:
         is_work_failed_last = isinstance(last_event, WorkFailed)
 
         assert not is_work_failed_last, "RetryScheduled is the last event, not WorkFailed"
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: Kill orphaned bash children (pipe deadlock prevention)
+# ---------------------------------------------------------------------------
+
+
+class TestOrphanedBashCleanup:
+    """Verify that orphaned bash -i processes are killed on shutdown."""
+
+    def test_kill_orphaned_bash_children_finds_and_kills(self) -> None:
+        """_kill_orphaned_bash_children should kill bash processes whose
+        ppid matches the current process.
+        """
+        import os
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        current_pid = os.getpid()
+        killed_pids: list[int] = []
+
+        # Mock /proc traversal: simulate a bash child of current process
+        fake_proc_entries = ["1", str(current_pid), "99999", "abc"]
+        fake_stat_content = {
+            # pid (bash) S ppid ...
+            "99999": f"99999 (bash) S {current_pid} 0 0 0 0 0 0",
+            "1": f"1 (init) S 0 0 0 0 0 0",
+        }
+
+        original_listdir = os.listdir
+        original_kill = os.kill
+
+        def mock_listdir(path: str) -> list[str]:
+            if path == "/proc":
+                return fake_proc_entries
+            return original_listdir(path)
+
+        def mock_kill(pid: int, sig: int) -> None:
+            killed_pids.append(pid)
+
+        with patch("os.listdir", side_effect=mock_listdir):
+            with patch("os.kill", side_effect=mock_kill):
+                with patch("builtins.open", side_effect=lambda p, *a, **k:
+                    MagicMock(__enter__=lambda s: MagicMock(
+                        read=lambda: fake_stat_content.get(p.split("/")[2], "")
+                    ), __exit__=lambda *a: None)
+                ):
+                    OpenHandsAdapter._kill_orphaned_bash_children()
+
+        assert 99999 in killed_pids, "Should have killed bash child PID 99999"
+        assert len(killed_pids) == 1, "Should only kill the bash child, not init"
+
+    def test_kill_orphaned_bash_children_handles_no_children(self) -> None:
+        """Should not crash when there are no bash children."""
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        with patch("os.listdir", return_value=["1", "2"]):
+            with patch("builtins.open", side_effect=OSError("no proc")):
+                # Should not raise
+                OpenHandsAdapter._kill_orphaned_bash_children()
