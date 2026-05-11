@@ -8,7 +8,7 @@ the report as ``experiments/<study>/reports/enrollment.lock.yaml``.
 
 Usage::
 
-    python -m experiments.shared.scripts.collect --study 2026-04-23-initial-secbench
+    python -m experiments.shared.scripts.collect --study <study-id>
 
 The lockfile is written via ``write_binary`` so it carries the same
 ``.generated.json`` provenance as every other artifact in the reports

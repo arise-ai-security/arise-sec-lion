@@ -9,7 +9,7 @@ list of failed jobs with their error messages.
 Usage::
 
     uv run python -m experiments.shared.scripts.run_matrix \\
-        --study 2026-04-23-initial-secbench \\
+        --study <study-id> \\
         [--cells A1,B2] [--tasks gpac.cve-2021-40575] \\
         [--replicates 3] [--parallel 1] [--continue-on-error] \\
         [--no-render]
