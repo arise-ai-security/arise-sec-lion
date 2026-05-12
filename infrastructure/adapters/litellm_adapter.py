@@ -5,6 +5,7 @@ various LLM providers (OpenAI, Anthropic, Google, etc.) with optional
 cost tracking via the CostCalculatorPort.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -71,16 +72,21 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _ollama_overrides(model: str) -> dict[str, Any]:
-        """Return extra kwargs for Ollama models (disable thinking mode).
+        """Return extra kwargs for Ollama models.
 
-        Ollama reasoning models (qwen3.5, deepseek-v4-flash, etc.) emit
-        their reasoning either as inline ``<think>`` tags (Qwen) or in a
-        separate ``thinking`` field (DeepSeek), often at the cost of
-        leaving ``content`` empty or near-empty on long structured
-        prompts. Ollama's chat API recognises a top-level ``think: false``
-        flag that disables both behaviours; the older ``options.think``
-        form is ignored by DeepSeek (and by recent Ollama Cloud builds),
-        so we send the flag at the top level only.
+        Applies two critical overrides for Ollama reasoning models
+        (qwen3.5, deepseek-v4-flash, etc.):
+
+        1. **Disable thinking mode** — these models emit reasoning as
+           inline ``<think>`` tags (Qwen) or in a separate ``thinking``
+           field (DeepSeek), often leaving ``content`` empty on long
+           structured prompts.
+
+        2. **Set num_ctx** — Ollama defaults to num_ctx=2048 which
+           truncates prompts longer than ~1500 tokens. Our decomposition
+           prompts are 6-8K tokens; without explicit num_ctx the model
+           cannot see domain-specific rules (e.g. "Builder MUST decompose")
+           buried later in the prompt, causing systematic failures.
 
         litellm's ``reasoning_effort`` param does NOT propagate to Ollama.
         """
@@ -91,10 +97,22 @@ class LiteLLMAdapter(LLMPort):
         # ``data["think"]`` (see litellm/llms/ollama_chat.py). Passing it
         # as a direct kwarg avoids the extra_body merge logic, which
         # behaves differently across providers.
-        return {"think": False}
+        return {
+            "think": False,
+            "num_ctx": 65536,
+        }
+
+    _LLM_TIMEOUT_SECONDS = 180  # Hard timeout for a single LLM call
+    _RATE_LIMIT_RETRIES = 3
+    _RATE_LIMIT_BASE_DELAY = 10  # seconds; doubles each retry
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
-        """Call litellm.acompletion with unified exception handling.
+        """Call litellm.acompletion with timeout, 429 retry, and exception handling.
+
+        Retries rate-limit (429) errors with exponential backoff up to
+        _RATE_LIMIT_RETRIES times. Applies a hard timeout of
+        _LLM_TIMEOUT_SECONDS to each individual attempt to prevent
+        indefinite hangs when the endpoint is overwhelmed.
 
         Args:
             model: Model identifier (e.g., 'gpt-4', 'claude-3-opus').
@@ -106,44 +124,64 @@ class LiteLLMAdapter(LLMPort):
         Raises:
             LLMError: On any API failure, with specific error messages.
         """
-        try:
-            return await litellm.acompletion(model=model, **kwargs)
+        last_error: Exception | None = None
 
-        except litellm.exceptions.AuthenticationError as e:
-            raise LLMError(
-                f"LLM authentication failed for model '{model}': {e}",
-                original_error=e,
-            ) from e
+        for attempt in range(self._RATE_LIMIT_RETRIES + 1):
+            try:
+                return await asyncio.wait_for(
+                    litellm.acompletion(model=model, **kwargs),
+                    timeout=self._LLM_TIMEOUT_SECONDS,
+                )
 
-        except litellm.exceptions.RateLimitError as e:
-            raise LLMError(
-                f"LLM rate limit exceeded for model '{model}': {e}",
-                original_error=e,
-            ) from e
+            except asyncio.TimeoutError as e:
+                raise LLMError(
+                    f"LLM request timed out after {self._LLM_TIMEOUT_SECONDS}s for model '{model}'",
+                    original_error=e,
+                ) from e
 
-        except litellm.exceptions.APIError as e:
-            raise LLMError(
-                f"LLM API error for model '{model}': {e}",
-                original_error=e,
-            ) from e
+            except (litellm.exceptions.RateLimitError, litellm.exceptions.ServiceUnavailableError) as e:
+                last_error = e
+                if attempt < self._RATE_LIMIT_RETRIES:
+                    delay = self._RATE_LIMIT_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "Rate limited by %s (attempt %d/%d), retrying in %ds",
+                        model, attempt + 1, self._RATE_LIMIT_RETRIES + 1, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise LLMError(
+                    f"LLM rate limit exceeded for model '{model}' after {attempt + 1} attempts: {e}",
+                    original_error=e,
+                ) from e
 
-        except litellm.exceptions.Timeout as e:
-            raise LLMError(
-                f"LLM request timed out for model '{model}': {e}",
-                original_error=e,
-            ) from e
+            except litellm.exceptions.AuthenticationError as e:
+                raise LLMError(
+                    f"LLM authentication failed for model '{model}': {e}",
+                    original_error=e,
+                ) from e
 
-        except litellm.exceptions.ServiceUnavailableError as e:
-            raise LLMError(
-                f"LLM service unavailable for model '{model}': {e}",
-                original_error=e,
-            ) from e
+            except litellm.exceptions.APIError as e:
+                raise LLMError(
+                    f"LLM API error for model '{model}': {e}",
+                    original_error=e,
+                ) from e
 
-        except Exception as e:
-            raise LLMError(
-                f"Unexpected LLM error for model '{model}': {e}",
-                original_error=e,
-            ) from e
+            except litellm.exceptions.Timeout as e:
+                raise LLMError(
+                    f"LLM request timed out for model '{model}': {e}",
+                    original_error=e,
+                ) from e
+
+            except Exception as e:
+                raise LLMError(
+                    f"Unexpected LLM error for model '{model}': {e}",
+                    original_error=e,
+                ) from e
+
+        raise LLMError(
+            f"LLM call failed after retries for model '{model}': {last_error}",
+            original_error=last_error,
+        )
 
     def _extract_usage(self, model: str, response: Any) -> tuple[LLMUsage, float]:
         """Extract token usage and cost from a raw LiteLLM response.

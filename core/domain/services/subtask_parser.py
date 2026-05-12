@@ -464,6 +464,25 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
     # Resolve string depends_on references across all subtasks
     _resolve_depends_on(items)
 
+    # Strip self-references and out-of-range depends_on indices.
+    # Qwen-family models sometimes include a subtask's own index in its
+    # depends_on list, creating an unresolvable scheduling deadlock.
+    # GPT/Claude never generate these, so this is a no-op for them.
+    num_subtasks = len(items)
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict) or "depends_on" not in item:
+            continue
+        original = item["depends_on"]
+        cleaned = [d for d in original if d != idx and 0 <= d < num_subtasks]
+        if len(cleaned) < len(original):
+            dropped = [d for d in original if d == idx or not (0 <= d < num_subtasks)]
+            logger.warning(
+                "Subtask %d: dropped invalid depends_on %r (self-ref or out-of-range)",
+                idx,
+                dropped,
+            )
+            item["depends_on"] = cleaned
+
     config_adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
     subtasks: list[Subtask] = []
 
