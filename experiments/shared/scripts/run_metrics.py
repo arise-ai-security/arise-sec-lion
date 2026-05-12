@@ -87,6 +87,7 @@ def empty_metrics() -> dict[str, MetricValue]:
         "event_count": 0,
         "prompt_sent_count": 0,
         "tool_call_count": 0,
+        "probe_count": 0,
         "tool_result_count": 0,
         "thinking_event_count": 0,
         "thinking_chars": 0,
@@ -103,6 +104,11 @@ def empty_metrics() -> dict[str, MetricValue]:
         "total_cost_usd": 0.0,
         "run_duration_seconds": -1.0,
         "run_completed_count": 0,
+        # `judge_score = -1` is the sentinel for "no verification-judge event
+        # observed" (parallels run_duration_seconds). 0–100 means the judge
+        # stage ran and produced that score. Sourced from VerificationPassed
+        # or VerificationFailed(failed_stage="judge").
+        "judge_score": -1,
         "tool_calls_by_type": {},
     }
 
@@ -141,12 +147,21 @@ def metrics_from_events(  # noqa: PLR0915
                 _incr(metrics, "thinking_chars", len(content))
 
         elif event_type == "ProbeStarted":
-            _incr(metrics, "tool_call_count")
+            _incr(metrics, "probe_count")
             probe = str(_get(event, "probe_type") or "probe")
             tool_calls_by_type[probe] = tool_calls_by_type.get(probe, 0) + 1
 
         elif event_type == "ProbeCompleted":
             _incr(metrics, "tool_result_count")
+
+        elif event_type == "VerificationPassed":
+            metrics["judge_score"] = _int(_get(event, "score"))
+
+        elif event_type == "VerificationFailed":
+            # Only the judge stage produces a meaningful score; other stages
+            # (structural / deterministic / execution) emit score=0 by default.
+            if str(_get(event, "failed_stage") or "") == "judge":
+                metrics["judge_score"] = _int(_get(event, "score"))
 
         elif event_type == "TokensConsumed":
             prompt = _int(_get(event, "prompt_tokens"))

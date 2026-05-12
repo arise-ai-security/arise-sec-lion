@@ -214,6 +214,111 @@ def test_tool_calls_by_type_unlabeled_tool_use_records_unknown() -> None:
     assert metrics["tool_calls_by_type"] == {"unknown": 1}
 
 
+def test_probe_started_increments_probe_count_not_tool_call_count() -> None:
+    # Given: a ProbeStarted event (manager-recon stage) and a tool_use
+    # (worker tool call) in the same run.
+    events = [
+        {
+            "event_type": "ThoughtCaptured",
+            "content": "ls -la",
+            "output_type": "tool_use",
+            "tool_name": "Bash",
+        },
+        {
+            "event_type": "ProbeStarted",
+            "probe_type": "read_file",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: BUG-METRIC4 — recon probes are bucketed separately from worker
+    # tool calls so manager-recon volume does not double-count or
+    # contaminate worker tool_call_count.
+    assert metrics["tool_call_count"] == 1
+    assert metrics["probe_count"] == 1
+
+
+def test_verification_passed_sets_judge_score() -> None:
+    # Given: a VerificationPassed event with the judge's score.
+    events = [
+        {
+            "event_type": "VerificationPassed",
+            "feedback": "looks good",
+            "score": 87,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: BUG-METRIC7 — the judge score is surfaced into the per-run
+    # metric dict instead of being lost inside the agent aggregate.
+    assert metrics["judge_score"] == 87
+
+
+def test_judge_score_sentinel_when_no_verification_event() -> None:
+    # Given: a run that never reaches the judge stage (skip_judge or earlier
+    # stage failure with no judge VerificationFailed emitted).
+    events = [
+        {
+            "event_type": "ThoughtCaptured",
+            "content": "ls",
+            "output_type": "tool_use",
+            "tool_name": "Bash",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: -1 sentinel (loud) distinguishes "judge never ran" from a real
+    # score of 0.
+    assert metrics["judge_score"] == -1
+
+
+def test_verification_failed_at_judge_stage_sets_judge_score() -> None:
+    # Given: VerificationFailed at the judge stage with a low score.
+    events = [
+        {
+            "event_type": "VerificationFailed",
+            "failed_stage": "judge",
+            "feedback": "missing PoC verification",
+            "stages_passed": ["structural", "deterministic", "execution"],
+            "score": 35,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: BUG-METRIC7 — judge-stage failures also carry a meaningful
+    # score (the judge's verdict) and must surface it.
+    assert metrics["judge_score"] == 35
+
+
+def test_verification_failed_at_non_judge_stage_does_not_touch_judge_score() -> None:
+    # Given: an execution-stage VerificationFailed (no judge involvement).
+    # Its `score` field defaults to 0 and is not the judge's verdict.
+    events = [
+        {
+            "event_type": "VerificationFailed",
+            "failed_stage": "execution",
+            "feedback": "exit code 1",
+            "stages_passed": ["structural", "deterministic"],
+            "score": 0,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: judge_score stays at the no-judge sentinel — the execution
+    # stage's score=0 default must not masquerade as a real judge verdict.
+    assert metrics["judge_score"] == -1
+
+
 def test_metrics_from_events_jsonl_rejects_malformed_lines(tmp_path) -> None:
     # Given: a JSONL file with one corrupted line between valid ones.
     # Pre-N-1, the reader silently skipped the bad line and produced a
