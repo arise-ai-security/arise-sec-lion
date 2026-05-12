@@ -60,7 +60,13 @@ def _settings_with(tmp_path: Path, **overrides: dict) -> Settings:
 
 
 def test_tool_policy_for_claude_code(tmp_path: Path) -> None:
-    """worker.tool=claude_code yields ToolPolicy reflecting tool_params lists."""
+    """worker.tool=claude_code yields ToolPolicy reflecting top-level lists.
+
+    Post-BUG-A1 (2026-05-12), ``build_tool_policy`` reads tool policy from
+    top-level ``worker.allowed_tools`` / ``disallowed_tools`` rather than the
+    nested ``tool_params.claude_code.*`` slot. The cell yamls follow the same
+    contract; this test pins it for the value object.
+    """
     settings = _settings_with(
         tmp_path,
         worker={
@@ -68,10 +74,10 @@ def test_tool_policy_for_claude_code(tmp_path: Path) -> None:
             "tool": "claude_code",
             "timeout": 300,
             "max_iterations_per_run": 20,
+            "allowed_tools": ["Bash", "Read", "Edit"],
+            "disallowed_tools": ["WebFetch"],
             "tool_params": {
                 "claude_code": {
-                    "allowed_tools": ["Bash", "Read", "Edit"],
-                    "disallowed_tools": ["WebFetch"],
                     "output_format": "stream-json",
                     "include_partial_messages": True,
                     "max_turns": 40,

@@ -228,6 +228,8 @@ def create_runtime_cli(
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
+            worker_allowed_tools=list(settings.worker.allowed_tools),
+            worker_disallowed_tools=list(settings.worker.disallowed_tools),
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
             format_repairer_enabled=settings.format_repairer.enabled,

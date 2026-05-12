@@ -232,3 +232,106 @@ def test_create_runtime_cli_leaves_hierarchical_mode_default(tmp_path: Path) -> 
     assert service._config.mode == "hierarchical"
     assert service._flat_worker is None
     assert service._flat_invariant_builder is None
+
+
+# BUG-TOOL1 regression: composition.py used to construct InfrastructureConfig
+# without ``worker_allowed_tools`` / ``worker_disallowed_tools``, so the
+# hierarchical adapters silently fell back to each SDK's hardcoded defaults
+# and ignored the YAML. The two tests below pin the wiring so a future
+# regression at the composition.py boundary fails loudly here.
+
+
+def _custom_tool_policy_settings(tmp_path: Path, *, tool: str, model: str) -> Path:
+    return _settings_with(
+        tmp_path,
+        worker={
+            "model": model,
+            "tool": tool,
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            # Use a list distinct from every adapter's hardcoded default
+            # (SDKAdapterConfig defaults to no MultiEdit; OpenHandsAdapter
+            # defaults to ``["*"]``) so the assertion fails if either
+            # fallback silently re-enters.
+            "allowed_tools": [
+                "Read",
+                "Write",
+                "Edit",
+                "MultiEdit",
+                "Bash",
+                "Glob",
+                "Grep",
+            ],
+            "disallowed_tools": ["WebSearch", "WebFetch"],
+        },
+    )
+
+
+def test_create_runtime_cli_threads_allowed_tools_to_claude_sdk(tmp_path: Path) -> None:
+    """B-cell wiring: YAML ``worker.allowed_tools`` reaches the Claude SDK adapter."""
+    from bootstrap.composition import create_runtime_cli
+    from config.settings import Settings
+    from infrastructure.adapters.worker import ClaudeAgentSDKAdapter
+
+    # Given: a hierarchical claude_code settings overlay with an explicit allowlist.
+    settings_path = _custom_tool_policy_settings(
+        tmp_path, tool="claude_code", model="claude-sonnet-4-20250514"
+    )
+    settings = Settings.from_yaml(settings_path)
+
+    # When: building the CLI.
+    cli = create_runtime_cli(settings)
+
+    # Then: the SDK adapter received the YAML policy verbatim, not its hardcoded default.
+    worker_port = cli.execution_service._orchestrator._worker_port
+    assert isinstance(worker_port, ClaudeAgentSDKAdapter)
+    assert worker_port.config.allowed_tools == [
+        "Read",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Bash",
+        "Glob",
+        "Grep",
+    ]
+    assert worker_port.config.disallowed_tools == ["WebSearch", "WebFetch"]
+
+
+def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -> None:
+    """C-cell wiring: YAML ``worker.allowed_tools`` reaches the OpenHands adapter."""
+    from bootstrap.composition import create_runtime_cli
+    from config.settings import Settings
+    from infrastructure.adapters.worker import OpenHandsAdapter
+
+    # Given: a hierarchical openhands settings overlay with an explicit allowlist.
+    settings_path = _custom_tool_policy_settings(
+        tmp_path, tool="openhands", model="openai/gpt-4o-mini"
+    )
+    # OpenHands tool_params slot is required when tool=openhands.
+    overlay = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    overlay["worker"]["tool_params"] = {
+        "openhands": {
+            "image": "openhands:latest",
+            "timeout_seconds": 300,
+            "max_iterations_per_run": 20,
+        }
+    }
+    settings_path.write_text(yaml.safe_dump(overlay), encoding="utf-8")
+    settings = Settings.from_yaml(settings_path)
+
+    # When: building the CLI.
+    cli = create_runtime_cli(settings)
+
+    # Then: the OpenHands adapter received the YAML policy verbatim, not ``["*"]``.
+    worker_port = cli.execution_service._orchestrator._worker_port
+    assert isinstance(worker_port, OpenHandsAdapter)
+    assert worker_port.allowed_tools == [
+        "Read",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Bash",
+        "Glob",
+        "Grep",
+    ]
+    assert worker_port.disallowed_tools == ["WebSearch", "WebFetch"]
