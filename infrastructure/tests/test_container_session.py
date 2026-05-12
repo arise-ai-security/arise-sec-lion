@@ -42,11 +42,26 @@ def test_container_session_wraps_shell_commands() -> None:
     assert "/src/build.sh" in wrapped
 
 
-def test_container_session_prefix_mentions_helper_for_manual_shell() -> None:
+def test_container_session_prefix_mentions_shell_in_container_for_manual_shell() -> None:
+    # E.10: the manual-shell branch must route the agent at the MCP
+    # ``shell_in_container`` tool, NOT at a host-side ``./secb-exec`` binary.
     session = _session()
 
     prompt = session.apply_task_prefix("Do the task", auto_shell=False)
 
     assert "/workspace/run/src" in prompt
     assert "/workspace/run/testcase" in prompt
-    assert "./secb-exec" in prompt
+    assert "shell_in_container" in prompt
+    assert "./secb-exec" not in prompt
+
+
+def test_container_session_prefix_mentions_shell_in_container_for_auto_shell() -> None:
+    # E.10: the auto-shell branch (claude_sdk / google_adk path) still
+    # advertises the MCP tool as preferred, even though Bash tool calls
+    # are auto-routed into the container by the permission hook.
+    session = _session()
+
+    prompt = session.apply_task_prefix("Do the task", auto_shell=True)
+
+    assert "shell_in_container" in prompt
+    assert "./secb-exec" not in prompt

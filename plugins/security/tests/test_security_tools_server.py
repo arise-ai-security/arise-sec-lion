@@ -238,3 +238,78 @@ def test_klee_run_returns_install_error_when_apt_fails() -> None:
     assert result["error"] == "klee_install_failed"
     assert "valgrind" in result["message"].lower()
     assert result["install_exit_code"] == 1
+
+
+# -- shell_in_container (E.10) -------------------------------------------------
+
+
+def test_shell_in_container_invokes_exec_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Host-mode call routes the command through ``secb-exec`` (docker exec).
+
+    The helper script gets the command verbatim — with the configured
+    working directory prefixed via ``cd <work_dir> && ...``. We use a
+    real shell script as the "helper" so the captured output proves end
+    to end that argv[1] is what the agent intends to run inside the
+    container.
+    """
+    # Given: a fake helper script that echoes its single positional arg.
+    helper = tmp_path / "fake-helper.sh"
+    helper.write_text('#!/usr/bin/env bash\necho "HELPER GOT: $1"\n')
+    helper.chmod(0o755)
+
+    monkeypatch.setenv(server.ENV_CONTAINER_ID, "abc123def456")
+    monkeypatch.setenv(server.ENV_HELPER_SCRIPT, str(helper))
+    monkeypatch.setenv(server.ENV_WORK_DIR, "/src/demo")
+
+    # When: the agent invokes ``shell_in_container`` with a build command.
+    result = server.shell_in_container(command="make all")
+
+    # Then: the helper was invoked with the agent's command (prefixed by
+    # the configured cwd).
+    assert result["ok"] is True
+    assert result["exit_code"] == 0
+    assert "HELPER GOT:" in result["stdout"]
+    assert "cd /src/demo && make all" in result["stdout"]
+
+
+def test_shell_in_container_works_in_container_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In-container mode (no helper) executes via ``bash -lc``."""
+    # Given: only the container id is set (in-container deployment).
+    monkeypatch.delenv(server.ENV_HELPER_SCRIPT, raising=False)
+    monkeypatch.delenv(server.ENV_WORK_DIR, raising=False)
+    monkeypatch.setenv(server.ENV_CONTAINER_ID, "abc123def456")
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run(argv, **_kwargs):
+        captured["argv"] = list(argv)
+        return _ok_completed(stdout="hi\n", returncode=0)
+
+    # When: the agent calls ``shell_in_container``.
+    with patch.object(server.subprocess, "run", _fake_run):
+        result = server.shell_in_container(command="echo hi")
+
+    # Then: the in-container fast path was taken — ``bash -lc <command>``,
+    # not ``secb-exec``.
+    assert captured["argv"][0] == "bash"
+    assert captured["argv"][1] == "-lc"
+    assert captured["argv"][2] == "echo hi"
+    assert result["ok"] is True
+
+
+def test_shell_in_container_returns_structured_error_when_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing env returns the same ``missing_env`` error as the other tools."""
+    monkeypatch.delenv(server.ENV_CONTAINER_ID, raising=False)
+    monkeypatch.delenv(server.ENV_HELPER_SCRIPT, raising=False)
+
+    result = server.shell_in_container(command="anything")
+
+    assert result["ok"] is False
+    assert result["error"] == "missing_env"

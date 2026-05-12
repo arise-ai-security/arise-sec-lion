@@ -10,6 +10,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from time import time
 from typing import Any, Literal
 from uuid import UUID
 
@@ -93,7 +94,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         Yields events as they are produced, not after completion.
         Uses PostToolUse hooks to capture tool invocations.
         """
-        self._start_timing()
+        started_at = time()
         tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
@@ -128,7 +129,11 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                             yield event
 
                         # Emit cost event before terminal event
-                        cost_event = self._make_cost_event(message, sequencer)
+                        cost_event = self._make_cost_event(
+                            message,
+                            sequencer,
+                            duration_seconds=time() - started_at,
+                        )
                         if cost_event:
                             yield cost_event
 
@@ -246,6 +251,8 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         self,
         message: ResultMessage,
         sequencer: EventSequencer,
+        *,
+        duration_seconds: float = 0.0,
     ) -> DomainEvent | None:
         """Create WorkerCostRecorded event from ResultMessage if cost data available."""
         cost_usd = getattr(message, "total_cost_usd", None)
@@ -280,7 +287,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         return sequencer.cost_recorded(
             tool_name=self._get_tool_name(),
             cost_usd=cost_usd or 0.0,
-            duration_seconds=self._get_duration(),
+            duration_seconds=duration_seconds,
             model=self.config.model,
             tokens=total_tokens,
             prompt_tokens=prompt_tokens,

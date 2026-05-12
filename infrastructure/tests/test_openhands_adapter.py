@@ -279,17 +279,26 @@ class TestMCPServersWiring:
         # Then
         assert result == raw
 
-    def test_build_conversation_calls_create_mcp_tools_with_camelcase_envelope(
+    def test_build_conversation_passes_mcp_config_kwarg_to_agent(
         self,
     ) -> None:
-        """create_mcp_tools is called with ``{"mcpServers": {...}}``."""
-        # Given: a minimal adapter and a fake create_mcp_tools.
+        """Agent receives the MCP config via its dedicated ``mcp_config`` kwarg.
+
+        Regression: openhands-sdk 1.20's ``Agent.tools`` is a typed list of
+        ``Tool`` instances and rejects ``MCPToolDefinition`` with a Pydantic
+        ``model_type`` error. MCP servers must be wired through the
+        ``mcp_config`` kwarg instead — ``Agent`` builds the in-process MCP
+        bridge from there.
+        """
+        # Given: a minimal adapter and stubbed openhands.sdk surface.
         adapter = OpenHandsAdapter(model="openai/gpt-4o", api_key="sk-test")
         captured: dict[str, object] = {}
 
-        def _fake_create_mcp_tools(config, *_args, **_kwargs):
-            captured["config"] = config
-            return ["mcp-tool-stub-1", "mcp-tool-stub-2"]
+        def _fake_agent(*, llm, tools, mcp_config):
+            captured["llm"] = llm
+            captured["tools"] = list(tools)
+            captured["mcp_config"] = mcp_config
+            return "agent-stub"
 
         # The other openhands SDK pieces are imported inside _build_conversation;
         # we stub the entire openhands.sdk module surface used here.
@@ -298,11 +307,9 @@ class TestMCPServersWiring:
 
         fake_sdk = MagicMock()
         fake_sdk.LLM = MagicMock(return_value="llm-stub")
-        fake_sdk.Agent = MagicMock(return_value="agent-stub")
+        fake_sdk.Agent = MagicMock(side_effect=_fake_agent)
         fake_sdk.Conversation = MagicMock(return_value="conversation-stub")
         fake_sdk.Tool = MagicMock(side_effect=lambda **kw: ("Tool", kw))
-        fake_mcp = MagicMock()
-        fake_mcp.create_mcp_tools = _fake_create_mcp_tools
         fake_file_editor = MagicMock()
         fake_file_editor.FileEditorTool = MagicMock(name="FileEditorTool")
         fake_file_editor.FileEditorTool.name = "file_editor"
@@ -314,13 +321,11 @@ class TestMCPServersWiring:
             name: sys.modules.get(name)
             for name in (
                 "openhands.sdk",
-                "openhands.sdk.mcp",
                 "openhands.tools.file_editor",
                 "openhands.tools.terminal",
             )
         }
         sys.modules["openhands.sdk"] = fake_sdk
-        sys.modules["openhands.sdk.mcp"] = fake_mcp
         sys.modules["openhands.tools.file_editor"] = fake_file_editor
         sys.modules["openhands.tools.terminal"] = fake_terminal
         try:
@@ -348,12 +353,408 @@ class TestMCPServersWiring:
                 else:
                     sys.modules[name] = mod
 
-        # Then: create_mcp_tools received the camelCase MCPConfig envelope.
-        assert "config" in captured
-        config = captured["config"]
-        assert isinstance(config, dict)
-        assert "mcpServers" in config
-        assert "security_tools" in config["mcpServers"]
-        assert config["mcpServers"]["security_tools"]["command"] == "python"
+        # Then: Agent received the MCP config via the dedicated kwarg, NOT in tools.
+        assert "mcp_config" in captured
+        mcp_config = captured["mcp_config"]
+        assert isinstance(mcp_config, dict)
+        assert "mcpServers" in mcp_config
+        assert "security_tools" in mcp_config["mcpServers"]
+        assert mcp_config["mcpServers"]["security_tools"]["command"] == "python"
+        # And: the tools list does NOT contain the MCP server entries.
+        for tool in captured["tools"]:
+            tool_repr = repr(tool)
+            assert "security_tools" not in tool_repr
+            assert "MCPToolDefinition" not in tool_repr
         # And: the conversation handle came back from the fake SDK.
         assert conversation == "conversation-stub"
+
+
+class TestTerminalToolRegistration:
+    """E.10: OpenHands worker locality enforcement.
+
+    The host-side ``TerminalTool`` is intentionally NOT registered on the
+    OpenHands agent. Container shells go through the MCP
+    ``shell_in_container`` tool instead, so build/test commands never run
+    on the host where ``/src`` and ``/testcase`` do not exist.
+    """
+
+    def test_no_terminaltool_registered(self) -> None:
+        """``_build_conversation`` produces a tools list with no host terminal tool."""
+        # Given: a minimal adapter and stubs for every openhands SDK piece.
+        adapter = OpenHandsAdapter(model="openai/gpt-4o", api_key="sk-test")
+
+        import sys
+        from unittest.mock import MagicMock
+
+        # ``Tool`` is captured as a tagged tuple so we can inspect the kwargs
+        # the adapter passed without depending on the real SDK shape.
+        def _tool_factory(**kw):
+            return ("Tool", kw)
+
+        fake_sdk = MagicMock()
+        fake_sdk.LLM = MagicMock(return_value="llm-stub")
+        fake_sdk.Agent = MagicMock(return_value="agent-stub")
+
+        captured_tools: list[Any] = []
+
+        def _conversation_factory(*_args, **kwargs):
+            # ``tools`` is set on the Agent, but the adapter passes the
+            # composed agent to Conversation. We snapshot the list at
+            # Agent construction time below.
+            return ("Conversation", kwargs)
+
+        fake_sdk.Conversation = MagicMock(side_effect=_conversation_factory)
+        fake_sdk.Tool = MagicMock(side_effect=_tool_factory)
+
+        def _agent_factory(**kwargs):
+            captured_tools.extend(kwargs.get("tools", []))
+            return "agent-stub"
+
+        fake_sdk.Agent = MagicMock(side_effect=_agent_factory)
+
+        fake_mcp = MagicMock()
+        fake_mcp.create_mcp_tools = lambda *_args, **_kwargs: []
+        fake_file_editor = MagicMock()
+        fake_file_editor.FileEditorTool = MagicMock(name="FileEditorTool")
+        fake_file_editor.FileEditorTool.name = "file_editor"
+
+        previous = {
+            name: sys.modules.get(name)
+            for name in (
+                "openhands.sdk",
+                "openhands.sdk.mcp",
+                "openhands.tools.file_editor",
+            )
+        }
+        sys.modules["openhands.sdk"] = fake_sdk
+        sys.modules["openhands.sdk.mcp"] = fake_mcp
+        sys.modules["openhands.tools.file_editor"] = fake_file_editor
+        try:
+            from infrastructure.adapters.worker import openhands_adapter
+
+            with patch.object(
+                openhands_adapter,
+                "_patch_openhands_fn_converter",
+                lambda: None,
+            ):
+                adapter._build_conversation(working_dir="/work")
+        finally:
+            for name, mod in previous.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        # Then: no Tool was registered for the OpenHands host terminal,
+        # under any of the common SDK names. Compare against a small
+        # allowlist of canonical aliases the SDK has used so this test
+        # stays robust across SDK versions.
+        terminal_aliases = {
+            "execute_bash",  # current SDK canonical name
+            "TerminalTool",
+            "terminal",
+            "bash",
+        }
+        for tool in captured_tools:
+            if isinstance(tool, tuple) and tool[0] == "Tool":
+                name = tool[1].get("name")
+                assert name not in terminal_aliases, (
+                    f"E.10 violated: host terminal tool {name!r} still "
+                    "registered. Shell access must flow through the MCP "
+                    "`shell_in_container` tool instead."
+                )
+
+        # And: the file editor tool IS registered (bind-mounted host paths
+        # are transparent inside the container; the file tool itself is
+        # locality-safe).
+        registered_names = [
+            tool[1].get("name")
+            for tool in captured_tools
+            if isinstance(tool, tuple) and tool[0] == "Tool"
+        ]
+        assert "file_editor" in registered_names
+
+
+class TestMcpChildProcessLifecycle:
+    """G.4: verify ``_request_shutdown`` reaps surviving MCP stdio subprocesses.
+
+    The OpenHands SDK boots MCP servers as long-lived stdio subprocesses.
+    A graceful ``Conversation.close()`` is best-effort and has been
+    observed to leave ``python -m plugins.security.mcp.security_tools_server``
+    children alive on shutdown, so the adapter wires a SIGTERM reaper that
+    captures child PIDs immediately after ``_build_conversation`` and
+    terminates survivors after ``close()`` runs.
+
+    Booting the real ``Conversation`` just to assert MCP reaping is heavier
+    than the test merits — instead we exercise the reaper directly:
+    spawn a real ``cat`` subprocess (a stand-in for the MCP server), pass
+    its PID into ``_request_shutdown`` as a "claimed MCP child," and
+    assert the reaper SIGTERMs it. ``psutil`` is a test-only dependency.
+    """
+
+    def test_close_terminates_mcp_subprocesses(self) -> None:
+        # Skip when psutil is not available — it is a test-only dependency.
+        psutil = pytest.importorskip("psutil")
+
+        import subprocess
+        import time as _time
+
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        # Given: a long-running stdio subprocess that stands in for an MCP
+        # server (``cat`` blocks on stdin so it stays alive until killed).
+        child = subprocess.Popen(
+            ["cat"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert psutil.pid_exists(child.pid), "test scaffold failed to spawn child"
+
+            # And: a conversation that DOES NOT terminate the child on
+            # close (this is the failure mode the reaper exists to handle).
+            class _FakeConv:
+                def __init__(self) -> None:
+                    self.paused = False
+                    self.closed = False
+
+                def pause(self) -> None:
+                    self.paused = True
+
+                def close(self) -> None:
+                    # Intentionally a no-op WRT the child — mirrors the
+                    # SDK behavior the reaper compensates for.
+                    self.closed = True
+
+            adapter = OpenHandsAdapter()
+            conversation = _FakeConv()
+
+            # When: ``_request_shutdown`` is called with the child PID
+            # marked as a tracked MCP subprocess.
+            adapter._request_shutdown(conversation, mcp_child_pids=[child.pid])
+
+            # Then: the SDK-native cleanup path ran.
+            assert conversation.paused is True
+            assert conversation.closed is True
+
+            # And: the reaper SIGTERMed the child; it exits shortly after.
+            deadline = _time.monotonic() + 5.0
+            while _time.monotonic() < deadline and psutil.pid_exists(child.pid):
+                try:
+                    child.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    continue
+
+            assert not psutil.pid_exists(child.pid), (
+                f"MCP child PID {child.pid} survived _request_shutdown — "
+                "the G.4 reaper is not running. Long-running matrix runs "
+                "will accumulate orphan MCP stdio subprocesses."
+            )
+        finally:
+            # Defensive: never leak the child if an assertion above failed.
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=2.0)
+
+    def test_request_shutdown_skips_reaper_when_no_pids(self) -> None:
+        """The reaper short-circuits when no MCP child PIDs were captured.
+
+        Workers without MCP servers (or test code that bypasses the
+        snapshot) must still get full SDK-native cleanup without the
+        reaper attempting to kill arbitrary PIDs.
+        """
+        # Given: a fake conversation with no claimed MCP children.
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        class _FakeConv:
+            def __init__(self) -> None:
+                self.paused = False
+                self.closed = False
+
+            def pause(self) -> None:
+                self.paused = True
+
+            def close(self) -> None:
+                self.closed = True
+
+        adapter = OpenHandsAdapter()
+        conversation = _FakeConv()
+
+        # When: shutdown runs with no PID list.
+        adapter._request_shutdown(conversation, mcp_child_pids=None)
+        adapter._request_shutdown(conversation, mcp_child_pids=[])
+
+        # Then: pause/close still ran on every invocation.
+        assert conversation.paused is True
+        assert conversation.closed is True
+
+    def test_request_shutdown_reaps_zombie_mcp_child(self) -> None:
+        """Codex review HIGH #2: after SIGTERM, ``waitpid`` MUST run so
+        the dead child is reaped (not left as a zombie).
+
+        Previously ``_request_shutdown`` sent SIGTERM and returned. An
+        MCP child that exited immediately stayed as a ``Z`` (zombie)
+        entry in the kernel until the parent process exited; long
+        matrix runs accumulated dozens of zombies per session.
+        """
+        import subprocess as _subprocess
+
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        # Given: a short-lived child that exits within ~0.2s on its own.
+        # The child must be a direct child of this process so ``waitpid``
+        # can reap it from inside the adapter.
+        child = _subprocess.Popen(
+            ["python", "-c", "import time; time.sleep(0.1)"],
+            stdin=_subprocess.PIPE,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+        )
+        try:
+            class _FakeConv:
+                def pause(self) -> None: ...
+                def close(self) -> None: ...
+
+            adapter = OpenHandsAdapter()
+            # Let the child exit on its own before we run the reaper —
+            # this is the zombie case. SIGTERM to an already-exited PID
+            # is harmless; the test is that waitpid() actually runs.
+            time.sleep(0.3)
+
+            # When: the reaper runs.
+            adapter._request_shutdown(_FakeConv(), mcp_child_pids=[child.pid])
+
+            # Then: the kernel no longer carries a zombie for the PID.
+            # If the adapter did NOT call waitpid, ``waitpid(WNOHANG)``
+            # here would return ``(pid, status)`` and the kernel would
+            # still hold the entry. After the reaper, the table entry
+            # is gone and a second waitpid raises ``ChildProcessError``.
+            import os as _os
+
+            with pytest.raises(ChildProcessError):
+                _os.waitpid(child.pid, _os.WNOHANG)
+        finally:
+            # Defensive: if the test failed before the reaper ran,
+            # subprocess.Popen.__del__ would warn about leaks. Reap
+            # ourselves to keep the test output clean.
+            try:
+                child.wait(timeout=2.0)
+            except _subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=2.0)
+            except Exception:
+                pass
+
+    def test_request_shutdown_sigkills_unresponsive_mcp_child(self) -> None:
+        """Codex review HIGH #2: SIGTERM-ignoring children must be
+        escalated to SIGKILL within ``grace_seconds + a small margin``.
+
+        A real MCP child that traps SIGTERM (or is stuck in a tight
+        loop) would otherwise stay alive forever; the original reaper
+        had no escalation path.
+        """
+        import os as _os
+        import subprocess as _subprocess
+
+        psutil = pytest.importorskip("psutil")
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        # Given: a child that installs a no-op SIGTERM handler and then
+        # sleeps for a long time. ``signal.signal(SIGTERM, lambda...)``
+        # makes the kernel deliver the signal but the handler ignores
+        # it, so SIGTERM alone cannot kill the process.
+        child = _subprocess.Popen(
+            [
+                "python",
+                "-c",
+                (
+                    "import signal, time; "
+                    "signal.signal(signal.SIGTERM, lambda s, f: None); "
+                    "time.sleep(60)"
+                ),
+            ],
+            stdin=_subprocess.PIPE,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+        )
+        try:
+            # Give the child a moment to install its signal handler so
+            # the SIGTERM we send is actually ignored (not delivered to
+            # a process that hasn't reached the signal.signal call yet).
+            time.sleep(0.5)
+            assert psutil.pid_exists(child.pid), (
+                "test scaffold: SIGTERM-ignoring child failed to spawn"
+            )
+
+            class _FakeConv:
+                def pause(self) -> None: ...
+                def close(self) -> None: ...
+
+            adapter = OpenHandsAdapter()
+
+            # When: the reaper runs with a tight grace so the test is
+            # fast. Internal helper to bypass the constant default.
+            started = time.monotonic()
+            adapter._reap_with_escalation(
+                {child.pid}, grace_seconds=0.5, poll_interval=0.05
+            )
+            elapsed = time.monotonic() - started
+
+            # Then: the child is gone within ~grace + a small slack.
+            # 1.5s is generous — escalation is grace (0.5) + step-3
+            # SIGKILL loop (another ~0.5 worst case) + slack.
+            assert elapsed < 1.5, (
+                f"SIGKILL escalation took {elapsed:.2f}s — too slow. "
+                "The reaper must fall back to SIGKILL after the grace "
+                "period for SIGTERM-ignoring MCP children."
+            )
+
+            # And: a second ``waitpid`` confirms the PID is reaped.
+            with pytest.raises(ChildProcessError):
+                _os.waitpid(child.pid, _os.WNOHANG)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                try:
+                    child.wait(timeout=2.0)
+                except _subprocess.TimeoutExpired:
+                    pass
+
+    def test_reap_with_escalation_handles_empty_set(self) -> None:
+        """Defensive: empty PID set is a no-op (mirrors the no-PIDs
+        contract of ``_request_shutdown``)."""
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        adapter = OpenHandsAdapter()
+        # Should not raise nor block.
+        adapter._reap_with_escalation(set(), grace_seconds=0.1, poll_interval=0.05)
+
+    def test_reap_with_escalation_tolerates_already_reaped_pids(self) -> None:
+        """``ChildProcessError`` (already reaped) and ``ProcessLookupError``
+        (already gone) must NOT propagate — the reaper is best-effort."""
+        import os as _os
+
+        from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+        # Given: an arbitrary PID that is not a child of this process.
+        # ``os.kill(pid, 0)`` will succeed (process exists) but
+        # ``waitpid`` will raise ``ChildProcessError`` because the
+        # kernel only allows waiting for direct children.
+        adapter = OpenHandsAdapter()
+
+        with patch("infrastructure.adapters.worker.openhands_adapter.os.kill"):
+            with patch(
+                "infrastructure.adapters.worker.openhands_adapter.os.waitpid",
+                side_effect=ChildProcessError(),
+            ):
+                with patch(
+                    "infrastructure.adapters.worker.openhands_adapter._pid_alive",
+                    return_value=True,
+                ):
+                    adapter._reap_with_escalation(
+                        {_os.getpid()},  # never the current process
+                        grace_seconds=0.1,
+                        poll_interval=0.05,
+                    )
+                    # Reached here without raising — pass.

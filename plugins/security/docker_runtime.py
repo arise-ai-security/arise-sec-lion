@@ -1,9 +1,12 @@
 """Docker-backed SEC-bench runtime."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import shlex
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -18,15 +21,42 @@ logger = logging.getLogger(__name__)
 
 
 class DockerSecBenchRuntime:
-    """Prepare host workspaces and run short-lived SEC-bench containers."""
+    """Prepare host workspaces and run short-lived SEC-bench containers.
 
-    def __init__(self, container_prefix: str = "secbench-worker") -> None:
+    Raises:
+        RuntimeError: at construction time, when running under DooD
+            (``/.dockerenv`` exists or ``DOCKER_HOST`` is set) and
+            ``HOST_PROJECT_ROOT`` is empty or relative. Bind mounts cannot
+            resolve in that configuration and every parallel run would fail.
+    """
+
+    def __init__(
+        self,
+        container_prefix: str = "secbench-worker",
+        *,
+        network_mode: str = "host",
+        timeout_seconds: float = 300.0,
+    ) -> None:
         self._container_prefix = container_prefix
+        self._network_mode = network_mode
+        self._timeout_seconds = float(timeout_seconds)
         # DooD path mapping: container /app → host project root.
         # When running inside a container that mounts Docker socket, volume
         # bind paths must be expressed as host paths since the Docker daemon
         # runs on the host. HOST_PROJECT_ROOT overrides automatic detection.
         self._host_project_root = os.environ.get("HOST_PROJECT_ROOT", "")
+        if self._dood_mode() and not self._host_project_root_valid():
+            raise RuntimeError(
+                "HOST_PROJECT_ROOT must be an absolute host path when running "
+                "under DooD. Set it in deployment/.env."
+            )
+
+    @staticmethod
+    def _dood_mode() -> bool:
+        return Path("/.dockerenv").exists() or bool(os.environ.get("DOCKER_HOST"))
+
+    def _host_project_root_valid(self) -> bool:
+        return bool(self._host_project_root) and Path(self._host_project_root).is_absolute()
 
     def _host_path(self, container_path: Path) -> str:
         """Map a container-local path to a host path for DooD volume mounts."""
@@ -80,15 +110,34 @@ class DockerSecBenchRuntime:
         agent_id: UUID,
     ) -> SecBenchContainerSession:
         """Start a tool-enriched container bound to the prepared workspace."""
+        # G.5 part 2 — assert every bind-mount target lives under this run's
+        # host_root. Scope is the run's own root, not the pool root, so a
+        # sibling-run path (e.g. /tmp/runs/<other-root>/src) is rejected.
+        host_root_resolved = workspace.host_root.resolve()
+        for label, path in (
+            ("host_source_dir", workspace.host_source_dir),
+            ("host_testcase_dir", workspace.host_testcase_dir),
+            ("host_work_dir", workspace.host_work_dir),
+        ):
+            resolved = path.resolve()
+            if (
+                resolved != host_root_resolved
+                and host_root_resolved not in resolved.parents
+            ):
+                raise RuntimeError(
+                    f"Refusing to mount {label}={resolved}: "
+                    f"path escapes this run's host_root {host_root_resolved}"
+                )
+
         container_name = (
-            f"{self._container_prefix}-{workspace.root_id.hex[:8]}-{agent_id.hex[:8]}"
+            f"{self._container_prefix}-{workspace.root_id.hex}-{agent_id.hex}"
         )
         cmd = [
             "docker",
             "run",
             "-d",
             "--network",
-            "host",
+            self._network_mode,
             "--name",
             container_name,
             "--label",
@@ -97,6 +146,10 @@ class DockerSecBenchRuntime:
             f"arise.agent_id={agent_id}",
             "--label",
             f"arise.instance_id={cve.instance_id}",
+            "--label",
+            f"arise.session_pid={os.getpid()}",
+            "--label",
+            f"arise.created_at={datetime.now(UTC).isoformat()}",
             "-v",
             f"{self._host_path(workspace.host_source_dir)}:{workspace.container_source_dir}",
             "-v",
@@ -157,7 +210,21 @@ class DockerSecBenchRuntime:
 
     async def _copy_testcase_tree(self, image: str, testcase_dir: Path) -> None:
         """Copy /testcase/ from the image so the host mount doesn't shadow it."""
-        seed_container = (await self._run_checked(["docker", "create", image])).strip()
+        seed_container = (
+            await self._run_checked(
+                [
+                    "docker",
+                    "create",
+                    "--label",
+                    f"arise.session_pid={os.getpid()}",
+                    "--label",
+                    "arise.role=seed",
+                    "--label",
+                    f"arise.created_at={datetime.now(UTC).isoformat()}",
+                    image,
+                ]
+            )
+        ).strip()
         try:
             await self._run_checked(
                 ["docker", "cp", f"{seed_container}:/testcase/.", str(testcase_dir)]
@@ -175,7 +242,21 @@ class DockerSecBenchRuntime:
         )
 
     async def _copy_source_tree(self, image: str, source_dir: Path) -> None:
-        seed_container = (await self._run_checked(["docker", "create", image])).strip()
+        seed_container = (
+            await self._run_checked(
+                [
+                    "docker",
+                    "create",
+                    "--label",
+                    f"arise.session_pid={os.getpid()}",
+                    "--label",
+                    "arise.role=seed",
+                    "--label",
+                    f"arise.created_at={datetime.now(UTC).isoformat()}",
+                    image,
+                ]
+            )
+        ).strip()
         try:
             await self._run_checked(
                 ["docker", "cp", f"{seed_container}:/src/.", str(source_dir)]
@@ -203,13 +284,30 @@ class DockerSecBenchRuntime:
             build_sh.chmod(build_sh.stat().st_mode | 0o755)
 
     def _map_host_work_dir(self, source_dir: Path, container_work_dir: str) -> Path:
+        # G.5 part 1 — normalize-and-validate. `Path.__truediv__` does NOT
+        # normalize, so `container_work_dir="/src/../../etc"` would produce
+        # `source_dir / "../../etc"` and a subsequent `mkdir(parents=True)`
+        # would create directories outside the runs root. Resolve both paths
+        # and require the candidate to either equal or descend from
+        # `source_dir`.
         if container_work_dir == "/src":
             return source_dir
-        if container_work_dir.startswith("/src/"):
-            return source_dir / container_work_dir.removeprefix("/src/")
-        raise RuntimeError(
-            f"Unsupported SEC-bench work_dir outside /src: {container_work_dir}"
-        )
+        if not container_work_dir.startswith("/src/"):
+            raise RuntimeError(
+                f"Unsupported SEC-bench work_dir outside /src: {container_work_dir}"
+            )
+        candidate = source_dir / container_work_dir.removeprefix("/src/")
+        source_resolved = source_dir.resolve()
+        candidate_resolved = candidate.resolve()
+        if (
+            candidate_resolved != source_resolved
+            and source_resolved not in candidate_resolved.parents
+        ):
+            raise RuntimeError(
+                f"Refusing work_dir escape: {container_work_dir} resolves to "
+                f"{candidate_resolved}, outside {source_resolved}"
+            )
+        return candidate
 
     async def _install_secb(self, container_id: str, secb_content: str) -> None:
         install_cmd = f"""
@@ -277,7 +375,21 @@ chmod +x /usr/local/bin/secb
             stderr=asyncio.subprocess.PIPE,
             env=os.environ.copy(),
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=self._timeout_seconds
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "docker subprocess did not exit after kill: %s", cmd[:3]
+                )
+            raise RuntimeError(
+                f"Docker command timed out after {self._timeout_seconds}s: {cmd[:3]}"
+            )
         return (
             process.returncode or 0,
             stdout.decode("utf-8", errors="replace"),

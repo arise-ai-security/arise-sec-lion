@@ -189,6 +189,43 @@ def _build_klee_command(
 
 
 @mcp.tool(
+    name="shell_in_container",
+    description=(
+        "Run an arbitrary shell command inside the active SEC-bench "
+        "container. Use this for build/test/runtime commands instead of "
+        "the agent's host terminal — host paths like /src and /testcase do "
+        "not exist on the host."
+    ),
+)
+def shell_in_container(
+    command: str,
+    timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Run ``command`` inside the active container.
+
+    When a working directory was injected into the env (``ARISE_SECBENCH_WORK_DIR``)
+    the command is prefixed with ``cd <work_dir> && `` so successive calls share
+    a consistent cwd. In host mode the call is routed via the ``secb-exec``
+    helper (``docker exec``); in in-container mode it runs directly via
+    ``bash -lc``.
+    """
+    env = _read_env()
+    if isinstance(env, dict):
+        return env
+    _container_id, helper_script, work_dir = env
+    full_command = (
+        command
+        if work_dir is None
+        else f"cd {shlex.quote(work_dir)} && {command}"
+    )
+    return _exec_in_container(
+        helper_script,
+        full_command,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+@mcp.tool(
     name="valgrind_run",
     description=(
         "Run Valgrind memcheck against a compiled binary inside the SEC-bench "

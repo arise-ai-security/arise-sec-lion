@@ -4,10 +4,16 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import signal
+import subprocess
+import time as _time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from time import time
 from typing import Any, Protocol, cast
 from uuid import UUID
+
+from infrastructure.cleanup.registry import _pid_alive
 
 from core.domain.events.events import (
     DomainEvent,
@@ -30,6 +36,39 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
+
+
+def _snapshot_child_pids() -> set[int]:
+    """Return the set of direct child PIDs of this process.
+
+    Used by G.4 to identify MCP stdio subprocesses spawned by the
+    OpenHands SDK during ``Conversation`` construction. The diff between
+    ``before`` and ``after`` snapshots picks out exactly the children
+    introduced by ``_build_conversation`` so the reaper can SIGTERM them
+    if the SDK leaves them running on shutdown.
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603 - argv is fully owned by this module.
+            ["pgrep", "-P", str(os.getpid())],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return set()
+    if completed.returncode not in (0, 1):
+        return set()
+    pids: set[int] = set()
+    for line in completed.stdout.splitlines():
+        token = line.strip()
+        if not token:
+            continue
+        try:
+            pids.add(int(token))
+        except ValueError:
+            continue
+    return pids
 
 
 class _ConversationLike(Protocol):
@@ -130,7 +169,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
     ) -> AsyncIterator[DomainEvent]:
         """Execute task via OpenHands SDK with native conversation lifecycle."""
         del agent_id
-        self._start_timing()
+        started_at = time()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -139,6 +178,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
 
         mcp_servers = self._extract_mcp_servers(task_context)
+        children_before = _snapshot_child_pids()
         try:
             conversation = cast(
                 "_ConversationLike",
@@ -154,6 +194,19 @@ class OpenHandsAdapter(WorkerAdapterBase):
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
             return
 
+        # G.4: snapshot MCP stdio subprocesses spawned by ``_build_conversation``
+        # so ``_request_shutdown`` can SIGTERM any survivors after ``close()``.
+        # The OpenHands SDK's ``Conversation.close()`` is best-effort and has
+        # historically left ``python -m plugins.security.mcp.security_tools_server``
+        # processes alive on shutdown; a per-process reaper keeps long-running
+        # matrix runs from accumulating orphan stdio children.
+        mcp_child_pids = sorted(_snapshot_child_pids() - children_before)
+
+        # G.3: workers within a single run are dispatched sequentially via
+        # AgentExecutionService → get_active_agent_ids(sequential_workers=True),
+        # so a thread leaked here on timeout (audit-2 #5) cannot race a sibling
+        # worker. The invariant is pinned by
+        # test_sequential_worker_invariant_holds_in_dispatch.
         executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="openhands"
         )
@@ -167,7 +220,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                     timeout=self.timeout_seconds,
                 )
             except TimeoutError:
-                self._request_shutdown(conversation)
+                self._request_shutdown(conversation, mcp_child_pids=mcp_child_pids)
                 await self._await_thread_exit(future)
                 yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
                 return
@@ -194,7 +247,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             yield sequencer.cost_recorded(
                 tool_name=self._get_tool_name(),
                 cost_usd=cost_data.cost_usd,
-                duration_seconds=self._get_duration(),
+                duration_seconds=time() - started_at,
                 model=self._resolve_cost_model(cost_data),
                 tokens=cost_data.tokens,
                 prompt_tokens=cost_data.prompt_tokens,
@@ -211,7 +264,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         except Exception as error:
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
         finally:
-            self._request_shutdown(conversation)
+            self._request_shutdown(conversation, mcp_child_pids=mcp_child_pids)
             executor.shutdown(wait=False)
 
     def _build_conversation(
@@ -231,9 +284,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 category=DeprecationWarning,
             )
             from openhands.sdk import LLM, Agent, Conversation, Tool
-            from openhands.sdk.mcp import create_mcp_tools
         from openhands.tools.file_editor import FileEditorTool
-        from openhands.tools.terminal import TerminalTool
 
         llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
         if self.base_url:
@@ -278,25 +329,27 @@ class OpenHandsAdapter(WorkerAdapterBase):
             llm_kwargs["top_p"] = 0.95
         llm = LLM(**llm_kwargs)
         tools = []
-        if self._tool_allowed("Bash", "Terminal", "execute_command", "shell_execute"):
-            # Force subprocess-backed shell instead of the auto-detected tmux
-            # PTY: tmux streams commands character-by-character with
-            # bracketed-paste toggling per line, which stalls on complex
-            # nested quoting (e.g. ./run-cmd "... grep 'id=\"[^\"]*\"' ...").
-            # Subprocess sends the command as argv, bypassing terminal
-            # emulation entirely.
-            tools.append(
-                Tool(
-                    name=TerminalTool.name,
-                    params={"terminal_type": "subprocess"},
-                )
-            )
+        # E.10: TerminalTool is intentionally NOT registered. The OpenHands
+        # built-in terminal would run on the host, which has no
+        # ``/src`` / ``/testcase`` paths — every build/test command would
+        # fail. Shell access into the secb-tools container is exposed via
+        # the MCP ``shell_in_container`` tool (see
+        # ``plugins/security/mcp/security_tools_server.py``).
         if self._file_editor_allowed():
+            # Bind-mounted host paths under ``workspace.host_root`` are
+            # transparent inside the container; FileEditorTool reads/writes
+            # against host paths and the container observes them via the
+            # bind mount, so no in-container shell hop is needed for files.
             tools.append(Tool(name=FileEditorTool.name))
-        if mcp_servers:
-            tools.extend(create_mcp_tools(to_openhands_mcp_config(mcp_servers)))
+        # OpenHands SDK 1.20: MCP tools go through the dedicated ``mcp_config``
+        # kwarg on ``Agent``, NOT through the ``tools`` list. Earlier code
+        # called ``create_mcp_tools(...)`` and appended its output to
+        # ``tools``, which surfaces as a Pydantic ``model_type`` validation
+        # error because ``Agent.tools`` expects ``Tool`` instances and
+        # ``create_mcp_tools`` returns ``MCPToolDefinition`` objects.
+        mcp_config = to_openhands_mcp_config(mcp_servers) if mcp_servers else {}
 
-        agent = Agent(llm=llm, tools=tools)
+        agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
         return Conversation(
             agent=agent,
             workspace=working_dir,
@@ -608,8 +661,23 @@ class OpenHandsAdapter(WorkerAdapterBase):
         msg = getattr(action, "message", None)
         return str(msg).strip() if msg and str(msg).strip() else None
 
-    def _request_shutdown(self, conversation: Any) -> None:
-        """Best-effort SDK-native cleanup for the conversation."""
+    def _request_shutdown(
+        self,
+        conversation: Any,
+        *,
+        mcp_child_pids: list[int] | None = None,
+    ) -> None:
+        """Best-effort SDK-native cleanup for the conversation.
+
+        G.4: after the SDK-native ``pause()`` / ``close()`` path runs, we
+        SIGTERM any MCP stdio subprocesses that survived. The plan's
+        verification step 1 found that ``Conversation.close()`` is
+        best-effort with respect to MCP children — survivors are
+        occasional but real, so the reaper (plan step 2) is wired
+        unconditionally. ``_pid_alive`` short-circuits the kill when the
+        SDK already terminated the child, so the reaper is a true no-op
+        in the happy path.
+        """
         for method_name in ("pause", "close"):
             method = getattr(conversation, method_name, None)
             if callable(method):
@@ -621,6 +689,105 @@ class OpenHandsAdapter(WorkerAdapterBase):
                         method_name,
                         exc_info=True,
                     )
+
+        if not mcp_child_pids:
+            return
+        self._reap_with_escalation(set(mcp_child_pids))
+
+    def _reap_with_escalation(
+        self,
+        pids: set[int],
+        *,
+        grace_seconds: float = float(_SHUTDOWN_GRACE_SECONDS),
+        poll_interval: float = 0.1,
+    ) -> None:
+        """SIGTERM ``pids``, poll ``waitpid``, then SIGKILL survivors.
+
+        Codex review #2: the previous reaper sent SIGTERM and returned
+        without reaping. SDK-spawned MCP children that exited stayed as
+        zombies, and children that ignored SIGTERM stayed live. Both
+        accumulate across long matrix runs.
+
+        Steps:
+          1. SIGTERM every still-alive PID (uses ``_pid_alive`` to skip
+             ones the SDK already cleaned up).
+          2. Poll ``os.waitpid(pid, WNOHANG)`` every ``poll_interval``
+             seconds until either every PID is reaped or
+             ``grace_seconds`` elapse. ``waitpid`` returns ``(0, 0)``
+             when the child is still running; ``(pid, _)`` once reaped;
+             raises ``ChildProcessError`` if the OS already reaped it.
+          3. For any PID still alive after the grace, SIGKILL and drain
+             ``waitpid`` again (best-effort).
+          4. Treat ``ChildProcessError`` and ``ProcessLookupError`` as
+             "already gone." All other ``OSError`` is logged at debug.
+        """
+        if not pids:
+            return
+
+        # Step 1: SIGTERM.
+        for pid in list(pids):
+            if not _pid_alive(pid):
+                pids.discard(pid)
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pids.discard(pid)
+            except OSError:
+                logger.debug(
+                    "SIGTERM to MCP child PID %d failed", pid, exc_info=True
+                )
+
+        # Step 2: poll waitpid until grace expires.
+        deadline = _time.monotonic() + grace_seconds
+        while pids and _time.monotonic() < deadline:
+            self._drain_waitpid(pids)
+            if pids:
+                _time.sleep(poll_interval)
+
+        if not pids:
+            return
+
+        # Step 3: SIGKILL survivors.
+        for pid in list(pids):
+            if not _pid_alive(pid):
+                pids.discard(pid)
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pids.discard(pid)
+            except OSError:
+                logger.debug(
+                    "SIGKILL to MCP child PID %d failed", pid, exc_info=True
+                )
+
+        # Step 4: drain waitpid one more time so SIGKILLed children don't
+        # linger as zombies waiting for the parent to reap them.
+        kill_deadline = _time.monotonic() + grace_seconds
+        while pids and _time.monotonic() < kill_deadline:
+            self._drain_waitpid(pids)
+            if pids:
+                _time.sleep(poll_interval)
+
+    @staticmethod
+    def _drain_waitpid(pids: set[int]) -> None:
+        """Non-blocking ``waitpid`` for each PID; discard those reaped."""
+        for pid in list(pids):
+            try:
+                wpid, _status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                # The OS already reaped this child (e.g., handled by
+                # another waiter or by ``signal.SIGCHLD`` default).
+                pids.discard(pid)
+                continue
+            except OSError:
+                logger.debug(
+                    "waitpid for MCP child PID %d failed", pid, exc_info=True
+                )
+                continue
+            if wpid == pid:
+                pids.discard(pid)
 
     async def _await_thread_exit(
         self,

@@ -24,8 +24,16 @@ Design notes:
   require parsing both inputs, and the repair we are doing is exactly
   that the original cannot be parsed. We rely on the prompt instruction
   and downstream pydantic validation.
+- Concurrent repair calls are bounded by an ``asyncio.Semaphore`` sized
+  via ``max_concurrent``. A parse-failure storm across parallel agents
+  must not amplify into N simultaneous LLM requests against the repair
+  endpoint (Ollama Cloud or local Ollama) — that would re-create the
+  rate-limit pressure the repair path is meant to absorb.
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
 from typing import Any
 
@@ -75,11 +83,13 @@ class LLMFormatRepairer(FormatRepairerPort):
         model: str,
         max_tokens: int = 8000,
         api_base: str | None = None,
+        max_concurrent: int = 3,
     ) -> None:
         self._llm_port = llm_port
         self._model = model
         self._max_tokens = max_tokens
         self._api_base = api_base
+        self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def repair(self, raw: str, schema_hint: str) -> str:
         prompt = _REPAIR_PROMPT.format(schema_hint=schema_hint, raw=raw)
@@ -91,13 +101,14 @@ class LLMFormatRepairer(FormatRepairerPort):
         if self._api_base:
             config["api_base"] = self._api_base
 
-        try:
-            return await self._llm_port.query(prompt, config)
-        except LLMError as exc:
-            logger.warning(
-                "Format repairer LLM call failed (model=%s): %s; "
-                "falling back to original error",
-                self._model,
-                exc,
-            )
-            return raw
+        async with self._semaphore:
+            try:
+                return await self._llm_port.query(prompt, config)
+            except LLMError as exc:
+                logger.warning(
+                    "Format repairer LLM call failed (model=%s): %s; "
+                    "falling back to original error",
+                    self._model,
+                    exc,
+                )
+                return raw

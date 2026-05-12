@@ -65,23 +65,34 @@ class ContainerSessionContext:
         return f"{self.container_workspace_root}/{rel_str}"
 
     def apply_task_prefix(self, task_description: str, *, auto_shell: bool) -> str:
-        """Explain the host/container mapping to the worker."""
-        helper_name = self.helper_script.name
+        """Explain the host/container mapping to the worker.
+
+        Build/test/runtime commands must run inside the target container,
+        not on the host. Workers reach the container through the MCP
+        ``shell_in_container`` tool (see
+        ``plugins/security/mcp/security_tools_server.py``). When ``auto_shell``
+        is true the adapter's permission hook ALSO rewrites a Bash tool call
+        into a ``docker exec`` against the container, but the agent should
+        prefer ``shell_in_container`` so the MCP server is the single source
+        of truth for container locality.
+        """
         if auto_shell:
             shell_line = (
-                "- Shell commands are already routed into the target "
-                "container by this runtime.\n"
-                f'- Use normal shell commands, or `./{helper_name} "<command>"` '
-                "as a fallback.\n"
+                "- The MCP `shell_in_container` tool is the recommended way "
+                "to run build/test/runtime commands.\n"
+                "- Plain Bash tool calls are auto-routed into the container "
+                "by this runtime as a fallback, but `shell_in_container` is "
+                "preferred for clarity.\n"
             )
         else:
             shell_line = (
-                "- **ALL build/test/runtime shell commands** MUST use "
-                f'`./{helper_name} "<command>"`.  '
-                "Do NOT run them directly — they will fail because "
-                "container paths do not exist on this host.\n"
-                f'- Example: `./{helper_name} "cd /src/<project> && make"` '
-                "(NOT `cd /src/<project> && make`)\n"
+                "- **ALL build/test/runtime shell commands** MUST use the MCP "
+                "`shell_in_container` tool. Do NOT run them on the host "
+                "terminal — host paths like `/src` and `/testcase` do not "
+                "exist on the host and the command will fail.\n"
+                '- Example: call `shell_in_container` with '
+                '`command="cd /src/<project> && make"` (NOT a plain shell '
+                "command that runs on the host).\n"
             )
         prefix = (
             "## Container-backed workspace\n\n"
@@ -102,13 +113,15 @@ class ContainerSessionContext:
             "(read files under this path, not `/src/...`)\n"
             f"- Example: to read a testcase artifact → "
             f"`{self.host_testcase_dir}/<testcase>.sh`\n\n"
-            f"**Shell commands — ALWAYS use the helper script `./{helper_name}` "
-            "for container commands:**\n"
+            "**Shell commands — ALWAYS use the MCP `shell_in_container` tool "
+            "for build/test/runtime commands inside the container:**\n"
             f"{shell_line}\n"
             f"**Source code is already cloned** at `{self.host_source_dir}/` with the "
             "correct commit checked out. Do NOT re-clone the repository.\n\n"
-            f'**Helper**: `./{helper_name} "<command>"` '
-            "runs a shell command inside the container.\n\n"
+            "**Tool**: the MCP `shell_in_container` tool runs an arbitrary "
+            "shell command inside the active container — use it whenever you "
+            "need a `/src/...` or `/testcase/...` path that does not exist "
+            "on the host.\n\n"
         )
         return f"{prefix}\n{task_description}"
 

@@ -5,6 +5,7 @@ import logging
 import subprocess
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from time import time
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -145,7 +146,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
 
         Uses MCP filesystem tools and custom shell execution.
         """
-        self._start_timing()
+        started_at = time()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -284,7 +285,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
                 yield sequencer.cost_recorded(
                     tool_name=self._get_tool_name(),
                     cost_usd=cost_usd,
-                    duration_seconds=self._get_duration(),
+                    duration_seconds=time() - started_at,
                     model=self.config.model,
                     tokens=total_tokens,
                     prompt_tokens=total_input_tokens,
