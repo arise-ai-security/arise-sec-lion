@@ -80,6 +80,11 @@ class AgentSession:
     verification_feedback: str | None
     verification_score: int | None
     failed_children: set[UUID]
+    # Per-coroutine reservation bookkeeping for child-spawn OCC (D.2).
+    # NOT event-sourced — lives only on the in-memory aggregate for the
+    # duration of one run_agent_step attempt; reset on every fresh load
+    # and after the orchestrator commits or releases the reservation.
+    pending_reservation: int
     _changes: list[DomainEvent]
     _sequence: int
 
@@ -153,6 +158,12 @@ class AgentSession:
             result: Simple result text for the event
             report: Structured Report (optional, provides additional context)
         """
+        # Idempotence: a child is reported terminally at most once. Under
+        # OCC retry or grandparent walks, the same notification can arrive
+        # twice; the second call must no-op.
+        if child_id in self.child_reports or child_id in self.failed_children:
+            return
+
         self._assert_parent_can_receive_child_event(child_id)
 
         if report is None:
@@ -213,6 +224,12 @@ class AgentSession:
             child_id: ID of failed child
             reason: Error message from child
         """
+        # Idempotence: a child is reported terminally at most once. Under
+        # OCC retry the same failure notification can arrive twice; the
+        # second call must no-op.
+        if child_id in self.child_reports or child_id in self.failed_children:
+            return
+
         self._assert_parent_can_receive_child_event(child_id)
 
         # Record child failure
@@ -485,6 +502,9 @@ class AgentSession:
         self.verification_score = None
         # Track failed children for partial-success aggregation
         self.failed_children = set()
+        # Per-coroutine reservation count (see D.2). Reset on every fresh
+        # load, every replay, and after commit/release in the orchestrator.
+        self.pending_reservation = 0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
         """Set hierarchy limits for limit enforcement."""

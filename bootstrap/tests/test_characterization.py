@@ -85,34 +85,32 @@ class InMemoryEventStore:
     async def initialize_schema(self) -> None:
         pass
 
-    async def append(self, event: DomainEvent, expected_version: int) -> None:
+    async def append(self, event: DomainEvent) -> None:
         agent_id = event.aggregate_id
         current = self._events.get(agent_id, [])
-        if len(current) != expected_version:
+        existing_seqs = {e.sequence_number for e in current}
+        if event.sequence_number in existing_seqs:
             from core.domain.exceptions import ConcurrencyError
 
             raise ConcurrencyError(
                 aggregate_id=str(agent_id),
-                expected_version=expected_version,
                 actual_version=len(current),
             )
         if agent_id not in self._events:
             self._events[agent_id] = []
         self._events[agent_id].append(event)
 
-    async def append_batch(
-        self, events: list[DomainEvent], expected_version: int
-    ) -> None:
+    async def append_batch(self, events: list[DomainEvent]) -> None:
         if not events:
             return
         agent_id = events[0].aggregate_id
         current = self._events.get(agent_id, [])
-        if len(current) != expected_version:
+        existing_seqs = {e.sequence_number for e in current}
+        if any(e.sequence_number in existing_seqs for e in events):
             from core.domain.exceptions import ConcurrencyError
 
             raise ConcurrencyError(
                 aggregate_id=str(agent_id),
-                expected_version=expected_version,
                 actual_version=len(current),
             )
         if agent_id not in self._events:
@@ -879,7 +877,7 @@ class TestPromptTraceReplay:
                 occurred_at=base_time + timedelta(seconds=3),
             ),
         ]:
-            await event_store.append(event, expected_version=event.sequence_number - 1)
+            await event_store.append(event)
 
         # Child 1 events
         for event in [
@@ -905,7 +903,7 @@ class TestPromptTraceReplay:
                 occurred_at=base_time + timedelta(seconds=6),
             ),
         ]:
-            await event_store.append(event, expected_version=event.sequence_number - 1)
+            await event_store.append(event)
 
         # Child 2 events
         for event in [
@@ -925,7 +923,7 @@ class TestPromptTraceReplay:
                 occurred_at=base_time + timedelta(seconds=5),
             ),
         ]:
-            await event_store.append(event, expected_version=event.sequence_number - 1)
+            await event_store.append(event)
 
         # Act
         trace_service = PromptTraceService(event_store=event_store)

@@ -40,16 +40,16 @@ class ParentNotificationService:
     async def notify_if_complete(self, child: AgentSession) -> None:
         """Notify parent when child completes, recursively up the hierarchy.
 
-        This method:
-        1. Checks if child is completed and has a parent
-        2. Loads the parent agent
-        3. Builds structured child result
-        4. Updates parent with child completion
-        5. Persists parent events
-        6. Recursively notifies grandparent if parent also completed
+        Branches on parent status so that an OCC retry whose sibling has
+        already driven the parent to terminal does not drop the upward
+        propagation chain:
 
-        Args:
-            child: The child agent that may have completed.
+        - WAITING: normal path (emit, persist, recurse upward).
+        - COMPLETED: walk further upward toward the grandparent. The
+          aggregate's idempotence guard (handle_child_update) makes the
+          grandparent re-emission safe.
+        - FAILED: no-op; failure already propagated via the failure path.
+        - Other: no-op.
         """
         if child.status != AgentStatus.COMPLETED or child.parent_id is None:
             return
@@ -59,41 +59,53 @@ class ParentNotificationService:
         except AgentNotFoundError as e:
             raise ValueError(f"Parent agent {child.parent_id} not found") from e
 
-        # Skip if parent is not in WAITING status (already completed or failed)
-        # This handles race conditions where:
-        # 1. Another child already triggered parent completion
-        # 2. A sibling failed and propagated failure to parent
-        if parent.status != AgentStatus.WAITING:
+        if parent.status == AgentStatus.WAITING:
+            # Build structured report
+            report = child.build_report()
+
+            parent.handle_child_update(
+                child_id=child.agent_id,
+                result=child.result or "",
+                report=report,
+            )
+
+            await self._repository.persist_events(
+                parent,
+                self._progress_callback,
+            )
+
+            # Recursively notify grandparent if parent also completed
+            if parent.status == AgentStatus.COMPLETED:
+                await self.notify_if_complete(parent)
             return
 
-        parent_version = parent.version
-
-        # Build structured report
-        report = child.build_report()
-
-        parent.handle_child_update(
-            child_id=child.agent_id,
-            result=child.result or "",
-            report=report,
-        )
-
-        await self._repository.persist_events(
-            parent,
-            parent_version,
-            self._progress_callback,
-        )
-
-        # Recursively notify grandparent if parent also completed
-        # This handles the case where all children completing causes parent to complete
         if parent.status == AgentStatus.COMPLETED:
+            # Sibling already drove parent terminal; walk upward so the
+            # grandparent sees the completion chain. Aggregate idempotence
+            # protects against duplicate ChildCompleted emissions.
             await self.notify_if_complete(parent)
+            return
+
+        # FAILED or any other non-WAITING status: drop the upward
+        # propagation here — failure has its own propagation path.
+        return
 
     async def notify_if_failed(self, child: AgentSession) -> None:
         """Notify parent when child fails, recursively up the hierarchy.
 
+        Branches on parent status so a sibling that already drove the
+        parent terminal does not silently drop the failure chain:
+
+        - WAITING: normal path (decide infeasible re-decomposition or
+          propagate failure).
+        - FAILED: walk further upward toward the grandparent.
+        - COMPLETED: partial-success case — walk upward via the
+          completion path so the grandparent sees the completion chain.
+        - ANALYZING (re-decompose in flight) or other: no-op.
+
         If child failure is infeasible (DecisionInfeasible), triggers parent
-        re-decomposition instead of propagating failure.
-        Otherwise, parent fails and failure bubbles up to BOSS.
+        re-decomposition instead of propagating failure. Otherwise, parent
+        fails and failure bubbles up to BOSS.
         """
         if child.status != AgentStatus.FAILED or child.parent_id is None:
             return
@@ -103,10 +115,20 @@ class ParentNotificationService:
         except AgentNotFoundError as e:
             raise ValueError(f"Parent agent {child.parent_id} not found") from e
 
-        if parent.status != AgentStatus.WAITING:
+        if parent.status == AgentStatus.FAILED:
+            # Sibling already drove parent terminal; walk upward.
+            await self.notify_if_failed(parent)
             return
 
-        parent_version = parent.version
+        if parent.status == AgentStatus.COMPLETED:
+            # Partial success: sibling completed the parent already.
+            # Walk upward via the completion path.
+            await self.notify_if_complete(parent)
+            return
+
+        if parent.status != AgentStatus.WAITING:
+            # ANALYZING (re-decompose in flight) or unexpected state.
+            return
 
         # Check if failure is infeasible → trigger re-decomposition
         error = child.error_message or ""
@@ -117,7 +139,7 @@ class ParentNotificationService:
                     reason=error,
                 )
                 await self._repository.persist_events(
-                    parent, parent_version, self._progress_callback
+                    parent, self._progress_callback
                 )
                 # Parent is now ANALYZING — system loop will re-decompose it
                 return
@@ -130,7 +152,7 @@ class ParentNotificationService:
                 ),
             )
             await self._repository.persist_events(
-                parent, parent_version, self._progress_callback
+                parent, self._progress_callback
             )
             if parent.status == AgentStatus.FAILED:
                 await self.notify_if_failed(parent)
@@ -145,7 +167,6 @@ class ParentNotificationService:
 
         await self._repository.persist_events(
             parent,
-            parent_version,
             self._progress_callback,
         )
 

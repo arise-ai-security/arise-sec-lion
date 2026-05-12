@@ -61,7 +61,6 @@ class RetryPolicy:
 
         await self._repository.persist_events(
             agent,
-            agent.version - 1,
             self._progress_callback,
         )
         return True

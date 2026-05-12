@@ -78,14 +78,14 @@ class AgentRepository:
     async def save(self, agent: AgentSession) -> list[DomainEvent]:
         """Persist uncommitted events and return them.
 
-        Notifies progress callback for each persisted event.
+        Notifies progress callback for each persisted event. OCC is
+        enforced by the event store's UNIQUE(aggregate_id, sequence_number)
+        constraint.
         """
-        current_version = agent.version - len(agent.events)
         uncommitted = list(agent.events)
 
         for event in uncommitted:
-            await self._event_store.append(event, expected_version=current_version)
-            current_version += 1
+            await self._event_store.append(event)
             self._notify_progress(event, agent)
 
         agent.mark_changes_as_committed()
@@ -109,7 +109,6 @@ class AgentRepository:
                 if retry_count >= self._max_retries:
                     raise ConcurrencyError(
                         aggregate_id=str(agent.agent_id),
-                        expected_version=e.expected_version,
                         actual_version=e.actual_version,
                     ) from e
                 # Reload agent for retry
@@ -122,25 +121,24 @@ class AgentRepository:
 
     async def save_new_agent(self, agent: AgentSession) -> None:
         """Save a newly created agent (no retry needed, version starts at 0)."""
-        for idx, event in enumerate(agent.events):
-            await self._event_store.append(event, expected_version=idx)
+        for event in agent.events:
+            await self._event_store.append(event)
             self._notify_progress(event, agent)
         agent.mark_changes_as_committed()
 
     async def persist_events(
         self,
         agent: AgentSession,
-        expected_version: int,
         progress_callback: ProgressCallback | None = None,
     ) -> list[DomainEvent]:
         """Persist uncommitted events with batch optimization.
 
         This method consolidates the event persistence pattern used across
-        the application, eliminating DRY violations.
+        the application, eliminating DRY violations. OCC is enforced by the
+        event store's UNIQUE constraint on (aggregate_id, sequence_number).
 
         Args:
             agent: The agent with uncommitted events.
-            expected_version: The expected version for OCC.
             progress_callback: Optional callback for each persisted event.
                              If None, uses the repository's default callback.
 
@@ -153,9 +151,9 @@ class AgentRepository:
 
         # Batch for efficiency when multiple events
         if len(uncommitted) > 1:
-            await self._event_store.append_batch(uncommitted, expected_version=expected_version)
+            await self._event_store.append_batch(uncommitted)
         else:
-            await self._event_store.append(uncommitted[0], expected_version=expected_version)
+            await self._event_store.append(uncommitted[0])
 
         # Notify progress (use provided callback or fall back to repository default)
         callback = progress_callback if progress_callback is not None else self._progress_callback

@@ -63,10 +63,16 @@ class ChildAgentFactory:
         self._manager_config = manager_config
         self._default_worker_tool = default_worker_tool
         self._total_created: int = 0
+        # Atomic reservation guard (D.2). Concurrent MANAGER evaluations
+        # must reserve under the lock before emitting ChildSpawned events
+        # so the cap check and the commit observe a consistent count.
+        self._lock = asyncio.Lock()
+        self._reserved: int = 0
 
     def reset(self, initial_count: int = 0) -> None:
         """Reset factory state for a new run."""
         self._total_created = initial_count
+        self._reserved = 0
 
     @property
     def total_created(self) -> int:
@@ -78,11 +84,61 @@ class ChildAgentFactory:
         """Get the max total agents limit (-1 means unlimited)."""
         return self._max_total_agents
 
+    @property
+    def reserved(self) -> int:
+        """Get number of agents currently reserved but not yet committed."""
+        return self._reserved
+
     def is_at_agent_limit(self) -> bool:
         """Check if we've reached the max_total_agents limit."""
         if self._max_total_agents < 0:
             return False
         return self._total_created >= self._max_total_agents
+
+    async def try_reserve(self, n: int) -> bool:
+        """Atomically reserve ``n`` agent slots against ``max_total_agents``.
+
+        Returns True if the reservation succeeded; False if the cap would
+        be exceeded. The caller must eventually call ``commit_reservation``
+        (on success) or ``release_reservation`` (on failure / OCC retry)
+        with the same ``n``.
+
+        With ``max_total_agents == -1`` (unlimited), the reservation
+        always succeeds and is not actually tracked.
+        """
+        if self._max_total_agents < 0:
+            return True
+        async with self._lock:
+            projected = self._total_created + self._reserved + n
+            if projected > self._max_total_agents:
+                return False
+            self._reserved += n
+            return True
+
+    async def release_reservation(self, n: int) -> None:
+        """Release ``n`` previously-reserved slots without committing.
+
+        Called on the OCC-retry branch when a managed spawn attempt fails
+        and must be retried; the orchestrator releases before reloading
+        so the retry sees the full available cap again.
+        """
+        if self._max_total_agents < 0 or n <= 0:
+            return
+        async with self._lock:
+            self._reserved = max(0, self._reserved - n)
+
+    async def commit_reservation(self, n: int) -> None:
+        """Atomically move ``n`` slots from reserved to committed.
+
+        Always bumps ``_total_created`` so the observed count tracks real
+        spawns even in unlimited mode (where reservations are not held).
+        """
+        if n <= 0:
+            return
+        async with self._lock:
+            if self._max_total_agents >= 0:
+                self._reserved = max(0, self._reserved - n)
+            self._total_created += n
 
     def _apply_manager_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """Apply manager config defaults to child config.
@@ -176,7 +232,9 @@ class ChildAgentFactory:
             )
 
         await self._repository.save_new_agent(child)
-        self._total_created += 1
+        # Commit one slot. Honours the reservation if one is outstanding;
+        # otherwise just bumps the committed count.
+        await self.commit_reservation(1)
 
         return ChildCreationResult(agent=child, created=True)
 
@@ -205,9 +263,9 @@ class ChildAgentFactory:
             *[self._create_child_parallel(event, parent_id) for event in events]
         )
 
-        # Update counter after all parallel operations complete
-        # This avoids race conditions on _total_created
-        self._total_created += len(events)
+        # Commit the reservation atomically (moves from _reserved to
+        # _total_created under the lock when the factory is bounded).
+        await self.commit_reservation(len(events))
 
         return list(results)
 

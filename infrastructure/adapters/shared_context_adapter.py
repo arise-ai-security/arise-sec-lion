@@ -87,15 +87,19 @@ class PostgresSharedContextAdapter(SharedContextPort):
 
         Args:
             context: The context to save
-            expected_version: Expected version for OCC
+            expected_version: Retained for the SharedContextPort
+                contract; OCC on the underlying event store is enforced
+                by the UNIQUE(aggregate_id, sequence_number) constraint
+                (see D.3), so the inner ``append`` call no longer takes
+                an explicit version.
 
         Raises:
-            ConcurrencyError: If version mismatch
+            ConcurrencyError: If sequence_number collides on the event
+                store.
         """
-        current_version = expected_version
+        del expected_version  # retained for back-compat on this port
         for event in context.events:
-            await self._event_store.append(event, expected_version=current_version)
-            current_version += 1
+            await self._event_store.append(event)
         context.mark_changes_as_committed()
 
     async def exists(self, root_id: UUID) -> bool:

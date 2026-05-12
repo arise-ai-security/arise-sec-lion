@@ -32,13 +32,24 @@ class EventStoreConnectPort(Protocol):
 
 
 class EventStoreWritePort(Protocol):
-    """Append-only write operations with Optimistic Concurrency Control."""
+    """Append-only write operations with Optimistic Concurrency Control.
 
-    async def append(self, event: DomainEvent, expected_version: int) -> None:
-        """Append event with OCC. Raises ConcurrencyError if version mismatch."""
+    OCC is enforced solely by the UNIQUE(aggregate_id, sequence_number)
+    constraint on the underlying storage. Concurrent writers that compute
+    the same next sequence_number will race for that constraint, and the
+    loser receives a ConcurrencyError. No explicit version parameter is
+    needed; the sequence_number carried on each event is the version.
+    """
+
+    async def append(self, event: DomainEvent) -> None:
+        """Append event with OCC.
+
+        Raises ConcurrencyError if another writer already persisted an
+        event with the same (aggregate_id, sequence_number).
+        """
         ...
 
-    async def append_batch(self, events: list[DomainEvent], expected_version: int) -> None:
+    async def append_batch(self, events: list[DomainEvent]) -> None:
         """Append multiple events atomically in a single transaction.
 
         Significantly faster than individual appends for workers
@@ -46,7 +57,6 @@ class EventStoreWritePort(Protocol):
 
         Args:
             events: List of events to persist.
-            expected_version: Expected version before first event.
         """
         ...
 

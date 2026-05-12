@@ -267,7 +267,7 @@ class AgentOrchestrator:
                         "executing directly",
                         agent.agent_id,
                     )
-                    self._apply_assessment_result(
+                    await self._apply_assessment_result(
                         agent,
                         AssessmentResult(
                             action="execute",
@@ -428,7 +428,7 @@ class AgentOrchestrator:
                             ),
                         )
 
-                self._apply_assessment_result(agent, result)
+                await self._apply_assessment_result(agent, result)
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 agent.fail_with_reason(f"Assessment failed: {e}")
 
@@ -492,7 +492,7 @@ class AgentOrchestrator:
                 # Already failed/marked-infeasible by helper.
                 return
 
-            failure = self._spawn_children(agent, subtasks)
+            failure = await self._spawn_children(agent, subtasks)
             if failure:
                 agent.fail_with_reason(failure)
                 return
@@ -597,8 +597,15 @@ class AgentOrchestrator:
                 duration_seconds=duration,
             )
 
-    def _check_limit_violations(self, agent: "AgentSession", subtasks: list) -> str | None:
-        """Check hard limits. Returns failure reason or None."""
+    async def _check_limit_violations(
+        self, agent: "AgentSession", subtasks: list
+    ) -> str | None:
+        """Check hard limits. Returns failure reason or None.
+
+        Async to compose with the atomic reservation path in
+        ``_spawn_children``; the cap check itself is sync but the
+        cascade keeps the call chain awaitable end-to-end (D.2).
+        """
         limits = agent.hierarchy_limits
         violations: list[dict[str, Any]] = []
 
@@ -640,13 +647,19 @@ class AgentOrchestrator:
 
         return None
 
-    def _spawn_children(
+    async def _spawn_children(
             self,
             agent: "AgentSession",
             subtasks: list["Subtask"],
     ) -> str | None:
-        """Validate limits, determine child role, and spawn children."""
-        failure = self._check_limit_violations(agent, subtasks)
+        """Validate limits, determine child role, and spawn children.
+
+        Async (D.2): after the optimistic sync cap check, atomically
+        reserves ``len(subtasks)`` slots against the factory so concurrent
+        MANAGER evaluations cannot oversubscribe ``max_total_agents``.
+        On reservation failure emits ``LimitEnforced`` and aborts.
+        """
+        failure = await self._check_limit_violations(agent, subtasks)
         if failure:
             return failure
 
@@ -670,6 +683,24 @@ class AgentOrchestrator:
             )
             return None
         # ---------------------------------------------------------------------
+
+        # Atomic reservation: protects against concurrent MANAGER spawn
+        # races where both callers passed the stale-count cap check.
+        max_total = self._child_factory.max_total_agents
+        if max_total > 0:
+            reserved_n = len(subtasks)
+            reserved = await self._child_factory.try_reserve(reserved_n)
+            if not reserved:
+                agent.emit_limit_enforced(
+                    limit_type="total_agents",
+                    limit_value=max_total,
+                    attempted_value=reserved_n,
+                    action_taken="agent_failed",
+                )
+                return "reservation_failed:total_agents"
+            # Stash on the aggregate so the OCC retry handler in
+            # ExecutionService can release the reservation before reload.
+            agent.pending_reservation = reserved_n
 
         limits = agent.hierarchy_limits
         force_worker = False
@@ -769,12 +800,18 @@ class AgentOrchestrator:
             return set()
         return registry.get_tree_role_prefixes(agent.agent_id)
 
-    def _apply_assessment_result(
+    async def _apply_assessment_result(
             self,
             agent: "AgentSession",
             result: AssessmentResult,
     ) -> None:
-        """Apply the parsed assessment outcome to the agent."""
+        """Apply the parsed assessment outcome to the agent.
+
+        Async (D.2): the decompose path awaits ``_spawn_children``, which
+        in turn awaits ``ChildAgentFactory.try_reserve``. Keeping this
+        method sync would silently truthy-check the returned coroutine
+        as ``failure_msg`` and never await it.
+        """
         if result.action == "infeasible":
             if result.constraint_failure is None:
                 agent.fail_with_reason(
@@ -805,7 +842,7 @@ class AgentOrchestrator:
             agent.fail_with_reason("Assessment requested decomposition without subtasks")
             return
 
-        failure_msg = self._spawn_children(agent, result.subtasks)
+        failure_msg = await self._spawn_children(agent, result.subtasks)
         if failure_msg:
             agent.fail_with_reason(failure_msg)
 

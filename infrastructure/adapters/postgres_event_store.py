@@ -93,8 +93,16 @@ class PostgresEventStore(EventStorePort):
 
     SQL_DIR = Path(__file__).parent.parent / "sql"
 
-    def __init__(self, connection_string: str) -> None:
+    def __init__(
+        self,
+        connection_string: str,
+        *,
+        pool_min: int = 10,
+        pool_max: int = 10,
+    ) -> None:
         self.connection_string = connection_string
+        self.pool_min = pool_min
+        self.pool_max = pool_max
         self.pool: asyncpg.Pool | None = None
 
     @classmethod
@@ -140,6 +148,8 @@ class PostgresEventStore(EventStorePort):
             self.connection_string,
             init=init_connection,
             statement_cache_size=0,
+            min_size=self.pool_min,
+            max_size=self.pool_max,
         )
 
     async def disconnect(self) -> None:
@@ -159,11 +169,12 @@ class PostgresEventStore(EventStorePort):
                 "Failed to initialize event store schema", original_error=e
             ) from e
 
-    async def append(self, event: DomainEvent, expected_version: int) -> None:
+    async def append(self, event: DomainEvent) -> None:
         """Append event with OCC via UNIQUE constraint.
 
-        The UNIQUE(aggregate_id, sequence_number) constraint guarantees
-        only one writer succeeds. On conflict, caller reloads and retries.
+        The UNIQUE(aggregate_id, sequence_number) constraint is the sole
+        OCC guard. Only one writer wins; the loser receives a
+        ConcurrencyError, reloads the aggregate, and retries.
         """
         if not self.pool:
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
@@ -194,7 +205,6 @@ class PostgresEventStore(EventStorePort):
         except asyncpg.UniqueViolationError as e:
             raise ConcurrencyError(
                 aggregate_id=str(event.aggregate_id),
-                expected_version=expected_version,
             ) from e
 
         except Exception as e:
@@ -206,16 +216,16 @@ class PostgresEventStore(EventStorePort):
     async def append_batch(
         self,
         events: list[DomainEvent],
-        expected_version: int,
     ) -> None:
         """Append multiple events atomically in a single transaction.
 
         This is significantly faster than individual appends for workers
-        that produce many events (thoughts, tool uses, etc.).
+        that produce many events (thoughts, tool uses, etc.). The UNIQUE
+        constraint on (aggregate_id, sequence_number) is the sole OCC
+        guard.
 
         Args:
             events: List of events to persist.
-            expected_version: Expected version before first event.
         """
         if not events:
             return
@@ -254,7 +264,6 @@ class PostgresEventStore(EventStorePort):
         except asyncpg.UniqueViolationError as e:
             raise ConcurrencyError(
                 aggregate_id=str(events[0].aggregate_id),
-                expected_version=expected_version,
             ) from e
 
         except Exception as e:
@@ -597,7 +606,10 @@ class PostgresEventStore(EventStorePort):
                         FROM events
                         WHERE event_type = 'AgentCreated'
                           AND payload->>'role' = 'boss'
-                        ORDER BY occurred_at DESC
+                        -- G.2: tie-break wall-clock collisions on sequence_number
+                        -- so the projection is deterministic when two BOSS
+                        -- AgentCreated events share occurred_at.
+                        ORDER BY occurred_at DESC, sequence_number DESC
                         LIMIT $1 OFFSET $2
                     ),
                     task_descriptions AS (
@@ -628,7 +640,13 @@ class PostgresEventStore(EventStorePort):
                             'VerificationFailed', 'DecisionInfeasible',
                             'RetryScheduled', 'RedecompositionTriggered'
                         )
-                        ORDER BY e.aggregate_id, e.occurred_at DESC
+                        -- G.2: when wall-clock occurred_at collides, fall
+                        -- back to sequence_number DESC so the projection
+                        -- picks the *later* event deterministically (e.g.
+                        -- WorkCompleted after RetryScheduled at the same
+                        -- timestamp resolves to status='completed').
+                        ORDER BY e.aggregate_id, e.occurred_at DESC,
+                                 e.sequence_number DESC
                     ),
                     run_info AS (
                         SELECT DISTINCT ON (e.aggregate_id)

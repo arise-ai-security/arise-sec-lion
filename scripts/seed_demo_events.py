@@ -278,7 +278,7 @@ async def main():
     # Insert via append_batch (uses proper serialization)
     # =========================================================================
     events_only = [e for e, _ in all_events]
-    await store.append_batch(events_only, expected_version=-1)
+    await store.append_batch(events_only)
 
     print(f"Seeded {len(events_only)} events for {len(seq)} agents")
     print(f"  BOSS: {boss_id}")

@@ -259,29 +259,71 @@ class AgentExecutionService:
     async def run_agent_step(self, agent_id: UUID) -> None:
         """Execute one workflow step: load -> dispatch -> persist with OCC retry."""
         retry_count = 0
+        # Track the in-memory aggregate so any failure path can release
+        # the pending child-spawn reservation (D.2) before reload or
+        # bubbling the error up. ``_spawn_children`` stashes the count on
+        # ``agent.pending_reservation``; if a path never reached spawning
+        # the count stays 0 and release is a no-op.
+        last_agent = None
 
         while retry_count < self._config.max_retries:
             try:
                 agent = await self._load_agent_with_context(agent_id)
-                current_version = agent.version
+                last_agent = agent
 
                 await self._dispatch_agent_action(agent)
-                uncommitted = await self._persist_agent_events(agent, current_version)
+                uncommitted = await self._persist_agent_events(agent)
                 await self._handle_post_step(agent, uncommitted)
                 return
 
             except ConcurrencyError as e:
+                # OCC retry: release the failed attempt's reservation so the
+                # retry sees the real available cap.
+                await self._release_pending_reservation(last_agent)
+
                 retry_count += 1
                 if retry_count >= self._config.max_retries:
                     raise ConcurrencyError(
                         aggregate_id=str(agent_id),
-                        expected_version=e.expected_version,
                         actual_version=e.actual_version,
                     ) from e
 
+            except asyncio.CancelledError:
+                # Cancellation aborts the step without writing a failure
+                # event (the run is shutting down); still release any
+                # reservation so the cap isn't permanently shrunk.
+                await self._release_pending_reservation(last_agent)
+                raise
+
             except Exception as e:
+                # Any non-OCC failure (EventStoreError, RuntimeError, ...)
+                # must release the reservation before delegating to
+                # ``_handle_step_failure``. Otherwise the failed spawn
+                # leaks slots and the next caller's ``try_reserve`` fails
+                # spuriously with ``reservation_failed:total_agents``.
+                await self._release_pending_reservation(last_agent)
                 await self._handle_step_failure(agent_id, e)
                 raise
+
+    async def _release_pending_reservation(
+        self, agent: AgentSession | None
+    ) -> None:
+        """Release the in-memory agent's pending child-spawn reservation, if any.
+
+        ``_spawn_children`` stashes the reserved count on
+        ``agent.pending_reservation`` after a successful
+        ``ChildAgentFactory.try_reserve``. On every failure path
+        (ConcurrencyError, EventStoreError, cancellation) we must
+        release it; otherwise the slots stay parked in ``_reserved`` and
+        future ``try_reserve`` calls see a shrunken cap (D.2).
+        """
+        if agent is None:
+            return
+        pending = getattr(agent, "pending_reservation", 0)
+        if not pending:
+            return
+        await self._child_factory.release_reservation(pending)
+        agent.pending_reservation = 0
 
     async def run_system_loop(self, root_agent_id: UUID) -> None:
         """Poll and execute active agents until all reach terminal state.
@@ -370,61 +412,85 @@ class AgentExecutionService:
                 domain_context=self._current_domain_context,
             )
 
-        bundle = self._flat_invariant_builder(
-            task=self._current_task,
-            domain_context=self._current_domain_context,
-            run_dir=(
-                Path(worker_context.working_directory)
-                if worker_context is not None and worker_context.working_directory
-                else self._working_directory
-            ),
-        )
-        if worker_context is not None and worker_context.task_context:
-            bundle = FlatModeBundle(
-                spec=bundle.spec,
-                tool_policy=bundle.tool_policy,
-                timeouts=bundle.timeouts,
-                workspace=bundle.workspace.model_copy(
-                    update={
-                        "extras": {
-                            **dict(bundle.workspace.extras),
-                            **dict(worker_context.task_context),
-                        }
-                    }
+        try:
+            bundle = self._flat_invariant_builder(
+                task=self._current_task,
+                domain_context=self._current_domain_context,
+                run_dir=(
+                    Path(worker_context.working_directory)
+                    if worker_context is not None and worker_context.working_directory
+                    else self._working_directory
                 ),
             )
+            if worker_context is not None and worker_context.task_context:
+                bundle = FlatModeBundle(
+                    spec=bundle.spec,
+                    tool_policy=bundle.tool_policy,
+                    timeouts=bundle.timeouts,
+                    workspace=bundle.workspace.model_copy(
+                        update={
+                            "extras": {
+                                **dict(bundle.workspace.extras),
+                                **dict(worker_context.task_context),
+                            }
+                        }
+                    ),
+                )
 
-        boss = await self._repository.load(root_agent_id)
-        tool_name = self._config.default_worker_tool
+            boss = await self._repository.load(root_agent_id)
+            tool_name = self._config.default_worker_tool
 
-        # Mirror the hierarchical worker's telemetry envelope and ordering so
-        # A-cell runs are comparable to B/C worker runs in metrics scripts.
-        base_version = boss.version
-        execution_started_at = time.monotonic()
-        operation_started_at = execution_started_at
-        boss.emit_execution_started(role=AgentRole.WORKER.value, depth=0)
-        boss.emit_operation_started(operation_type="worker_execution")
-        boss.start_worker_execution(tool_name)
-        boss.emit_prompt_sent(
-            prompt=bundle.spec.rendered_prompt,
-            prompt_type="worker_execution",
-            target=tool_name,
-        )
-        await self._repository.persist_events(boss, base_version, self._progress_callback)
-
-        try:
-            result = await self._flat_worker.run_task(
-                run_id=root_agent_id,
-                spec=bundle.spec,
-                tool_policy=bundle.tool_policy,
-                timeouts=bundle.timeouts,
-                workspace=bundle.workspace,
+            # Mirror the hierarchical worker's telemetry envelope and ordering so
+            # A-cell runs are comparable to B/C worker runs in metrics scripts.
+            execution_started_at = time.monotonic()
+            operation_started_at = execution_started_at
+            boss.emit_execution_started(role=AgentRole.WORKER.value, depth=0)
+            boss.emit_operation_started(operation_type="worker_execution")
+            boss.start_worker_execution(tool_name)
+            boss.emit_prompt_sent(
+                prompt=bundle.spec.rendered_prompt,
+                prompt_type="worker_execution",
+                target=tool_name,
             )
-        except Exception as error:
-            logger.exception("flat-mode worker raised; failing run")
+            await self._repository.persist_events(boss, self._progress_callback)
+
+            try:
+                result = await self._flat_worker.run_task(
+                    run_id=root_agent_id,
+                    spec=bundle.spec,
+                    tool_policy=bundle.tool_policy,
+                    timeouts=bundle.timeouts,
+                    workspace=bundle.workspace,
+                )
+            except Exception as error:
+                logger.exception("flat-mode worker raised; failing run")
+                reloaded = await self._repository.load(root_agent_id)
+                reloaded.fail_with_reason(f"flat-mode worker error: {error!r}")
+                now = time.monotonic()
+                reloaded.emit_operation_finished(
+                    operation_type="worker_execution",
+                    duration_seconds=now - operation_started_at,
+                )
+                reloaded.emit_execution_finished(
+                    role=AgentRole.WORKER.value,
+                    status=reloaded.status.value,
+                    duration_seconds=now - execution_started_at,
+                )
+                await self._repository.persist_events(
+                    reloaded, self._progress_callback
+                )
+                await self._emit_run_completed(
+                    root_agent_id,
+                    start_time,
+                    status_override="failed",
+                )
+                return
+
             reloaded = await self._repository.load(root_agent_id)
-            base_version = reloaded.version
-            reloaded.fail_with_reason(f"flat-mode worker error: {error!r}")
+            for event in result.events:
+                reloaded.apply_worker_event(event)
+            terminal_event = self._build_terminal_event(reloaded.agent_id, result)
+            reloaded.apply_worker_event(terminal_event)
             now = time.monotonic()
             reloaded.emit_operation_finished(
                 operation_type="worker_execution",
@@ -435,51 +501,20 @@ class AgentExecutionService:
                 status=reloaded.status.value,
                 duration_seconds=now - execution_started_at,
             )
-            await self._repository.persist_events(
-                reloaded, base_version, self._progress_callback
-            )
+            await self._repository.persist_events(reloaded, self._progress_callback)
+
             await self._emit_run_completed(
                 root_agent_id,
                 start_time,
-                status_override="failed",
+                status_override=self._classify_flat_run(result.exit_status),
             )
+        finally:
             if self._domain_plugin is not None:
                 await self._domain_plugin.cleanup_worker_execution(
                     root_id=root_agent_id,
                     agent_id=root_agent_id,
                     domain_context=self._current_domain_context,
                 )
-            return
-
-        reloaded = await self._repository.load(root_agent_id)
-        base_version = reloaded.version
-        for event in result.events:
-            reloaded.apply_worker_event(event)
-        terminal_event = self._build_terminal_event(reloaded.agent_id, result)
-        reloaded.apply_worker_event(terminal_event)
-        now = time.monotonic()
-        reloaded.emit_operation_finished(
-            operation_type="worker_execution",
-            duration_seconds=now - operation_started_at,
-        )
-        reloaded.emit_execution_finished(
-            role=AgentRole.WORKER.value,
-            status=reloaded.status.value,
-            duration_seconds=now - execution_started_at,
-        )
-        await self._repository.persist_events(reloaded, base_version, self._progress_callback)
-
-        await self._emit_run_completed(
-            root_agent_id,
-            start_time,
-            status_override=self._classify_flat_run(result.exit_status),
-        )
-        if self._domain_plugin is not None:
-            await self._domain_plugin.cleanup_worker_execution(
-                root_id=root_agent_id,
-                agent_id=root_agent_id,
-                domain_context=self._current_domain_context,
-            )
 
     @staticmethod
     def _build_terminal_event(
@@ -541,7 +576,6 @@ class AgentExecutionService:
         stats = await self._query_service.get_statistics(root_id=root_agent_id)
 
         boss_agent = await self._repository.load(root_agent_id)
-        current_version = boss_agent.version
         run_status = status_override or (
             "completed" if boss_agent.status.value == "completed" else "failed"
         )
@@ -555,7 +589,7 @@ class AgentExecutionService:
         )
 
         await self._repository.persist_events(
-            boss_agent, current_version, self._progress_callback
+            boss_agent, self._progress_callback
         )
 
     def _reap_completed_tasks(
@@ -668,11 +702,9 @@ class AgentExecutionService:
             return
 
         try:
-            current_version = agent.version
             agent.fail_with_reason(reason)
             await self._repository.persist_events(
                 agent,
-                current_version,
                 self._progress_callback,
             )
             await self._parent_notifier.notify_if_failed(agent)
@@ -681,11 +713,9 @@ class AgentExecutionService:
             if reloaded is None or reloaded.is_terminal():
                 return
 
-            current_version = reloaded.version
             reloaded.fail_with_reason(reason)
             await self._repository.persist_events(
                 reloaded,
-                current_version,
                 self._progress_callback,
             )
             await self._parent_notifier.notify_if_failed(reloaded)
@@ -857,11 +887,11 @@ class AgentExecutionService:
         return limits.current_depth if limits else 0
 
     async def _persist_agent_events(
-            self, agent: AgentSession, base_version: int
+            self, agent: AgentSession
     ) -> list[DomainEvent]:
         """Persist uncommitted events and return them."""
         return await self._repository.persist_events(
-            agent, base_version, self._progress_callback
+            agent, self._progress_callback
         )
 
     async def _handle_post_step(
@@ -873,6 +903,11 @@ class AgentExecutionService:
             await self._child_factory.create_children_from_events(
                 child_events, agent.agent_id
             )
+            # The factory's ``commit_reservation`` has now moved the
+            # reserved slots into ``_total_created`` for these children;
+            # clear the in-memory marker so a later failure path on the
+            # same aggregate cannot double-release the slot count.
+            agent.pending_reservation = 0
 
         if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
             await self._process_worker_context_updates(agent)
@@ -912,7 +947,7 @@ class AgentExecutionService:
         agent.schedule_retry(reason=reason, escalated_model=None)
 
         await self._repository.persist_events(
-            agent, agent.version - 1, self._progress_callback
+            agent, self._progress_callback
         )
         logger.info(
             "Verification retry %d/%d for agent %s: %s",
@@ -968,7 +1003,7 @@ class AgentExecutionService:
 
             agent.fail_with_reason(f"Execution error: {error!r}")
             await self._repository.persist_events(
-                agent, agent.version, self._progress_callback
+                agent, self._progress_callback
             )
 
             await self._parent_notifier.notify_if_failed(agent)
