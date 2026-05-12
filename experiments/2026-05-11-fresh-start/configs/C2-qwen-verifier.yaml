@@ -1,0 +1,23 @@
+# Cell C2 — C1 with the LLM Judge stage ON. C1 vs C2 isolates the value of
+# the verification pipeline within the Qwen/OpenHands worker arm.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: false
+  boss.model: claude-sonnet-4-6
+  manager.model: claude-sonnet-4-6
+  worker.tool: openhands
+  worker.model: ollama_chat/qwen3.5:397b-cloud
+  worker.allowed_tools: ["*"]
+  worker.disallowed_tools: []
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 40
+  output.directory: ./runs
+  worker.tool_params:
+    openhands:
+      image: openhands:latest
+      timeout_seconds: 5400
+      max_iterations_per_run: 40
+  domain.plugin: security

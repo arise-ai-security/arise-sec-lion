@@ -1,0 +1,25 @@
+# Cell B2 — same hierarchy and worker as B1 with the LLM Judge stage ON
+# (`orchestration.skip_judge: false`). B1 vs B2 isolates the value of the
+# post-worker verification pipeline within the Claude-worker arm.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: false
+  boss.model: claude-sonnet-4-6
+  manager.model: claude-sonnet-4-6
+  worker.tool: claude_code
+  worker.model: claude-sonnet-4-6
+  worker.allowed_tools: ["*"]
+  worker.disallowed_tools: []
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 40
+  output.directory: ./runs
+  worker.tool_params:
+    openhands: null
+    claude_code:
+      output_format: stream-json
+      include_partial_messages: true
+      max_turns: 40
+  domain.plugin: security

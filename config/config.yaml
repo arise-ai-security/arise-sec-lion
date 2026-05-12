@@ -150,7 +150,7 @@ cors:
 # SEC-bench container settings
 security:
   enabled: true  # Uses worker.timeout for secb commands
-  tools: [valgrind]  # KLEE unavailable in Ubuntu Focal base images
+  tools: [valgrind, klee]  # KLEE is lazy-installed on first use by security_tools_server
 
 # Active domain plugin and its opaque per-plugin params.
 domain:

@@ -1,0 +1,25 @@
+# Cell C1 — hierarchical tree with Qwen/OpenHands workers, LLM Judge OFF.
+# Same orchestration as B1 but swaps the worker to OpenHands running
+# Qwen3.5 via Ollama. B vs C isolates the worker-model effect on the same
+# decomposition; C1 vs C2 mirrors B1/B2 for the judge toggle.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: true
+  boss.model: claude-sonnet-4-6
+  manager.model: claude-sonnet-4-6
+  worker.tool: openhands
+  worker.model: ollama_chat/qwen3.5:397b-cloud
+  worker.allowed_tools: ["*"]
+  worker.disallowed_tools: []
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 40
+  output.directory: ./runs
+  worker.tool_params:
+    openhands:
+      image: openhands:latest
+      timeout_seconds: 5400
+      max_iterations_per_run: 40
+  domain.plugin: security
