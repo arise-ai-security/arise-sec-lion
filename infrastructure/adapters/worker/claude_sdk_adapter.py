@@ -7,6 +7,7 @@ Uses PostToolUse hooks for capturing tool invocations as events.
 """
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -157,7 +158,12 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             """Hook callback to capture tool invocations."""
             tool_name = getattr(input_data, "tool_name", "unknown")
             tool_input = getattr(input_data, "tool_input", {})
-            content = format_tool_event(tool_name, tool_input)
+            # BUG-EVENT1: mirror claude_code_worker.py:565-567 and
+            # openhands_adapter.py:692 -- append `\nInput: {<json>}` so the
+            # cheating-attempt detector (`run_metrics._extract_bash_command`)
+            # can recover the Bash command string from B-cell tool_use events.
+            detail = json.dumps(tool_input, sort_keys=True, default=str)
+            content = f"{format_tool_event(tool_name, tool_input)}\nInput: {detail}"
             # Audit N-6: pass the canonical tool_name through so the
             # downstream ThoughtCaptured event has a structured field
             # instead of forcing offline metrics to parse the human prefix.

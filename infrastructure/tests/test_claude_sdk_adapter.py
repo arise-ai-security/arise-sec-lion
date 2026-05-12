@@ -458,3 +458,122 @@ class TestMCPServersWiring:
             )
 
         assert "mcp_servers" not in captured
+
+
+class MockHookInput:
+    """Stub for claude_agent_sdk HookInput with attributes the hook reads."""
+
+    def __init__(self, tool_name: str, tool_input: dict) -> None:
+        self.tool_name = tool_name
+        self.tool_input = tool_input
+
+
+def _extract_capture_tool_use_hook(captured_kwargs: dict[str, object]):
+    """Pull the PostToolUse callback out of the ClaudeAgentOptions kwargs."""
+    hooks = captured_kwargs["hooks"]
+    assert isinstance(hooks, dict)
+    matchers = hooks["PostToolUse"]
+    assert isinstance(matchers, list)
+    assert matchers
+    # HookMatcher is a dataclass with a public `hooks` list of callables.
+    return matchers[0].hooks[0]
+
+
+class TestToolUseInputPayload:
+    """BUG-EVENT1 regression: tool_use events must include the input payload.
+
+    Sibling adapters (`claude_code_worker.py:565-567`, `openhands_adapter.py:692`)
+    append ``\\nInput: {<json>}`` to tool_use content so the cross-cell
+    cheating-attempt detector in `experiments/shared/scripts/run_metrics.py`
+    can recover the Bash command string. Pre-fix, this adapter dropped the
+    payload and made B-cell Bash commands invisible to the detector.
+    """
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_appends_input_json_payload(self) -> None:
+        """Hook content carries ``\\nInput: {...}`` with the Bash command string."""
+        # Given: an adapter and a fake ClaudeAgentOptions that captures kwargs.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        import asyncio as _asyncio
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        tool_queue: _asyncio.Queue[tuple[str, str, str | None]] = _asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=None,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+
+        # When: the PostToolUse hook fires for a Bash command.
+        hook_input = MockHookInput(
+            tool_name="Bash",
+            tool_input={"command": "git log --oneline -3"},
+        )
+        await capture_tool_use(hook_input, None, MagicMock())
+
+        # Then: the queued content carries the canonical `\nInput: {<json>}` suffix
+        # AND the literal command string.
+        content, output_type, tool_name = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_name == "Bash"
+        assert "\nInput: " in content, (
+            "tool_use content must include the `\\nInput: ` JSON suffix so the "
+            "cheating-attempt detector can extract the Bash command (BUG-EVENT1)."
+        )
+        assert "git log --oneline -3" in content
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_payload_parses_back_via_detector(self) -> None:
+        """Emitted content round-trips through the cheating-attempt detector.
+
+        Cross-cutting integration check: the content this adapter emits must be
+        parseable by `run_metrics._extract_bash_command` and recognised as a
+        cheating signature by `_is_cheating_command`.
+        """
+        # Given: an adapter and captured options kwargs.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        import asyncio as _asyncio
+
+        from experiments.shared.scripts.run_metrics import (
+            _extract_bash_command,
+            _is_cheating_command,
+        )
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        tool_queue: _asyncio.Queue[tuple[str, str, str | None]] = _asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=None,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+
+        # When: a cheating-signature Bash command flows through the hook.
+        hook_input = MockHookInput(
+            tool_name="Bash",
+            tool_input={"command": "git log --oneline -3"},
+        )
+        await capture_tool_use(hook_input, None, MagicMock())
+        content, _, _ = tool_queue.get_nowait()
+
+        # Then: the detector recovers the exact command and counts it as cheating.
+        assert _extract_bash_command(content) == "git log --oneline -3"
+        assert _is_cheating_command("git log --oneline -3") is True
