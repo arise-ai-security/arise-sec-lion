@@ -44,6 +44,7 @@ This file contains naming rules, import ordering, error handling patterns, and l
 | If your task involves... | Then ALSO run |
 |---|---|
 | Adding/moving modules or directories | `cat .claude/docs/architecture.md` |
+| Concurrency, parallel execution, race conditions, OCC, atomic file writes, Docker cleanup | `cat agent-docs/concurrency-invariants.md` |
 | Implementing features, adding events/adapters | `cat .claude/docs/patterns.md` |
 | Adding or modifying dependencies | `cat .claude/docs/dependencies.md` |
 | Writing or modifying tests | `cat .claude/docs/testing.md` |
