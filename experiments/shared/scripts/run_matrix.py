@@ -25,9 +25,11 @@ import argparse
 import logging
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -37,10 +39,10 @@ from experiments.shared.scripts import collect
 from experiments.shared.scripts._paths import get_repo_root
 from experiments.shared.scripts.validate_manifest import validate_manifest
 from experiments.shared.scripts.write_report import write_md
+from infrastructure.cleanup.registry import _pid_alive
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from uuid import UUID
 
 
@@ -106,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("dry-run job: cell=%s task=%s replicate=%d", cell, task, replicate)
         logger.info("dry-run complete: %d jobs would run", len(jobs))
         return 0
+
+    pools = _collect_pools_from_manifest(
+        manifest, repo_root=repo_root, cells_filter=cells_filter
+    )
+    _sweep_stale_state(pools)
 
     results = _dispatch_jobs(
         jobs,
@@ -475,6 +482,141 @@ def _parse_csv(value: str | None) -> set[str] | None:
 
 def _utcnow_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+# =============================================================================
+# Startup sweep (F.2): remove stale containers + orphan result files
+# =============================================================================
+
+
+_ORPHAN_RESULT_MAX_AGE_SECONDS = 3600
+
+
+def _collect_pools_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    repo_root: Path,
+    cells_filter: set[str] | None,
+) -> set[Path]:
+    """Return every pool root that may contain stale state from a prior run.
+
+    The default ``<repo>/runs/`` pool is always included; per-cell configs
+    may relocate the pool via ``output.directory`` overlay. The sweep is
+    scoped to the cells the operator actually selected so we don't reach
+    into unrelated cells' pools.
+    """
+    pools: set[Path] = {repo_root / "runs"}
+    cells = manifest.get("cells") or {}
+    for cell_name, cell_spec in cells.items():
+        if cells_filter is not None and cell_name not in cells_filter:
+            continue
+        config_rel = cell_spec.get("config") if isinstance(cell_spec, dict) else None
+        if not config_rel:
+            continue
+        config_path = repo_root / "experiments" / manifest["study_id"] / config_rel
+        pools.add(_runs_root_for_config(config_path, repo_root=repo_root))
+    return pools
+
+
+def _runs_root_for_config(config_path: Path, *, repo_root: Path) -> Path:
+    """Resolve a cell config's ``output.directory`` to an absolute pool root.
+
+    Mirrors ``harness._runs_root`` but stays module-local so the sweep does
+    not couple to harness internals. Any failure falls back to the
+    conventional ``<repo>/runs/`` pool, matching the harness behaviour.
+    """
+    try:
+        from config.overlay import resolve_overlay
+
+        materialized = resolve_overlay(config_path, repo_root=repo_root)
+        raw_output = (materialized.get("output") or {}).get("directory")
+        if isinstance(raw_output, str) and raw_output.strip():
+            candidate = Path(raw_output)
+            return candidate if candidate.is_absolute() else repo_root / candidate
+    except Exception:
+        logger.warning(
+            "startup sweep: failed to resolve output.directory from %s; using default",
+            config_path,
+        )
+    return repo_root / "runs"
+
+
+def _sweep_stale_state(pools: set[Path]) -> None:
+    """Daemon-wide container sweep + per-pool orphan ``.run-result-*.json`` sweep."""
+    _sweep_stale_containers()
+    for pool in pools:
+        _sweep_orphan_result_files(pool)
+
+
+def _sweep_stale_containers() -> None:
+    """Remove worker/seed containers whose owning session PID is gone.
+
+    Filters on the ``arise.session_pid`` label set by
+    ``plugins/security/docker_runtime.py``. PID-reuse is an accepted
+    trade-off: an unlikely PID collision means we leave the container
+    alone, which is the safe failure mode.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603, S607
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                "label=arise.session_pid",
+                "--format",
+                "{{.ID}}\t{{.Label \"arise.session_pid\"}}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ) as exc:
+        logger.warning("startup sweep: docker ps failed (%s); skipping", exc)
+        return
+
+    stale_ids: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        cid, _, pid_str = line.partition("\t")
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        if _pid_alive(pid):
+            continue
+        stale_ids.append(cid)
+
+    if not stale_ids:
+        return
+    logger.info(
+        "startup sweep: removing %d stale worker container(s)", len(stale_ids)
+    )
+    subprocess.run(  # noqa: S603, S607
+        ["docker", "rm", "-f", *stale_ids],
+        check=False,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def _sweep_orphan_result_files(pool: Path) -> None:
+    """Unlink ``.run-result-*.json`` files older than one hour in ``pool``."""
+    if not pool.exists():
+        return
+    cutoff = time.time() - _ORPHAN_RESULT_MAX_AGE_SECONDS
+    for path in pool.glob(".run-result-*.json"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("startup sweep: failed to unlink %s (%s)", path, exc)
 
 
 # =============================================================================

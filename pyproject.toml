@@ -54,6 +54,7 @@ markers = [
     "e2e: end-to-end tests (require full infrastructure)",
     "integration: integration tests (require external services)",
     "property: property-based tests (may take longer)",
+    "requires_docker: tests that require a local Docker daemon",
 ]
 addopts = "-v --tb=short"
 
