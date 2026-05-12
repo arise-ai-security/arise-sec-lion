@@ -3,10 +3,7 @@
 <domain>
     <cve_instance>
         {% for key, value in cve.items() -%}
-            {# Cap bug_report at 8 KiB so unusually long upstream-issue
-               narratives don't blow the prompt context budget. The other
-               allowlisted fields are short structured strings. #}
-            - {{ key | replace('_', ' ') | title }}: {{ (value | string | truncate(8000, killwords=False, end='… [truncated]')) if key == 'bug_report' else value }}
+            - {{ key | replace('_', ' ') | title }}: {{ value }}
         {% endfor -%}
     </cve_instance>
 
@@ -43,6 +40,9 @@
             - `/testcase/security_report.md` exists and is non-empty
             - Report covers: executive summary, vulnerability details, root cause, PoC evidence, fix implementation, validation results
             - References specific file paths, command outputs, and tool results as evidence
+        {% endif %}
+        {% if has_gold_patch %}
+            Gold patch reference available for validation comparison.
         {% endif %}
     </success_criteria>
 

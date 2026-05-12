@@ -167,9 +167,6 @@ def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> Non
     assert bundle.tool_policy.allowed == ("Bash",)
     assert bundle.tool_policy.disallowed == ("WebFetch",)
     assert bundle.workspace.root == run_dir
-    # Prompt now flows through system/single_agent.j2 + inputs/*: assert the
-    # canonical persona + task-input markers, not the legacy "Task: t1" line.
-    assert "<persona>" in bundle.spec.rendered_prompt
     assert "demo.cve-9999-0001" in bundle.spec.rendered_prompt
 
 

@@ -2,42 +2,24 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.application.execution_service import FlatModeBundle
-from core.application.run_invariants import (
-    build_timeouts,
-    build_tool_policy,
-    build_workspace_spec,
-)
-from infrastructure.adapters.worker import OpenHandsAdapter
-from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
-from plugins.security import CVEInstance, SecurityDomainPlugin
+from plugins.security import SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
-from plugins.security.prompt_strategy import render_single_agent_prompt
 from presentation.cli import CLI, CLIConfig
 
 from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
 
 
-logger = logging.getLogger(__name__)
-
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from config import Settings
-    from core.application.execution_service import (
-        FlatInvariantBuilder,
-        ProgressCallback,
-    )
+    from core.application.execution_service import ProgressCallback
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
-    from core.ports.worker_port import WorkerPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,105 +85,11 @@ def get_run_domain_components(
     return builder(settings) if builder is not None else DomainComponents()
 
 
-_PROMPTS_RELATIVE = Path("prompts")
-
-
-def _resolve_template_dir() -> Path:
-    """Locate the canonical Jinja template root relative to the repo root."""
-    return Path(__file__).resolve().parents[1] / _PROMPTS_RELATIVE
-
-
-def _build_flat_worker(settings: Settings) -> WorkerPort:
-    """Pick the WorkerPort adapter implied by ``settings.worker.tool``.
-
-    google_adk has no flat-mode adapter today; it raises a clear NotImplementedError
-    so configuration errors surface at bootstrap rather than at dispatch time.
-    """
-    tool = settings.worker.tool
-    if tool == "claude_code":
-        params = settings.worker.tool_params.claude_code
-        if params is None:
-            raise ValueError(
-                "worker.tool_params.claude_code must be populated for orchestration.mode='flat' "
-                "with worker.tool='claude_code'"
-            )
-        return ClaudeCodeWorker(
-            model=settings.worker.model,
-            output_format=params.output_format,
-            include_partial_messages=params.include_partial_messages,
-            max_turns=params.max_turns,
-            use_global_config=params.use_global_config,
-        )
-    if tool == "openhands":
-        adapter = OpenHandsAdapter(
-            model=settings.worker.model,
-            timeout_seconds=settings.worker.timeout,
-            max_iterations_per_run=settings.worker.max_iterations_per_run,
-            base_url=settings.worker.base_url,
-            allowed_tools=settings.worker.allowed_tools,
-            disallowed_tools=settings.worker.disallowed_tools,
-        )
-        return OpenHandsWorker(adapter=adapter)
-    if tool == "google_adk":
-        raise NotImplementedError("flat-mode worker for google_adk is not implemented yet")
-    raise ValueError(f"Unknown worker tool: {tool}")
-
-
-def _make_flat_invariant_builder(
-    *,
-    settings: Settings,
-    context_file: Path | None,
-) -> FlatInvariantBuilder:
-    """Return a ``FlatInvariantBuilder`` closure for the active run.
-
-    The closure renders Cell A's prompt through the unified template
-    chain — ``system/single_agent.j2`` (persona) plus the canonical
-    input block (``inputs/user.j2`` + ``inputs/cve.j2`` +
-    ``inputs/control.j2``) — so A and B-BOSS receive byte-identical
-    user-message bytes for the same CVE.
-    """
-    template_dir = _resolve_template_dir()
-    # ``context_file`` is retained on the closure so the caller can
-    # surface "fixture provided but plugin produced no CVEInstance"
-    # mistakes loudly, but it's no longer the source of prompt content.
-    _ = context_file
-
-    def _build(
-        *,
-        task: str,
-        domain_context: object | None,
-        run_dir: Path,
-    ) -> FlatModeBundle:
-        if not isinstance(domain_context, CVEInstance):
-            raise ValueError(
-                "Cell A flat-mode dispatch requires a CVEInstance domain "
-                f"context; got {type(domain_context).__name__}. Ensure the "
-                "security plugin's CVE inference resolved the task."
-            )
-        spec = render_single_agent_prompt(
-            template_dir=template_dir,
-            cve_instance=domain_context,
-            task=task,
-        )
-        tool_policy = build_tool_policy(settings=settings)
-        timeouts = build_timeouts(settings)
-        workspace = build_workspace_spec(run_dir=run_dir)
-        return FlatModeBundle(
-            spec=spec,
-            tool_policy=tool_policy,
-            timeouts=timeouts,
-            workspace=workspace,
-        )
-
-    return _build
-
-
 def create_runtime_cli(
     settings: Settings,
     *,
     progress_callback: ProgressCallback | None = None,
     domain_components: DomainComponents | None = None,
-    context_file: Path | None = None,
 ) -> CLI:
     """Create a CLI with fully wired infrastructure and optional domain pieces."""
     active_domain_components = domain_components or DomainComponents()
@@ -211,8 +99,6 @@ def create_runtime_cli(
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
-            worker_allowed_tools=settings.worker.allowed_tools,
-            worker_disallowed_tools=settings.worker.disallowed_tools,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
             format_repairer_enabled=settings.format_repairer.enabled,
@@ -223,15 +109,6 @@ def create_runtime_cli(
     )
 
     plugin = active_domain_components.plugin
-
-    flat_worker: WorkerPort | None = None
-    flat_invariant_builder: FlatInvariantBuilder | None = None
-    if settings.orchestration.mode == "flat":
-        flat_worker = _build_flat_worker(settings)
-        flat_invariant_builder = _make_flat_invariant_builder(
-            settings=settings,
-            context_file=context_file,
-        )
 
     app = get_application(
         infra,
@@ -252,9 +129,6 @@ def create_runtime_cli(
             prompt_strategy=active_domain_components.prompt_strategy,
             progress_callback=progress_callback,
             domain_key=active_domain_components.domain_key,
-            mode=settings.orchestration.mode,
-            flat_worker=flat_worker,
-            flat_invariant_builder=flat_invariant_builder,
         ),
     )
 

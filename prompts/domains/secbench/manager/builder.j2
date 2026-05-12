@@ -22,10 +22,9 @@ Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Ex
    - `depends_on`: [0]
    - `context_sharing`: Publish build status (success/failure) and binary locations via `<context-update>`.
 
-3. **[Build-Verifier]** (index 2): **Verification worker — final node of the Builder subtree.** Review ALL upstream workers' findings holistically and re-run the build empirically. (a) Verify required deliverables exist: `/testcase/base_commit_hash`, `/src/build.sh`, compiled binaries. (b) Record installed packages to `/testcase/packages.txt` (one per line). (c) Save source changes: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`. (d) Independently re-run `/src/build.sh` from a clean tree state to confirm the build is reproducible end-to-end — do NOT trust Build-Compiler's success summary alone. (e) If any deliverable is missing, the build fails on re-run, or sanitizer instrumentation is absent from the produced binaries, the verification fails — investigate and fix or escalate. Do NOT rubber-stamp. Write the verification outcome to `/testcase/build_verification.md` (deliverables checklist with status, re-run exit code, sanitizer evidence).
+3. **[Build-Verifier]** (index 2): Verify ALL required deliverables exist: `/testcase/base_commit_hash`, `/src/build.sh`, compiled binaries. Record installed packages to `/testcase/packages.txt` (one per line). Save source changes: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`. Confirm build works end-to-end.
    - `depends_on`: [1]
-   - `context_sharing`: Publish via `<context-update>`: verification_status (pass/fail), list of verified deliverables, binary paths, and any corrections made.
-   - `success_criteria`: `/testcase/build_verification.md` exists; all required deliverables present; re-run of `/src/build.sh` exits 0 with sanitizer flags preserved.
+   - `context_sharing`: Publish list of verified deliverables and binary paths.
 
 ### Decomposition Requirements
 
