@@ -108,14 +108,14 @@ def test_aris_runner_delegates_to_harness_run_ours(monkeypatch: pytest.MonkeyPat
     )
 
     # Then: both cells came back with the run_ours sentinel and forwarded the
-    # config + replicate-as-attempt mapping unchanged.
+    # config + replicate values unchanged.
     assert flat_result == sentinel
     assert hier_result == sentinel
     # The capture only retains the LAST call; assert it carries the B-cell's
     # arguments (a sanity check that we did make two distinct calls).
     assert captured["cell"] == "B2"
     assert captured["task"] == "cve-hier"
-    assert captured["attempt"] == 2
+    assert captured["replicate"] == 2
     assert captured["config"] == config_path
 
 
