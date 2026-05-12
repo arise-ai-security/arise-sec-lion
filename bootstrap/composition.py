@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import subprocess
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -24,6 +27,9 @@ from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
 
 
+logger = logging.getLogger(__name__)
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -36,6 +42,7 @@ if TYPE_CHECKING:
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.worker_port import WorkerPort
+    from infrastructure.cleanup.registry import CleanupRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +58,10 @@ def _build_security_components(settings: Settings) -> DomainComponents:
     if not settings.security.enabled:
         return DomainComponents()
 
-    runtime = DockerSecBenchRuntime()
+    runtime = DockerSecBenchRuntime(
+        network_mode=settings.security.worker_network_mode,
+        timeout_seconds=settings.security.worker_docker_timeout_seconds,
+    )
     plugin = SecurityDomainPlugin(enabled_tools=settings.security.tools)
     plugin.set_container_runtime(runtime)
     return DomainComponents(
@@ -213,18 +223,71 @@ def _make_flat_invariant_builder(
     return _builder
 
 
+def _docker_pid_cleanup() -> None:
+    """Remove every container labeled with this process's PID.
+
+    Second line of defense against leaked worker/seed containers. The
+    happy-path try/finally in flat-mode + the hierarchical role dispatch
+    already call ``cleanup_worker_execution``. This handler covers the
+    SIGKILL / SIGTERM / SIGINT / atexit paths where in-process cleanup
+    cannot run — it fires from the :class:`CleanupRegistry` once.
+
+    Best-effort: every failure is logged and swallowed because the handler
+    runs during process teardown when other state may already be torn
+    down. A raise here would block the registry's remaining handlers.
+    """
+    pid = os.getpid()
+    try:
+        listing = subprocess.run(
+            [
+                "docker", "ps", "-a",
+                "--filter", f"label=arise.session_pid={pid}",
+                "--format", "{{.ID}}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        ids = [line.strip() for line in listing.stdout.splitlines() if line.strip()]
+        if not ids:
+            return
+        subprocess.run(
+            ["docker", "rm", "-f", *ids],
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+    except Exception:
+        logger.warning("docker PID-label cleanup failed", exc_info=True)
+
+
 def create_runtime_cli(
     settings: Settings,
     *,
     progress_callback: ProgressCallback | None = None,
     domain_components: DomainComponents | None = None,
     context_file: Path | None = None,
+    cleanup_registry: CleanupRegistry | None = None,
 ) -> CLI:
     """Create a CLI with fully wired infrastructure and optional domain pieces."""
     active_domain_components = domain_components or DomainComponents()
+
+    # Register the Docker PID-label cleanup handler when the security plugin
+    # is active. Other plugins (and the query-only paths that pass
+    # ``cleanup_registry=None``) do not produce Docker workload, so the
+    # registration is conditional. The handler itself is best-effort and
+    # idempotent against an empty container set.
+    if cleanup_registry is not None and isinstance(
+        active_domain_components.plugin, SecurityDomainPlugin
+    ):
+        cleanup_registry.register("docker-by-pid", _docker_pid_cleanup)
+
     infra = get_infrastructure(
         InfrastructureConfig(
             postgres_connection_string=settings.database.connection_string,
+            pool_min=settings.database.pool_min,
+            pool_max=settings.database.pool_max,
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
@@ -236,6 +299,7 @@ def create_runtime_cli(
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,
             format_repairer_api_base=settings.format_repairer.api_base,
+            format_repairer_max_concurrent=settings.format_repairer.max_concurrent,
         )
     )
 

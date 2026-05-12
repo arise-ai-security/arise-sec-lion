@@ -61,6 +61,11 @@ class DatabaseConfig(BaseModel):
     user: str
     password: str
     name: str
+    # asyncpg pool sizing (G.1). Default matches the historical asyncpg
+    # defaults of (min=10, max=10) so unchanged deployments behave the
+    # same; raise pool_max to widen the connection pool under load.
+    pool_min: int = Field(default=10, ge=1, le=100)
+    pool_max: int = Field(default=10, ge=1, le=100)
 
     @property
     def connection_string(self) -> str:
@@ -209,6 +214,11 @@ class FormatRepairerConfig(BaseModel):
         default=None,
         description="Optional LiteLLM api_base override for the repairer.",
     )
+    # Bound concurrent repair calls so a parse-failure storm cannot
+    # amplify into N simultaneous LLM requests against the repair
+    # endpoint. Sized to host capacity (Ollama Cloud or local Ollama),
+    # not to source-model concurrency.
+    max_concurrent: int = Field(default=3, ge=1, le=32)
 
 
 class ToolsetPolicyConfig(BaseModel):
@@ -402,6 +412,8 @@ class SecurityConfig(BaseModel):
         default_factory=lambda: ["valgrind"],
         description="Security analysis tools to enable in SEC-bench containers",
     )
+    worker_network_mode: Literal["bridge", "host"] = "host"
+    worker_docker_timeout_seconds: int = Field(default=300, ge=1, le=3600)
 
 
 class DomainConfig(BaseModel):

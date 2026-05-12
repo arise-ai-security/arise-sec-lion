@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import logging
+import signal
 import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from uuid import UUID
 from config import Settings
 from core.domain.events.events import RunStarted
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
+from infrastructure.cleanup.registry import CleanupRegistry
 from infrastructure.snapshot import snapshot_effective_config
 
 from .composition import (
@@ -43,17 +45,35 @@ def main(args: list[str] | None = None) -> None:
         parser.print_help()
         sys.exit(0)
 
+    # Install signal/atexit cleanup hooks once at process entry. Idempotent
+    # internally, but main() runs once per invocation so a fresh registry
+    # per process is the natural lifetime. Registry is threaded into every
+    # command handler so domain plugins (e.g., security) can register
+    # SIGKILL-recovery cleanup callbacks at composition time.
+    cleanup_registry = CleanupRegistry()
+    cleanup_registry.install(signals=(signal.SIGTERM, signal.SIGINT))
+
     handlers = {
         "run": _run_task,
-        "events": lambda a: _query_projection(a, "events"),
-        "summary": lambda a: _query_projection(a, "summary"),
+        "events": lambda a, *, cleanup_registry: _query_projection(
+            a, "events", cleanup_registry=cleanup_registry
+        ),
+        "summary": lambda a, *, cleanup_registry: _query_projection(
+            a, "summary", cleanup_registry=cleanup_registry
+        ),
         "list": _list_runs,
         "prompts": _trace_prompts,
     }
 
     try:
-        asyncio.run(handlers[parsed.command](parsed))
+        asyncio.run(handlers[parsed.command](parsed, cleanup_registry=cleanup_registry))
     except KeyboardInterrupt:
+        # Defensive backstop: install() consumes SIGINT via signal.signal,
+        # but asyncio.run can still translate a SIGINT delivered during a
+        # tight C-extension call into KeyboardInterrupt. run_all() is
+        # idempotent — calling it again after a signal already fired is a
+        # no-op because the registry clears itself on the first sweep.
+        cleanup_registry.run_all()
         print("\nInterrupted. Agent state is persisted in the event store.")
         sys.exit(0)
 
@@ -134,7 +154,11 @@ def _create_parser() -> argparse.ArgumentParser:
 @asynccontextmanager
 async def _event_store(settings: Settings) -> AsyncIterator[PostgresEventStore]:
     """Create and manage event store lifecycle."""
-    store = PostgresEventStore(settings.database.connection_string)
+    store = PostgresEventStore(
+        settings.database.connection_string,
+        pool_min=settings.database.pool_min,
+        pool_max=settings.database.pool_max,
+    )
     await store.connect()
     try:
         yield store
@@ -142,7 +166,11 @@ async def _event_store(settings: Settings) -> AsyncIterator[PostgresEventStore]:
         await store.disconnect()
 
 
-async def _run_task(args: argparse.Namespace) -> None:
+async def _run_task(
+    args: argparse.Namespace,
+    *,
+    cleanup_registry: CleanupRegistry | None = None,
+) -> None:
     from core.query.projections import ProjectionPipelineBuilder
     from presentation.formatters import ProgressDisplayFormatter
     from presentation.persistence import RunPersistence
@@ -172,6 +200,7 @@ async def _run_task(args: argparse.Namespace) -> None:
         progress_callback=callback,
         domain_components=domain_components,
         context_file=context_file,
+        cleanup_registry=cleanup_registry,
     )
 
     # Wall-clock timings cover runtime setup (domain plugin init, docker
@@ -300,7 +329,13 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
     return settings.model_copy(update={"worker": new_worker})
 
 
-async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
+async def _query_projection(
+    args: argparse.Namespace,
+    output_type: str,
+    *,
+    cleanup_registry: CleanupRegistry | None = None,
+) -> None:
+    del cleanup_registry  # Query path has no cleanup obligations.
     from core.query.projections import ProjectionPipelineBuilder
 
     settings = _load_settings(args.config)
@@ -323,7 +358,12 @@ async def _query_projection(args: argparse.Namespace, output_type: str) -> None:
             await builder.to_sink("stdout").build().execute(agent_id)
 
 
-async def _list_runs(args: argparse.Namespace) -> None:
+async def _list_runs(
+    args: argparse.Namespace,
+    *,
+    cleanup_registry: CleanupRegistry | None = None,
+) -> None:
+    del cleanup_registry  # Query path has no cleanup obligations.
     from core.domain.aggregates.agent_session import AgentRole
     from core.domain.events.events import AgentCreated
     from presentation.rendering import OutputRenderer
@@ -358,8 +398,13 @@ async def _list_runs(args: argparse.Namespace) -> None:
             OutputRenderer.print_runs_table(runs)
 
 
-async def _trace_prompts(args: argparse.Namespace) -> None:
+async def _trace_prompts(
+    args: argparse.Namespace,
+    *,
+    cleanup_registry: CleanupRegistry | None = None,
+) -> None:
     """Trace prompts through agent hierarchy."""
+    del cleanup_registry  # Query path has no cleanup obligations.
     from core.application.services import PromptParser, PromptTraceService
     from core.domain.values.prompt_trace import RenderOptions
     from presentation.formatters.prompt_trace_formatter import get_renderer

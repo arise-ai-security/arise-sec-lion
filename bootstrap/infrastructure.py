@@ -45,6 +45,12 @@ class InfrastructureConfig:
     format_repairer_model: str = "ollama_chat/qwen3-coder:480b-cloud"
     format_repairer_max_tokens: int = 16000
     format_repairer_api_base: str | None = None
+    format_repairer_max_concurrent: int = 3
+    # asyncpg pool sizing (G.1). Defaults match the adapter's own
+    # defaults so unchanged deployments behave identically; raise
+    # pool_max to widen the connection pool under load.
+    pool_min: int = 10
+    pool_max: int = 10
 
 
 @dataclass
@@ -96,7 +102,11 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
 
 def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     """Create all infrastructure adapters."""
-    event_store = PostgresEventStore(config.postgres_connection_string)
+    event_store = PostgresEventStore(
+        config.postgres_connection_string,
+        pool_min=config.pool_min,
+        pool_max=config.pool_max,
+    )
     llm_adapter = LiteLLMAdapter()
     worker_tool = _create_worker_adapter(config)
     shared_context = PostgresSharedContextAdapter(event_store)
@@ -109,6 +119,7 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
             model=config.format_repairer_model,
             max_tokens=config.format_repairer_max_tokens,
             api_base=config.format_repairer_api_base,
+            max_concurrent=config.format_repairer_max_concurrent,
         )
 
     return Infrastructure(
