@@ -126,25 +126,27 @@ def _demo_cve_instance() -> CVEInstance:
 def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> None:
     """The bootstrap-side invariant builder picks up overlaid settings.
 
-    Given a settings YAML overriding ``worker.timeout`` and ``orchestration``
-    fields, the closure produced by ``_make_flat_invariant_builder`` reflects
-    those values in the resulting ``FlatModeBundle``.
+    A-cell tool policy is expressed at the top level in YAML — A2 sets
+    ``worker.disallowed_tools: ["Task"]`` to suppress Claude's Task tool
+    (that's the entire A1-vs-A2 contrast). The closure reads from there
+    directly so the policy flows through to the ``ClaudeCodeWorker`` CLI flags.
     """
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
 
-    # Given: a settings overlay that pins per-worker-call to 450s.
+    # Given: a settings overlay that pins per-worker-call to 450s and the
+    # top-level tool allow/deny lists used by A1/A2.
     settings_path = _settings_with(
         tmp_path,
         worker={
             "model": "gpt-4o",
             "tool": "claude_code",
+            "allowed_tools": ["Bash"],
+            "disallowed_tools": ["WebFetch"],
             "timeout": 450,
             "max_iterations_per_run": 20,
             "tool_params": {
                 "claude_code": {
-                    "allowed_tools": ["Bash"],
-                    "disallowed_tools": ["WebFetch"],
                     "output_format": "stream-json",
                     "include_partial_messages": True,
                     "max_turns": 40,
@@ -242,3 +244,51 @@ def test_build_flat_worker_rejects_google_adk(tmp_path: Path) -> None:
 
     with pytest.raises(NotImplementedError, match="google_adk"):
         _build_flat_worker(settings)
+
+
+def test_flat_invariant_builder_pins_a2_task_denial_against_default_tool_params(
+    tmp_path: Path,
+) -> None:
+    """A2's ``worker.disallowed_tools: ["Task"]`` must reach the worker.
+
+    A2's `tool_params.claude_code` slot omits `disallowed_tools` (defaults to
+    `[]`), and the entire A1-vs-A2 contrast hinges on the top-level denial
+    reaching the Claude CLI. A regression that re-prefers the nested slot
+    would silently make A1 ≡ A2.
+    """
+    from bootstrap.composition import _make_flat_invariant_builder
+    from config.settings import Settings
+
+    # Given: an A2-shaped settings overlay — Task denied at the top level,
+    # the nested claude_code slot deliberately omits ``disallowed_tools``.
+    settings_path = _settings_with(
+        tmp_path,
+        worker={
+            "model": "claude-sonnet-4-6",
+            "tool": "claude_code",
+            "allowed_tools": ["*"],
+            "disallowed_tools": ["Task"],
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            "tool_params": {
+                "claude_code": {
+                    "output_format": "stream-json",
+                    "include_partial_messages": True,
+                    "max_turns": 20,
+                    "use_global_config": False,
+                }
+            },
+        },
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+    builder = _make_flat_invariant_builder(settings=settings, context_file=None)
+
+    # When: invoking the closure on a valid CVE context.
+    run_dir = tmp_path / "runs" / "a2"
+    run_dir.mkdir(parents=True)
+    bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
+
+    # Then: Task is denied; allow-everything is preserved.
+    assert bundle.tool_policy.allowed == ("*",)
+    assert bundle.tool_policy.disallowed == ("Task",)

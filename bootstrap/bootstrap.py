@@ -171,7 +171,7 @@ async def _run_task(args: argparse.Namespace) -> None:
         settings,
         progress_callback=callback,
         domain_components=domain_components,
-        context_file=Path(context_file) if context_file else None,
+        context_file=context_file,
     )
 
     # Wall-clock timings cover runtime setup (domain plugin init, docker

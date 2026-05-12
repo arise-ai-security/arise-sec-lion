@@ -11,7 +11,11 @@ replicates: 1
 # headline reports only aggregate the cells listed here. `collect.py` and
 # `render_report.py` honor this allowlist; if absent, they fall back to all
 # cells.
-headline_cells: [A1, A2, B1, B2, C1, C2]
+# BUG-A1 gating: A1/A2 stay registered so they remain runnable, but they are
+# excluded from headline aggregates until BUG-A2 lands the unified flat prompt
+# (the current flat-mode placeholder is not a publishable baseline). Restore
+# A1 and A2 here after BUG-A2 merges.
+headline_cells: [B1, B2, C1, C2]
 cells:
   A1: {group: A, runner: aris, config: configs/A1-claude-code-subagent.yaml}
   A2: {group: A, runner: aris, config: configs/A2-claude-code-nosubagent.yaml}

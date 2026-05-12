@@ -97,6 +97,15 @@ class ApplicationConfig:
     flat_worker: WorkerPort | None = None
     flat_invariant_builder: FlatInvariantBuilder | None = None
 
+    def __post_init__(self) -> None:
+        if self.mode == "flat" and (
+            self.flat_worker is None or self.flat_invariant_builder is None
+        ):
+            raise ValueError(
+                "orchestration.mode='flat' requires both flat_worker and "
+                "flat_invariant_builder"
+            )
+
 
 @dataclass
 class Application:
