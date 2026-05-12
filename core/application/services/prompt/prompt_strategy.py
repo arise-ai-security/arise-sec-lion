@@ -83,3 +83,17 @@ class PromptStrategy(Protocol):
     ) -> "TemplateChain | None":
         """Return an extended worker prompt chain, or None to use the default chain."""
         ...
+
+    def extend_flat_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        """Return an extended flat-mode prompt chain, or None to use the default chain.
+
+        Flat mode runs a single agent through all phases of a task (no
+        decomposition, no briefing). Domain implementations should compose
+        the domain context plus all per-phase guidance so the agent has the
+        full pipeline view in one prompt.
+        """
+        ...

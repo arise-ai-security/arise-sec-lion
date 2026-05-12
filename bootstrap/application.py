@@ -91,6 +91,7 @@ class ApplicationConfig:
     skip_judge: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
+    prompt_builder: PromptBuilder | None = None
     progress_callback: ProgressCallback | None = None
     domain_key: str | None = None
     mode: Literal["hierarchical", "flat"] = "hierarchical"
@@ -129,8 +130,11 @@ def get_application(
         mode=config.mode,
     )
 
-    # Create collaborators (composition root wiring)
-    prompt_builder = PromptBuilder(
+    # Create collaborators (composition root wiring). Prefer the
+    # PromptBuilder constructed by ``create_runtime_cli`` so the flat-mode
+    # closure and the live service share one instance; fall back to
+    # constructing one for callers that don't set the field.
+    prompt_builder = config.prompt_builder or PromptBuilder(
         "prompts",
         config.default_worker_tool,
         strategy=config.prompt_strategy,

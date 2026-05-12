@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from core.application.execution_service import FlatModeBundle
 from core.application.run_invariants import (
@@ -13,6 +14,7 @@ from core.application.run_invariants import (
     build_timeouts,
     build_workspace_spec,
 )
+from core.application.services import PromptBuilder
 from infrastructure.workers import ClaudeCodeWorker
 from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
@@ -132,18 +134,36 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
 def _make_flat_invariant_builder(
     *,
     settings: Settings,
-    context_file: Path | None,
+    prompt_builder: PromptBuilder,
+    context_file: Path | None = None,
 ) -> FlatInvariantBuilder:
     """Return a closure that produces a ``FlatModeBundle`` per flat-mode run.
 
     The closure validates that ``domain_context`` is a ``CVEInstance``, then
     assembles the four ``run_invariants`` value objects from ``Settings`` and
-    the run-scoped inputs. ``context_file`` is captured for BUG-A2 — the future
-    ``extend_flat_prompt`` renderer will read CVE metadata from this JSON path
-    when the inferred ``domain_context`` is sparse. The current closure does
-    not consume it.
+    the run-scoped inputs. The rendered prompt is composed via
+    ``prompt_builder.build_flat_prompt`` so the same ``PromptBuilder``
+    instance is shared with ``ApplicationConfig`` (and hence the live
+    ``AgentExecutionService``).
+
+    ``context_file`` is reserved for a future refinement that lets the
+    closure ingest CVE metadata from a JSON path when the inferred
+    ``domain_context`` is sparse; the current closure does not consume it.
     """
-    del context_file  # Reserved for BUG-A2; remove the ``del`` when consumed.
+    del context_file  # Reserved; remove the ``del`` when consumed.
+
+    # ``subagent_enabled`` is derived once at factory time — settings are
+    # constant for the lifetime of this closure. A1 cells leave
+    # ``disallowed_tools`` empty (Task tool allowed); A2 cells deny ``Task``
+    # explicitly. The flat prompt appends ``FLAT_SUBAGENT_NOTE`` only when
+    # the cell allows Task. The asymmetry is documented as TV-PROMPT-A1.
+    #
+    # Assumes ``allowed_tools: ["*"]`` (today's A1/A2). A future cell that
+    # pins an explicit allowlist excluding ``Task`` (instead of relying on
+    # ``disallowed_tools``) would silently still get the subagent note here
+    # even though the CLI receives no Task entitlement. Revisit the
+    # predicate when introducing such a cell.
+    subagent_enabled = "Task" not in settings.worker.disallowed_tools
 
     def _builder(
         *,
@@ -171,8 +191,12 @@ def _make_flat_invariant_builder(
             ),
         )
 
-        # TODO(BUG-A2): replace placeholder with extend_flat_prompt output.
-        rendered_prompt = f"<flat-mode placeholder for CVE {domain_context.instance_id}>"
+        rendered_prompt = prompt_builder.build_flat_prompt(
+            task_description=task,
+            agent_id=uuid4(),
+            domain_context=domain_context,
+            subagent_enabled=subagent_enabled,
+        )
         spec = TaskPromptSpec(
             rendered_prompt=rendered_prompt,
             prompt_sha=sha256(rendered_prompt.encode("utf-8")).hexdigest(),
@@ -215,10 +239,25 @@ def create_runtime_cli(
 
     plugin = active_domain_components.plugin
 
+    # Construct PromptBuilder once and share it between the flat-mode closure
+    # (which needs it to render the flat prompt at run time) and the
+    # AgentExecutionService (which needs it for hierarchical mode). Keeping
+    # one instance avoids divergent Jinja envs and double initialization.
+    prompt_builder = PromptBuilder(
+        "prompts",
+        settings.worker.tool,
+        strategy=active_domain_components.prompt_strategy,
+        domain_plugin=plugin,
+    )
+
     is_flat = settings.orchestration.mode == "flat"
     flat_worker = _build_flat_worker(settings) if is_flat else None
     flat_invariant_builder = (
-        _make_flat_invariant_builder(settings=settings, context_file=context_file)
+        _make_flat_invariant_builder(
+            settings=settings,
+            prompt_builder=prompt_builder,
+            context_file=context_file,
+        )
         if is_flat
         else None
     )
@@ -240,6 +279,7 @@ def create_runtime_cli(
             default_worker_tool=settings.worker.tool,
             domain_plugin=plugin,
             prompt_strategy=active_domain_components.prompt_strategy,
+            prompt_builder=prompt_builder,
             progress_callback=progress_callback,
             domain_key=active_domain_components.domain_key,
             mode=settings.orchestration.mode,

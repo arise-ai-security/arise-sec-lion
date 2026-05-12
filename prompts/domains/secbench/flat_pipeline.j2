@@ -1,0 +1,38 @@
+<pipeline>
+## Vulnerability Reproduction — 4-Phase Process
+
+The repository is already cloned in the working directory. DO NOT clone again.
+All work MUST be done in the working directory specified in the CVE context above.
+Execute all four phases sequentially; each depends on the previous.
+
+### Phase 1: Build
+Build the repository with sanitizer instrumentation.
+Deliverables:
+- `/testcase/base_commit_hash` (the vulnerable commit hash)
+- `/src/build.sh` (improved, standalone, sanitizer flags preserved)
+- `/testcase/repo_changes.diff` (source changes vs. base commit, may be empty)
+- `/testcase/packages.txt` (apt packages installed during the build, one per line)
+
+### Phase 2: Exploit
+Create a proof-of-concept that triggers the reported sanitizer error.
+Phase 1's compiled binaries are at `/work/bin/` — do NOT rebuild from scratch.
+Deliverables:
+- PoC artifacts under `/testcase/` (e.g. `/testcase/poc.bin`, `/testcase/poc.js`)
+- `/testcase/repro.sh` (a standalone reproducer command)
+
+### Phase 3: Fix
+Generate a unified patch that removes the sanitizer error.
+Use Phase 2's `/testcase/repro.sh` to validate the patch.
+Deliverable:
+- `/testcase/model_patch.diff` (git-apply-able against the base commit)
+
+### Phase 4: Report
+Synthesize the findings from Phases 1-3 into a security analysis report.
+Deliverable:
+- `/testcase/security_report.md` (non-empty; covers executive summary,
+  vulnerability details with root cause, PoC evidence, fix implementation,
+  validation results, references to specific file paths and command outputs)
+
+**ALL FOUR PHASES MUST BE COMPLETED. Verify each phase's deliverables before
+moving to the next.**
+</pipeline>

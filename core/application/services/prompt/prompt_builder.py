@@ -22,6 +22,17 @@ from core.domain.values.enums import AgentRole
 from core.domain.values.prompt_capabilities import PromptCapabilities
 
 
+# Appended to the flat-mode prompt when the cell allows Claude's Task
+# subagent tool (A1). Without this note Claude rarely exercises Task, so
+# A1 vs A2 degenerates into noise. The note widens the cell delta beyond
+# pure tool capability — captured as TV-PROMPT-A1 in
+# research/03-threats-to-validity.md.
+FLAT_SUBAGENT_NOTE = (
+    "Note: The Task subagent tool is available; use it at your discretion to "
+    "decompose complex steps."
+)
+
+
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
@@ -392,6 +403,48 @@ class PromptBuilder:
             briefing=briefing,
             chain_factory=self.chain,
         )
+
+    def build_flat_prompt(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        domain_context: object | None = None,
+        subagent_enabled: bool = False,
+    ) -> str:
+        """Build prompt for flat-mode single-agent execution.
+
+        Flat mode is a CONTROL baseline against the hierarchical tree
+        (Groups B/C). The role-tier prompts (``roles/*.j2``,
+        ``operations/*.j2``, ``domains/*/worker*.j2``) encode the tree
+        topology's per-role guidance — that's the contribution under test.
+        Including them in a flat baseline would have A inherit our system's
+        engineering for free.
+
+        ``build_flat_prompt`` therefore delegates to the domain strategy's
+        ``extend_flat_prompt`` (which renders the problem statement plus
+        the task structure for the domain), optionally appends a
+        ``FLAT_SUBAGENT_NOTE`` for cells whose tool budget allows Claude's
+        ``Task`` subagent tool (A1), and appends the task slug. When no
+        strategy or no domain context is supplied, the prompt collapses
+        to the note (when enabled) plus the task slug.
+        """
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=agent_id,
+            agent_role=AgentRole.WORKER,
+            default_tool=self.default_tool,
+            domain_context=domain_context,
+        )
+        chain = self.chain()
+        extended_chain = (
+            self._strategy.extend_flat_prompt(chain, prompt_ctx)
+            if self._strategy is not None
+            else None
+        )
+        body = (extended_chain or chain).build()
+        task_block = f"<task>\n{task_description}\n</task>"
+        parts = [p for p in (body, FLAT_SUBAGENT_NOTE if subagent_enabled else "", task_block) if p]
+        return "\n\n".join(parts)
 
     def build_worker_prompt(
         self,

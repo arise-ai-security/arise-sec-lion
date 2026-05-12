@@ -27,6 +27,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_CONFIG = REPO_ROOT / "config" / "config.yaml"
 
 
+def _prompt_builder():
+    """Construct a PromptBuilder for flat-mode tests.
+
+    Mirrors the construction in ``bootstrap/composition.py::create_runtime_cli``:
+    template_dir=``prompts``, default_tool=``claude_code``, strategy=SecBench.
+    """
+    from core.application.services import PromptBuilder
+    from plugins.security import SecBenchPromptStrategy
+
+    return PromptBuilder(
+        template_dir=str(REPO_ROOT / "prompts"),
+        default_tool="claude_code",
+        strategy=SecBenchPromptStrategy(),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _postgres_password(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POSTGRES_PASSWORD", "test_pw")
@@ -156,7 +172,9 @@ def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> Non
         orchestration={"mode": "flat", "max_run_duration_seconds": 7200},
     )
     settings = Settings.from_yaml(settings_path)
-    builder = _make_flat_invariant_builder(settings=settings, context_file=None)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
 
     # When: invoking the closure for a synthetic run.
     run_dir = tmp_path / "runs" / "abc"
@@ -184,7 +202,9 @@ def test_flat_invariant_builder_rejects_missing_cve_instance(tmp_path: Path) -> 
 
     settings_path = _settings_with(tmp_path, orchestration={"mode": "flat"})
     settings = Settings.from_yaml(settings_path)
-    builder = _make_flat_invariant_builder(settings=settings, context_file=None)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
 
     run_dir = tmp_path / "runs" / "x"
     run_dir.mkdir(parents=True)
@@ -282,7 +302,9 @@ def test_flat_invariant_builder_pins_a2_task_denial_against_default_tool_params(
         orchestration={"mode": "flat"},
     )
     settings = Settings.from_yaml(settings_path)
-    builder = _make_flat_invariant_builder(settings=settings, context_file=None)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
 
     # When: invoking the closure on a valid CVE context.
     run_dir = tmp_path / "runs" / "a2"
@@ -292,3 +314,87 @@ def test_flat_invariant_builder_pins_a2_task_denial_against_default_tool_params(
     # Then: Task is denied; allow-everything is preserved.
     assert bundle.tool_policy.allowed == ("*",)
     assert bundle.tool_policy.disallowed == ("Task",)
+
+
+def test_flat_invariant_builder_renders_a1_prompt_with_subagent_note(tmp_path: Path) -> None:
+    """A1's flat prompt carries the ``FLAT_SUBAGENT_NOTE`` capability hint."""
+    from bootstrap.composition import _make_flat_invariant_builder
+    from config.settings import Settings
+    from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
+
+    # Given: an A1-shaped settings overlay — Task tool allowed.
+    settings_path = _settings_with(
+        tmp_path,
+        worker={
+            "model": "claude-sonnet-4-6",
+            "tool": "claude_code",
+            "allowed_tools": ["*"],
+            "disallowed_tools": [],
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            "tool_params": {
+                "claude_code": {
+                    "output_format": "stream-json",
+                    "include_partial_messages": True,
+                    "max_turns": 20,
+                    "use_global_config": False,
+                }
+            },
+        },
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
+
+    # When: the closure renders for a CVE.
+    run_dir = tmp_path / "runs" / "a1"
+    run_dir.mkdir(parents=True)
+    bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
+
+    # Then: the 4-phase pipeline AND the subagent note are present.
+    assert "## Vulnerability Reproduction — 4-Phase Process" in bundle.spec.rendered_prompt
+    assert FLAT_SUBAGENT_NOTE in bundle.spec.rendered_prompt
+
+
+def test_flat_invariant_builder_renders_a2_prompt_without_subagent_note(tmp_path: Path) -> None:
+    """A2's flat prompt omits the ``FLAT_SUBAGENT_NOTE`` because Task is denied."""
+    from bootstrap.composition import _make_flat_invariant_builder
+    from config.settings import Settings
+    from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
+
+    # Given: an A2-shaped settings overlay — Task tool denied.
+    settings_path = _settings_with(
+        tmp_path,
+        worker={
+            "model": "claude-sonnet-4-6",
+            "tool": "claude_code",
+            "allowed_tools": ["*"],
+            "disallowed_tools": ["Task"],
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            "tool_params": {
+                "claude_code": {
+                    "output_format": "stream-json",
+                    "include_partial_messages": True,
+                    "max_turns": 20,
+                    "use_global_config": False,
+                }
+            },
+        },
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
+
+    # When: the closure renders for a CVE.
+    run_dir = tmp_path / "runs" / "a2"
+    run_dir.mkdir(parents=True)
+    bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
+
+    # Then: the pipeline is present but the subagent note is absent.
+    assert "## Vulnerability Reproduction — 4-Phase Process" in bundle.spec.rendered_prompt
+    assert FLAT_SUBAGENT_NOTE not in bundle.spec.rendered_prompt
