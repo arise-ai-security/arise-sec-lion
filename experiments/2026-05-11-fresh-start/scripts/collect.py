@@ -78,6 +78,38 @@ METRIC_FIELDS = [
     # cheating-attempt signatures (`git log`, `git show`, `git diff <ref>`,
     # `git reflog`). Per-run integer; cell/study totals are plain sums.
     "cheating_attempt_count",
+    # Postcondition metrics (smoke-test-2026-05-12 follow-up).
+    # `judge_ran` = real judge LLM call occurred (NOT the structural-check
+    # sentinel). `judge_passed` = judge ran AND score >= 70.
+    # `structural_check_passed` = the structural fallback fired (mutually
+    # exclusive at run level with judge_ran).
+    "judge_ran",
+    "judge_passed",
+    "structural_check_passed",
+    # From RunCompleted payload; -1 sentinel when no RunCompleted observed.
+    "total_agents",
+    "completed_agents",
+    "failed_agents",
+    # Counts derived from RetryScheduled / RedecompositionTriggered events.
+    "retry_count",
+    "redecomposition_count",
+]
+
+# Filesystem-derived per-run booleans (0/1) checked against testcase/.
+# Kept separate from METRIC_FIELDS because they cannot be computed from
+# events.jsonl alone.
+ARTIFACT_FIELDS = [
+    "builder_artifacts_present",
+    "exploiter_artifacts_present",
+    "fixer_artifacts_present",
+]
+
+# JSON-encoded dict columns produced by metrics_from_events. Listed
+# separately so the aggregation/finalization paths can merge them by
+# summing same-keyed values rather than treating them as opaque strings.
+DICT_FIELDS = [
+    "cost_by_model",
+    "cost_by_operation",
 ]
 
 SUMMARY_FIELDS = [
@@ -86,8 +118,11 @@ SUMMARY_FIELDS = [
     "deliverables_present",
     "event_files",
     "artifact_files_copied",
+    "run_terminated_status",
+    *ARTIFACT_FIELDS,
     *METRIC_FIELDS,
     "tool_calls_by_type",
+    *DICT_FIELDS,
 ]
 
 RUN_FIELDS = [
@@ -95,12 +130,17 @@ RUN_FIELDS = [
     "task",
     "replicate",
     "run_id",
-    "exit_status",
+    # Renamed from `exit_status` so the field name reflects that the value
+    # came from run_manifest.json["exit_status"] but represents the run's
+    # terminal status, not a CLI exit code. See findings doc for rationale.
+    "run_terminated_status",
     "events_jsonl",
     "artifacts_path",
     "deliverables_present",
+    *ARTIFACT_FIELDS,
     *METRIC_FIELDS,
     "tool_calls_by_type",
+    *DICT_FIELDS,
 ]
 
 TOTAL_FIELDS = [
@@ -109,8 +149,10 @@ TOTAL_FIELDS = [
     "deliverables_present",
     "event_files",
     "artifact_files_copied",
+    *ARTIFACT_FIELDS,
     *METRIC_FIELDS,
     "tool_calls_by_type",
+    *DICT_FIELDS,
 ]
 
 _TRACE_FILENAMES = (
@@ -211,6 +253,71 @@ def _metrics_for_run(run_dir: Path | None) -> tuple[dict[str, Any], str]:
     return metrics_from_events_jsonl(events_jsonl), events_jsonl.as_posix()
 
 
+def _file_nonempty(path: Path) -> bool:
+    """Return True iff ``path`` exists, is a file, and has nonzero size.
+
+    Several SEC-bench artifacts (notably ``repo_changes.diff``) are created
+    even on partial failure but are 0 bytes — the size check is what makes
+    "artifacts present" meaningful.
+    """
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _check_artifacts(run_dir: Path | None) -> tuple[int, int, int]:
+    """Inspect ``run_dir/testcase`` and return builder/exploiter/fixer flags.
+
+    Builder: ``base_commit_hash`` AND ``packages.txt`` AND (``repo_changes.diff``
+    nonempty OR ``src/build.sh`` exists). The parenthetical OR mirrors the
+    smoke-test findings doc — SEC-bench-style runs sometimes ship build
+    metadata as ``src/build.sh`` instead of a populated diff.
+
+    Exploiter: ``repro.sh`` nonempty AND at least one ``poc.*`` file nonempty.
+
+    Fixer: ``model_patch.diff`` nonempty.
+
+    Returns three 0/1 ints (no booleans — CSV consumers treat them as counts).
+    """
+    if run_dir is None:
+        return 0, 0, 0
+    testcase = run_dir / "testcase"
+    if not testcase.is_dir():
+        return 0, 0, 0
+
+    base_commit = _file_nonempty(testcase / "base_commit_hash")
+    packages = _file_nonempty(testcase / "packages.txt")
+    repo_diff = _file_nonempty(testcase / "repo_changes.diff")
+    build_sh = (testcase / "src" / "build.sh").is_file()
+    builder = int(base_commit and packages and (repo_diff or build_sh))
+
+    repro = _file_nonempty(testcase / "repro.sh")
+    poc_present = any(
+        _file_nonempty(candidate) for candidate in testcase.glob("poc.*")
+    )
+    exploiter = int(repro and poc_present)
+
+    fixer = int(_file_nonempty(testcase / "model_patch.diff"))
+
+    return builder, exploiter, fixer
+
+
+def _merge_cost_dict(target: dict[str, float], source: Any) -> None:
+    """In-place merge: sum same-keyed floats from ``source`` into ``target``.
+
+    Used for both `cost_by_model` and `cost_by_operation` so per-run dicts
+    can roll up to cell totals without losing model/operation provenance.
+    """
+    if not isinstance(source, dict):
+        return
+    for key, value in source.items():
+        try:
+            target[str(key)] = round(float(target.get(str(key), 0.0)) + float(value), 6)
+        except (TypeError, ValueError):
+            continue
+
+
 def _repo_relative_existing(paths: set[Path]) -> list[str]:
     """Return existing repo-relative file paths suitable for provenance metadata."""
     rels: list[str] = []
@@ -224,7 +331,17 @@ def _repo_relative_existing(paths: set[Path]) -> list[str]:
     return list(dict.fromkeys(rels))
 
 
-def _add_metric_totals(target: dict[str, Any], metrics: dict[str, Any]) -> None:
+_SENTINEL_INT_FIELDS = frozenset({
+    # Per-run -1 sentinels that must sticky-propagate at the cohort level so
+    # an "any unknown ⇒ cohort total unknown" semantic is preserved.
+    "judge_score",
+    "total_agents",
+    "completed_agents",
+    "failed_agents",
+})
+
+
+def _add_metric_totals(target: dict[str, Any], metrics: dict[str, Any]) -> None:  # noqa: PLR0912
     for field in METRIC_FIELDS:
         current = target.get(field, 0)
         value = metrics.get(field, 0)
@@ -241,11 +358,10 @@ def _add_metric_totals(target: dict[str, Any], metrics: dict[str, Any]) -> None:
             else:
                 target[field] = round(current_f + value_f, 6)
             continue
-        if field == "judge_score":
-            # BUG-METRIC7: -1 sentinel means "no judge stage observed".
-            # Propagate it so a mixed cohort (some runs judged, some not)
-            # surfaces as -1 in the cell/study total rather than silently
-            # underweighting the sum.
+        if field in _SENTINEL_INT_FIELDS:
+            # Mirror run_duration_seconds: a -1 sentinel in either operand
+            # contaminates the cohort total so consumers cannot silently
+            # under-attribute a missing RunCompleted payload as zero.
             current_i = int(current)
             value_i = int(value)
             if current_i == -1 or value_i == -1:
@@ -269,6 +385,13 @@ def _add_metric_totals(target: dict[str, Any], metrics: dict[str, Any]) -> None:
         for tool, count in metric_breakdown.items():
             breakdown[str(tool)] = int(breakdown.get(str(tool), 0)) + int(count)
 
+    for dict_field in DICT_FIELDS:
+        target_dict = target.setdefault(f"_{dict_field}", {})
+        if not isinstance(target_dict, dict):
+            target_dict = {}
+            target[f"_{dict_field}"] = target_dict
+        _merge_cost_dict(target_dict, metrics.get(dict_field))
+
 
 def _finalize_row(row: dict[str, Any]) -> dict[str, Any]:
     if "_tool_calls_by_type" in row:
@@ -276,6 +399,17 @@ def _finalize_row(row: dict[str, Any]) -> dict[str, Any]:
         row["tool_calls_by_type"] = json.dumps(breakdown, sort_keys=True)
     else:
         row["tool_calls_by_type"] = str(row.get("tool_calls_by_type") or "{}")
+    for dict_field in DICT_FIELDS:
+        accum_key = f"_{dict_field}"
+        if accum_key in row:
+            payload = row.pop(accum_key, {})
+            row[dict_field] = json.dumps(payload, sort_keys=True)
+        else:
+            value = row.get(dict_field)
+            if isinstance(value, dict):
+                row[dict_field] = json.dumps(value, sort_keys=True)
+            else:
+                row[dict_field] = str(value or "{}")
     for field in ("llm_cost_usd", "worker_cost_usd", "total_cost_usd"):
         row[field] = f"{float(row.get(field, 0.0)):.6f}"
     row["run_duration_seconds"] = f"{float(row.get('run_duration_seconds', 0.0)):.3f}"
@@ -315,8 +449,10 @@ def _summarize(
         "deliverables_present": 0,
         "event_files": 0,
         "artifact_files_copied": 0,
+        **dict.fromkeys(ARTIFACT_FIELDS, 0),
         **dict.fromkeys(METRIC_FIELDS, 0),
         "_tool_calls_by_type": {},
+        **{f"_{f}": {} for f in DICT_FIELDS},
     }
 
     for cell in cells:
@@ -327,8 +463,15 @@ def _summarize(
             "deliverables_present": 0,
             "event_files": 0,
             "artifact_files_copied": 0,
+            # `run_terminated_status` aggregated as the count of runs in this
+            # cell that reached the `success` terminal status (mirrors how
+            # we treat other 0/1 per-run booleans). For per-run rows this
+            # column carries the raw string instead.
+            "run_terminated_status": 0,
+            **dict.fromkeys(ARTIFACT_FIELDS, 0),
             **dict.fromkeys(METRIC_FIELDS, 0),
             "_tool_calls_by_type": {},
+            **{f"_{f}": {} for f in DICT_FIELDS},
         }
         for run in runs:
             run_id = str(run.get("run_id") or "")
@@ -341,9 +484,22 @@ def _summarize(
                 runtime_inputs.add(Path(events_jsonl))
             artifact_rel, artifact_count = _copy_artifacts(run, run_dir)
             deliverables = _deliverable_count(run)
+            builder_ok, exploiter_ok, fixer_ok = _check_artifacts(run_dir)
+            terminated_status = str(run.get("exit_status") or "")
 
             row["deliverables_present"] = int(row["deliverables_present"]) + deliverables
             row["artifact_files_copied"] = int(row["artifact_files_copied"]) + artifact_count
+            row["builder_artifacts_present"] = (
+                int(row["builder_artifacts_present"]) + builder_ok
+            )
+            row["exploiter_artifacts_present"] = (
+                int(row["exploiter_artifacts_present"]) + exploiter_ok
+            )
+            row["fixer_artifacts_present"] = (
+                int(row["fixer_artifacts_present"]) + fixer_ok
+            )
+            if terminated_status == "success":
+                row["run_terminated_status"] = int(row["run_terminated_status"]) + 1
             if events_jsonl:
                 row["event_files"] = int(row["event_files"]) + 1
             _add_metric_totals(row, metrics)
@@ -353,10 +509,13 @@ def _summarize(
                 "task": run.get("task") or "",
                 "replicate": run.get("replicate", 0),
                 "run_id": run_id,
-                "exit_status": run.get("exit_status") or "",
+                "run_terminated_status": terminated_status,
                 "events_jsonl": events_jsonl,
                 "artifacts_path": artifact_rel,
                 "deliverables_present": deliverables,
+                "builder_artifacts_present": builder_ok,
+                "exploiter_artifacts_present": exploiter_ok,
+                "fixer_artifacts_present": fixer_ok,
             }
             for field in METRIC_FIELDS:
                 run_row[field] = metrics.get(field, 0)
@@ -364,6 +523,12 @@ def _summarize(
                 metrics.get("tool_calls_by_type") or {},
                 sort_keys=True,
             )
+            for dict_field in DICT_FIELDS:
+                payload = metrics.get(dict_field) or {}
+                run_row[dict_field] = json.dumps(
+                    payload if isinstance(payload, dict) else {},
+                    sort_keys=True,
+                )
             run_rows.append(_finalize_row(run_row))
 
         _add_metric_totals(total_row, row)
@@ -375,6 +540,10 @@ def _summarize(
         total_row["artifact_files_copied"] = (
             int(total_row["artifact_files_copied"]) + int(row["artifact_files_copied"])
         )
+        for artifact_field in ARTIFACT_FIELDS:
+            total_row[artifact_field] = (
+                int(total_row[artifact_field]) + int(row[artifact_field])
+            )
         rows.append(_finalize_row(row))
 
     return rows, run_rows, _finalize_row(total_row), runtime_inputs

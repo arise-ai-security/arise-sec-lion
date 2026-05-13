@@ -550,6 +550,225 @@ def test_cheating_attempt_count_counts_attempts_regardless_of_outcome() -> None:
     assert metrics["cheating_attempt_count"] == 2
 
 
+def test_verification_passed_with_structural_check_does_not_set_judge_ran() -> None:
+    # Given: VerificationPassed with the structural-check sentinel feedback.
+    # No real LLM judge actually fired in this run.
+    events = [
+        {
+            "event_type": "VerificationPassed",
+            "feedback": (
+                "Passed structural checks (no success criteria defined for "
+                "judge evaluation)"
+            ),
+            "score": 100,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: judge_ran stays 0 (structural fallback only), structural_check
+    # surfaces separately so 100 cannot be confused with a real judge verdict.
+    assert metrics["judge_ran"] == 0
+    assert metrics["judge_passed"] == 0
+    assert metrics["structural_check_passed"] == 1
+
+
+def test_verification_passed_with_real_feedback_sets_judge_ran_and_passed() -> None:
+    # Given: VerificationPassed with a real judge feedback string and a
+    # passing score (>= threshold 70).
+    events = [
+        {
+            "event_type": "VerificationPassed",
+            "feedback": "Judge: passed criteria A and B",
+            "score": 85,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then
+    assert metrics["judge_ran"] == 1
+    assert metrics["judge_passed"] == 1
+    assert metrics["judge_score"] == 85
+    assert metrics["structural_check_passed"] == 0
+
+
+def test_judge_passed_zero_when_real_score_below_threshold() -> None:
+    # Given: VerificationFailed at the judge stage with a low score.
+    events = [
+        {
+            "event_type": "VerificationFailed",
+            "failed_stage": "judge",
+            "feedback": "missing PoC verification",
+            "stages_passed": ["structural", "deterministic", "execution"],
+            "score": 35,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: judge ran but did not pass.
+    assert metrics["judge_ran"] == 1
+    assert metrics["judge_passed"] == 0
+    assert metrics["judge_score"] == 35
+
+
+def test_run_completed_populates_agent_counts() -> None:
+    # Given: a RunCompleted with the agent count fields populated.
+    events = [
+        {
+            "event_type": "RunCompleted",
+            "status": "completed",
+            "duration_seconds": 12.5,
+            "total_agents": 5,
+            "completed_agents": 4,
+            "failed_agents": 1,
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then
+    assert metrics["total_agents"] == 5
+    assert metrics["completed_agents"] == 4
+    assert metrics["failed_agents"] == 1
+
+
+def test_agent_counts_sentinel_when_no_run_completed() -> None:
+    # Given: no RunCompleted event.
+    events: list = []
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then: sentinel -1 mirrors run_duration_seconds (loud over silent zero).
+    assert metrics["total_agents"] == -1
+    assert metrics["completed_agents"] == -1
+    assert metrics["failed_agents"] == -1
+
+
+def test_retry_and_redecomposition_counts() -> None:
+    # Given: two RetryScheduled events and one RedecompositionTriggered.
+    events = [
+        {"event_type": "RetryScheduled", "attempt": 1, "reason": "transient"},
+        {"event_type": "RetryScheduled", "attempt": 2, "reason": "transient"},
+        {
+            "event_type": "RedecompositionTriggered",
+            "trigger_child_id": "00000000-0000-0000-0000-000000000000",
+            "reason": "infeasible",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then
+    assert metrics["retry_count"] == 2
+    assert metrics["redecomposition_count"] == 1
+
+
+def test_cost_by_operation_sums_from_tokens_consumed() -> None:
+    # Given: TokensConsumed events with different operations.
+    events = [
+        {
+            "event_type": "TokensConsumed",
+            "model": "gpt-4o-mini",
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "cost_usd": 0.5,
+            "operation": "task_decomposition",
+        },
+        {
+            "event_type": "TokensConsumed",
+            "model": "gpt-4o-mini",
+            "prompt_tokens": 200,
+            "completion_tokens": 100,
+            "total_tokens": 300,
+            "cost_usd": 1.0,
+            "operation": "task_decomposition",
+        },
+        {
+            "event_type": "TokensConsumed",
+            "model": "gpt-4o-mini",
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "cost_usd": 0.25,
+            "operation": "task_assessment",
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then
+    assert metrics["cost_by_operation"] == {
+        "task_assessment": 0.25,
+        "task_decomposition": 1.5,
+    }
+
+
+def test_cost_by_model_fallback_to_top_level_when_usage_metrics_empty() -> None:
+    # Given: WorkerCostRecorded with empty usage_metrics. The top-level
+    # (model, cost_usd) pair must drive cost_by_model (empirically ~55% of
+    # 2026-05-12 events fit this shape).
+    events = [
+        {
+            "event_type": "WorkerCostRecorded",
+            "tool_name": "claude_code",
+            "model": "claude-haiku-4-5",
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "cost_usd": 0.05,
+            "usage_metrics": [],
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then
+    assert metrics["cost_by_model"] == {"claude-haiku-4-5": 0.05}
+
+
+def test_cost_by_model_uses_usage_metrics_when_populated() -> None:
+    # Given: WorkerCostRecorded with two usage_metrics entries for the same
+    # model. The per-usage breakdown is the source of truth when present.
+    events = [
+        {
+            "event_type": "WorkerCostRecorded",
+            "tool_name": "claude_code",
+            "model": "claude-haiku-4-5",
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "cost_usd": 999.0,  # top-level value MUST be ignored when usage_metrics is set
+            "usage_metrics": [
+                {
+                    "usage_id": "session-a",
+                    "model": "openai/gpt-4o-mini",
+                    "accumulated_cost_usd": 0.02,
+                },
+                {
+                    "usage_id": "session-b",
+                    "model": "openai/gpt-4o-mini",
+                    "accumulated_cost_usd": 0.03,
+                },
+            ],
+        },
+    ]
+
+    # When
+    metrics = metrics_from_events(events)
+
+    # Then
+    assert metrics["cost_by_model"] == {"openai/gpt-4o-mini": 0.05}
+
+
 def test_metrics_from_events_jsonl_rejects_malformed_lines(tmp_path) -> None:
     # Given: a JSONL file with one corrupted line between valid ones.
     # Pre-N-1, the reader silently skipped the bad line and produced a

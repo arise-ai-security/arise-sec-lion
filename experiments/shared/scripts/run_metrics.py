@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel
+
 from config import Settings
 from core.domain.events.events import DomainEvent
 from core.query.projections import ProjectionPipelineBuilder
@@ -29,7 +31,22 @@ from infrastructure.adapters.postgres_event_store import PostgresEventStore
 logger = logging.getLogger(__name__)
 
 
-MetricValue = int | float | str | dict[str, int]
+MetricValue = int | float | str | dict[str, int] | dict[str, float]
+
+
+# Threshold for `judge_passed`. Sourced from
+# `agent-docs/smoke-test-2026-05-12-findings.md` postcondition spec. A run is
+# judged passing only when (a) a real judge LLM call fired (feedback is not the
+# structural-check sentinel) AND (b) the produced score is >= this threshold.
+JUDGE_PASS_THRESHOLD = 60  # Mirrors verification_pipeline.py:87 (_JUDGE_PASS_THRESHOLD)
+
+# Feedback string emitted by the structural-check fallback path
+# (`core/application/services/orchestration/verification_pipeline.py:148-152`).
+# When a VerificationPassed event carries exactly this feedback, no LLM judge
+# actually ran — score=100 is a sentinel, not a real verdict.
+STRUCTURAL_CHECK_FEEDBACK = (
+    "Passed structural checks (no success criteria defined for judge evaluation)"
+)
 
 
 # BUG-METRIC1 - strict/narrow cheating-attempt detector (R6 frozen spec).
@@ -159,13 +176,48 @@ def empty_metrics() -> dict[str, MetricValue]:
         # `judge_score = -1` is the sentinel for "no verification-judge event
         # observed" (parallels run_duration_seconds). 0-100 means the judge
         # stage ran and produced that score. Sourced from VerificationPassed
-        # or VerificationFailed(failed_stage="judge").
+        # or VerificationFailed(failed_stage="judge"). Note that this field
+        # ALSO captures structural-check sentinel passes (score=100, judge
+        # never ran). Use `judge_ran` to disambiguate.
         "judge_score": -1,
         # BUG-METRIC1: strict/narrow cheating-attempt detector. See module-level
         # comment above _CHEATING_REGEX for the pre-registered signature set and
         # cross-adapter scope decision.
         "cheating_attempt_count": 0,
+        # Postcondition-rich metrics (smoke-test-2026-05-12 follow-up). Each
+        # of these is derivable purely from existing event data; no new event
+        # types were introduced. See `agent-docs/experiment-metrics-reference.md`.
+        # `judge_ran` = 1 iff at least one VerificationPassed/Failed event was
+        # observed whose feedback is NOT the structural-check sentinel.
+        "judge_ran": 0,
+        # `judge_passed` = 1 iff judge_ran AND a real judge score >= 70.
+        "judge_passed": 0,
+        # `structural_check_passed` = 1 iff the structural-check fallback
+        # fired (VerificationPassed with the sentinel feedback). Mutually
+        # exclusive with judge_ran for the run-level interpretation.
+        "structural_check_passed": 0,
+        # Population from RunCompleted payload. Mirrors run_duration_seconds:
+        # sentinel `-1` when no RunCompleted event was observed.
+        "total_agents": -1,
+        "completed_agents": -1,
+        "failed_agents": -1,
+        # Simple counts pulled from existing observability events.
+        "retry_count": 0,
+        "redecomposition_count": 0,
         "tool_calls_by_type": {},
+        # cost_by_model[model_name] -> usd; aggregated from
+        # WorkerCostRecorded.usage_metrics (per-usage_id model) plus
+        # TokensConsumed (orchestrator-side LLM cost keyed by model). Fallback
+        # to WorkerCostRecorded top-level (model, cost_usd) when usage_metrics
+        # is empty — empirically ~55% of WorkerCostRecorded events in the
+        # 2026-05-12 smoke test have an empty usage_metrics list.
+        "cost_by_model": {},
+        # cost_by_operation[operation] -> usd; summed only from TokensConsumed
+        # (WorkerCostRecorded carries no operation field). Observed values in
+        # the 2026-05-12 smoke test data: `task_assessment`,
+        # `task_decomposition`. The task spec mentioned `complexity_evaluation`
+        # and `worker_execution` but neither appeared in real events.
+        "cost_by_operation": {},
     }
 
 
@@ -175,6 +227,11 @@ def metrics_from_events(  # noqa: PLR0912, PLR0915
     """Compute the canonical metric set from typed or raw event objects."""
     metrics = empty_metrics()
     tool_calls_by_type: dict[str, int] = {}
+    cost_by_model: dict[str, float] = {}
+    cost_by_operation: dict[str, float] = {}
+    # Track real (non-sentinel) judge scores separately from `judge_score` so
+    # the structural-check fallback can never poison `judge_passed`.
+    real_judge_score: int | None = None
 
     for event in events:
         _incr(metrics, "event_count")
@@ -219,13 +276,29 @@ def metrics_from_events(  # noqa: PLR0912, PLR0915
             _incr(metrics, "tool_result_count")
 
         elif event_type == "VerificationPassed":
-            metrics["judge_score"] = _int(_get(event, "score"))
+            score = _int(_get(event, "score"))
+            metrics["judge_score"] = score
+            feedback = str(_get(event, "feedback") or "")
+            if feedback == STRUCTURAL_CHECK_FEEDBACK:
+                metrics["structural_check_passed"] = 1
+            else:
+                metrics["judge_ran"] = 1
+                real_judge_score = score
 
         elif event_type == "VerificationFailed":
             # Only the judge stage produces a meaningful score; other stages
             # (structural / deterministic / execution) emit score=0 by default.
             if str(_get(event, "failed_stage") or "") == "judge":
-                metrics["judge_score"] = _int(_get(event, "score"))
+                score = _int(_get(event, "score"))
+                metrics["judge_score"] = score
+                metrics["judge_ran"] = 1
+                real_judge_score = score
+
+        elif event_type == "RetryScheduled":
+            _incr(metrics, "retry_count")
+
+        elif event_type == "RedecompositionTriggered":
+            _incr(metrics, "redecomposition_count")
 
         elif event_type == "TokensConsumed":
             prompt = _int(_get(event, "prompt_tokens"))
@@ -236,6 +309,14 @@ def metrics_from_events(  # noqa: PLR0912, PLR0915
             _incr(metrics, "tokens_completion", completion)
             _incr(metrics, "tokens_total", total)
             _add_float(metrics, "llm_cost_usd", cost)
+            model = _str_or_none(_get(event, "model"))
+            if model and cost:
+                cost_by_model[model] = cost_by_model.get(model, 0.0) + cost
+            operation = _str_or_none(_get(event, "operation"))
+            if operation and cost:
+                cost_by_operation[operation] = (
+                    cost_by_operation.get(operation, 0.0) + cost
+                )
 
         elif event_type == "WorkerCostRecorded":
             # Audit N-3: sum breakdown buckets so Claude-SDK and OpenHands
@@ -256,12 +337,17 @@ def metrics_from_events(  # noqa: PLR0912, PLR0915
             _incr(metrics, "tokens_cache_write", cache_write)
             _incr(metrics, "tokens_total", total)
             _add_float(metrics, "worker_cost_usd", cost)
+            _accumulate_worker_cost_by_model(event, cost, cost_by_model)
 
         elif event_type == "RunCompleted":
             # Audit N-7: track count + assign duration. Post-loop fixup
             # sets the sentinel when count==0 and warns on count>1.
             _incr(metrics, "run_completed_count")
             metrics["run_duration_seconds"] = _float(_get(event, "duration_seconds"))
+            # Postcondition payload (already present in events.jsonl).
+            metrics["total_agents"] = _int(_get(event, "total_agents"))
+            metrics["completed_agents"] = _int(_get(event, "completed_agents"))
+            metrics["failed_agents"] = _int(_get(event, "failed_agents"))
 
     # Audit N-12: round components first, then sum the rounded values, so
     # the invariant `total == round(llm + worker, 6)` holds after rounding.
@@ -289,7 +375,55 @@ def metrics_from_events(  # noqa: PLR0912, PLR0915
             3,
         )
     metrics["tool_calls_by_type"] = dict(sorted(tool_calls_by_type.items()))
+    # judge_passed = judge_ran AND a real (non-sentinel) judge score >= threshold.
+    # We use `real_judge_score` rather than `metrics["judge_score"]` so the
+    # structural-check fallback (score=100, judge never ran) cannot trigger
+    # a false positive.
+    if _int(metrics.get("judge_ran")) == 1 and real_judge_score is not None:
+        metrics["judge_passed"] = 1 if real_judge_score >= JUDGE_PASS_THRESHOLD else 0
+    metrics["cost_by_model"] = {
+        model: round(cost, 6) for model, cost in sorted(cost_by_model.items())
+    }
+    metrics["cost_by_operation"] = {
+        operation: round(cost, 6)
+        for operation, cost in sorted(cost_by_operation.items())
+    }
     return metrics
+
+
+def _str_or_none(value: Any) -> str | None:
+    """Return a non-empty stripped string, or None for empty / non-string input."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _accumulate_worker_cost_by_model(
+    event: DomainEvent | dict[str, Any],
+    top_level_cost: float,
+    cost_by_model: dict[str, float],
+) -> None:
+    """Aggregate WorkerCostRecorded cost into the per-model breakdown.
+
+    Prefers ``usage_metrics[*].(model, accumulated_cost_usd)`` when present
+    so multi-model SDK sessions are correctly attributed. Falls back to the
+    top-level ``(model, cost_usd)`` pair when ``usage_metrics`` is empty —
+    empirically ~55% of WorkerCostRecorded events in the 2026-05-12 smoke
+    test had `usage_metrics=[]` and would otherwise have zero attribution.
+    """
+    usage_metrics = _get(event, "usage_metrics") or []
+    if isinstance(usage_metrics, list) and usage_metrics:
+        for item in usage_metrics:
+            model = _str_or_none(_get(item, "model"))
+            sub_cost = _float(_get(item, "accumulated_cost_usd"))
+            if model and sub_cost:
+                cost_by_model[model] = cost_by_model.get(model, 0.0) + sub_cost
+        return
+    # Fallback: usage_metrics empty. Use top-level (model, cost_usd).
+    model = _str_or_none(_get(event, "model"))
+    if model and top_level_cost:
+        cost_by_model[model] = cost_by_model.get(model, 0.0) + top_level_cost
 
 
 def _incr(metrics: dict[str, MetricValue], key: str, amount: int = 1) -> None:
@@ -312,10 +446,14 @@ def _event_type(event: DomainEvent | dict[str, Any]) -> str:
     return "Unknown"
 
 
-def _get(event: DomainEvent | dict[str, Any], field: str) -> Any:
-    if isinstance(event, DomainEvent):
+def _get(event: DomainEvent | BaseModel | dict[str, Any], field: str) -> Any:
+    # BaseModel covers DomainEvent (subclass) AND nested value objects like
+    # WorkerUsageMetrics that the postcondition metrics need to traverse.
+    if isinstance(event, BaseModel):
         return getattr(event, field, None)
-    return event.get(field)
+    if isinstance(event, dict):
+        return event.get(field)
+    return None
 
 
 def _extract_bash_command(content: str) -> str | None:
