@@ -33,6 +33,9 @@ def _postgres_password(monkeypatch: pytest.MonkeyPatch) -> None:
 def _settings_with(tmp_path: Path, **overrides: Any) -> Path:
     """Write a YAML overlay on ``config.yaml`` and return its path."""
     payload = yaml.safe_load(BASE_CONFIG.read_text(encoding="utf-8"))
+    payload.setdefault("boss", {})["model"] = "test-boss-model"
+    payload.setdefault("manager", {})["model"] = "test-manager-model"
+    payload.setdefault("worker", {})["model"] = "test-worker-model"
     for top_key, sub in overrides.items():
         existing = payload.get(top_key, {})
         if isinstance(existing, dict) and isinstance(sub, dict):

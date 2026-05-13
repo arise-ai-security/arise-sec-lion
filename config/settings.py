@@ -181,8 +181,8 @@ class FormatRepairerConfig(BaseModel):
 
     Used when the deterministic ``raw_decode`` / ``_repair_json`` chain
     fails on output from less-disciplined models (qwen3, deepseek, GLM,
-    unknown). Default model is the one that most commonly produces
-    malformed output via Ollama Cloud — it knows what it meant to emit.
+    unknown). The repair model must be configured explicitly when this
+    repairer is enabled.
 
     Distinct from the security-domain "Fixer" agent role — this repairs
     output format, never source code.
@@ -192,20 +192,10 @@ class FormatRepairerConfig(BaseModel):
 
     # Disabled by default. Enable when running on models prone to malformed
     # output (qwen3, qwen3.5, deepseek, GLM, …). Adds a dependency on the
-    # configured repair model (default: Ollama Cloud) and a one-shot LLM
-    # call per parse failure. GPT/Claude paths are unaffected when enabled.
+    # configured repair model and a one-shot LLM call per parse failure.
+    # GPT/Claude paths are unaffected when enabled.
     enabled: bool = False
-    # Default to qwen3-coder:480b-cloud (Ollama Cloud, coder-tuned, no
-    # thinking-on-by-default). Reasoning:
-    # - Coder-specialised → reliable structured-JSON output.
-    # - No <think> tags → won't reintroduce the failure mode the
-    #   qwen3.5 reasoning model causes (the very thing we're repairing).
-    # - Different model family from typical boss/manager/worker (qwen3.5
-    #   or gpt-5.x) → independence from the source-of-the-bug model.
-    # - Only fires on parse failure (0-3x per run worst-case), so the
-    #   accuracy/speed tradeoff favours accuracy over the smaller
-    #   qwen3-coder-next:cloud preview.
-    model: str = "ollama_chat/qwen3-coder:480b-cloud"
+    model: str | None = None
     # Default 16000 to match boss/manager.max_tokens — a repaired output
     # cannot need more space than the source model could have produced.
     # Empirical max from prior runs: ~5000 tokens; p99 ~3500.
@@ -219,6 +209,12 @@ class FormatRepairerConfig(BaseModel):
     # endpoint. Sized to host capacity (Ollama Cloud or local Ollama),
     # not to source-model concurrency.
     max_concurrent: int = Field(default=3, ge=1, le=32)
+
+    @model_validator(mode="after")
+    def _model_required_when_enabled(self) -> FormatRepairerConfig:
+        if self.enabled and not self.model:
+            raise ValueError("format_repairer.model is required when enabled=true")
+        return self
 
 
 class ToolsetPolicyConfig(BaseModel):

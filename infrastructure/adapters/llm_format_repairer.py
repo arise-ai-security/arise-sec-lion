@@ -13,11 +13,7 @@ source code.
 
 Design notes:
 - The repair model is itself an LLM, so it is selectable via config.
-  Default is ``ollama_chat/qwen3-coder:480b-cloud``: coder-tuned for
-  strict JSON output, no ``<think>`` tags (avoids reintroducing the
-  failure mode the qwen3.5 reasoning model causes), and a different
-  model family from typical boss/manager/worker — independence from
-  the source-of-the-bug model.
+  It must be configured explicitly by experiments that enable repair.
 - One shot, no internal retries. If the repair call fails or its output
   is also malformed, the caller surfaces the original parse error.
 - We do not attempt to verify "values were preserved" — that would

@@ -190,7 +190,9 @@ class ToolCallingService:
             # Layer 2: condense older tool exchanges after threshold
             if self._condenser is not None:
                 messages = await self._condenser.maybe_condense(
-                    messages, current_iteration=iteration,
+                    messages,
+                    current_iteration=iteration,
+                    config_dict=config_dict,
                 )
 
             # Layer 3: if still over budget after condensation, force stop

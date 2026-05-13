@@ -219,7 +219,10 @@ async def _run_two_concurrent_google_adk_sessions() -> list[WorkerCostRecorded]:
         yield sequencer.completed("done")
 
     adapter = google_adk_adapter.GoogleADKAdapter(
-        google_adk_adapter.ADKAdapterConfig(timeout_seconds=5),
+        google_adk_adapter.ADKAdapterConfig(
+            model="gemini-3-pro",
+            timeout_seconds=5,
+        ),
     )
 
     with (
@@ -258,7 +261,10 @@ async def _run_two_concurrent_openhands_sessions() -> list[WorkerCostRecorded]:
             close=lambda: None,
         )
 
-    adapter = openhands_adapter.OpenHandsAdapter(timeout_seconds=5)
+    adapter = openhands_adapter.OpenHandsAdapter(
+        model="openai/gpt-4o",
+        timeout_seconds=5,
+    )
 
     with (
         patch.object(openhands_adapter, "time", clock),

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ADKAdapterConfig:
     """Configuration for Google ADK adapter."""
 
-    model: str = "gemini-3-pro"
+    model: str
     timeout_seconds: int = 300
     max_turns: int = 50
     allowed_tools: list[str] = field(
@@ -106,13 +106,13 @@ class GoogleADKAdapter(WorkerAdapterBase):
 
     STREAM_NAME = "google_adk"
 
-    def __init__(self, config: ADKAdapterConfig | None = None) -> None:
+    def __init__(self, config: ADKAdapterConfig) -> None:
         """Initialize ADK adapter.
 
         Args:
-            config: Optional configuration. Uses defaults if not provided.
+            config: Explicit adapter configuration.
         """
-        self.config = config or ADKAdapterConfig()
+        self.config = config
         super().__init__(timeout_seconds=self.config.timeout_seconds)
 
     def _get_tool_name(self) -> str:

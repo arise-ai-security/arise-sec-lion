@@ -41,6 +41,7 @@ from core.domain.values.llm_response import (
 )
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
 from infrastructure.adapters.litellm_adapter import (
+    _require_model,
     _strip_tool_content,
     _try_parse_content_tool_calls,
 )
@@ -253,7 +254,7 @@ class OpenRouterAdapter(LLMPort):
 
     async def query(self, prompt: str, config_dict: dict[str, Any]) -> str:
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "openai/gpt-4o-mini")
+        model = _require_model(merged_config)
         kwargs = self._build_kwargs(
             messages=[{"role": "user", "content": prompt}],
             merged_config=merged_config,
@@ -270,7 +271,7 @@ class OpenRouterAdapter(LLMPort):
         self, prompt: str, config_dict: dict[str, Any]
     ) -> LLMResponse:
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "openai/gpt-4o-mini")
+        model = _require_model(merged_config)
         kwargs = self._build_kwargs(
             messages=[{"role": "user", "content": prompt}],
             merged_config=merged_config,
@@ -294,7 +295,7 @@ class OpenRouterAdapter(LLMPort):
         tools: list[dict[str, Any]],
     ) -> LLMToolResponse:
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "openai/gpt-4o-mini")
+        model = _require_model(merged_config)
         # Anthropic rejects messages referencing tool_calls when no tools are
         # defined. Strip tool turns so the post-iteration "force final answer"
         # call works for both Anthropic-via-OpenRouter and OpenAI-via-OpenRouter.

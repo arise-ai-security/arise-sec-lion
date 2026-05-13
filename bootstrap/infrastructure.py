@@ -66,7 +66,7 @@ class InfrastructureConfig:
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
     format_repairer_enabled: bool = False
-    format_repairer_model: str = "ollama_chat/qwen3-coder:480b-cloud"
+    format_repairer_model: str | None = None
     format_repairer_max_tokens: int = 16000
     format_repairer_api_base: str | None = None
     format_repairer_max_concurrent: int = 3
@@ -117,7 +117,10 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             ADKAdapterConfig(
                 model=config.worker_tool_model,
                 timeout_seconds=config.worker_tool_timeout,
-                allowed_tools=config.worker_allowed_tools or ADKAdapterConfig().allowed_tools,
+                allowed_tools=(
+                    config.worker_allowed_tools
+                    or ADKAdapterConfig(model=config.worker_tool_model).allowed_tools
+                ),
                 disallowed_tools=config.worker_disallowed_tools or [],
             )
         )
@@ -137,6 +140,8 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
 
     format_repairer: FormatRepairerPort | None = None
     if config.format_repairer_enabled:
+        if not config.format_repairer_model:
+            raise ValueError("format_repairer_model is required when format repairer is enabled")
         format_repairer = LLMFormatRepairer(
             llm_port=llm_adapter,
             model=config.format_repairer_model,

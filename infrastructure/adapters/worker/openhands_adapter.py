@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import re
 import signal
 import subprocess
 import time as _time
@@ -13,8 +14,6 @@ from time import time
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from infrastructure.cleanup.registry import _pid_alive
-
 from core.domain.events.events import (
     DomainEvent,
     WorkerCostItem,
@@ -22,6 +21,7 @@ from core.domain.events.events import (
     WorkerTokenUsageItem,
     WorkerUsageMetrics,
 )
+from infrastructure.cleanup.registry import _pid_alive
 
 from .base import WorkerAdapterBase
 from .shared import ContainerSessionContext, EventSequencer, to_openhands_mcp_config
@@ -122,7 +122,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
         disallowed_tools: list[str] | None = None,
     ) -> None:
         super().__init__(timeout_seconds=timeout_seconds)
-        self.model: str = model or os.getenv("LLM_MODEL") or "openai/gpt-4o"
+        if not model:
+            raise ValueError("OpenHandsAdapter requires an explicit model")
+        self.model: str = model
         self.api_key = api_key or self._detect_api_key()
         self.max_iterations_per_run: int = max_iterations_per_run
         # None lets OpenHands/LiteLLM fall back to env vars (e.g. OLLAMA_API_BASE).
@@ -270,6 +272,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
             from openhands.sdk import LLM, Agent, Conversation, Tool
         from openhands.tools.file_editor import FileEditorTool
+        from openhands.tools.glob import GlobTool
+        from openhands.tools.grep import GrepTool
 
         llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
         if self.base_url:
@@ -320,12 +324,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # fail. Shell access into the secb-tools container is exposed via
         # the MCP ``shell_in_container`` tool (see
         # ``plugins/security/mcp/security_tools_server.py``).
-        if self._file_editor_allowed():
-            # Bind-mounted host paths under ``workspace.host_root`` are
-            # transparent inside the container; FileEditorTool reads/writes
-            # against host paths and the container observes them via the
-            # bind mount, so no in-container shell hop is needed for files.
-            tools.append(Tool(name=FileEditorTool.name))
+        # Bind-mounted host paths under ``workspace.host_root`` are transparent
+        # inside the container; host-side OpenHands file/search tools operate
+        # on those paths and the container observes the edits via the bind mount.
+        for tool_name in (FileEditorTool.name, GlobTool.name, GrepTool.name):
+            if self._tool_allowed(tool_name):
+                tools.append(Tool(name=tool_name))
         # OpenHands SDK 1.20: MCP tools go through the dedicated ``mcp_config``
         # kwarg on ``Agent``, NOT through the ``tools`` list. Earlier code
         # called ``create_mcp_tools(...)`` and appended its output to
@@ -334,7 +338,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # ``create_mcp_tools`` returns ``MCPToolDefinition`` objects.
         mcp_config = to_openhands_mcp_config(mcp_servers) if mcp_servers else {}
 
-        agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
+        agent = Agent(
+            llm=llm,
+            tools=tools,
+            mcp_config=mcp_config,
+            filter_tools_regex=self._tool_filter_regex(),
+        )
         return Conversation(
             agent=agent,
             workspace=working_dir,
@@ -350,34 +359,31 @@ class OpenHandsAdapter(WorkerAdapterBase):
             return None
         return dict(servers)
 
+    def _allow_all_tools(self) -> bool:
+        return "*" in self.allowed_tools
+
     def _tool_allowed(self, *names: str) -> bool:
         blocked = set(self.disallowed_tools)
         if any(name in blocked for name in names):
             return False
-        if self.allowed_tools == ["*"]:
+        if self._allow_all_tools():
             return True
         allowed = set(self.allowed_tools)
         return any(name in allowed for name in names)
 
-    def _file_editor_allowed(self) -> bool:
-        """Map global file-tool policy to OpenHands' coarse FileEditorTool.
+    def _tool_filter_regex(self) -> str | None:
+        blocked = set(self.disallowed_tools)
+        if self._allow_all_tools():
+            if not blocked:
+                return None
+            blocked_pattern = "|".join(re.escape(name) for name in sorted(blocked))
+            return rf"^(?!(?:{blocked_pattern})$).+$"
 
-        OpenHands exposes read/write/edit through one SDK tool. If an
-        experiment blocks any mutating file operation, we disable the entire
-        file-editor surface rather than silently allowing writes.
-        """
-        mutating_aliases = {
-            "Write",
-            "Edit",
-            "MultiEdit",
-            "NotebookEdit",
-            "write_file",
-            "create_directory",
-            "file_editor",
-        }
-        if mutating_aliases & set(self.disallowed_tools):
-            return False
-        return self._tool_allowed("Read", "Write", "Edit", "file_editor", "read_file")
+        visible = sorted(set(self.allowed_tools) - blocked)
+        if not visible:
+            return r"(?!)"
+        visible_pattern = "|".join(re.escape(name) for name in visible)
+        return rf"^(?:{visible_pattern})$"
 
     def _iter_conversation_events(self, conversation: Any) -> list[Any]:
         state = getattr(conversation, "state", None)

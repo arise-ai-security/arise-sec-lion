@@ -21,9 +21,6 @@ logger = logging.getLogger(__name__)
 # Rough estimate: 1 token ≈ 4 chars for English/code text.
 _CHARS_PER_TOKEN = 4
 
-# Default summarization model — fast and cheap.
-_CONDENSER_MODEL = "gpt-4o-mini"
-
 _CONDENSE_SYSTEM = (
     "You are a context compressor. Summarize the tool-calling exchange below "
     "into a concise digest of FINDINGS ONLY. Keep file paths, function names, "
@@ -51,13 +48,11 @@ class ContextCondenser:
         result_char_limit: int = 6_000,
         condense_after_iteration: int = 2,
         token_budget: int = 80_000,
-        condenser_model: str = _CONDENSER_MODEL,
     ) -> None:
         self._llm_port = llm_port
         self._result_char_limit = result_char_limit
         self._condense_after = condense_after_iteration
         self._token_budget = token_budget
-        self._condenser_model = condenser_model
 
     # ── Layer 1: per-result truncation ──────────────────────────────────
 
@@ -87,6 +82,7 @@ class ContextCondenser:
         self,
         messages: list[dict[str, Any]],
         current_iteration: int,
+        config_dict: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Condense older tool exchanges if we've passed the threshold.
 
@@ -130,7 +126,7 @@ class ContextCondenser:
         if not old_messages:
             return messages
 
-        summary = await self._summarize_messages(old_messages)
+        summary = await self._summarize_messages(old_messages, config_dict)
 
         condensed = [
             prompt_msg,
@@ -156,11 +152,15 @@ class ContextCondenser:
 
         return condensed
 
-    async def _summarize_messages(self, messages: list[dict[str, Any]]) -> str:
+    async def _summarize_messages(
+        self,
+        messages: list[dict[str, Any]],
+        config_dict: dict[str, Any],
+    ) -> str:
         """Produce a compact summary of tool exchanges.
 
-        If an LLM port is available, uses a cheap model for summarization.
-        Otherwise, falls back to deterministic extraction of key lines.
+        If an LLM port is available, uses the caller's configured model for
+        summarization. Otherwise, falls back to deterministic extraction of key lines.
         """
         parts: list[str] = []
         for msg in messages:
@@ -179,17 +179,25 @@ class ContextCondenser:
         exchange_text = "\n\n".join(parts)
 
         if self._llm_port is not None:
+            model = config_dict.get("model")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("ContextCondenser requires config_dict['model']")
             try:
                 summary_prompt = (
                     f"{_CONDENSE_SYSTEM}\n\n"
                     f"---\n{exchange_text}\n---\n\n"
                     "Concise digest of findings:"
                 )
-                response = await self._llm_port.query(
+                return await self._llm_port.query(
                     summary_prompt,
-                    {"model": self._condenser_model, "temperature": 0.0, "max_tokens": 800},
+                    {
+                        "model": model,
+                        "temperature": 0.0,
+                        "max_tokens": 800,
+                        "api_base": config_dict.get("api_base"),
+                        "api_key": config_dict.get("api_key"),
+                    },
                 )
-                return response
             except Exception:
                 logger.warning("LLM summarization failed, using deterministic fallback")
 

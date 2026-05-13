@@ -24,6 +24,10 @@ GEMINI_3_PRO_INPUT_PRICE_PER_M = _pricing.input_per_million
 GEMINI_3_PRO_OUTPUT_PRICE_PER_M = _pricing.output_per_million
 
 
+def _adk_config(**kwargs) -> ADKAdapterConfig:
+    return ADKAdapterConfig(model="gemini-3-pro", **kwargs)
+
+
 class TestExecuteCommand:
     """Tests for execute_command shell tool."""
 
@@ -70,7 +74,7 @@ class TestADKAdapterConfig:
 
     def test_defaults(self) -> None:
         """Config has sensible defaults."""
-        config = ADKAdapterConfig()
+        config = _adk_config()
 
         assert config.model == "gemini-3-pro"
         assert config.timeout_seconds == 300
@@ -100,7 +104,7 @@ class TestGoogleADKAdapter:
     @pytest.mark.asyncio
     async def test_missing_task_description_raises(self) -> None:
         """Missing task_description raises ValueError."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
 
         with pytest.raises(ValueError, match="task_description"):
             async for _ in adapter.run_session({"agent_id": uuid4()}):
@@ -109,7 +113,7 @@ class TestGoogleADKAdapter:
     @pytest.mark.asyncio
     async def test_missing_agent_id_raises(self) -> None:
         """Missing agent_id raises ValueError."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
 
         with pytest.raises(ValueError, match="agent_id"):
             async for _ in adapter.run_session({"task_description": "Test"}):
@@ -121,7 +125,7 @@ class TestGoogleADKAdapter:
 
     def test_build_instruction(self) -> None:
         """Instruction is generic and task-execution oriented."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         instruction = adapter._build_instruction()
 
         assert "task execution agent" in instruction.lower()
@@ -130,7 +134,7 @@ class TestGoogleADKAdapter:
 
     def test_tool_policy_blocks_filesystem_when_write_is_denied(self) -> None:
         adapter = GoogleADKAdapter(
-            ADKAdapterConfig(allowed_tools=["*"], disallowed_tools=["write_file"])
+            _adk_config(allowed_tools=["*"], disallowed_tools=["write_file"])
         )
 
         assert adapter._filesystem_tool_allowed() is False
@@ -167,7 +171,7 @@ class TestAdapterExecution:
     @pytest.mark.asyncio
     async def test_adapter_handles_exceptions_gracefully(self) -> None:
         """Adapter handles exceptions and yields WorkFailed."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         # Since the actual ADK imports may fail or succeed depending on environment,
@@ -190,7 +194,7 @@ class TestEventProcessing:
 
     def test_process_text_content(self) -> None:
         """Text content is mapped to output type."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -210,7 +214,7 @@ class TestEventProcessing:
 
     def test_process_empty_content(self) -> None:
         """Empty content is skipped."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -226,7 +230,7 @@ class TestEventProcessing:
 
     def test_process_content_with_text_attribute(self) -> None:
         """Content with text attribute is mapped correctly."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -248,7 +252,7 @@ class TestEventProcessing:
 
     def test_process_none_content(self) -> None:
         """None content returns empty list."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -264,7 +268,7 @@ class TestEventProcessing:
 
     def test_process_parts_with_text(self) -> None:
         """Content with parts containing text is mapped correctly."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -289,7 +293,7 @@ class TestEventProcessing:
 
     def test_process_parts_with_function_call(self) -> None:
         """Content with parts containing function_call is mapped correctly."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -321,7 +325,7 @@ class TestEventProcessing:
 
     def test_process_parts_with_function_response(self) -> None:
         """Content with parts containing function_response is mapped correctly."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         agent_id = uuid4()
 
         from infrastructure.adapters.worker.shared import EventSequencer
@@ -352,7 +356,7 @@ class TestCreateShellTool:
 
     def test_shell_tool_binds_working_dir(self, tmp_path) -> None:
         """Shell tool uses bound working directory."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         shell_tool = adapter._create_shell_tool(str(tmp_path))
 
         result = shell_tool("pwd")
@@ -362,7 +366,7 @@ class TestCreateShellTool:
 
     def test_shell_tool_respects_timeout(self, tmp_path) -> None:
         """Shell tool respects timeout parameter."""
-        adapter = GoogleADKAdapter(ADKAdapterConfig())
+        adapter = GoogleADKAdapter(_adk_config())
         shell_tool = adapter._create_shell_tool(str(tmp_path))
 
         result = shell_tool("sleep 10", timeout=1)

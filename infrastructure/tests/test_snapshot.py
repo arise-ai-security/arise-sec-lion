@@ -22,7 +22,11 @@ def _postgres_password(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _make_settings() -> Settings:
-    return Settings.from_yaml(BASE_CONFIG)
+    payload = yaml.safe_load(BASE_CONFIG.read_text(encoding="utf-8"))
+    payload.setdefault("boss", {})["model"] = "test-boss-model"
+    payload.setdefault("manager", {})["model"] = "test-manager-model"
+    payload.setdefault("worker", {})["model"] = "test-worker-model"
+    return Settings._build_from_config(payload)
 
 
 def test_snapshot_writes_effective_config(tmp_path: Path) -> None:

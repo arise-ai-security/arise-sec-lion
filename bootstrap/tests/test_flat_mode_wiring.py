@@ -47,9 +47,16 @@ def _load_base_config() -> dict[str, Any]:
     return yaml.safe_load(BASE_CONFIG.read_text(encoding="utf-8"))
 
 
+def _add_required_models(payload: dict[str, Any]) -> dict[str, Any]:
+    payload.setdefault("boss", {})["model"] = "test-boss-model"
+    payload.setdefault("manager", {})["model"] = "test-manager-model"
+    payload.setdefault("worker", {})["model"] = "test-worker-model"
+    return payload
+
+
 def _settings_with(tmp_path: Path, **overrides: Any) -> Path:
     """Write a settings YAML overlay onto ``config.yaml`` and return the path."""
-    payload = _load_base_config()
+    payload = _add_required_models(_load_base_config())
     for top_key, sub in overrides.items():
         existing = payload.get(top_key, {})
         if (
@@ -309,6 +316,14 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
     )
     # OpenHands tool_params slot is required when tool=openhands.
     overlay = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    overlay["worker"]["allowed_tools"] = [
+        "file_editor",
+        "glob",
+        "grep",
+        "valgrind_run",
+        "klee_run",
+    ]
+    overlay["worker"]["disallowed_tools"] = ["terminal", "browser_tool_set"]
     overlay["worker"]["tool_params"] = {
         "openhands": {
             "image": "openhands:latest",
@@ -326,12 +341,10 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
     worker_port = cli.execution_service._orchestrator._worker_port
     assert isinstance(worker_port, OpenHandsAdapter)
     assert worker_port.allowed_tools == [
-        "Read",
-        "Write",
-        "Edit",
-        "MultiEdit",
-        "Bash",
-        "Glob",
-        "Grep",
+        "file_editor",
+        "glob",
+        "grep",
+        "valgrind_run",
+        "klee_run",
     ]
-    assert worker_port.disallowed_tools == ["WebSearch", "WebFetch"]
+    assert worker_port.disallowed_tools == ["terminal", "browser_tool_set"]

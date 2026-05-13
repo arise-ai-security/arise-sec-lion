@@ -5,15 +5,12 @@ database:
   name: arise_events
 
 boss:
-  model: gpt-5.3-codex
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 manager:
-  model: gpt-5.3-codex
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 worker:
-  model: gpt-5.3-codex
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20
@@ -27,14 +24,11 @@ worker:
 # when the deterministic raw_decode/_repair_json chain fails. Distinct
 # from the security-domain "Fixer" agent role.
 #
-# OPT-IN: disabled by default. Set enabled: true when running on models
-# prone to malformed output (qwen3.5, qwen3, deepseek, GLM, unknown).
-# Default repair model — qwen3-coder:480b-cloud (Ollama Cloud) — is
-# coder-tuned for strict JSON output and has no thinking-mode pollution;
-# downgrade to qwen3-coder-next:cloud for a faster/smaller variant.
+# OPT-IN: disabled by default. Set enabled: true in an experiment config,
+# and define format_repairer.model there, when running models prone to
+# malformed output (qwen3.5, qwen3, deepseek, GLM, unknown).
 format_repairer:
-  enabled: true
-  model: ollama_chat/qwen3-coder:480b-cloud
+  enabled: false
   max_tokens: 16000
   # api_base: https://ollama.com  # uncomment for Ollama Cloud
 

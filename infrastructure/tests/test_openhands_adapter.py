@@ -1,10 +1,12 @@
 """Tests for OpenHandsAdapter."""
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -19,6 +21,10 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+
+
+def _adapter(**kwargs: Any) -> OpenHandsAdapter:
+    return OpenHandsAdapter(model="openai/gpt-4o", **kwargs)
 
 
 def _mock_event(
@@ -116,14 +122,30 @@ class _StuckConversation(_FakeConversation):
 
 
 class TestOpenHandsAdapter:
-    def test_tool_policy_blocks_file_editor_when_write_is_denied(self) -> None:
-        adapter = OpenHandsAdapter(allowed_tools=["*"], disallowed_tools=["Write"])
+    def test_tool_policy_blocks_native_disallowed_tool(self) -> None:
+        adapter = _adapter(allowed_tools=["*"], disallowed_tools=["file_editor"])
 
-        assert adapter._file_editor_allowed() is False
-        assert adapter._tool_allowed("Bash") is True
+        assert adapter._tool_allowed("file_editor") is False
+        assert adapter._tool_allowed("glob") is True
+
+    def test_tool_filter_regex_allows_only_configured_native_and_mcp_tools(self) -> None:
+        adapter = _adapter(
+            allowed_tools=["file_editor", "glob", "grep", "valgrind_run", "klee_run"],
+            disallowed_tools=["terminal", "browser_tool_set"],
+        )
+
+        pattern = adapter._tool_filter_regex()
+        assert pattern is not None
+        compiled = re.compile(pattern)
+        assert compiled.match("file_editor")
+        assert compiled.match("valgrind_run")
+        assert compiled.match("klee_run")
+        assert not compiled.match("shell_in_container")
+        assert not compiled.match("terminal")
+        assert not compiled.match("browser_tool_set")
 
     def test_action_and_observation_events_are_tool_events(self) -> None:
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
         action = SimpleNamespace(command="echo hi")
         observation = SimpleNamespace(
             command="echo hi",
@@ -141,7 +163,7 @@ class TestOpenHandsAdapter:
         )
 
     def test_extract_result_compacts_observations_before_core(self, tmp_path: Path) -> None:
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
         observation = SimpleNamespace(
             command="make test",
             metadata=SimpleNamespace(exit_code=1),
@@ -160,7 +182,7 @@ class TestOpenHandsAdapter:
         monkeypatch,
         tmp_path: Path,
     ) -> None:
-        adapter = OpenHandsAdapter(timeout_seconds=1)
+        adapter = _adapter(timeout_seconds=1)
         conversation = _FakeConversation()
         monkeypatch.setattr(
             adapter,
@@ -200,7 +222,7 @@ class TestOpenHandsAdapter:
 
     @pytest.mark.asyncio
     async def test_timeout_requests_sdk_shutdown(self, monkeypatch, tmp_path: Path) -> None:
-        adapter = OpenHandsAdapter(timeout_seconds=0.01)
+        adapter = _adapter(timeout_seconds=0.01)
         conversation = _SlowConversation()
         monkeypatch.setattr(
             adapter,
@@ -234,7 +256,7 @@ class TestOpenHandsAdapter:
             "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
-        adapter = OpenHandsAdapter(timeout_seconds=0.01)
+        adapter = _adapter(timeout_seconds=0.01)
         conversation = _StuckConversation()
         monkeypatch.setattr(
             adapter,
@@ -264,13 +286,13 @@ class TestMCPServersWiring:
 
     def test_extract_mcp_servers_returns_none_when_absent(self) -> None:
         # Given/When/Then
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
         assert adapter._extract_mcp_servers({}) is None
         assert adapter._extract_mcp_servers({"mcp_servers": {}}) is None
 
     def test_extract_mcp_servers_returns_raw_dict_when_present(self) -> None:
         # Given
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
         raw = {"security_tools": {"command": "python", "args": [], "env": {}}}
 
         # When
@@ -294,10 +316,11 @@ class TestMCPServersWiring:
         adapter = OpenHandsAdapter(model="openai/gpt-4o", api_key="sk-test")
         captured: dict[str, object] = {}
 
-        def _fake_agent(*, llm, tools, mcp_config):
+        def _fake_agent(*, llm, tools, mcp_config, filter_tools_regex):
             captured["llm"] = llm
             captured["tools"] = list(tools)
             captured["mcp_config"] = mcp_config
+            captured["filter_tools_regex"] = filter_tools_regex
             return "agent-stub"
 
         # The other openhands SDK pieces are imported inside _build_conversation;
@@ -313,6 +336,12 @@ class TestMCPServersWiring:
         fake_file_editor = MagicMock()
         fake_file_editor.FileEditorTool = MagicMock(name="FileEditorTool")
         fake_file_editor.FileEditorTool.name = "file_editor"
+        fake_glob = MagicMock()
+        fake_glob.GlobTool = MagicMock(name="GlobTool")
+        fake_glob.GlobTool.name = "glob"
+        fake_grep = MagicMock()
+        fake_grep.GrepTool = MagicMock(name="GrepTool")
+        fake_grep.GrepTool.name = "grep"
         fake_terminal = MagicMock()
         fake_terminal.TerminalTool = MagicMock(name="TerminalTool")
         fake_terminal.TerminalTool.name = "execute_bash"
@@ -322,11 +351,15 @@ class TestMCPServersWiring:
             for name in (
                 "openhands.sdk",
                 "openhands.tools.file_editor",
+                "openhands.tools.glob",
+                "openhands.tools.grep",
                 "openhands.tools.terminal",
             )
         }
         sys.modules["openhands.sdk"] = fake_sdk
         sys.modules["openhands.tools.file_editor"] = fake_file_editor
+        sys.modules["openhands.tools.glob"] = fake_glob
+        sys.modules["openhands.tools.grep"] = fake_grep
         sys.modules["openhands.tools.terminal"] = fake_terminal
         try:
             conversation = adapter._build_conversation(
@@ -353,6 +386,7 @@ class TestMCPServersWiring:
         assert "mcpServers" in mcp_config
         assert "security_tools" in mcp_config["mcpServers"]
         assert mcp_config["mcpServers"]["security_tools"]["command"] == "python"
+        assert captured["filter_tools_regex"] is None
         # And: the tools list does NOT contain the MCP server entries.
         for tool in captured["tools"]:
             tool_repr = repr(tool)
@@ -410,6 +444,12 @@ class TestTerminalToolRegistration:
         fake_file_editor = MagicMock()
         fake_file_editor.FileEditorTool = MagicMock(name="FileEditorTool")
         fake_file_editor.FileEditorTool.name = "file_editor"
+        fake_glob = MagicMock()
+        fake_glob.GlobTool = MagicMock(name="GlobTool")
+        fake_glob.GlobTool.name = "glob"
+        fake_grep = MagicMock()
+        fake_grep.GrepTool = MagicMock(name="GrepTool")
+        fake_grep.GrepTool.name = "grep"
 
         previous = {
             name: sys.modules.get(name)
@@ -417,11 +457,15 @@ class TestTerminalToolRegistration:
                 "openhands.sdk",
                 "openhands.sdk.mcp",
                 "openhands.tools.file_editor",
+                "openhands.tools.glob",
+                "openhands.tools.grep",
             )
         }
         sys.modules["openhands.sdk"] = fake_sdk
         sys.modules["openhands.sdk.mcp"] = fake_mcp
         sys.modules["openhands.tools.file_editor"] = fake_file_editor
+        sys.modules["openhands.tools.glob"] = fake_glob
+        sys.modules["openhands.tools.grep"] = fake_grep
         try:
             adapter._build_conversation(working_dir="/work")
         finally:
@@ -459,6 +503,8 @@ class TestTerminalToolRegistration:
             if isinstance(tool, tuple) and tool[0] == "Tool"
         ]
         assert "file_editor" in registered_names
+        assert "glob" in registered_names
+        assert "grep" in registered_names
 
 
 class TestMcpChildProcessLifecycle:
@@ -513,7 +559,7 @@ class TestMcpChildProcessLifecycle:
                     # SDK behavior the reaper compensates for.
                     self.closed = True
 
-            adapter = OpenHandsAdapter()
+            adapter = _adapter()
             conversation = _FakeConv()
 
             # When: ``_request_shutdown`` is called with the child PID
@@ -564,7 +610,7 @@ class TestMcpChildProcessLifecycle:
             def close(self) -> None:
                 self.closed = True
 
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
         conversation = _FakeConv()
 
         # When: shutdown runs with no PID list.
@@ -602,7 +648,7 @@ class TestMcpChildProcessLifecycle:
                 def pause(self) -> None: ...
                 def close(self) -> None: ...
 
-            adapter = OpenHandsAdapter()
+            adapter = _adapter()
             # Let the child exit on its own before we run the reaper —
             # this is the zombie case. SIGTERM to an already-exited PID
             # is harmless; the test is that waitpid() actually runs.
@@ -677,7 +723,7 @@ class TestMcpChildProcessLifecycle:
                 def pause(self) -> None: ...
                 def close(self) -> None: ...
 
-            adapter = OpenHandsAdapter()
+            adapter = _adapter()
 
             # When: the reaper runs with a tight grace so the test is
             # fast. Internal helper to bypass the constant default.
@@ -712,7 +758,7 @@ class TestMcpChildProcessLifecycle:
         contract of ``_request_shutdown``)."""
         from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
         # Should not raise nor block.
         adapter._reap_with_escalation(set(), grace_seconds=0.1, poll_interval=0.05)
 
@@ -727,7 +773,7 @@ class TestMcpChildProcessLifecycle:
         # ``os.kill(pid, 0)`` will succeed (process exists) but
         # ``waitpid`` will raise ``ChildProcessError`` because the
         # kernel only allows waiting for direct children.
-        adapter = OpenHandsAdapter()
+        adapter = _adapter()
 
         with patch("infrastructure.adapters.worker.openhands_adapter.os.kill"):
             with patch(

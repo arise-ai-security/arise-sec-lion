@@ -30,6 +30,13 @@ from infrastructure.io import robust_call
 logger = logging.getLogger(__name__)
 
 
+def _require_model(merged_config: dict[str, Any]) -> str:
+    model = merged_config.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise LLMError("LLM model must be configured explicitly")
+    return model
+
+
 def _strip_tool_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove tool_calls and tool-result messages from a conversation history.
 
@@ -241,7 +248,7 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On API failure or empty response.
         """
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "gpt-4")
+        model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
@@ -274,7 +281,7 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On API failure or empty response.
         """
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "gpt-4")
+        model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
@@ -313,7 +320,7 @@ class LiteLLMAdapter(LLMPort):
         text content (final answer) or tool_calls (requesting tool execution).
         """
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "gpt-4")
+        model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": messages,
