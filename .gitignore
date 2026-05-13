@@ -686,6 +686,7 @@ FodyWeavers.xsd
 !README.md
 !CLAUDE.md
 !USER_MANUAL.md
+!EXPERIMENT_MANUAL.md
 !agent-docs/*.md
 !.claude/docs/*.md
 !experiments/**/reports/**/*.md

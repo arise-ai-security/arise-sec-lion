@@ -184,7 +184,7 @@ If you're in a Claude Code session and want the same flow with one command, the 
 What the skill does (same work you'd do by hand in Path A, just chained together):
 
 1. **Pre-flight**: checks containers are healthy, restarts them (unless `--no-restart`), verifies the fixture JSON.
-2. **Image build**: runs `bash deployment/build-secbench-tools.sh <fixture>` (skipped if image already exists). Resolves the base image from `docker_image_override`, falling back to `songtli/…` then `hwiwonlee/…`.
+2. **Image build**: runs `bash deployment/build-secbench-tools.sh <fixture>` (skipped if image already exists). Resolves the base image from `docker_image_override` if set, otherwise falls back to `hwiwonlee/secb.eval.x86_64.<project>.<cve-id>:patch`. There is **no automatic `songtli/...` fallback** — fixtures that should use the `songtli/` namespace must set `docker_image_override` explicitly (see §7).
 3. **Launch**: execs `python main.py run …` inside `arise-app` in the background.
 4. **Live monitor**: three DB queries every 2–5 min (agent count, event timeline, per-agent state summary).
 5. **Issue diagnosis**: sweeps a checklist of known issues (missing image, scheduling bug, over-decomposition, role-name non-compliance, file-editor path errors, verification judge misfires, missing deliverables) and surfaces the fix.
@@ -301,13 +301,16 @@ Once it finishes, the fixture is immediately runnable via Path A of §4 (or the 
 
 ## 7. Docker images on DockerHub
 
-Every fixture needs a base Docker image that contains the vulnerable source, ASan toolchain, and a `/usr/local/bin/compile` wrapper. Resolution order (the `/secbench-run` skill uses this):
+Every fixture needs a base Docker image that contains the vulnerable source, ASan toolchain, and a `/usr/local/bin/compile` wrapper. The image is resolved by `CVEInstance.docker_image` (`plugins/security/cve_instance.py:41-44`) in exactly two steps:
 
-1. **`docker_image_override`** in the fixture JSON — authoritative if set.
-2. **Our DockerHub** — `docker.io/songtli/secb.eval.x86_64.<project>.<cve-id>:patch` — fixtures we have rebuilt or authored locally.
-3. **Upstream SEC-bench** — `hwiwonlee/secb.eval.x86_64.<project>.<cve-id>:patch`.
+1. **`docker_image_override`** field in the fixture JSON — used as-is if set. This is how the 11 team-authored fixtures point to `docker.io/songtli/...` images.
+2. **Fallback default** — `hwiwonlee/secb.eval.x86_64.<project>.<cve-id>:patch`. Every fixture sourced from the upstream `SEC-bench/SEC-bench` HuggingFace dataset uses this path (300 instances as of 2026-05).
 
-At run time, `deployment/build-secbench-tools.sh <fixture>` layers our analysis tools (cflow, cppcheck, gdb, ltrace, strace, valgrind, klee, etc.) on top of the base image and tags the result `secb-tools:<instance_id>-patch`. That tagged image is what the workers actually exec into.
+> **Note**: The two DockerHub namespaces have distinct provenance:
+> - `hwiwonlee/...` — upstream SEC-bench paper authors' images. Matches every instance in the HF dataset.
+> - `songtli/...` — this team's personal DockerHub. Used only for fixtures the team authored or rebuilt locally — all of these are **post-cutoff** (CVE-2025+ or `issue-*` entries not yet in the upstream dataset) and they explicitly set `docker_image_override`.
+
+At run time, `deployment/build-secbench-tools.sh <fixture>` layers our analysis tools (cflow, cppcheck, gdb, ltrace, strace, valgrind, klee, etc.) on top of the resolved base image and tags the result `secb-tools:<instance_id>-patch`. That tagged image is what the workers actually exec into.
 
 Manual build if the script ever fails:
 
