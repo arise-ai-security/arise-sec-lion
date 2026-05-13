@@ -181,8 +181,8 @@ class FormatRepairerConfig(BaseModel):
 
     Used when the deterministic ``raw_decode`` / ``_repair_json`` chain
     fails on output from less-disciplined models (qwen3, deepseek, GLM,
-    unknown). The repair model must be configured explicitly when this
-    repairer is enabled.
+    unknown). The repair model must be configured by YAML; there is no
+    source-code model fallback.
 
     Distinct from the security-domain "Fixer" agent role — this repairs
     output format, never source code.
@@ -195,7 +195,7 @@ class FormatRepairerConfig(BaseModel):
     # configured repair model and a one-shot LLM call per parse failure.
     # GPT/Claude paths are unaffected when enabled.
     enabled: bool = False
-    model: str | None = None
+    model: str = Field(min_length=1)
     # Default 16000 to match boss/manager.max_tokens — a repaired output
     # cannot need more space than the source model could have produced.
     # Empirical max from prior runs: ~5000 tokens; p99 ~3500.
@@ -209,12 +209,6 @@ class FormatRepairerConfig(BaseModel):
     # endpoint. Sized to host capacity (Ollama Cloud or local Ollama),
     # not to source-model concurrency.
     max_concurrent: int = Field(default=3, ge=1, le=32)
-
-    @model_validator(mode="after")
-    def _model_required_when_enabled(self) -> FormatRepairerConfig:
-        if self.enabled and not self.model:
-            raise ValueError("format_repairer.model is required when enabled=true")
-        return self
 
 
 class ToolsetPolicyConfig(BaseModel):

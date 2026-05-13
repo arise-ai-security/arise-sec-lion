@@ -24,11 +24,14 @@ worker:
 # when the deterministic raw_decode/_repair_json chain fails. Distinct
 # from the security-domain "Fixer" agent role.
 #
-# OPT-IN: disabled by default. Set enabled: true in an experiment config,
-# and define format_repairer.model there, when running models prone to
-# malformed output (qwen3.5, qwen3, deepseek, GLM, unknown).
+# OPT-IN: disabled by default. The repairer is the only repo-level model
+# default: keep it in YAML, not source code, so removing it fails validation.
+# Default: gpt-5.4-mini (OpenAI, low-latency/cost structured-output repair).
+# Claude alternatives: claude-haiku-4-5-20251001 for fastest near-frontier
+# repair, or claude-sonnet-4-6 for higher accuracy.
 format_repairer:
   enabled: false
+  model: gpt-5.4-mini
   max_tokens: 16000
   # api_base: https://ollama.com  # uncomment for Ollama Cloud
 

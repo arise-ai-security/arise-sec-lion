@@ -13,7 +13,7 @@ source code.
 
 Design notes:
 - The repair model is itself an LLM, so it is selectable via config.
-  It must be configured explicitly by experiments that enable repair.
+  It must be configured in YAML; there is no source-code model fallback.
 - One shot, no internal retries. If the repair call fails or its output
   is also malformed, the caller surfaces the original parse error.
 - We do not attempt to verify "values were preserved" — that would

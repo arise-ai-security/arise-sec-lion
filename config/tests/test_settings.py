@@ -103,15 +103,15 @@ def test_tool_params_validation_openhands_null_raises(tmp_path: Path) -> None:
     assert "tool_params.openhands" in str(exc_info.value)
 
 
-def test_base_config_has_no_default_model_names() -> None:
-    """Model names must be supplied by experiment overlays, not base config."""
+def test_base_config_has_no_default_agent_model_names() -> None:
+    """Agent model names must be supplied by experiment overlays."""
 
     payload = _load_base_config()
 
     assert "model" not in payload["boss"]
     assert "model" not in payload["manager"]
     assert "model" not in payload["worker"]
-    assert "model" not in payload["format_repairer"]
+    assert payload["format_repairer"]["model"] == "gpt-5.4-mini"
 
 
 def test_base_config_without_models_fails() -> None:
@@ -126,18 +126,18 @@ def test_base_config_without_models_fails() -> None:
     assert "worker.model" in msg
 
 
-def test_format_repairer_enabled_requires_model(tmp_path: Path) -> None:
-    """The optional repairer cannot enable a hidden model fallback."""
+def test_format_repairer_model_is_required_from_config(tmp_path: Path) -> None:
+    """The repairer has a YAML default, not a source-code fallback."""
 
     payload = _add_required_models(_load_base_config())
-    payload["format_repairer"]["enabled"] = True
+    del payload["format_repairer"]["model"]
     target = tmp_path / "repairer.yaml"
     _write_yaml(target, payload)
 
     with pytest.raises(ValidationError) as exc_info:
         Settings.from_yaml(target)
 
-    assert "format_repairer.model is required" in str(exc_info.value)
+    assert "format_repairer.model" in str(exc_info.value)
 
 
 def test_default_orchestration_mode_is_hierarchical(tmp_path: Path) -> None:
