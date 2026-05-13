@@ -9,6 +9,7 @@ This is the main orchestration service that coordinates:
 
 import asyncio
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -183,6 +184,9 @@ class AgentExecutionService:
         )
         self._llm_semaphore = asyncio.Semaphore(llm_limit)
         self._llm_jitter_max_ms = system_limits.llm_jitter_max_ms
+        self._max_agent_step_seconds = float(
+            getattr(system_limits, "max_agent_step_seconds", 600.0) or 600.0
+        )
 
         # Progress callback
         self._progress_callback = progress_callback
@@ -260,8 +264,8 @@ class AgentExecutionService:
         """Execute one workflow step: load -> dispatch -> persist with OCC retry."""
         retry_count = 0
         # Track the in-memory aggregate so any failure path can release
-        # the pending child-spawn reservation (D.2) before reload or
-        # bubbling the error up. ``_spawn_children`` stashes the count on
+        # the pending child-spawn reservation before reload or bubbling
+        # the error up. ``_spawn_children`` stashes the count on
         # ``agent.pending_reservation``; if a path never reached spawning
         # the count stays 0 and release is a no-op.
         last_agent = None
@@ -315,7 +319,7 @@ class AgentExecutionService:
         ``ChildAgentFactory.try_reserve``. On every failure path
         (ConcurrencyError, EventStoreError, cancellation) we must
         release it; otherwise the slots stay parked in ``_reserved`` and
-        future ``try_reserve`` calls see a shrunken cap (D.2).
+        future ``try_reserve`` calls see a shrunken cap.
         """
         if agent is None:
             return
@@ -340,10 +344,20 @@ class AgentExecutionService:
         start_time = time.monotonic()
         in_progress: set[UUID] = set()
         tasks: dict[UUID, asyncio.Task] = {}
+        task_started_at: dict[UUID, float] = {}
+        # Per-agent staleness tracker: agents that get repeatedly rescheduled
+        # (each task completes fast, but the agent never emits a new event) need
+        # a different signal than per-task wall-clock age. Track event counts
+        # over polls; reset the timer whenever the count grows.
+        agent_event_count: dict[UUID, int] = {}
+        agent_last_progress_at: dict[UUID, float] = {}
         run_status_override: str | None = None
+        debug_poll = bool(os.environ.get("ARISE_DEBUG_POLL"))
+        debug_last_log = 0.0
+        debug_interval = float(os.environ.get("ARISE_DEBUG_POLL_INTERVAL_S", "10"))
 
         while True:
-            self._reap_completed_tasks(tasks, in_progress)
+            self._reap_completed_tasks(tasks, in_progress, task_started_at)
 
             if self._is_run_timed_out(start_time):
                 run_status_override = "timed_out"
@@ -354,6 +368,11 @@ class AgentExecutionService:
                 )
                 break
 
+            await self._kill_overdue_tasks(tasks, in_progress, task_started_at)
+            await self._kill_stale_agents(
+                in_progress, agent_event_count, agent_last_progress_at,
+            )
+
             active_agents = await self._query_service.get_active_agent_ids(
                 root_id=root_agent_id, sequential_workers=True
             )
@@ -363,6 +382,26 @@ class AgentExecutionService:
                 in_progress.add(agent_id)
                 tasks[agent_id] = asyncio.create_task(
                     self._run_agent_step_safe(agent_id)
+                )
+                task_started_at[agent_id] = time.monotonic()
+                agent_last_progress_at.setdefault(agent_id, time.monotonic())
+
+            now = time.monotonic()
+            if debug_poll and (now - debug_last_log) >= debug_interval:
+                debug_last_log = now
+                active_short = [str(a)[:8] for a in active_agents]
+                tasks_summary = {
+                    str(aid)[:8]: f"age={now - task_started_at.get(aid, now):.0f}s "
+                                  f"done={tasks[aid].done()}"
+                    for aid in tasks
+                }
+                logger.warning(
+                    "[POLL root=%s elapsed=%.0fs] active=%s in_progress=%d tasks=%s",
+                    str(root_agent_id)[:8],
+                    now - start_time,
+                    active_short,
+                    len(in_progress),
+                    tasks_summary,
                 )
 
             if not active_agents and not in_progress:
@@ -441,7 +480,8 @@ class AgentExecutionService:
             tool_name = self._config.default_worker_tool
 
             # Mirror the hierarchical worker's telemetry envelope and ordering so
-            # A-cell runs are comparable to B/C worker runs in metrics scripts.
+            # flat-mode runs are comparable to hierarchical worker runs in
+            # metrics scripts.
             execution_started_at = time.monotonic()
             operation_started_at = execution_started_at
             boss.emit_execution_started(role=AgentRole.WORKER.value, depth=0)
@@ -551,17 +591,40 @@ class AgentExecutionService:
         return "failed"
 
     async def _run_agent_step_safe(self, agent_id: UUID) -> None:
-        """Execute agent step with exception handling, jitter, and rate limiting."""
+        """Execute agent step with jitter, rate limiting, and a hard per-step timeout.
+
+        The hard timeout prevents an orchestrator step from blocking forever in
+        LiteLLM retry storms. On timeout, the agent is marked failed so the poll
+        loop progresses.
+        """
         try:
             if self._llm_jitter_max_ms > 0:
                 jitter_ms = random.randint(0, self._llm_jitter_max_ms)  # noqa: S311
                 await asyncio.sleep(jitter_ms / 1000.0)
 
             async with self._llm_semaphore:
-                await self.run_agent_step(agent_id)
+                await asyncio.wait_for(
+                    self.run_agent_step(agent_id),
+                    timeout=self._max_agent_step_seconds,
+                )
         except asyncio.CancelledError:
             logger.warning("Agent %s step cancelled", agent_id)
             raise
+        except asyncio.TimeoutError:
+            logger.error(
+                "Agent %s step exceeded %.0fs timeout - marking failed",
+                agent_id,
+                self._max_agent_step_seconds,
+            )
+            try:
+                agent = await self._repository.load_if_exists(agent_id)
+                if agent is not None and not agent.is_terminal():
+                    await self._fail_agent(
+                        agent,
+                        f"Agent step timed out after {self._max_agent_step_seconds:.0f}s",
+                    )
+            except Exception:
+                logger.exception("Failed to mark timed-out agent %s as failed", agent_id)
         except Exception:
             logger.exception("Agent %s step failed unexpectedly", agent_id)
 
@@ -596,18 +659,125 @@ class AgentExecutionService:
             self,
             tasks: dict[UUID, asyncio.Task],
             in_progress: set[UUID],
+            task_started_at: dict[UUID, float] | None = None,
     ) -> None:
         """Remove completed tasks and log their terminal state."""
         completed = [aid for aid, task in tasks.items() if task.done()]
         for aid in completed:
             in_progress.discard(aid)
             task = tasks.pop(aid)
+            if task_started_at is not None:
+                task_started_at.pop(aid, None)
             if task.cancelled():
                 logger.warning("Agent %s task was cancelled", aid)
                 continue
             exc = task.exception()
             if exc is not None:
                 logger.error("Agent %s failed with exception", aid, exc_info=exc)
+
+    async def _kill_overdue_tasks(
+            self,
+            tasks: dict[UUID, asyncio.Task],
+            in_progress: set[UUID],
+            task_started_at: dict[UUID, float],
+    ) -> None:
+        """Cancel and fail any task running past the per-step budget.
+
+        Safety net for cases where the in-step ``asyncio.wait_for`` cannot reach
+        the running code (thread-bound worker, uncancellable subprocess wait, etc.).
+        The 1.5x grace avoids racing the in-step timeout's own failure path.
+        """
+        budget = self._max_agent_step_seconds * 1.5
+        now = time.monotonic()
+        overdue = [
+            aid
+            for aid, started in task_started_at.items()
+            if aid in tasks and not tasks[aid].done() and (now - started) > budget
+        ]
+        for aid in overdue:
+            elapsed = now - task_started_at.get(aid, now)
+            logger.error(
+                "Agent %s task overdue (%.0fs > %.0fs); cancelling and failing",
+                aid,
+                elapsed,
+                budget,
+            )
+            task = tasks.get(aid)
+            if task is not None and not task.done():
+                task.cancel()
+            try:
+                agent = await self._repository.load_if_exists(aid)
+                if agent is not None and not agent.is_terminal():
+                    await self._fail_agent(
+                        agent,
+                        f"Agent step exceeded watchdog budget {budget:.0f}s",
+                    )
+            except Exception:
+                logger.exception("Watchdog failed to mark agent %s failed", aid)
+            in_progress.discard(aid)
+            tasks.pop(aid, None)
+            task_started_at.pop(aid, None)
+
+    _STALE_AGENT_BUDGET_SECONDS = 600.0
+    _STALE_AGENT_GRACE_SECONDS = 60.0  # skip checks while agent is fresh
+
+    async def _kill_stale_agents(
+            self,
+            in_progress: set[UUID],
+            agent_event_count: dict[UUID, int],
+            agent_last_progress_at: dict[UUID, float],
+    ) -> None:
+        """Force-fail agents that stay in_progress without persisting any new events.
+
+        Complements ``_kill_overdue_tasks``: that one catches a single task
+        running too long; this one catches the pattern where ``run_agent_step``
+        completes fast on each poll but the agent never reaches a terminal
+        state (boss in judge-retry loop, manager in re-decomposition cycle).
+
+        Polls event counts per active agent. Resets the timer when an agent's
+        count grows. Fails the agent after ``_STALE_AGENT_BUDGET_SECONDS`` of
+        zero progress.
+        """
+        if not in_progress:
+            return
+        now = time.monotonic()
+        active_ids = list(in_progress)
+        try:
+            counts = await self._query_service.get_event_counts(active_ids)
+        except Exception:
+            logger.exception("Stale-agent watchdog failed to fetch event counts")
+            return
+
+        for aid in active_ids:
+            current = counts.get(aid, 0)
+            previous = agent_event_count.get(aid, current)
+            agent_event_count[aid] = current
+            if current > previous:
+                # Real progress — reset the stale timer.
+                agent_last_progress_at[aid] = now
+                continue
+            first_seen = agent_last_progress_at.setdefault(aid, now)
+            stale_for = now - first_seen
+            if stale_for <= self._STALE_AGENT_BUDGET_SECONDS:
+                continue
+            logger.error(
+                "Agent %s stale: no new events for %.0fs (budget %.0fs); failing",
+                aid,
+                stale_for,
+                self._STALE_AGENT_BUDGET_SECONDS,
+            )
+            try:
+                agent = await self._repository.load_if_exists(aid)
+                if agent is not None and not agent.is_terminal():
+                    await self._fail_agent(
+                        agent,
+                        f"Agent stale for {stale_for:.0f}s with no event progress",
+                    )
+            except Exception:
+                logger.exception("Stale-agent watchdog failed to fail agent %s", aid)
+            in_progress.discard(aid)
+            agent_event_count.pop(aid, None)
+            agent_last_progress_at.pop(aid, None)
 
     def _is_run_timed_out(self, start_time: float) -> bool:
         """Return True when the global orchestration deadline has elapsed."""

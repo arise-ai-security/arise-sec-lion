@@ -206,6 +206,25 @@ class AgentQueryService:
             active=active,
         )
 
+    async def get_event_counts(
+        self, agent_ids: list[UUID]
+    ) -> dict[UUID, int]:
+        """Return number of persisted events per agent.
+
+        Used by the system loop's staleness watchdog to detect agents that
+        keep getting re-scheduled by ``get_active_agent_ids`` but never emit
+        any new events (boss-in-judge-loop, manager re-decomposition cycle,
+        etc.) — a pattern the per-task wall-clock watchdog cannot catch
+        because each individual ``run_agent_step`` call completes quickly.
+        """
+        if not agent_ids:
+            return {}
+        counts: dict[UUID, int] = {}
+        for agent_id in agent_ids:
+            events = await self._repository.get_events(agent_id)
+            counts[agent_id] = len(events)
+        return counts
+
     async def get_active_agent_ids(  # noqa: PLR0912
         self,
         root_id: UUID | None = None,

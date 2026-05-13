@@ -253,11 +253,22 @@ def _invoke_main_py(
         str(context_file),
     ]
     env = {**os.environ, RUN_RESULT_ENV_VAR: str(result_path)}
+    timeout_seconds = float(os.environ.get("ARISE_SUBPROCESS_TIMEOUT_SECONDS", "7800"))
     logger.info("invoking: %s", " ".join(cmd))
-    completed = subprocess.run(  # noqa: S603
-        cmd, check=False, cwd=get_repo_root(), env=env
-    )
-    return completed.returncode
+    try:
+        completed = subprocess.run(  # noqa: S603
+            cmd,
+            check=False,
+            cwd=get_repo_root(),
+            env=env,
+            timeout=timeout_seconds,
+        )
+        return completed.returncode
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "subprocess timed out after %.0fs: %s", timeout_seconds, " ".join(cmd)
+        )
+        return 124
 
 
 def run_ours(
