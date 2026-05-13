@@ -16,7 +16,6 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 
 
 def get_repo_root() -> Path:
-    """Return the currently-configured repo root (patchable in tests)."""
     return REPO_ROOT
 
 
@@ -39,7 +38,6 @@ def to_repo_relative(path: str | Path) -> str:
 
 
 def resolve_repo_path(path: str | Path) -> Path:
-    """Return the absolute filesystem path for a repo-root-relative input."""
     root = get_repo_root()
     candidate = Path(path)
     if candidate.is_absolute():

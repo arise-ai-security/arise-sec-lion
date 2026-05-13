@@ -76,7 +76,6 @@ def _sha256_of(path: Path) -> str:
 
 
 def _discover_report_files() -> list[Path]:
-    """Return every file under any `experiments/*/reports/` tree."""
     experiments_dir = get_repo_root() / "experiments"
     results: list[Path] = []
     if not experiments_dir.is_dir():
@@ -432,7 +431,6 @@ def _load_sidecar(reports_dir: Path) -> dict[str, dict[str, Any]]:
 
 
 def _reports_root_for(path: Path) -> Path | None:
-    """Find the `<study>/reports/` ancestor for a file, or None if outside."""
     experiments_dir = get_repo_root() / "experiments"
     for parent in path.parents:
         if parent.name == "reports" and parent.parent.parent == experiments_dir:
@@ -441,7 +439,6 @@ def _reports_root_for(path: Path) -> Path | None:
 
 
 def validate_paths(paths: Iterable[Path]) -> list[str]:
-    """Return a list of human-readable error messages (empty = valid)."""
     errors: list[str] = []
     sidecars: dict[Path, dict[str, dict[str, Any]]] = {}
 
@@ -615,7 +612,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _discover_study_ids() -> list[str]:
-    """Return every ``experiments/<id>/`` whose ``manifest.yaml`` exists."""
     experiments_dir = get_repo_root() / "experiments"
     if not experiments_dir.is_dir():
         return []

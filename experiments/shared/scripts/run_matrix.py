@@ -382,7 +382,6 @@ def _write_matrix_summary(
     tasks_filter: set[str] | None,
     repo_root: Path,
 ) -> Path:
-    """Render and write ``reports/matrix-summary.md`` with scripts-first provenance."""
     succeeded = [r for r in results if r.status == "succeeded"]
     failed = [r for r in results if r.status == "failed"]
 
@@ -607,7 +606,6 @@ def _sweep_stale_containers() -> None:
 
 
 def _sweep_orphan_result_files(pool: Path) -> None:
-    """Unlink ``.run-result-*.json`` files older than one hour in ``pool``."""
     if not pool.exists():
         return
     cutoff = time.time() - _ORPHAN_RESULT_MAX_AGE_SECONDS

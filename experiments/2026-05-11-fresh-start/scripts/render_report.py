@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 def _load_groups() -> dict[str, str]:
-    """Load `experiments/shared/groups.yaml` as letter -> label."""
     data = yaml.safe_load(_GROUPS_YAML.read_text(encoding="utf-8")) or {}
     return {str(k): str(v) for k, v in data.items()}
 

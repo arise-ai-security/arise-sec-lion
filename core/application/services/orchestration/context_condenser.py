@@ -162,7 +162,6 @@ class ContextCondenser:
         If an LLM port is available, uses a cheap model for summarization.
         Otherwise, falls back to deterministic extraction of key lines.
         """
-        # Build a text representation of the tool exchanges
         parts: list[str] = []
         for msg in messages:
             role = msg.get("role", "")

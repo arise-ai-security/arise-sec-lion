@@ -68,7 +68,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Load settings from config files and environment variables
     settings = Settings.load()
 
-    # Create and connect the event store
     event_store = _event_store_factory(settings.database.connection_string)
     await event_store.connect()
 

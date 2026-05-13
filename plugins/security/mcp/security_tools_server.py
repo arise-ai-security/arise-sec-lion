@@ -239,7 +239,6 @@ def valgrind_run(
     args: list[str] | None = None,
     options: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run valgrind on ``target_path`` inside the active container."""
     env = _read_env()
     if isinstance(env, dict):
         return env
@@ -268,7 +267,6 @@ def klee_run(
     max_time_seconds: int = 120,
     output_dir: str = "klee-out",
 ) -> dict[str, Any]:
-    """Run KLEE on ``bitcode_path`` inside the active container."""
     env = _read_env()
     if isinstance(env, dict):
         return env

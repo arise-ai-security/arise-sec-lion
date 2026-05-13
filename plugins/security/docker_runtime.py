@@ -59,7 +59,6 @@ class DockerSecBenchRuntime:
         return bool(self._host_project_root) and Path(self._host_project_root).is_absolute()
 
     def _host_path(self, container_path: Path) -> str:
-        """Map a container-local path to a host path for DooD volume mounts."""
         resolved = str(container_path.resolve())
         if self._host_project_root and resolved.startswith("/app/"):
             return resolved.replace("/app/", self._host_project_root + "/", 1)
@@ -209,7 +208,6 @@ class DockerSecBenchRuntime:
         )
 
     async def _copy_testcase_tree(self, image: str, testcase_dir: Path) -> None:
-        """Copy /testcase/ from the image so the host mount doesn't shadow it."""
         seed_container = (
             await self._run_checked(
                 [
@@ -233,7 +231,6 @@ class DockerSecBenchRuntime:
             await self._run_best_effort(["docker", "rm", "-f", seed_container])
 
     async def _add_git_safe_directory(self, container_id: str, work_dir: str) -> None:
-        """Mark the work directory as safe to avoid git ownership errors."""
         await self._run_best_effort(
             [
                 "docker", "exec", container_id, "git", "config",

@@ -15,7 +15,6 @@ class PromptToolDescriptor:
 
     @property
     def signature(self) -> str:
-        """Return a prompt-friendly function signature."""
         if not self.parameters:
             return f"{self.name}()"
 
@@ -30,7 +29,6 @@ class PromptToolDescriptor:
         cls,
         tool_definition: dict[str, Any],
     ) -> "PromptToolDescriptor | None":
-        """Build a prompt descriptor from an OpenAI function-calling definition."""
         function = tool_definition.get("function", {})
         name = function.get("name")
         description = function.get("description")

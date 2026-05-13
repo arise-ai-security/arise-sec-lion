@@ -128,7 +128,6 @@ class ContainerSessionContext:
     def translate_tool_input(
         self, tool_name: str, tool_input: dict[str, Any]
     ) -> dict[str, Any]:
-        """Translate container paths and shell commands for Claude Code tools."""
         updated = dict(tool_input)
         for key in ("file_path", "path", "cwd", "working_directory"):
             value = updated.get(key)
@@ -142,7 +141,6 @@ class ContainerSessionContext:
         return updated
 
     def map_container_path(self, path: str) -> str:
-        """Translate well-known container paths onto the host mirror."""
         if path == self.container_source_dir:
             return str(self.host_source_dir)
         if path.startswith(f"{self.container_source_dir}/"):
@@ -182,7 +180,6 @@ class ContainerSessionContext:
         )
 
     def relative_host_work_dir(self) -> str:
-        """Return the mirrored working directory relative to the workspace root."""
         try:
             rel = self.host_work_dir.relative_to(self.workspace_root)
             rel_str = rel.as_posix()

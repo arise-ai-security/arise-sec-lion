@@ -52,7 +52,6 @@ class EventSequencer:
 
     @property
     def current_sequence(self) -> int:
-        """Return current sequence number (for testing/debugging)."""
         return self._sequence
 
     def thought(

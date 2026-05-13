@@ -14,7 +14,6 @@ from core.query.projections.registry import register_projection
 
 
 def _recorded_worker_tokens(event: WorkerCostRecorded) -> int:
-    """Return the best available total token count for a worker cost event."""
     return event.total_recorded_tokens or 0
 
 
@@ -87,7 +86,6 @@ class CostProjection(Projection):
 
         total_cost = llm_cost + worker_cost
 
-        # Calculate budget remaining
         budget_remaining = None
         if self._budget_limit is not None:
             budget_remaining = max(0.0, self._budget_limit - total_cost)

@@ -366,7 +366,6 @@ class WorkerCostRecorded(DomainEvent):
 
     @property
     def model_costs(self) -> dict[str, float]:
-        """Return the most accurate per-model cost breakdown available."""
         if self.usage_metrics:
             costs: dict[str, float] = {}
             for usage in self.usage_metrics:  # pylint: disable=not-an-iterable

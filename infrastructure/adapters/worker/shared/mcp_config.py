@@ -22,14 +22,12 @@ from typing import Any
 
 
 def to_cli_config_payload(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Wrap stdio specs in the ``mcpServers`` envelope for the Claude Code CLI."""
     return {"mcpServers": dict(servers)}
 
 
 def to_sdk_mcp_servers(
     servers: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    """Convert stdio specs into the Claude Agent SDK ``mcp_servers`` mapping."""
     out: dict[str, dict[str, Any]] = {}
     for name, spec in servers.items():
         entry: dict[str, Any] = {"type": "stdio"}
@@ -39,5 +37,4 @@ def to_sdk_mcp_servers(
 
 
 def to_openhands_mcp_config(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Wrap stdio specs in the ``mcpServers`` envelope for OpenHands' MCPConfig."""
     return {"mcpServers": dict(servers)}

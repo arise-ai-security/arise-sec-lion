@@ -185,7 +185,6 @@ def _empty_audit_row(judge_score: int) -> dict[str, Any]:
 
 
 def _csv_int(value: str) -> int:
-    """Coerce a CSV cell to int, treating empty/non-numeric as 0."""
     if not value:
         return 0
     try:

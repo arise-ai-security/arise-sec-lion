@@ -79,7 +79,6 @@ def main(args: list[str] | None = None) -> None:
 
 
 def _load_settings(config_path: Path | None) -> Settings:
-    """Load settings from a provided config path or the default location."""
     return Settings.from_yaml(config_path) if config_path else Settings.load()
 
 
@@ -153,7 +152,6 @@ def _create_parser() -> argparse.ArgumentParser:
 
 @asynccontextmanager
 async def _event_store(settings: Settings) -> AsyncIterator[PostgresEventStore]:
-    """Create and manage event store lifecycle."""
     store = PostgresEventStore(
         settings.database.connection_string,
         pool_min=settings.database.pool_min,
@@ -276,7 +274,6 @@ def _infer_domain_context(
     task_text: str,
     context_file: object | None,
 ) -> object | None:
-    """Infer optional domain context for a run."""
     if plugin is None:
         return None
 
@@ -293,7 +290,6 @@ def _print_inferred_domain_context(
     domain_context: object | None,
     verbose: bool,
 ) -> None:
-    """Print inferred domain metadata when verbose output is enabled."""
     if plugin is None or domain_context is None or not verbose:
         return
 
@@ -319,7 +315,6 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
     if not worker_model and not worker_tool:
         return settings  # No overrides
 
-    # Build updated worker config
     new_worker = settings.worker.model_copy(update={
         **({"model": worker_model} if worker_model else {}),
         **({"tool": worker_tool} if worker_tool else {}),
@@ -403,7 +398,6 @@ async def _trace_prompts(
     *,
     cleanup_registry: CleanupRegistry | None = None,
 ) -> None:
-    """Trace prompts through agent hierarchy."""
     del cleanup_registry  # Query path has no cleanup obligations.
     from core.application.services import PromptParser, PromptTraceService
     from core.domain.values.prompt_trace import RenderOptions
@@ -435,7 +429,6 @@ def _resolve_agent_id(
     settings: Settings,
     requested_agent_id: UUID | None,
 ) -> UUID | None:
-    """Resolve an explicit agent id or fall back to the last persisted run."""
     from presentation.persistence import RunPersistence
 
     agent_id = (

@@ -100,7 +100,6 @@ def validate_manifest(manifest: dict[str, Any], *, repo_root: Path) -> None:  # 
 
 
 def _validate_study(study_id: str, *, repo_root: Path) -> int:
-    """Validate one study; return process exit code (0 on success)."""
     manifest_path = repo_root / "experiments" / study_id / "manifest.yaml"
     if not manifest_path.is_file():
         logger.error("manifest not found: %s", manifest_path)

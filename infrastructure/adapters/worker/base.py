@@ -108,5 +108,4 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         ...
 
     def _create_sequencer(self, agent_id: UUID) -> EventSequencer:
-        """Create EventSequencer tagged with this adapter's STREAM_NAME."""
         return EventSequencer(agent_id, stream=self.STREAM_NAME)

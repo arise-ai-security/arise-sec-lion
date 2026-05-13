@@ -246,7 +246,6 @@ def collect_study(
     *,
     pool_roots: Iterable[Path] | None = None,
 ) -> Path:
-    """Build and write the enrollment lockfile, returning its absolute path."""
     if not _study_manifest_path(study_id).is_file():
         raise FileNotFoundError(
             f"unknown study {study_id!r}: experiments/{study_id}/manifest.yaml not found"

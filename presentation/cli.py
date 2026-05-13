@@ -71,7 +71,6 @@ class CLI:
         self._renderer = OutputRenderer
 
     async def _initialize_infrastructure(self) -> None:
-        """Initialize infrastructure adapters and connect to database."""
         if self.config.verbose:
             self._renderer.print_step(1, 5, "Initializing infrastructure adapters...")
             self._renderer.print_success("Event Store: PostgreSQL")
@@ -102,7 +101,6 @@ class CLI:
         task_description: str,
         domain_context: object | None = None,
     ) -> UUID:
-        """Create the root BOSS agent."""
         if self.config.verbose:
             self._renderer.print_step(3, 5, "Creating root BOSS agent...")
 
@@ -122,7 +120,6 @@ class CLI:
             sys.exit(1)
 
     async def _run_orchestration_loop(self, root_id: UUID) -> None:
-        """Run the main orchestration loop."""
         if self.config.verbose:
             self._renderer.print_step(4, 5, "Starting orchestration loop...")
             self._renderer.print_info("(This may take a while depending on task complexity)")
@@ -134,7 +131,6 @@ class CLI:
             print()
 
     async def _display_final_result(self, root_id: UUID) -> None:
-        """Display the final execution result."""
         if self.config.verbose:
             self._renderer.print_step(5, 5, "Fetching final result...")
 

@@ -86,7 +86,6 @@ class LastRunInfo:
 
     @classmethod
     def from_dict(cls, data: dict) -> LastRunInfo:
-        """Deserialize from dictionary."""
         return cls(
             boss_id=UUID(data["boss_id"]),
             task=data["task"],
@@ -96,7 +95,6 @@ class LastRunInfo:
 
 
 def _current_git_sha() -> str | None:
-    """Return the current HEAD sha, or None when git isn't usable."""
     git_bin = shutil.which("git")
     if git_bin is None:
         logger.warning("git not found on PATH; omitting git_sha from run manifest")
@@ -129,7 +127,6 @@ def _compute_uv_lock_sha256() -> str | None:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Write JSON atomically: tmp file in same dir + rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
@@ -163,7 +160,6 @@ class RunPersistence:
         return self._output_dir / self.FILENAME
 
     def get_last_run(self) -> LastRunInfo | None:
-        """Read last run info from disk."""
         if not self._path.exists():
             return None
         try:
@@ -195,7 +191,6 @@ class RunPersistence:
         _atomic_write_json(self._path, info.to_dict())
 
     def get_last_run_id(self) -> UUID | None:
-        """Get boss_id from last run, if available."""
         info = self.get_last_run()
         return info.boss_id if info else None
 
@@ -271,7 +266,6 @@ class RunPersistence:
 
 
 def _to_iso(moment: datetime) -> str:
-    """Return an ISO8601 string in UTC with a trailing Z."""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")

@@ -27,7 +27,6 @@ class AgentListItem:
 
     @classmethod
     def empty(cls, agent_id: UUID) -> "AgentListItem":
-        """Create empty agent list item."""
         return cls(
             agent_id=agent_id,
             role="PENDING",
@@ -49,7 +48,6 @@ class NodeCountSummary:
 
     @classmethod
     def empty(cls) -> "NodeCountSummary":
-        """Create empty node count summary."""
         return cls(total=0, by_role={})
 
 
@@ -65,7 +63,6 @@ class ExecutionTimeSummary:
 
     @classmethod
     def empty(cls) -> "ExecutionTimeSummary":
-        """Create empty execution time summary."""
         return cls(total_seconds=0.0, per_role={}, per_phase={}, per_agent={}, per_operation={})
 
 
@@ -165,7 +162,6 @@ class CostSummary:
 
     @classmethod
     def empty(cls, budget_limit: float | None = None) -> "CostSummary":
-        """Create empty cost summary with zero values."""
         return cls(
             total_cost_usd=0.0,
             llm_cost_usd=0.0,
@@ -204,7 +200,6 @@ class ProjectionSummary:
 
     @classmethod
     def empty(cls) -> "ProjectionSummary":
-        """Create empty summary with zero counts."""
         return cls(
             total_events=0,
             events_by_type={},

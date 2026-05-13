@@ -138,7 +138,6 @@ class Handoff(BaseModel):
         return any(s.sibling_index > self.current_sibling_index for s in self.siblings)
 
     def to_template_dict(self) -> dict[str, Any]:
-        """Convert to dict for Jinja2 template rendering (includes computed fields)."""
         return self.model_dump()
 
 

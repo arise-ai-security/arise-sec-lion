@@ -34,7 +34,6 @@ class ParentNotificationService:
         self._progress_callback = progress_callback
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
-        """Set the progress callback for event notifications."""
         self._progress_callback = callback
 
     async def notify_if_complete(self, child: AgentSession) -> None:
@@ -60,7 +59,6 @@ class ParentNotificationService:
             raise ValueError(f"Parent agent {child.parent_id} not found") from e
 
         if parent.status == AgentStatus.WAITING:
-            # Build structured report
             report = child.build_report()
 
             parent.handle_child_update(

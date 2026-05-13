@@ -51,16 +51,6 @@ RUN_RESULT_ENV_VAR = "ARISE_RUN_RESULT_PATH"
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Manifest-driven dispatch (PR 2 onward)
-# =============================================================================
-# `run_ours` below is the load-bearing implementation of the unified execution
-# path. PR 2 introduced runner-registry dispatch (`experiments/shared/runners/aris.py`)
-# so cells resolve to a runner via `runners.get(cell.runner)` and the runner
-# calls back into `run_ours`. PR 4b folded flat-mode into the same pipeline,
-# and PR 5 deleted the legacy `run_baseline` path entirely — every cell (A or
-# B) now goes through `main.py run` with `orchestration.mode` selecting flat
-# vs. hierarchical dispatch inside the bootstrap composition root.
 
 # =============================================================================
 # Dataset and study helpers
@@ -360,7 +350,6 @@ def run_ours(
 
 
 def _runs_root(config: Path | None = None) -> Path:
-    """Return the pool root that `main.py run` will write into."""
     if config is None:
         return get_repo_root() / "runs"
     try:

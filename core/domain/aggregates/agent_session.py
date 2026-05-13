@@ -133,11 +133,9 @@ class AgentSession:
         return self._changes
 
     def mark_changes_as_committed(self) -> None:
-        """Clear uncommitted changes after successful persistence."""
         self._changes.clear()
 
     def assign_task(self, task_description: str) -> None:
-        """Assign task, transitions to ANALYZING status."""
         task_event = TaskAssigned(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -197,7 +195,6 @@ class AgentSession:
             self._emit(work_completed_event)
 
     def _aggregate_child_results(self) -> str:
-        """Combine results from all completed children using structured Reports."""
         lines = ["Subtask results:", ""]
         for child_id in self.child_ids:
             report = self.child_reports.get(child_id)
@@ -507,7 +504,6 @@ class AgentSession:
         self.pending_reservation = 0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
-        """Set hierarchy limits for limit enforcement."""
         self.hierarchy_limits = limits
 
     def build_briefing_for_child(self) -> Briefing:
@@ -518,15 +514,12 @@ class AgentSession:
         return build_briefing(self, self.briefing)
 
     def record_decision(self, decision: str) -> None:
-        """Record a local decision made during execution."""
         self.local_decisions.append(decision)
 
     def record_artifact(self, artifact_key: str) -> None:
-        """Record an artifact produced during execution."""
         self.local_artifacts.append(artifact_key)
 
     def build_report(self) -> Report:
-        """Build structured Report to return to parent."""
         execution_summary: dict[str, Any] = {}
         total_cost = 0.0
         for event in self._changes:
@@ -565,7 +558,6 @@ class AgentSession:
         return self._sequence
 
     def _assert_parent_can_receive_child_event(self, child_id: UUID) -> None:
-        """Validate parent state before applying a child completion/failure event."""
         if self.role not in (AgentRole.MANAGER, AgentRole.BOSS):
             raise DomainInvariantError(f"Requires BOSS/MANAGER, got {self.role}")
         if not self.child_ids:
@@ -593,7 +585,6 @@ class AgentSession:
         minimum_subtasks: int | None = None,
         minimum_depth: int | None = None,
     ) -> None:
-        """Mark task as infeasible within given constraints."""
         event = DecisionInfeasible(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -625,7 +616,6 @@ class AgentSession:
         self._emit(event)
 
     def fail_with_reason(self, reason: str) -> None:
-        """Mark agent as failed with WorkFailed event."""
         failed_event = WorkFailed(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -633,10 +623,6 @@ class AgentSession:
         )
         self._emit(failed_event)
 
-    # -------------------------------------------------------------------------
-    # Pure Domain Methods (event emission only, no I/O)
-    # These are called by the orchestrator after it performs LLM/worker calls.
-    # -------------------------------------------------------------------------
 
     def apply_complexity_result(
         self,
@@ -689,7 +675,6 @@ class AgentSession:
         attempted_value: int,
         action_taken: str,
     ) -> None:
-        """Emit LimitEnforced event (pure domain method)."""
         limit_event = LimitEnforced(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -761,7 +746,6 @@ class AgentSession:
         child_role: str,
         briefing: Briefing,
     ) -> list[tuple[UUID, Subtask]]:
-        """Emit child spawn events for each generated subtask."""
         children_to_spawn: list[tuple[UUID, Subtask]] = []
 
         for sibling_index, subtask in enumerate(subtasks):
@@ -810,7 +794,6 @@ class AgentSession:
         self._emit(started_event)
 
     def apply_worker_event(self, tool_event: DomainEvent) -> None:
-        """Apply a worker tool event with corrected sequence number."""
         event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
         event_data["aggregate_id"] = self.agent_id
         event_data["sequence_number"] = self._next_sequence()
@@ -836,7 +819,6 @@ class AgentSession:
         self._emit(event)
 
     def mark_verification_passed(self, feedback: str = "", score: int = 100) -> None:
-        """Record that verification passed (observability event)."""
         event = VerificationPassed(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -850,7 +832,6 @@ class AgentSession:
     # -------------------------------------------------------------------------
 
     def emit_execution_started(self, role: str, depth: int) -> None:
-        """Emit AgentExecutionStarted event for timing observability."""
         event = AgentExecutionStarted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -862,7 +843,6 @@ class AgentSession:
     def emit_execution_finished(
         self, role: str, status: str, duration_seconds: float
     ) -> None:
-        """Emit AgentExecutionFinished event for timing observability."""
         event = AgentExecutionFinished(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -873,7 +853,6 @@ class AgentSession:
         self._emit(event)
 
     def emit_operation_started(self, operation_type: str) -> None:
-        """Emit OperationStarted event for timing observability."""
         event = OperationStarted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -884,7 +863,6 @@ class AgentSession:
     def emit_operation_finished(
         self, operation_type: str, duration_seconds: float
     ) -> None:
-        """Emit OperationFinished event for timing observability."""
         event = OperationFinished(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -898,7 +876,6 @@ class AgentSession:
     # -------------------------------------------------------------------------
 
     def emit_probe_started(self, probe_type: str) -> None:
-        """Emit ProbeStarted event for tool-calling observability."""
         event = ProbeStarted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -909,7 +886,6 @@ class AgentSession:
     def emit_probe_completed(
         self, probe_type: str, result_summary: str = ""
     ) -> None:
-        """Emit ProbeCompleted event for tool-calling observability."""
         event = ProbeCompleted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),

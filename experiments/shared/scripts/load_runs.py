@@ -97,7 +97,6 @@ def _resolve_pool_roots(
 
 
 def _iter_manifest_paths_for_root(root: Path) -> Iterator[Path]:
-    """Yield every `run_manifest.json` directly beneath the pool root."""
     if not root.is_dir():
         return
 

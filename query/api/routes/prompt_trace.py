@@ -23,7 +23,6 @@ router = APIRouter()
 
 
 def _prompt_to_schema(prompt: ParsedPrompt) -> ParsedPromptSchema:
-    """Convert domain ParsedPrompt to API schema."""
     sections = [
         PromptSectionSchema(
             tag=s.tag,
@@ -53,7 +52,6 @@ def _prompt_to_schema(prompt: ParsedPrompt) -> ParsedPromptSchema:
 
 
 def _agent_node_to_schema(node: AgentNode) -> TraceAgentNodeSchema:
-    """Convert domain AgentNode to API schema."""
     prompts = [_prompt_to_schema(p) for p in node.prompts]
 
     return TraceAgentNodeSchema(
@@ -69,7 +67,6 @@ def _agent_node_to_schema(node: AgentNode) -> TraceAgentNodeSchema:
 
 
 def _find_agent_in_tree(node: AgentNode, target_id: UUID) -> AgentNode | None:
-    """Recursively search for an agent in the tree."""
     if node.agent_id == target_id:
         return node
     for child in node.children:

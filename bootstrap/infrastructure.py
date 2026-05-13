@@ -125,7 +125,6 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
 
 
 def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
-    """Create all infrastructure adapters."""
     event_store = PostgresEventStore(
         config.postgres_connection_string,
         pool_min=config.pool_min,

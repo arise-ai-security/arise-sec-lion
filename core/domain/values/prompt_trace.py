@@ -49,12 +49,10 @@ class ParsedPrompt:
     sections: tuple[PromptSection, ...]
 
     def by_provenance(self, provenance: SectionProvenance) -> list[PromptSection]:
-        """Get all sections with a specific provenance."""
         return [s for s in self.sections if s.provenance == provenance]
 
     @property
     def raw_length(self) -> int:
-        """Length of the raw prompt text."""
         return len(self.raw)
 
 

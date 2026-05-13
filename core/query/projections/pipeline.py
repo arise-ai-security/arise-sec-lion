@@ -48,12 +48,10 @@ class ProjectionPipeline:
         self._sink.write(output)
 
     async def execute_events(self, root_agent_id: UUID) -> list[DomainEvent]:
-        """Return filtered events without formatting or sink output."""
         events = await self._collector.collect(root_agent_id)
         return [e for e in events if self._filter.matches(e)]
 
     async def execute_summary(self, root_agent_id: UUID) -> ProjectionSummary:
-        """Return aggregated summary without sink output."""
         events = await self._collector.collect(root_agent_id)
         filtered = [e for e in events if self._filter.matches(e)]
         projection = SummaryProjection()
@@ -71,45 +69,37 @@ class ProjectionPipelineBuilder:
         self._sink: SinkPort | None = None
 
     def with_filter(self, name: str, **kwargs: Any) -> Self:
-        """Set filter by registered name."""
         filter_cls = ProjectionRegistry.get_filter(name)
         self._filter = filter_cls(**kwargs) if kwargs else filter_cls()
         return self
 
     def with_filter_instance(self, filter_: EventFilter) -> Self:
-        """Set pre-configured filter instance."""
         self._filter = filter_
         return self
 
     def with_output(self, output_type: str) -> Self:
-        """Set output type: 'events' or 'summary'."""
         self._output_type = output_type
         return self
 
     def with_formatter(self, name: str, **kwargs: Any) -> Self:
-        """Set formatter by registered name."""
         formatter_cls = ProjectionRegistry.get_formatter(name)
         self._formatter = formatter_cls(**kwargs) if kwargs else formatter_cls()
         return self
 
     def with_formatter_instance(self, formatter: Formatter) -> Self:
-        """Set pre-configured formatter instance."""
         self._formatter = formatter
         return self
 
     def to_sink(self, name: str, **kwargs: Any) -> Self:
-        """Set sink by registered name."""
         sink_cls = ProjectionRegistry.get_sink(name)
         self._sink = sink_cls(**kwargs) if kwargs else sink_cls()
         return self
 
     def to_sink_instance(self, sink: SinkPort) -> Self:
-        """Set pre-configured sink instance."""
         self._sink = sink
         return self
 
     def build(self) -> ProjectionPipeline:
-        """Build configured pipeline with resolved defaults."""
         sink = self._sink
         if sink is None:
             sink_cls = ProjectionRegistry.get_sink("string")

@@ -28,7 +28,6 @@ _SECRET_EXCLUSIONS: dict[str, dict[str, bool]] = {
 
 
 def _redacted_settings_blob(settings: Settings) -> bytes:
-    """Serialize settings as canonical JSON with secrets redacted."""
     redacted = settings.model_dump(mode="json", exclude=_SECRET_EXCLUSIONS)
     return json.dumps(redacted, sort_keys=True, separators=(",", ":")).encode("utf-8")
 

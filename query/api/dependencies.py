@@ -40,7 +40,6 @@ def get_execution_service(request: Request) -> AgentExecutionService:
 
 
 def get_domain_plugin(request: Request) -> DomainPlugin | None:
-    """Get the optional domain plugin from application state."""
     return getattr(request.app.state, "domain_plugin", None)
 
 

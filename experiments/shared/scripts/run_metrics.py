@@ -104,7 +104,6 @@ async def query_run_metrics(
     *,
     config_path: Path | None = None,
 ) -> dict[str, MetricValue]:
-    """Query Postgres for ``run_id`` and return deterministic numeric metrics."""
     settings = Settings.from_yaml(config_path) if config_path else Settings.load()
     store = PostgresEventStore(settings.database.connection_string)
     await store.connect()
@@ -224,7 +223,6 @@ def empty_metrics() -> dict[str, MetricValue]:
 def metrics_from_events(  # noqa: PLR0912, PLR0915
     events: list[DomainEvent] | list[dict[str, Any]],
 ) -> dict[str, MetricValue]:
-    """Compute the canonical metric set from typed or raw event objects."""
     metrics = empty_metrics()
     tool_calls_by_type: dict[str, int] = {}
     cost_by_model: dict[str, float] = {}
@@ -392,7 +390,6 @@ def metrics_from_events(  # noqa: PLR0912, PLR0915
 
 
 def _str_or_none(value: Any) -> str | None:
-    """Return a non-empty stripped string, or None for empty / non-string input."""
     if isinstance(value, str):
         stripped = value.strip()
         return stripped or None

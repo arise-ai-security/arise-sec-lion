@@ -66,7 +66,6 @@ class HierarchyBuilder:
         # BFS to find all agents in hierarchy and calculate depth
         hierarchy_agents, max_depth = self._traverse_hierarchy(root_id)
 
-        # Build tree recursively
         root_node = self._build_node(root_id)
 
         return HierarchyResult(

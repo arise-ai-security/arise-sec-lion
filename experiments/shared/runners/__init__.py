@@ -62,7 +62,6 @@ def get(runner_id: str) -> Runner:
 
 
 def all_ids() -> list[str]:
-    """Return sorted ids of every registered runner."""
     return sorted(_REGISTRY)
 
 

@@ -49,12 +49,10 @@ SAMPLE_VARIABLES = {
 
 
 def get_prompt_path(category: str, name: str) -> Path:
-    """Get the file path for a prompt template."""
     return PROMPTS_DIR / category / f"{name}.j2"
 
 
 def validate_category(category: str) -> None:
-    """Validate that the category is valid."""
     if category not in VALID_CATEGORIES:
         raise HTTPException(
             status_code=400,
@@ -63,18 +61,15 @@ def validate_category(category: str) -> None:
 
 
 async def _path_exists(path: Path) -> bool:
-    """Check if path exists asynchronously."""
     return await aiofiles.os.path.exists(path)
 
 
 async def _read_file(path: Path) -> str:
-    """Read file content asynchronously."""
     async with aiofiles.open(path, encoding="utf-8") as f:
         return await f.read()
 
 
 async def _write_file(path: Path, content: str) -> None:
-    """Write content to file asynchronously."""
     async with aiofiles.open(path, mode="w", encoding="utf-8") as f:
         await f.write(content)
 

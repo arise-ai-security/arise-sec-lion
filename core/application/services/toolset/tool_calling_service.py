@@ -258,7 +258,6 @@ def _mask_old_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any
     if last_assistant_idx is None or last_assistant_idx <= 1:
         return messages
 
-    # Build masked copy
     result: list[dict[str, Any]] = []
     for i, msg in enumerate(messages):
         if i < last_assistant_idx and msg.get("role") == "tool":
@@ -280,7 +279,6 @@ def _mask_old_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _find_tool_name(messages: list[dict[str, Any]], tool_call_id: str) -> str:
-    """Find tool name for a tool_call_id from assistant messages."""
     for msg in messages:
         if msg.get("role") == "assistant" and "tool_calls" in msg:
             for tc in msg["tool_calls"]:
@@ -290,12 +288,10 @@ def _find_tool_name(messages: list[dict[str, Any]], tool_call_id: str) -> str:
 
 
 def _serialize_arguments(arguments: dict[str, Any]) -> str:
-    """Serialize tool call arguments to JSON string for message history."""
     return json.dumps(arguments)
 
 
 def _summarize_args(arguments: dict[str, Any]) -> str:
-    """Create a short summary of arguments for logging."""
     parts = []
     for k, v in arguments.items():
         s = str(v)

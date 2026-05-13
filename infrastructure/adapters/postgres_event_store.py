@@ -112,7 +112,6 @@ class PostgresEventStore(EventStorePort):
 
     @staticmethod
     def _deserialize_event(event_type: str, payload: str | dict) -> DomainEvent:
-        """Deserialize event from stored type and payload."""
         event_class = EVENT_TYPE_REGISTRY.get(event_type)
         if not event_class:
             raise EventStoreError(f"Unknown event type: {event_type}")
@@ -283,7 +282,6 @@ class PostgresEventStore(EventStorePort):
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
-            # Build query with optional pagination
             query_parts = [
                 "SELECT event_type, payload",
                 "FROM events",

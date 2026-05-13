@@ -356,10 +356,8 @@ class ExecutionSummarySchema(BaseModel):
         default_factory=RoleCountSchema, description="Agent counts by role"
     )
 
-    # Cost breakdown
     cost: CostBreakdownSchema = Field(..., description="Cost breakdown")
 
-    # Execution timing
     timing: ExecutionTimingSchema = Field(..., description="Execution timing details")
 
     # Derived fields

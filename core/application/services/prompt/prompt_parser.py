@@ -135,7 +135,6 @@ class PromptParser:
         return SectionProvenance.TEMPLATE
 
     def extract_section(self, raw_prompt: str, tag: str) -> str | None:
-        """Extract a specific section's content by tag name."""
         pattern = rf"<{tag}(?:\s[^>]*)?>(.+?)</{tag}>"
         match = re.search(pattern, raw_prompt, re.DOTALL | re.IGNORECASE)
         return match.group(1).strip() if match else None

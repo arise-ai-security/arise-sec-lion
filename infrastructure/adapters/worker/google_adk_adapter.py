@@ -116,7 +116,6 @@ class GoogleADKAdapter(WorkerAdapterBase):
         super().__init__(timeout_seconds=self.config.timeout_seconds)
 
     def _get_tool_name(self) -> str:
-        """Return tool identifier for cost tracking."""
         return "google_adk"
 
     def _tool_allowed(self, *names: str) -> bool:
@@ -192,7 +191,6 @@ class GoogleADKAdapter(WorkerAdapterBase):
                 tools=sdk_tools,
             )
 
-            # Create session service and runner
             session_service = InMemorySessionService()
             runner = Runner(
                 agent=agent,
@@ -208,14 +206,12 @@ class GoogleADKAdapter(WorkerAdapterBase):
             result_text = ""
             processed_events: list[DomainEvent] = []
 
-            # Create the session first
             await session_service.create_session(
                 app_name="arise_worker",
                 user_id=user_id,
                 session_id=session_id,
             )
 
-            # Create Content from task description
             message_content = genai_types.Content(
                 parts=[genai_types.Part(text=task_description)],
                 role="user",
@@ -306,7 +302,6 @@ class GoogleADKAdapter(WorkerAdapterBase):
             yield sequencer.failed(f"Google ADK adapter error: {e!r}")
 
     def _build_instruction(self) -> str:
-        """Build the agent instruction for general task execution."""
         return """You are a task execution agent.
 
 You have access to:
@@ -323,7 +318,6 @@ Always explain your reasoning and provide clear output about what you're doing."
         working_dir: str,
         container_session: ContainerSessionContext | None = None,
     ) -> Any:
-        """Create shell execution tool with bound working directory."""
 
         def shell_execute(command: str, timeout: int = 300) -> dict[str, Any]:
             """Execute shell command in the workspace.
@@ -344,7 +338,6 @@ Always explain your reasoning and provide clear output about what you're doing."
     def _process_adk_event(  # noqa: PLR0912
         self, event: Any, sequencer: EventSequencer
     ) -> list[DomainEvent]:
-        """Process ADK event and return domain events."""
         events: list[DomainEvent] = []
 
         # Handle content events
@@ -368,7 +361,6 @@ Always explain your reasoning and provide clear output about what you're doing."
         # Content with parts (multimodal)
         if hasattr(content, "parts"):
             for part in content.parts:
-                # Text part
                 if hasattr(part, "text"):
                     text = getattr(part, "text", "")
                     if text and text.strip():

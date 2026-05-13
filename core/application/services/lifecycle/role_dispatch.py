@@ -177,7 +177,6 @@ class WorkerHandler(LifecycleRoleHandler):
 
 
 def build_role_handlers(context: DispatchContext) -> dict[AgentRole, RoleHandler]:
-    """Build the role-dispatch registry for execution."""
     evaluator = EvaluatorHandler(context)
     return {
         AgentRole.PENDING: PendingHandler(context),

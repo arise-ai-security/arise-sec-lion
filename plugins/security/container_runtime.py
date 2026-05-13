@@ -68,7 +68,6 @@ class SecurityContainerRuntime(Protocol):
         image: str,
         root_id: UUID,
     ) -> SecBenchWorkspace:
-        """Create the host workspace that mirrors the container image."""
         ...
 
     async def start_session(

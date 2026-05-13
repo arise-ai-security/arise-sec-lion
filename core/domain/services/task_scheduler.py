@@ -40,7 +40,6 @@ class TaskScheduler:
 
     @classmethod
     def from_dependencies(cls, deps: dict[int, list[int]]) -> "TaskScheduler":
-        """Create scheduler from {index: [dependency_indices]} mapping."""
         scheduler = cls()
         scheduler._pending_deps = {idx: set(d) for idx, d in deps.items()}
         return scheduler
@@ -65,11 +64,9 @@ class TaskScheduler:
         return ready
 
     def mark_completed(self, index: int) -> None:
-        """Mark a task as completed, potentially unblocking dependents."""
         self._completed.add(index)
 
     def mark_failed(self, index: int) -> None:
-        """Mark a task as failed."""
         self._failed.add(index)
 
     def invalidate_dependents(self, failed_index: int) -> list[int]:

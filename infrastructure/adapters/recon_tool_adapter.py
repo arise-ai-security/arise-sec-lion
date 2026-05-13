@@ -172,7 +172,6 @@ class ReconToolAdapter:
             return f"Error reading '{path}': {e}"
 
     async def list_directory(self, path: str) -> str:
-        """List directory entries with type indicators (/ for dirs)."""
         resolved = self._resolve_path(path)
         if not resolved.is_dir():
             return f"Error: '{path}' is not a directory or does not exist."
@@ -211,7 +210,6 @@ class ReconToolAdapter:
             if not result:
                 return f"No matches found for pattern '{pattern}'."
 
-            # Make paths relative to workdir for readability
             workdir_str = str(self._workdir) + os.sep
             result = result.replace(workdir_str, "")
             return result
@@ -222,7 +220,6 @@ class ReconToolAdapter:
             return f"Search error: {e}"
 
     async def find_file(self, pattern: str, path: str = ".") -> str:
-        """Find files matching a glob pattern."""
         resolved = self._resolve_path(path)
 
         try:
@@ -246,7 +243,6 @@ class ReconToolAdapter:
             return f"Find error: {e}"
 
     async def get_file_structure(self, path: str = ".", max_depth: int = 3) -> str:
-        """Get a tree view of the directory structure."""
         resolved = self._resolve_path(path)
         if not resolved.is_dir():
             return f"Error: '{path}' is not a directory."
@@ -263,7 +259,6 @@ class ReconToolAdapter:
         max_depth: int,
         lines: list[str],
     ) -> None:
-        """Recursively build tree output."""
         if depth >= max_depth:
             return
 
@@ -334,7 +329,6 @@ class ReconToolAdapter:
         )
 
     async def _ctags_symbols(self, resolved: Path, display_path: str) -> str | None:
-        """Extract symbols using ctags. Returns None if ctags unavailable."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ctags", "--output-format=json", "--fields=+nKS",
@@ -406,7 +400,6 @@ class ReconToolAdapter:
 
     @staticmethod
     def _find_symbol_line(lines: list[str], symbol_name: str, suffix: str) -> int | None:
-        """Find the start line (0-indexed) of a named symbol."""
         suffix = suffix.lower()
         for i, line in enumerate(lines):
             stripped = line.strip()
@@ -423,7 +416,6 @@ class ReconToolAdapter:
 
     @staticmethod
     def _find_symbol_end(lines: list[str], start: int, suffix: str) -> int:
-        """Find the end line (0-indexed) of a symbol starting at `start`."""
         suffix = suffix.lower()
 
         if suffix in (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"):
@@ -456,7 +448,6 @@ class ReconToolAdapter:
         return min(start + 50, len(lines) - 1)
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return tool definitions in OpenAI function-calling format."""
         return [
             {
                 "type": "function",

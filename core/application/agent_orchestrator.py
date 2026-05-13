@@ -283,7 +283,6 @@ class AgentOrchestrator:
                 domain_context = self._get_domain_context(agent)
                 tool_context = self._toolset_resolver.resolve(agent.role)
 
-                # Build prompt
                 scope = self._build_scope(agent)
                 prompt = self._prompt_builder.build_assessment_prompt(
                     task_description=agent.task_description,
@@ -519,7 +518,6 @@ class AgentOrchestrator:
             tool_name = agent.config.tool
             agent.start_worker_execution(tool_name)
 
-            # Build worker prompt
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
@@ -1124,14 +1122,12 @@ class AgentOrchestrator:
 
     @staticmethod
     def _get_domain_context(agent: "AgentSession") -> object | None:
-        """Extract optional domain context from hierarchy limits."""
         if agent.hierarchy_limits:
             return agent.hierarchy_limits.domain_context
         return None
 
     @staticmethod
     def _build_scope(agent: "AgentSession") -> SubtaskScope | None:
-        """Build SubtaskScope from agent's structured scoping fields."""
         if not (agent.target_paths or agent.symbols or agent.search_hints):
             return None
         return SubtaskScope(
@@ -1145,7 +1141,6 @@ class AgentOrchestrator:
             agent: "AgentSession",
             tool_records: list,
     ) -> None:
-        """Emit ProbeStarted/ProbeCompleted events for each recon tool call."""
         for record in tool_records:
             agent.emit_probe_started(probe_type=record.tool_name)
             agent.emit_probe_completed(

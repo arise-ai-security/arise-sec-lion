@@ -51,7 +51,6 @@ def shared_context_aggregate_id(root_id: UUID) -> UUID:
 
 @dataclass(frozen=True)
 class Artifact:
-    """Stored artifact metadata."""
 
     key: str
     content_type: str
@@ -114,20 +113,16 @@ class EventSourcedAggregateBase:
         return self._changes
 
     def mark_changes_as_committed(self) -> None:
-        """Clear uncommitted changes after successful persistence."""
         self._changes.clear()
 
     def _next_sequence(self) -> int:
-        """Get next sequence number for event ordering."""
         self._sequence += 1
         return self._sequence
 
     def set_sequence(self, seq: int) -> None:
-        """Set sequence number (used during replay)."""
         self._sequence = max(self._sequence, seq)
 
     def _increment_version(self) -> None:
-        """Increment version after applying an event."""
         self._version += 1
 
     def _emit(self, event: DomainEvent) -> DomainEvent:
@@ -152,7 +147,6 @@ class EventSourcedAggregateBase:
         raise TypeError(f"No handler for {type(event).__name__}")
 
     def apply_event(self, event: DomainEvent) -> None:
-        """Apply event during replay (public for facade use)."""
         self._apply(event)
 
 
@@ -179,7 +173,6 @@ class ArtifactStore:
         content_hash: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ArtifactStored:
-        """Construct an ArtifactStored event for the owning aggregate."""
         return ArtifactStored(
             aggregate_id=aggregate_id,
             sequence_number=sequence_number,
@@ -195,7 +188,6 @@ class ArtifactStore:
         self,
         event: ArtifactStored,
     ) -> None:
-        """Apply an ArtifactStored event to the projection state."""
         self._artifacts[event.key] = Artifact(
             key=event.key,
             content_type=event.content_type,
@@ -206,7 +198,6 @@ class ArtifactStore:
         )
 
     def get_artifact(self, key: str) -> Artifact | None:
-        """Get artifact by key."""
         return self._artifacts.get(key)
 
     def list_artifacts(self) -> list[str]:
@@ -230,7 +221,6 @@ class DecisionLog:
         rationale: str,
         decided_by: UUID,
     ) -> DecisionRecorded:
-        """Construct a DecisionRecorded event for the owning aggregate."""
         return DecisionRecorded(
             aggregate_id=aggregate_id,
             sequence_number=sequence_number,
@@ -241,7 +231,6 @@ class DecisionLog:
         )
 
     def apply_event(self, event: DecisionRecorded) -> None:
-        """Apply a DecisionRecorded event to the projection state."""
         self._decisions[event.decision_key] = Decision(
             key=event.decision_key,
             value=event.decision_value,
@@ -250,7 +239,6 @@ class DecisionLog:
         )
 
     def get_decision(self, key: str) -> Decision | None:
-        """Get decision by key."""
         return self._decisions.get(key)
 
     def list_decisions(self) -> list[str]:
@@ -350,7 +338,6 @@ class SharedStore(EventSourcedAggregateBase):
         return instance
 
     def mark_changes_as_committed(self) -> None:
-        """Clear uncommitted changes after successful persistence."""
         super().mark_changes_as_committed()
 
     # -------------------------------------------------------------------------
@@ -417,10 +404,6 @@ class SharedStore(EventSourcedAggregateBase):
         """List all decision keys (delegated to DecisionLog)."""
         return self._decision_log.list_decisions()
 
-    # -------------------------------------------------------------------------
-    # Event Handlers
-    # Note: _next_sequence() inherited from EventSourcedAggregateBase
-    # -------------------------------------------------------------------------
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:

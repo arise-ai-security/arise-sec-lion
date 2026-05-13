@@ -25,7 +25,6 @@ class ConstraintFailure(BaseModel):
 
     @classmethod
     def from_llm_response(cls, data: dict[str, Any]) -> Self:
-        """Create from LLM response dict with nested minimum_required."""
         minimum_required = data.get("minimum_required", {})
         return cls(
             reason=data.get("reason", "Unknown reason"),
@@ -34,7 +33,6 @@ class ConstraintFailure(BaseModel):
         )
 
     def format_message(self) -> str:
-        """Format failure as human-readable message."""
         msg = f"Constraints unsatisfiable: {self.reason}"
         if self.minimum_subtasks is not None:
             msg += f" (needs at least {self.minimum_subtasks} subtasks)"

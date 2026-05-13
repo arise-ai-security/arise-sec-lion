@@ -27,7 +27,6 @@ class EventStoreConnectPort(Protocol):
         ...
 
     async def initialize_schema(self) -> None:
-        """Create tables/schema."""
         ...
 
 
@@ -88,7 +87,6 @@ class EventStoreReadPort(Protocol):
         ...
 
     async def get_all_aggregate_ids(self) -> list[UUID]:
-        """Get all aggregate UUIDs that have events."""
         ...
 
     async def get_all_events_grouped(

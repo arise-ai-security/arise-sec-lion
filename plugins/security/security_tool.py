@@ -53,7 +53,6 @@ def get_tools_for_phase(
     phase: str,
     enabled_tools: list[str],
 ) -> list[SecurityTool]:
-    """Return enabled tools that apply to the current SEC-bench phase."""
     return [
         tool
         for name, tool in SECURITY_TOOL_REGISTRY.items()

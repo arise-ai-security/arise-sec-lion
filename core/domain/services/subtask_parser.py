@@ -25,15 +25,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Schema hints for the LLM-backed format repairer (FormatRepairerPort).
-# ---------------------------------------------------------------------------
-# We derive the per-object schemas from Pydantic models at runtime so
-# that any new required field, renamed field, or removed field on
-# Subtask / AgentConfig / ConstraintFailure automatically propagates
-# into the repairer prompt. The outer envelope (action/reasoning/
-# subtasks) is hand-parsed and kept as a small template that
-# interpolates the dynamic blocks.
 
 from functools import lru_cache  # noqa: E402  — placed near the schema helpers
 
@@ -100,7 +91,6 @@ required field is missing, which is the correct behavior."""
 
 @lru_cache(maxsize=1)
 def build_subtasks_schema_hint() -> str:
-    """Build the subtasks-list schema hint from current Pydantic models."""
     subtask_schema = _compact_pydantic_schema(Subtask)
     failure_schema = _compact_pydantic_schema(ConstraintFailure)
     return f"""\
@@ -146,12 +136,6 @@ ASSESSMENT_SCHEMA_HINT: str = build_assessment_schema_hint()
 SUBTASKS_SCHEMA_HINT: str = build_subtasks_schema_hint()
 
 
-# ---------------------------------------------------------------------------
-# Standard JSON extraction (GPT / Claude)
-# ---------------------------------------------------------------------------
-# GPT and Claude reliably return a single JSON object, optionally wrapped in
-# a ```json … ``` markdown code block.  The two patterns below handle the
-# code-block case; plain JSON passes through unchanged.
 
 _FULL_CODE_BLOCK_PATTERN = re.compile(
     r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
@@ -326,7 +310,6 @@ def _parse_json(response: str) -> Any:
 
 
 def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:  # noqa: PLR0911
-    """Normalize various LLM response formats to subtask list."""
     match data:
         case list() as items:
             return items

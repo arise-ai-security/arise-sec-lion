@@ -106,7 +106,6 @@ class WorkerToolPort(Protocol):
 
 
 class CostCalculatorPort(Protocol):
-    """Calculate USD cost from token usage and model information."""
 
     def calculate_llm_cost(
         self, model: str, prompt_tokens: int, completion_tokens: int
@@ -159,7 +158,6 @@ class SharedContextPort(Protocol):
 
 
 class SiblingViewPort(Protocol):
-    """Build sibling view for worker coordination."""
 
     async def build_view(
         self, agent_id: UUID, parent_id: UUID | None, root_id: UUID
@@ -209,7 +207,6 @@ class Toolset(Protocol):
     def name(self) -> str: ...
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return tool definitions in OpenAI function-calling format."""
         ...
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
@@ -233,11 +230,9 @@ class ReconToolPort(Toolset, Protocol):
         self, path: str, max_lines: int = 200,
         start_line: int | None = None, end_line: int | None = None,
     ) -> str:
-        """Read file contents. Use start_line/end_line for targeted reads."""
         ...
 
     async def list_directory(self, path: str) -> str:
-        """List directory entries with type indicators."""
         ...
 
     async def search_codebase(self, pattern: str, path: str = ".") -> str:
@@ -245,15 +240,12 @@ class ReconToolPort(Toolset, Protocol):
         ...
 
     async def find_file(self, pattern: str, path: str = ".") -> str:
-        """Find files matching a glob pattern."""
         ...
 
     async def get_file_structure(self, path: str = ".", max_depth: int = 3) -> str:
-        """Get a tree view of the directory structure."""
         ...
 
     async def get_symbols_overview(self, path: str) -> str:
-        """Get function/class/method signatures without bodies."""
         ...
 
     async def read_symbol(self, path: str, symbol_name: str) -> str:

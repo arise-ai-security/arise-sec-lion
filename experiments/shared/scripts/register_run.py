@@ -52,7 +52,6 @@ def _study_manifest_path(study_id: str) -> Path:
 
 
 def _runs_root(output_directory: str | Path | None = None) -> Path:
-    """Return the flat runs pool root (default: `<repo_root>/runs`)."""
     if output_directory is None:
         return get_repo_root() / "runs"
     return Path(output_directory)

@@ -319,7 +319,6 @@ def _merge_cost_dict(target: dict[str, float], source: Any) -> None:
 
 
 def _repo_relative_existing(paths: set[Path]) -> list[str]:
-    """Return existing repo-relative file paths suitable for provenance metadata."""
     rels: list[str] = []
     for path in sorted(paths, key=lambda item: item.as_posix()):
         if not path.is_file():

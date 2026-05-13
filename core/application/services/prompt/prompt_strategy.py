@@ -57,7 +57,6 @@ class PromptStrategy(Protocol):
         chain: "TemplateChain",
         context: PromptContext,
     ) -> "TemplateChain | None":
-        """Return an extended assessment prompt chain, or None to use the default chain."""
         ...
 
     def extend_boss_prompt(
@@ -65,7 +64,6 @@ class PromptStrategy(Protocol):
         chain: "TemplateChain",
         context: PromptContext,
     ) -> "TemplateChain | None":
-        """Return an extended boss prompt chain, or None to use the default chain."""
         ...
 
     def extend_manager_prompt(
@@ -73,7 +71,6 @@ class PromptStrategy(Protocol):
         chain: "TemplateChain",
         context: PromptContext,
     ) -> "TemplateChain | None":
-        """Return an extended manager prompt chain, or None to use the default chain."""
         ...
 
     def extend_worker_prompt(
@@ -81,7 +78,6 @@ class PromptStrategy(Protocol):
         chain: "TemplateChain",
         context: PromptContext,
     ) -> "TemplateChain | None":
-        """Return an extended worker prompt chain, or None to use the default chain."""
         ...
 
     def extend_flat_prompt(

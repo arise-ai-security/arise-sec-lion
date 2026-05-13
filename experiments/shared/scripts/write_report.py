@@ -70,7 +70,6 @@ def _utc_now_iso() -> str:
 
 
 def _inputs_hash_map(inputs: Iterable[str]) -> dict[str, str]:
-    """Compute sha256 for every listed input, keyed by repo-relative path."""
     result: dict[str, str] = {}
     for item in inputs:
         rel = to_repo_relative(item)
@@ -228,7 +227,6 @@ def write_binary(
 
 
 def _reports_root_for_output(output_abs: Path) -> Path:
-    """Find the enclosing `<study>/reports/` dir for an output file path."""
     for parent in output_abs.parents:
         if parent.name == "reports" and parent.parent.parent.name == "experiments":
             return parent

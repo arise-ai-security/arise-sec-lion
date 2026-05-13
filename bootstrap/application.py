@@ -120,7 +120,6 @@ def get_application(
     infrastructure: Infrastructure,
     config: ApplicationConfig,
 ) -> Application:
-    """Create all application services with proper dependency injection."""
     service_config = ServiceConfig(
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
@@ -250,7 +249,6 @@ def get_cli(
     event_store: EventStoreReadPort,
     config: CLIConfig | None = None,
 ) -> CLI:
-    """Create CLI interface."""
     from presentation.cli import CLI
 
     return CLI(execution_service=execution_service, event_store=event_store, config=config)
