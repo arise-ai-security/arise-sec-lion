@@ -14,6 +14,7 @@ from core.ports.runtime_ports import (
 )
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 from infrastructure.adapters.llm_format_repairer import LLMFormatRepairer
+from infrastructure.adapters.openrouter_adapter import OpenRouterAdapter
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 from infrastructure.adapters.recon_tool_adapter import ReconToolAdapter
 from infrastructure.adapters.shared_context_adapter import PostgresSharedContextAdapter
@@ -27,6 +28,29 @@ from infrastructure.adapters.worker import (
 
 
 type WorkerToolType = Literal["claude_code", "openhands", "google_adk"]
+
+
+def _build_llm_adapter() -> LLMPort:
+    """Pick the LLM gateway based on ``ARISE_LLM_GATEWAY`` env var.
+
+    Values:
+        - ``litellm`` (default) — multi-provider routing via LiteLLM
+        - ``openrouter`` — single gateway via the official ``openai`` SDK
+          pointed at https://openrouter.ai. Requires ``OPENROUTER_API_KEY``.
+
+    Keeping both behind a switch lets us A/B test 429 behavior and roll back
+    quickly if a model isn't available through OpenRouter.
+    """
+    import os
+
+    gateway = os.environ.get("ARISE_LLM_GATEWAY", "litellm").lower()
+    if gateway == "openrouter":
+        return OpenRouterAdapter(app_title="arise-sec-lion")
+    if gateway == "litellm":
+        return LiteLLMAdapter()
+    raise ValueError(
+        f"Unknown ARISE_LLM_GATEWAY={gateway!r}; expected 'litellm' or 'openrouter'"
+    )
 
 
 @dataclass
@@ -46,9 +70,9 @@ class InfrastructureConfig:
     format_repairer_max_tokens: int = 16000
     format_repairer_api_base: str | None = None
     format_repairer_max_concurrent: int = 3
-    # asyncpg pool sizing (G.1). Defaults match the adapter's own
-    # defaults so unchanged deployments behave identically; raise
-    # pool_max to widen the connection pool under load.
+    # asyncpg pool sizing. Defaults match the adapter's own defaults so
+    # unchanged deployments behave identically; raise ``pool_max`` to
+    # widen the connection pool under load.
     pool_min: int = 10
     pool_max: int = 10
 
@@ -107,7 +131,7 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
         pool_min=config.pool_min,
         pool_max=config.pool_max,
     )
-    llm_adapter = LiteLLMAdapter()
+    llm_adapter = _build_llm_adapter()
     worker_tool = _create_worker_adapter(config)
     shared_context = PostgresSharedContextAdapter(event_store)
     recon_tool = ReconToolAdapter()

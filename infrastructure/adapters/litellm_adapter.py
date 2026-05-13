@@ -124,9 +124,13 @@ class LiteLLMAdapter(LLMPort):
             "num_ctx": 65536,
         }
 
-    _LLM_TIMEOUT_SECONDS = 180  # Hard timeout for a single LLM call
-    _RATE_LIMIT_RETRIES = 3
-    _RATE_LIMIT_BASE_DELAY = 10  # seconds; doubles each retry
+    _LLM_TIMEOUT_SECONDS = 120  # Hard timeout for a single LLM call
+    # Cap retries low because 3 retries x 180s x 5 tool-iterations could
+    # compound to ~25 min of DB-silent retry. One retry with a longer cooldown
+    # propagates a 429 storm as an LLMError quickly enough that the per-step
+    # timeout (default 600s) can recycle the agent.
+    _RATE_LIMIT_RETRIES = 1
+    _RATE_LIMIT_BASE_DELAY = 15  # seconds; doubles each retry
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
         """Call litellm.acompletion with timeout, 429 retry, and exception handling.

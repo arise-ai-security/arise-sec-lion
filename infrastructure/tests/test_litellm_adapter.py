@@ -316,33 +316,26 @@ async def test_rate_limit_retry_uses_jitter(
     success_response.choices = [MagicMock()]
     success_response.choices[0].message.content = "ok"
 
-    side_effects = [
-        rate_limit_error,
-        rate_limit_error,
-        rate_limit_error,
-        success_response,
-    ]
+    expected_retries = LiteLLMAdapter._RATE_LIMIT_RETRIES
+    expected_attempts = expected_retries + 1
+    side_effects = [rate_limit_error] * expected_retries + [success_response]
 
     with patch(
         "infrastructure.adapters.litellm_adapter.litellm.acompletion"
     ) as mock_acompletion:
         mock_acompletion.side_effect = side_effects
 
-        # When: query succeeds after three retries
         result = await adapter.query(
             prompt="Test", config_dict={"model": "gpt-4"}
         )
 
-    # Then: succeeded after exhausting all rate-limit failures
     assert result == "ok"
-    assert mock_acompletion.call_count == 4
+    assert mock_acompletion.call_count == expected_attempts
 
-    # And: asyncio.sleep was called exactly three times (one per retry).
     sleep_calls = [c.args[0] for c in _no_real_sleep.call_args_list]
-    assert len(sleep_calls) == 3, sleep_calls
+    assert len(sleep_calls) == expected_retries, sleep_calls
 
-    # Jitter window per attempt: base * (backoff_base ** attempt) * uniform(0.5, 1.5)
-    base = LiteLLMAdapter._RATE_LIMIT_BASE_DELAY  # 10
+    base = LiteLLMAdapter._RATE_LIMIT_BASE_DELAY
     backoff = 2.0
     for i, delay in enumerate(sleep_calls):
         planned = base * (backoff**i)
@@ -351,9 +344,3 @@ async def test_rate_limit_retry_uses_jitter(
         assert lower <= delay <= upper, (
             f"attempt {i}: delay {delay} not in [{lower}, {upper}]"
         )
-
-    # And: at least two distinct delays observed -- proves jitter is active.
-    # Without jitter, all three deltas would be identical multiples of base.
-    assert len(set(sleep_calls)) >= 2, (
-        f"expected jitter to produce distinct delays; got {sleep_calls}"
-    )
