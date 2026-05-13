@@ -30,6 +30,25 @@ from infrastructure.io import robust_call
 logger = logging.getLogger(__name__)
 
 
+def _strip_tool_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove tool_calls and tool-result messages from a conversation history.
+
+    Anthropic rejects messages that reference tools (assistant tool_calls or
+    role=tool results) when no ``tools`` parameter is provided. This is used
+    by the fallback "force final answer" path after max tool iterations.
+    """
+    cleaned: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") == "tool":
+            continue
+        if msg.get("tool_calls"):
+            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+            if not msg.get("content"):
+                msg["content"] = ""
+        cleaned.append(msg)
+    return cleaned
+
+
 class LiteLLMAdapter(LLMPort):
     """Query LLMs via LiteLLM (OpenAI, Anthropic, etc.) with cost tracking."""
 
@@ -303,12 +322,13 @@ class LiteLLMAdapter(LLMPort):
             "max_tokens": merged_config.get("max_tokens", 4000),
             "top_p": merged_config.get("top_p"),
         }
-        # Some providers (notably ollama_chat) reject ``tools=[]`` outright;
-        # callers using this method as a multi-turn no-tools query path
-        # (e.g. orchestrator decomposition recovery) pass an empty list to
-        # signal "no tools this turn". Drop the key entirely in that case.
         if tools:
             call_kwargs["tools"] = tools
+        else:
+            # Anthropic rejects messages containing tool_calls/tool results
+            # when no tools are defined. Strip tool content so the fallback
+            # "force final answer" call after max iterations works cleanly.
+            call_kwargs["messages"] = _strip_tool_content(messages)
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))

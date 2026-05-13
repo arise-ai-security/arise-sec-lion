@@ -345,8 +345,11 @@ class AgentQueryService:
             if sib_id in summaries:
                 sib = summaries[sib_id]
                 sibling_status[sib.sibling_index] = sib.is_terminal
+        effective_deps = [
+            d for d in summary.depends_on if d != summary.sibling_index
+        ]
         return all(
-            sibling_status.get(dep_idx, False) for dep_idx in summary.depends_on
+            sibling_status.get(dep_idx, False) for dep_idx in effective_deps
         )
 
     @staticmethod
@@ -372,9 +375,13 @@ class AgentQueryService:
                         if sib_id in summaries:
                             sib = summaries[sib_id]
                             sibling_status[sib.sibling_index] = sib.is_terminal
+                    effective_deps = [
+                        d for d in ancestor.depends_on
+                        if d != ancestor.sibling_index
+                    ]
                     if not all(
                         sibling_status.get(dep_idx, False)
-                        for dep_idx in ancestor.depends_on
+                        for dep_idx in effective_deps
                     ):
                         return False
             current_id = ancestor.parent_id
