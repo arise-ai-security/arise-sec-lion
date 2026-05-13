@@ -69,14 +69,8 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _is_o_series(model: str) -> bool:
-        """Return True for OpenAI models that reject temperature (O-series, GPT-5)."""
         base = model.split("/")[-1].lower()
         return base.startswith(("o1", "o3", "o4", "gpt-5"))
-
-    @staticmethod
-    def _is_ollama(model: str) -> bool:
-        """Return True for models served via Ollama (local or cloud)."""
-        return model.startswith(("ollama/", "ollama_chat/"))
 
     @staticmethod
     def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
@@ -611,7 +605,6 @@ def _match_single_tool_call(
 def _build_tool_param_index(
     tools: list[dict[str, Any]],
 ) -> dict[str, frozenset[str]]:
-    """Build tool-name → parameter-keys index from OpenAI-format tool defs."""
     index: dict[str, frozenset[str]] = {}
     for t in tools:
         func = t.get("function", {})

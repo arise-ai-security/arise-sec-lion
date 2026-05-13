@@ -184,9 +184,7 @@ class AgentExecutionService:
         )
         self._llm_semaphore = asyncio.Semaphore(llm_limit)
         self._llm_jitter_max_ms = system_limits.llm_jitter_max_ms
-        self._max_agent_step_seconds = float(
-            getattr(system_limits, "max_agent_step_seconds", 600.0) or 600.0
-        )
+        self._max_agent_step_seconds = float(system_limits.max_agent_step_seconds)
 
         # Progress callback
         self._progress_callback = progress_callback
@@ -217,7 +215,6 @@ class AgentExecutionService:
     # -------------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """Initialize infrastructure connections."""
         await self._event_store.connect()
         await self._event_store.initialize_schema()
 
@@ -230,7 +227,6 @@ class AgentExecutionService:
             task_description: str,
             domain_context: object | None = None,
     ) -> UUID:
-        """Create root BOSS agent with task."""
         root_id = uuid4()
         self._reset_for_new_run(root_id, domain_context=domain_context)
         self._current_task = task_description
@@ -254,7 +250,6 @@ class AgentExecutionService:
         return root_id
 
     async def _create_shared_context(self, root_id: UUID) -> None:
-        """Create shared context for execution run."""
         shared_context = await self._shared_context_port.get_or_create(
             root_id=root_id, config={}
         )
@@ -323,7 +318,7 @@ class AgentExecutionService:
         """
         if agent is None:
             return
-        pending = getattr(agent, "pending_reservation", 0)
+        pending = agent.pending_reservation
         if not pending:
             return
         await self._child_factory.release_reservation(pending)
@@ -634,7 +629,6 @@ class AgentExecutionService:
             start_time: float,
             status_override: str | None = None,
     ) -> None:
-        """Emit RunCompleted event on BOSS agent with run statistics."""
         duration_seconds = time.monotonic() - start_time
         stats = await self._query_service.get_statistics(root_id=root_agent_id)
 
@@ -661,7 +655,6 @@ class AgentExecutionService:
             in_progress: set[UUID],
             task_started_at: dict[UUID, float] | None = None,
     ) -> None:
-        """Remove completed tasks and log their terminal state."""
         completed = [aid for aid, task in tasks.items() if task.done()]
         for aid in completed:
             in_progress.discard(aid)
@@ -780,7 +773,6 @@ class AgentExecutionService:
             agent_last_progress_at.pop(aid, None)
 
     def _is_run_timed_out(self, start_time: float) -> bool:
-        """Return True when the global orchestration deadline has elapsed."""
         return (
                 time.monotonic() - start_time
         ) > self._system_limits.max_run_duration_seconds
@@ -810,7 +802,6 @@ class AgentExecutionService:
             tasks: dict[UUID, asyncio.Task],
             in_progress: set[UUID],
     ) -> None:
-        """Cancel all in-flight tasks and wait for cancellation to settle."""
         if not tasks:
             return
 
@@ -867,7 +858,6 @@ class AgentExecutionService:
                     )
 
     async def _fail_agent(self, agent: AgentSession, reason: str) -> None:
-        """Persist a failure for a still-active agent and notify its parent."""
         if agent.is_terminal():
             return
 
@@ -891,13 +881,11 @@ class AgentExecutionService:
             await self._parent_notifier.notify_if_failed(reloaded)
 
     async def get_agent_result(self, agent_id: UUID) -> AgentResultDTO:
-        """Get agent execution result."""
         return await self._query_service.get_result(agent_id)
 
     async def get_system_statistics(
             self, root_id: UUID | None = None
     ) -> SystemStatisticsDTO:
-        """Get agent statistics."""
         return await self._query_service.get_statistics(root_id=root_id)
 
     # -------------------------------------------------------------------------
@@ -907,7 +895,6 @@ class AgentExecutionService:
     def _reset_for_new_run(
             self, root_id: UUID, domain_context: object | None = None
     ) -> None:
-        """Reset all state for a new execution run."""
         self._working_directory = None
         self._limits_registry.reset()
         self._child_factory.reset(initial_count=1)
@@ -923,7 +910,6 @@ class AgentExecutionService:
         )
 
     def _get_run_metadata(self, domain_context: object | None) -> JsonObject | None:
-        """Build JSON-safe run metadata from the active domain plugin."""
         if self._domain_plugin is None or domain_context is None:
             return None
 
@@ -1000,11 +986,9 @@ class AgentExecutionService:
             return None
 
     def _get_working_directory_str(self) -> str | None:
-        """Get the current working directory as string."""
         return str(self._working_directory) if self._working_directory else None
 
     def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
-        """Create the root BOSS agent session."""
         boss_cfg = self._config.boss_config
         boss_config = {
             "strategy": "heuristic",
@@ -1012,7 +996,7 @@ class AgentExecutionService:
                 "model": boss_cfg.model,
                 "temperature": boss_cfg.temperature,
                 "max_tokens": boss_cfg.max_tokens,
-                "api_base": getattr(boss_cfg, "api_base", None),
+                "api_base": boss_cfg.api_base,
             },
             "tool": self._config.default_worker_tool,
         }
@@ -1027,7 +1011,6 @@ class AgentExecutionService:
         return boss_agent
 
     async def _load_agent_with_context(self, agent_id: UUID) -> AgentSession:
-        """Load agent and attach hierarchy limits with current agent counts."""
         agent = await self._repository.load(agent_id)
 
         limits = self._limits_registry.get(agent_id)
@@ -1052,14 +1035,12 @@ class AgentExecutionService:
         await handler.handle(agent)
 
     def _get_agent_depth(self, agent: AgentSession) -> int:
-        """Get agent depth from hierarchy limits, defaulting to 0."""
         limits = self._limits_registry.get(agent.agent_id)
         return limits.current_depth if limits else 0
 
     async def _persist_agent_events(
             self, agent: AgentSession
     ) -> list[DomainEvent]:
-        """Persist uncommitted events and return them."""
         return await self._repository.persist_events(
             agent, self._progress_callback
         )
@@ -1067,7 +1048,6 @@ class AgentExecutionService:
     async def _handle_post_step(
             self, agent: AgentSession, events: list[DomainEvent]
     ) -> None:
-        """Handle post-step operations after agent events are persisted."""
         child_events = [e for e in events if isinstance(e, ChildSpawned)]
         if child_events:
             await self._child_factory.create_children_from_events(
@@ -1129,7 +1109,6 @@ class AgentExecutionService:
         return True
 
     async def _process_worker_context_updates(self, agent: AgentSession) -> None:
-        """Extract and store context updates from worker result."""
         if agent.result is None:
             return
 
@@ -1165,7 +1144,6 @@ class AgentExecutionService:
             context.mark_changes_as_committed()
 
     async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
-        """Handle execution failure by persisting error state and notifying parent."""
         try:
             agent = await self._repository.load_if_exists(agent_id)
             if agent is None:

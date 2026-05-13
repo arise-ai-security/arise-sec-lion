@@ -78,7 +78,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         super().__init__(timeout_seconds=self.config.timeout_seconds)
 
     def _get_tool_name(self) -> str:
-        """Return tool identifier for cost tracking."""
         return "claude_code"
 
     async def _execute_task(
@@ -153,20 +152,18 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         container_session: ContainerSessionContext | None,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> ClaudeAgentOptions:
-        """Build SDK options with PostToolUse hook for event capture."""
 
         async def capture_tool_use(
             input_data: HookInput,
             _tool_use_id: str | None,
             _context: HookContext,
         ) -> SyncHookJSONOutput:
-            """Hook callback to capture tool invocations."""
             tool_name = getattr(input_data, "tool_name", "unknown")
             tool_input = getattr(input_data, "tool_input", {})
-            # BUG-EVENT1: mirror claude_code_worker.py:565-567 and
-            # openhands_adapter.py:692 -- append `\nInput: {<json>}` so the
-            # cheating-attempt detector (`run_metrics._extract_bash_command`)
-            # can recover the Bash command string from B-cell tool_use events.
+            # Mirror claude_code_worker.py:565-567 and openhands_adapter.py:692:
+            # append `\nInput: {<json>}` so downstream parsers that expect the
+            # JSON-encoded tool input alongside the description (e.g.,
+            # bash-command recovery) can find it.
             detail = json.dumps(tool_input, sort_keys=True, default=str)
             content = f"{format_tool_event(tool_name, tool_input)}\nInput: {detail}"
             # Audit N-6: pass the canonical tool_name through so the
@@ -207,7 +204,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     def _extract_mcp_servers(
         task_context: dict[str, Any],
     ) -> dict[str, dict[str, Any]] | None:
-        """Translate ``task_context['mcp_servers']`` into the SDK-shaped mapping."""
         servers = task_context.get("mcp_servers")
         if not isinstance(servers, dict) or not servers:
             return None
@@ -227,7 +223,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         queue: asyncio.Queue[tuple[str, str, str | None]],
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
-        """Drain all pending events from queue."""
         while not queue.empty():
             content, output_type, tool_name = queue.get_nowait()
             yield sequencer.thought(content, output_type, tool_name=tool_name)
@@ -237,7 +232,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         message: Any,
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
-        """Process SDK message and yield domain events."""
         if not isinstance(message, AssistantMessage):
             return
 
@@ -254,7 +248,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         *,
         duration_seconds: float = 0.0,
     ) -> DomainEvent | None:
-        """Create WorkerCostRecorded event from ResultMessage if cost data available."""
         cost_usd = getattr(message, "total_cost_usd", None)
         usage = getattr(message, "usage", None) or {}
 
@@ -299,7 +292,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _usage_int(usage: Any, key: str) -> int:
-        """Read an integer token metric from dict-like or SDK usage objects."""
         value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
         return int(value or 0)
 
@@ -308,14 +300,12 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         message: ResultMessage,
         sequencer: EventSequencer,
     ) -> DomainEvent:
-        """Create terminal event from ResultMessage."""
         if getattr(message, "is_error", False):
             return sequencer.failed(getattr(message, "result", None) or "Task failed")
         return sequencer.completed(getattr(message, "result", None) or "Task completed")
 
     @staticmethod
     def _process_block(block: Any) -> tuple[str, str] | None:
-        """Process a single content block, returning (content, output_type) or None."""
         if isinstance(block, TextBlock):
             if block.text.strip():
                 return block.text, "output"
@@ -328,7 +318,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         return None
 
     def _format_error(self, error: Exception) -> str:
-        """Format exception as user-friendly error message."""
         error_str = str(error).lower()
         if "cli" in error_str and ("not found" in error_str or "missing" in error_str):
             return (

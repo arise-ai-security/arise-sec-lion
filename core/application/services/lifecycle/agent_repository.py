@@ -46,7 +46,6 @@ class AgentRepository:
         self._progress_callback = progress_callback
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
-        """Set the progress callback for event notifications."""
         self._progress_callback = callback
 
     async def load(self, agent_id: UUID) -> AgentSession:
@@ -172,10 +171,6 @@ class AgentRepository:
         agent.mark_changes_as_committed()
         return uncommitted
 
-    async def get_all_agent_ids(self) -> list[UUID]:
-        """Get all agent IDs from event store."""
-        return await self._event_store.get_all_aggregate_ids()
-
     async def get_all_events_grouped(self) -> dict[UUID, list[DomainEvent]]:
         """Get all events grouped by aggregate ID.
 
@@ -216,7 +211,6 @@ class AgentRepository:
         return await self._event_store.get_hierarchy_events_grouped(root_id)
 
     def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
-        """Notify progress callback if set."""
         if self._progress_callback is not None:
             try:
                 self._progress_callback(event, agent)

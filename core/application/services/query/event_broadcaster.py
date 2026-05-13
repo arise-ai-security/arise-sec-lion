@@ -33,7 +33,6 @@ class EventBroadcaster:
     _lock: asyncio.Lock | None = None
 
     def __init__(self) -> None:
-        """Initialize broadcaster with empty subscriber registry."""
         self._subscribers: dict[UUID, list[asyncio.Queue[DomainEvent]]] = (
             defaultdict(list)
         )
@@ -48,11 +47,6 @@ class EventBroadcaster:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-
-    @classmethod
-    def reset_instance(cls) -> None:
-        """Reset singleton for testing."""
-        cls._instance = None
 
     async def publish(self, event: "DomainEvent", root_id: UUID) -> None:
         """Publish event to all subscribers for a root_id.

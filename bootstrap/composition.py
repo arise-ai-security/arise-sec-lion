@@ -88,7 +88,6 @@ def build_domain_plugin(settings: Settings) -> DomainPlugin | None:
 
 
 def get_first_enabled_domain_components(settings: Settings) -> DomainComponents:
-    """Return the first enabled domain plugin bundle, if any."""
     for name in _DOMAIN_COMPONENT_ORDER:
         components = _DOMAIN_COMPONENT_BUILDERS[name](settings)
         if components.plugin is not None:
@@ -102,7 +101,6 @@ def get_run_domain_components(
     requested_domain: str | None,
     context_file: object | None,
 ) -> DomainComponents:
-    """Return the domain bundle for a run when explicitly requested."""
     if requested_domain is None and context_file is None:
         return DomainComponents()
 
@@ -114,10 +112,11 @@ def get_run_domain_components(
 def _build_flat_worker(settings: Settings) -> WorkerPort:
     """Construct the ``WorkerPort`` adapter used by flat-mode dispatch.
 
-    Scope: A-cells (A1, A2) only use ``worker.tool='claude_code'`` — flat mode
-    is currently a single-runner contract. Other backends (openhands, google_adk)
-    raise ``NotImplementedError`` so a misconfigured cell fails loudly at
-    composition time. Add branches here when their A-cell configs land.
+    Today only the ``claude_code`` worker is wired for flat mode at
+    composition time. Other backends (openhands, google_adk) raise
+    ``NotImplementedError`` so a misconfigured run fails loudly at
+    composition time. Add branches here when additional flat-mode workers
+    land.
     """
     tool = settings.worker.tool
     if tool == "claude_code":
@@ -136,8 +135,7 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
         )
     raise NotImplementedError(
         f"flat mode currently supports only worker.tool='claude_code'; got {tool!r}. "
-        "openhands and google_adk flat-mode adapters are out of scope until their "
-        "A-cell configs land."
+        "openhands and google_adk flat-mode adapters are not yet wired."
     )
 
 
@@ -163,16 +161,13 @@ def _make_flat_invariant_builder(
     del context_file  # Reserved; remove the ``del`` when consumed.
 
     # ``subagent_enabled`` is derived once at factory time — settings are
-    # constant for the lifetime of this closure. A1 cells leave
-    # ``disallowed_tools`` empty (Task tool allowed); A2 cells deny ``Task``
-    # explicitly. The flat prompt appends ``FLAT_SUBAGENT_NOTE`` only when
-    # the cell allows Task. The asymmetry is documented as TV-PROMPT-A1.
-    #
-    # Assumes ``allowed_tools: ["*"]`` (today's A1/A2). A future cell that
-    # pins an explicit allowlist excluding ``Task`` (instead of relying on
+    # constant for the lifetime of this closure. The flat prompt appends
+    # ``FLAT_SUBAGENT_NOTE`` only when the tool policy allows ``Task``.
+    # Assumes ``allowed_tools: ["*"]``; a future config that pins an
+    # explicit allowlist excluding ``Task`` (instead of relying on
     # ``disallowed_tools``) would silently still get the subagent note here
-    # even though the CLI receives no Task entitlement. Revisit the
-    # predicate when introducing such a cell.
+    # even though the CLI receives no ``Task`` entitlement. Revisit the
+    # predicate when introducing such a config.
     subagent_enabled = "Task" not in settings.worker.disallowed_tools
 
     def _builder(
@@ -187,11 +182,11 @@ def _make_flat_invariant_builder(
                 f"{type(domain_context).__name__}"
             )
 
-        # A-cell tool policy is expressed at the top level in YAML — A2 sets
-        # ``worker.disallowed_tools: ["Task"]`` to suppress Claude's Task
-        # subagent tool, the entire purpose of the A1-vs-A2 contrast. Read
-        # from there directly; ``tool_params.claude_code.{allowed,disallowed}_tools``
-        # are the per-runner defaults and are NOT the source of truth for the
+        # Flat-mode tool policy is expressed at the top level in YAML; for
+        # example, some configs set ``worker.disallowed_tools: ["Task"]`` to
+        # suppress Claude's Task subagent tool. Read from there directly;
+        # ``tool_params.claude_code.{allowed,disallowed}_tools`` are the
+        # per-runner defaults and are NOT the source of truth for the
         # flat-mode policy contract.
         tool_policy = ToolPolicy(
             allowed=tuple(settings.worker.allowed_tools),
@@ -270,7 +265,6 @@ def create_runtime_cli(
     context_file: Path | None = None,
     cleanup_registry: CleanupRegistry | None = None,
 ) -> CLI:
-    """Create a CLI with fully wired infrastructure and optional domain pieces."""
     active_domain_components = domain_components or DomainComponents()
 
     # Register the Docker PID-label cleanup handler when the security plugin

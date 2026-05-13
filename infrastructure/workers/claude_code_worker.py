@@ -56,9 +56,10 @@ class ClaudeCodeWorker:
     """Adapter satisfying ``WorkerPort`` by invoking the ``claude`` CLI.
 
     By default, a scratch ``CLAUDE_CONFIG_DIR`` is materialized per call so the
-    CLI reads only the policy our ``ToolPolicy`` declares. A-cells can opt into
-    the operator/global Claude config while still receiving the same
-    ``ToolPolicy`` CLI allow/deny flags as every other worker engine.
+    CLI reads only the policy our ``ToolPolicy`` declares. Callers can opt into
+    the operator/global Claude config via ``use_global_config`` while still
+    receiving the same ``ToolPolicy`` CLI allow/deny flags as every other
+    worker engine.
     """
 
     def __init__(
@@ -126,7 +127,6 @@ class ClaudeCodeWorker:
         run_dir: Path,
         transcript_path: Path,
     ) -> WorkerResult:
-        """Host-side path: ``claude`` runs on the host (legacy behavior)."""
         claude_bin = shutil.which("claude")
         if claude_bin is None:
             raise ToolNotAvailableError(

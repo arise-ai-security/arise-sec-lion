@@ -329,23 +329,16 @@ class TestMCPServersWiring:
         sys.modules["openhands.tools.file_editor"] = fake_file_editor
         sys.modules["openhands.tools.terminal"] = fake_terminal
         try:
-            from infrastructure.adapters.worker import openhands_adapter
-
-            with patch.object(
-                openhands_adapter,
-                "_patch_openhands_fn_converter",
-                lambda: None,
-            ):
-                conversation = adapter._build_conversation(
-                    working_dir="/work",
-                    mcp_servers={
-                        "security_tools": {
-                            "command": "python",
-                            "args": ["-m", "plugins.security.mcp.security_tools_server"],
-                            "env": {"ARISE_SECBENCH_CONTAINER_ID": "abc"},
-                        }
-                    },
-                )
+            conversation = adapter._build_conversation(
+                working_dir="/work",
+                mcp_servers={
+                    "security_tools": {
+                        "command": "python",
+                        "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                        "env": {"ARISE_SECBENCH_CONTAINER_ID": "abc"},
+                    }
+                },
+            )
         finally:
             for name, mod in previous.items():
                 if mod is None:
@@ -430,14 +423,7 @@ class TestTerminalToolRegistration:
         sys.modules["openhands.sdk.mcp"] = fake_mcp
         sys.modules["openhands.tools.file_editor"] = fake_file_editor
         try:
-            from infrastructure.adapters.worker import openhands_adapter
-
-            with patch.object(
-                openhands_adapter,
-                "_patch_openhands_fn_converter",
-                lambda: None,
-            ):
-                adapter._build_conversation(working_dir="/work")
+            adapter._build_conversation(working_dir="/work")
         finally:
             for name, mod in previous.items():
                 if mod is None:

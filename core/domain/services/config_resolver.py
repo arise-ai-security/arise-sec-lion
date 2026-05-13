@@ -22,7 +22,9 @@ class ConfigResolver:
         base = config.base
 
         if operation == "complexity_evaluation":
-            # TODO: Make this adjustable
+            # Heuristic overrides are hardcoded (temperature=0.3, max_tokens=500
+            # cap). Future: source these per-operation overrides from
+            # ``Settings`` if deployments need to tune them without a code edit.
             return LLMConfig(
                 model=base.model,
                 temperature=0.3,

@@ -22,11 +22,10 @@ from core.domain.values.enums import AgentRole
 from core.domain.values.prompt_capabilities import PromptCapabilities
 
 
-# Appended to the flat-mode prompt when the cell allows Claude's Task
-# subagent tool (A1). Without this note Claude rarely exercises Task, so
-# A1 vs A2 degenerates into noise. The note widens the cell delta beyond
-# pure tool capability — captured as TV-PROMPT-A1 in
-# research/03-threats-to-validity.md.
+# Appended to the flat-mode prompt when the tool policy allows Claude's
+# Task subagent tool. Without this note, Claude rarely exercises Task, so
+# toggling Task availability degenerates into noise unless the prompt is
+# also adjusted.
 FLAT_SUBAGENT_NOTE = (
     "Note: The Task subagent tool is available; use it at your discretion to "
     "decompose complex steps."
@@ -115,7 +114,6 @@ class PromptBuilder:
 
     @staticmethod
     def _normalize_prompt_text(text: str) -> str:
-        """Normalize whitespace for prompt deduplication checks."""
         return " ".join(text.split())
 
     def _maybe_user_prompt_block(
@@ -144,19 +142,16 @@ class PromptBuilder:
         user_prompt: str,
         domain_context: object | None = None,
     ) -> None:
-        """Set global context for this run (called once at start)."""
         self._user_prompt = user_prompt
         self._domain_context = domain_context
 
     def chain(self) -> TemplateChain:
-        """Create a new template chain builder."""
         return TemplateChain(self.env, "template")
 
     def _limits_context(
         self,
         hierarchy_limits: "HierarchyLimits | None",
     ) -> dict[str, Any]:
-        """Build limits context dict for templates."""
         if hierarchy_limits is None:
             return {
                 "max_subtasks": None,
@@ -204,7 +199,6 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        """Build prompt for PENDING agent task assessment."""
         limits = self._limits_context(hierarchy_limits)
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -268,7 +262,6 @@ class PromptBuilder:
         hierarchy_limits: "HierarchyLimits | None" = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        """Build prompt for BOSS agent task delegation."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -328,7 +321,6 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        """Build prompt for MANAGER agent task decomposition."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -411,22 +403,13 @@ class PromptBuilder:
         domain_context: object | None = None,
         subagent_enabled: bool = False,
     ) -> str:
-        """Build prompt for flat-mode single-agent execution.
+        """Build the flat-mode (single-agent) prompt.
 
-        Flat mode is a CONTROL baseline against the hierarchical tree
-        (Groups B/C). The role-tier prompts (``roles/*.j2``,
-        ``operations/*.j2``, ``domains/*/worker*.j2``) encode the tree
-        topology's per-role guidance — that's the contribution under test.
-        Including them in a flat baseline would have A inherit our system's
-        engineering for free.
-
-        ``build_flat_prompt`` therefore delegates to the domain strategy's
-        ``extend_flat_prompt`` (which renders the problem statement plus
-        the task structure for the domain), optionally appends a
-        ``FLAT_SUBAGENT_NOTE`` for cells whose tool budget allows Claude's
-        ``Task`` subagent tool (A1), and appends the task slug. When no
-        strategy or no domain context is supplied, the prompt collapses
-        to the note (when enabled) plus the task slug.
+        Delegates to the active domain strategy's ``extend_flat_prompt``,
+        optionally appends ``FLAT_SUBAGENT_NOTE`` (when the tool policy
+        enables Claude's ``Task``), and appends the task slug. When no
+        strategy or no domain context is supplied, the prompt collapses to
+        the note (when enabled) plus the task slug.
         """
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -455,7 +438,6 @@ class PromptBuilder:
         domain_context: object | None = None,
         briefing: "Briefing | None" = None,
     ) -> str:
-        """Build prompt for WORKER agent task execution."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id or UUID("00000000-0000-0000-0000-000000000000"),

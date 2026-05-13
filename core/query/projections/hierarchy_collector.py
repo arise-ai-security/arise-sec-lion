@@ -33,16 +33,7 @@ class HierarchyCollector:
 
         return sorted(all_events, key=lambda e: (e.occurred_at, e.sequence_number))
 
-    async def collect_grouped(self, root_agent_id: UUID) -> dict[UUID, list[DomainEvent]]:
-        """Collect events grouped by agent ID.
-
-        Returns the raw grouped result from the optimized query.
-        Useful when caller needs per-agent access without re-grouping.
-        """
-        return await self._event_store.get_hierarchy_events_grouped(root_agent_id)
-
     async def collect_agent_ids(self, root_agent_id: UUID) -> set[UUID]:
-        """Collect just the agent IDs in the hierarchy."""
         grouped_events = await self._event_store.get_hierarchy_events_grouped(root_agent_id)
         return set(grouped_events.keys())
 

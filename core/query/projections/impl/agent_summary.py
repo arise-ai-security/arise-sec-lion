@@ -169,7 +169,6 @@ class AgentSummaryService:
         # Single batch query for all child statuses
         child_statuses = await self._fetch_child_statuses(child_ids, parent_id)
 
-        # Build subtasks with matched child info
         subtasks = []
         for idx, description in enumerate(descriptions):
             child_id = child_ids[idx] if idx < len(child_ids) else None
@@ -238,11 +237,8 @@ class AgentSummaryService:
         Returns:
             Tuple of (config_strategy, config_details dict).
         """
-        if not hasattr(agent, "config") or not agent.config:
-            return None, {}
-
         config = agent.config
-        strategy = getattr(config, "strategy", None)
+        strategy = config.strategy
         details = self._build_config_details(config, strategy)
         return strategy, details
 

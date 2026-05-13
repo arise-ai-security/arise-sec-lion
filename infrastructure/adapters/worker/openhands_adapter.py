@@ -79,16 +79,6 @@ class _ConversationLike(Protocol):
     def run(self) -> object: ...
 
 
-def _patch_openhands_fn_converter() -> None:
-    """No-op: content-key bug fixed in openhands-sdk ≥1.20.0.
-
-    Previously patched fn_call_converter to tolerate assistant messages
-    missing their 'content' key (Qwen via Ollama omits reasoning text
-    before function calls). SDK 1.20.0 uses .get("content") or ""
-    natively, so the patch is no longer needed.
-    """
-
-
 SDK_EVENT_TYPE_MAP: dict[str, str] = {
     "ActionEvent": "tool_use",
     "AgentThinkAction": "thinking",
@@ -131,7 +121,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
     ) -> None:
-        """Initialize OpenHands adapter."""
         super().__init__(timeout_seconds=timeout_seconds)
         self.model: str = model or os.getenv("LLM_MODEL") or "openai/gpt-4o"
         self.api_key = api_key or self._detect_api_key()
@@ -142,7 +131,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self.disallowed_tools: list[str] = disallowed_tools or []
 
     def _detect_api_key(self) -> str | None:
-        """Detect appropriate API key based on model name."""
         if api_key := os.getenv("LLM_API_KEY"):
             return api_key
 
@@ -156,7 +144,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         return os.getenv("OPENAI_API_KEY")
 
     def _get_tool_name(self) -> str:
-        """Return tool identifier for cost tracking."""
         return "openhands"
 
     async def _execute_task(
@@ -167,7 +154,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         sequencer: EventSequencer,
         task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
-        """Execute task via OpenHands SDK with native conversation lifecycle."""
         del agent_id
         started_at = time()
         container_session = ContainerSessionContext.from_task_context(task_context)
@@ -272,7 +258,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         working_dir: str,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> Any:
-        """Create an OpenHands SDK conversation for the current task."""
         import warnings
 
         # Suppress authlib.jose deprecation from openhands.sdk.llm.auth.openai
@@ -360,14 +345,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
     def _extract_mcp_servers(
         task_context: dict[str, Any],
     ) -> dict[str, dict[str, Any]] | None:
-        """Return raw stdio specs from ``task_context['mcp_servers']`` or ``None``."""
         servers = task_context.get("mcp_servers")
         if not isinstance(servers, dict) or not servers:
             return None
         return dict(servers)
 
     def _tool_allowed(self, *names: str) -> bool:
-        """Return whether any of ``names`` survives the global policy."""
         blocked = set(self.disallowed_tools)
         if any(name in blocked for name in names):
             return False
@@ -397,14 +380,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         return self._tool_allowed("Read", "Write", "Edit", "file_editor", "read_file")
 
     def _iter_conversation_events(self, conversation: Any) -> list[Any]:
-        """Return the SDK events recorded for this conversation."""
         state = getattr(conversation, "state", None)
         if state is None or not hasattr(state, "events"):
             return []
         return list(state.events)
 
     def _extract_cost_data(self, conversation: Any) -> OpenHandsCostData:
-        """Extract cost and token detail from conversation_stats."""
         stats = getattr(conversation, "conversation_stats", None)
         if stats is None:
             return OpenHandsCostData()
@@ -417,7 +398,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         )
 
     def _extract_usage_metrics(self, usage_to_metrics: Any) -> OpenHandsCostData:
-        """Extract detailed metrics from ConversationStats.usage_to_metrics."""
         items = usage_to_metrics.items() if isinstance(usage_to_metrics, dict) else []
         usage_metrics: list[WorkerUsageMetrics] = []
         total_cost = 0.0
@@ -518,7 +498,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self,
         stats: Any,
     ) -> tuple[int | None, int | None, int | None, int | None, int | None]:
-        """Extract aggregate token categories from metrics or legacy dicts."""
         accumulated = self._get_stat(stats, "accumulated_token_usage")
         if accumulated is not None:
             return (
@@ -538,7 +517,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         )
 
     def _resolve_cost_model(self, cost_data: OpenHandsCostData) -> str | None:
-        """Return a representative model value for the aggregate worker event."""
         usage_models = {usage.model for usage in cost_data.usage_metrics if usage.model}
         if len(usage_models) == 1:
             return next(iter(usage_models))
@@ -629,7 +607,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _observation_text(obs: Any) -> str:
-        """Extract the plain text payload from an observation object."""
         content = getattr(obs, "content", None)
         if content is None:
             return ""
@@ -652,7 +629,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _try_extract_finish(event: Any) -> str | None:
-        """Try to extract a FinishAction message from an SDK event."""
         action = getattr(event, "action", None)
         if action is None:
             return None
@@ -793,7 +769,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self,
         future: concurrent.futures.Future,  # type: ignore[type-arg]
     ) -> None:
-        """Give the background thread a grace period to exit after shutdown."""
         if future.done():
             return
         try:
@@ -813,7 +788,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _classify_event(event: Any) -> str:
-        """Classify SDK event type to output_type."""
         if getattr(event, "action", None) is not None:
             return "tool_use"
         if getattr(event, "observation", None) is not None:
@@ -823,7 +797,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @classmethod
     def _extract_event_content(cls, event: Any) -> str | None:
-        """Extract content from SDK event."""
         if hasattr(event, "action") and event.action:
             return cls._format_action_event(event.action)
         if hasattr(event, "observation") and event.observation:
@@ -838,7 +811,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _extract_tool_name(event: Any) -> str | None:
-        """Return the canonical action class name for a tool_use event."""
         action = getattr(event, "action", None)
         if action is None:
             return None
@@ -846,7 +818,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @classmethod
     def _format_action_event(cls, action: Any) -> str:
-        """Format an OpenHands action as a canonical tool_use event."""
         tool_name = type(action).__name__ or "OpenHandsAction"
         payload: dict[str, Any] = {}
         for attr_name in ("command", "path", "file_path", "thought", "content"):
@@ -860,7 +831,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @classmethod
     def _format_observation_event(cls, observation: Any) -> str:
-        """Format an OpenHands observation as a canonical tool_result event."""
         command = getattr(observation, "command", "") or ""
         metadata = getattr(observation, "metadata", None)
         exit_code = getattr(metadata, "exit_code", None) if metadata else None
@@ -875,7 +845,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
 
 def json_dumps_for_event(payload: dict[str, Any]) -> str:
-    """JSON formatter for event payloads that may contain SDK objects."""
     import json
 
     return json.dumps(payload, sort_keys=True, default=str)

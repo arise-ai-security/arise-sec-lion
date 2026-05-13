@@ -9,8 +9,8 @@ from pydantic import BaseModel, computed_field
 
 # Fields that exist on CVEInstance for evaluation/grading but MUST NEVER
 # reach a prompt template. Embedding the gold patch (or a candidate fix
-# body) tutors the model with the answer key and invalidates A/B/C
-# comparisons. Python code that needs these fields (e.g., post-run patch
+# body) would tutor the model with the answer key and invalidate the
+# evaluation. Python code that needs these fields (e.g., post-run patch
 # similarity scoring) accesses them via the typed attribute directly.
 _PROMPT_FORBIDDEN_FIELDS: frozenset[str] = frozenset({"patch", "candidate_fixes"})
 

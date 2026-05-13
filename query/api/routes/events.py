@@ -83,7 +83,6 @@ THINKING_EVENTS = {ThoughtCaptured}
 
 
 def event_to_schema(event: DomainEvent) -> EventSchema:
-    """Convert a domain event to API schema."""
     # Get event-specific data (exclude base fields)
     data = event.model_dump(exclude={"aggregate_id", "sequence_number", "occurred_at"})
 
@@ -187,11 +186,9 @@ class IncrementalHierarchyTracker:
         return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
 
     def get_all_events(self) -> list[DomainEvent]:
-        """Get all accumulated events (for summary projection)."""
         return sorted(self._all_events, key=lambda e: (e.occurred_at, e.sequence_number))
 
     def has_pending_children(self) -> bool:
-        """Check if there are pending children to fetch."""
         return len(self._pending_children) > 0
 
 
@@ -390,7 +387,6 @@ async def sse_events(root_id: UUID, event_store: EventStoreDep) -> EventSourceRe
                 except Exception:
                     # Log full error details server-side
                     logger.exception("SSE stream error for root_id=%s", root_id)
-                    # Return sanitized error to client
                     yield {
                         "event": "error",
                         "data": '{"message": "Stream error occurred", "retry": true}',
@@ -425,7 +421,6 @@ async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceR
 
         while True:
             try:
-                # Fetch only new events (incremental)
                 new_events = await tracker.fetch_new_events()
 
                 # Keep fetching if new children were discovered
@@ -446,10 +441,9 @@ async def sse_summary(root_id: UUID, event_store: EventStoreDep) -> EventSourceR
                 # Poll interval
                 await asyncio.sleep(0.5)
 
-            except Exception as e:
+            except Exception:
                 # Log full error details server-side
                 logger.exception("SSE summary stream error for root_id=%s", root_id)
-                # Return sanitized error to client
                 yield {
                     "event": "error",
                     "data": '{"message": "Summary stream error occurred", "retry": true}',

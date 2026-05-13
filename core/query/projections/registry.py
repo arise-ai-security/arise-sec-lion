@@ -21,22 +21,18 @@ class ProjectionRegistry:
 
     @classmethod
     def register_filter(cls, name: str) -> Callable[[type[T]], type[T]]:
-        """Decorator to register a filter class."""
         return cls._make_registrar(cls._filters, "filter", name)
 
     @classmethod
     def register_projection(cls, name: str) -> Callable[[type[T]], type[T]]:
-        """Decorator to register a projection class."""
         return cls._make_registrar(cls._projections, "projection", name)
 
     @classmethod
     def register_formatter(cls, name: str) -> Callable[[type[T]], type[T]]:
-        """Decorator to register a formatter class."""
         return cls._make_registrar(cls._formatters, "formatter", name)
 
     @classmethod
     def register_sink(cls, name: str) -> Callable[[type[T]], type[T]]:
-        """Decorator to register a sink class."""
         return cls._make_registrar(cls._sinks, "sink", name)
 
     @classmethod
@@ -64,16 +60,8 @@ class ProjectionRegistry:
         return sorted(cls._filters.keys())
 
     @classmethod
-    def list_projections(cls) -> list[str]:
-        return sorted(cls._projections.keys())
-
-    @classmethod
     def list_formatters(cls) -> list[str]:
         return sorted(cls._formatters.keys())
-
-    @classmethod
-    def list_sinks(cls) -> list[str]:
-        return sorted(cls._sinks.keys())
 
     @classmethod
     def clear(cls) -> None:
@@ -107,20 +95,16 @@ class ProjectionRegistry:
 
 
 def register_filter(name: str) -> Callable[[type[T]], type[T]]:
-    """Alias for ProjectionRegistry.register_filter()."""
     return ProjectionRegistry.register_filter(name)
 
 
 def register_projection(name: str) -> Callable[[type[T]], type[T]]:
-    """Alias for ProjectionRegistry.register_projection()."""
     return ProjectionRegistry.register_projection(name)
 
 
 def register_formatter(name: str) -> Callable[[type[T]], type[T]]:
-    """Alias for ProjectionRegistry.register_formatter()."""
     return ProjectionRegistry.register_formatter(name)
 
 
 def register_sink(name: str) -> Callable[[type[T]], type[T]]:
-    """Alias for ProjectionRegistry.register_sink()."""
     return ProjectionRegistry.register_sink(name)
