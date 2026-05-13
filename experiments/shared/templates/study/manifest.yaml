@@ -1,0 +1,22 @@
+# Study template — copy this directory to experiments/<YYYY-MM-DD-slug>/ and
+# replace STUDY_TEMPLATE with the new folder name in this file. See
+# EXPERIMENT_MANUAL.md §3 for the full design walkthrough.
+
+study_id: STUDY_TEMPLATE                # MUST equal the folder name under experiments/
+
+dataset: dataset.yaml
+replicates: 1                           # >= 1; raise after the smoke pass
+
+# Six headline cells: A1/A2 flat baselines, B1/B2 ours + Claude worker,
+# C1/C2 ours + Qwen worker. {1,2} suffix toggles the Judge stage.
+cells:
+  A1: {group: A, runner: aris, config: configs/A1-claude-code-subagent.yaml}
+  A2: {group: A, runner: aris, config: configs/A2-claude-code-nosubagent.yaml}
+  B1: {group: B, runner: aris, config: configs/B1-ours-claude-noverifier.yaml}
+  B2: {group: B, runner: aris, config: configs/B2-ours-claude-verifier.yaml}
+  C1: {group: C, runner: aris, config: configs/C1-qwen-noverifier.yaml}
+  C2: {group: C, runner: aris, config: configs/C2-qwen-verifier.yaml}
+
+# If omitted, every declared cell is treated as headline (= reported on).
+# Use this allowlist to keep smoke cells in `cells:` but out of the aggregate.
+headline_cells: [A1, A2, B1, B2, C1, C2]

@@ -1,158 +1,357 @@
 # EXPERIMENT_MANUAL.md
 
-End-to-end recipe for running SEC-bench CVE experiments at scale. Start here if you just cloned the repo and want to go from zero to a shareable result set. For conceptual background, read [`README.md`](README.md) first.
-
-## Audience
-
-You're here to: fetch the 300+ CVE dataset, build images in bulk, run instances, detect failures, resume after errors, and share outputs with the team. For single-instance exploration, `README.md` §4 is enough.
+How to design and run a comparative **A/B/C experiment** on SEC-bench from a fresh clone of this repo. Start here if you need to *compare treatments* (architectures, models, verifier on/off, …) across the CVE dataset. If you only want to run our system once against a single CVE for exploration, `README.md` §4 is enough.
 
 ---
 
-## Prerequisites
+## 1. What "experiment" means here
 
-On the host:
+In this repo, an experiment is a **study** that compares variants of the system against a fixed CVE task set. The vocabulary is small and load-bearing — internalize it before touching any config:
 
-- **Docker** + Docker Compose v2+
-- **`uv`** — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **PostgreSQL client tools** (`pg_dump`, `psql`) — needed by the dump/restore scripts
-- **Local Ollama** with `qwen3:8b` pulled — `ollama pull qwen3:8b`. Verify with:
-  ```bash
-  curl -s http://localhost:11434/api/tags | jq '.models[].name' | grep qwen3:8b
-  ```
-  (Or use Ollama Cloud / OpenAI / Anthropic — see `README.md` §13.)
 
----
+| Term          | Definition                                                                                                                                                                         | Lives in                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Group**     | A high-level approach class. Single uppercase letter. Examples:`A: Claude Code CLI`, `B: Our System`, `C: Our System + Qwen`.                                                      | `experiments/shared/groups.yaml`                                                             |
+| **Cell**      | A specific variant within a group. Name must start with the group letter (e.g.`A1`, `A2`, `B1`, `B2`). Each cell has its own config YAML. **Cells are your independent variable.** | `experiments/<study>/manifest.yaml` + one YAML per cell under `experiments/<study>/configs/` |
+| **Task**      | One SEC-bench CVE instance (e.g.`gpac.cve-2021-40575`).                                                                                                                            | `plugins/security/tests/fixtures/*.json`                                                     |
+| **Replicate** | Repeated runs of a`(cell, task)` pair, used for noise control. (Currently 1)                                                                                                       | `experiments/<study>/manifest.yaml: replicates`                                              |
+| **Study**     | One self-contained matrix: groups × cells × tasks × replicates. A folder on disk.                                                                                               | `experiments/<YYYY-MM-DD-slug>/`                                                             |
 
-## Phase 0 — Fresh-clone setup (~10 min)
+The matrix is dispatched by a single command:
 
 ```bash
-# 1. Python deps
+uv run python -m experiments.shared.scripts.run_matrix --study <study-id>
+```
+
+Every `(cell, task, replicate)` run mints a new `BOSS_ID`, writes events to Postgres, and drops artifacts under `runs/<BOSS_ID>/`. Per-study derived artifacts (reports, enrollment lock, plots) land under `experiments/<study-id>/reports/`.
+
+> If your change to the codebase isn't comparative — just "run once and look at the output" — you don't need this manual. Go to `README.md` §4.
+
+---
+
+## 2. Fresh-clone fast path (~15 min, prerequisites only)
+
+This section assumes you have nothing built locally. It gets you to "ready to design a study". Each step is a pointer; details live in `README.md`.
+
+```bash
+# (1) Python deps
 uv sync --frozen
 
-# 2. Env file
+# (2) Env file — fill POSTGRES_PASSWORD, HOST_PROJECT_ROOT, OPENAI_API_KEY,
+#                ANTHROPIC_API_KEY as appropriate
 cp deployment/.env.example deployment/.env
-# Edit deployment/.env and fill:
-#   POSTGRES_PASSWORD=<anything>
-#   HOST_PROJECT_ROOT=<absolute path to this repo>
-#   OPENAI_API_KEY=... or skip if running all-Ollama
 
-# 3. Bring the stack up (db + api dashboard + app container)
+# (3) Stack up (db + api dashboard + app container)
 docker compose --profile local up -d --build
 docker compose --profile local ps    # wait until db + api show "healthy"
 
-# 4. Smoke check
-open http://localhost:8000           # empty dashboard = success
-```
-
-Schema (single `events` table + 7 indexes) is auto-applied on first Postgres start via `docker-entrypoint-initdb.d`. There are no migrations to run.
-
----
-
-## Phase 1 — Fetch the CVE dataset (~5 min, network-bound)
-
-The 300+ upstream CVE instances live in the HuggingFace `SEC-bench/SEC-bench` dataset (splits: `cve`, `eval`, `oss`). Materialize them as local JSON fixtures:
-
-```bash
-# 'datasets' is NOT declared in pyproject.toml — inject it for this one call:
+# (4) (Optional: re-run only if the data is deleted) CVE fixtures — pulls the 300+ HF instances to plugins/security/tests/fixtures/.
+#     Already committed for most users.
 uv run --with datasets python plugins/security/tests/fixtures/fetch_secbench.py
-```
 
-Result: `plugins/security/tests/fixtures/*.json` grows from 28 → **311** files.
-
-| Counted | Source |
-|---|---|
-| 300 | Unique upstream HF instances (deduped across splits) |
-| 11 | Team-authored post-cutoff fixtures (2025/2026 CVEs + `issue-*`) — use `docker_image_override` pointing at `songtli/...` images |
-| 311 | Total |
-
-Filters: `--split cve|eval|oss`, `--instance-id <id>`, `--dry-run`, `--overwrite`.
-
----
-
-## Phase 2 — Build all Docker images (~30–90 min @ `-j 4`)
-
-Each fixture needs a `secb-tools:<instance_id>-patch` image (base image from DockerHub + analysis tools layer). The bulk builder loops over fixtures and skips images already present locally:
-
-```bash
-# 4-way parallel — recommended for the full dataset
+# (5) Docker images — one per fixture (~30-90 min @ -j 4). Skips already-built images.
 deployment/build-all-images.sh -j 4
 
-# Sequential (default)
-deployment/build-all-images.sh
-
-# Specific fixtures only
-deployment/build-all-images.sh plugins/security/tests/fixtures/openjpeg.cve-2016-7445.json
-
-# Preview without invoking docker
-deployment/build-all-images.sh --dry-run
+# (6) Smoke check — http://localhost:8000 should show an empty dashboard
+open http://localhost:8000
 ```
 
-Flags: `-j N` / `--parallel N`, `--fail-fast`, `--continue-on-error` (default), `--dry-run`, `-h`.
-
-The script tracks built / skipped / failed counts and lists failed instance_ids at the end. Exit code `1` if any image failed (regardless of `--continue-on-error`).
-
-> **Image resolution** (`plugins/security/cve_instance.py:41-44`): if the fixture sets `docker_image_override`, that image is pulled; otherwise the fallback is `hwiwonlee/secb.eval.x86_64.<project>.<cve>:patch`. There is **no** automatic `songtli/...` fallback — the 11 team-authored fixtures all set `docker_image_override` explicitly.
+For ad-hoc single-instance debugging (not an experiment), see `README.md` §4. Otherwise continue to §3.
 
 ---
 
-## Phase 3 — Run the experiment
+## 3. Design a study
 
-### Single instance (smoke test)
+A study is three things on disk:
 
-```bash
-docker exec arise-app python main.py \
-  -c config/experiment-qwen3-8b-local.yaml run \
-  "Analyze and patch openjpeg.cve-2016-7445." \
-  --domain security \
-  --domain-context-file plugins/security/tests/fixtures/openjpeg.cve-2016-7445.json
+```
+experiments/<YYYY-MM-DD-slug>/
+├── manifest.yaml         # cells, dataset pointer, replicates
+├── dataset.yaml          # which CVE instances this study runs over
+└── configs/              # one YAML per cell declared in manifest.yaml
+    ├── A1-claude-code-subagent.yaml
+    ├── A2-claude-code-nosubagent.yaml
+    ├── B1-ours-claude-noverifier.yaml
+    ├── B2-ours-claude-verifier.yaml
+    ├── C1-qwen-noverifier.yaml
+    └── C2-qwen-verifier.yaml
 ```
 
-Note: `-c <config>` must come **before** the `run` subcommand. Watch progress at http://localhost:8000.
+Optionally also `scripts/{collect,plot_success,render_report}.py` — `run_matrix` auto-invokes them after dispatch if present.
 
-### Bulk run
+A canonical, runnable template ships at `experiments/shared/templates/study/`. The fastest path is to copy it and edit four lines.
 
-There is **no native batch runner**. Wrap the single-instance call in a shell loop:
+### 3.1. Copy the template
 
 ```bash
-set -a && source deployment/.env && set +a
-mkdir -p logs
-for f in plugins/security/tests/fixtures/*.json; do
-  instance=$(basename "$f" .json)
-  echo "=== $instance ==="
-  docker exec arise-app python main.py \
-    -c config/experiment-qwen3-8b-local.yaml run \
-    "Analyze and patch $instance." \
-    --domain security \
-    --domain-context-file "$f" \
-    > "logs/${instance}.log" 2>&1 \
-    || echo "$instance" >> /tmp/failed_instances.txt
-done
+STUDY=2026-05-13-my-study              # pick a YYYY-MM-DD-<slug>
+cp -r experiments/shared/templates/study "experiments/${STUDY}"
+
+# Substitute the placeholder in manifest.yaml (macOS sed shown; drop the '' on Linux)
+sed -i '' "s/STUDY_TEMPLATE/${STUDY}/g" "experiments/${STUDY}/manifest.yaml"
 ```
 
-For comparative A/B studies (cells × tasks × replicates), use the experiments matrix harness in `experiments/shared/` — see `experiments/2026-04-23-initial-secbench/manifest.yaml` for the pattern and `python -m experiments.shared.scripts.run_matrix --help`.
+The template defines the canonical six-cell matrix (A1/A2/B1/B2/C1/C2) with tool allowlists, models, and iteration caps already pinned. **For most studies you only need to edit `manifest.yaml` (`created_at`, `hypothesis`) and `dataset.yaml` (which CVE instances).** Open the per-cell configs only when you're deliberately drifting a knob — and when you do, drift it the same way in every cell that's supposed to be paired.
+
+The template lives under `experiments/shared/templates/` so `validate_manifest._discover_studies` skips it (the `shared` directory is excluded from study discovery). It will never pollute reports.
+
+### 3.2. What's in `manifest.yaml`
+
+The design contract: which cells exist, where each cell's config lives, what dataset to run, and how many replicates. Schema enforced by `validate_manifest.py`:
+
+- `study_id` must equal the folder name.
+- Each cell entry needs `group`, `runner`, `config`.
+- `group` must be a single uppercase letter registered in `experiments/shared/groups.yaml`.
+- Cell name must start with its group letter (`A1` under `group: A`, not `Foo1`).
+- `runner` must be a registered runner. Currently only **`aris`** exists — it dispatches every cell through `harness.run_ours` → `main.py run`.
+- `config` is resolved relative to `experiments/<study>/`; the file must exist.
+
+Optional but useful:
+
+- `headline_cells: [A1, A2, B1, B2, C1, C2]` — restricts the reports aggregate to a subset (e.g. exclude smoke cells while keeping them runnable for dev).
+
+If you add a new group letter (`D`, `E`, …), register it in `experiments/shared/groups.yaml` first. That's a deliberate project-wide change — discuss it with the team. Reusing existing letters with new cells underneath is the common case.
+
+### 3.3. What's in `dataset.yaml`
+
+**The explicit list of CVE instance IDs this study runs over.** `run_matrix` enumerates `cells × dataset.default_cves × replicates` — without `dataset.yaml`, no tasks; without an instance in `default_cves`, that CVE is not in scope.
+
+Three fields:
+
+- `default_cves: [<instance-id>, …]` — the task set. Edit this to grow or shrink scope. The template ships 10 instances; the full dataset is 311 (see `plugins/security/tests/fixtures/`).
+- `per_cell_overrides: {<cell>: {subset: [<instance-id>, …]}}` — optional per-cell scope narrowing. Each subset MUST be a subset of `default_cves` (validator rejects out-of-set entries).
+- `source.paths: [<fixture-path>, …]` — one entry per CVE in `default_cves`, pointing at the JSON fixture under `plugins/security/tests/fixtures/`. Pre-flight (`ensure_task_coverage()`) verifies coverage and aborts before any worker starts if a fixture is missing.
+
+### 3.4. What's in each cell config
+
+Each cell config is a tiny overlay on `config/config.yaml`. The template's cells already pin everything load-bearing:
+
+| Knob | A1 | A2 | B1 | B2 | C1 | C2 |
+|---|---|---|---|---|---|---|
+| `orchestration.mode` | `flat` | `flat` | `hierarchical` | `hierarchical` | `hierarchical` | `hierarchical` |
+| `orchestration.skip_judge` | `true` | `true` | `true` | `false` | `true` | `false` |
+| `boss.model` / `manager.model` | (n/a — flat) | (n/a — flat) | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` |
+| `worker.tool` | `claude_code` | `claude_code` | `claude_code` | `claude_code` | `openhands` | `openhands` |
+| `worker.model` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `ollama_chat/qwen3:8b` | `ollama_chat/qwen3:8b` |
+| `worker.allowed_tools` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep]` | same as A2 | same as A2 | same as A2 | same as A2 |
+| `worker.disallowed_tools` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch, Task]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` |
+| `worker.max_iterations_per_run` + tool-level cap | `250` | `250` | `250` | `250` | `250` | `250` |
+| `worker.timeout` (s) | `5400` | `5400` | `5400` | `5400` | `5400` | `5400` |
+
+**Tool allowlists are pinned by `BUG-TOOL1` (`research/findings/00-synthesis.md`).** Security MCP custom tools (Valgrind, KLEE) and the orchestration recon toolset (`config/config.yaml:103-127`) are served on separate channels — they remain available regardless of `worker.allowed_tools`. The worker allow/denylist governs only the worker's direct CLI/SDK tool surface. A1 vs A2 differs by `Task` (in `disallowed_tools` for A2) so the flat-mode subagent-note derivation, which reads `disallowed_tools` as its single source of truth, infers subagent-off correctly for A2.
+
+**Iteration cap is 250 across all cells** (SecVerifier-parity budget). Setting it lower starves flat A-cells relative to hierarchical B/C cells, because A has no decomposition to split work across multiple workers.
+
+**Fairness invariants — keep these constant across paired cells:** `worker.max_iterations_per_run`, `claude_code.max_turns` / `openhands.max_iterations_per_run`, `worker.timeout`, `worker.allowed_tools`, `worker.disallowed_tools`, `domain.plugin`, and the prompt set. Per-cell drift here invalidates the between-cell comparison.
+
+### 3.5. Validate before running
+
+```bash
+uv run python -m experiments.shared.scripts.validate_manifest --study "${STUDY}"
+```
+
+Success is silent. Failure prints every problem at once (missing config files, unknown groups, naming violations, …). Also runs as a pre-commit hook.
 
 ---
 
-## Phase 4 — Detect failures and resume
+## 4. Run the matrix
 
-### Detecting failures
+```bash
+uv run python -m experiments.shared.scripts.run_matrix --study "${STUDY}"
+```
 
-| Where | What |
-|---|---|
-| Process exit code | `main.py run` returns non-zero on failure (`bootstrap/bootstrap.py:221-222`) |
-| Postgres | Terminal `RunCompleted` event carries `status: "completed" \| "failed"`. Failure event types: `WorkFailed`, `VerificationFailed`, `DecisionInfeasible`, `ChildFailed` |
-| Host filesystem | `runs/<BOSS_ID>/run_manifest.json` → `.exit_status` (`success` on the happy path) |
-| CLI views (inside `arise-app`) | `python main.py list --limit 20`, `python main.py events --errors-only`, `python main.py summary` |
-| Dashboard | http://localhost:8000 — live tree + events + costs |
+### 4.1. What `--study <id>` does
 
-### Resuming a partial run
+The `<id>` is the folder name under `experiments/`. The driver uses it to:
 
-There is **no built-in resume command**. Each `main.py run` mints a fresh BOSS_ID — running the same fixture twice creates two independent runs. The `instance_id` is **not** in `run_manifest.json`; it lives in the Postgres `RunStarted.domain_metadata` field (`plugins/security/plugin.py:96-100`). Recipe:
+1. Locate `experiments/<id>/manifest.yaml` and load it.
+2. Validate the manifest (re-runs §3.5 internally — pre-commit + driver both call `validate_manifest`).
+3. Resolve `manifest.dataset` (default `dataset.yaml`) relative to `experiments/<id>/` and load it.
+4. Resolve every cell's `config` path relative to `experiments/<id>/`.
+5. Sweep stale state in every selected cell's `output.directory` pool (orphan `ARISE_RUN_RESULT_PATH` files older than 1 h, dead PID locks).
+6. Invoke per-study scripts at `experiments/<id>/scripts/{collect,plot_success,render_report}.py` if present.
+7. Write outputs to `experiments/<id>/reports/{matrix-summary.md, enrollment.lock.yaml, …}`.
+8. Tag the enrollment lockfile with `study_id: <id>` and a `design_sha` (git SHA of the manifest at run time) so later inspection can tell which manifest version produced these results.
+
+### 4.2. End-to-end flow
+
+The driver:
+
+1. Validates the manifest (step 4.1.2).
+2. Sweeps stale state (step 4.1.5).
+3. Enumerates the cartesian product `cells × tasks × replicates`. Per-cell overrides narrow each cell's task list independently.
+4. Dispatches each job via the cell's runner (`aris` → `main.py run` subprocess inside `arise-app`).
+5. On completion: runs the shared `collect.py` (enrollment lockfile), then any per-study scripts (step 4.1.6), then `validate_reports`.
+6. Writes `experiments/<id>/reports/matrix-summary.md` with per-cell success/failure counts and a failed-jobs table.
+
+### Useful flags
+
+
+| Flag                                             | Purpose                                                                                                                                                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--cells A1,B2`                                  | Run only these cells (comma-separated).                                                                                                                                                                 |
+| `--tasks gpac.cve-2021-40575,njs.cve-2022-28049` | Run only these tasks.                                                                                                                                                                                   |
+| `--replicates N`                                 | Override`manifest.replicates`.                                                                                                                                                                          |
+| `--parallel K`                                   | Up to`K` concurrent dispatches (`ThreadPoolExecutor`). Default `1` (sequential). Mind host CPU, Docker daemon, and per-provider rate limits. See `agent-docs/parallel-20-host-saturation-diagnosis.md`. |
+| `--continue-on-error` / `--no-continue-on-error` | Default is continue; failed jobs are captured and the matrix proceeds. Use`--no-continue-on-error` for tight debugging loops.                                                                           |
+| `--no-render`                                    | Skip the per-study render/validate step (partial reruns where study scripts aren't ready yet).                                                                                                          |
+| `--dry-run`                                      | Validate + list selected jobs, dispatch nothing.                                                                                                                                                        |
+
+### Resuming after partial completion
+
+`run_matrix` is **not** idempotent at the (cell, task, replicate) granularity — re-invoking re-runs every selected job. To resume only the missing ones:
+
+```bash
+# 1. Which (cell, task, replicate) tuples already succeeded? The enrollment
+#    lockfile (produced by collect.py) is the source of truth post-run.
+cat experiments/<study>/reports/enrollment.lock.yaml
+
+# 2. Pick the gaps. Run the gaps explicitly via --cells / --tasks filters.
+uv run python -m experiments.shared.scripts.run_matrix \
+  --study <study> \
+  --cells B2 \
+  --tasks gpac.cve-2021-40575 \
+  --replicates 1
+```
+
+For ad-hoc CVE-only resume (no cell breakdown), the recipe in §8 below works too.
+
+---
+
+## 5. Inspect results
+
+### 5.1. Matrix summary
+
+`experiments/<study>/reports/matrix-summary.md` — per-cell success/failure, list of failed jobs with truncated error messages. Generated by `run_matrix`.
+
+### 5.2. Enrollment lockfile
+
+`experiments/<study>/reports/enrollment.lock.yaml` — the authoritative `(study_id, cell, task, replicate) → run_id` mapping. Generated by `collect.py` (invoked automatically by `run_matrix`; can also be run on its own):
+
+```bash
+uv run python -m experiments.shared.scripts.collect --study <study>
+```
+
+### 5.3. Per-run artifacts
+
+For each `run_id` referenced in the lockfile:
+
+
+| Path                              | Contents                                                                                                                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs/<run_id>/testcase/`         | `security_report.md`, `model_patch.diff`, `repro.sh`, `base_commit_hash`, worker logs                                                                                 |
+| `runs/<run_id>/src/`              | Host mirror of the vulnerable source tree                                                                                                                             |
+| `runs/<run_id>/run_manifest.json` | Run metadata (`exit_status`, `models`, `summary_available`, `deliverables`). Does **not** carry `instance_id` — that lives in Postgres `RunStarted.domain_metadata`. |
+| `runs/<run_id>/events.jsonl`      | Per-run projected event stream (also queryable in Postgres)                                                                                                           |
+
+### 5.4. CLI views (inside `arise-app`)
+
+```bash
+docker exec arise-app python main.py list --limit 20
+docker exec arise-app python main.py events --errors-only
+docker exec arise-app python main.py summary
+```
+
+### 5.5. Dashboard
+
+http://localhost:8000 — live tree, events, costs. Filterable by run.
+
+### 5.6. Custom per-study scripts
+
+If `experiments/<study>/scripts/{collect,plot_success,render_report}.py` exist, `run_matrix` runs each after dispatch (in that order) and `validate_reports` checks their outputs against the `*.generated.json` provenance schema. Write these when you need study-specific aggregations beyond the shared `collect.py`.
+
+---
+
+## 6. Share results
+
+The full state is **two pieces**:
+
+1. **Postgres `events` table** — the source of truth. Append-only event log; everything else replays from here.
+2. **Host-side `runs/<run_id>/`** — bind-mounted to the host via `../runs:/app/runs`. Contains deliverables and per-run logs.
+
+### Sender
 
 ```bash
 set -a && source deployment/.env && set +a
 
-# 1. Done set: query Postgres for completed instance_ids
+# (a) Dump events
+scripts/dump_events.sh                  # writes events-YYYYMMDDTHHMMSSZ.sql.gz
+
+# (b) Tar run artifacts
+tar -czf "runs-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" runs/
+
+# (c) Optionally include the study folder for the design contract + reports
+tar -czf "study-<id>-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" experiments/<study>/
+```
+
+### Receiver
+
+After `docker compose --profile local up -d` (schema auto-applies on first start):
+
+```bash
+tar -xzf runs-20260513T164000Z.tar.gz
+tar -xzf study-<id>-20260513T164000Z.tar.gz
+
+set -a && source deployment/.env && set +a
+
+# Fresh DB:
+scripts/restore_events.sh events-20260513T164000Z.sql.gz
+
+# DB already has events — choose one:
+scripts/restore_events.sh --truncate events-20260513T164000Z.sql.gz   # wipe + replace
+scripts/restore_events.sh --append   events-20260513T164000Z.sql.gz   # merge (errors on collisions)
+```
+
+Open http://localhost:8000 — every imported `run_id` appears in the agent list.
+
+---
+
+## 7. Reference — paths and sources of truth
+
+
+| Path                                              | Role                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Postgres`events`                                  | **Source of truth.** Append-only, OCC on `(aggregate_id, sequence_number)`.          |
+| `experiments/shared/groups.yaml`                  | Project-wide group letter → label registry.                                         |
+| `experiments/shared/harness.py`                   | `run-ours` subcommand; wraps `main.py run` with per-job `ARISE_RUN_RESULT_PATH`.     |
+| `experiments/shared/scripts/run_matrix.py`        | The matrix driver.                                                                   |
+| `experiments/shared/scripts/validate_manifest.py` | Manifest schema validator (pre-commit +`run_matrix` entry).                          |
+| `experiments/shared/scripts/collect.py`           | Builds`enrollment.lock.yaml` from `run_manifest.json` files.                         |
+| `experiments/<study>/manifest.yaml`               | **Study design contract** — cells, dataset pointer, replicates, headline allowlist. |
+| `experiments/<study>/dataset.yaml`                | Task set + fixture paths.                                                            |
+| `experiments/<study>/configs/*.yaml`              | Per-cell config overlays.                                                            |
+| `experiments/<study>/reports/`                    | All derived artifacts (`matrix-summary.md`, `enrollment.lock.yaml`, custom plots).   |
+| `plugins/security/tests/fixtures/*.json`          | CVE instance metadata fed into the worker as`--domain-context-file`.                 |
+| `runs/<run_id>/testcase/`                         | Per-run deliverables.                                                                |
+
+---
+
+## 8. Troubleshooting
+
+
+| Symptom                                                      | Fix                                                                                                                                       |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate_manifest: cells.X1.group = 'X' not in groups.yaml` | Add the letter to`experiments/shared/groups.yaml` (team decision), or fix the typo.                                                       |
+| `validate_manifest: cells.B1.config not found`               | Path is relative to`experiments/<study>/`. Check spelling and existence.                                                                  |
+| `validate_manifest: name must start with group letter 'B'`   | Cell names must begin with their group letter. Rename`Foo1` → `B1`.                                                                      |
+| `run_matrix: no jobs match the given filters`                | Filter set doesn't overlap with declared cells/tasks. Drop the filter or fix it.                                                          |
+| `run_matrix` Docker exec error / stale code                  | `docker compose --profile local up -d --build app` to rebuild the app container.                                                          |
+| `fetch_secbench.py: ModuleNotFoundError: datasets`           | Use`uv run --with datasets python …`. `datasets` is intentionally out of `pyproject.toml`.                                               |
+| Bulk image build:`pull access denied`                        | The fixture's default`hwiwonlee/…` image doesn't exist for that CVE. Author a `songtli/…` override (see the `/secbench-fixture` skill). |
+| `dump_events.sh: POSTGRES_PASSWORD must be set`              | `set -a && source deployment/.env && set +a` first.                                                                                       |
+| `restore_events.sh` aborts on existing rows                  | Pass`--truncate` (wipe + replace) or `--append` (merge — errors on UNIQUE collisions).                                                   |
+| Worker container can't reach Ollama on Linux                 | `extra_hosts: ["host.docker.internal:host-gateway"]` is already set in `deployment/docker-compose.yml`.                                   |
+| Agent tree exploded past 25 nodes                            | Over-decomposition. See`README.md` §12; edit `prompts/domains/secbench/assess.j2`.                                                       |
+| `--parallel >1` saturates the host                           | See`agent-docs/parallel-20-host-saturation-diagnosis.md`. Start at `--parallel 2` and scale.                                              |
+
+### Resuming an aborted matrix (CVE-only granularity)
+
+If you don't care about cell-level resume and just want "which CVEs are still missing across all of `arise-app`'s run history":
+
+```bash
+set -a && source deployment/.env && set +a
+
+# (a) Done set — completed instance_ids in Postgres
 docker exec arise-db psql -U arise -d arise_events -tA -c "
   SELECT DISTINCT payload->'domain_metadata'->>'instance_id'
   FROM events
@@ -164,97 +363,20 @@ docker exec arise-db psql -U arise -d arise_events -tA -c "
     AND payload->'domain_metadata'->>'instance_id' IS NOT NULL
 " | sort -u > /tmp/done.txt
 
-# 2. Target set: all fixtures
+# (b) Target set
 ls plugins/security/tests/fixtures/ | sed 's/\.json$//' | sort > /tmp/all.txt
 
-# 3. Diff for the todo set
+# (c) Diff
 comm -23 /tmp/all.txt /tmp/done.txt > /tmp/todo.txt
 echo "$(wc -l < /tmp/todo.txt) instances still to run"
 
-# 4. Re-run only the missing ones
-while read instance; do
-  docker exec arise-app python main.py \
-    -c config/experiment-qwen3-8b-local.yaml run \
-    "Analyze and patch $instance." \
-    --domain security \
-    --domain-context-file "plugins/security/tests/fixtures/${instance}.json"
-done < /tmp/todo.txt
+# (d) Re-run only the missing ones via the matrix driver
+uv run python -m experiments.shared.scripts.run_matrix \
+  --study <study> \
+  --tasks "$(paste -sd, /tmp/todo.txt)"
 ```
 
----
-
-## Phase 5 — Share outputs
-
-The full state is **two pieces**:
-
-1. **Postgres `events` table** — append-only event log; everything else replays from here. Schema: `infrastructure/sql/create_events_table.sql` (one table, no views).
-2. **Host-side `runs/<BOSS_ID>/`** — already on the host via the compose bind mount `../runs:/app/runs`. Contains `testcase/{security_report.md, model_patch.diff, repro.sh, base_commit_hash, ...}` and worker logs.
-
-### Sender side
-
-```bash
-set -a && source deployment/.env && set +a
-
-# 1. Dump the event store (gzipped, with row count printed)
-scripts/dump_events.sh    # writes events-YYYYMMDDTHHMMSSZ.sql.gz
-
-# 2. Tar the run artifacts
-tar -czf "runs-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" runs/
-
-ls -lh events-*.sql.gz runs-*.tar.gz
-```
-
-Both files together = the complete shareable result set.
-
-### Receiver side
-
-After the receiver runs `docker compose --profile local up -d` once (schema auto-applies on first start):
-
-```bash
-# 1. Unpack run artifacts
-tar -xzf runs-20260513T164000Z.tar.gz
-
-# 2. Restore events
-set -a && source deployment/.env && set +a
-
-# Fresh DB:
-scripts/restore_events.sh events-20260513T164000Z.sql.gz
-
-# DB already has events — choose one:
-scripts/restore_events.sh --truncate events-20260513T164000Z.sql.gz   # wipe + replace
-scripts/restore_events.sh --append   events-20260513T164000Z.sql.gz   # merge (errors on collisions)
-```
-
-Open http://localhost:8000 — every imported BOSS_ID appears in the agent list.
-
----
-
-## Reference — Paths and sources of truth
-
-| Path | Role |
-|---|---|
-| Postgres `events` | **THE source of truth.** Append-only, OCC on `(aggregate_id, sequence_number)`. |
-| `plugins/security/tests/fixtures/*.json` | Authoritative CVE instance list (311 entries after Phase 1). |
-| `runs/<BOSS_ID>/testcase/` | Deliverables: `security_report.md`, `model_patch.diff`, `repro.sh`, `base_commit_hash` + worker logs. |
-| `runs/<BOSS_ID>/src/` | Host mirror of the vulnerable source tree. |
-| `runs/<BOSS_ID>/run_manifest.json` | Per-run metadata (`run_id`, `exit_status`, `models`, `summary_available`, `deliverables`). Does **not** carry `instance_id` — that lives in Postgres `RunStarted.domain_metadata`. |
-| `/src` (in container) | Source tree the worker `cd`'s into. |
-| `/testcase` (in container, **singular**) | Where workers write deliverables. NOT `/testcases`. |
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `fetch_secbench.py`: `ModuleNotFoundError: datasets` | Use `uv run --with datasets python ...`. `datasets` is not in `pyproject.toml`. |
-| `docker exec arise-app python main.py ...`: stale code | `docker compose --profile local up -d --build app` |
-| Bulk build fails on `pull access denied` | Fixture's default `hwiwonlee/...` image doesn't exist for that CVE. Authoring a `songtli/...` image is in scope of the `/secbench-fixture` skill. |
-| `dump_events.sh: POSTGRES_PASSWORD must be set` | `set -a && source deployment/.env && set +a` first, or pass `POSTGRES_PASSWORD=...` inline. |
-| `restore_events.sh` aborts: existing rows | Pass `--truncate` (wipe + replace) or `--append` (merge — errors on UNIQUE collisions). |
-| Run shows `failed` | `docker exec arise-app python main.py events --errors-only`. Re-run only that instance per Phase 4. |
-| Worker container can't reach Ollama on Linux | `extra_hosts: ["host.docker.internal:host-gateway"]` (already set in `deployment/docker-compose.yml`). |
-| Agent tree exploded past 25 nodes | Over-decomposition. See `README.md` §12; edit `prompts/domains/secbench/assess.j2`. |
+For cell-level granularity, prefer `experiments/<study>/reports/enrollment.lock.yaml` (§4 Resuming).
 
 ---
 
@@ -263,4 +385,5 @@ Open http://localhost:8000 — every imported BOSS_ID appears in the agent list.
 - `README.md` — conceptual overview, single-instance run, dashboard tour
 - `README.md` §11 — prompt hierarchy (where to edit security prompts)
 - `agent-docs/secbench-pipeline-tech-doc.md` — image build pipeline internals
-- `experiments/shared/scripts/run_matrix.py` — matrix runner for comparative studies
+- `agent-docs/parallel-20-host-saturation-diagnosis.md` — guidance for `--parallel`
+- `research/02-experimental-design.md` — concrete hypotheses, IVs, DVs, threats to validity
