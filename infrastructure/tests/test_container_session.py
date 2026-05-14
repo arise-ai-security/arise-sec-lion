@@ -60,9 +60,12 @@ def test_container_session_prefix_mentions_shell_in_container_for_manual_shell()
 
     prompt = session.apply_task_prefix("Do the task", auto_shell=False)
 
-    assert "/workspace/run/src" in prompt
-    assert "/workspace/run/testcase" in prompt
-    assert "/workspace/run/work" in prompt
+    assert "/src/..." in prompt
+    assert "/testcase/..." in prompt
+    assert "/work/..." in prompt
+    assert str(session.host_source_dir) not in prompt
+    assert str(session.host_testcase_dir) not in prompt
+    assert str(session.host_work_root) not in prompt
     assert "shell_in_container" in prompt
     assert "./secb-exec" not in prompt
 
@@ -76,4 +79,7 @@ def test_container_session_prefix_mentions_shell_in_container_for_auto_shell() -
     prompt = session.apply_task_prefix("Do the task", auto_shell=True)
 
     assert "shell_in_container" in prompt
+    assert str(session.host_source_dir) not in prompt
+    assert str(session.host_testcase_dir) not in prompt
+    assert str(session.host_work_root) not in prompt
     assert "./secb-exec" not in prompt

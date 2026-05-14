@@ -16,7 +16,6 @@ from core.ports.domain_plugin_port import (
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.image_resolver import resolve_secbench_image
-from plugins.security.mcp.security_tools_server import build_stdio_config as build_mcp_stdio_config
 from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
 from plugins.security.security_tool import get_tools_for_phase
 
@@ -189,6 +188,10 @@ class SecurityDomainPlugin(DomainPlugin):
             if prepared is None:
                 return None
             workspace = self._workspaces[root_id]
+
+        from plugins.security.mcp.security_tools_server import (
+            build_stdio_config as build_mcp_stdio_config,
+        )
 
         # Audit §13#9: serialize the check-and-start under a per-root lock
         # so two concurrent prepare_worker_execution calls for the same

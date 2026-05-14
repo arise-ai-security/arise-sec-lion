@@ -28,10 +28,12 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
+from uuid import UUID
 
 import yaml
 
@@ -41,10 +43,6 @@ from experiments.shared.scripts._paths import get_repo_root
 from experiments.shared.scripts.validate_manifest import validate_manifest
 from experiments.shared.scripts.write_report import write_md
 from infrastructure.cleanup.registry import _pid_alive
-
-
-if TYPE_CHECKING:
-    from uuid import UUID
 
 
 logger = logging.getLogger(__name__)
@@ -324,8 +322,10 @@ async def _run_one_async(
 async def _invoke_runner(runner: Any, **kwargs: object) -> UUID:
     run_async = getattr(runner, "run_async", None)
     if callable(run_async):
-        return await run_async(**kwargs)
-    return await asyncio.to_thread(runner.run, **kwargs)
+        async_runner = cast(Callable[..., Awaitable[UUID]], run_async)
+        return await async_runner(**kwargs)
+    sync_runner = cast(Callable[..., UUID], runner.run)
+    return await asyncio.to_thread(sync_runner, **kwargs)
 
 
 def _read_run_status(

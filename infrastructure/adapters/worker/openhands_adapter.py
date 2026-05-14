@@ -7,9 +7,11 @@ import os
 import re
 import signal
 import subprocess
+import threading
 import time as _time
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import time
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -45,6 +47,7 @@ _SHUTDOWN_GRACE_SECONDS = 5
 _OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
 _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
 _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
+_CONTAINER_AWARE_OPENHANDS_TOOLS_LOCK = threading.Lock()
 _TRAILING_PORT_DOT_PATTERN = re.compile(r":(?P<port>\d+)\.(?=$|/)")
 
 
@@ -103,19 +106,133 @@ def _map_openhands_action_paths(
     return action
 
 
+def _host_to_container_rewrites(
+    container_session: ContainerSessionContext,
+) -> tuple[tuple[str, str], ...]:
+    paths = (
+        (container_session.host_work_root, container_session.container_work_dir),
+        (container_session.host_work_dir, container_session.container_working_directory),
+        (container_session.host_source_dir, container_session.container_source_dir),
+        (container_session.host_testcase_dir, container_session.container_testcase_dir),
+    )
+    rewrites: dict[str, str] = {}
+    for host_path, container_path in paths:
+        for candidate in (host_path, host_path.resolve()):
+            host = str(candidate).rstrip("/")
+            if host:
+                rewrites[host] = container_path.rstrip("/") or "/"
+    return tuple(
+        sorted(rewrites.items(), key=lambda rewrite: len(rewrite[0]), reverse=True)
+    )
+
+
+def _replace_host_path_prefix(text: str, host_prefix: str, container_prefix: str) -> str:
+    pattern = re.compile(rf"{re.escape(host_prefix)}(?=$|/)")
+    return pattern.sub(container_prefix, text)
+
+
+def _replace_host_paths(
+    text: str,
+    container_session: ContainerSessionContext,
+) -> str:
+    sanitized = text
+    for host_prefix, container_prefix in _host_to_container_rewrites(container_session):
+        sanitized = _replace_host_path_prefix(sanitized, host_prefix, container_prefix)
+    return sanitized
+
+
+def _sanitize_openhands_observation_paths(
+    value: Any,
+    container_session: ContainerSessionContext,
+) -> Any:
+    if isinstance(value, str):
+        return _replace_host_paths(value, container_session)
+    if isinstance(value, list):
+        return [
+            _sanitize_openhands_observation_paths(item, container_session)
+            for item in value
+        ]
+    if isinstance(value, tuple):
+        return tuple(
+            _sanitize_openhands_observation_paths(item, container_session)
+            for item in value
+        )
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_openhands_observation_paths(item, container_session)
+            for key, item in value.items()
+        }
+
+    model_copy = getattr(value, "model_copy", None)
+    model_fields = getattr(type(value), "model_fields", None)
+    if callable(model_copy) and isinstance(model_fields, dict):
+        updates: dict[str, Any] = {}
+        for field_name in model_fields:
+            if not hasattr(value, field_name):
+                continue
+            original = getattr(value, field_name)
+            sanitized = _sanitize_openhands_observation_paths(
+                original,
+                container_session,
+            )
+            if sanitized != original:
+                updates[field_name] = sanitized
+        if updates:
+            return model_copy(update=updates)
+    return value
+
+
+def _maybe_idempotent_file_create_observation(
+    action: Any,
+    container_session: ContainerSessionContext,
+) -> Any | None:
+    if getattr(action, "command", None) != "create":
+        return None
+    path = getattr(action, "path", None)
+    file_text = getattr(action, "file_text", None)
+    if not isinstance(path, str) or not isinstance(file_text, str):
+        return None
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        return None
+    try:
+        current = file_path.read_text()
+    except UnicodeDecodeError:
+        return None
+    if current != file_text:
+        return None
+
+    from openhands.sdk.llm.message import TextContent
+    from openhands.tools.file_editor.definition import FileEditorObservation
+
+    container_path = _replace_host_paths(path, container_session)
+    return FileEditorObservation(
+        command="create",
+        path=container_path,
+        prev_exist=True,
+        old_content=current,
+        new_content=current,
+        content=[
+            TextContent(
+                text=f"File already exists with identical content at: {container_path}"
+            )
+        ],
+    )
+
+
 def _augment_native_tool_description(
     description: str,
     container_session: ContainerSessionContext,
 ) -> str:
     return (
         f"{description}\n\n"
-        "Container path compatibility: this runtime maps "
-        f"`{container_session.container_source_dir}/...` to "
-        f"`{container_session.host_source_dir}/...`, "
-        f"`{container_session.container_testcase_dir}/...` to "
-        f"`{container_session.host_testcase_dir}/...`, and "
-        f"`{container_session.container_work_dir}/...` to "
-        f"`{container_session.host_work_root}/...` before executing this tool."
+        "Container path compatibility: use canonical container paths "
+        f"`{container_session.container_source_dir}/...`, "
+        f"`{container_session.container_testcase_dir}/...`, and "
+        f"`{container_session.container_work_dir}/...`. This runtime maps them "
+        "to the run mirror before execution and rewrites results back to "
+        "container paths."
     )
 
 
@@ -123,7 +240,14 @@ def _ensure_container_aware_openhands_tools_registered() -> None:
     global _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED
     if _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED:
         return
+    with _CONTAINER_AWARE_OPENHANDS_TOOLS_LOCK:
+        if _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED:
+            return
+        _register_container_aware_openhands_tools()
+        _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = True
 
+
+def _register_container_aware_openhands_tools() -> None:
     from openhands.sdk.tool import register_tool
     from openhands.sdk.tool.tool import ToolExecutor
     from openhands.tools.file_editor import FileEditorTool
@@ -144,7 +268,17 @@ def _ensure_container_aware_openhands_tools_registered() -> None:
                 action,
                 self._container_session,
             )
-            return self._delegate(mapped_action, conversation)
+            idempotent_observation = _maybe_idempotent_file_create_observation(
+                mapped_action,
+                self._container_session,
+            )
+            if idempotent_observation is not None:
+                return idempotent_observation
+            observation = self._delegate(mapped_action, conversation)
+            return _sanitize_openhands_observation_paths(
+                observation,
+                self._container_session,
+            )
 
         def close(self) -> None:
             self._delegate.close()
@@ -219,10 +353,16 @@ def _ensure_container_aware_openhands_tools_registered() -> None:
                 return list(tools)
             return _wrap_native_tools(tools, parsed_session)
 
-    register_tool(FileEditorTool.name, _ContainerAwareFileEditorTool)
-    register_tool(GlobTool.name, _ContainerAwareGlobTool)
-    register_tool(GrepTool.name, _ContainerAwareGrepTool)
-    _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = True
+    # OpenHands pre-registers these native names; replacing them here is intentional.
+    registry_logger = logging.getLogger("openhands.sdk.tool.registry")
+    previous_level = registry_logger.level
+    registry_logger.setLevel(max(previous_level, logging.ERROR))
+    try:
+        register_tool(FileEditorTool.name, _ContainerAwareFileEditorTool)
+        register_tool(GlobTool.name, _ContainerAwareGlobTool)
+        register_tool(GrepTool.name, _ContainerAwareGrepTool)
+    finally:
+        registry_logger.setLevel(previous_level)
 
 
 def _snapshot_child_pids() -> set[int]:
