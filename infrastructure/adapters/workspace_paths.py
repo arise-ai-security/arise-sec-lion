@@ -29,7 +29,7 @@ class WorkspacePathMapper:
             if not virtual_path.startswith("/"):
                 raise ValueError(f"Path alias must be absolute: {alias.virtual_path}")
 
-            host_path = str(Path(alias.host_path)).rstrip("/") or "/"
+            host_path = str(Path(alias.host_path).resolve()).rstrip("/") or "/"
             normalized.append(WorkspacePathAlias(virtual_path, host_path))
         return tuple(sorted(normalized, key=lambda item: len(item.virtual_path), reverse=True))
 

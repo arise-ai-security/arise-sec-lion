@@ -33,6 +33,27 @@ def test_workspace_path_mapper_maps_virtual_paths_to_host_mirrors(
     assert unrelated_path == "/tmp/file"
 
 
+def test_workspace_path_mapper_resolves_relative_host_mirrors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relative run roots still produce absolute host paths for local tools."""
+
+    # Given: A mapper built from a run path relative to the process cwd.
+    monkeypatch.chdir(tmp_path)
+    mapper = WorkspacePathMapper(
+        (
+            WorkspacePathAlias("/testcase", "runs/demo/testcase"),
+        )
+    )
+
+    # When: Mapping a container path used by an agent.
+    testcase_path = mapper.map_virtual_to_host("/testcase/base_commit_hash")
+
+    # Then: The host-side tool receives an absolute path, not a cwd-relative path.
+    assert testcase_path == str(tmp_path / "runs" / "demo" / "testcase" / "base_commit_hash")
+
+
 def test_workspace_path_mapper_rewrites_host_paths_back_to_virtual(
     tmp_path: Path,
 ) -> None:
