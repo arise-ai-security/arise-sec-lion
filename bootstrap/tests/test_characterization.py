@@ -134,6 +134,12 @@ class InMemoryEventStore:
     async def get_all_aggregate_ids(self) -> list[UUID]:
         return list(self._events.keys())
 
+    async def count_events(self, aggregate_ids: list[UUID]) -> dict[UUID, int]:
+        return {
+            aggregate_id: len(self._events.get(aggregate_id, []))
+            for aggregate_id in aggregate_ids
+        }
+
     async def get_all_events_grouped(
         self,
         *,

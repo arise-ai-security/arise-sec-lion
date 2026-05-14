@@ -138,6 +138,49 @@ async def test_event_store_append_and_get_single_event(event_store: PostgresEven
 
 
 @pytest.mark.asyncio
+async def test_count_events_returns_counts_for_requested_aggregates(
+    event_store: PostgresEventStore,
+):
+    """Test counting events for multiple aggregates in one query."""
+
+    # Given: Two aggregates with different event counts
+    first_id = uuid4()
+    second_id = uuid4()
+    missing_id = uuid4()
+    await event_store.append(
+        AgentCreated(
+            aggregate_id=first_id,
+            sequence_number=1,
+            role=AgentRole.BOSS.value,
+            parent_id=None,
+            config={},
+        )
+    )
+    await event_store.append(
+        TaskAssigned(
+            aggregate_id=first_id,
+            sequence_number=2,
+            task_description="first task",
+        )
+    )
+    await event_store.append(
+        AgentCreated(
+            aggregate_id=second_id,
+            sequence_number=1,
+            role=AgentRole.WORKER.value,
+            parent_id=first_id,
+            config={},
+        )
+    )
+
+    # When: Counting events for both known aggregates and a missing aggregate
+    counts = await event_store.count_events([first_id, second_id, missing_id])
+
+    # Then: Counts are returned for all requested aggregates
+    assert counts == {first_id: 2, second_id: 1, missing_id: 0}
+
+
+@pytest.mark.asyncio
 async def test_event_store_append_multiple_events(event_store: PostgresEventStore):
     """Test appending and retrieving multiple events in sequence."""
 
@@ -348,6 +391,10 @@ async def test_event_store_error_without_connection():
     # And: Get events without connect should raise EventStoreError
     with pytest.raises(EventStoreError, match=r"(?i)connection pool not initialized"):
         await store.get_events(uuid4())
+
+    # And: Count events without connect should raise EventStoreError
+    with pytest.raises(EventStoreError, match=r"(?i)connection pool not initialized"):
+        await store.count_events([uuid4()])
 
     # And: Initialize schema without connect should raise EventStoreError
     with pytest.raises(EventStoreError, match=r"(?i)connection pool not initialized"):

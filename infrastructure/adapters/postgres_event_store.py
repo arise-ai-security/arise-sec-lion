@@ -342,6 +342,41 @@ class PostgresEventStore(EventStorePort):
                 original_error=e,
             ) from e
 
+    async def count_events(self, aggregate_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events for multiple aggregates in a single query."""
+        if not aggregate_ids:
+            return {}
+
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT aggregate_id, COUNT(*)::int AS event_count
+                    FROM events
+                    WHERE aggregate_id = ANY($1::uuid[])
+                    GROUP BY aggregate_id
+                    """,
+                    aggregate_ids,
+                )
+
+            counts = {row["aggregate_id"]: row["event_count"] for row in rows}
+            return {
+                aggregate_id: counts.get(aggregate_id, 0)
+                for aggregate_id in aggregate_ids
+            }
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to count events",
+                original_error=e,
+            ) from e
+
     async def get_all_events_grouped(
         self,
         *,

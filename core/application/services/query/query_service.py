@@ -219,11 +219,7 @@ class AgentQueryService:
         """
         if not agent_ids:
             return {}
-        counts: dict[UUID, int] = {}
-        for agent_id in agent_ids:
-            events = await self._repository.get_events(agent_id)
-            counts[agent_id] = len(events)
-        return counts
+        return await self._repository.get_event_counts(agent_ids)
 
     async def get_active_agent_ids(  # noqa: PLR0912
         self,

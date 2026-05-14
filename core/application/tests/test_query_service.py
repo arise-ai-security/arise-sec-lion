@@ -7,6 +7,60 @@ import pytest
 from core.application.services import AgentSummaryReadModel
 
 
+class CountOnlyEventStore:
+    """Fake event store exposing only the count API needed by this test."""
+
+    def __init__(self, counts: dict[UUID, int]) -> None:
+        self.counts = counts
+        self.requested_ids: list[UUID] = []
+
+    async def count_events(self, aggregate_ids: list[UUID]) -> dict[UUID, int]:
+        self.requested_ids = aggregate_ids
+        return {
+            aggregate_id: self.counts.get(aggregate_id, 0)
+            for aggregate_id in aggregate_ids
+        }
+
+
+class TestEventCounts:
+    """Tests for event count query delegation."""
+
+    async def test_get_event_counts_uses_repository_count_query(self) -> None:
+        """Event count query does not require full event fetch support."""
+        from core.application.services import AgentQueryService, AgentRepository
+
+        # Given: A real repository backed by a store with count_events only
+        first_id = uuid4()
+        second_id = uuid4()
+        missing_id = uuid4()
+        event_store = CountOnlyEventStore({first_id: 3, second_id: 1})
+        repository = AgentRepository(event_store=event_store)
+        service = AgentQueryService(repository)
+
+        # When: Fetching event counts through the query service
+        counts = await service.get_event_counts([first_id, second_id, missing_id])
+
+        # Then: The query delegates to count_events without fetching full events
+        assert counts == {first_id: 3, second_id: 1, missing_id: 0}
+        assert event_store.requested_ids == [first_id, second_id, missing_id]
+
+    async def test_get_event_counts_returns_empty_without_store_call(self) -> None:
+        """Empty input avoids unnecessary repository calls."""
+        from core.application.services import AgentQueryService, AgentRepository
+
+        # Given: A real repository backed by a count-capable fake
+        event_store = CountOnlyEventStore({})
+        repository = AgentRepository(event_store=event_store)
+        service = AgentQueryService(repository)
+
+        # When: Fetching counts for no agents
+        counts = await service.get_event_counts([])
+
+        # Then: The service returns immediately
+        assert counts == {}
+        assert event_store.requested_ids == []
+
+
 class TestAgentSummaryReadModel:
     """Tests for AgentSummaryReadModel sibling_index handling."""
 

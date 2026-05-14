@@ -89,6 +89,18 @@ class EventStoreReadPort(Protocol):
     async def get_all_aggregate_ids(self) -> list[UUID]:
         ...
 
+    async def count_events(self, aggregate_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events for multiple aggregates.
+
+        Args:
+            aggregate_ids: Aggregate UUIDs to count events for.
+
+        Returns:
+            Dict mapping each aggregate_id to its event count. Aggregates with
+            no events are mapped to 0.
+        """
+        ...
+
     async def get_all_events_grouped(
         self,
         *,
@@ -217,4 +229,3 @@ class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadP
     Implementations should inherit from this composite interface.
     Clients should depend on the narrowest interface they need.
     """
-
