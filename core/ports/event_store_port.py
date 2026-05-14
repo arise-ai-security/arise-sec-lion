@@ -101,6 +101,24 @@ class EventStoreReadPort(Protocol):
         """
         ...
 
+    async def count_subtree_events(self, root_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events across the entire descendant subtree for each root.
+
+        Uses a recursive CTE to traverse ChildSpawned links and sum all events
+        under each root aggregate. This is used by the staleness watchdog so
+        that a manager waiting for queued children is not mistakenly killed —
+        the manager itself emits no new events while waiting, but its subtree
+        does.
+
+        Args:
+            root_ids: Root aggregate UUIDs to compute subtree counts for.
+
+        Returns:
+            Dict mapping each root_id to the total event count in its subtree
+            (including the root itself). Roots with no events are mapped to 0.
+        """
+        ...
+
     async def get_all_events_grouped(
         self,
         *,

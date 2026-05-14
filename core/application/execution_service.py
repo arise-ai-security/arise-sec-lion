@@ -711,7 +711,11 @@ class AgentExecutionService:
             tasks.pop(aid, None)
             task_started_at.pop(aid, None)
 
-    _STALE_AGENT_BUDGET_SECONDS = 600.0
+    # Budget before a silent aggregate is declared stale. Set high because
+    # manager agents legitimately have no own-events while their sub-workers
+    # are queued behind max_concurrent_workers=1. The run-level hard timeout
+    # (max_run_duration_seconds) provides the ultimate safety net.
+    _STALE_AGENT_BUDGET_SECONDS = 7200.0
     _STALE_AGENT_GRACE_SECONDS = 60.0  # skip checks while agent is fresh
 
     async def _kill_stale_agents(
@@ -736,7 +740,7 @@ class AgentExecutionService:
         now = time.monotonic()
         active_ids = list(in_progress)
         try:
-            counts = await self._query_service.get_event_counts(active_ids)
+            counts = await self._query_service.get_subtree_event_counts(active_ids)
         except Exception:
             logger.exception("Stale-agent watchdog failed to fetch event counts")
             return

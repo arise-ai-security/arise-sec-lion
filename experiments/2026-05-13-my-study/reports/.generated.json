@@ -1,6 +1,6 @@
 {
   "experiments/2026-05-13-my-study/reports/enrollment.lock.yaml": {
-    "generated_at": "2026-05-14T05:53:41.789144Z",
+    "generated_at": "2026-05-14T15:53:31.581568Z",
     "generated_by": "experiments/shared/scripts/collect.py",
     "inputs": [
       "experiments/2026-05-13-my-study/manifest.yaml"
@@ -8,6 +8,6 @@
     "inputs_sha256": {
       "experiments/2026-05-13-my-study/manifest.yaml": "3da0f218ab4a4795d208ae57b97b90a767e61de90609fa4fdb29ca053f9963f3"
     },
-    "output_sha256": "bd3f906cb83d90f73009dd05bd5822fd52cfa24c498a136f9e26597ff7ab95a4"
+    "output_sha256": "9539b39f5ff73cea588af87dc85863167fffa35a9bbf6baa6ca6f640828c0bf0"
   }
 }

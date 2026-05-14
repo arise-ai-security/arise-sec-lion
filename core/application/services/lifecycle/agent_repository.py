@@ -183,6 +183,10 @@ class AgentRepository:
         """Get persisted event counts for multiple agents."""
         return await self._event_store.count_events(agent_ids)
 
+    async def get_subtree_event_counts(self, agent_ids: list[UUID]) -> dict[UUID, int]:
+        """Get event counts across entire descendant subtree for multiple agents."""
+        return await self._event_store.count_subtree_events(agent_ids)
+
     async def get_children_events_grouped(
         self, parent_id: UUID
     ) -> dict[UUID, list[DomainEvent]]:

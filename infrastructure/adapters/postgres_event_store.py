@@ -377,6 +377,49 @@ class PostgresEventStore(EventStorePort):
                 original_error=e,
             ) from e
 
+    async def count_subtree_events(self, root_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events across the entire descendant subtree for each root."""
+        if not root_ids:
+            return {}
+
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    WITH RECURSIVE subtree(root_id, agent_id) AS (
+                        SELECT r.id, r.id
+                        FROM unnest($1::uuid[]) AS r(id)
+
+                        UNION
+
+                        SELECT s.root_id, (e.payload->>'child_id')::uuid
+                        FROM events e
+                        INNER JOIN subtree s ON e.aggregate_id = s.agent_id
+                        WHERE e.event_type = 'ChildSpawned'
+                    )
+                    SELECT s.root_id, COUNT(e.event_id)::int AS total_count
+                    FROM subtree s
+                    INNER JOIN events e ON e.aggregate_id = s.agent_id
+                    GROUP BY s.root_id
+                    """,
+                    root_ids,
+                )
+
+            counts = {row["root_id"]: row["total_count"] for row in rows}
+            return {root_id: counts.get(root_id, 0) for root_id in root_ids}
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to count subtree events",
+                original_error=e,
+            ) from e
+
     async def get_all_events_grouped(
         self,
         *,

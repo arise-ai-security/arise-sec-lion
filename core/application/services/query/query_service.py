@@ -221,6 +221,19 @@ class AgentQueryService:
             return {}
         return await self._repository.get_event_counts(agent_ids)
 
+    async def get_subtree_event_counts(
+        self, agent_ids: list[UUID]
+    ) -> dict[UUID, int]:
+        """Return event counts across entire descendant subtree per agent.
+
+        Uses a recursive CTE over ChildSpawned links so that a manager waiting
+        for queued sub-workers is not mistakenly declared stale — the manager
+        emits no own-events while waiting, but its subtree does.
+        """
+        if not agent_ids:
+            return {}
+        return await self._repository.get_subtree_event_counts(agent_ids)
+
     async def get_active_agent_ids(  # noqa: PLR0912
         self,
         root_id: UUID | None = None,

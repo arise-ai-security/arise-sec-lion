@@ -75,7 +75,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ../data/postgres:/var/lib/postgresql/data
       - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-arise}
@@ -168,5 +168,4 @@ services:
       retries: 5
 
 volumes:
-  postgres_data:
   secbench_output:  # Shared volume for SEC-bench artifacts between containers
