@@ -203,17 +203,34 @@ class TestClaudeAgentSDKAdapter:
         """Adapter uses consistent stream name."""
         assert ClaudeAgentSDKAdapter.STREAM_NAME == "claude_sdk"
 
-    def test_effective_allowed_tools_applies_disallowed_policy(self) -> None:
+    def test_build_options_passes_tool_policy_verbatim_to_sdk(self) -> None:
+        """Configured allowlist and denylist reach ClaudeAgentOptions unchanged."""
+        # Given: an adapter with explicit built-in and custom tool policy.
         adapter = ClaudeAgentSDKAdapter(
-            SDKAdapterConfig(allowed_tools=["*"], disallowed_tools=["Write", "MultiEdit"])
+            SDKAdapterConfig(
+                allowed_tools=["Read", "Bash", "mcp__custom_tools__run"],
+                disallowed_tools=["WebFetch", "Task"],
+            )
         )
+        captured: dict[str, object] = {}
 
-        allowed = adapter._effective_allowed_tools()
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
 
-        assert "Read" in allowed
-        assert "Bash" in allowed
-        assert "Write" not in allowed
-        assert "MultiEdit" not in allowed
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: policy is passed through for Claude SDK validation/enforcement.
+        assert captured["allowed_tools"] == ["Read", "Bash", "mcp__custom_tools__run"]
+        assert captured["disallowed_tools"] == ["WebFetch", "Task"]
 
     def test_format_error_cli_not_found(self) -> None:
         """CLI not found errors get helpful message."""
@@ -391,10 +408,10 @@ class TestMCPServersWiring:
     def test_extract_mcp_servers_adds_stdio_type_per_entry(self) -> None:
         # Given: a raw stdio spec keyed by server name.
         raw = {
-            "security_tools": {
+            "custom_tools": {
                 "command": "python",
-                "args": ["-m", "plugins.security.mcp.security_tools_server"],
-                "env": {"ARISE_SECBENCH_CONTAINER_ID": "abc"},
+                "args": ["-m", "example.tools_server"],
+                "env": {"ARISE_CONTAINER_ID": "abc"},
             }
         }
 
@@ -403,9 +420,9 @@ class TestMCPServersWiring:
 
         # Then: the SDK-shaped mapping carries type=stdio.
         assert result is not None
-        assert result["security_tools"]["type"] == "stdio"
-        assert result["security_tools"]["command"] == "python"
-        assert result["security_tools"]["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc"
+        assert result["custom_tools"]["type"] == "stdio"
+        assert result["custom_tools"]["command"] == "python"
+        assert result["custom_tools"]["env"]["ARISE_CONTAINER_ID"] == "abc"
 
     def test_build_options_passes_mcp_servers_to_claude_agent_options(self) -> None:
         """``mcp_servers`` keyword reaches ``ClaudeAgentOptions`` constructor."""
@@ -425,10 +442,10 @@ class TestMCPServersWiring:
                 tool_queue=MagicMock(),
                 container_session=None,
                 mcp_servers={
-                    "security_tools": {
+                    "custom_tools": {
                         "type": "stdio",
                         "command": "python",
-                        "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                        "args": ["-m", "example.tools_server"],
                         "env": {},
                     }
                 },
@@ -436,8 +453,8 @@ class TestMCPServersWiring:
 
         # Then: ClaudeAgentOptions received a mcp_servers kwarg with the spec.
         assert "mcp_servers" in captured
-        assert "security_tools" in captured["mcp_servers"]  # type: ignore[index]
-        assert captured["mcp_servers"]["security_tools"]["command"] == "python"  # type: ignore[index]
+        assert "custom_tools" in captured["mcp_servers"]  # type: ignore[index]
+        assert captured["mcp_servers"]["custom_tools"]["command"] == "python"  # type: ignore[index]
 
     def test_build_options_omits_mcp_servers_when_unset(self) -> None:
         """No ``mcp_servers`` kwarg when not provided."""

@@ -8,7 +8,7 @@ Uses PostToolUse hooks for capturing tool invocations as events.
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from time import time
 from typing import Any, Literal
@@ -41,6 +41,16 @@ from .shared import (
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+type ToolEvent = tuple[str, str, str | None]
+type ToolEventQueue = asyncio.Queue[ToolEvent]
+type ToolUseHook = Callable[
+    [HookInput, str | None, HookContext],
+    Awaitable[SyncHookJSONOutput],
+]
+type ToolPermissionCallback = Callable[
+    [str, dict[str, Any], Any],
+    Awaitable[PermissionResultAllow],
+]
 
 
 @dataclass
@@ -94,7 +104,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         Uses PostToolUse hooks to capture tool invocations.
         """
         started_at = time()
-        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        tool_queue: ToolEventQueue = asyncio.Queue()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
             task_description = container_session.apply_task_prefix(
@@ -148,11 +158,29 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
     def _build_options(
         self,
         working_dir: str,
-        tool_queue: asyncio.Queue[tuple[str, str, str | None]],
+        tool_queue: ToolEventQueue,
         container_session: ContainerSessionContext | None,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> ClaudeAgentOptions:
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "cwd": working_dir,
+            "allowed_tools": list(self.config.allowed_tools),
+            "disallowed_tools": list(self.config.disallowed_tools),
+            "permission_mode": self.config.permission_mode,
+            "can_use_tool": self._make_permission_callback(container_session),
+            "hooks": {
+                "PostToolUse": [
+                    HookMatcher(hooks=[self._make_tool_use_hook(tool_queue)])
+                ],
+            },
+        }
+        if mcp_servers:
+            kwargs["mcp_servers"] = mcp_servers
+        return ClaudeAgentOptions(**kwargs)
 
+    @staticmethod
+    def _make_tool_use_hook(tool_queue: ToolEventQueue) -> ToolUseHook:
         async def capture_tool_use(
             input_data: HookInput,
             _tool_use_id: str | None,
@@ -172,13 +200,20 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             await tool_queue.put((content, "tool_use", tool_name))
             return SyncHookJSONOutput()
 
+        return capture_tool_use
+
+    @staticmethod
+    def _make_permission_callback(
+        container_session: ContainerSessionContext | None,
+    ) -> ToolPermissionCallback | None:
+        if container_session is None:
+            return None
+
         async def can_use_tool(
             tool_name: str,
             tool_input: dict[str, Any],
             _context: Any,
         ) -> PermissionResultAllow:
-            if container_session is None:
-                return PermissionResultAllow()
             return PermissionResultAllow(
                 updated_input=container_session.translate_tool_input(
                     tool_name,
@@ -186,19 +221,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 )
             )
 
-        kwargs: dict[str, Any] = {
-            "model": self.config.model,
-            "cwd": working_dir,
-            "allowed_tools": self._effective_allowed_tools(),
-            "permission_mode": self.config.permission_mode,
-            "can_use_tool": can_use_tool if container_session is not None else None,
-            "hooks": {
-                "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
-            },
-        }
-        if mcp_servers:
-            kwargs["mcp_servers"] = mcp_servers
-        return ClaudeAgentOptions(**kwargs)
+        return can_use_tool
 
     @staticmethod
     def _extract_mcp_servers(
@@ -209,18 +232,9 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             return None
         return to_sdk_mcp_servers(servers)
 
-    def _effective_allowed_tools(self) -> list[str]:
-        """Apply global allow/deny policy to Claude SDK tool names."""
-        if self.config.allowed_tools == ["*"]:
-            allowed = ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"]
-        else:
-            allowed = list(self.config.allowed_tools)
-        blocked = set(self.config.disallowed_tools)
-        return [tool for tool in allowed if tool not in blocked]
-
     async def _drain_queue(
         self,
-        queue: asyncio.Queue[tuple[str, str, str | None]],
+        queue: ToolEventQueue,
         sequencer: EventSequencer,
     ) -> AsyncIterator[ThoughtCaptured]:
         while not queue.empty():
