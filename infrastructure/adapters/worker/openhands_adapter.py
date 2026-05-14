@@ -8,7 +8,7 @@ import re
 import signal
 import subprocess
 import time as _time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from time import time
 from typing import Any, Protocol, cast
@@ -41,15 +41,14 @@ _SHUTDOWN_GRACE_SECONDS = 5
 def _snapshot_child_pids() -> set[int]:
     """Return the set of direct child PIDs of this process.
 
-    Used by G.4 to identify MCP stdio subprocesses spawned by the
-    OpenHands SDK during ``Conversation`` construction. The diff between
-    ``before`` and ``after`` snapshots picks out exactly the children
-    introduced by ``_build_conversation`` so the reaper can SIGTERM them
-    if the SDK leaves them running on shutdown.
+    Used to identify MCP stdio subprocesses spawned while OpenHands initializes
+    and runs a conversation. OpenHands lazy-loads MCP tools during
+    ``send_message()`` / ``run()``, so the caller snapshots before building the
+    conversation and diffs against the current children during cleanup.
     """
     try:
-        completed = subprocess.run(  # noqa: S603 - argv is fully owned by this module.
-            ["pgrep", "-P", str(os.getpid())],
+        completed = subprocess.run(  # noqa: S603 - argv is fully owned here.
+            ["pgrep", "-P", str(os.getpid())],  # noqa: S607 - intentionally PATH-based.
             check=False,
             capture_output=True,
             text=True,
@@ -106,6 +105,76 @@ class OpenHandsCostData:
     usage_metrics: list[WorkerUsageMetrics] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class _OpenHandsConversationRun:
+    """Own the blocking OpenHands SDK call and its one-thread boundary."""
+
+    conversation: _ConversationLike
+    task_description: str
+    child_pid_baseline: set[int]
+    timeout_seconds: int
+    max_iterations_per_run: int
+    _executor: concurrent.futures.ThreadPoolExecutor | None = field(
+        default=None, init=False
+    )
+    _future: concurrent.futures.Future | None = field(default=None, init=False)
+
+    def start(self) -> None:
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="openhands"
+        )
+        self._future = self._executor.submit(self._send_message_and_run)
+
+    def _send_message_and_run(self) -> object:
+        self.conversation.send_message(self.task_description)
+        return self.conversation.run()
+
+    async def wait_for_completion(self) -> None:
+        await asyncio.wait_for(
+            asyncio.shield(asyncio.wrap_future(self._future_or_raise())),
+            timeout=self.timeout_seconds,
+        )
+
+    async def wait_for_exit_after_shutdown(self) -> None:
+        future = self._future_or_raise()
+        if future.done():
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(future)),
+                timeout=_SHUTDOWN_GRACE_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "OpenHands thread did not exit within %ds after shutdown; "
+                "it will run until max_iteration_per_run (%d) is reached",
+                _SHUTDOWN_GRACE_SECONDS,
+                self.max_iterations_per_run,
+            )
+        except Exception:
+            logger.debug("OpenHands thread exit wait failed", exc_info=True)
+
+    def current_child_pids(self) -> list[int]:
+        return sorted(_snapshot_child_pids() - self.child_pid_baseline)
+
+    def shutdown_executor(self) -> None:
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+
+    def _future_or_raise(self) -> concurrent.futures.Future:  # type: ignore[type-arg]
+        if self._future is None:
+            raise RuntimeError("OpenHands conversation run was not started")
+        return self._future
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenHandsRunOutcome:
+    """Result of waiting for the blocking OpenHands SDK call."""
+
+    timed_out: bool
+    shutdown_requested: bool = False
+
+
 class OpenHandsAdapter(WorkerAdapterBase):
     """Execute tasks via the OpenHands SDK with native conversation controls."""
 
@@ -156,22 +225,14 @@ class OpenHandsAdapter(WorkerAdapterBase):
         sequencer: EventSequencer,
         task_context: dict[str, Any],
     ) -> AsyncIterator[DomainEvent]:
-        del agent_id
+        _ = agent_id  # Contract parameter; EventSequencer already carries this ID.
         started_at = time()
-        container_session = ContainerSessionContext.from_task_context(task_context)
-        if container_session is not None:
-            task_description = container_session.apply_task_prefix(
-                task_description,
-                auto_shell=False,
-            )
-
+        task_description = self._prepare_task_description(task_description, task_context)
         mcp_servers = self._extract_mcp_servers(task_context)
         children_before = _snapshot_child_pids()
+
         try:
-            conversation = cast(
-                "_ConversationLike",
-                self._build_conversation(working_dir, mcp_servers),
-            )
+            conversation = self._build_conversation_for_task(working_dir, mcp_servers)
         except ImportError as error:
             yield sequencer.failed(
                 "OpenHands packages not installed. "
@@ -182,78 +243,153 @@ class OpenHandsAdapter(WorkerAdapterBase):
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
             return
 
-        # G.4: snapshot MCP stdio subprocesses spawned by ``_build_conversation``
-        # so ``_request_shutdown`` can SIGTERM any survivors after ``close()``.
-        # The OpenHands SDK's ``Conversation.close()`` is best-effort and has
-        # historically left ``python -m plugins.security.mcp.security_tools_server``
-        # processes alive on shutdown; a per-process reaper keeps long-running
-        # matrix runs from accumulating orphan stdio children.
-        mcp_child_pids = sorted(_snapshot_child_pids() - children_before)
-
-        # G.3: workers within a single run are dispatched sequentially via
-        # AgentExecutionService → get_active_agent_ids(sequential_workers=True),
-        # so a thread leaked here on timeout (audit-2 #5) cannot race a sibling
-        # worker. The invariant is pinned by
-        # test_sequential_worker_invariant_holds_in_dispatch.
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="openhands"
+        conversation_run = self._create_conversation_run(
+            conversation=conversation,
+            task_description=task_description,
+            children_before=children_before,
         )
+        shutdown_requested = False
         try:
-            conversation.send_message(task_description)  # pylint: disable=no-member
-            future = executor.submit(conversation.run)  # pylint: disable=no-member
-
-            try:
-                await asyncio.wait_for(
-                    asyncio.wrap_future(future),
-                    timeout=self.timeout_seconds,
-                )
-            except TimeoutError:
-                self._request_shutdown(conversation, mcp_child_pids=mcp_child_pids)
-                await self._await_thread_exit(future)
+            outcome = await self._run_conversation_or_timeout(conversation, conversation_run)
+            shutdown_requested = outcome.shutdown_requested
+            if outcome.timed_out:
                 yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
                 return
 
-            finish_message: str | None = None
-            for event in self._iter_conversation_events(conversation):
-                content = self._extract_event_content(event)
-                if content and content.strip():
-                    output_type = self._classify_event(event)
-                    yield sequencer.thought(
-                        content.strip(),
-                        output_type,
-                        tool_name=(
-                            self._extract_tool_name(event)
-                            if output_type == "tool_use"
-                            else None
-                        ),
-                    )
-                # Capture finish message during iteration
-                if finish_message is None:
-                    finish_message = self._try_extract_finish(event)
+            finish_message = self._extract_finish_message(conversation)
+            for event in self._iter_conversation_domain_events(conversation, sequencer):
+                yield event
 
-            cost_data = self._extract_cost_data(conversation)
-            yield sequencer.cost_recorded(
-                tool_name=self._get_tool_name(),
-                cost_usd=cost_data.cost_usd,
-                duration_seconds=time() - started_at,
-                model=self._resolve_cost_model(cost_data),
-                tokens=cost_data.tokens,
-                prompt_tokens=cost_data.prompt_tokens,
-                completion_tokens=cost_data.completion_tokens,
-                cache_read_tokens=cost_data.cache_read_tokens,
-                cache_write_tokens=cost_data.cache_write_tokens,
-                reasoning_tokens=cost_data.reasoning_tokens,
-                usage_metrics=cost_data.usage_metrics,
-            )
-
-            yield sequencer.completed(
-                self._extract_result(conversation, working_dir, finish_message)
+            yield self._make_cost_recorded_event(conversation, sequencer, started_at)
+            yield self._make_completed_event(
+                conversation,
+                working_dir,
+                finish_message,
+                sequencer,
             )
         except Exception as error:
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
         finally:
-            self._request_shutdown(conversation, mcp_child_pids=mcp_child_pids)
-            executor.shutdown(wait=False)
+            if not shutdown_requested:
+                await self._shutdown_conversation_run(conversation, conversation_run)
+            conversation_run.shutdown_executor()
+
+    @staticmethod
+    def _prepare_task_description(
+        task_description: str,
+        task_context: dict[str, Any],
+    ) -> str:
+        container_session = ContainerSessionContext.from_task_context(task_context)
+        if container_session is None:
+            return task_description
+        return container_session.apply_task_prefix(task_description, auto_shell=False)
+
+    def _build_conversation_for_task(
+        self,
+        working_dir: str,
+        mcp_servers: dict[str, dict[str, Any]] | None,
+    ) -> _ConversationLike:
+        return cast("_ConversationLike", self._build_conversation(working_dir, mcp_servers))
+
+    def _create_conversation_run(
+        self,
+        *,
+        conversation: _ConversationLike,
+        task_description: str,
+        children_before: set[int],
+    ) -> _OpenHandsConversationRun:
+        return _OpenHandsConversationRun(
+            conversation=conversation,
+            task_description=task_description,
+            child_pid_baseline=children_before,
+            timeout_seconds=self.timeout_seconds,
+            max_iterations_per_run=self.max_iterations_per_run,
+        )
+
+    async def _run_conversation_or_timeout(
+        self,
+        conversation: _ConversationLike,
+        conversation_run: _OpenHandsConversationRun,
+    ) -> _OpenHandsRunOutcome:
+        conversation_run.start()
+        try:
+            await conversation_run.wait_for_completion()
+        except TimeoutError:
+            await self._shutdown_conversation_run(conversation, conversation_run)
+            await conversation_run.wait_for_exit_after_shutdown()
+            return _OpenHandsRunOutcome(timed_out=True, shutdown_requested=True)
+        return _OpenHandsRunOutcome(timed_out=False)
+
+    async def _shutdown_conversation_run(
+        self,
+        conversation: _ConversationLike,
+        conversation_run: _OpenHandsConversationRun,
+    ) -> None:
+        await self._request_shutdown_async(
+            conversation,
+            mcp_child_pids=conversation_run.current_child_pids(),
+        )
+
+    def _iter_conversation_domain_events(
+        self,
+        conversation: _ConversationLike,
+        sequencer: EventSequencer,
+    ) -> Iterator[DomainEvent]:
+        for sdk_event in self._iter_conversation_events(conversation):
+            if thought_event := self._sdk_event_to_thought(sdk_event, sequencer):
+                yield thought_event
+
+    def _extract_finish_message(self, conversation: _ConversationLike) -> str | None:
+        for sdk_event in self._iter_conversation_events(conversation):
+            finish_message = self._try_extract_finish(sdk_event)
+            if finish_message is not None:
+                return finish_message
+        return None
+
+    def _sdk_event_to_thought(
+        self,
+        sdk_event: Any,
+        sequencer: EventSequencer,
+    ) -> DomainEvent | None:
+        content = self._extract_event_content(sdk_event)
+        if not content or not content.strip():
+            return None
+
+        output_type = self._classify_event(sdk_event)
+        tool_name = self._extract_tool_name(sdk_event) if output_type == "tool_use" else None
+        return sequencer.thought(content.strip(), output_type, tool_name=tool_name)
+
+    def _make_cost_recorded_event(
+        self,
+        conversation: _ConversationLike,
+        sequencer: EventSequencer,
+        started_at: float,
+    ) -> DomainEvent:
+        cost_data = self._extract_cost_data(conversation)
+        return sequencer.cost_recorded(
+            tool_name=self._get_tool_name(),
+            cost_usd=cost_data.cost_usd,
+            duration_seconds=time() - started_at,
+            model=self._resolve_cost_model(cost_data),
+            tokens=cost_data.tokens,
+            prompt_tokens=cost_data.prompt_tokens,
+            completion_tokens=cost_data.completion_tokens,
+            cache_read_tokens=cost_data.cache_read_tokens,
+            cache_write_tokens=cost_data.cache_write_tokens,
+            reasoning_tokens=cost_data.reasoning_tokens,
+            usage_metrics=cost_data.usage_metrics,
+        )
+
+    def _make_completed_event(
+        self,
+        conversation: _ConversationLike,
+        working_dir: str,
+        finish_message: str | None,
+        sequencer: EventSequencer,
+    ) -> DomainEvent:
+        return sequencer.completed(
+            self._extract_result(conversation, working_dir, finish_message)
+        )
 
     def _build_conversation(
         self,
@@ -643,6 +779,36 @@ class OpenHandsAdapter(WorkerAdapterBase):
         msg = getattr(action, "message", None)
         return str(msg).strip() if msg and str(msg).strip() else None
 
+    async def _request_shutdown_async(
+        self,
+        conversation: Any,
+        *,
+        mcp_child_pids: list[int] | None = None,
+    ) -> None:
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="openhands-shutdown"
+        )
+        future = executor.submit(
+            self._request_shutdown,
+            conversation,
+            mcp_child_pids=mcp_child_pids,
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(future)),
+                timeout=(float(_SHUTDOWN_GRACE_SECONDS) * 2) + 1.0,
+            )
+        except TimeoutError:
+            logger.warning(
+                "OpenHands shutdown did not finish within %.0fs; cleanup will "
+                "continue in its background thread",
+                (float(_SHUTDOWN_GRACE_SECONDS) * 2) + 1.0,
+            )
+        except Exception:
+            logger.debug("OpenHands shutdown failed", exc_info=True)
+        finally:
+            executor.shutdown(wait=False)
+
     def _request_shutdown(
         self,
         conversation: Any,
@@ -651,14 +817,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
     ) -> None:
         """Best-effort SDK-native cleanup for the conversation.
 
-        G.4: after the SDK-native ``pause()`` / ``close()`` path runs, we
-        SIGTERM any MCP stdio subprocesses that survived. The plan's
-        verification step 1 found that ``Conversation.close()`` is
-        best-effort with respect to MCP children — survivors are
-        occasional but real, so the reaper (plan step 2) is wired
-        unconditionally. ``_pid_alive`` short-circuits the kill when the
-        SDK already terminated the child, so the reaper is a true no-op
-        in the happy path.
+        After the SDK-native ``pause()`` / ``close()`` path runs, SIGTERM any
+        MCP stdio subprocesses that survived. ``Conversation.close()`` is
+        best-effort with respect to MCP children, so the reaper is wired
+        unconditionally. ``_pid_alive`` short-circuits the kill when the SDK
+        already terminated the child, so the reaper is a true no-op in the
+        happy path.
         """
         for method_name in ("pause", "close"):
             method = getattr(conversation, method_name, None)
@@ -676,7 +840,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             return
         self._reap_with_escalation(set(mcp_child_pids))
 
-    def _reap_with_escalation(
+    def _reap_with_escalation(  # noqa: PLR0912 - explicit OS cleanup branches.
         self,
         pids: set[int],
         *,
@@ -770,27 +934,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 continue
             if wpid == pid:
                 pids.discard(pid)
-
-    async def _await_thread_exit(
-        self,
-        future: concurrent.futures.Future,  # type: ignore[type-arg]
-    ) -> None:
-        if future.done():
-            return
-        try:
-            await asyncio.wait_for(
-                asyncio.wrap_future(future),
-                timeout=_SHUTDOWN_GRACE_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning(
-                "OpenHands thread did not exit within %ds after shutdown; "
-                "it will run until max_iteration_per_run (%d) is reached",
-                _SHUTDOWN_GRACE_SECONDS,
-                self.max_iterations_per_run,
-            )
-        except Exception:
-            logger.debug("OpenHands thread exit wait failed", exc_info=True)
 
     @staticmethod
     def _classify_event(event: Any) -> str:

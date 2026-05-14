@@ -107,6 +107,41 @@ class _SlowConversation(_FakeConversation):
         time.sleep(0.05)
 
 
+class _ThreadRecordingConversation(_FakeConversation):
+    def __init__(self) -> None:
+        super().__init__()
+        self.send_thread_name: str | None = None
+        self.run_thread_name: str | None = None
+        self.run_saw_message = False
+
+    def send_message(self, message: str) -> None:
+        self.send_thread_name = threading.current_thread().name
+        super().send_message(message)
+
+    def run(self) -> None:
+        self.run_thread_name = threading.current_thread().name
+        self.run_saw_message = self.messages == ["Threaded task"]
+        super().run()
+
+
+class _SlowSendMessageConversation(_FakeConversation):
+    def __init__(self) -> None:
+        super().__init__()
+        self._gate = threading.Event()
+        self.run_called = False
+
+    def send_message(self, message: str) -> None:
+        self.messages.append(message)
+        self._gate.wait(timeout=30)
+
+    def run(self) -> None:
+        self.run_called = True
+        super().run()
+
+    def release(self) -> None:
+        self._gate.set()
+
+
 class _StuckConversation(_FakeConversation):
     """Conversation whose run() ignores pause/close and blocks until released."""
 
@@ -219,6 +254,138 @@ class TestOpenHandsAdapter:
         assert cost_event.usage_metrics[0].cost_items[1].model == "openai/gpt-4o-mini"
         assert isinstance(events[-1], WorkCompleted)
         assert "final output" in events[-1].result
+
+    @pytest.mark.asyncio
+    async def test_conversation_message_and_run_share_blocking_thread(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """Run the dependent OpenHands calls together before reading SDK events."""
+
+        # Given: a conversation that records where send_message and run execute.
+        adapter = _adapter(timeout_seconds=1)
+        conversation = _ThreadRecordingConversation()
+        monkeypatch.setattr(
+            adapter,
+            "_build_conversation",
+            lambda *_args: conversation,
+        )
+
+        # When: the adapter executes a worker session.
+        events = []
+        async for event in adapter.run_session(
+            {
+                "task_description": "Threaded task",
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+            }
+        ):
+            events.append(event)
+
+        # Then: both SDK lifecycle calls ran on the same OpenHands worker thread.
+        assert conversation.send_thread_name is not None
+        assert conversation.run_thread_name is not None
+        assert conversation.send_thread_name.startswith("openhands")
+        assert conversation.run_thread_name == conversation.send_thread_name
+
+        # And: run observed the message before domain events were extracted.
+        assert conversation.run_saw_message is True
+        assert any(isinstance(event, ThoughtCaptured) for event in events)
+        assert isinstance(events[-1], WorkCompleted)
+
+    @pytest.mark.asyncio
+    async def test_timeout_covers_blocking_send_message(
+        self,
+        monkeypatch,
+        caplog,
+        tmp_path: Path,
+    ) -> None:
+        """A hang before run() still hits the adapter timeout and cleanup path."""
+
+        # Given: send_message blocks before OpenHands can enter run().
+        monkeypatch.setattr(
+            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            0.05,
+        )
+        adapter = _adapter(timeout_seconds=0.01)
+        conversation = _SlowSendMessageConversation()
+        monkeypatch.setattr(
+            adapter,
+            "_build_conversation",
+            lambda *_args: conversation,
+        )
+
+        # When: the adapter executes the session.
+        events = []
+        with caplog.at_level(logging.WARNING):
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Blocked before run",
+                    "agent_id": uuid4(),
+                    "working_directory": str(tmp_path),
+                }
+            ):
+                events.append(event)
+
+        # Then: the call times out, requests SDK cleanup, and does not run.
+        assert conversation.paused is True
+        assert conversation.closed is True
+        assert conversation.run_called is False
+        assert isinstance(events[-1], WorkFailed)
+        assert "timed out" in events[-1].reason
+        assert any("did not exit" in record.message for record in caplog.records)
+
+        conversation.release()
+
+    @pytest.mark.asyncio
+    async def test_timeout_shutdown_uses_current_child_pid_diff(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """MCP children spawned during send_message/run are included in shutdown."""
+
+        # Given: child PID snapshots where an MCP child appears after start.
+        monkeypatch.setattr(
+            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            0.05,
+        )
+        snapshots = iter([{100}, {100, 200}, {100, 200}])
+        monkeypatch.setattr(
+            "infrastructure.adapters.worker.openhands_adapter._snapshot_child_pids",
+            lambda: next(snapshots, {100, 200}),
+        )
+        adapter = _adapter(timeout_seconds=0.01)
+        conversation = _StuckConversation()
+        monkeypatch.setattr(
+            adapter,
+            "_build_conversation",
+            lambda *_args: conversation,
+        )
+        captured_pid_lists: list[list[int] | None] = []
+
+        def _record_shutdown(_conversation: object, *, mcp_child_pids: list[int] | None) -> None:
+            captured_pid_lists.append(mcp_child_pids)
+
+        monkeypatch.setattr(adapter, "_request_shutdown", _record_shutdown)
+
+        # When: the run times out.
+        events = []
+        async for event in adapter.run_session(
+            {
+                "task_description": "Spawned MCP child",
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+            }
+        ):
+            events.append(event)
+
+        # Then: shutdown receives the child created after the baseline snapshot once.
+        assert isinstance(events[-1], WorkFailed)
+        assert captured_pid_lists == [[200]]
+
+        conversation.release()
 
     @pytest.mark.asyncio
     async def test_timeout_requests_sdk_shutdown(self, monkeypatch, tmp_path: Path) -> None:
