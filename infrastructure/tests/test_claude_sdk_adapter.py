@@ -16,6 +16,7 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from infrastructure.adapters.worker.claude_sdk_adapter import (
+    DEFAULT_MAX_THINKING_TOKENS,
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
 )
@@ -160,6 +161,8 @@ class TestSDKAdapterConfig:
         assert "Edit" in config.allowed_tools
         assert "Bash" in config.allowed_tools
         assert config.permission_mode == "bypassPermissions"
+        assert config.max_thinking_tokens == DEFAULT_MAX_THINKING_TOKENS
+        assert config.thinking_display == "summarized"
 
     def test_custom_values(self) -> None:
         """Config accepts custom values."""
@@ -169,6 +172,8 @@ class TestSDKAdapterConfig:
             allowed_tools=["Read", "Bash"],
             disallowed_tools=["Write"],
             permission_mode="default",
+            max_thinking_tokens=None,
+            thinking_display=None,
         )
 
         assert config.model == "claude-sonnet-4"
@@ -176,6 +181,8 @@ class TestSDKAdapterConfig:
         assert config.allowed_tools == ["Read", "Bash"]
         assert config.disallowed_tools == ["Write"]
         assert config.permission_mode == "default"
+        assert config.max_thinking_tokens is None
+        assert config.thinking_display is None
 
 
 class TestClaudeAgentSDKAdapter:
@@ -475,6 +482,30 @@ class TestMCPServersWiring:
             )
 
         assert "mcp_servers" not in captured
+
+    def test_build_options_enables_summarized_thinking_by_default(self) -> None:
+        """Default B-cell SDK options request visible Claude thinking blocks."""
+        # Given: an adapter and a captured ClaudeAgentOptions stub.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: ClaudeAgentOptions receives fixed-budget thinking and summarized output.
+        assert captured["max_thinking_tokens"] == DEFAULT_MAX_THINKING_TOKENS
+        assert captured["extra_args"] == {"thinking-display": "summarized"}
 
 
 class MockHookInput:

@@ -41,6 +41,7 @@ from .shared import (
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+type ThinkingDisplay = Literal["summarized", "omitted"]
 type ToolEvent = tuple[str, str, str | None]
 type ToolEventQueue = asyncio.Queue[ToolEvent]
 type ToolUseHook = Callable[
@@ -51,6 +52,8 @@ type ToolPermissionCallback = Callable[
     [str, dict[str, Any], Any],
     Awaitable[PermissionResultAllow],
 ]
+
+DEFAULT_MAX_THINKING_TOKENS = 63_999
 
 
 @dataclass
@@ -64,6 +67,8 @@ class SDKAdapterConfig:
     )
     disallowed_tools: list[str] = field(default_factory=list)
     permission_mode: PermissionMode = "bypassPermissions"
+    max_thinking_tokens: int | None = DEFAULT_MAX_THINKING_TOKENS
+    thinking_display: ThinkingDisplay | None = "summarized"
 
 
 class ClaudeAgentSDKAdapter(WorkerAdapterBase):
@@ -175,6 +180,10 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 ],
             },
         }
+        if self.config.thinking_display is not None:
+            kwargs["extra_args"] = {"thinking-display": self.config.thinking_display}
+        if self.config.max_thinking_tokens is not None:
+            kwargs["max_thinking_tokens"] = self.config.max_thinking_tokens
         if mcp_servers:
             kwargs["mcp_servers"] = mcp_servers
         return ClaudeAgentOptions(**kwargs)
