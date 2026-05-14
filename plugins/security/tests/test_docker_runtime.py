@@ -230,11 +230,13 @@ async def test_worker_container_name_uses_full_uuid(tmp_path: Path) -> None:
     ]
     assert f"arise.session_pid={os.getpid()}" in label_pairs
     assert any(label.startswith("arise.created_at=") for label in label_pairs)
+    volume_specs = [argv[i + 1] for i, token in enumerate(argv) if token == "-v"]
+    assert any(spec.endswith(":/work") for spec in volume_specs)
 
 
 @pytest.mark.asyncio
 async def test_seed_containers_carry_session_pid_label(tmp_path: Path) -> None:
-    """E.3 — both `docker create` seed invocations (source + testcase) carry
+    """E.3 — seed invocations (source + testcase + work) carry
     the `arise.session_pid` and `arise.role=seed` labels so the F.2 PID-label
     sweep can collect them on SIGKILL."""
     cve = _make_cve()
@@ -260,7 +262,7 @@ async def test_seed_containers_carry_session_pid_label(tmp_path: Path) -> None:
     )
 
     create_cmds = [cmd for cmd in invocations if cmd[:2] == ["docker", "create"]]
-    assert len(create_cmds) == 2, f"expected two docker create calls, got {create_cmds}"
+    assert len(create_cmds) == 3, f"expected three docker create calls, got {create_cmds}"
     for cmd in create_cmds:
         label_pairs = [cmd[i + 1] for i, token in enumerate(cmd) if token == "--label"]
         assert f"arise.session_pid={os.getpid()}" in label_pairs

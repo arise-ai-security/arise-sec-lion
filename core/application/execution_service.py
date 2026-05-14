@@ -49,13 +49,13 @@ if TYPE_CHECKING:
         WorkspaceSpec,
     )
     from core.application.services import PromptBuilder
-    from core.ports.domain_plugin_port import DomainPlugin
+    from core.ports.domain_plugin_port import DomainPlugin, PreparedRunWorkspace
     from core.ports.event_store_port import EventStorePort
     from core.ports.runtime_ports import (
         SharedContextPort,
         SiblingViewPort,
         SystemLimitsPort,
-        Toolset,
+        ReconToolPort,
     )
     from core.ports.worker_port import WorkerPort
 
@@ -118,7 +118,7 @@ class ExecutionServiceDependencies:
     parent_notifier: ParentNotificationService
     prompt_builder: "PromptBuilder"
     domain_plugin: "DomainPlugin | None" = None
-    recon_tool: "Toolset | None" = None
+    recon_tool: "ReconToolPort | None" = None
     flat_worker: "WorkerPort | None" = None
     flat_invariant_builder: FlatInvariantBuilder | None = None
 
@@ -943,12 +943,25 @@ class AgentExecutionService:
         if prepared is not None and prepared.working_directory:
             self._working_directory = Path(prepared.working_directory)
 
-        # Point recon tools at the workspace so thinker agents can read target code
-        if self._recon_tool is not None and self._working_directory is not None:
-            set_wd = getattr(self._recon_tool, "set_working_directory", None)
-            if callable(set_wd):
-                set_wd(str(self._working_directory))
-                logger.info("Recon tools targeting: %s", self._working_directory)
+        self._configure_recon_workspace(prepared)
+
+    def _configure_recon_workspace(
+        self,
+        prepared: "PreparedRunWorkspace | None",
+    ) -> None:
+        if self._recon_tool is None or self._working_directory is None:
+            return
+
+        set_wd = getattr(self._recon_tool, "set_working_directory", None)
+        if callable(set_wd):
+            set_wd(str(self._working_directory))
+
+        set_aliases = getattr(self._recon_tool, "set_path_aliases", None)
+        if callable(set_aliases):
+            aliases = prepared.path_aliases if prepared is not None else ()
+            set_aliases(aliases)
+
+        logger.info("Recon tools targeting: %s", self._working_directory)
 
     # Top-level directories that contain the target project source tree.
     # Workers access source code inside their container, not via the

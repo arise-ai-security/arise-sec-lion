@@ -41,6 +41,10 @@ def test_build_stdio_config_returns_engine_agnostic_dict() -> None:
         container_id="abc123def456",
         helper_script="/run/secb-exec",
         work_dir="/src/demo",
+        host_source_dir="/host/run/src",
+        host_testcase_dir="/host/run/testcase",
+        host_work_root="/host/run/work",
+        workspace_root="/host/run",
     )
 
     # Then: it carries the python entrypoint and env contract.
@@ -49,6 +53,13 @@ def test_build_stdio_config_returns_engine_agnostic_dict() -> None:
     assert spec["env"][server.ENV_CONTAINER_ID] == "abc123def456"
     assert spec["env"][server.ENV_HELPER_SCRIPT] == "/run/secb-exec"
     assert spec["env"][server.ENV_WORK_DIR] == "/src/demo"
+    assert spec["env"][server.ENV_HOST_SOURCE_DIR] == "/host/run/src"
+    assert spec["env"][server.ENV_HOST_TESTCASE_DIR] == "/host/run/testcase"
+    assert spec["env"][server.ENV_HOST_WORK_ROOT] == "/host/run/work"
+    assert spec["env"][server.ENV_WORKSPACE_ROOT] == "/host/run"
+    assert spec["env"][server.ENV_CONTAINER_SOURCE_DIR] == "/src"
+    assert spec["env"][server.ENV_CONTAINER_TESTCASE_DIR] == "/testcase"
+    assert spec["env"][server.ENV_CONTAINER_WORK_DIR] == "/work"
 
 
 def test_build_stdio_config_omits_work_dir_when_unset() -> None:
@@ -273,6 +284,62 @@ def test_shell_in_container_invokes_exec_helper(
     assert result["exit_code"] == 0
     assert "HELPER GOT:" in result["stdout"]
     assert "cd /src/demo && make all" in result["stdout"]
+
+
+def test_shell_in_container_translates_host_mirror_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    # Given: a helper script captures the command routed into the container.
+    helper = tmp_path / "fake-helper.sh"
+    helper.write_text('#!/usr/bin/env bash\necho "HELPER GOT: $1"\n')
+    helper.chmod(0o755)
+    monkeypatch.setenv(server.ENV_CONTAINER_ID, "abc123def456")
+    monkeypatch.setenv(server.ENV_HELPER_SCRIPT, str(helper))
+    monkeypatch.setenv(server.ENV_WORK_DIR, "/src/openjpeg")
+    monkeypatch.setenv(server.ENV_HOST_SOURCE_DIR, "/host/run/src")
+    monkeypatch.setenv(server.ENV_HOST_TESTCASE_DIR, "/host/run/testcase")
+    monkeypatch.setenv(server.ENV_HOST_WORK_ROOT, "/host/run/work")
+    monkeypatch.setenv(server.ENV_WORKSPACE_ROOT, "/host/run")
+    monkeypatch.setenv(server.ENV_CONTAINER_SOURCE_DIR, "/src")
+    monkeypatch.setenv(server.ENV_CONTAINER_TESTCASE_DIR, "/testcase")
+    monkeypatch.setenv(server.ENV_CONTAINER_WORK_DIR, "/work")
+    monkeypatch.setenv(server.ENV_CONTAINER_WORKSPACE_ROOT, "/arise-run")
+
+    # When: the model incorrectly passes host mirror paths to the container shell.
+    result = server.shell_in_container(
+        command=(
+            "cd /host/run/src/openjpeg && "
+            "cp /host/run/testcase/poc /host/run/work/poc.copy"
+        )
+    )
+
+    # Then: the MCP server rewrites them to container paths before execution.
+    assert result["ok"] is True
+    assert "cd /src/openjpeg && cd /src/openjpeg" in result["stdout"]
+    assert "cp /testcase/poc /work/poc.copy" in result["stdout"]
+    assert "/host/run" not in result["stdout"]
+
+
+@pytest.mark.usefixtures("env")
+def test_valgrind_run_translates_host_target_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: path translation env is present.
+    monkeypatch.setenv(server.ENV_HOST_SOURCE_DIR, "/host/run/src")
+    captured: dict[str, Any] = {}
+
+    def _fake_run(argv, **_kwargs):
+        captured["argv"] = argv
+        return _ok_completed()
+
+    # When: target_path is a host mirror path.
+    with patch.object(server.subprocess, "run", _fake_run):
+        server.valgrind_run(target_path="/host/run/src/demo/bin/app")
+
+    # Then: Valgrind is executed against the container path.
+    assert "/src/demo/bin/app" in captured["argv"][1]
+    assert "/host/run/src" not in captured["argv"][1]
 
 
 def test_shell_in_container_works_in_container_mode(

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from core.domain.events.events import DomainEvent
 from core.domain.values.llm_response import LLMResponse, LLMToolResponse
+from core.ports.domain_plugin_port import WorkspacePathAlias
 
 
 if TYPE_CHECKING:
@@ -225,6 +226,12 @@ class ReconToolPort(Toolset, Protocol):
     These allow PENDING/MANAGER agents to inspect the codebase before
     deciding whether to execute or decompose. All operations are read-only.
     """
+
+    def set_working_directory(self, path: str) -> None:
+        ...
+
+    def set_path_aliases(self, aliases: tuple[WorkspacePathAlias, ...]) -> None:
+        ...
 
     async def read_file(
         self, path: str, max_lines: int = 200,

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 from typing import Any
@@ -31,6 +32,14 @@ logger = logging.getLogger(__name__)
 ENV_CONTAINER_ID = "ARISE_SECBENCH_CONTAINER_ID"
 ENV_HELPER_SCRIPT = "ARISE_SECBENCH_HELPER_SCRIPT"
 ENV_WORK_DIR = "ARISE_SECBENCH_WORK_DIR"
+ENV_HOST_SOURCE_DIR = "ARISE_SECBENCH_HOST_SOURCE_DIR"
+ENV_HOST_TESTCASE_DIR = "ARISE_SECBENCH_HOST_TESTCASE_DIR"
+ENV_HOST_WORK_ROOT = "ARISE_SECBENCH_HOST_WORK_ROOT"
+ENV_WORKSPACE_ROOT = "ARISE_SECBENCH_WORKSPACE_ROOT"
+ENV_CONTAINER_SOURCE_DIR = "ARISE_SECBENCH_CONTAINER_SOURCE_DIR"
+ENV_CONTAINER_TESTCASE_DIR = "ARISE_SECBENCH_CONTAINER_TESTCASE_DIR"
+ENV_CONTAINER_WORK_DIR = "ARISE_SECBENCH_CONTAINER_WORK_DIR"
+ENV_CONTAINER_WORKSPACE_ROOT = "ARISE_SECBENCH_CONTAINER_WORKSPACE_ROOT"
 
 _DEFAULT_VALGRIND_OPTIONS = (
     "--tool=memcheck",
@@ -50,6 +59,14 @@ def build_stdio_config(
     container_id: str,
     helper_script: str,
     work_dir: str | None = None,
+    host_source_dir: str | None = None,
+    host_testcase_dir: str | None = None,
+    host_work_root: str | None = None,
+    workspace_root: str | None = None,
+    container_source_dir: str = "/src",
+    container_testcase_dir: str = "/testcase",
+    container_work_dir: str = "/work",
+    container_workspace_root: str = "/arise-run",
     python_executable: str = "python",
 ) -> dict[str, Any]:
     """Build the engine-agnostic stdio server spec for adapter wiring.
@@ -64,11 +81,62 @@ def build_stdio_config(
     }
     if work_dir is not None:
         env[ENV_WORK_DIR] = work_dir
+    optional_env = {
+        ENV_HOST_SOURCE_DIR: host_source_dir,
+        ENV_HOST_TESTCASE_DIR: host_testcase_dir,
+        ENV_HOST_WORK_ROOT: host_work_root,
+        ENV_WORKSPACE_ROOT: workspace_root,
+        ENV_CONTAINER_SOURCE_DIR: container_source_dir,
+        ENV_CONTAINER_TESTCASE_DIR: container_testcase_dir,
+        ENV_CONTAINER_WORK_DIR: container_work_dir,
+        ENV_CONTAINER_WORKSPACE_ROOT: container_workspace_root,
+    }
+    env.update({key: value for key, value in optional_env.items() if value})
     return {
         "command": python_executable,
         "args": ["-m", "plugins.security.mcp.security_tools_server"],
         "env": env,
     }
+
+
+def _path_translation_pairs_from_env() -> list[tuple[str, str]]:
+    pairs = [
+        (
+            os.environ.get(ENV_HOST_SOURCE_DIR),
+            os.environ.get(ENV_CONTAINER_SOURCE_DIR, "/src"),
+        ),
+        (
+            os.environ.get(ENV_HOST_TESTCASE_DIR),
+            os.environ.get(ENV_CONTAINER_TESTCASE_DIR, "/testcase"),
+        ),
+        (
+            os.environ.get(ENV_HOST_WORK_ROOT),
+            os.environ.get(ENV_CONTAINER_WORK_DIR, "/work"),
+        ),
+        (
+            os.environ.get(ENV_WORKSPACE_ROOT),
+            os.environ.get(ENV_CONTAINER_WORKSPACE_ROOT, "/arise-run"),
+        ),
+    ]
+    normalized: list[tuple[str, str]] = []
+    for host_path, container_path in pairs:
+        if not host_path or not container_path:
+            continue
+        normalized.append((host_path.rstrip("/"), container_path.rstrip("/")))
+    return sorted(normalized, key=lambda pair: len(pair[0]), reverse=True)
+
+
+def _translate_host_paths(command: str) -> str:
+    """Translate known host mirror paths embedded in a shell command."""
+    translated = command
+    for host_path, container_path in _path_translation_pairs_from_env():
+        if not host_path:
+            continue
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9._/-]){re.escape(host_path)}(?=$|/|[^A-Za-z0-9._-])"
+        )
+        translated = pattern.sub(container_path, translated)
+    return translated
 
 
 def _read_env() -> tuple[str | None, str | None, str | None] | dict[str, Any]:
@@ -213,6 +281,7 @@ def shell_in_container(
     if isinstance(env, dict):
         return env
     _container_id, helper_script, work_dir = env
+    command = _translate_host_paths(command)
     full_command = (
         command
         if work_dir is None
@@ -243,11 +312,13 @@ def valgrind_run(
     if isinstance(env, dict):
         return env
     _container_id, helper_script, work_dir = env
-    command = _build_valgrind_command(
-        target_path=target_path,
-        args=args or [],
-        options=options,
-        work_dir=work_dir,
+    command = _translate_host_paths(
+        _build_valgrind_command(
+            target_path=target_path,
+            args=args or [],
+            options=options,
+            work_dir=work_dir,
+        )
     )
     return _exec_in_container(helper_script, command)
 
@@ -288,11 +359,13 @@ def klee_run(
                 "install_stderr": install_result.get("stderr"),
             }
 
-    command = _build_klee_command(
-        bitcode_path=bitcode_path,
-        max_time_seconds=max_time_seconds,
-        output_dir=output_dir,
-        work_dir=work_dir,
+    command = _translate_host_paths(
+        _build_klee_command(
+            bitcode_path=bitcode_path,
+            max_time_seconds=max_time_seconds,
+            output_dir=output_dir,
+            work_dir=work_dir,
+        )
     )
     return _exec_in_container(
         helper_script,

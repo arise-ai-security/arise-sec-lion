@@ -21,6 +21,7 @@ class ContainerSessionContext:
     container_testcase_dir: str
     container_working_directory: str
     helper_script: Path
+    container_work_dir: str = "/work"
     container_workspace_root: str = "/arise-run"
 
     @classmethod
@@ -42,8 +43,13 @@ class ContainerSessionContext:
             container_testcase_dir=str(raw["container_testcase_dir"]),
             container_working_directory=str(raw["container_working_directory"]),
             helper_script=Path(raw["helper_script"]),
+            container_work_dir=str(raw.get("container_work_dir", "/work")),
             container_workspace_root=str(raw.get("container_workspace_root", "/arise-run")),
         )
+
+    @property
+    def host_work_root(self) -> Path:
+        return self.workspace_root / "work"
 
     def host_to_container_path(self, host_path: Path) -> str:
         """Translate a host path under ``workspace_root`` to its in-container path.
@@ -83,45 +89,60 @@ class ContainerSessionContext:
                 "- Plain Bash tool calls are auto-routed into the container "
                 "by this runtime as a fallback, but `shell_in_container` is "
                 "preferred for clarity.\n"
+                "- Do not place host mirror paths in shell commands; use "
+                "`/src`, `/testcase`, and `/work` paths.\n"
             )
         else:
             shell_line = (
                 "- **ALL build/test/runtime shell commands** MUST use the MCP "
                 "`shell_in_container` tool. Do NOT run them on the host "
-                "terminal — host paths like `/src` and `/testcase` do not "
+                "terminal — host paths like `/src`, `/testcase`, and `/work` do not "
                 "exist on the host and the command will fail.\n"
                 '- Example: call `shell_in_container` with '
                 '`command="cd /src/<project> && make"` (NOT a plain shell '
                 "command that runs on the host).\n"
+                "- Never call `shell_in_container` with a command containing "
+                f"`{self.host_source_dir}` or any other host mirror path.\n"
             )
         prefix = (
             "## Container-backed workspace\n\n"
             "⚠️ **ABSOLUTE RULE — TWO SEPARATE FILESYSTEMS:**\n"
             "You are running on a HOST machine. Source code and testcase files are "
-            "mirrored between host and a Docker container. The file editor tool "
-            "operates on HOST paths. Container paths like `/src/...` and "
-            "`/testcase/...` DO NOT EXIST on the host and WILL ERROR.\n\n"
-            "**File editor (read/write/edit) — ALWAYS use ABSOLUTE host paths:**\n"
+            "mirrored between host and a Docker container. Build artifacts are "
+            "mirrored through `/work`. Native file tools operate on the HOST "
+            "mirror. The MCP `shell_in_container` tool runs INSIDE the container. "
+            "Host paths under the run directory DO NOT EXIST inside the container.\n\n"
+            "**Native file tools (read/write/edit/search) — use host paths or "
+            "container aliases:**\n"
             f"- Source code: `{self.host_source_dir}/...` — "
-            "NOT `/src/...`\n"
+            "container alias `/src/...`\n"
             f"- Test artifacts: `{self.host_testcase_dir}/...` — "
-            "NOT `/testcase/...`\n"
-            f"- Working dir: `{self.host_work_dir}/...` — "
-            f"NOT `{self.container_working_directory}/...`\n"
+            "container alias `/testcase/...`\n"
+            f"- Build artifacts: `{self.host_work_root}/...` — "
+            "container alias `/work/...`\n"
+            f"- Repository root for file tools: `{self.host_work_dir}/...` — "
+            f"container alias `{self.container_working_directory}/...`\n"
             f"- Example: to read a source file → "
             f"`{self.host_source_dir}/<project>/src/file.c` "
-            "(read files under this path, not `/src/...`)\n"
+            "or `/src/<project>/src/file.c`\n"
             f"- Example: to read a testcase artifact → "
-            f"`{self.host_testcase_dir}/<testcase>.sh`\n\n"
+            f"`{self.host_testcase_dir}/<testcase>.sh` or "
+            "`/testcase/<testcase>.sh`\n\n"
             "**Shell commands — ALWAYS use the MCP `shell_in_container` tool "
-            "for build/test/runtime commands inside the container:**\n"
+            "with CONTAINER paths, never host mirror paths:**\n"
+            f"- Source code in shell: `{self.container_source_dir}/...`, not "
+            f"`{self.host_source_dir}/...`\n"
+            f"- Test artifacts in shell: `{self.container_testcase_dir}/...`, not "
+            f"`{self.host_testcase_dir}/...`\n"
+            f"- Build artifacts in shell: `{self.container_work_dir}/...`, not "
+            f"`{self.host_work_root}/...`\n"
             f"{shell_line}\n"
-            f"**Source code is already cloned** at `{self.host_source_dir}/` with the "
-            "correct commit checked out. Do NOT re-clone the repository.\n\n"
+            f"**Source code is already cloned** at `{self.container_source_dir}/` "
+            "inside the container and mirrored on the host. Do NOT re-clone "
+            "the repository.\n\n"
             "**Tool**: the MCP `shell_in_container` tool runs an arbitrary "
             "shell command inside the active container — use it whenever you "
-            "need a `/src/...` or `/testcase/...` path that does not exist "
-            "on the host.\n\n"
+            "need a container-only path that does not exist on the host.\n\n"
         )
         return f"{prefix}\n{task_description}"
 
@@ -151,6 +172,11 @@ class ContainerSessionContext:
         if path.startswith(f"{self.container_testcase_dir}/"):
             suffix = path.removeprefix(self.container_testcase_dir).lstrip("/")
             return str(self.host_testcase_dir / suffix)
+        if path == self.container_work_dir:
+            return str(self.host_work_root)
+        if path.startswith(f"{self.container_work_dir}/"):
+            suffix = path.removeprefix(self.container_work_dir).lstrip("/")
+            return str(self.host_work_root / suffix)
         return path
 
     def wrap_shell_command(self, command: str) -> str:

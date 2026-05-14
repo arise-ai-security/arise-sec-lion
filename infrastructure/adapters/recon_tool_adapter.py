@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.ports.domain_plugin_port import WorkspacePathAlias
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +108,7 @@ class ReconToolAdapter:
 
     def __init__(self, working_directory: str = ".") -> None:
         self._workdir = Path(working_directory).resolve()
+        self._path_aliases: tuple[WorkspacePathAlias, ...] = ()
 
     def set_working_directory(self, path: str) -> None:
         """Update the working directory for this adapter.
@@ -115,6 +118,24 @@ class ReconToolAdapter:
         """
         self._workdir = Path(path).resolve()
 
+    def set_path_aliases(self, aliases: tuple[WorkspacePathAlias, ...]) -> None:
+        """Map domain/container paths to host paths under the working directory."""
+        normalized = []
+        for alias in aliases:
+            virtual_path = alias.virtual_path.rstrip("/") or "/"
+            if not virtual_path.startswith("/"):
+                raise ValueError(f"Path alias must be absolute: {alias.virtual_path}")
+
+            host_path = self._ensure_within_workdir(
+                Path(alias.host_path).resolve(),
+                alias.host_path,
+            )
+            normalized.append(WorkspacePathAlias(virtual_path, str(host_path)))
+
+        self._path_aliases = tuple(
+            sorted(normalized, key=lambda item: len(item.virtual_path), reverse=True)
+        )
+
     @property
     def name(self) -> str:
         """Stable toolset identifier used in config resolution."""
@@ -123,15 +144,42 @@ class ReconToolAdapter:
     def _resolve_path(self, path: str) -> Path:
         """Resolve a path relative to working directory, preventing escapes.
 
-        Absolute paths are resolved as-is (the LLM may reference paths
-        from the domain context like /src/project). Relative paths are
-        resolved against the working directory.
+        Absolute domain paths may be mapped through run-scoped aliases
+        such as ``/src`` or ``/testcase``. Other paths must already be
+        inside the working directory or be relative to it.
         """
+        aliased = self._map_path_alias(path)
+        if aliased is not None:
+            return self._ensure_within_workdir(aliased.resolve(), path)
+
         if Path(path).is_absolute():
-            return Path(path).resolve()
+            return self._ensure_within_workdir(Path(path).resolve(), path)
+
         resolved = (self._workdir / path).resolve()
-        if not str(resolved).startswith(str(self._workdir)):
-            raise ValueError(f"Path escapes working directory: {path}")
+        return self._ensure_within_workdir(resolved, path)
+
+    def _map_path_alias(self, path: str) -> Path | None:
+        if not Path(path).is_absolute():
+            return None
+
+        for alias in self._path_aliases:
+            virtual_path = alias.virtual_path
+            if virtual_path == "/":
+                suffix = path.removeprefix("/").lstrip("/")
+                return Path(alias.host_path) / suffix
+            if path == virtual_path:
+                return Path(alias.host_path)
+            if path.startswith(f"{virtual_path}/"):
+                suffix = path.removeprefix(virtual_path).lstrip("/")
+                return Path(alias.host_path) / suffix
+
+        return None
+
+    def _ensure_within_workdir(self, resolved: Path, display_path: str) -> Path:
+        try:
+            resolved.relative_to(self._workdir)
+        except ValueError as e:
+            raise ValueError(f"Path escapes working directory: {display_path}") from e
         return resolved
 
     async def read_file(
@@ -481,4 +529,7 @@ class ReconToolAdapter:
         valid_params = set(sig.parameters.keys())
         filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
 
-        return await handler(**filtered_args)
+        try:
+            return await handler(**filtered_args)
+        except ValueError as e:
+            return f"Error: {e}"

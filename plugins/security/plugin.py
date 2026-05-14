@@ -162,7 +162,10 @@ class SecurityDomainPlugin(DomainPlugin):
             )
             self._workspaces[root_id] = existing
 
-        return PreparedRunWorkspace(working_directory=str(existing.host_root))
+        return PreparedRunWorkspace(
+            working_directory=str(existing.host_root),
+            path_aliases=existing.path_aliases(),
+        )
 
     async def prepare_worker_execution(
         self,
@@ -214,6 +217,14 @@ class SecurityDomainPlugin(DomainPlugin):
                         container_id=session.container_id,
                         helper_script=str(workspace.helper_script),
                         work_dir=workspace.container_working_directory,
+                        host_source_dir=str(workspace.host_source_dir),
+                        host_testcase_dir=str(workspace.host_testcase_dir),
+                        host_work_root=str(workspace.host_work_root),
+                        workspace_root=str(workspace.host_root),
+                        container_source_dir=workspace.container_source_dir,
+                        container_testcase_dir=workspace.container_testcase_dir,
+                        container_work_dir=workspace.container_work_dir,
+                        container_workspace_root=workspace.container_workspace_root,
                     ),
                 },
             },

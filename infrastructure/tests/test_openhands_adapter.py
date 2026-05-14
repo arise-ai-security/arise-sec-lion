@@ -23,10 +23,27 @@ from core.domain.events.events import (
 )
 import infrastructure.adapters.worker.openhands_adapter as openhands_adapter_module
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
+from infrastructure.adapters.worker.shared import ContainerSessionContext
 
 
 def _adapter(**kwargs: Any) -> OpenHandsAdapter:
     return OpenHandsAdapter(model="openai/gpt-4o", **kwargs)
+
+
+def _container_session(tmp_path: Path) -> ContainerSessionContext:
+    return ContainerSessionContext(
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image="secb-tools:demo.cve-2024-0001-patch",
+        workspace_root=tmp_path,
+        host_source_dir=tmp_path / "src",
+        host_testcase_dir=tmp_path / "testcase",
+        host_work_dir=tmp_path / "src" / "demo",
+        container_source_dir="/src",
+        container_testcase_dir="/testcase",
+        container_working_directory="/src/demo",
+        helper_script=tmp_path / "secb-exec",
+    )
 
 
 def _mock_event(
@@ -172,6 +189,85 @@ class TestOpenHandsAdapter:
             {"name": "glob"},
             {"name": "grep"},
         ]
+
+    def test_build_native_tools_threads_container_session_to_file_tools(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Given: an OpenHands worker for a container-backed SEC-bench run.
+        adapter = _adapter(allowed_tools=["file_editor", "glob", "grep"])
+        container_session = _container_session(tmp_path)
+
+        # When: building SDK Tool specs with container context.
+        tools = adapter._build_native_tools(
+            lambda **kw: kw,
+            container_session,
+        )
+
+        # Then: native file tools receive the path-mapping context.
+        assert [tool["name"] for tool in tools] == ["file_editor", "glob", "grep"]
+        for tool in tools:
+            params = tool["params"]["container_session"]
+            assert params["container_source_dir"] == "/src"
+            assert params["container_testcase_dir"] == "/testcase"
+            assert params["container_work_dir"] == "/work"
+            assert params["host_source_dir"] == str(tmp_path / "src")
+            assert params["host_testcase_dir"] == str(tmp_path / "testcase")
+            assert params["host_work_root"] == str(tmp_path / "work")
+
+    def test_container_aware_file_editor_maps_shared_container_paths(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Given: OpenHands file_editor receives canonical container paths.
+        adapter = _adapter(allowed_tools=["file_editor"])
+        container_session = _container_session(tmp_path)
+        container_session.host_testcase_dir.mkdir(parents=True)
+        (container_session.host_work_root / "bin").mkdir(parents=True)
+        conv_state = SimpleNamespace(
+            workspace=SimpleNamespace(working_dir=str(tmp_path)),
+            agent=SimpleNamespace(
+                llm=SimpleNamespace(vision_is_active=lambda: False),
+            ),
+        )
+
+        # When: the registered OpenHands tool executes create actions.
+        openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+        from openhands.sdk import Tool
+        from openhands.sdk.tool.registry import resolve_tool
+
+        resolved_tools = resolve_tool(
+            Tool(
+                name="file_editor",
+                params={
+                    "container_session": adapter._container_session_tool_params(
+                        container_session,
+                    )
+                },
+            ),
+            conv_state,
+        )
+        tool = resolved_tools[0]
+        testcase_observation = tool(
+            tool.action_type(
+                command="create",
+                path="/testcase/base_commit_hash",
+                file_text="abc123",
+            )
+        )
+        work_observation = tool(
+            tool.action_type(
+                command="create",
+                path="/work/bin/demo",
+                file_text="binary placeholder",
+            )
+        )
+
+        # Then: writes land in the run-scoped host mirrors.
+        assert testcase_observation.is_error is False
+        assert work_observation.is_error is False
+        assert (tmp_path / "testcase" / "base_commit_hash").read_text() == "abc123"
+        assert (tmp_path / "work" / "bin" / "demo").read_text() == "binary placeholder"
 
     def test_build_native_tools_rejects_mcp_or_unknown_tool_names(self) -> None:
         # Given: an MCP tool name accidentally placed in the native allowlist.

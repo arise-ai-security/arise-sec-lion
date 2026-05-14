@@ -71,20 +71,24 @@ class DockerSecBenchRuntime:
         image: str,
         root_id: UUID,
     ) -> SecBenchWorkspace:
-        """Seed a host mirror of container `/src` and `/testcase`."""
+        """Seed host mirrors of container `/src`, `/testcase`, and `/work`."""
         run_output_path.mkdir(parents=True, exist_ok=True)
         source_dir = run_output_path / "src"
         testcase_dir = run_output_path / "testcase"
+        work_root = run_output_path / "work"
         helper_script = run_output_path / "secb-exec"
 
         source_dir.mkdir(parents=True, exist_ok=True)
         testcase_dir.mkdir(parents=True, exist_ok=True)
+        work_root.mkdir(parents=True, exist_ok=True)
 
         await self._ensure_image_exists(image)
         if not any(source_dir.iterdir()):
             await self._copy_source_tree(image, source_dir)
         if not any(testcase_dir.iterdir()):
             await self._copy_testcase_tree(image, testcase_dir)
+        if not any(work_root.iterdir()):
+            await self._copy_work_tree(image, work_root)
 
         host_work_dir = self._map_host_work_dir(source_dir, cve.work_dir)
         host_work_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +120,7 @@ class DockerSecBenchRuntime:
         for label, path in (
             ("host_source_dir", workspace.host_source_dir),
             ("host_testcase_dir", workspace.host_testcase_dir),
+            ("host_work_root", workspace.host_work_root),
             ("host_work_dir", workspace.host_work_dir),
         ):
             resolved = path.resolve()
@@ -153,6 +158,8 @@ class DockerSecBenchRuntime:
             f"{self._host_path(workspace.host_source_dir)}:{workspace.container_source_dir}",
             "-v",
             f"{self._host_path(workspace.host_testcase_dir)}:{workspace.container_testcase_dir}",
+            "-v",
+            f"{self._host_path(workspace.host_work_root)}:{workspace.container_work_dir}",
             # Bind the workspace root so worker scratch files (e.g. mcp config,
             # scratch CLAUDE_CONFIG_DIR) written on the host are reachable from
             # inside the container — required when the agent process itself
@@ -260,11 +267,48 @@ class DockerSecBenchRuntime:
             )
         finally:
             await self._run_best_effort(["docker", "rm", "-f", seed_container])
-        # docker cp preserves root ownership from the image.  Make the entire
-        # tree world-writable so the agent (running as a non-root host user)
-        # can edit source files to create patches.  Skip symlinks — they
-        # cannot have their permissions changed and may be broken.
-        for item in source_dir.rglob("*"):
+        self._make_host_tree_writable(source_dir)
+        # Ensure build.sh is executable after copy (docker cp may not preserve mode).
+        build_sh = source_dir / "build.sh"
+        if build_sh.exists():
+            build_sh.chmod(build_sh.stat().st_mode | 0o755)
+
+    async def _copy_work_tree(self, image: str, work_root: Path) -> None:
+        seed_container = (
+            await self._run_checked(
+                [
+                    "docker",
+                    "create",
+                    "--label",
+                    f"arise.session_pid={os.getpid()}",
+                    "--label",
+                    "arise.role=seed",
+                    "--label",
+                    f"arise.created_at={datetime.now(UTC).isoformat()}",
+                    image,
+                ]
+            )
+        ).strip()
+        try:
+            exit_code, stdout, stderr = await self._run_command(
+                ["docker", "cp", f"{seed_container}:/work/.", str(work_root)]
+            )
+            if exit_code != 0:
+                logger.info(
+                    "No /work tree copied from %s: %s",
+                    image,
+                    stderr.strip() or stdout.strip() or "docker cp failed",
+                )
+                return
+        finally:
+            await self._run_best_effort(["docker", "rm", "-f", seed_container])
+        self._make_host_tree_writable(work_root)
+
+    @staticmethod
+    def _make_host_tree_writable(path: Path) -> None:
+        # docker cp preserves root ownership from the image. Make mirrored
+        # files writable by the host-side agent while leaving symlinks alone.
+        for item in path.rglob("*"):
             if item.is_symlink():
                 continue
             try:
@@ -275,10 +319,6 @@ class DockerSecBenchRuntime:
                     item.chmod(mode | 0o666)
             except OSError:
                 pass
-        # Ensure build.sh is executable after copy (docker cp may not preserve mode).
-        build_sh = source_dir / "build.sh"
-        if build_sh.exists():
-            build_sh.chmod(build_sh.stat().st_mode | 0o755)
 
     def _map_host_work_dir(self, source_dir: Path, container_work_dir: str) -> Path:
         # G.5 part 1 — normalize-and-validate. `Path.__truediv__` does NOT

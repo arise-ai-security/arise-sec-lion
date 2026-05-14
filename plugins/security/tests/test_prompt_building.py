@@ -146,6 +146,26 @@ class TestSecurityPromptBuilding:
         assert "<cve_instance>" in prompt
         assert "Fixer Worker" in prompt
 
+    def test_secbench_reporter_prompt_uses_canonical_testcase_alias(self) -> None:
+        # Given: a SEC-bench worker prompt for the reporter phase.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="openhands",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: building the reporter worker prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Reporter] Write the final security report",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the prompt directs the file editor to the canonical alias.
+        assert "`/testcase/security_report.md`" in prompt
+        assert "Do NOT use `/testcase/security_report.md`" not in prompt
+        assert "host testcase path" not in prompt
+
 
 class TestFlatPromptBuilding:
     """Flat-mode (A-cell) control-baseline prompt composition.

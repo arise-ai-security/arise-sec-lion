@@ -54,7 +54,27 @@ def _make_workspace(tmp_path: Path) -> WorkspaceSpec:
     return WorkspaceSpec(root=tmp_path, extras={})
 
 
-def _fake_process(returncode: int = 0) -> AsyncMock:
+class _FakeStdout:
+    """Async stdout stream for subprocess tests."""
+
+    def __init__(self, chunks: list[bytes] | None = None) -> None:
+        self._chunks = list(chunks or [b""])
+
+    async def read(self, _limit: int) -> bytes:
+        if self._chunks:
+            return self._chunks.pop(0)
+        return b""
+
+
+class _HangingStdout:
+    """Async stdout stream that never produces output."""
+
+    async def read(self, _limit: int) -> bytes:
+        await asyncio.sleep(60)
+        return b""
+
+
+def _fake_process(returncode: int = 0, stdout: object | None = None) -> AsyncMock:
     """Build a fake asyncio process with a configurable return code.
 
     ``Process.wait()`` is async; ``kill()`` and ``terminate()`` are sync.
@@ -62,7 +82,9 @@ def _fake_process(returncode: int = 0) -> AsyncMock:
     """
     proc = AsyncMock()
     proc.returncode = returncode
+    proc.stdout = stdout if stdout is not None else _FakeStdout()
     proc.wait = AsyncMock(return_value=returncode)
+    proc.communicate = AsyncMock(return_value=(b"", b""))
     # MagicMock (sync) — Process.kill() is not a coroutine.
     from unittest.mock import MagicMock
 
@@ -583,6 +605,81 @@ def test_run_task_returns_timeout_exit_status_when_wait_for_times_out(
     assert proc.kill.called
 
 
+def test_run_task_returns_timeout_when_claude_output_goes_idle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """A silent Claude subprocess is bounded by the idle-output watchdog."""
+    # Given: a stubbed Claude process whose stdout never produces a chunk.
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    proc = _fake_process(returncode=0, stdout=_HangingStdout())
+
+    async def _fake_exec(*_args, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+    worker = ClaudeCodeWorker(inactivity_timeout_seconds=0.01)
+
+    # When: running the task with a short idle timeout.
+    result = asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=10, per_run_total=20),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    # Then: the worker kills the process and reports a timeout promptly.
+    assert result.exit_status == "timeout"
+    assert "without Claude output" in (result.output_summary or "")
+    assert proc.kill.called
+
+
+def test_run_task_preserves_transcript_when_claude_outputs_then_exits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """Output activity is written to stdout_stderr.log and does not trigger idle timeout."""
+    # Given: a process that emits one stream-json line, then exits.
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+    line = b'{"type":"result","result":"ok"}\n'
+    proc = _fake_process(returncode=0, stdout=_FakeStdout([line, b""]))
+
+    async def _fake_exec(*_args, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+    worker = ClaudeCodeWorker(inactivity_timeout_seconds=1)
+
+    # When: running the task.
+    result = asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=10, per_run_total=20),
+            workspace=_make_workspace(tmp_path),
+        )
+    )
+
+    # Then: the run completes, the process is not killed, and the transcript is intact.
+    assert result.exit_status == "completed"
+    assert not proc.kill.called
+    assert (tmp_path / "stdout_stderr.log").read_bytes() == line
+
+
 def test_run_task_records_log_message_on_invocation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -830,8 +927,7 @@ def test_run_task_in_container_does_not_probe_host_path_for_claude(
 def test_run_task_in_container_emits_e_flags_for_narrow_env_allowlist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:
-    """Env vars are passed via ``-e KEY=VAL`` flags; host PATH/HOME/USER are
-    NOT forwarded so the container's base env is preserved."""
+    """Env vars are passed via ``-e KEY=VAL`` flags without leaking host identity."""
     # Given: host env that includes things which must NOT leak into the container.
     monkeypatch.setenv("PATH", "/host/usr/bin")
     monkeypatch.setenv("HOME", "/host/home")
@@ -867,18 +963,58 @@ def test_run_task_in_container_emits_e_flags_for_narrow_env_allowlist(
 
     argv: tuple[str, ...] = captured["argv"]  # type: ignore[assignment]
     e_flags = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
-    # Then: ANTHROPIC_API_KEY is forwarded via -e, host PATH/HOME/USER are NOT,
+    forwarded = dict(flag.split("=", 1) for flag in e_flags)
+    # Then: ANTHROPIC_API_KEY is forwarded via -e, host PATH is NOT, host
+    # HOME/USER are replaced with the prepared in-container Claude identity,
     # and CLAUDE_CONFIG_DIR is remapped onto the container workspace mount.
-    forwarded_keys = {flag.split("=", 1)[0] for flag in e_flags}
+    forwarded_keys = set(forwarded)
     assert "ANTHROPIC_API_KEY" in forwarded_keys
     assert "PATH" not in forwarded_keys
-    assert "HOME" not in forwarded_keys
-    assert "USER" not in forwarded_keys
+    assert forwarded["HOME"] == "/tmp/arise-claude-home"  # noqa: S108
+    assert forwarded["USER"] == "arise-agent"
     assert "OPENAI_API_KEY" not in forwarded_keys
     assert "POSTGRES_PASSWORD" not in forwarded_keys
     config_flag = next((flag for flag in e_flags if flag.startswith("CLAUDE_CONFIG_DIR=")), None)
     assert config_flag is not None
     assert config_flag.startswith("CLAUDE_CONFIG_DIR=/arise-run/")
+
+
+def test_run_task_in_container_prepares_apt_and_sudo_root_shims(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
+) -> None:
+    """The non-root Claude exec still needs prompt-prescribed apt-get commands."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
+    prepare_scripts: list[str] = []
+
+    async def _fake_exec(*args, **_kwargs):
+        if args[:3] == ("docker", "exec", "-i") and "--user" not in args:
+            prepare_scripts.append(str(args[-1]))
+        return _fake_process(returncode=0)
+
+    monkeypatch.setattr(
+        "infrastructure.workers.claude_code_worker.asyncio.create_subprocess_exec",
+        _fake_exec,
+    )
+
+    worker = ClaudeCodeWorker()
+    workspace = WorkspaceSpec(root=tmp_path, extras=_container_session_extras(tmp_path))
+
+    asyncio.run(
+        worker.run_task(
+            run_id=run_id,
+            spec=_make_spec(),
+            tool_policy=_make_policy(),
+            timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
+            workspace=workspace,
+        )
+    )
+
+    assert len(prepare_scripts) == 1
+    script = prepare_scripts[0]
+    assert "/usr/local/bin/arise-root" in script
+    assert "/usr/local/bin/sudo" in script
+    assert "/usr/local/bin/apt-get" in script
+    assert "exec /usr/local/bin/arise-root /usr/bin/apt-get" in script
 
 
 def test_run_task_in_container_drops_host_container_prompt_prefix(

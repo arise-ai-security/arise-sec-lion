@@ -31,6 +31,17 @@ def test_container_session_maps_container_paths_to_host() -> None:
     assert translated["file_path"] == "/workspace/run/src/demo/main.c"
 
 
+def test_container_session_maps_work_artifacts_to_host() -> None:
+    session = _session()
+
+    translated = session.translate_tool_input(
+        "Read",
+        {"file_path": "/work/bin/demo"},
+    )
+
+    assert translated["file_path"] == "/workspace/run/work/bin/demo"
+
+
 def test_container_session_wraps_shell_commands() -> None:
     session = _session()
 
@@ -51,6 +62,7 @@ def test_container_session_prefix_mentions_shell_in_container_for_manual_shell()
 
     assert "/workspace/run/src" in prompt
     assert "/workspace/run/testcase" in prompt
+    assert "/workspace/run/work" in prompt
     assert "shell_in_container" in prompt
     assert "./secb-exec" not in prompt
 

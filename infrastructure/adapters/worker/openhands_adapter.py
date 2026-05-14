@@ -42,6 +42,176 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
 _OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
+_OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
+_CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
+
+
+def _container_session_from_tool_params(
+    container_session: object,
+) -> ContainerSessionContext | None:
+    if not isinstance(container_session, dict):
+        return None
+    try:
+        return ContainerSessionContext.from_task_context(
+            {"container_session": container_session}
+        )
+    except (KeyError, TypeError, ValueError):
+        logger.warning(
+            "Ignoring invalid OpenHands container_session tool params",
+            exc_info=True,
+        )
+        return None
+
+
+def _map_openhands_action_paths(
+    action: Any,
+    container_session: ContainerSessionContext,
+) -> Any:
+    updates: dict[str, str] = {}
+    path = getattr(action, "path", None)
+    if isinstance(path, str):
+        mapped_path = container_session.map_container_path(path)
+        if mapped_path != path:
+            updates["path"] = mapped_path
+
+    if action.__class__.__name__ == "GlobAction":
+        pattern = getattr(action, "pattern", None)
+        if isinstance(pattern, str):
+            mapped_pattern = container_session.map_container_path(pattern)
+            if mapped_pattern != pattern:
+                updates["pattern"] = mapped_pattern
+
+    if not updates:
+        return action
+
+    model_copy = getattr(action, "model_copy", None)
+    if callable(model_copy):
+        return model_copy(update=updates)
+    for key, value in updates.items():
+        setattr(action, key, value)
+    return action
+
+
+def _augment_native_tool_description(
+    description: str,
+    container_session: ContainerSessionContext,
+) -> str:
+    return (
+        f"{description}\n\n"
+        "Container path compatibility: this runtime maps "
+        f"`{container_session.container_source_dir}/...` to "
+        f"`{container_session.host_source_dir}/...`, "
+        f"`{container_session.container_testcase_dir}/...` to "
+        f"`{container_session.host_testcase_dir}/...`, and "
+        f"`{container_session.container_work_dir}/...` to "
+        f"`{container_session.host_work_root}/...` before executing this tool."
+    )
+
+
+def _ensure_container_aware_openhands_tools_registered() -> None:
+    global _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED
+    if _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED:
+        return
+
+    from openhands.sdk.tool import register_tool
+    from openhands.sdk.tool.tool import ToolExecutor
+    from openhands.tools.file_editor import FileEditorTool
+    from openhands.tools.glob import GlobTool
+    from openhands.tools.grep import GrepTool
+
+    class _PathMappingOpenHandsExecutor(ToolExecutor[Any, Any]):
+        def __init__(
+            self,
+            delegate: ToolExecutor[Any, Any],
+            container_session: ContainerSessionContext,
+        ) -> None:
+            self._delegate = delegate
+            self._container_session = container_session
+
+        def __call__(self, action: Any, conversation: Any | None = None) -> Any:
+            mapped_action = _map_openhands_action_paths(
+                action,
+                self._container_session,
+            )
+            return self._delegate(mapped_action, conversation)
+
+        def close(self) -> None:
+            self._delegate.close()
+
+    def _wrap_native_tools(
+        tools: Any,
+        container_session: ContainerSessionContext,
+    ) -> list[Any]:
+        wrapped_tools: list[Any] = []
+        for tool in tools:
+            if tool.executor is None:
+                wrapped_tools.append(tool)
+                continue
+            wrapped_tools.append(
+                tool.model_copy(
+                    update={
+                        "description": _augment_native_tool_description(
+                            tool.description,
+                            container_session,
+                        ),
+                        "executor": _PathMappingOpenHandsExecutor(
+                            tool.executor,
+                            container_session,
+                        ),
+                    }
+                )
+            )
+        return wrapped_tools
+
+    class _ContainerAwareFileEditorTool(FileEditorTool):
+        name = FileEditorTool.name
+
+        @classmethod
+        def create(
+            cls,
+            conv_state: Any,
+            container_session: object = None,
+        ) -> list[Any]:
+            parsed_session = _container_session_from_tool_params(container_session)
+            tools = FileEditorTool.create(conv_state)
+            if parsed_session is None:
+                return list(tools)
+            return _wrap_native_tools(tools, parsed_session)
+
+    class _ContainerAwareGlobTool(GlobTool):
+        name = GlobTool.name
+
+        @classmethod
+        def create(
+            cls,
+            conv_state: Any,
+            container_session: object = None,
+        ) -> list[Any]:
+            parsed_session = _container_session_from_tool_params(container_session)
+            tools = GlobTool.create(conv_state)
+            if parsed_session is None:
+                return list(tools)
+            return _wrap_native_tools(tools, parsed_session)
+
+    class _ContainerAwareGrepTool(GrepTool):
+        name = GrepTool.name
+
+        @classmethod
+        def create(
+            cls,
+            conv_state: Any,
+            container_session: object = None,
+        ) -> list[Any]:
+            parsed_session = _container_session_from_tool_params(container_session)
+            tools = GrepTool.create(conv_state)
+            if parsed_session is None:
+                return list(tools)
+            return _wrap_native_tools(tools, parsed_session)
+
+    register_tool(FileEditorTool.name, _ContainerAwareFileEditorTool)
+    register_tool(GlobTool.name, _ContainerAwareGlobTool)
+    register_tool(GrepTool.name, _ContainerAwareGrepTool)
+    _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = True
 
 
 def _snapshot_child_pids() -> set[int]:
@@ -233,12 +403,20 @@ class OpenHandsAdapter(WorkerAdapterBase):
     ) -> AsyncIterator[DomainEvent]:
         _ = agent_id  # Contract parameter; EventSequencer already carries this ID.
         started_at = time()
-        task_description = self._prepare_task_description(task_description, task_context)
+        container_session = ContainerSessionContext.from_task_context(task_context)
+        task_description = self._prepare_task_description(
+            task_description,
+            container_session,
+        )
         mcp_servers = self._extract_mcp_servers(task_context)
         children_before = _snapshot_child_pids()
 
         try:
-            conversation = self._build_conversation_for_task(working_dir, mcp_servers)
+            conversation = self._build_conversation_for_task(
+                working_dir,
+                mcp_servers,
+                container_session,
+            )
         except ImportError as error:
             yield sequencer.failed(
                 "OpenHands packages not installed. "
@@ -283,9 +461,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
     @staticmethod
     def _prepare_task_description(
         task_description: str,
-        task_context: dict[str, Any],
+        container_session: ContainerSessionContext | None,
     ) -> str:
-        container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is None:
             return task_description
         return container_session.apply_task_prefix(task_description, auto_shell=False)
@@ -294,8 +471,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self,
         working_dir: str,
         mcp_servers: dict[str, dict[str, Any]] | None,
+        container_session: ContainerSessionContext | None,
     ) -> _ConversationLike:
-        return cast("_ConversationLike", self._build_conversation(working_dir, mcp_servers))
+        return cast(
+            "_ConversationLike",
+            self._build_conversation(working_dir, mcp_servers, container_session),
+        )
 
     def _create_conversation_run(
         self,
@@ -403,6 +584,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self,
         working_dir: str,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
+        container_session: ContainerSessionContext | None = None,
     ) -> Any:
         import warnings
 
@@ -417,7 +599,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             from openhands.sdk import LLM, Agent, Conversation, Tool
 
         llm = LLM(**self._build_llm_kwargs())
-        tools = self._build_native_tools(Tool)
+        tools = self._build_native_tools(Tool, container_session)
         # Agent creates MCP tool definitions from this config after native tools.
         mcp_config = to_openhands_mcp_config(mcp_servers) if mcp_servers else {}
 
@@ -452,7 +634,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
             "top_p": 0.95,
         }
 
-    def _build_native_tools(self, tool_factory: Callable[..., Any]) -> list[Any]:
+    def _build_native_tools(
+        self,
+        tool_factory: Callable[..., Any],
+        container_session: ContainerSessionContext | None = None,
+    ) -> list[Any]:
         native_tool_names = self._openhands_native_tool_names()
         unknown = [name for name in self.allowed_tools if name not in native_tool_names]
         if unknown:
@@ -462,7 +648,54 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 f"Unsupported OpenHands native tool(s): {requested}. "
                 f"Configured worker.allowed_tools must use: {allowed}."
             )
-        return [tool_factory(name=name) for name in self.allowed_tools]
+        container_session_params: dict[str, str] | None = None
+        if container_session is not None and any(
+            name in _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES
+            for name in self.allowed_tools
+        ):
+            _ensure_container_aware_openhands_tools_registered()
+            container_session_params = self._container_session_tool_params(
+                container_session,
+            )
+
+        tools: list[Any] = []
+        for name in self.allowed_tools:
+            if (
+                container_session_params is not None
+                and name in _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES
+            ):
+                tools.append(
+                    tool_factory(
+                        name=name,
+                        params={"container_session": container_session_params},
+                    )
+                )
+                continue
+            tools.append(tool_factory(name=name))
+        return tools
+
+    @staticmethod
+    def _container_session_tool_params(
+        container_session: ContainerSessionContext,
+    ) -> dict[str, str]:
+        return {
+            "container_id": container_session.container_id,
+            "container_name": container_session.container_name,
+            "image": container_session.image,
+            "workspace_root": str(container_session.workspace_root),
+            "host_source_dir": str(container_session.host_source_dir),
+            "host_testcase_dir": str(container_session.host_testcase_dir),
+            "host_work_root": str(container_session.host_work_root),
+            "host_work_dir": str(container_session.host_work_dir),
+            "container_source_dir": container_session.container_source_dir,
+            "container_testcase_dir": container_session.container_testcase_dir,
+            "container_work_dir": container_session.container_work_dir,
+            "container_working_directory": (
+                container_session.container_working_directory
+            ),
+            "helper_script": str(container_session.helper_script),
+            "container_workspace_root": container_session.container_workspace_root,
+        }
 
     @staticmethod
     def _openhands_native_tool_names() -> set[str]:

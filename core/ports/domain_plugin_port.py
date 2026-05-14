@@ -17,10 +17,19 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class WorkspacePathAlias:
+    """Run-local mapping from a domain path to a host workspace path."""
+
+    virtual_path: str
+    host_path: str
+
+
+@dataclass(frozen=True)
 class PreparedRunWorkspace:
     """Optional workspace override returned by a domain plugin."""
 
     working_directory: str
+    path_aliases: tuple[WorkspacePathAlias, ...] = ()
 
 
 @dataclass(frozen=True)

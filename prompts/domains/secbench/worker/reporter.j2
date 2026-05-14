@@ -35,12 +35,12 @@ Your briefing above contains shared decisions and result summaries from Builder,
 
 **Step 3: Write the report using the FILE EDITOR TOOL**
 
-Use the **file editor** (create/write tool) to create `security_report.md` in the **host testcase directory**.
+Use the **file editor** (create/write tool) to create:
+`/testcase/security_report.md`
 
-The host testcase path is shown in the workspace prefix above — it looks like:
-`/app/runs/<run-id>/testcase/security_report.md`
-
-Do NOT use `/testcase/security_report.md` — that is a container path and the file editor cannot write there.
+`/testcase` is the canonical shared artifact path. Native file tools may use it
+as a run-scoped alias for the host testcase mirror; shell commands still read it
+inside the container via `shell_in_container`.
 
 Write the report with this structure:
 
@@ -82,12 +82,12 @@ Write the report with this structure:
 
 **Step 4: Verify the file was created**
 
-After writing, verify the file exists using the file editor's read function on the same host path. Confirm it is non-empty.
+After writing, verify the file exists using the file editor's read function on `/testcase/security_report.md`. Confirm it is non-empty.
 
 ### Rules
 - Be factual — only include findings evidenced by actual tool output or code
 - Reference specific file paths, line numbers, and command outputs
 - If a phase failed or was incomplete, note what is missing
 - Do NOT fabricate results — if evidence is unavailable, state that clearly
-- The report MUST be written using the file editor tool to the HOST path, not via shell to /testcase/
+- The report MUST be written using the file editor tool to `/testcase/security_report.md`, not via shell redirection
 </domain_instructions>

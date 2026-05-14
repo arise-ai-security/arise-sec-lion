@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from core.ports.domain_plugin_port import WorkspacePathAlias
 from plugins.security.container_runtime import (
     SecBenchContainerSession,
     SecBenchWorkspace,
@@ -76,6 +77,11 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
 
     assert prepared is not None
     assert prepared.working_directory == str(tmp_path)
+    assert prepared.path_aliases == (
+        WorkspacePathAlias("/src", str(tmp_path / "src")),
+        WorkspacePathAlias("/testcase", str(tmp_path / "testcase")),
+        WorkspacePathAlias("/work", str(tmp_path / "work")),
+    )
     runtime.prepare_workspace.assert_awaited_once()
     assert (
         runtime.prepare_workspace.await_args.kwargs["image"]
@@ -86,6 +92,8 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
     container_session = worker_context.task_context["container_session"]
     assert container_session["container_id"] == "abc123def456"
     assert container_session["host_source_dir"] == str(tmp_path / "src")
+    assert container_session["host_work_root"] == str(tmp_path / "work")
+    assert container_session["container_work_dir"] == "/work"
 
     mcp_servers = worker_context.task_context["mcp_servers"]
     assert "security_tools" in mcp_servers
@@ -95,6 +103,16 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
         "plugins.security.mcp.security_tools_server",
     ]
     assert security_tools_spec["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
+    assert security_tools_spec["env"]["ARISE_SECBENCH_HOST_SOURCE_DIR"] == str(
+        tmp_path / "src"
+    )
+    assert security_tools_spec["env"]["ARISE_SECBENCH_HOST_TESTCASE_DIR"] == str(
+        tmp_path / "testcase"
+    )
+    assert security_tools_spec["env"]["ARISE_SECBENCH_HOST_WORK_ROOT"] == str(
+        tmp_path / "work"
+    )
+    assert security_tools_spec["env"]["ARISE_SECBENCH_CONTAINER_WORK_DIR"] == "/work"
 
     await plugin.cleanup_worker_execution(
         root_id=root_id,
