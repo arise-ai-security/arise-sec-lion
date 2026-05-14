@@ -1,4 +1,4 @@
-"""Regression tests for the `run_ours` harness.
+"""Regression tests for the `run_arise` harness.
 
 Covers the N-4 fix (audit §7.5.5): each `main.py run` subprocess receives a
 unique per-invocation result file via `ARISE_RUN_RESULT_PATH` so concurrent
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _write_study_layout(tmp_path: Path, *, task: str, cell: str) -> Path:
-    """Provision the minimum study layout `run_ours` reads before invoking the subprocess."""
+    """Provision the minimum study layout `run_arise` reads before invoking the subprocess."""
     study_dir = tmp_path / "experiments" / "2026-test-study"
     study_dir.mkdir(parents=True)
     context_file = study_dir / f"{task}.json"
@@ -46,7 +46,7 @@ def _write_study_layout(tmp_path: Path, *, task: str, cell: str) -> Path:
             {
                 "study_id": "2026-test-study",
                 "dataset": "dataset.yaml",
-                "cells": {cell: {"runner": "aris"}},
+                "cells": {cell: {"runner": "arise"}},
             }
         ),
         encoding="utf-8",
@@ -88,14 +88,13 @@ def _stub_register_run(monkeypatch: pytest.MonkeyPatch, captured: list[UUID]) ->
     monkeypatch.setattr(harness, "register_run", _capture)
 
 
-def test_run_ours_reads_run_id_from_per_invocation_result_file(
-    study: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_run_arise_reads_run_id_from_per_invocation_result_file(
+    study: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given: a stubbed subprocess that writes a known boss_id to the env-var path
     expected = uuid4()
 
-    def fake_invoke(*, config: Path, task: str, context_file: Path, result_path: Path,
-                    python_bin: str | None = None) -> int:
+    def fake_invoke(*, result_path: Path, **_kwargs: Any) -> int:
         result_path.write_text(
             json.dumps({"boss_id": str(expected), "status": "success"}),
             encoding="utf-8",
@@ -107,8 +106,8 @@ def test_run_ours_reads_run_id_from_per_invocation_result_file(
     captured: list[UUID] = []
     _stub_register_run(monkeypatch, captured)
 
-    # When: run_ours executes
-    returned = harness.run_ours(
+    # When: run_arise executes
+    returned = harness.run_arise(
         study_id=study["study_id"],
         cell=study["cell"],
         task=study["task"],
@@ -121,7 +120,7 @@ def test_run_ours_reads_run_id_from_per_invocation_result_file(
     assert captured == [expected]
 
 
-def test_run_ours_raises_when_subprocess_does_not_write_result_file(
+def test_run_arise_raises_when_subprocess_does_not_write_result_file(
     study: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given: a stubbed subprocess that exits without writing the result file
@@ -132,9 +131,9 @@ def test_run_ours_raises_when_subprocess_does_not_write_result_file(
     _stub_project_events_to_jsonl(monkeypatch)
     _stub_register_run(monkeypatch, [])
 
-    # When/Then: run_ours refuses to enroll
+    # When/Then: run_arise refuses to enroll
     with pytest.raises(FileNotFoundError, match="run-result"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study["study_id"],
             cell=study["cell"],
             task=study["task"],
@@ -143,7 +142,7 @@ def test_run_ours_raises_when_subprocess_does_not_write_result_file(
         )
 
 
-def test_run_ours_concurrent_invocations_do_not_misattribute_run_ids(
+def test_run_arise_concurrent_invocations_do_not_misattribute_run_ids(
     study: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given: each thread writes its own UUID to its own result path; if the
@@ -152,8 +151,7 @@ def test_run_ours_concurrent_invocations_do_not_misattribute_run_ids(
     barrier = threading.Barrier(4)
     seen: dict[int, tuple[UUID, UUID]] = {}
 
-    def fake_invoke(*, config: Path, task: str, context_file: Path, result_path: Path,
-                    python_bin: str | None = None) -> int:
+    def fake_invoke(*, result_path: Path, **_kwargs: Any) -> int:
         my_uuid = uuid4()
         # Synchronise so all threads write at roughly the same time, maximising
         # any race window if one existed.
@@ -163,7 +161,7 @@ def test_run_ours_concurrent_invocations_do_not_misattribute_run_ids(
             encoding="utf-8",
         )
         # Stash the UUID this thread WROTE so the assertion can compare it
-        # against what `run_ours` returned for the same thread.
+        # against what `run_arise` returned for the same thread.
         seen[threading.get_ident()] = (my_uuid, my_uuid)
         return 0
 
@@ -174,7 +172,7 @@ def test_run_ours_concurrent_invocations_do_not_misattribute_run_ids(
     results: dict[int, UUID] = {}
 
     def worker() -> None:
-        returned = harness.run_ours(
+        returned = harness.run_arise(
             study_id=study["study_id"],
             cell=study["cell"],
             task=study["task"],
@@ -194,5 +192,5 @@ def test_run_ours_concurrent_invocations_do_not_misattribute_run_ids(
     for tid, returned in results.items():
         wrote, _ = seen[tid]
         assert returned == wrote, (
-            f"thread {tid} wrote {wrote} but run_ours returned {returned}"
+            f"thread {tid} wrote {wrote} but run_arise returned {returned}"
         )

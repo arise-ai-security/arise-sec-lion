@@ -8,7 +8,9 @@ spawned.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -72,7 +74,7 @@ def _write_study(
 
 
 # -----------------------------
-# run-ours
+# run-arise
 # -----------------------------
 
 
@@ -82,7 +84,7 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     state: dict[str, object] = {"boss_id": None}
 
-    def _fake_invoke(*, config, task, context_file, result_path, python_bin=None) -> int:  # noqa: ARG001
+    def _fake_invoke(*, result_path, **_kwargs: object) -> int:
         runs_root = harness._runs_root()
         runs_root.mkdir(parents=True, exist_ok=True)
         boss_id = uuid4()
@@ -126,7 +128,7 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     return state
 
 
-def test_run_ours_enrolls_run_into_study(
+def test_run_arise_enrolls_run_into_study(
     repo_root: Path,
     stub_main_py_success: dict[str, object],
 ) -> None:
@@ -139,8 +141,8 @@ def test_run_ours_enrolls_run_into_study(
         default_cves=["gpac.cve-2021-40575"],
     )
 
-    # When: run-ours is invoked for that cell/task.
-    run_id = harness.run_ours(
+    # When: run-arise is invoked for that cell/task.
+    run_id = harness.run_arise(
         study_id=study_id,
         cell="B2",
         task="gpac.cve-2021-40575",
@@ -169,7 +171,7 @@ def test_run_ours_enrolls_run_into_study(
     assert (repo_root / "runs" / str(run_id) / "events.jsonl").exists()
 
 
-def test_run_ours_rejects_subprocess_that_never_wrote_result(
+def test_run_arise_rejects_subprocess_that_never_wrote_result(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -210,7 +212,7 @@ def test_run_ours_rejects_subprocess_that_never_wrote_result(
 
     # When/Then: harness aborts because the result file is empty.
     with pytest.raises(FileNotFoundError, match="run-result"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="gpac.cve-2021-40575",
@@ -219,7 +221,52 @@ def test_run_ours_rejects_subprocess_that_never_wrote_result(
         )
 
 
-def test_run_ours_aborts_on_task_not_in_cell_scope(
+def test_run_arise_reports_parent_killed_timeout(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    study_id = "2026-04-22-timeout-test"
+    _write_study(
+        repo_root,
+        study_id=study_id,
+        cells={"B2": {"config": "configs/B2.yaml", "harness": "ours"}},
+        default_cves=["gpac.cve-2021-40575"],
+    )
+
+    def _fake_timeout(**_kwargs: object) -> int:
+        return harness._SUBPROCESS_TIMEOUT_EXIT_CODE
+
+    monkeypatch.setattr(harness, "_invoke_main_py", _fake_timeout)
+
+    with pytest.raises(harness.MainPyTimeoutError, match="timed out"):
+        harness.run_arise(
+            study_id=study_id,
+            cell="B2",
+            task="gpac.cve-2021-40575",
+            replicate=0,
+            config=repo_root / "fake-config.yaml",
+        )
+
+
+def test_terminate_process_tree_kills_child_process() -> None:
+    async def _exercise() -> int:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(30)",
+            start_new_session=True,
+        )
+        await harness._terminate_process_tree(
+            process,
+            reason="test",
+            grace_seconds=0.01,
+        )
+        return process.returncode
+
+    assert asyncio.run(_exercise()) is not None
+
+
+def test_run_arise_aborts_on_task_not_in_cell_scope(
     repo_root: Path,
     stub_main_py_success: dict[str, object],  # noqa: ARG001 - ensures stubs registered
 ) -> None:
@@ -235,7 +282,7 @@ def test_run_ours_aborts_on_task_not_in_cell_scope(
 
     # When/Then
     with pytest.raises(ValueError, match="not in the effective CVE set"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="cve-b",
@@ -244,7 +291,7 @@ def test_run_ours_aborts_on_task_not_in_cell_scope(
         )
 
 
-def test_run_ours_aborts_when_source_path_missing(
+def test_run_arise_aborts_when_source_path_missing(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -285,7 +332,7 @@ def test_run_ours_aborts_when_source_path_missing(
 
     # When/Then
     with pytest.raises(ValueError, match="no entry matching task"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="gpac.cve-2021-40575",
@@ -327,13 +374,13 @@ def test_match_path_for_task_falls_back_to_substring() -> None:
 # -----------------------------
 
 
-def test_run_ours_builds_main_py_argv_in_exact_order(
+def test_run_arise_builds_main_py_argv_in_exact_order(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Spec §8: argv MUST be ``-c <config>`` BEFORE the ``run`` subcommand,
     and ``--domain-context-file`` is required for ``--domain security``."""
-    # Given: a well-formed study and a captured subprocess.run call.
+    # Given: a well-formed study and a captured invocation.
     study_id = "2026-04-22-argv-order"
     _write_study(
         repo_root,
@@ -344,11 +391,17 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
 
     captured: dict[str, object] = {}
 
-    def _fake_subprocess_run(cmd, *, check, cwd, env):  # noqa: ARG001
-        captured["cmd"] = list(cmd)
-        captured["cwd"] = cwd
-        # The harness now passes the per-invocation result path via env var.
-        result_path = harness.Path(env[harness.RUN_RESULT_ENV_VAR])
+    def _fake_invoke(*, config, task, context_file, result_path, python_bin=None) -> int:
+        invocation = harness._build_main_py_invocation(
+            config=config,
+            task=task,
+            context_file=context_file,
+            result_path=result_path,
+            python_bin=python_bin,
+        )
+        captured["cmd"] = list(invocation.cmd)
+        captured["cwd"] = invocation.cwd
+        captured["env"] = invocation.env
         runs_root = harness._runs_root()
         runs_root.mkdir(parents=True, exist_ok=True)
         boss_id = uuid4()
@@ -363,13 +416,9 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
         (run_dir / "run_manifest.json").write_text(
             json.dumps({"run_id": str(boss_id), "kind": "ours"}, sort_keys=True) + "\n"
         )
+        return 0
 
-        class _Completed:
-            returncode = 0
-
-        return _Completed()
-
-    monkeypatch.setattr(harness.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke)
 
     async def _fake_project_events(*, run_id, output_path, config_path=None):  # noqa: ARG001
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -381,7 +430,7 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
     config_path = repo_root / "fake-config.yaml"
 
     # When
-    harness.run_ours(
+    harness.run_arise(
         study_id=study_id,
         cell="B2",
         task="gpac.cve-2021-40575",
@@ -405,9 +454,13 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
     assert cmd[8] == "--domain-context-file"
     # The context file is resolved from the dataset source.paths entry.
     assert cmd[9].endswith("gpac-cve-2021-40575.json")
+    assert captured["cwd"] == repo_root
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert harness.RUN_RESULT_ENV_VAR in env
 
 
-def test_run_ours_aborts_when_subset_references_unknown_cve(
+def test_run_arise_aborts_when_subset_references_unknown_cve(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -434,7 +487,7 @@ def test_run_ours_aborts_when_subset_references_unknown_cve(
 
     # When/Then: harness aborts with a clear error listing offending slugs.
     with pytest.raises(ValueError, match="must be a subset of default_cves"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="cve-a",
@@ -443,7 +496,7 @@ def test_run_ours_aborts_when_subset_references_unknown_cve(
         )
 
 
-def test_run_ours_aborts_when_cell_not_declared(
+def test_run_arise_aborts_when_cell_not_declared(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -464,7 +517,7 @@ def test_run_ours_aborts_when_cell_not_declared(
 
     # When/Then
     with pytest.raises(ValueError, match=r"not declared in study\.cells"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="Z9",
             task="cve-a",

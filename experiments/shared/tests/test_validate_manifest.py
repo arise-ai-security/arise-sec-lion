@@ -66,8 +66,8 @@ def _well_formed_manifest(study_id: str) -> dict:
         "study_id": study_id,
         "schema_version": 2,
         "cells": {
-            "A1": {"group": "A", "runner": "aris", "config": "configs/A1.yaml"},
-            "B1": {"group": "B", "runner": "aris", "config": "configs/B1.yaml"},
+            "A1": {"group": "A", "runner": "arise", "config": "configs/A1.yaml"},
+            "B1": {"group": "B", "runner": "arise", "config": "configs/B1.yaml"},
         },
     }
 
@@ -105,12 +105,12 @@ def test_missing_group_field_raises(repo_root: Path) -> None:
     _write_study(
         repo_root,
         study_id=study_id,
-        manifest={"study_id": study_id, "cells": {"A1": {"runner": "aris", "config": "x.yaml"}}},
+        manifest={"study_id": study_id, "cells": {"A1": {"runner": "arise", "config": "x.yaml"}}},
         config_files=["x.yaml"],
     )
     manifest = {
         "study_id": study_id,
-        "cells": {"A1": {"runner": "aris", "config": "x.yaml"}},
+        "cells": {"A1": {"runner": "arise", "config": "x.yaml"}},
     }
 
     # When/Then
@@ -145,11 +145,11 @@ def test_missing_config_field_raises(repo_root: Path) -> None:
     _write_study(
         repo_root,
         study_id=study_id,
-        manifest={"study_id": study_id, "cells": {"A1": {"group": "A", "runner": "aris"}}},
+        manifest={"study_id": study_id, "cells": {"A1": {"group": "A", "runner": "arise"}}},
     )
     manifest = {
         "study_id": study_id,
-        "cells": {"A1": {"group": "A", "runner": "aris"}},
+        "cells": {"A1": {"group": "A", "runner": "arise"}},
     }
 
     # When/Then
@@ -171,13 +171,13 @@ def test_unknown_group_raises(repo_root: Path) -> None:
         study_id=study_id,
         manifest={
             "study_id": study_id,
-            "cells": {"Z9": {"group": "Z", "runner": "aris", "config": "x.yaml"}},
+            "cells": {"Z9": {"group": "Z", "runner": "arise", "config": "x.yaml"}},
         },
         config_files=["x.yaml"],
     )
     manifest = {
         "study_id": study_id,
-        "cells": {"Z9": {"group": "Z", "runner": "aris", "config": "x.yaml"}},
+        "cells": {"Z9": {"group": "Z", "runner": "arise", "config": "x.yaml"}},
     }
 
     # When/Then
@@ -194,7 +194,7 @@ def test_validate_manifest_unknown_group_does_not_emit_prefix_error(repo_root: P
     _write_groups(repo_root, {"A": "Claude Code CLI"})
     manifest = {
         "study_id": "unknown-group-no-prefix",
-        "cells": {"X1": {"group": "Z", "runner": "aris", "config": "x.yaml"}},
+        "cells": {"X1": {"group": "Z", "runner": "arise", "config": "x.yaml"}},
     }
 
     # When: validation runs.
@@ -242,13 +242,13 @@ def test_cell_name_must_start_with_group_letter(repo_root: Path) -> None:
         study_id=study_id,
         manifest={
             "study_id": study_id,
-            "cells": {"B1": {"group": "A", "runner": "aris", "config": "x.yaml"}},
+            "cells": {"B1": {"group": "A", "runner": "arise", "config": "x.yaml"}},
         },
         config_files=["x.yaml"],
     )
     manifest = {
         "study_id": study_id,
-        "cells": {"B1": {"group": "A", "runner": "aris", "config": "x.yaml"}},
+        "cells": {"B1": {"group": "A", "runner": "arise", "config": "x.yaml"}},
     }
 
     # When/Then
@@ -270,13 +270,13 @@ def test_missing_config_file_raises(repo_root: Path) -> None:
         study_id=study_id,
         manifest={
             "study_id": study_id,
-            "cells": {"A1": {"group": "A", "runner": "aris", "config": "configs/ghost.yaml"}},
+            "cells": {"A1": {"group": "A", "runner": "arise", "config": "configs/ghost.yaml"}},
         },
         # No config_files written.
     )
     manifest = {
         "study_id": study_id,
-        "cells": {"A1": {"group": "A", "runner": "aris", "config": "configs/ghost.yaml"}},
+        "cells": {"A1": {"group": "A", "runner": "arise", "config": "configs/ghost.yaml"}},
     }
 
     # When/Then
@@ -292,7 +292,7 @@ def test_validate_manifest_non_string_config_raises_helpfully(repo_root: Path) -
     _write_groups(repo_root, {"A": "Claude Code CLI"})
     manifest = {
         "study_id": "non-string-config",
-        "cells": {"A1": {"group": "A", "runner": "aris", "config": 42}},
+        "cells": {"A1": {"group": "A", "runner": "arise", "config": 42}},
     }
 
     # When/Then: validator emits a typed error, not a TypeError crash.
@@ -308,7 +308,7 @@ def test_validate_manifest_non_string_config_raises_helpfully(repo_root: Path) -
 def test_invalid_group_letter_in_groups_yaml_raises(repo_root: Path) -> None:
     # Given: groups.yaml uses two-letter and lowercase keys.
     _write_groups(repo_root, {"AA": "double-letter", "alpha": "lowercase"})
-    manifest = {"study_id": "x", "cells": {"A1": {"group": "A", "runner": "aris", "config": "y"}}}
+    manifest = {"study_id": "x", "cells": {"A1": {"group": "A", "runner": "arise", "config": "y"}}}
 
     # When/Then
     with pytest.raises(ValueError, match=r"group keys must be single uppercase letters A-Z"):
@@ -318,7 +318,7 @@ def test_invalid_group_letter_in_groups_yaml_raises(repo_root: Path) -> None:
 def test_groups_yaml_missing_raises(repo_root: Path) -> None:
     # Given: experiments/ exists but groups.yaml has not been written.
     (repo_root / "experiments" / "shared").mkdir(parents=True, exist_ok=True)
-    manifest = {"study_id": "x", "cells": {"A1": {"group": "A", "runner": "aris", "config": "y"}}}
+    manifest = {"study_id": "x", "cells": {"A1": {"group": "A", "runner": "arise", "config": "y"}}}
 
     # When/Then
     with pytest.raises(FileNotFoundError, match=r"groups registry missing"):
@@ -356,7 +356,7 @@ def test_validate_manifest_non_dict_cells_block_raises_helpfully(repo_root: Path
 def test_missing_study_id_raises(repo_root: Path) -> None:
     # Given
     _write_groups(repo_root, {"A": "Claude Code CLI"})
-    manifest = {"cells": {"A1": {"group": "A", "runner": "aris", "config": "x.yaml"}}}
+    manifest = {"cells": {"A1": {"group": "A", "runner": "arise", "config": "x.yaml"}}}
 
     # When/Then
     with pytest.raises(ValueError, match=r"manifest\.study_id missing"):
@@ -392,7 +392,7 @@ def test_main_with_study_arg_returns_one_on_failure(repo_root: Path) -> None:
         study_id=study_id,
         manifest={
             "study_id": study_id,
-            "cells": {"Z1": {"group": "Z", "runner": "aris", "config": "configs/Z1.yaml"}},
+            "cells": {"Z1": {"group": "Z", "runner": "arise", "config": "configs/Z1.yaml"}},
         },
         config_files=["configs/Z1.yaml"],
     )

@@ -22,11 +22,12 @@ Defaults: every declared cell and task, ``replicates`` from the manifest
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
+import shutil
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -196,30 +197,66 @@ def _dispatch_jobs(
 ) -> list[JobResult]:
     """Dispatch each job through the appropriate runner.
 
-    ``parallel=1`` is sequential. Higher values use a ThreadPoolExecutor
-    capped at ``parallel``. ``continue_on_error`` captures exceptions and
-    keeps going; otherwise the first raised error propagates.
+    ``parallel=1`` is sequential. Higher values use an asyncio subprocess
+    supervisor capped at ``parallel``. Native async runners are awaited
+    directly; legacy sync runners run through a compatibility worker thread.
+    ``continue_on_error`` captures exceptions and keeps going; otherwise the
+    first raised error propagates and pending jobs are cancelled.
     """
+    return asyncio.run(
+        _dispatch_jobs_async(
+            jobs,
+            manifest=manifest,
+            dataset=dataset,
+            repo_root=repo_root,
+            parallel=parallel,
+            continue_on_error=continue_on_error,
+        )
+    )
+
+
+async def _dispatch_jobs_async(
+    jobs: list[tuple[str, str, int]],
+    *,
+    manifest: dict[str, Any],
+    dataset: dict[str, Any],
+    repo_root: Path,
+    parallel: int,
+    continue_on_error: bool,
+) -> list[JobResult]:
     coverage = harness.ensure_task_coverage(dataset)
+    limit = max(1, parallel)
 
-    if parallel <= 1:
-        return [_run_one(j, manifest, coverage, repo_root, continue_on_error) for j in jobs]
+    if limit == 1:
+        results: list[JobResult] = []
+        for job in jobs:
+            results.append(
+                await _run_one_async(job, manifest, coverage, repo_root, continue_on_error)
+            )
+        return results
 
-    results: list[JobResult] = []
-    with ThreadPoolExecutor(max_workers=parallel) as executor:
-        futures = {
-            executor.submit(_run_one, job, manifest, coverage, repo_root, continue_on_error): job
-            for job in jobs
-        }
-        for future in as_completed(futures):
-            results.append(future.result())
+    semaphore = asyncio.Semaphore(limit)
+
+    async def _guarded(job: tuple[str, str, int]) -> JobResult:
+        async with semaphore:
+            return await _run_one_async(job, manifest, coverage, repo_root, continue_on_error)
+
+    tasks = [asyncio.create_task(_guarded(job)) for job in jobs]
+    try:
+        results = await asyncio.gather(*tasks)
+    except Exception:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
     # Restore deterministic order so the matrix-summary table matches
     # the enumeration order rather than completion order.
     results.sort(key=lambda r: (r.cell, r.task, r.replicate))
     return results
 
 
-def _run_one(
+async def _run_one_async(
     job: tuple[str, str, int],
     manifest: dict[str, Any],
     coverage: dict[str, Path],
@@ -248,7 +285,8 @@ def _run_one(
         )
 
     try:
-        run_id = runner.run(
+        run_id = await _invoke_runner(
+            runner,
             study_id=manifest["study_id"],
             cell=cell_name,
             task=task,
@@ -269,7 +307,7 @@ def _run_one(
             error=str(exc),
         )
 
-    # ``harness.run_ours`` returns a run_id even when ``main.py run`` exits
+    # ``harness.run_arise`` returns a run_id even when ``main.py run`` exits
     # non-zero (so the failure is enrolled and discoverable). Reflect that real
     # exit status in the matrix summary instead of falsely reporting success.
     run_status, run_error = _read_run_status(repo_root, manifest["study_id"], run_id)
@@ -281,6 +319,13 @@ def _run_one(
         status=run_status,
         error=run_error,
     )
+
+
+async def _invoke_runner(runner: Any, **kwargs: object) -> UUID:
+    run_async = getattr(runner, "run_async", None)
+    if callable(run_async):
+        return await run_async(**kwargs)
+    return await asyncio.to_thread(runner.run, **kwargs)
 
 
 def _read_run_status(
@@ -555,16 +600,21 @@ def _sweep_stale_containers() -> None:
     trade-off: an unlikely PID collision means we leave the container
     alone, which is the safe failure mode.
     """
+    docker = shutil.which("docker")
+    if docker is None:
+        logger.warning("startup sweep: docker executable not found; skipping")
+        return
+
     try:
-        result = subprocess.run(  # noqa: S603, S607
+        result = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
             [
-                "docker",
+                docker,
                 "ps",
                 "-a",
                 "--filter",
                 "label=arise.session_pid",
                 "--format",
-                "{{.ID}}\t{{.Label \"arise.session_pid\"}}",
+                '{{.ID}}\t{{.Label "arise.session_pid"}}',
             ],
             check=True,
             capture_output=True,
@@ -597,8 +647,8 @@ def _sweep_stale_containers() -> None:
     logger.info(
         "startup sweep: removing %d stale worker container(s)", len(stale_ids)
     )
-    subprocess.run(  # noqa: S603, S607
-        ["docker", "rm", "-f", *stale_ids],
+    subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
+        [docker, "rm", "-f", *stale_ids],
         check=False,
         capture_output=True,
         timeout=60,
@@ -645,7 +695,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--parallel",
         type=int,
         default=1,
-        help="Max concurrent dispatches. >1 uses threads; mind Docker/LLM limits.",
+        help="Max concurrent dispatches; mind Docker/LLM limits.",
     )
     parser.add_argument(
         "--continue-on-error",

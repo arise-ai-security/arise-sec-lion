@@ -7,8 +7,8 @@ runner registry is monkey-patched so no real subprocess fires.
 
 from __future__ import annotations
 
+import asyncio
 import json
-import threading
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID, uuid4
 
@@ -113,7 +113,7 @@ def fake_runner(monkeypatch: pytest.MonkeyPatch) -> _FakeRunnerState:
     """Register a fake runner that records dispatched jobs and returns a UUID.
 
     The matrix driver calls ``runners.get(cell.runner)``; this fixture swaps
-    the registry's lookup so the test never imports ``aris`` (which would
+    the registry's lookup so the test never imports ``arise`` (which would
     drag in the real subprocess path).
     """
     state: _FakeRunnerState = {
@@ -423,19 +423,26 @@ def test_run_matrix_parallel_dispatches_concurrently(
 ) -> None:
     """--parallel >1 must invoke multiple workers concurrently.
 
-    We patch the runner registry directly so the fake's run() blocks on a
-    barrier; if dispatch were sequential the barrier would deadlock.
+    We patch the runner registry directly so the fake's run_async() blocks
+    on a barrier; if dispatch were sequential the barrier would deadlock.
     """
     _seed_study(repo_root, study_id="study-par")
-
-    barrier = threading.Barrier(2, timeout=5.0)
 
     class _BarrierRunner:
         id = "fake"
         label = "fake"
 
-        def run(self, **_kwargs: object) -> UUID:
-            barrier.wait()  # deadlocks if dispatch isn't concurrent
+        def __init__(self) -> None:
+            self._entered = 0
+            self._event: asyncio.Event | None = None
+
+        async def run_async(self, **_kwargs: object) -> UUID:
+            if self._event is None:
+                self._event = asyncio.Event()
+            self._entered += 1
+            if self._entered >= 2:
+                self._event.set()
+            await asyncio.wait_for(self._event.wait(), timeout=5.0)
             return uuid4()
 
     instance = _BarrierRunner()

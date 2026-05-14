@@ -103,7 +103,7 @@ The design contract: which cells exist, where each cell's config lives, what dat
 - Each cell entry needs `group`, `runner`, `config`.
 - `group` must be a single uppercase letter registered in `experiments/shared/groups.yaml`.
 - Cell name must start with its group letter (`A1` under `group: A`, not `Foo1`).
-- `runner` must be a registered runner. Currently only **`aris`** exists — it dispatches every cell through `harness.run_ours` → `main.py run`.
+- `runner` must be a registered runner. Currently only **`arise`** exists — it dispatches every cell through `harness.run_arise` → `main.py run`.
 - `config` is resolved relative to `experiments/<study>/`; the file must exist.
 
 Optional but useful:
@@ -133,16 +133,16 @@ Each cell config is a tiny overlay on `config/config.yaml`. The template's cells
 | `boss.model` / `manager.model` | (n/a — flat) | (n/a — flat) | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` |
 | `worker.tool` | `claude_code` | `claude_code` | `claude_code` | `claude_code` | `openhands` | `openhands` |
 | `worker.model` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `ollama_chat/qwen3:8b` | `ollama_chat/qwen3:8b` |
-| `worker.allowed_tools` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep]` | same as A2 | same as A2 | same as A2 | same as A2 |
-| `worker.disallowed_tools` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch, Task]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` |
-| `worker.max_iterations_per_run` + tool-level cap | `250` | `250` | `250` | `250` | `250` | `250` |
+| `worker.allowed_tools` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep]` | same as A2 | same as A2 | `[file_editor, glob, grep, valgrind_run, klee_run]` | same as C1 |
+| `worker.disallowed_tools` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch, Task]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[terminal, browser_tool_set]` | same as C1 |
+| `worker.max_iterations_per_run` | `250` | `250` | `250` | `250` | `250` | `250` |
 | `worker.timeout` (s) | `5400` | `5400` | `5400` | `5400` | `5400` | `5400` |
 
 **Tool allowlists are pinned by `BUG-TOOL1` (`research/findings/00-synthesis.md`).** Security MCP custom tools (Valgrind, KLEE) and the orchestration recon toolset (`config/config.yaml:103-127`) are served on separate channels — they remain available regardless of `worker.allowed_tools`. The worker allow/denylist governs only the worker's direct CLI/SDK tool surface. A1 vs A2 differs by `Task` (in `disallowed_tools` for A2) so the flat-mode subagent-note derivation, which reads `disallowed_tools` as its single source of truth, infers subagent-off correctly for A2.
 
-**Iteration cap is 250 across all cells** (SecVerifier-parity budget). Setting it lower starves flat A-cells relative to hierarchical B/C cells, because A has no decomposition to split work across multiple workers.
+**Iteration cap is 250 across all cells** (SecVerifier-parity budget). A-cells also set `claude_code.max_turns: 250` because the flat Claude CLI backend consumes that tool-specific cap. Setting either lower starves flat A-cells relative to hierarchical B/C cells, because A has no decomposition to split work across multiple workers.
 
-**Fairness invariants — keep these constant across paired cells:** `worker.max_iterations_per_run`, `claude_code.max_turns` / `openhands.max_iterations_per_run`, `worker.timeout`, `worker.allowed_tools`, `worker.disallowed_tools`, `domain.plugin`, and the prompt set. Per-cell drift here invalidates the between-cell comparison.
+**Fairness invariants — keep these constant across paired cells:** `worker.max_iterations_per_run`, A-cell `claude_code.max_turns`, `worker.timeout`, `worker.allowed_tools`, `worker.disallowed_tools`, the `--domain security` runner invocation, and the prompt set. Per-cell drift here invalidates the between-cell comparison.
 
 ### 3.5. Validate before running
 
@@ -180,7 +180,7 @@ The driver:
 1. Validates the manifest (step 4.1.2).
 2. Sweeps stale state (step 4.1.5).
 3. Enumerates the cartesian product `cells × tasks × replicates`. Per-cell overrides narrow each cell's task list independently.
-4. Dispatches each job via the cell's runner (`aris` → `main.py run` subprocess inside `arise-app`).
+4. Dispatches each job via the cell's runner (`arise` → `main.py run` subprocess inside `arise-app`).
 5. On completion: runs the shared `collect.py` (enrollment lockfile), then any per-study scripts (step 4.1.6), then `validate_reports`.
 6. Writes `experiments/<id>/reports/matrix-summary.md` with per-cell success/failure counts and a failed-jobs table.
 
@@ -313,7 +313,7 @@ Open http://localhost:8000 — every imported `run_id` appears in the agent list
 | ------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Postgres`events`                                  | **Source of truth.** Append-only, OCC on `(aggregate_id, sequence_number)`.          |
 | `experiments/shared/groups.yaml`                  | Project-wide group letter → label registry.                                         |
-| `experiments/shared/harness.py`                   | `run-ours` subcommand; wraps `main.py run` with per-job `ARISE_RUN_RESULT_PATH`.     |
+| `experiments/shared/harness.py`                   | `run-arise` subcommand; wraps `main.py run` with per-job `ARISE_RUN_RESULT_PATH`.     |
 | `experiments/shared/scripts/run_matrix.py`        | The matrix driver.                                                                   |
 | `experiments/shared/scripts/validate_manifest.py` | Manifest schema validator (pre-commit +`run_matrix` entry).                          |
 | `experiments/shared/scripts/collect.py`           | Builds`enrollment.lock.yaml` from `run_manifest.json` files.                         |

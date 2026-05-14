@@ -554,7 +554,7 @@ The repo uses a two-area split for comparative studies:
   `run_manifest.json`. Legacy runs migrated from the pre-2026-04 layout
   live under `runs/_legacy/`.
 
-Primary harness: `python -m experiments.shared.harness run-ours …` /
+Primary harness: `python -m experiments.shared.harness run-arise …` /
 `run-baseline …`. Full design: see
 `docs/superpowers/specs/2026-04-22-experiments-layout-design.md`.
 

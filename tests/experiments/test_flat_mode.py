@@ -1,4 +1,4 @@
-"""Unit tests for flat-mode dispatch through ``aris`` and the bootstrap composition.
+"""Unit tests for flat-mode dispatch through ``arise`` and the bootstrap composition.
 
 These tests stub out subprocess calls and the database; they exercise the
 runner-to-harness path and the bootstrap-side wiring of WorkerPort + invariant
@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from experiments.shared import harness
-from experiments.shared.runners import aris as aris_module, get as get_runner
+from experiments.shared.runners import arise as arise_module, get as get_runner
 
 
 if TYPE_CHECKING:
@@ -55,6 +55,9 @@ def _load_base_config() -> dict:
 def _settings_with(tmp_path: Path, **overrides: dict) -> Path:
     """Write a settings YAML and return its path."""
     payload = _load_base_config()
+    payload.setdefault("boss", {})["model"] = "test-boss-model"
+    payload.setdefault("manager", {})["model"] = "test-manager-model"
+    payload.setdefault("worker", {})["model"] = "test-worker-model"
     for top_key, sub in overrides.items():
         existing = payload.get(top_key, {})
         if (
@@ -74,23 +77,23 @@ def _settings_with(tmp_path: Path, **overrides: dict) -> Path:
     return target
 
 
-def test_aris_runner_delegates_to_harness_run_ours(monkeypatch: pytest.MonkeyPatch) -> None:
-    """aris.run forwards every dispatch through ``harness.run_ours`` regardless of cell."""
-    # Given: a stubbed run_ours that captures its arguments and returns a sentinel.
+def test_arise_runner_delegates_to_harness_run_arise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """arise.run forwards every dispatch through ``harness.run_arise`` regardless of cell."""
+    # Given: a stubbed run_arise that captures its arguments and returns a sentinel.
     sentinel = uuid4()
     captured: dict[str, object] = {}
 
-    def _fake_run_ours(**kwargs: object) -> object:
+    def _fake_run_arise(**kwargs: object) -> object:
         captured.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr(harness, "run_ours", _fake_run_ours)
+    monkeypatch.setattr(harness, "run_arise", _fake_run_arise)
 
     # When: dispatching an A-cell (flat-mode) and a B-cell (hierarchical-mode)
     # through the same runner.
-    aris = get_runner("aris")
+    arise = get_runner("arise")
     config_path = Path("/tmp/cell.yaml")  # noqa: S108 — test sentinel only.
-    flat_result = aris.run(
+    flat_result = arise.run(
         study_id="study-x",
         cell="A1",
         task="cve-flat",
@@ -98,7 +101,7 @@ def test_aris_runner_delegates_to_harness_run_ours(monkeypatch: pytest.MonkeyPat
         config=config_path,
         context_file=Path("ignored.json"),
     )
-    hier_result = aris.run(
+    hier_result = arise.run(
         study_id="study-x",
         cell="B2",
         task="cve-hier",
@@ -107,7 +110,7 @@ def test_aris_runner_delegates_to_harness_run_ours(monkeypatch: pytest.MonkeyPat
         context_file=Path("ignored.json"),
     )
 
-    # Then: both cells came back with the run_ours sentinel and forwarded the
+    # Then: both cells came back with the run_arise sentinel and forwarded the
     # config + replicate values unchanged.
     assert flat_result == sentinel
     assert hier_result == sentinel
@@ -119,9 +122,9 @@ def test_aris_runner_delegates_to_harness_run_ours(monkeypatch: pytest.MonkeyPat
     assert captured["config"] == config_path
 
 
-def test_aris_module_no_longer_carries_legacy_variant_table() -> None:
+def test_arise_module_no_longer_carries_legacy_variant_table() -> None:
     """The legacy ``_LEGACY_VARIANTS`` mapping is removed in PR 4b."""
-    assert not hasattr(aris_module, "_LEGACY_VARIANTS")
+    assert not hasattr(arise_module, "_LEGACY_VARIANTS")
 
 
 def _demo_cve_instance() -> CVEInstance:
@@ -223,12 +226,12 @@ def test_build_flat_worker_picks_claude_code(tmp_path: Path) -> None:
         worker={
             "model": "gpt-4o",
             "tool": "claude_code",
+            "allowed_tools": ["Bash"],
+            "disallowed_tools": [],
             "timeout": 300,
             "max_iterations_per_run": 20,
             "tool_params": {
                 "claude_code": {
-                    "allowed_tools": ["Bash"],
-                    "disallowed_tools": [],
                     "output_format": "stream-json",
                     "include_partial_messages": True,
                     "max_turns": 40,
