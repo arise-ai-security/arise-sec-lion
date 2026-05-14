@@ -167,7 +167,7 @@ def test_default_orchestration_mode_is_hierarchical(tmp_path: Path) -> None:
 
 
 def test_openhands_tool_params_accepts_empty_backend_slot(tmp_path: Path) -> None:
-    """OpenHands backend params are intentionally empty; top-level worker fields drive it."""
+    """OpenHands backend params may omit MCP tools; top-level worker fields drive limits."""
 
     # Given: an explicit empty openhands slot.
     payload = _add_required_models(_load_base_config())
@@ -180,6 +180,7 @@ def test_openhands_tool_params_accepts_empty_backend_slot(tmp_path: Path) -> Non
 
     # Then: the slot is populated, but no duplicate backend knobs exist.
     assert settings.worker.tool_params.openhands is not None
+    assert settings.worker.tool_params.openhands.mcp_tools == []
     assert settings.worker.timeout == payload["worker"]["timeout"]
     assert settings.worker.max_iterations_per_run == payload["worker"]["max_iterations_per_run"]
 
@@ -268,8 +269,7 @@ def test_overlay_yaml_is_resolved_by_from_yaml(tmp_path: Path) -> None:
 def test_study_openhands_tool_policy_overrides_base_defaults(config_name: str) -> None:
     """Study C-cells must replace base worker tool defaults."""
 
-    # Given: config/config.yaml omits worker.allowed_tools, so Settings would
-    # default it to ["*"] unless the study overlay wins.
+    # Given: C-cell overlays pin the SEC-bench MCP tool surface explicitly.
     path = STUDY_CONFIG_DIR / config_name
 
     # When: Settings loads the real study overlay.
@@ -281,10 +281,14 @@ def test_study_openhands_tool_policy_overrides_base_defaults(config_name: str) -
         "file_editor",
         "glob",
         "grep",
+    ]
+    assert settings.worker.disallowed_tools == []
+    assert settings.worker.tool_params.openhands is not None
+    assert settings.worker.tool_params.openhands.mcp_tools == [
+        "shell_in_container",
         "valgrind_run",
         "klee_run",
     ]
-    assert settings.worker.disallowed_tools == ["terminal", "browser_tool_set"]
 
 
 @pytest.mark.parametrize("config_name", sorted(p.name for p in STUDY_CONFIG_DIR.glob("*.yaml")))

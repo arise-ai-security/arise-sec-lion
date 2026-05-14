@@ -282,6 +282,12 @@ def create_runtime_cli(
     ):
         cleanup_registry.register("docker-by-pid", _docker_pid_cleanup)
 
+    openhands_params = settings.worker.tool_params.openhands
+    worker_mcp_tools = (
+        list(openhands_params.mcp_tools)
+        if settings.worker.tool == "openhands" and openhands_params is not None
+        else None
+    )
     infra = get_infrastructure(
         InfrastructureConfig(
             postgres_connection_string=settings.database.connection_string,
@@ -292,6 +298,7 @@ def create_runtime_cli(
             worker_tool_timeout=settings.worker.timeout,
             worker_allowed_tools=list(settings.worker.allowed_tools),
             worker_disallowed_tools=list(settings.worker.disallowed_tools),
+            worker_mcp_tools=worker_mcp_tools,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
             format_repairer_enabled=settings.format_repairer.enabled,

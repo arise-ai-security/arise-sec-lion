@@ -133,16 +133,17 @@ Each cell config is a tiny overlay on `config/config.yaml`. The template's cells
 | `boss.model` / `manager.model` | (n/a — flat) | (n/a — flat) | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` | `claude-opus-4-5-20251101` |
 | `worker.tool` | `claude_code` | `claude_code` | `claude_code` | `claude_code` | `openhands` | `openhands` |
 | `worker.model` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `claude-sonnet-4-5-20250929` | `ollama_chat/qwen3:8b` | `ollama_chat/qwen3:8b` |
-| `worker.allowed_tools` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep]` | same as A2 | same as A2 | `[file_editor, glob, grep, valgrind_run, klee_run]` | same as C1 |
-| `worker.disallowed_tools` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch, Task]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[terminal, browser_tool_set]` | same as C1 |
+| `worker.allowed_tools` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]` | `[Read, Write, Edit, MultiEdit, Bash, Glob, Grep]` | same as A2 | same as A2 | `[file_editor, glob, grep]` | same as C1 |
+| `worker.tool_params.openhands.mcp_tools` | n/a | n/a | n/a | n/a | `[shell_in_container, valgrind_run, klee_run]` | same as C1 |
+| `worker.disallowed_tools` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch, Task]` | `[WebSearch, WebFetch]` | `[WebSearch, WebFetch]` | `[]` | same as C1 |
 | `worker.max_iterations_per_run` | `250` | `250` | `250` | `250` | `250` | `250` |
 | `worker.timeout` (s) | `5400` | `5400` | `5400` | `5400` | `5400` | `5400` |
 
-**Tool allowlists are pinned by `BUG-TOOL1` (`research/findings/00-synthesis.md`).** Security MCP custom tools (Valgrind, KLEE) and the orchestration recon toolset (`config/config.yaml:103-127`) are served on separate channels — they remain available regardless of `worker.allowed_tools`. The worker allow/denylist governs only the worker's direct CLI/SDK tool surface. A1 vs A2 differs by `Task` (in `disallowed_tools` for A2) so the flat-mode subagent-note derivation, which reads `disallowed_tools` as its single source of truth, infers subagent-off correctly for A2.
+**Tool allowlists are pinned by `BUG-TOOL1` (`research/findings/00-synthesis.md`).** OpenHands native tools and SEC-bench MCP tools are separate channels: C cells put native OpenHands tools in `worker.allowed_tools` and MCP tools in `worker.tool_params.openhands.mcp_tools`. A1 vs A2 differs by `Task` (in `disallowed_tools` for A2) so the flat-mode subagent-note derivation, which reads `disallowed_tools` as its single source of truth, infers subagent-off correctly for A2.
 
 **Iteration cap is 250 across all cells** (SecVerifier-parity budget). A-cells also set `claude_code.max_turns: 250` because the flat Claude CLI backend consumes that tool-specific cap. Setting either lower starves flat A-cells relative to hierarchical B/C cells, because A has no decomposition to split work across multiple workers.
 
-**Fairness invariants — keep these constant across paired cells:** `worker.max_iterations_per_run`, A-cell `claude_code.max_turns`, `worker.timeout`, `worker.allowed_tools`, `worker.disallowed_tools`, the `--domain security` runner invocation, and the prompt set. Per-cell drift here invalidates the between-cell comparison.
+**Fairness invariants — keep these constant across paired cells:** `worker.max_iterations_per_run`, A-cell `claude_code.max_turns`, `worker.timeout`, `worker.allowed_tools`, OpenHands `mcp_tools`, `worker.disallowed_tools`, the `--domain security` runner invocation, and the prompt set. Per-cell drift here invalidates the between-cell comparison.
 
 ### 3.5. Validate before running
 

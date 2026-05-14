@@ -63,6 +63,7 @@ class InfrastructureConfig:
     worker_tool_timeout: int
     worker_allowed_tools: list[str] | None = None
     worker_disallowed_tools: list[str] | None = None
+    worker_mcp_tools: list[str] | None = None
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
     format_repairer_enabled: bool = False
@@ -110,7 +111,7 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             max_iterations_per_run=config.worker_tool_max_iterations,
             base_url=config.worker_tool_base_url,
             allowed_tools=config.worker_allowed_tools,
-            disallowed_tools=config.worker_disallowed_tools,
+            mcp_tools=config.worker_mcp_tools,
         )
     if config.default_worker_tool == "google_adk":
         return GoogleADKAdapter(

@@ -14,6 +14,11 @@ worker:
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20
+  allowed_tools:
+    - file_editor
+    - glob
+    - grep
+  # OpenHands native tools are allowlisted above; terminal/browser are omitted.
 
 # Output-format repairer: second-tier LLM-backed JSON parser. Only invoked
 # when the deterministic raw_decode/_repair_json chain fails. Distinct

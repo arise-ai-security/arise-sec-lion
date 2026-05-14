@@ -4,11 +4,10 @@ import asyncio
 import concurrent.futures
 import logging
 import os
-import re
 import signal
 import subprocess
 import time as _time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from time import time
 from typing import Any, Protocol, cast
@@ -36,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
+_OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
 
 
 def _snapshot_child_pids() -> set[int]:
@@ -188,7 +188,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         max_iterations_per_run: int = DEFAULT_MAX_ITERATIONS_PER_RUN,
         base_url: str | None = None,
         allowed_tools: list[str] | None = None,
-        disallowed_tools: list[str] | None = None,
+        mcp_tools: list[str] | None = None,
     ) -> None:
         super().__init__(timeout_seconds=timeout_seconds)
         if not model:
@@ -198,8 +198,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self.max_iterations_per_run: int = max_iterations_per_run
         # None lets OpenHands/LiteLLM fall back to env vars (e.g. OLLAMA_API_BASE).
         self.base_url: str | None = base_url
-        self.allowed_tools: list[str] = allowed_tools or ["*"]
-        self.disallowed_tools: list[str] = disallowed_tools or []
+        self.allowed_tools: list[str] = allowed_tools or []
+        self.mcp_tools: list[str] = mcp_tools or []
 
     def _detect_api_key(self) -> str | None:
         if api_key := os.getenv("LLM_API_KEY"):
@@ -407,84 +407,64 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 category=DeprecationWarning,
             )
             from openhands.sdk import LLM, Agent, Conversation, Tool
-        from openhands.tools.file_editor import FileEditorTool
-        from openhands.tools.glob import GlobTool
-        from openhands.tools.grep import GrepTool
 
-        llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
-        if self.base_url:
-            llm_kwargs["base_url"] = self.base_url
-        # Qwen-family models via Ollama report context_length (e.g. 262144)
-        # as max_output_tokens, but the actual output limit is lower.
-        # litellm's auto-detection conflates context window with output cap,
-        # causing Ollama to reject the request.  Cap explicitly.
-        # Ollama Cloud enforces a 65536 server-side output limit for
-        # qwen3.5:397b-cloud; use 65000 to stay within bounds while giving
-        # workers ample budget for thinking + multi-turn tool calls.
-        if self.model.startswith(("ollama/", "ollama_chat/")):
-            llm_kwargs["max_output_tokens"] = 65000
-            # litellm marks Ollama models as supports_function_calling=False,
-            # triggering a crude single-shot JSON fallback that forces
-            # `format: json` and a "Produce JSON OUTPUT ONLY!" prompt.
-            # This is fundamentally incompatible with OpenHands' multi-turn
-            # agent loop: the model generates minimal JSON, never executes
-            # any commands, and finishes immediately (0 ThoughtCaptured).
-            # Setting native_tool_calling=False makes OpenHands use its own
-            # XML-based prompt mocking (<function=...> / </function>) which
-            # works correctly with multi-turn conversations and does not
-            # force format constraints.
-            llm_kwargs["native_tool_calling"] = False
-            # Disable thinking/reasoning mode for Ollama reasoning models.
-            # qwen3.5 wraps output in inline <think> tags; deepseek-v4-flash
-            # emits a separate `thinking` field — both routinely consume
-            # the response budget on reasoning and leave `content` empty
-            # or malformed (missing tool-call args, truncated JSON).
-            # Ollama exposes a top-level `think: false` flag that
-            # suppresses both behaviours; the older nested
-            # `options.think` form is silently ignored by deepseek and
-            # recent Ollama Cloud builds. litellm's `reasoning_effort`
-            # param does NOT propagate to Ollama — must use extra_body.
-            llm_kwargs["litellm_extra_body"] = {
-                "think": False,
-                "num_ctx": 65536,
-            }
-            # Qwen official docs recommend top_p=0.95, top_k=20 for
-            # non-thinking mode. DO NOT use temperature=0 (greedy) —
-            # explicitly warned against in Qwen3 docs.
-            llm_kwargs["top_p"] = 0.95
-        llm = LLM(**llm_kwargs)
-        tools = []
-        # E.10: TerminalTool is intentionally NOT registered. The OpenHands
-        # built-in terminal would run on the host, which has no
-        # ``/src`` / ``/testcase`` paths — every build/test command would
-        # fail. Shell access into the secb-tools container is exposed via
-        # the MCP ``shell_in_container`` tool (see
-        # ``plugins/security/mcp/security_tools_server.py``).
-        # Bind-mounted host paths under ``workspace.host_root`` are transparent
-        # inside the container; host-side OpenHands file/search tools operate
-        # on those paths and the container observes the edits via the bind mount.
-        for tool_name in (FileEditorTool.name, GlobTool.name, GrepTool.name):
-            if self._tool_allowed(tool_name):
-                tools.append(Tool(name=tool_name))
-        # OpenHands SDK 1.20: MCP tools go through the dedicated ``mcp_config``
-        # kwarg on ``Agent``, NOT through the ``tools`` list. Earlier code
-        # called ``create_mcp_tools(...)`` and appended its output to
-        # ``tools``, which surfaces as a Pydantic ``model_type`` validation
-        # error because ``Agent.tools`` expects ``Tool`` instances and
-        # ``create_mcp_tools`` returns ``MCPToolDefinition`` objects.
+        llm = LLM(**self._build_llm_kwargs())
+        tools = self._build_native_tools(Tool)
+        # Agent creates MCP tool definitions from this config after native tools.
         mcp_config = to_openhands_mcp_config(mcp_servers) if mcp_servers else {}
 
         agent = Agent(
             llm=llm,
             tools=tools,
             mcp_config=mcp_config,
-            filter_tools_regex=self._tool_filter_regex(),
+            include_default_tools=_OPENHANDS_DEFAULT_CONTROL_TOOLS,
         )
         return Conversation(
             agent=agent,
             workspace=working_dir,
             max_iteration_per_run=self.max_iterations_per_run,
         )
+
+    def _build_llm_kwargs(self) -> dict[str, Any]:
+        llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
+        if self.base_url:
+            llm_kwargs["base_url"] = self.base_url
+        if self.model.startswith(("ollama/", "ollama_chat/")):
+            llm_kwargs.update(self._ollama_llm_overrides())
+        return llm_kwargs
+
+    @staticmethod
+    def _ollama_llm_overrides() -> dict[str, Any]:
+        """Keep Ollama/Qwen compatible with OpenHands' multi-turn tool loop."""
+        return {
+            "max_output_tokens": 65000,
+            "native_tool_calling": False,
+            # This disables model-side reasoning tags; OpenHands ThinkTool remains enabled.
+            "litellm_extra_body": {"think": False, "num_ctx": 65536},
+            "top_p": 0.95,
+        }
+
+    def _build_native_tools(self, tool_factory: Callable[..., Any]) -> list[Any]:
+        native_tool_names = self._openhands_native_tool_names()
+        unknown = [name for name in self.allowed_tools if name not in native_tool_names]
+        if unknown:
+            allowed = ", ".join(sorted(native_tool_names))
+            requested = ", ".join(unknown)
+            raise ValueError(
+                f"Unsupported OpenHands native tool(s): {requested}. "
+                f"Configured worker.allowed_tools must use: {allowed}."
+            )
+        return [tool_factory(name=name) for name in self.allowed_tools]
+
+    @staticmethod
+    def _openhands_native_tool_names() -> set[str]:
+        # Keep host-shell access out of OpenHands native tools. Container shell
+        # commands must use the SEC-bench MCP ``shell_in_container`` tool.
+        from openhands.tools.file_editor import FileEditorTool
+        from openhands.tools.glob import GlobTool
+        from openhands.tools.grep import GrepTool
+
+        return {FileEditorTool.name, GlobTool.name, GrepTool.name}
 
     @staticmethod
     def _extract_mcp_servers(
@@ -494,32 +474,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         if not isinstance(servers, dict) or not servers:
             return None
         return dict(servers)
-
-    def _allow_all_tools(self) -> bool:
-        return "*" in self.allowed_tools
-
-    def _tool_allowed(self, *names: str) -> bool:
-        blocked = set(self.disallowed_tools)
-        if any(name in blocked for name in names):
-            return False
-        if self._allow_all_tools():
-            return True
-        allowed = set(self.allowed_tools)
-        return any(name in allowed for name in names)
-
-    def _tool_filter_regex(self) -> str | None:
-        blocked = set(self.disallowed_tools)
-        if self._allow_all_tools():
-            if not blocked:
-                return None
-            blocked_pattern = "|".join(re.escape(name) for name in sorted(blocked))
-            return rf"^(?!(?:{blocked_pattern})$).+$"
-
-        visible = sorted(set(self.allowed_tools) - blocked)
-        if not visible:
-            return r"(?!)"
-        visible_pattern = "|".join(re.escape(name) for name in visible)
-        return rf"^(?:{visible_pattern})$"
 
     def _iter_conversation_events(self, conversation: Any) -> list[Any]:
         state = getattr(conversation, "state", None)

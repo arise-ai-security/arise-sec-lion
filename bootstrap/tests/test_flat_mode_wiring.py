@@ -304,7 +304,7 @@ def test_create_runtime_cli_threads_allowed_tools_to_claude_sdk(tmp_path: Path) 
 
 
 def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -> None:
-    """C-cell wiring: YAML ``worker.allowed_tools`` reaches the OpenHands adapter."""
+    """C-cell wiring: YAML OpenHands native/MCP tools reach the adapter."""
     from bootstrap.composition import create_runtime_cli
     from config.settings import Settings
     from infrastructure.adapters.worker import OpenHandsAdapter
@@ -318,11 +318,10 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
         "file_editor",
         "glob",
         "grep",
-        "valgrind_run",
-        "klee_run",
     ]
-    overlay["worker"]["disallowed_tools"] = ["terminal", "browser_tool_set"]
-    overlay["worker"]["tool_params"] = {"openhands": {}}
+    overlay["worker"]["tool_params"] = {
+        "openhands": {"mcp_tools": ["shell_in_container", "valgrind_run", "klee_run"]}
+    }
     settings_path.write_text(yaml.safe_dump(overlay), encoding="utf-8")
     settings = Settings.from_yaml(settings_path)
 
@@ -336,7 +335,5 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
         "file_editor",
         "glob",
         "grep",
-        "valgrind_run",
-        "klee_run",
     ]
-    assert worker_port.disallowed_tools == ["terminal", "browser_tool_set"]
+    assert worker_port.mcp_tools == ["shell_in_container", "valgrind_run", "klee_run"]

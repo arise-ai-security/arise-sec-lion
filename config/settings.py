@@ -119,13 +119,11 @@ class ClaudeCodeParams(BaseModel):
 
 
 class OpenHandsParams(BaseModel):
-    """OpenHands currently has no backend-specific YAML params.
-
-    Use top-level ``worker.timeout`` and ``worker.max_iterations_per_run``;
-    those are the values threaded into the OpenHands adapter.
-    """
+    """OpenHands-specific worker settings."""
 
     model_config = {"extra": "forbid"}
+
+    mcp_tools: list[str] = Field(default_factory=list)
 
 
 class GoogleAdkParams(BaseModel):
@@ -492,7 +490,7 @@ class Settings(BaseSettings):
     boss: BossConfig
     manager: ManagerConfig
     worker: WorkerConfig
-    format_repairer: FormatRepairerConfig = Field(default_factory=FormatRepairerConfig)
+    format_repairer: FormatRepairerConfig
     orchestration: OrchestrationConfig
     output: OutputConfig
     security: SecurityConfig = Field(default_factory=SecurityConfig)
