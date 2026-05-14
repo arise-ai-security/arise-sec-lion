@@ -12,11 +12,13 @@ interface ConfigPanelProps {
   onClose: () => void;
 }
 
-function ConfigItem({ label, value }: { label: string; value: string | number }) {
+function ConfigItem({ label, value }: { label: string; value: string | number | null }) {
   return (
     <div className="flex justify-between items-center py-1">
       <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
-      <span className="text-xs font-mono text-gray-700 dark:text-gray-300">{value}</span>
+      <span className="text-xs font-mono text-gray-700 dark:text-gray-300">
+        {value ?? 'not configured'}
+      </span>
     </div>
   );
 }
@@ -107,7 +109,7 @@ export function ConfigPanel({ isOpen, onClose }: ConfigPanelProps) {
               </ConfigSection>
 
               <p className="text-xs text-gray-400 dark:text-gray-500 text-center mt-4">
-                Configuration is read-only. Edit config/default.yaml to change.
+                Configuration is read-only. Edit config/config.yaml to change.
               </p>
             </>
           )}

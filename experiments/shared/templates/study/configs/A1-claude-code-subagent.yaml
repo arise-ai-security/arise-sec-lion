@@ -27,7 +27,6 @@ overrides:
   worker.max_iterations_per_run: 250
   output.directory: ./runs
   worker.tool_params:
-    openhands: null
     claude_code:
       output_format: stream-json
       include_partial_messages: true
@@ -35,4 +34,3 @@ overrides:
       # In-container Claude CLI authenticates via ANTHROPIC_API_KEY; the
       # operator's ~/.claude config is not bind-mounted (would leak creds).
       use_global_config: false
-  domain.plugin: security

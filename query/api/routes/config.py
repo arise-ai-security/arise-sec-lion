@@ -4,9 +4,9 @@ Provides a read-only endpoint for retrieving system configuration.
 This allows the dashboard to display current hyperparameters.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from config import Settings
+from config import ApiSettings
 from query.api.schemas import (
     ApplicationConfigSchema,
     InfrastructureConfigSchema,
@@ -18,26 +18,29 @@ router = APIRouter()
 
 
 @router.get("", response_model=SystemConfigSchema)
-async def get_system_config() -> SystemConfigSchema:
+async def get_system_config(request: Request) -> SystemConfigSchema:
     """Get current system configuration.
 
-    Returns a read-only view of the system configuration including:
-    - Infrastructure settings (LLM models, worker tools)
+    Returns a read-only view of query/runtime configuration including:
+    - Infrastructure settings (worker tool metadata)
     - Application settings (timeouts, retries, thresholds)
 
     Note: Sensitive information (passwords, API keys) is NOT exposed.
+    Experiment model names are intentionally absent from base API config.
     """
-    settings = Settings.load()
+    settings = getattr(request.app.state, "settings", None)
+    if not isinstance(settings, ApiSettings):
+        settings = ApiSettings.load()
 
     return SystemConfigSchema(
         infrastructure=InfrastructureConfigSchema(
-            llm_model_boss=settings.infrastructure.llm_model_boss,
-            worker_tool_type=settings.infrastructure.worker_tool_type,
-            worker_tool_model=settings.infrastructure.worker_tool_model,
-            worker_tool_timeout=settings.infrastructure.worker_tool_timeout,
+            llm_model_boss=None,
+            worker_tool_type=settings.worker.tool,
+            worker_tool_model=None,
+            worker_tool_timeout=settings.worker.timeout,
         ),
         application=ApplicationConfigSchema(
-            max_retries=settings.application.max_retries,
-            poll_interval=settings.application.poll_interval,
+            max_retries=settings.orchestration.max_retries,
+            poll_interval=settings.orchestration.poll_interval,
         ),
     )

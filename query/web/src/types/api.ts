@@ -150,9 +150,9 @@ export interface AgentSummary {
 // System Configuration types
 
 export interface InfrastructureConfig {
-  llm_model_boss: string;
+  llm_model_boss: string | null;
   worker_tool_type: string;
-  worker_tool_model: string;
+  worker_tool_model: string | null;
   worker_tool_timeout: number;
 }
 

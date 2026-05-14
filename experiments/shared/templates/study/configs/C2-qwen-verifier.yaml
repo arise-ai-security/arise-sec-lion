@@ -15,10 +15,3 @@ overrides:
   worker.timeout: 5400
   worker.max_iterations_per_run: 250
   output.directory: ./runs
-  worker.tool_params:
-    claude_code: null
-    openhands:
-      image: openhands:latest
-      timeout_seconds: 5400
-      max_iterations_per_run: 250
-  domain.plugin: security

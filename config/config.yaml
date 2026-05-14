@@ -14,11 +14,6 @@ worker:
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20
-  tool_params:
-    openhands:
-      image: openhands:latest
-      timeout_seconds: 1000  # mirrors worker.timeout above; collapsed in a follow-up PR
-      max_iterations_per_run: 20
 
 # Output-format repairer: second-tier LLM-backed JSON parser. Only invoked
 # when the deterministic raw_decode/_repair_json chain fails. Distinct
@@ -126,7 +121,6 @@ orchestration:
 
 output:
   verbose: true
-  show_progress: true
   log_level: INFO
   directory: ./output
 
@@ -149,8 +143,3 @@ cors:
 security:
   enabled: true  # Uses worker.timeout for secb commands
   tools: [valgrind, klee]  # KLEE is lazy-installed on first use by security_tools_server
-
-# Active domain plugin and its opaque per-plugin params.
-domain:
-  plugin: security
-  params: {}

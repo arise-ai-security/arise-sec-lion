@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from hashlib import sha256
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from config import Settings
+    from config import ApiSettings, Settings
     from core.application.execution_service import (
         FlatInvariantBuilder,
         ProgressCallback,
@@ -54,7 +55,7 @@ class DomainComponents:
     domain_key: str | None = None
 
 
-def _build_security_components(settings: Settings) -> DomainComponents:
+def _build_security_components(settings: Settings | ApiSettings) -> DomainComponents:
     if not settings.security.enabled:
         return DomainComponents()
 
@@ -71,14 +72,14 @@ def _build_security_components(settings: Settings) -> DomainComponents:
     )
 
 
-_DOMAIN_COMPONENT_BUILDERS: dict[str, Callable[[Settings], DomainComponents]] = {
+_DOMAIN_COMPONENT_BUILDERS: dict[str, Callable[[Settings | ApiSettings], DomainComponents]] = {
     "security": _build_security_components,
 }
 
 _DOMAIN_COMPONENT_ORDER: tuple[str, ...] = tuple(_DOMAIN_COMPONENT_BUILDERS)
 
 
-def build_domain_plugin(settings: Settings) -> DomainPlugin | None:
+def build_domain_plugin(settings: Settings | ApiSettings) -> DomainPlugin | None:
     """Return the first enabled domain plugin, or None.
 
     Intended for query API bootstrap where only the plugin (not full
@@ -87,7 +88,7 @@ def build_domain_plugin(settings: Settings) -> DomainPlugin | None:
     return get_first_enabled_domain_components(settings).plugin
 
 
-def get_first_enabled_domain_components(settings: Settings) -> DomainComponents:
+def get_first_enabled_domain_components(settings: Settings | ApiSettings) -> DomainComponents:
     for name in _DOMAIN_COMPONENT_ORDER:
         components = _DOMAIN_COMPONENT_BUILDERS[name](settings)
         if components.plugin is not None:
@@ -232,10 +233,14 @@ def _docker_pid_cleanup() -> None:
     down. A raise here would block the registry's remaining handlers.
     """
     pid = os.getpid()
+    docker = shutil.which("docker")
+    if docker is None:
+        logger.warning("docker executable not found; skipping PID-label cleanup")
+        return
     try:
-        listing = subprocess.run(
+        listing = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
             [
-                "docker", "ps", "-a",
+                docker, "ps", "-a",
                 "--filter", f"label=arise.session_pid={pid}",
                 "--format", "{{.ID}}",
             ],
@@ -247,8 +252,8 @@ def _docker_pid_cleanup() -> None:
         ids = [line.strip() for line in listing.stdout.splitlines() if line.strip()]
         if not ids:
             return
-        subprocess.run(
-            ["docker", "rm", "-f", *ids],
+        subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
+            [docker, "rm", "-f", *ids],
             check=False,
             capture_output=True,
             timeout=60,

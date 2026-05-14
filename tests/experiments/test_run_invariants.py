@@ -40,6 +40,9 @@ def _postgres_password(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _settings_with(tmp_path: Path, **overrides: dict) -> Settings:
     payload = yaml.safe_load(BASE_CONFIG.read_text(encoding="utf-8"))
+    payload.setdefault("boss", {})["model"] = "test-boss-model"
+    payload.setdefault("manager", {})["model"] = "test-manager-model"
+    payload.setdefault("worker", {})["model"] = "test-worker-model"
     for top_key, sub in overrides.items():
         existing = payload.get(top_key, {})
         if (
@@ -101,11 +104,7 @@ def test_tool_policy_for_openhands(tmp_path: Path) -> None:
             "timeout": 300,
             "max_iterations_per_run": 20,
             "tool_params": {
-                "openhands": {
-                    "image": "openhands:latest",
-                    "timeout_seconds": 600,
-                    "max_iterations_per_run": 20,
-                }
+                "openhands": {}
             },
         },
     )

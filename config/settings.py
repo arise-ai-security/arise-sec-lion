@@ -112,8 +112,6 @@ class ClaudeCodeParams(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
-    disallowed_tools: list[str] = Field(default_factory=list)
     output_format: Literal["stream-json", "text"] = "stream-json"
     include_partial_messages: bool = True
     max_turns: int = Field(default=40, gt=0)
@@ -121,13 +119,13 @@ class ClaudeCodeParams(BaseModel):
 
 
 class OpenHandsParams(BaseModel):
-    """Tool-specific params for the OpenHands worker backend."""
+    """OpenHands currently has no backend-specific YAML params.
+
+    Use top-level ``worker.timeout`` and ``worker.max_iterations_per_run``;
+    those are the values threaded into the OpenHands adapter.
+    """
 
     model_config = {"extra": "forbid"}
-
-    image: str = "openhands:latest"
-    timeout_seconds: int = Field(default=600, gt=0)
-    max_iterations_per_run: int = Field(default=20, gt=0)
 
 
 class GoogleAdkParams(BaseModel):
@@ -174,6 +172,16 @@ class WorkerConfig(BaseModel):
         ),
     )
     tool_params: WorkerToolParams = Field(default_factory=WorkerToolParams)
+
+
+class ApiWorkerConfig(BaseModel):
+    """Worker settings the query API can expose without requiring run models."""
+
+    model_config = {"extra": "ignore"}
+
+    tool: Literal["claude_code", "openhands", "google_adk"]
+    timeout: int = Field(default=300, gt=0)
+    max_iterations_per_run: int = Field(default=20, gt=0)
 
 
 class FormatRepairerConfig(BaseModel):
@@ -364,15 +372,6 @@ class OrchestrationConfig(BaseModel):
         ge=0,
         description="Maximum infeasibility-driven redecompositions per parent.",
     )
-    decomposition_strategy: str = Field(
-        default="recursive",
-        description="How tasks are decomposed: recursive (default) or flat",
-    )
-    global_budget_usd: float = Field(
-        default=0.0,
-        ge=0.0,
-        description="Global budget limit in USD (0 = unlimited)",
-    )
     skip_judge: bool = Field(
         default=False,
         description="Skip the LLM judge stage of verification (stages 1-3 still run).",
@@ -390,7 +389,6 @@ class OutputConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     verbose: bool
-    show_progress: bool
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
     directory: str
 
@@ -407,19 +405,6 @@ class SecurityConfig(BaseModel):
     )
     worker_network_mode: Literal["bridge", "host"] = "host"
     worker_docker_timeout_seconds: int = Field(default=300, ge=1, le=3600)
-
-
-class DomainConfig(BaseModel):
-    """Domain plugin selection and plugin-specific params.
-
-    The ``params`` slot is intentionally an opaque dict; each plugin is
-    responsible for shape-validating its own subkey.
-    """
-
-    model_config = {"extra": "forbid"}
-
-    plugin: Literal["security"] | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class CorsConfig(BaseModel):
@@ -444,6 +429,60 @@ _WORKER_TOOL_PARAM_TYPES: dict[str, type[BaseModel]] = {
 }
 
 
+def _inject_env_database(config: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(config)
+
+    db_config = dict(merged.get("database", {}))
+    postgres_password = os.getenv("POSTGRES_PASSWORD")
+    if not postgres_password:
+        raise ValueError("POSTGRES_PASSWORD environment variable is required")
+    db_config["password"] = postgres_password
+    if os.getenv("POSTGRES_HOST"):
+        db_config["host"] = os.getenv("POSTGRES_HOST")
+    postgres_port = os.getenv("POSTGRES_PORT")
+    if postgres_port:
+        db_config["port"] = int(postgres_port)
+    if os.getenv("POSTGRES_USER"):
+        db_config["user"] = os.getenv("POSTGRES_USER")
+    if os.getenv("POSTGRES_DB"):
+        db_config["name"] = os.getenv("POSTGRES_DB")
+    merged["database"] = db_config
+    return merged
+
+
+class ApiSettings(BaseSettings):
+    """Query API config that intentionally does not require experiment models."""
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    database: DatabaseConfig
+    worker: ApiWorkerConfig
+    orchestration: OrchestrationConfig
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    cors: CorsConfig = Field(default_factory=CorsConfig)
+
+    @classmethod
+    def _build_from_config(cls, config: dict[str, Any]) -> ApiSettings:
+        return cls.model_validate(_inject_env_database(config))
+
+    @classmethod
+    def load(cls, env: str | None = None) -> ApiSettings:
+        config = _load_yaml_hierarchy(env)
+        return cls._build_from_config(config)
+
+    @classmethod
+    def from_yaml(cls, config_path: str | Path) -> ApiSettings:
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        from config._paths import get_repo_root
+        from config.overlay import resolve_overlay
+
+        config = resolve_overlay(config_file, repo_root=get_repo_root())
+        return cls._build_from_config(config)
+
+
 class Settings(BaseSettings):
     """Root config: secrets from env, everything else from YAML."""
 
@@ -457,7 +496,6 @@ class Settings(BaseSettings):
     orchestration: OrchestrationConfig
     output: OutputConfig
     security: SecurityConfig = Field(default_factory=SecurityConfig)
-    domain: DomainConfig = Field(default_factory=DomainConfig)
     cors: CorsConfig = Field(default_factory=CorsConfig)
 
     @model_validator(mode="after")
@@ -489,23 +527,7 @@ class Settings(BaseSettings):
     @classmethod
     def _build_from_config(cls, config: dict[str, Any]) -> Settings:
         """Build Settings from config dict, injecting env vars."""
-        merged = deepcopy(config)
-
-        db_config = dict(merged.get("database", {}))
-        postgres_password = os.getenv("POSTGRES_PASSWORD")
-        if not postgres_password:
-            raise ValueError("POSTGRES_PASSWORD environment variable is required")
-        db_config["password"] = postgres_password
-        if os.getenv("POSTGRES_HOST"):
-            db_config["host"] = os.getenv("POSTGRES_HOST")
-        postgres_port = os.getenv("POSTGRES_PORT")
-        if postgres_port:
-            db_config["port"] = int(postgres_port)
-        if os.getenv("POSTGRES_USER"):
-            db_config["user"] = os.getenv("POSTGRES_USER")
-        if os.getenv("POSTGRES_DB"):
-            db_config["name"] = os.getenv("POSTGRES_DB")
-        merged["database"] = db_config
+        merged = _inject_env_database(config)
 
         merged["worker"] = _populate_default_tool_params(dict(merged.get("worker", {})))
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
-from config.settings import Settings
+from config.settings import ApiSettings, Settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -126,6 +127,17 @@ def test_base_config_without_models_fails() -> None:
     assert "worker.model" in msg
 
 
+def test_api_settings_loads_base_config_without_agent_models() -> None:
+    """The query API can boot from base config without experiment model names."""
+
+    settings = ApiSettings.from_yaml(BASE_CONFIG)
+
+    assert settings.database.password == os.environ["POSTGRES_PASSWORD"]
+    assert settings.worker.tool == "openhands"
+    assert settings.worker.timeout == 1000
+    assert settings.orchestration.max_retries == 3
+
+
 def test_format_repairer_model_is_required_from_config(tmp_path: Path) -> None:
     """The repairer has a YAML default, not a source-code fallback."""
 
@@ -154,42 +166,43 @@ def test_default_orchestration_mode_is_hierarchical(tmp_path: Path) -> None:
     assert settings.orchestration.mode == "hierarchical"
 
 
-def test_default_domain_plugin_is_security_for_base_config(tmp_path: Path) -> None:
-    """The base config explicitly declares domain.plugin=security."""
+def test_openhands_tool_params_accepts_empty_backend_slot(tmp_path: Path) -> None:
+    """OpenHands backend params are intentionally empty; top-level worker fields drive it."""
 
-    # Given: the repo's base config plus required experiment-owned models.
-    target = tmp_path / "config.yaml"
-    _write_yaml(target, _add_required_models(_load_base_config()))
-
-    # When: loading the config.
-    settings = Settings.from_yaml(target)
-
-    # Then: the active domain plugin is the security one.
-    assert settings.domain.plugin == "security"
-    assert settings.domain.params == {}
-
-
-
-
-def test_explicit_tool_params_override_defaults(tmp_path: Path) -> None:
-    """Explicit tool_params values are preserved (no auto-fill clobber)."""
-
-    # Given: a config where openhands.timeout_seconds is explicitly set.
+    # Given: an explicit empty openhands slot.
     payload = _add_required_models(_load_base_config())
-    payload["worker"]["tool_params"] = {
-        "openhands": {"image": "custom:latest", "timeout_seconds": 42, "max_iterations_per_run": 3}
-    }
+    payload["worker"]["tool_params"] = {"openhands": {}}
     target = tmp_path / "explicit.yaml"
     _write_yaml(target, payload)
 
     # When: loaded.
     settings = Settings.from_yaml(target)
 
-    # Then: explicit values win.
+    # Then: the slot is populated, but no duplicate backend knobs exist.
     assert settings.worker.tool_params.openhands is not None
-    assert settings.worker.tool_params.openhands.image == "custom:latest"
-    assert settings.worker.tool_params.openhands.timeout_seconds == 42
-    assert settings.worker.tool_params.openhands.max_iterations_per_run == 3
+    assert settings.worker.timeout == payload["worker"]["timeout"]
+    assert settings.worker.max_iterations_per_run == payload["worker"]["max_iterations_per_run"]
+
+
+def test_openhands_tool_params_rejects_removed_duplicate_fields(tmp_path: Path) -> None:
+    """OpenHands timeout/iteration config must stay at top-level worker fields."""
+
+    # Given: the retired OpenHands-specific timeout/image fields.
+    payload = _add_required_models(_load_base_config())
+    payload["worker"]["tool_params"] = {
+        "openhands": {"image": "custom:latest", "timeout_seconds": 42, "max_iterations_per_run": 3}
+    }
+    target = tmp_path / "duplicate_openhands.yaml"
+    _write_yaml(target, payload)
+
+    # When/Then: strict validation rejects the stale fields.
+    with pytest.raises(ValidationError) as exc_info:
+        Settings.from_yaml(target)
+
+    msg = str(exc_info.value)
+    assert "image" in msg
+    assert "timeout_seconds" in msg
+    assert "max_iterations_per_run" in msg
 
 
 def test_tool_params_rejects_inactive_slot_payload(tmp_path: Path) -> None:
@@ -207,12 +220,8 @@ def test_tool_params_rejects_inactive_slot_payload(tmp_path: Path) -> None:
                 "worker.model": "test-worker-model",
                 "worker.tool": "openhands",
                 "worker.tool_params": {
-                    "openhands": {
-                        "image": "x:latest",
-                        "timeout_seconds": 10,
-                        "max_iterations_per_run": 5,
-                    },
-                    "claude_code": {"disallowed_tools": ["Task"]},
+                    "openhands": {},
+                    "claude_code": {"max_turns": 5},
                 },
             },
         },
@@ -276,6 +285,17 @@ def test_study_openhands_tool_policy_overrides_base_defaults(config_name: str) -
         "klee_run",
     ]
     assert settings.worker.disallowed_tools == ["terminal", "browser_tool_set"]
+
+
+@pytest.mark.parametrize("config_name", sorted(p.name for p in STUDY_CONFIG_DIR.glob("*.yaml")))
+def test_all_study_template_configs_load(config_name: str) -> None:
+    """Every committed study template must be a valid Settings overlay."""
+
+    settings = Settings.from_yaml(STUDY_CONFIG_DIR / config_name)
+
+    assert settings.boss.model
+    assert settings.manager.model
+    assert settings.worker.model
 
 
 def test_secbench_recon_tool_allowlist_matches_registered_tools() -> None:

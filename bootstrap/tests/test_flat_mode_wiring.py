@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 import pytest
 import yaml
@@ -24,6 +23,8 @@ from config import (
 
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from core.application.execution_service import FlatModeBundle
     from core.application.run_invariants import (
         TaskPromptSpec,
@@ -153,7 +154,7 @@ def test_application_config_flat_mode_requires_worker() -> None:
 
 
 def test_application_config_flat_mode_requires_invariant_builder() -> None:
-    """ApplicationConfig refuses construction when mode='flat' but flat_invariant_builder is None."""
+    """ApplicationConfig refuses flat mode without a FlatInvariantBuilder."""
     from bootstrap import ApplicationConfig
 
     # Given: flat mode with a worker but no builder.
@@ -198,8 +199,6 @@ def test_create_runtime_cli_wires_flat_mode_for_claude_code(tmp_path: Path) -> N
             "max_iterations_per_run": 20,
             "tool_params": {
                 "claude_code": {
-                    "allowed_tools": ["Bash"],
-                    "disallowed_tools": [],
                     "output_format": "stream-json",
                     "include_partial_messages": True,
                     "max_turns": 40,
@@ -314,7 +313,6 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
     settings_path = _custom_tool_policy_settings(
         tmp_path, tool="openhands", model="openai/gpt-4o-mini"
     )
-    # OpenHands tool_params slot is required when tool=openhands.
     overlay = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
     overlay["worker"]["allowed_tools"] = [
         "file_editor",
@@ -324,13 +322,7 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
         "klee_run",
     ]
     overlay["worker"]["disallowed_tools"] = ["terminal", "browser_tool_set"]
-    overlay["worker"]["tool_params"] = {
-        "openhands": {
-            "image": "openhands:latest",
-            "timeout_seconds": 300,
-            "max_iterations_per_run": 20,
-        }
-    }
+    overlay["worker"]["tool_params"] = {"openhands": {}}
     settings_path.write_text(yaml.safe_dump(overlay), encoding="utf-8")
     settings = Settings.from_yaml(settings_path)
 

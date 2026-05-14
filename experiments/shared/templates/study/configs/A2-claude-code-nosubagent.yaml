@@ -20,10 +20,8 @@ overrides:
   worker.max_iterations_per_run: 250
   output.directory: ./runs
   worker.tool_params:
-    openhands: null
     claude_code:
       output_format: stream-json
       include_partial_messages: true
       max_turns: 250
       use_global_config: false
-  domain.plugin: security

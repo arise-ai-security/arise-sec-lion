@@ -9,6 +9,7 @@ from config import (
     ConcurrencyConfig,
     CorsConfig,
     DatabaseConfig,
+    FormatRepairerConfig,
     ManagerConfig,
     OpenHandsParams,
     OrchestrationConfig,
@@ -72,11 +73,11 @@ def _make_settings(**overrides: Any) -> Settings:
         ),
         output=OutputConfig(
             verbose=True,
-            show_progress=True,
             log_level="INFO",
             directory="./runs",
         ),
         security=SecurityConfig(enabled=True, tools=["valgrind"]),
+        format_repairer=FormatRepairerConfig(model="gpt-5.4-mini"),
         cors=CorsConfig(),
     )
     return base.model_copy(update=overrides) if overrides else base

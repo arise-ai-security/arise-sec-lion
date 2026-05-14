@@ -134,10 +134,7 @@ def build_tool_policy(*, settings: Settings) -> ToolPolicy:
 def build_timeouts(settings: Settings) -> TimeoutBudget:
     """Extract worker and run timeouts from settings.
 
-    ``worker.timeout`` is the canonical per-worker-call budget. ``openhands``
-    also exposes ``tool_params.openhands.timeout_seconds``; that field is
-    duplicate today and a follow-up PR will collapse them.
-
+    ``worker.timeout`` is the canonical per-worker-call budget.
     Per-run total comes from ``orchestration.max_run_duration_seconds``,
     which is float-typed in settings; we coerce to int seconds here so the
     budget value object matches ``per_worker_call``'s type.

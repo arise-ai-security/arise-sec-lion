@@ -1,12 +1,14 @@
 """Configuration via Pydantic Settings with phase-specific YAML support."""
 
 from .settings import (
+    ApiSettings,
+    ApiWorkerConfig,
     BossConfig,
     ClaudeCodeParams,
     ConcurrencyConfig,
     CorsConfig,
     DatabaseConfig,
-    DomainConfig,
+    FormatRepairerConfig,
     GoogleAdkParams,
     ManagerConfig,
     OpenHandsParams,
@@ -27,12 +29,14 @@ from .settings import (
 
 
 __all__ = [
+    "ApiSettings",
+    "ApiWorkerConfig",
     "BossConfig",
     "ClaudeCodeParams",
     "ConcurrencyConfig",
     "CorsConfig",
     "DatabaseConfig",
-    "DomainConfig",
+    "FormatRepairerConfig",
     "GoogleAdkParams",
     "ManagerConfig",
     "OpenHandsParams",
