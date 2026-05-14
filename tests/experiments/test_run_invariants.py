@@ -95,7 +95,7 @@ def test_tool_policy_for_claude_code(tmp_path: Path) -> None:
 
 
 def test_tool_policy_for_openhands(tmp_path: Path) -> None:
-    """worker.tool=openhands defaults to wildcard allow with empty disallow."""
+    """worker.tool=openhands defaults to the native non-terminal tool allowlist."""
     settings = _settings_with(
         tmp_path,
         worker={
@@ -109,7 +109,7 @@ def test_tool_policy_for_openhands(tmp_path: Path) -> None:
         },
     )
     policy = build_tool_policy(settings=settings)
-    assert policy.allowed == ("*",)
+    assert policy.allowed == ("file_editor", "glob", "grep")
     assert policy.disallowed == ()
 
 

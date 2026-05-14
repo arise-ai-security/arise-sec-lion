@@ -23,7 +23,13 @@ from core.domain.events.events import (
 from infrastructure.cleanup.registry import _pid_alive
 
 from .base import WorkerAdapterBase
-from .shared import ContainerSessionContext, EventSequencer, to_openhands_mcp_config
+from .shared import (
+    ContainerSessionContext,
+    EventSequencer,
+    UsageBreakdown,
+    emit_cost,
+    to_openhands_mcp_config,
+)
 
 
 # Suppress verbose OpenHands logging
@@ -366,17 +372,19 @@ class OpenHandsAdapter(WorkerAdapterBase):
         started_at: float,
     ) -> DomainEvent:
         cost_data = self._extract_cost_data(conversation)
-        return sequencer.cost_recorded(
+        return emit_cost(
+            sequencer,
             tool_name=self._get_tool_name(),
-            cost_usd=cost_data.cost_usd,
             duration_seconds=time() - started_at,
             model=self._resolve_cost_model(cost_data),
-            tokens=cost_data.tokens,
-            prompt_tokens=cost_data.prompt_tokens,
-            completion_tokens=cost_data.completion_tokens,
-            cache_read_tokens=cost_data.cache_read_tokens,
-            cache_write_tokens=cost_data.cache_write_tokens,
-            reasoning_tokens=cost_data.reasoning_tokens,
+            breakdown=UsageBreakdown(
+                prompt_tokens=cost_data.prompt_tokens,
+                completion_tokens=cost_data.completion_tokens,
+                cache_read_tokens=cost_data.cache_read_tokens,
+                cache_write_tokens=cost_data.cache_write_tokens,
+                reasoning_tokens=cost_data.reasoning_tokens,
+                cost_usd=cost_data.cost_usd,
+            ),
             usage_metrics=cost_data.usage_metrics,
         )
 
@@ -518,13 +526,13 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
         return OpenHandsCostData(
             cost_usd=total_cost,
-            tokens=self._sum_tokens(
-                prompt_tokens,
-                completion_tokens,
-                cache_read_tokens,
-                cache_write_tokens,
-                reasoning_tokens,
-            ),
+            tokens=UsageBreakdown(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                reasoning_tokens=reasoning_tokens,
+            ).tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cache_read_tokens=cache_read_tokens,
@@ -638,13 +646,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
         if value is None:
             return None
         return float(value)
-
-    @staticmethod
-    def _sum_tokens(*parts: int | None) -> int | None:
-        """Sum optional token counts, returning None when no data exists."""
-        if not any(part is not None for part in parts):
-            return None
-        return sum(part or 0 for part in parts)
 
     _EVENT_TEXT_LIMIT = 600
 

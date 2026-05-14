@@ -9,6 +9,7 @@ from .mcp_config import (
     to_sdk_mcp_servers,
 )
 from .tool_formatters import TOOL_FORMATTERS, format_tool_event
+from .usage import UsageBreakdown, emit_cost
 from .validation import validate_task_context
 
 
@@ -18,6 +19,8 @@ __all__ = [
     "ContainerSessionContext",
     "EventSequencer",
     "ModelPricing",
+    "UsageBreakdown",
+    "emit_cost",
     "format_tool_event",
     "get_model_pricing",
     "to_cli_config_payload",

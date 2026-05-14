@@ -47,6 +47,7 @@ def test_sweep_removes_containers_with_dead_pid(
     # Given: docker ps returns one row whose owning PID is no longer alive.
     stdout = f"abc123\t{_DEAD_PID}\n"
     mock_run = MagicMock(side_effect=[_ps_result(stdout), _rm_result()])
+    monkeypatch.setattr(run_matrix.shutil, "which", lambda _name: "docker")
     monkeypatch.setattr(run_matrix.subprocess, "run", mock_run)
 
     # When: the sweep runs.
@@ -68,6 +69,7 @@ def test_sweep_keeps_containers_with_live_pid(
     # Given: docker ps returns one row whose owning PID is THIS pytest process.
     stdout = f"def456\t{os.getpid()}\n"
     mock_run = MagicMock(side_effect=[_ps_result(stdout)])
+    monkeypatch.setattr(run_matrix.shutil, "which", lambda _name: "docker")
     monkeypatch.setattr(run_matrix.subprocess, "run", mock_run)
 
     # When: the sweep runs.

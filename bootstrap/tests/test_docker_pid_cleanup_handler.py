@@ -66,7 +66,10 @@ def test_docker_pid_cleanup_runs_docker_rm_for_each_listed_id() -> None:
         return MagicMock(stdout="", stderr="", returncode=0)
 
     # When: the handler runs.
-    with patch("bootstrap.composition.subprocess.run", side_effect=_fake_run):
+    with (
+        patch("bootstrap.composition.shutil.which", return_value="docker"),
+        patch("bootstrap.composition.subprocess.run", side_effect=_fake_run),
+    ):
         _docker_pid_cleanup()
 
     # Then: exactly two subprocess invocations — a listing then a removal.
@@ -99,7 +102,10 @@ def test_docker_pid_cleanup_noop_when_no_containers_match() -> None:
         return MagicMock(stdout="", stderr="", returncode=0)
 
     # When: the handler runs.
-    with patch("bootstrap.composition.subprocess.run", side_effect=_fake_run):
+    with (
+        patch("bootstrap.composition.shutil.which", return_value="docker"),
+        patch("bootstrap.composition.subprocess.run", side_effect=_fake_run),
+    ):
         _docker_pid_cleanup()
 
     # Then: only the listing call was made; no removal call.
@@ -253,7 +259,10 @@ def test_registered_handler_invokes_docker_rm_via_registry(tmp_path: Path) -> No
         return MagicMock(stdout="", stderr="", returncode=0)
 
     # When: the registry sweep fires.
-    with patch("bootstrap.composition.subprocess.run", side_effect=_fake_run):
+    with (
+        patch("bootstrap.composition.shutil.which", return_value="docker"),
+        patch("bootstrap.composition.subprocess.run", side_effect=_fake_run),
+    ):
         registry.run_all()
 
     # Then: the registered handler reached docker rm -f <id>.

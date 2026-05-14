@@ -25,6 +25,8 @@ from core.domain.exceptions import ToolNotAvailableError
 from infrastructure.adapters.worker.shared import (
     ContainerSessionContext,
     EventSequencer,
+    UsageBreakdown,
+    emit_cost,
     format_tool_event,
     to_cli_config_payload,
 )
@@ -596,39 +598,25 @@ class ClaudeCodeWorker:
         reasoning_tokens = _int_value(
             usage_dict.get("reasoning_tokens") or usage_dict.get("thinking_tokens")
         )
-        # Audit N-3 completion: always sum from the breakdown. The Claude
-        # CLI's `total_tokens` is prompt+completion only and drops cache +
-        # reasoning, mirroring the same undercount the SDK adapter had
-        # pre-fix.
-        breakdown_parts = (
-            prompt_tokens,
-            completion_tokens,
-            cache_read_tokens,
-            cache_write_tokens,
-            reasoning_tokens,
-        )
-        total_tokens: int | None = (
-            sum(part or 0 for part in breakdown_parts)
-            if any(part is not None for part in breakdown_parts)
-            else None
-        )
-        cost_usd = _float_value(payload.get("total_cost_usd") or payload.get("cost_usd"))
-        if cost_usd is None and total_tokens is None:
-            return None
-        duration = _float_value(payload.get("duration_ms"))
-        duration_seconds = (duration / 1000.0) if duration is not None else wall_time_seconds
-        model = _string_value(payload.get("model")) or self._model
-        return sequencer.cost_recorded(
-            tool_name="claude_code",
-            model=model,
-            tokens=total_tokens,
+        breakdown = UsageBreakdown(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
             reasoning_tokens=reasoning_tokens,
-            cost_usd=cost_usd or 0.0,
+            cost_usd=_float_value(payload.get("total_cost_usd") or payload.get("cost_usd")),
+        )
+        if not breakdown.has_cost_data:
+            return None
+        duration = _float_value(payload.get("duration_ms"))
+        duration_seconds = (duration / 1000.0) if duration is not None else wall_time_seconds
+        model = _string_value(payload.get("model")) or self._model
+        return emit_cost(
+            sequencer,
+            tool_name="claude_code",
+            model=model,
             duration_seconds=duration_seconds,
+            breakdown=breakdown,
         )
 
     def _summarize_transcript(self, transcript_path: Path) -> str | None:

@@ -21,6 +21,7 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
+import infrastructure.adapters.worker.openhands_adapter as openhands_adapter_module
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 
 
@@ -572,6 +573,20 @@ class TestTerminalToolRegistration:
     ``shell_in_container`` tool instead, so build/test commands never run
     on the host where ``/src`` and ``/testcase`` do not exist.
     """
+
+    def test_host_terminal_tool_absent_from_static_tool_sets(self) -> None:
+        """The no-host-shell invariant is enforced by tool registration."""
+        terminal_aliases = {
+            "execute_bash",
+            "TerminalTool",
+            "terminal",
+            "bash",
+        }
+
+        assert not (
+            terminal_aliases & set(openhands_adapter_module._OPENHANDS_DEFAULT_CONTROL_TOOLS)
+        )
+        assert not (terminal_aliases & OpenHandsAdapter._openhands_native_tool_names())
 
     def test_no_terminaltool_registered(self) -> None:
         """``_build_conversation`` produces a tools list with no host terminal tool."""

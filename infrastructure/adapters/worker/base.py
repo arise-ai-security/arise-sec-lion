@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-from core.domain.events.events import DomainEvent
+from core.domain.events.events import DomainEvent, WorkCompleted, WorkFailed
 from core.ports.runtime_ports import WorkerToolPort
 
 from .shared import EventSequencer, validate_task_context
@@ -54,19 +54,28 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         2. Create sequencer
         3. Delegate to _execute_task()
 
-        Error handling is left to subclasses for SDK-specific formatting.
+        SDK-specific error handling stays in subclasses. This wrapper is only
+        a final safety net so unexpected subclass escapes still produce a
+        terminal worker event.
         """
         task_description, agent_id, working_dir = validate_task_context(task_context)
         sequencer = self._create_sequencer(agent_id)
+        terminal_emitted = False
 
-        async for event in self._execute_task(
-            task_description=task_description,
-            agent_id=agent_id,
-            working_dir=working_dir,
-            sequencer=sequencer,
-            task_context=task_context,
-        ):
-            yield event
+        try:
+            async for event in self._execute_task(
+                task_description=task_description,
+                agent_id=agent_id,
+                working_dir=working_dir,
+                sequencer=sequencer,
+                task_context=task_context,
+            ):
+                if isinstance(event, (WorkCompleted, WorkFailed)):
+                    terminal_emitted = True
+                yield event
+        except Exception as error:
+            if not terminal_emitted:
+                yield sequencer.failed(self._format_unexpected_error(error))
 
     @abstractmethod
     async def _execute_task(
@@ -106,6 +115,9 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         Examples: "claude_code", "openhands", "google_adk"
         """
         ...
+
+    def _format_unexpected_error(self, error: Exception) -> str:
+        return f"{self._get_tool_name()} adapter error: {error!r}"
 
     def _create_sequencer(self, agent_id: UUID) -> EventSequencer:
         return EventSequencer(agent_id, stream=self.STREAM_NAME)

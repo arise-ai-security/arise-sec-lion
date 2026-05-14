@@ -26,7 +26,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from core.domain.events.events import DomainEvent, WorkerCostRecorded
+from core.domain.events.events import (
+    DomainEvent,
+    ThoughtCaptured,
+    WorkerCostRecorded,
+    WorkFailed,
+)
 from infrastructure.adapters.worker.base import WorkerAdapterBase
 from infrastructure.adapters.worker.shared import EventSequencer
 
@@ -48,6 +53,76 @@ class _MinimalAdapter(WorkerAdapterBase):
 
     def _get_tool_name(self) -> str:  # pragma: no cover - not invoked
         return "minimal"
+
+
+class _RaisesAfterThoughtAdapter(_MinimalAdapter):
+    """Adapter that escapes after yielding a non-terminal event."""
+
+    async def _execute_task(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        working_dir: str,
+        sequencer: EventSequencer,
+        task_context: dict[str, Any],
+    ) -> AsyncIterator[DomainEvent]:
+        del task_description, agent_id, working_dir, task_context
+        yield sequencer.thought("started", "output")
+        raise RuntimeError("boom")
+
+
+class _TerminalThenRaisesAdapter(_MinimalAdapter):
+    """Adapter that emits its own terminal event before an escape."""
+
+    async def _execute_task(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        working_dir: str,
+        sequencer: EventSequencer,
+        task_context: dict[str, Any],
+    ) -> AsyncIterator[DomainEvent]:
+        del task_description, agent_id, working_dir, task_context
+        yield sequencer.failed("adapter-specific install message")
+        raise RuntimeError("ignored after terminal")
+
+
+class _TerminalThenThoughtThenRaisesAdapter(_MinimalAdapter):
+    """Adapter that emits a terminal event, then escapes after a bad extra event."""
+
+    async def _execute_task(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        working_dir: str,
+        sequencer: EventSequencer,
+        task_context: dict[str, Any],
+    ) -> AsyncIterator[DomainEvent]:
+        del task_description, agent_id, working_dir, task_context
+        yield sequencer.failed("adapter-specific install message")
+        yield sequencer.thought("late event", "output")
+        raise RuntimeError("ignored after terminal")
+
+
+class _FinallyAdapter(_MinimalAdapter):
+    """Adapter with cleanup that must run when the base catches an escape."""
+
+    finally_ran = False
+
+    async def _execute_task(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        working_dir: str,
+        sequencer: EventSequencer,
+        task_context: dict[str, Any],
+    ) -> AsyncIterator[DomainEvent]:
+        del task_description, agent_id, working_dir, task_context
+        try:
+            yield sequencer.thought("started", "output")
+            raise RuntimeError("boom")
+        finally:
+            self.finally_ran = True
 
 
 def test_worker_adapter_base_has_no_start_time_field() -> None:
@@ -73,6 +148,64 @@ def test_worker_adapter_base_has_no_start_time_field() -> None:
         "_get_duration helper must be removed; each adapter computes "
         "time() - started_at locally (E.9)."
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_adapter_base_emits_failed_when_subclass_escapes() -> None:
+    """Unexpected subclass escapes still produce a terminal WorkFailed event."""
+    adapter = _RaisesAfterThoughtAdapter(timeout_seconds=1)
+
+    events = await _collect_events(
+        adapter.run_session({"task_description": "task", "agent_id": uuid4()})
+    )
+
+    assert isinstance(events[0], ThoughtCaptured)
+    assert isinstance(events[-1], WorkFailed)
+    assert events[-1].reason == "minimal adapter error: RuntimeError('boom')"
+
+
+@pytest.mark.asyncio
+async def test_worker_adapter_base_does_not_duplicate_terminal_events() -> None:
+    """Adapter-specific terminal messages are preserved without a second failure."""
+    adapter = _TerminalThenRaisesAdapter(timeout_seconds=1)
+
+    events = await _collect_events(
+        adapter.run_session({"task_description": "task", "agent_id": uuid4()})
+    )
+
+    assert len(events) == 1
+    assert isinstance(events[0], WorkFailed)
+    assert events[0].reason == "adapter-specific install message"
+
+
+@pytest.mark.asyncio
+async def test_worker_adapter_base_latches_terminal_event() -> None:
+    """A late non-terminal event after a terminal event does not reset the flag."""
+    adapter = _TerminalThenThoughtThenRaisesAdapter(timeout_seconds=1)
+
+    events = await _collect_events(
+        adapter.run_session({"task_description": "task", "agent_id": uuid4()})
+    )
+
+    failures = [event for event in events if isinstance(event, WorkFailed)]
+    assert len(failures) == 1
+    assert failures[0].reason == "adapter-specific install message"
+    assert isinstance(events[1], ThoughtCaptured)
+
+
+@pytest.mark.asyncio
+async def test_worker_adapter_base_allows_subclass_finally_to_run() -> None:
+    """Subclass cleanup still runs when the base emits the fallback failure."""
+    adapter = _FinallyAdapter(timeout_seconds=1)
+
+    events = await _collect_events(
+        adapter.run_session({"task_description": "task", "agent_id": uuid4()})
+    )
+
+    assert adapter.finally_ran is True
+    assert isinstance(events[0], ThoughtCaptured)
+    assert isinstance(events[-1], WorkFailed)
+    assert events[-1].reason == "minimal adapter error: RuntimeError('boom')"
 
 
 # -- Per-adapter concurrent-session timing checks --------------------------------

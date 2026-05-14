@@ -35,6 +35,8 @@ from .base import WorkerAdapterBase
 from .shared import (
     ContainerSessionContext,
     EventSequencer,
+    UsageBreakdown,
+    emit_cost,
     format_tool_event,
     to_sdk_mcp_servers,
 )
@@ -125,34 +127,35 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 mcp_servers=self._extract_mcp_servers(task_context),
             )
 
-            async with ClaudeSDKClient(options=options) as client:
-                await client.query(task_description)
+            async with asyncio.timeout(self.timeout_seconds):
+                async with ClaudeSDKClient(options=options) as client:
+                    await client.query(task_description)
 
-                async for message in client.receive_response():
-                    # Yield pending tool events from hooks
-                    async for event in self._drain_queue(tool_queue, sequencer):
-                        yield event
-
-                    # Process message content blocks
-                    async for event in self._process_message(message, sequencer):
-                        yield event
-
-                    # Handle result message (terminal)
-                    if isinstance(message, ResultMessage):
+                    async for message in client.receive_response():
+                        # Yield pending tool events from hooks
                         async for event in self._drain_queue(tool_queue, sequencer):
                             yield event
 
-                        # Emit cost event before terminal event
-                        cost_event = self._make_cost_event(
-                            message,
-                            sequencer,
-                            duration_seconds=time() - started_at,
-                        )
-                        if cost_event:
-                            yield cost_event
+                        # Process message content blocks
+                        async for event in self._process_message(message, sequencer):
+                            yield event
 
-                        yield self._make_result_event(message, sequencer)
-                        return
+                        # Handle result message (terminal)
+                        if isinstance(message, ResultMessage):
+                            async for event in self._drain_queue(tool_queue, sequencer):
+                                yield event
+
+                            # Emit cost event before terminal event
+                            cost_event = self._make_cost_event(
+                                message,
+                                sequencer,
+                                duration_seconds=time() - started_at,
+                            )
+                            if cost_event:
+                                yield cost_event
+
+                            yield self._make_result_event(message, sequencer)
+                            return
 
         except TimeoutError:
             yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
@@ -278,39 +281,27 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         if cost_usd is None and not usage:
             return None
 
-        prompt_tokens = self._usage_int(usage, "input_tokens")
-        completion_tokens = self._usage_int(usage, "output_tokens")
-        cache_read_tokens = self._usage_int(usage, "cache_read_input_tokens")
-        cache_write_tokens = self._usage_int(usage, "cache_creation_input_tokens")
-        reasoning_tokens = self._usage_int(usage, "reasoning_tokens") + self._usage_int(
-            usage,
-            "thinking_tokens",
-        )
-        # Audit N-3: include cache + reasoning in the total so cross-adapter
-        # token comparisons stay symmetric with OpenHands (which already sums
-        # all five buckets). The Claude usage block reports cache and
-        # reasoning separately; `prompt + completion` alone undercounts.
-        total_tokens: int | None = None
         if usage:
-            total_tokens = (
-                prompt_tokens
-                + completion_tokens
-                + cache_read_tokens
-                + cache_write_tokens
-                + reasoning_tokens
+            breakdown = UsageBreakdown(
+                prompt_tokens=self._usage_int(usage, "input_tokens"),
+                completion_tokens=self._usage_int(usage, "output_tokens"),
+                cache_read_tokens=self._usage_int(usage, "cache_read_input_tokens"),
+                cache_write_tokens=self._usage_int(usage, "cache_creation_input_tokens"),
+                reasoning_tokens=(
+                    self._usage_int(usage, "reasoning_tokens")
+                    + self._usage_int(usage, "thinking_tokens")
+                ),
+                cost_usd=cost_usd,
             )
+        else:
+            breakdown = UsageBreakdown(cost_usd=cost_usd)
 
-        return sequencer.cost_recorded(
+        return emit_cost(
+            sequencer,
             tool_name=self._get_tool_name(),
-            cost_usd=cost_usd or 0.0,
             duration_seconds=duration_seconds,
             model=self.config.model,
-            tokens=total_tokens,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-            reasoning_tokens=reasoning_tokens,
+            breakdown=breakdown,
         )
 
     @staticmethod
@@ -349,3 +340,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 "pip install --force-reinstall claude-agent-sdk"
             )
         return f"Claude SDK adapter error: {error!r}"
+
+    def _format_unexpected_error(self, error: Exception) -> str:
+        return self._format_error(error)

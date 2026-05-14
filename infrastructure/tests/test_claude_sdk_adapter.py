@@ -4,6 +4,7 @@ Uses mocking to avoid requiring actual Claude Agent SDK installation and API cal
 Tests verify correct event mapping and error handling.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -402,6 +403,70 @@ class TestAdapterIntegration:
                 assert len(events) == 1
                 assert isinstance(events[0], WorkFailed)
                 assert "file not found" in events[0].reason
+
+    @pytest.mark.asyncio
+    async def test_query_timeout_yields_work_failed(self) -> None:
+        """A hanging SDK query is bounded by the adapter timeout."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(timeout_seconds=0.01))
+
+        async def _hang(_message: str) -> None:
+            await asyncio.sleep(10)
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock(side_effect=_hang)
+        mock_client.receive_response = MagicMock(return_value=async_iter([]))
+
+        mock_client_class = MagicMock()
+        mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class):
+            events = []
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Test task",
+                    "agent_id": uuid4(),
+                }
+            ):
+                events.append(event)
+
+        assert isinstance(events[-1], WorkFailed)
+        assert "timed out" in events[-1].reason
+
+    @pytest.mark.asyncio
+    async def test_receive_response_timeout_yields_work_failed(self) -> None:
+        """A hanging SDK response stream is bounded by the adapter timeout."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(timeout_seconds=0.01))
+
+        async def _hang_stream():
+            await asyncio.sleep(10)
+            if False:
+                yield None
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=_hang_stream())
+
+        mock_client_class = MagicMock()
+        mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class):
+            events = []
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Test task",
+                    "agent_id": uuid4(),
+                }
+            ):
+                events.append(event)
+
+        assert isinstance(events[-1], WorkFailed)
+        assert "timed out" in events[-1].reason
 
 
 class TestMCPServersWiring:

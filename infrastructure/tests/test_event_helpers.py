@@ -5,10 +5,17 @@ Tests EventSequencer and format_tool_event utilities.
 
 from uuid import uuid4
 
-from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events.events import (
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkerCostRecorded,
+    WorkFailed,
+)
 from infrastructure.adapters.worker.shared import (
     TOOL_FORMATTERS,
     EventSequencer,
+    UsageBreakdown,
+    emit_cost,
     format_tool_event,
 )
 
@@ -117,6 +124,65 @@ class TestEventSequencer:
 
         assert sdk_event.stream == "claude_sdk"
         assert oh_event.stream == "openhands"
+
+
+class TestUsageBreakdown:
+    """Tests for shared worker usage normalization."""
+
+    def test_tokens_sum_all_five_buckets(self) -> None:
+        # Given: usage with prompt, completion, cache, and reasoning buckets.
+        breakdown = UsageBreakdown(
+            prompt_tokens=100,
+            completion_tokens=25,
+            cache_read_tokens=10,
+            cache_write_tokens=5,
+            reasoning_tokens=7,
+        )
+
+        # Then: the inclusive total uses all buckets.
+        assert breakdown.tokens == 147
+
+    def test_tokens_none_when_no_bucket_reported(self) -> None:
+        # Given: usage containing only cost.
+        breakdown = UsageBreakdown(cost_usd=0.01)
+
+        # Then: the token total stays unknown instead of trusting SDK totals.
+        assert breakdown.tokens is None
+        assert breakdown.has_cost_data is True
+
+    def test_emit_cost_uses_normalized_breakdown(self) -> None:
+        # Given: a sequencer and a normalized breakdown.
+        agent_id = uuid4()
+        sequencer = EventSequencer(agent_id, stream="worker")
+        breakdown = UsageBreakdown(
+            prompt_tokens=3,
+            completion_tokens=4,
+            cache_read_tokens=5,
+            cache_write_tokens=6,
+            reasoning_tokens=7,
+            cost_usd=0.02,
+        )
+
+        # When: emitting a cost event.
+        event = emit_cost(
+            sequencer,
+            tool_name="worker",
+            model="model",
+            breakdown=breakdown,
+            duration_seconds=1.5,
+        )
+
+        # Then: the event preserves the breakdown and inclusive total.
+        assert isinstance(event, WorkerCostRecorded)
+        assert event.aggregate_id == agent_id
+        assert event.tokens == 25
+        assert event.prompt_tokens == 3
+        assert event.completion_tokens == 4
+        assert event.cache_read_tokens == 5
+        assert event.cache_write_tokens == 6
+        assert event.reasoning_tokens == 7
+        assert event.cost_usd == 0.02
+        assert event.duration_seconds == 1.5
 
 
 class TestFormatToolEvent:
