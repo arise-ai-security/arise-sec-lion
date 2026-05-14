@@ -1,0 +1,51 @@
+# Task set for STUDY_TEMPLATE. Edit default_cves to pick which CVE instances
+# this study runs over; add or remove entries from source.paths so every CVE
+# in default_cves has a matching fixture file. run_matrix's pre-flight
+# (`ensure_task_coverage`) aborts before launch if anything is missing.
+
+name: secbench-template-10cves
+
+default_cves:
+  - openjpeg.cve-2016-7445
+  - imagemagick.cve-2019-13309
+  - faad2.cve-2021-32272
+  - mruby.cve-2022-0240
+  - njs.cve-2022-28049
+  - gpac.cve-2023-5586
+  - exiv2.cve-2018-19607
+  - faad2.cve-2018-20198
+  - gpac.cve-2023-2840
+  - njs.cve-2022-32414
+  - gpac.cve-2022-2453
+  - gpac.cve-2021-40566
+  - gpac.cve-2021-32440
+  - gpac.cve-2021-32439
+  - gpac.cve-2021-32438
+  - gpac.cve-2021-32437
+
+# A cell may restrict itself to a subset of default_cves. The subset MUST be
+# a subset of default_cves — the validator rejects out-of-set entries.
+per_cell_overrides: {}
+# per_cell_overrides:
+#   B1smoke: {subset: [openjpeg.cve-2016-7445]}
+
+source:
+  kind: deployment-json                 # informational
+  paths:
+    - plugins/security/tests/fixtures/openjpeg.cve-2016-7445.json
+    - plugins/security/tests/fixtures/openjpeg.cve-2016-7445.json
+    - plugins/security/tests/fixtures/imagemagick.cve-2019-13309.json
+    - plugins/security/tests/fixtures/faad2.cve-2021-32272.json
+    - plugins/security/tests/fixtures/mruby.cve-2022-0240.json
+    - plugins/security/tests/fixtures/njs.cve-2022-28049.json
+    - plugins/security/tests/fixtures/gpac.cve-2023-5586.json
+    - plugins/security/tests/fixtures/exiv2.cve-2018-19607.json
+    - plugins/security/tests/fixtures/faad2.cve-2018-20198.json
+    - plugins/security/tests/fixtures/gpac.cve-2023-2840.json
+    - plugins/security/tests/fixtures/njs.cve-2022-32414.json
+    - plugins/security/tests/fixtures/gpac.cve-2022-2453.json
+    - plugins/security/tests/fixtures/gpac.cve-2021-40566.json
+    - plugins/security/tests/fixtures/gpac.cve-2021-32440.json
+    - plugins/security/tests/fixtures/gpac.cve-2021-32439.json
+    - plugins/security/tests/fixtures/gpac.cve-2021-32438.json
+    - plugins/security/tests/fixtures/gpac.cve-2021-32437.json

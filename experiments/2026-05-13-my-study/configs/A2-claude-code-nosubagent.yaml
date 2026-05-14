@@ -1,0 +1,27 @@
+# Cell A2 — flat Claude Code CLI baseline with sub-agents DISABLED.
+# Same setup as A1 except `Task` is in worker.disallowed_tools, so the model
+# cannot spawn children and the entire task collapses to a single Claude
+# agent. A1 vs A2 isolates the value of CLI subagents. The flat-mode
+# subagent-note derivation uses `disallowed_tools` as its single source of
+# truth — keep `Task` in this list to keep that derivation correct.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: flat
+  orchestration.skip_judge: true
+  boss.model: claude-opus-4-5-20251101
+  manager.model: claude-opus-4-5-20251101
+  worker.tool: claude_code
+  worker.model: claude-sonnet-4-5-20250929
+  worker.allowed_tools: [Read, Write, Edit, MultiEdit, Bash, Glob, Grep]
+  worker.disallowed_tools: [WebSearch, WebFetch, Task]
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 250
+  output.directory: ./runs
+  worker.tool_params:
+    claude_code:
+      output_format: stream-json
+      include_partial_messages: true
+      max_turns: 250
+      use_global_config: false
