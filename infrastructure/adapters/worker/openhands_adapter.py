@@ -106,80 +106,18 @@ def _map_openhands_action_paths(
     return action
 
 
-def _host_to_container_rewrites(
-    container_session: ContainerSessionContext,
-) -> tuple[tuple[str, str], ...]:
-    paths = (
-        (container_session.host_work_root, container_session.container_work_dir),
-        (container_session.host_work_dir, container_session.container_working_directory),
-        (container_session.host_source_dir, container_session.container_source_dir),
-        (container_session.host_testcase_dir, container_session.container_testcase_dir),
-    )
-    rewrites: dict[str, str] = {}
-    for host_path, container_path in paths:
-        for candidate in (host_path, host_path.resolve()):
-            host = str(candidate).rstrip("/")
-            if host:
-                rewrites[host] = container_path.rstrip("/") or "/"
-    return tuple(
-        sorted(rewrites.items(), key=lambda rewrite: len(rewrite[0]), reverse=True)
-    )
-
-
-def _replace_host_path_prefix(text: str, host_prefix: str, container_prefix: str) -> str:
-    pattern = re.compile(rf"{re.escape(host_prefix)}(?=$|/)")
-    return pattern.sub(container_prefix, text)
-
-
 def _replace_host_paths(
     text: str,
     container_session: ContainerSessionContext,
 ) -> str:
-    sanitized = text
-    for host_prefix, container_prefix in _host_to_container_rewrites(container_session):
-        sanitized = _replace_host_path_prefix(sanitized, host_prefix, container_prefix)
-    return sanitized
+    return container_session.path_mapper.replace_host_paths(text)
 
 
 def _sanitize_openhands_observation_paths(
     value: Any,
     container_session: ContainerSessionContext,
 ) -> Any:
-    if isinstance(value, str):
-        return _replace_host_paths(value, container_session)
-    if isinstance(value, list):
-        return [
-            _sanitize_openhands_observation_paths(item, container_session)
-            for item in value
-        ]
-    if isinstance(value, tuple):
-        return tuple(
-            _sanitize_openhands_observation_paths(item, container_session)
-            for item in value
-        )
-    if isinstance(value, dict):
-        return {
-            key: _sanitize_openhands_observation_paths(item, container_session)
-            for key, item in value.items()
-        }
-
-    model_copy = getattr(value, "model_copy", None)
-    model_fields = getattr(type(value), "model_fields", None)
-    if callable(model_copy) and isinstance(model_fields, dict):
-        updates: dict[str, Any] = {}
-        for field_name in model_fields:
-            if not hasattr(value, field_name):
-                continue
-            original = getattr(value, field_name)
-            sanitized = _sanitize_openhands_observation_paths(
-                original,
-                container_session,
-            )
-            if sanitized != original:
-                updates[field_name] = sanitized
-        if updates:
-            return model_copy(update=updates)
-    return value
+    return container_session.path_mapper.sanitize_host_paths(value)
 
 
 def _maybe_idempotent_file_create_observation(

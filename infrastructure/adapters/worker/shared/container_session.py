@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.ports.domain_plugin_port import WorkspacePathAlias
+from infrastructure.adapters.workspace_paths import WorkspacePathMapper
+
 
 @dataclass(frozen=True)
 class ContainerSessionContext:
@@ -50,6 +53,23 @@ class ContainerSessionContext:
     @property
     def host_work_root(self) -> Path:
         return self.workspace_root / "work"
+
+    @property
+    def path_mapper(self) -> WorkspacePathMapper:
+        return WorkspacePathMapper(
+            (
+                WorkspacePathAlias(self.container_work_dir, str(self.host_work_root)),
+                WorkspacePathAlias(
+                    self.container_working_directory,
+                    str(self.host_work_dir),
+                ),
+                WorkspacePathAlias(self.container_source_dir, str(self.host_source_dir)),
+                WorkspacePathAlias(
+                    self.container_testcase_dir,
+                    str(self.host_testcase_dir),
+                ),
+            )
+        )
 
     def host_to_container_path(self, host_path: Path) -> str:
         """Translate a host path under ``workspace_root`` to its in-container path.
@@ -150,22 +170,7 @@ class ContainerSessionContext:
         return updated
 
     def map_container_path(self, path: str) -> str:
-        if path == self.container_source_dir:
-            return str(self.host_source_dir)
-        if path.startswith(f"{self.container_source_dir}/"):
-            suffix = path.removeprefix(self.container_source_dir).lstrip("/")
-            return str(self.host_source_dir / suffix)
-        if path == self.container_testcase_dir:
-            return str(self.host_testcase_dir)
-        if path.startswith(f"{self.container_testcase_dir}/"):
-            suffix = path.removeprefix(self.container_testcase_dir).lstrip("/")
-            return str(self.host_testcase_dir / suffix)
-        if path == self.container_work_dir:
-            return str(self.host_work_root)
-        if path.startswith(f"{self.container_work_dir}/"):
-            suffix = path.removeprefix(self.container_work_dir).lstrip("/")
-            return str(self.host_work_root / suffix)
-        return path
+        return self.path_mapper.map_virtual_to_host(path)
 
     def wrap_shell_command(self, command: str) -> str:
         """Run a shell command inside the active container.

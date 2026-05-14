@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from core.ports.domain_plugin_port import WorkspacePathAlias
+from infrastructure.adapters.workspace_paths import WorkspacePathMapper
 
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class ReconToolAdapter:
 
     def __init__(self, working_directory: str = ".") -> None:
         self._workdir = Path(working_directory).resolve()
-        self._path_aliases: tuple[WorkspacePathAlias, ...] = ()
+        self._path_mapper = WorkspacePathMapper()
 
     def set_working_directory(self, path: str) -> None:
         """Update the working directory for this adapter.
@@ -132,9 +133,7 @@ class ReconToolAdapter:
             )
             normalized.append(WorkspacePathAlias(virtual_path, str(host_path)))
 
-        self._path_aliases = tuple(
-            sorted(normalized, key=lambda item: len(item.virtual_path), reverse=True)
-        )
+        self._path_mapper = WorkspacePathMapper(tuple(normalized))
 
     @property
     def name(self) -> str:
@@ -162,18 +161,8 @@ class ReconToolAdapter:
         if not Path(path).is_absolute():
             return None
 
-        for alias in self._path_aliases:
-            virtual_path = alias.virtual_path
-            if virtual_path == "/":
-                suffix = path.removeprefix("/").lstrip("/")
-                return Path(alias.host_path) / suffix
-            if path == virtual_path:
-                return Path(alias.host_path)
-            if path.startswith(f"{virtual_path}/"):
-                suffix = path.removeprefix(virtual_path).lstrip("/")
-                return Path(alias.host_path) / suffix
-
-        return None
+        host_path = self._path_mapper.virtual_to_host(path)
+        return Path(host_path) if host_path is not None else None
 
     def _ensure_within_workdir(self, resolved: Path, display_path: str) -> Path:
         try:
