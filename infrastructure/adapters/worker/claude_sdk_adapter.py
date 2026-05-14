@@ -8,6 +8,7 @@ Uses PostToolUse hooks for capturing tool invocations as events.
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from time import time
@@ -56,6 +57,7 @@ type ToolPermissionCallback = Callable[
 ]
 
 DEFAULT_MAX_THINKING_TOKENS = 63_999
+CLAUDE_CODE_CLI_PATH_ENV = "CLAUDE_CODE_CLI_PATH"
 
 
 @dataclass
@@ -71,6 +73,7 @@ class SDKAdapterConfig:
     permission_mode: PermissionMode = "bypassPermissions"
     max_thinking_tokens: int | None = DEFAULT_MAX_THINKING_TOKENS
     thinking_display: ThinkingDisplay | None = "summarized"
+    cli_path: str | None = None
 
 
 class ClaudeAgentSDKAdapter(WorkerAdapterBase):
@@ -187,9 +190,18 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             kwargs["extra_args"] = {"thinking-display": self.config.thinking_display}
         if self.config.max_thinking_tokens is not None:
             kwargs["max_thinking_tokens"] = self.config.max_thinking_tokens
+        if cli_path := self._effective_cli_path():
+            kwargs["cli_path"] = cli_path
         if mcp_servers:
             kwargs["mcp_servers"] = mcp_servers
         return ClaudeAgentOptions(**kwargs)
+
+    def _effective_cli_path(self) -> str | None:
+        cli_path = self.config.cli_path or os.getenv(CLAUDE_CODE_CLI_PATH_ENV)
+        if cli_path is None:
+            return None
+        stripped = cli_path.strip()
+        return stripped or None
 
     @staticmethod
     def _make_tool_use_hook(tool_queue: ToolEventQueue) -> ToolUseHook:

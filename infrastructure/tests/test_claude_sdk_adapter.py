@@ -17,6 +17,7 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from infrastructure.adapters.worker.claude_sdk_adapter import (
+    CLAUDE_CODE_CLI_PATH_ENV,
     DEFAULT_MAX_THINKING_TOKENS,
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
@@ -164,6 +165,7 @@ class TestSDKAdapterConfig:
         assert config.permission_mode == "bypassPermissions"
         assert config.max_thinking_tokens == DEFAULT_MAX_THINKING_TOKENS
         assert config.thinking_display == "summarized"
+        assert config.cli_path is None
 
     def test_custom_values(self) -> None:
         """Config accepts custom values."""
@@ -175,6 +177,7 @@ class TestSDKAdapterConfig:
             permission_mode="default",
             max_thinking_tokens=None,
             thinking_display=None,
+            cli_path="/usr/local/bin/claude",
         )
 
         assert config.model == "claude-sonnet-4"
@@ -184,6 +187,7 @@ class TestSDKAdapterConfig:
         assert config.permission_mode == "default"
         assert config.max_thinking_tokens is None
         assert config.thinking_display is None
+        assert config.cli_path == "/usr/local/bin/claude"
 
 
 class TestClaudeAgentSDKAdapter:
@@ -571,6 +575,62 @@ class TestMCPServersWiring:
         # Then: ClaudeAgentOptions receives fixed-budget thinking and summarized output.
         assert captured["max_thinking_tokens"] == DEFAULT_MAX_THINKING_TOKENS
         assert captured["extra_args"] == {"thinking-display": "summarized"}
+
+    def test_build_options_uses_claude_cli_path_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Env override selects the Claude Code executable used by the SDK."""
+        # Given: an environment override for the SDK transport's CLI path.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, " /usr/local/bin/claude ")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: ClaudeAgentOptions bypasses the SDK bundled CLI.
+        assert captured["cli_path"] == "/usr/local/bin/claude"
+
+    def test_configured_cli_path_overrides_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An explicit config path wins over the process environment."""
+        # Given: both an env override and an explicit adapter config path.
+        adapter = ClaudeAgentSDKAdapter(
+            SDKAdapterConfig(cli_path="/opt/claude/bin/claude")
+        )
+        monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, "/usr/local/bin/claude")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: explicit config remains the strongest override.
+        assert captured["cli_path"] == "/opt/claude/bin/claude"
 
 
 class MockHookInput:
