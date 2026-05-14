@@ -176,6 +176,37 @@ class _StuckConversation(_FakeConversation):
 
 
 class TestOpenHandsAdapter:
+    def test_build_llm_kwargs_normalizes_ollama_env_base_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given: deployment env has a common trailing-period typo after the port.
+        monkeypatch.setenv("OLLAMA_API_BASE", "http://localhost:11434.")
+        adapter = OpenHandsAdapter(
+            model="ollama_chat/qwen3:8b",
+            api_key="ollama-test",
+        )
+
+        # When: building OpenHands LLM kwargs.
+        kwargs = adapter._build_llm_kwargs()
+
+        # Then: the explicit base_url sent to OpenHands/LiteLLM is parseable.
+        assert kwargs["base_url"] == "http://localhost:11434"
+
+    def test_build_llm_kwargs_normalizes_explicit_ollama_base_url(self) -> None:
+        # Given: an overlay provides the same trailing-period typo.
+        adapter = OpenHandsAdapter(
+            model="ollama_chat/qwen3:8b",
+            api_key="ollama-test",
+            base_url=" http://localhost:11434. ",
+        )
+
+        # When:
+        kwargs = adapter._build_llm_kwargs()
+
+        # Then:
+        assert kwargs["base_url"] == "http://localhost:11434"
+
     def test_build_native_tools_returns_configured_openhands_tools(self) -> None:
         # Given: an explicit OpenHands native tool allowlist.
         adapter = _adapter(allowed_tools=["file_editor", "glob", "grep"])

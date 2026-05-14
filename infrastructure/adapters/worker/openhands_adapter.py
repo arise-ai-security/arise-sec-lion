@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import re
 import signal
 import subprocess
 import time as _time
@@ -44,6 +45,16 @@ _SHUTDOWN_GRACE_SECONDS = 5
 _OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
 _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
 _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
+_TRAILING_PORT_DOT_PATTERN = re.compile(r":(?P<port>\d+)\.(?=$|/)")
+
+
+def _normalize_base_url(base_url: str | None) -> str | None:
+    if base_url is None:
+        return None
+    stripped = base_url.strip()
+    if not stripped:
+        return None
+    return _TRAILING_PORT_DOT_PATTERN.sub(r":\g<port>", stripped)
 
 
 def _container_session_from_tool_params(
@@ -372,8 +383,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self.model: str = model
         self.api_key = api_key or self._detect_api_key()
         self.max_iterations_per_run: int = max_iterations_per_run
-        # None lets OpenHands/LiteLLM fall back to env vars (e.g. OLLAMA_API_BASE).
-        self.base_url: str | None = base_url
+        self.base_url: str | None = _normalize_base_url(base_url)
         self.allowed_tools: list[str] = allowed_tools or []
         self.mcp_tools: list[str] = mcp_tools or []
 
@@ -617,11 +627,21 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     def _build_llm_kwargs(self) -> dict[str, Any]:
         llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
-        if self.base_url:
-            llm_kwargs["base_url"] = self.base_url
-        if self.model.startswith(("ollama/", "ollama_chat/")):
+        if base_url := self._effective_base_url():
+            llm_kwargs["base_url"] = base_url
+        if self._is_ollama_model():
             llm_kwargs.update(self._ollama_llm_overrides())
         return llm_kwargs
+
+    def _effective_base_url(self) -> str | None:
+        if self.base_url:
+            return self.base_url
+        if self._is_ollama_model():
+            return _normalize_base_url(os.getenv("OLLAMA_API_BASE"))
+        return None
+
+    def _is_ollama_model(self) -> bool:
+        return self.model.lower().startswith(("ollama/", "ollama_chat/"))
 
     @staticmethod
     def _ollama_llm_overrides() -> dict[str, Any]:
