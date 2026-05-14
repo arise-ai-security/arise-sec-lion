@@ -3,7 +3,7 @@
 ## Load Priority (highest wins)
 
 1. **Environment variables** (secrets only: `POSTGRES_PASSWORD`, `OPENAI_API_KEY`, etc.)
-2. **Environment-specific YAML** (`config/config.{ARISE_ENV}.yaml`)
+2. **Optional local environment YAML** (`config/config.{ARISE_ENV}.yaml`, if present)
 3. **Base YAML** (`config/config.yaml`)
 4. **Code defaults** (Pydantic models in `config/settings.py`)
 
@@ -16,7 +16,7 @@ Settings                    # Root (Pydantic BaseSettings)
 ├── manager: ManagerConfig      # model, temperature, max_tokens
 ├── worker: WorkerConfig        # model, tool (claude_code|openhands|google_adk), timeout, max_iterations_per_run
 ├── orchestration: OrchestrationConfig
-│   ├── max_retries, poll_interval, decomposition_strategy, global_budget_usd
+│   ├── max_retries, poll_interval
 │   ├── max_run_duration_seconds    # Hard cap for system loop (default 1800s)
 │   ├── max_redecompositions        # Per-parent infeasibility re-planning cap (default 2)
 │   ├── topology: TopologyConfig
@@ -31,7 +31,7 @@ Settings                    # Root (Pydantic BaseSettings)
 │   └── retry: RetryConfig
 │       └── model_escalation_chain, retry_budget_fraction,
 │           circuit_breaker_threshold, circuit_breaker_reset_seconds
-├── output: OutputConfig        # verbose, show_progress, log_level, directory
+├── output: OutputConfig        # verbose, log_level, directory
 ├── security: SecurityConfig    # enabled, tools
 └── cors: CorsConfig            # allowed_origins, methods, headers
 ```
@@ -60,14 +60,12 @@ Rules:
 - NEVER put secrets in `config/*.yaml`
 - NEVER put application config in `.env`
 
-## Environment Phases
+## Local Environment Overlays
 
-Set via `ARISE_ENV` (default: `development`):
-
-| Phase | File | Purpose |
-|-------|------|---------|
-| `development` | `config.development.yaml` | Cheaper models, verbose |
-| `production` | `config.production.yaml` | Best models, minimal logging |
+Set `ARISE_ENV` to load an optional untracked `config/config.<env>.yaml`
+overlay on top of `config/config.yaml`. The repo intentionally commits only
+the base config; experiment and deployment configs should supply model names
+explicitly via `-c <config>`.
 
 ## Docker Compose Profiles
 

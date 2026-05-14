@@ -114,10 +114,7 @@ arise-sec-lion/
 │       └── schemas.py               # Pydantic response schemas
 ├── config/
 │   ├── settings.py                  # Pydantic Settings (YAML + env vars)
-│   ├── config.yaml                  # Base defaults
-│   ├── config.dev.yaml              # Dev overrides
-│   ├── config.development.yaml
-│   └── config.production.yaml
+│   └── config.yaml                  # Base defaults
 ├── prompts/                         # Jinja2 LLM prompt templates (4-tier)
 │   ├── system.j2                    # Tier 1: System identity
 │   ├── roles/                       # Tier 2: Role personas (boss, manager, worker, pending)

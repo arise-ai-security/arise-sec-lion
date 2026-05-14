@@ -392,7 +392,7 @@ After each run, grep worker events for:
 
 3. **Worker iteration budget** -- Current `max_iterations_per_run: 30` is too low vs SEC-bench's 75. Increase to 50-75.
 
-4. **Cost budget enforcement** -- `global_budget_usd` is not yet enforced in core. Add check in execution loop to abort when exceeded.
+4. **Cost budget enforcement** -- no config-level budget guard exists. Add an explicit setting and execution-loop check before relying on cost caps.
 
 5. **Verification pipeline** -- Stages 2-3 are placeholders. For SEC-bench, wire verification to run `secb build` + `secb repro` + check sanitizer output.
 
