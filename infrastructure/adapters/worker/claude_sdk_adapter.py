@@ -11,6 +11,7 @@ import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import time
 from typing import Any, Literal
 from uuid import UUID
@@ -22,7 +23,6 @@ from claude_agent_sdk import (
     HookContext,
     HookInput,
     HookMatcher,
-    PermissionResultAllow,
     ResultMessage,
     TextBlock,
     ThinkingBlock,
@@ -37,9 +37,13 @@ from .shared import (
     ContainerSessionContext,
     EventSequencer,
     UsageBreakdown,
+    build_claude_container_env,
     emit_cost,
     format_tool_event,
+    prepare_claude_container_user,
+    to_in_container_mcp_servers,
     to_sdk_mcp_servers,
+    write_docker_exec_wrapper,
 )
 
 
@@ -51,13 +55,11 @@ type ToolUseHook = Callable[
     [HookInput, str | None, HookContext],
     Awaitable[SyncHookJSONOutput],
 ]
-type ToolPermissionCallback = Callable[
-    [str, dict[str, Any], Any],
-    Awaitable[PermissionResultAllow],
-]
 
 DEFAULT_MAX_THINKING_TOKENS = 63_999
 CLAUDE_CODE_CLI_PATH_ENV = "CLAUDE_CODE_CLI_PATH"
+IN_CONTAINER_CLAUDE_EXECUTABLE = "claude"
+SDK_CONTAINER_WRAPPER_PATH = ".arise/claude-sdk-in-container"
 
 
 @dataclass
@@ -117,17 +119,17 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         tool_queue: ToolEventQueue = asyncio.Queue()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
-            task_description = container_session.apply_task_prefix(
-                task_description,
-                auto_shell=True,
-            )
+            await prepare_claude_container_user(container_session)
 
         try:
             options = self._build_options(
                 working_dir,
                 tool_queue,
                 container_session,
-                mcp_servers=self._extract_mcp_servers(task_context),
+                mcp_servers=self._extract_mcp_servers(
+                    task_context,
+                    in_container=container_session is not None,
+                ),
             )
 
             async with asyncio.timeout(self.timeout_seconds):
@@ -196,7 +198,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             "allowed_tools": list(self.config.allowed_tools),
             "disallowed_tools": list(self.config.disallowed_tools),
             "permission_mode": self.config.permission_mode,
-            "can_use_tool": self._make_permission_callback(container_session),
+            "can_use_tool": None,
             "hooks": {
                 "PostToolUse": [
                     HookMatcher(
@@ -214,11 +216,24 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             kwargs["extra_args"] = {"thinking-display": self.config.thinking_display}
         if self.config.max_thinking_tokens is not None:
             kwargs["max_thinking_tokens"] = self.config.max_thinking_tokens
-        if cli_path := self._effective_cli_path():
+        if container_session is not None:
+            kwargs["cli_path"] = str(self._write_in_container_cli_wrapper(container_session))
+        elif cli_path := self._effective_cli_path():
             kwargs["cli_path"] = cli_path
         if mcp_servers:
             kwargs["mcp_servers"] = mcp_servers
         return ClaudeAgentOptions(**kwargs)
+
+    def _write_in_container_cli_wrapper(
+        self,
+        container_session: ContainerSessionContext,
+    ) -> Path:
+        return write_docker_exec_wrapper(
+            path=container_session.workspace_root / SDK_CONTAINER_WRAPPER_PATH,
+            container_session=container_session,
+            executable=IN_CONTAINER_CLAUDE_EXECUTABLE,
+            env=build_claude_container_env(scratch_container_dir=None),
+        )
 
     def _effective_cli_path(self) -> str | None:
         cli_path = self.config.cli_path or os.getenv(CLAUDE_CODE_CLI_PATH_ENV)
@@ -261,33 +276,16 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         return capture_tool_use
 
     @staticmethod
-    def _make_permission_callback(
-        container_session: ContainerSessionContext | None,
-    ) -> ToolPermissionCallback | None:
-        if container_session is None:
-            return None
-
-        async def can_use_tool(
-            tool_name: str,
-            tool_input: dict[str, Any],
-            _context: Any,
-        ) -> PermissionResultAllow:
-            return PermissionResultAllow(
-                updated_input=container_session.translate_tool_input(
-                    tool_name,
-                    tool_input,
-                )
-            )
-
-        return can_use_tool
-
-    @staticmethod
     def _extract_mcp_servers(
         task_context: dict[str, Any],
+        *,
+        in_container: bool = False,
     ) -> dict[str, dict[str, Any]] | None:
         servers = task_context.get("mcp_servers")
         if not isinstance(servers, dict) or not servers:
             return None
+        if in_container:
+            servers = to_in_container_mcp_servers(servers)
         return to_sdk_mcp_servers(servers)
 
     async def _drain_queue(

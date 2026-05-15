@@ -47,6 +47,25 @@ def _container_session(tmp_path: Path) -> ContainerSessionContext:
     )
 
 
+def _container_session_payload(tmp_path: Path) -> dict[str, str]:
+    session = _container_session(tmp_path)
+    return {
+        "container_id": session.container_id,
+        "container_name": session.container_name,
+        "image": session.image,
+        "workspace_root": str(session.workspace_root),
+        "host_source_dir": str(session.host_source_dir),
+        "host_testcase_dir": str(session.host_testcase_dir),
+        "host_work_dir": str(session.host_work_dir),
+        "container_source_dir": session.container_source_dir,
+        "container_testcase_dir": session.container_testcase_dir,
+        "container_working_directory": session.container_working_directory,
+        "container_work_dir": session.container_work_dir,
+        "container_workspace_root": session.container_workspace_root,
+        "helper_script": str(session.helper_script),
+    }
+
+
 class MockTextBlock:
     """Mock TextBlock from claude-agent-sdk."""
 
@@ -449,6 +468,62 @@ class TestAdapterIntegration:
                 assert events[-1].result == "Task completed successfully"
 
     @pytest.mark.asyncio
+    async def test_container_execution_does_not_prefix_prompt(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Containerized SDK mode gives Claude the original task prompt."""
+        # Given: a container-backed task and a mocked SDK client.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        agent_id = uuid4()
+        result_msg = MockResultMessage(result="done")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=async_iter([result_msg]))
+
+        mock_client_class = MagicMock()
+        mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options),
+            patch.object(
+                claude_sdk_adapter,
+                "prepare_claude_container_user",
+                AsyncMock(),
+            ),
+            patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class),
+            patch.object(claude_sdk_adapter, "ResultMessage", MockResultMessage),
+        ):
+            events = []
+
+            # When: running a container-backed SDK session.
+            async for event in adapter.run_session(
+                {
+                    "task_description": "solve the bug",
+                    "agent_id": agent_id,
+                    "working_directory": str(tmp_path),
+                    "container_session": _container_session_payload(tmp_path),
+                }
+            ):
+                events.append(event)
+
+        # Then: the active prompt is the original task, not the old mapping prefix.
+        mock_client.query.assert_awaited_once_with("solve the bug")
+        assert "Container-backed workspace" not in mock_client.query.await_args.args[0]
+        assert isinstance(events[-1], WorkCompleted)
+
+        # And: the SDK options use the in-container wrapper path.
+        wrapper = Path(captured["cli_path"])  # type: ignore[arg-type]
+        assert wrapper == tmp_path / ".arise" / "claude-sdk-in-container"
+
+    @pytest.mark.asyncio
     async def test_error_result(self) -> None:
         """Error result yields WorkFailed."""
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
@@ -589,6 +664,36 @@ class TestMCPServersWiring:
         assert result["custom_tools"]["command"] == "python"
         assert result["custom_tools"]["env"]["ARISE_CONTAINER_ID"] == "abc"
 
+    def test_extract_mcp_servers_rewrites_for_in_container_execution(self) -> None:
+        """Containerized SDK mode launches MCP servers inside the same container."""
+        # Given: a host-side SEC-bench MCP stdio spec.
+        raw = {
+            "security_tools": {
+                "command": "python",
+                "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                "env": {
+                    "ARISE_SECBENCH_HELPER_SCRIPT": "/tmp/secb-exec",
+                    "ARISE_SECBENCH_CONTAINER_ID": "abc123def456",
+                },
+            }
+        }
+
+        # When: extracting SDK MCP config for in-container Claude.
+        result = ClaudeAgentSDKAdapter._extract_mcp_servers(
+            {"mcp_servers": raw},
+            in_container=True,
+        )
+
+        # Then: the SDK-shaped config points at the bundled in-container MCP server.
+        assert result is not None
+        server = result["security_tools"]
+        assert server["type"] == "stdio"
+        assert server["command"] == "/opt/arise-mcp/venv/bin/python"
+        assert server["args"] == ["-m", "plugins.security.mcp.security_tools_server"]
+        assert "ARISE_SECBENCH_HELPER_SCRIPT" not in server["env"]
+        assert server["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
+        assert server["env"]["PYTHONPATH"] == "/opt/arise-mcp"
+
     def test_build_options_passes_mcp_servers_to_claude_agent_options(self) -> None:
         """``mcp_servers`` keyword reaches ``ClaudeAgentOptions`` constructor."""
         # Given: an adapter and a captured ClaudeAgentOptions stub.
@@ -720,6 +825,45 @@ class TestMCPServersWiring:
 
         # Then: explicit config remains the strongest override.
         assert captured["cli_path"] == "/opt/claude/bin/claude"
+
+    def test_build_options_uses_container_wrapper_when_session_exists(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Container-backed SDK sessions launch Claude through a docker wrapper."""
+        # Given: a container session and a host CLI override that must not leak
+        # into containerized mode.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        session = _container_session(tmp_path)
+        monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, "/usr/local/bin/claude")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        # When: building SDK options for a container-backed worker call.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=MagicMock(),
+                container_session=session,
+            )
+
+        # Then: the SDK executable is a run-scoped wrapper, not the host CLI.
+        wrapper = Path(captured["cli_path"])  # type: ignore[arg-type]
+        assert wrapper == tmp_path / ".arise" / "claude-sdk-in-container"
+        assert wrapper.exists()
+        assert captured["can_use_tool"] is None
+        assert captured["cwd"] == str(tmp_path)
+
+        # And: the wrapper runs Claude inside the SEC-bench container cwd.
+        content = wrapper.read_text(encoding="utf-8")
+        assert "docker exec -i" in content
+        assert "--user 1000:1000" in content
+        assert "-w /src/demo" in content
+        assert "abc123def456 claude \"$@\"" in content
 
 
 class MockHookInput:

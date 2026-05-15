@@ -21,6 +21,11 @@ from __future__ import annotations
 from typing import Any
 
 
+IN_CONTAINER_MCP_PYTHON = "/opt/arise-mcp/venv/bin/python"
+IN_CONTAINER_MCP_PYTHONPATH = "/opt/arise-mcp"
+IN_CONTAINER_SECURITY_MCP_ARGS = ["-m", "plugins.security.mcp.security_tools_server"]
+
+
 def to_cli_config_payload(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {"mcpServers": dict(servers)}
 
@@ -38,3 +43,25 @@ def to_sdk_mcp_servers(
 
 def to_openhands_mcp_config(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {"mcpServers": dict(servers)}
+
+
+def to_in_container_mcp_servers(
+    servers: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Rewrite host stdio MCP specs so the server runs inside the container."""
+    rewritten: dict[str, dict[str, Any]] = {}
+    for name, spec in servers.items():
+        if not isinstance(spec, dict):
+            continue
+        entry = dict(spec)
+        entry["command"] = IN_CONTAINER_MCP_PYTHON
+        entry["args"] = list(IN_CONTAINER_SECURITY_MCP_ARGS)
+        new_env = {
+            k: v
+            for k, v in (entry.get("env") or {}).items()
+            if k != "ARISE_SECBENCH_HELPER_SCRIPT"
+        }
+        new_env.setdefault("PYTHONPATH", IN_CONTAINER_MCP_PYTHONPATH)
+        entry["env"] = new_env
+        rewritten[name] = entry
+    return rewritten

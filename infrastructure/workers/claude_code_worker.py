@@ -26,10 +26,15 @@ from infrastructure.adapters.worker.shared import (
     ContainerSessionContext,
     EventSequencer,
     UsageBreakdown,
+    build_claude_container_env,
+    build_docker_exec_argv,
     emit_cost,
     format_tool_event,
+    prepare_claude_container_user,
     to_cli_config_payload,
+    to_in_container_mcp_servers,
 )
+from infrastructure.io.atomic_write import write_json
 
 
 if TYPE_CHECKING:
@@ -48,21 +53,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_OUTPUT_FORMAT = "stream-json"
 _DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 600
-_CONTAINER_AGENT_UID = "1000"
-_CONTAINER_AGENT_GID = "1000"
-_CONTAINER_AGENT_USER = "arise-agent"
-_CONTAINER_AGENT_HOME = "/tmp/arise-claude-home"  # noqa: S108
-_CONTAINER_ROOT_HELPER = "/usr/local/bin/arise-root"
-_CONTAINER_ROOT_BASH = "/usr/local/bin/arise-root-bash"
-_CONTAINER_SUDO_SHIM = "/usr/local/bin/sudo"
-_CONTAINER_APT_GET_SHIM = "/usr/local/bin/apt-get"
-_CONTAINER_USER_PREP_TIMEOUT_SECONDS = 10
 _PROCESS_KILL_GRACE_SECONDS = 5
-
-# In-container exec path forwards a narrow allowlist only — the container has
-# its own coherent base env (PATH, HOME, etc.). Forwarding host PATH would
-# shadow the container's PATH and break ``claude`` resolution.
-_CONTAINER_ENV_ALLOWLIST: frozenset[str] = frozenset({"ANTHROPIC_API_KEY", "TZ"})
 
 
 class ClaudeCodeWorker:
@@ -210,7 +201,7 @@ class ClaudeCodeWorker:
         # Inside the container, ``claude`` is on PATH (installed by the
         # secb-tools Dockerfile); no host shutil.which probe.
         in_container_claude = "claude"
-        await self._prepare_in_container_user(container_session)
+        await prepare_claude_container_user(container_session)
         mcp_config_container_path = self._maybe_write_in_container_mcp_config(
             workspace=workspace,
             run_dir=run_dir,
@@ -290,28 +281,11 @@ class ClaudeCodeWorker:
         servers = workspace.extras.get("mcp_servers")
         if not isinstance(servers, dict) or not servers:
             return None
-        rewritten: dict[str, dict[str, Any]] = {}
-        for name, spec in servers.items():
-            if not isinstance(spec, dict):
-                continue
-            entry = dict(spec)
-            entry["command"] = "/opt/arise-mcp/venv/bin/python"
-            entry["args"] = ["-m", "plugins.security.mcp.security_tools_server"]
-            new_env = {
-                k: v
-                for k, v in (entry.get("env") or {}).items()
-                if k != "ARISE_SECBENCH_HELPER_SCRIPT"
-            }
-            new_env.setdefault("PYTHONPATH", "/opt/arise-mcp")
-            entry["env"] = new_env
-            rewritten[name] = entry
+        rewritten = to_in_container_mcp_servers(servers)
         if not rewritten:
             return None
         host_target = run_dir / "mcp_servers.in_container.json"
-        host_target.write_text(
-            json.dumps(to_cli_config_payload(rewritten), indent=2),
-            encoding="utf-8",
-        )
+        write_json(host_target, to_cli_config_payload(rewritten))
         return Path(container_session.host_to_container_path(host_target))
 
     def _build_argv(
@@ -409,18 +383,7 @@ class ClaudeCodeWorker:
         environment and forwarding host values would override container PATH
         and break ``claude`` resolution.
         """
-        env: dict[str, str] = {}
-        for key in _CONTAINER_ENV_ALLOWLIST:
-            value = os.environ.get(key)
-            if value is not None:
-                env[key] = value
-        env["HOME"] = _CONTAINER_AGENT_HOME
-        env["USER"] = _CONTAINER_AGENT_USER
-        env["LOGNAME"] = _CONTAINER_AGENT_USER
-        env["SHELL"] = "/bin/bash"
-        if scratch_container_dir is not None:
-            env["CLAUDE_CONFIG_DIR"] = scratch_container_dir
-        return env
+        return build_claude_container_env(scratch_container_dir=scratch_container_dir)
 
     def _wrap_with_docker_exec(
         self,
@@ -440,134 +403,11 @@ class ClaudeCodeWorker:
         world-readable/writable (``DockerSecBenchRuntime._copy_source_tree``
         chmods them 0o777/0o666).
         """
-        wrapped: list[str] = ["docker", "exec", "-i"]
-        wrapped.extend(["--user", f"{_CONTAINER_AGENT_UID}:{_CONTAINER_AGENT_GID}"])
-        wrapped.extend(["-w", container_session.container_working_directory])
-        for key, value in env.items():
-            wrapped.extend(["-e", f"{key}={value}"])
-        wrapped.append(container_session.container_id)
-        wrapped.extend(claude_argv)
-        return wrapped
-
-    async def _prepare_in_container_user(
-        self,
-        container_session: ContainerSessionContext,
-    ) -> None:
-        """Create the non-root Claude user identity inside a running container."""
-        script = (
-            "set -eu\n"
-            f"if ! grep -q '^[^:]*:[^:]*:{_CONTAINER_AGENT_GID}:' /etc/group; then\n"
-            f"  printf '%s\\n' '{_CONTAINER_AGENT_USER}:x:{_CONTAINER_AGENT_GID}:' "
-            ">> /etc/group\n"
-            "fi\n"
-            f"if ! grep -q '^[^:]*:[^:]*:{_CONTAINER_AGENT_UID}:' /etc/passwd; then\n"
-            "  printf '%s\\n' "
-            f"'{_CONTAINER_AGENT_USER}:x:{_CONTAINER_AGENT_UID}:{_CONTAINER_AGENT_GID}:"
-            f"Arise Claude User:{_CONTAINER_AGENT_HOME}:/bin/bash' >> /etc/passwd\n"
-            "fi\n"
-            f"mkdir -p {_CONTAINER_AGENT_HOME} /tmp/claude-{_CONTAINER_AGENT_UID}\n"
-            f"chown -R {_CONTAINER_AGENT_UID}:{_CONTAINER_AGENT_GID} "
-            f"{_CONTAINER_AGENT_HOME} /tmp/claude-{_CONTAINER_AGENT_UID}\n"
-            f"chmod 700 {_CONTAINER_AGENT_HOME}\n"
-            "install -d -m 0755 /usr/local/bin\n"
-            f"if [ ! -x {_CONTAINER_ROOT_HELPER} ]; then\n"
-            "  cat > /tmp/arise-root.c <<'ARISE_ROOT_C'\n"
-            "#include <errno.h>\n"
-            "#include <stdio.h>\n"
-            "#include <unistd.h>\n"
-            "\n"
-            "int main(int argc, char *argv[]) {\n"
-            "    if (argc < 2) {\n"
-            "        fputs(\"usage: arise-root <command> [args...]\\n\", stderr);\n"
-            "        return 2;\n"
-            "    }\n"
-            "    if (setgid(0) != 0) {\n"
-            "        perror(\"setgid\");\n"
-            "        return 126;\n"
-            "    }\n"
-            "    if (setuid(0) != 0) {\n"
-            "        perror(\"setuid\");\n"
-            "        return 126;\n"
-            "    }\n"
-            "    execvp(argv[1], &argv[1]);\n"
-            "    perror(\"execvp\");\n"
-            "    return errno == ENOENT ? 127 : 126;\n"
-            "}\n"
-            "ARISE_ROOT_C\n"
-            "  compiler=$(command -v cc || command -v gcc || command -v clang || true)\n"
-            f"  if [ -n \"$compiler\" ] && \"$compiler\" -O2 -Wall -Wextra "
-            f"-o {_CONTAINER_ROOT_HELPER} /tmp/arise-root.c; then\n"
-            f"    chown root:root {_CONTAINER_ROOT_HELPER}\n"
-            f"    chmod 4755 {_CONTAINER_ROOT_HELPER}\n"
-            "  elif [ -x /bin/bash ]; then\n"
-            f"    cp /bin/bash {_CONTAINER_ROOT_BASH}\n"
-            f"    chown root:root {_CONTAINER_ROOT_BASH}\n"
-            f"    chmod 4755 {_CONTAINER_ROOT_BASH}\n"
-            f"    cat > {_CONTAINER_ROOT_HELPER} <<'ARISE_ROOT_SH'\n"
-            "#!/bin/sh\n"
-            f"exec {_CONTAINER_ROOT_BASH} -p -c 'exec \"$@\"' arise-root \"$@\"\n"
-            "ARISE_ROOT_SH\n"
-            f"    chmod 0755 {_CONTAINER_ROOT_HELPER}\n"
-            "  else\n"
-            "    echo 'no compiler or bash available to create root helper' >&2\n"
-            "    exit 1\n"
-            "  fi\n"
-            "  rm -f /tmp/arise-root.c\n"
-            "fi\n"
-            f"cat > {_CONTAINER_SUDO_SHIM} <<'ARISE_SUDO_SH'\n"
-            "#!/bin/sh\n"
-            "if [ \"$#\" -eq 0 ]; then\n"
-            "  echo 'usage: sudo <command> [args...]' >&2\n"
-            "  exit 2\n"
-            "fi\n"
-            f"exec {_CONTAINER_ROOT_HELPER} \"$@\"\n"
-            "ARISE_SUDO_SH\n"
-            f"chmod 0755 {_CONTAINER_SUDO_SHIM}\n"
-            f"cat > {_CONTAINER_APT_GET_SHIM} <<'ARISE_APT_GET_SH'\n"
-            "#!/bin/sh\n"
-            f"exec {_CONTAINER_ROOT_HELPER} /usr/bin/apt-get \"$@\"\n"
-            "ARISE_APT_GET_SH\n"
-            f"chmod 0755 {_CONTAINER_APT_GET_SHIM}\n"
+        return build_docker_exec_argv(
+            container_session=container_session,
+            command_argv=claude_argv,
+            env=env,
         )
-        argv = [
-            "docker",
-            "exec",
-            "-i",
-            container_session.container_id,
-            "bash",
-            "-lc",
-            script,
-        ]
-        logger.debug(
-            "ClaudeCodeWorker preparing non-root user %s in container %s",
-            _CONTAINER_AGENT_USER,
-            container_session.container_name,
-        )
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        try:
-            output, _ = await asyncio.wait_for(
-                process.communicate(),
-                timeout=_CONTAINER_USER_PREP_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            process.kill()
-            await self._wait_after_kill(process)
-            logger.warning(
-                "Timed out preparing non-root user in container %s; continuing with "
-                "Claude subprocess watchdog enabled",
-                container_session.container_name,
-            )
-            return
-        if process.returncode != 0:
-            logger.warning(
-                "Failed to prepare non-root user in container %s: %s",
-                container_session.container_name,
-                output.decode("utf-8", errors="replace").strip(),
-            )
 
     def _write_settings(self, scratch_dir: Path, tool_policy: ToolPolicy) -> None:
         """Write a ``settings.json`` with the bash allowlist policy.
