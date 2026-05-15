@@ -1,0 +1,53 @@
+name: a12-batch-autogen
+
+default_cves:
+  - exiv2.cve-2018-19607
+  - faad2.cve-2018-20198
+  - gpac.cve-2022-3178
+  - gpac.cve-2023-2840
+  - gpac.cve-2023-5586
+  - imagemagick.cve-2017-11533
+  - imagemagick.cve-2018-5246
+  - imagemagick.cve-2018-5247
+  - jq.cve-2023-50246
+  - jq.cve-2026-32316
+  - libarchive.cve-2019-11463
+  - libredwg.cve-2020-21816
+  - libretro-common.cve-2025-9809
+  - llama-cpp.cve-2026-21869
+  - mruby.cve-2022-0240
+  - mruby.cve-2022-0631
+  - mruby.cve-2022-1427
+  - ngtcp2.cve-2026-40170
+  - njs.cve-2022-28049
+  - njs.cve-2022-32414
+  - njs.cve-2022-38890
+  - ollama.cve-2026-5757
+
+per_cell_overrides: {}
+
+source:
+  kind: deployment-json
+  paths:
+    - plugins/security/tests/fixtures/exiv2.cve-2018-19607.json
+    - plugins/security/tests/fixtures/faad2.cve-2018-20198.json
+    - plugins/security/tests/fixtures/gpac.cve-2022-3178.json
+    - plugins/security/tests/fixtures/gpac.cve-2023-2840.json
+    - plugins/security/tests/fixtures/gpac.cve-2023-5586.json
+    - plugins/security/tests/fixtures/imagemagick.cve-2017-11533.json
+    - plugins/security/tests/fixtures/imagemagick.cve-2018-5246.json
+    - plugins/security/tests/fixtures/imagemagick.cve-2018-5247.json
+    - plugins/security/tests/fixtures/jq.cve-2023-50246.json
+    - plugins/security/tests/fixtures/jq.cve-2026-32316.json
+    - plugins/security/tests/fixtures/libarchive.cve-2019-11463.json
+    - plugins/security/tests/fixtures/libredwg.cve-2020-21816.json
+    - plugins/security/tests/fixtures/libretro-common.cve-2025-9809.json
+    - plugins/security/tests/fixtures/llama-cpp.cve-2026-21869.json
+    - plugins/security/tests/fixtures/mruby.cve-2022-0240.json
+    - plugins/security/tests/fixtures/mruby.cve-2022-0631.json
+    - plugins/security/tests/fixtures/mruby.cve-2022-1427.json
+    - plugins/security/tests/fixtures/ngtcp2.cve-2026-40170.json
+    - plugins/security/tests/fixtures/njs.cve-2022-28049.json
+    - plugins/security/tests/fixtures/njs.cve-2022-32414.json
+    - plugins/security/tests/fixtures/njs.cve-2022-38890.json
+    - plugins/security/tests/fixtures/ollama.cve-2026-5757.json
