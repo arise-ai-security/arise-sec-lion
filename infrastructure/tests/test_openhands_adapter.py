@@ -16,6 +16,7 @@ from openhands.sdk.conversation.conversation_stats import ConversationStats
 from openhands.sdk.llm.utils.metrics import Metrics, ResponseLatency, TokenUsage
 
 from core.domain.events.events import (
+    DomainEvent,
     ThoughtCaptured,
     WorkCompleted,
     WorkerCostRecorded,
@@ -734,6 +735,121 @@ class TestOpenHandsAdapter:
         assert any("did not exit" in record.message for record in caplog.records)
 
         conversation.release()
+
+
+class _StreamingConversation(_FakeConversation):
+    """Fires SDK callbacks with sleeps between them, mirroring real streaming.
+
+    Used to prove that ThoughtCaptured events are yielded by ``run_session``
+    before ``run()`` completes, not after.
+    """
+
+    def __init__(self, between_events_seconds: float = 0.05) -> None:
+        super().__init__()
+        self._between = between_events_seconds
+        self._callbacks: list[Any] = []
+        self.run_completed_at: float | None = None
+
+    def set_callbacks(self, callbacks: list[Any]) -> None:
+        self._callbacks = list(callbacks)
+
+    def run(self) -> None:
+        events = [
+            _mock_event(class_name="MessageEvent", content="first output"),
+            _mock_event(class_name="ActionEvent", content="thinking"),
+            _mock_event(class_name="MessageEvent", content="final output"),
+        ]
+        for evt in events:
+            self.state.events.append(evt)
+            for cb in self._callbacks:
+                cb(evt)
+            time.sleep(self._between)
+        self.run_completed_at = time.monotonic()
+
+
+class TestOpenHandsAdapterStreaming:
+    """Switching to SDK callbacks must yield ThoughtCaptured events as they
+    arrive, not after the conversation completes."""
+
+    @pytest.mark.asyncio
+    async def test_thought_events_arrive_before_run_completes(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given: a conversation that fires callbacks with sleeps, recording
+        # when run() finishes.
+        adapter = _adapter(timeout_seconds=5)
+        conversation = _StreamingConversation(between_events_seconds=0.05)
+
+        def fake_build(*args: Any) -> Any:
+            # _build_conversation_for_task forwards callbacks positionally as
+            # the 4th arg; capture and wire them into the fake.
+            callbacks = args[3] if len(args) >= 4 else None
+            if callbacks:
+                conversation.set_callbacks(callbacks)
+            return conversation
+
+        monkeypatch.setattr(adapter, "_build_conversation", fake_build)
+
+        # When: collecting events, also recording when each ThoughtCaptured arrives.
+        thought_arrival_times: list[float] = []
+        events: list[DomainEvent] = []
+        async for event in adapter.run_session(
+            {
+                "task_description": "Stream me",
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+            }
+        ):
+            events.append(event)
+            if isinstance(event, ThoughtCaptured):
+                thought_arrival_times.append(time.monotonic())
+
+        # Then: at least one ThoughtCaptured arrived before run() returned.
+        thoughts = [e for e in events if isinstance(e, ThoughtCaptured)]
+        assert len(thoughts) >= 1
+        assert conversation.run_completed_at is not None
+        assert thought_arrival_times[0] < conversation.run_completed_at, (
+            "ThoughtCaptured events must stream during run(), not after"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dedup_by_event_id_prevents_double_yield(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given: a conversation that fires callbacks AND populates state.events
+        # with the same objects (mirrors the real SDK contract).
+        adapter = _adapter(timeout_seconds=5)
+        conversation = _StreamingConversation(between_events_seconds=0.0)
+
+        def fake_build(*args: Any) -> Any:
+            callbacks = args[3] if len(args) >= 4 else None
+            if callbacks:
+                conversation.set_callbacks(callbacks)
+            return conversation
+
+        monkeypatch.setattr(adapter, "_build_conversation", fake_build)
+
+        # When: collecting events.
+        events = [
+            event
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Dedup",
+                    "agent_id": uuid4(),
+                    "working_directory": str(tmp_path),
+                }
+            )
+        ]
+
+        # Then: each SDK event yields exactly one ThoughtCaptured (no duplicates
+        # from the state.events fallback pass).
+        thoughts = [e for e in events if isinstance(e, ThoughtCaptured)]
+        # Three SDK events were emitted; expect three ThoughtCaptured exactly.
+        assert len(thoughts) == 3
 
 
 class TestMCPServersWiring:

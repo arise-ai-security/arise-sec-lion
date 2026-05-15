@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -238,11 +238,19 @@ class AgentOrchestrator:
             format_repairer=format_repairer,
         )
 
-    async def assess_task(self, agent: "AgentSession") -> None:
+    async def assess_task(
+        self,
+        agent: "AgentSession",
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
+    ) -> None:
         """Assess a PENDING agent: execute directly or decompose.
 
         Single LLM call replaces separate complexity evaluation + decomposition.
         On execute → WORKER. On decompose → MANAGER with children spawned.
+
+        ``persist_checkpoint`` is called before the (potentially slow) LLM call so
+        ``OperationStarted`` and ``PromptSent`` are durable in the event store
+        even if the step is later cancelled by the watchdog.
         """
         if agent.role != AgentRole.PENDING:
             agent.fail_with_reason(f"Expected PENDING role, got {agent.role}")
@@ -294,6 +302,13 @@ class AgentOrchestrator:
                     prompt_capabilities=build_prompt_capabilities(tool_context),
                 )
                 agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
+
+                # Flush the prompt envelope before the LLM call so the DB shows
+                # the agent IS doing work — without this the orchestrator looks
+                # silent for the full LLM round-trip (which can be 5+ minutes for
+                # recon-heavy prompts on Sonnet/Opus).
+                if persist_checkpoint is not None:
+                    await persist_checkpoint(agent)
 
                 # Query LLM and parse; retry on malformed JSON. After the
                 # retry loop exhausts (or a glm-style prose preamble was
@@ -431,11 +446,20 @@ class AgentOrchestrator:
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 agent.fail_with_reason(f"Assessment failed: {e}")
 
-    async def evaluate_task(self, agent: "AgentSession") -> None:
+    async def evaluate_task(
+        self,
+        agent: "AgentSession",
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
+    ) -> None:
         """Decompose task into subtasks for a BOSS/MANAGER agent.
 
         LLM generates subtasks, limits are enforced, children are spawned.
         On failure, agent is failed with reason.
+
+        ``persist_checkpoint`` is called before the LLM call so ``OperationStarted``
+        and ``PromptSent`` are durable in the event store even if the step is
+        later cancelled. Without this, recon-heavy decomposition prompts produce
+        4-5 minute silent gaps in the event store.
         """
         if agent.role not in (AgentRole.BOSS, AgentRole.MANAGER):
             agent.fail_with_reason(f"Expected BOSS/MANAGER role, got {agent.role}")
@@ -468,6 +492,12 @@ class AgentOrchestrator:
                     prompt_capabilities=capabilities,
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
+
+            # Flush prompt envelope before the LLM call so the event store
+            # shows the boss/manager IS doing work — without this the recon
+            # round-trip is invisible for minutes (see acf44cbc 4m48s gap).
+            if persist_checkpoint is not None:
+                await persist_checkpoint(agent)
 
             # Query LLM (with tool calling if available)
             response = await self._query_llm(
@@ -503,10 +533,16 @@ class AgentOrchestrator:
             workspace_context: str | None = None,
             handoff: "Handoff | None" = None,
             task_context_overrides: dict[str, Any] | None = None,
+            persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
         On failure, agent is failed with reason.
+
+        When ``persist_checkpoint`` is provided, it is awaited after each worker
+        event is applied. This flushes in-flight events to the store so that a
+        watchdog cancellation does not discard the worker's trace (the orchestrator
+        otherwise persists only at end-of-step).
         """
         if agent.role != AgentRole.WORKER:
             agent.fail_with_reason(f"Expected WORKER role, got {agent.role}")
@@ -546,6 +582,12 @@ class AgentOrchestrator:
 
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
+            # Flush the start/prompt envelope before entering the worker stream
+            # so the trace is preserved even if the first SDK event never lands
+            # (e.g., LLM hangs before first token) and the watchdog cancels us.
+            if persist_checkpoint is not None:
+                await persist_checkpoint(agent)
+
             # Run worker session
             task_context: dict[str, Any] = {
                 "agent_id": agent.agent_id,
@@ -563,6 +605,8 @@ class AgentOrchestrator:
             try:
                 async for tool_event in self._worker_port.run_session(task_context):
                     agent.apply_worker_event(tool_event)
+                    if persist_checkpoint is not None:
+                        await persist_checkpoint(agent)
                     if self._realtime_callback and root_id:
                         await self._realtime_callback.on_event(tool_event, root_id)
             except ToolNotAvailableError as e:

@@ -44,6 +44,20 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
 _SHUTDOWN_GRACE_SECONDS = 5
+
+
+def _event_dedup_key(sdk_event: Any) -> Any:
+    """Stable dedup key for an SDK event.
+
+    Prefer the SDK's own ``event.id`` when present; fall back to object identity.
+    Identity is safe for the current SDK (callbacks receive the same object that
+    gets appended to ``state.events``), but ``event.id`` survives any future wrap
+    or copy by the SDK before append.
+    """
+    event_id = getattr(sdk_event, "id", None)
+    if event_id is not None:
+        return ("id", event_id)
+    return ("obj", id(sdk_event))
 _OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
 _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
 _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
@@ -499,11 +513,26 @@ class OpenHandsAdapter(WorkerAdapterBase):
         mcp_servers = self._extract_mcp_servers(task_context)
         children_before = _snapshot_child_pids()
 
+        # SDK callbacks fire synchronously from the OpenHands worker thread.
+        # Bridge them onto the running event loop so the async generator can
+        # yield ThoughtCaptured events as they happen, instead of after the
+        # whole conversation finishes (see openhands.sdk Conversation.callbacks).
+        loop = asyncio.get_running_loop()
+        event_queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        def sdk_event_callback(sdk_event: Any) -> None:
+            try:
+                loop.call_soon_threadsafe(event_queue.put_nowait, sdk_event)
+            except RuntimeError:
+                # Loop closed during shutdown; drop the event quietly.
+                pass
+
         try:
             conversation = self._build_conversation_for_task(
                 working_dir,
                 mcp_servers,
                 container_session,
+                callbacks=[sdk_event_callback],
             )
         except ImportError as error:
             yield sequencer.failed(
@@ -521,17 +550,46 @@ class OpenHandsAdapter(WorkerAdapterBase):
             children_before=children_before,
         )
         shutdown_requested = False
+        run_task: asyncio.Task[_OpenHandsRunOutcome] | None = None
+        seen_event_ids: set[int] = set()
         try:
-            outcome = await self._run_conversation_or_timeout(conversation, conversation_run)
+            run_task = asyncio.create_task(
+                self._run_conversation_or_timeout(conversation, conversation_run)
+            )
+
+            # Stream events as the SDK fires callbacks; interleave with run completion.
+            while not run_task.done():
+                try:
+                    sdk_event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                seen_event_ids.add(_event_dedup_key(sdk_event))
+                if thought := self._sdk_event_to_thought(sdk_event, sequencer):
+                    yield thought
+
+            # Drain any callbacks that landed after the last loop check.
+            while not event_queue.empty():
+                sdk_event = event_queue.get_nowait()
+                seen_event_ids.add(_event_dedup_key(sdk_event))
+                if thought := self._sdk_event_to_thought(sdk_event, sequencer):
+                    yield thought
+
+            outcome = await run_task
             shutdown_requested = outcome.shutdown_requested
             if outcome.timed_out:
                 yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
                 return
 
-            finish_message = self._extract_finish_message(conversation)
-            for event in self._iter_conversation_domain_events(conversation, sequencer):
-                yield event
+            # Fallback: yield any events that landed in ``state.events`` but never
+            # came through the callback path (test fakes, SDK quirks, terminal
+            # events emitted post-callback). Dedup by object identity.
+            for sdk_event in self._iter_conversation_events(conversation):
+                if _event_dedup_key(sdk_event) in seen_event_ids:
+                    continue
+                if thought := self._sdk_event_to_thought(sdk_event, sequencer):
+                    yield thought
 
+            finish_message = self._extract_finish_message(conversation)
             yield self._make_cost_recorded_event(conversation, sequencer, started_at)
             yield self._make_completed_event(
                 conversation,
@@ -542,6 +600,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         except Exception as error:
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
         finally:
+            if run_task is not None and not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             if not shutdown_requested:
                 await self._shutdown_conversation_run(conversation, conversation_run)
             conversation_run.shutdown_executor()
@@ -560,10 +624,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
         working_dir: str,
         mcp_servers: dict[str, dict[str, Any]] | None,
         container_session: ContainerSessionContext | None,
+        callbacks: list[Callable[[Any], None]] | None = None,
     ) -> _ConversationLike:
+        # Pass ``callbacks`` positionally so existing test fakes that monkey-patch
+        # ``_build_conversation`` with ``lambda *_args: conversation`` continue to
+        # work without **kwargs support.
         return cast(
             "_ConversationLike",
-            self._build_conversation(working_dir, mcp_servers, container_session),
+            self._build_conversation(
+                working_dir, mcp_servers, container_session, callbacks
+            ),
         )
 
     def _create_conversation_run(
@@ -673,6 +743,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         working_dir: str,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
         container_session: ContainerSessionContext | None = None,
+        callbacks: list[Callable[[Any], None]] | None = None,
     ) -> Any:
         import warnings
 
@@ -701,6 +772,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             agent=agent,
             workspace=working_dir,
             max_iteration_per_run=self.max_iterations_per_run,
+            callbacks=callbacks or [],
         )
 
     def _build_llm_kwargs(self) -> dict[str, Any]:
@@ -723,12 +795,23 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _ollama_llm_overrides() -> dict[str, Any]:
-        """Keep Ollama/Qwen compatible with OpenHands' multi-turn tool loop."""
+        """Keep Ollama/Qwen compatible with OpenHands' multi-turn tool loop.
+
+        ``num_ctx`` lowered from 65536 → 16384: on Apple Silicon the KV cache
+        for 65K context against an 8B model makes per-iteration latency ~3-4x
+        worse than the smaller window. OpenHands condensation handles overflow,
+        so the smaller window is safe for the file_editor/glob/grep workflow.
+
+        ``max_output_tokens`` lowered from 65000 → 8192: nonsensical when
+        num_ctx is 16384 (Ollama clamps to ctx-minus-prompt anyway). 8192 is
+        plenty for one OpenHands turn (a thought + tool-call or a final answer)
+        and signals intent clearly to LiteLLM.
+        """
         return {
-            "max_output_tokens": 65000,
+            "max_output_tokens": 8192,
             "native_tool_calling": False,
             # This disables model-side reasoning tags; OpenHands ThinkTool remains enabled.
-            "litellm_extra_body": {"think": False, "num_ctx": 65536},
+            "litellm_extra_body": {"think": False, "num_ctx": 16384},
             "top_p": 0.95,
         }
 

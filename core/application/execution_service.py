@@ -207,6 +207,7 @@ class AgentExecutionService:
                 get_run_output_path=lambda: self._working_directory,
                 get_working_directory=self._get_working_directory_str,
                 get_workspace_context=self._get_workspace_context,
+                persist_checkpoint=self._persist_agent_events,
             )
         )
 

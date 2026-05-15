@@ -1,5 +1,5 @@
 # Cell C1 — our hierarchy with OpenHands-driven local Qwen worker, Judge OFF.
-# Boss/Manager match B (Opus) so B vs C isolates only the worker substitution
+# Boss/Manager use Sonnet for headline parity with the A-cell Claude baseline.
 # (Claude Sonnet → local Qwen). C1 vs C2 isolates the Judge contribution
 # within the Qwen-worker arm.
 #
@@ -14,8 +14,14 @@ overrides:
   orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
-  boss.model: claude-opus-4-5-20251101
-  manager.model: claude-opus-4-5-20251101
+  # Workers stay sequential (sibling-view invariant). LLM semaphore is widened
+  # so Sonnet assess/decompose for queued siblings can pipeline while the one
+  # active worker runs. Per-step / run budgets scaled for Qwen-on-Mac.
+  orchestration.concurrency.max_concurrent_llm_calls: 8
+  orchestration.concurrency.max_agent_step_seconds: 1800
+  orchestration.max_run_duration_seconds: 21600
+  boss.model: claude-sonnet-4-5-20250929
+  manager.model: claude-sonnet-4-5-20250929
   worker.tool: openhands
   worker.model: ollama_chat/qwen3:8b
   worker.allowed_tools: [file_editor, glob, grep]

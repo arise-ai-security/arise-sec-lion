@@ -404,11 +404,14 @@ async def test_run_agent_step_retries_on_concurrency_error(
     mock_event_store.get_events.return_value = [event1, event2]
     mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
-    # First append_batch fails with ConcurrencyError, retry succeeds
+    # First append_batch (early prompt-envelope checkpoint) fails with
+    # ConcurrencyError; the retry's checkpoint succeeds, and the final
+    # end-of-step persist also succeeds.
     # (Multiple events use append_batch, not append)
     mock_event_store.append_batch.side_effect = [
         ConcurrencyError(aggregate_id=str(agent_id), actual_version=3),
-        None,  # Retry succeeds
+        None,  # Retry's early checkpoint succeeds
+        None,  # Retry's end-of-step persist succeeds
     ]
 
     # When: Run agent step
@@ -886,10 +889,12 @@ async def test_run_agent_step_releases_reservation_on_concurrency_error(
     await child_factory.try_reserve(2)
     assert child_factory.reserved == 2
 
-    # First append_batch raises ConcurrencyError; second succeeds.
+    # First append_batch (early prompt-envelope checkpoint) raises
+    # ConcurrencyError; the retry's checkpoint and end-of-step persist succeed.
     mock_event_store.append_batch.side_effect = [
         ConcurrencyError(aggregate_id=str(agent_id), actual_version=3),
-        None,
+        None,  # retry early checkpoint
+        None,  # retry end-of-step persist
     ]
 
     # We intercept _dispatch_agent_action so it always stamps the agent
