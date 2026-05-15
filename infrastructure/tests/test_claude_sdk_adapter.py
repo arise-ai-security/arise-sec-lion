@@ -865,6 +865,35 @@ class TestMCPServersWiring:
         assert "-w /src/demo" in content
         assert "abc123def456 claude \"$@\"" in content
 
+    def test_build_options_resolves_relative_container_wrapper_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """SDK cli_path stays valid even when the run workspace is relative."""
+        # Given: a container session carrying the relative workspace shape used
+        # by smoke runs and study output.directory="./runs".
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        session = _container_session(Path("runs") / f"smoke-{tmp_path.name}")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        # When: building SDK options for the relative workspace.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir=str(session.workspace_root),
+                tool_queue=MagicMock(),
+                container_session=session,
+            )
+
+        # Then: cli_path is absolute, so SDK cwd cannot reinterpret it.
+        wrapper = Path(captured["cli_path"])  # type: ignore[arg-type]
+        assert wrapper.is_absolute()
+        assert wrapper.exists()
+        assert wrapper.name == "claude-sdk-in-container"
+
 
 class MockHookInput:
     """Stub for claude_agent_sdk HookInput with attributes the hook reads."""
@@ -1020,3 +1049,43 @@ class TestToolUseInputPayload:
         assert tool_name == "Read"
         assert "/testcase/base_commit_hash" in content
         assert str(tmp_path) not in content
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_accepts_sdk_typed_dict_input(self) -> None:
+        """Current Claude SDK hook input is dict-shaped at runtime."""
+        # Given: a captured PostToolUse hook.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=None,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+
+        # When: the installed SDK passes a TypedDict-like hook payload.
+        await capture_tool_use(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/testcase/base_commit_hash"},
+                "tool_response": "ad487",
+            },
+            None,
+            MagicMock(),
+        )
+
+        # Then: the queued event preserves tool name and input.
+        content, output_type, tool_name = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_name == "Read"
+        assert "Reading: /testcase/base_commit_hash" in content
+        assert '"/testcase/base_commit_hash"' in content

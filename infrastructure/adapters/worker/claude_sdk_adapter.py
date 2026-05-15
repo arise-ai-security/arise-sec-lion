@@ -9,7 +9,7 @@ Uses PostToolUse hooks for capturing tool invocations as events.
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
@@ -229,7 +229,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         container_session: ContainerSessionContext,
     ) -> Path:
         return write_docker_exec_wrapper(
-            path=container_session.workspace_root / SDK_CONTAINER_WRAPPER_PATH,
+            path=(container_session.workspace_root / SDK_CONTAINER_WRAPPER_PATH).resolve(),
             container_session=container_session,
             executable=IN_CONTAINER_CLAUDE_EXECUTABLE,
             env=build_claude_container_env(scratch_container_dir=None),
@@ -252,8 +252,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             _tool_use_id: str | None,
             _context: HookContext,
         ) -> SyncHookJSONOutput:
-            tool_name = getattr(input_data, "tool_name", "unknown")
-            tool_input = getattr(input_data, "tool_input", {})
+            tool_name, tool_input = self._extract_hook_tool_call(input_data)
             sanitized_input = self._sanitize_for_events(
                 tool_input,
                 container_session,
@@ -274,6 +273,18 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             return SyncHookJSONOutput()
 
         return capture_tool_use
+
+    @staticmethod
+    def _extract_hook_tool_call(input_data: HookInput) -> tuple[str, dict[str, Any]]:
+        if isinstance(input_data, Mapping):
+            raw_name = input_data.get("tool_name", "unknown")
+            raw_input = input_data.get("tool_input", {})
+        else:
+            raw_name = getattr(input_data, "tool_name", "unknown")
+            raw_input = getattr(input_data, "tool_input", {})
+        tool_name = raw_name if isinstance(raw_name, str) else "unknown"
+        tool_input = raw_input if isinstance(raw_input, dict) else {}
+        return tool_name, tool_input
 
     @staticmethod
     def _extract_mcp_servers(
