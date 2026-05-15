@@ -9,8 +9,8 @@ overrides:
   orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
-  boss.model: claude-opus-4-5-20251101
-  manager.model: claude-opus-4-5-20251101
+  boss.model: claude-sonnet-4-5-20250929
+  manager.model: claude-sonnet-4-5-20250929
   worker.tool: openhands
   worker.model: ollama_chat/qwen3:8b
   worker.allowed_tools: [file_editor, glob, grep]

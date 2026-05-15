@@ -14,6 +14,12 @@
 > - **BUG-CR1 (Findings 08, 09)**: Smoke cells (`B1smoke`, `C1smoke`, `C1claudesmoke`) are in `manifest.yaml` alongside headline cells. `collect.py`/`render_report.py` do not filter them out. Headline aggregates will be polluted unless smoke cells are removed from `manifest.yaml` or a `headline_cells:` allowlist is added.
 > - **BUG-CR2**: A1/A2 omit `worker.max_iterations_per_run`; B/C set it to 40. Add explicit `40` to A configs for provenance parity.
 > - **R2 (Critical, post-author Q&A)**: A1/A2 do not crash — they **silently run as hierarchical** because `bootstrap/composition.py:115-133` never passes `mode=` to `ApplicationConfig` (which defaults to `"hierarchical"` at `bootstrap/application.py:96`). Every A-cell run to date has been a hierarchical run mis-labeled "A1" (confirmed by `runs/1c39be48-…/events.jsonl:1` showing `"role":"boss"`). Fix is in BUG-A1 in `findings/00-synthesis.md`.
+> - **R11 (2026-05-15, Finding 11)**: `orchestration.tool_calling.*.max_iterations`
+>   limits LLM tool-calling rounds, not individual recon probe calls. A single round
+>   can produce multiple `ProbeStarted` events. A1/A2 `boss.model` and `manager.model`
+>   are flat-mode schema/provenance leftovers; B/C boss/manager models are active
+>   coordinator models. Primary B/C should use Sonnet 4.5 for boss/manager; Opus belongs
+>   only in a named upper-bound ablation.
 
 ## Independent variables (controlled)
 
@@ -34,18 +40,33 @@ Held constant across cells. Any drift here invalidates a between-cell comparison
 
 System architecture, across six cells. Plus two judge-ablation variants.
 
-| Cell | Group | Architecture | Worker model | Verifier (judge) |
-|---|---|---|---|---|
-| `A1` | A — Flat baseline | Claude Code CLI + native subagents | Claude (single model) | — |
-| `A2` | A — Flat baseline | Claude Code CLI, no subagents | Claude (single model) | — |
-| `B1` | B — Tree (ours) | boss → manager → worker | Claude SDK | OFF |
-| `B2` | B — Tree (ours) | boss → manager → worker | Claude SDK | ON |
-| `C1` | C — Tree (ours) | boss → manager → worker | OpenHands + Qwen | OFF |
-| `C2` | C — Tree (ours) | boss → manager → worker | OpenHands + Qwen | ON |
+| Cell | Group | Architecture | Coordinator model | Worker model | Verifier (judge) |
+|---|---|---|---|---|---|
+| `A1` | A — Flat baseline | Claude Code CLI + native subagents | N/A in flat mode | Claude Code Sonnet 4.5 | — |
+| `A2` | A — Flat baseline | Claude Code CLI, no subagents | N/A in flat mode | Claude Code Sonnet 4.5 | — |
+| `B1` | B — Tree (ours) | boss → manager → worker | Sonnet 4.5 primary | Claude SDK Sonnet 4.5 | OFF |
+| `B2` | B — Tree (ours) | boss → manager → worker | Sonnet 4.5 primary | Claude SDK Sonnet 4.5 | ON |
+| `C1` | C — Tree (ours) | boss → manager → worker | Sonnet 4.5 primary | OpenHands + Qwen | OFF |
+| `C2` | C — Tree (ours) | boss → manager → worker | Sonnet 4.5 primary | OpenHands + Qwen | ON |
 
 Smoke variants exist (`B1smoke`, `C1smoke`, `C1claudesmoke`) for pipeline validation. They are NOT part of the headline matrix and must be excluded from paper results.
 
 Config files: `experiments/2026-05-11-fresh-start/configs/{A1,A2,B1,B2,C1,C2}-*.yaml`.
+
+### Coordinator model control
+
+`A1`/`A2` are flat-mode Claude Code CLI cells. The shared config schema still requires
+`boss.model` and `manager.model`, and run manifests still persist those fields for
+uniform provenance, but flat execution does not use them. Source-grounded check:
+`bootstrap/composition.py:123-135` builds the flat worker from `settings.worker.model`,
+and `core/application/execution_service.py:327-337,416-423,493-499` skips decomposition
+and dispatches directly to `flat_worker.run_task(...)`.
+
+For B/C, boss and manager are real coordinator nodes. Therefore the headline design pins
+B/C boss and manager to Sonnet 4.5. If Opus is used for B/C coordinators, the paper claim
+changes from "our topology improves over a Sonnet flat baseline" to "an Opus-coordinated
+hierarchy improves over a Sonnet flat baseline." That is a valid ablation/upper bound,
+but it is not the primary A/B/C comparison.
 
 ### Orchestrator tool-calling boundary
 
@@ -63,6 +84,15 @@ These are read-only inspection tools used before assessment or decomposition. Th
 not worker tools, do not execute builds/tests, and do not expose OpenHands tools such
 as `file_editor`, `glob`, `grep`, `valgrind_run`, or `klee_run`. Worker tool access is
 controlled separately by each cell's `worker.allowed_tools` / `worker.disallowed_tools`.
+
+Budget semantics: `orchestration.tool_calling.*.max_iterations` caps the number of LLM
+tool-calling rounds inside one operation, not the number of individual recon probes.
+`core/application/services/toolset/tool_calling_service.py:106-168` executes every tool
+call returned in one LLM response before the next iteration. `PromptSent` is emitted once
+per operation at `core/application/agent_orchestrator.py:470`, so it is not a count of
+internal LLM rounds. Use `ProbeStarted`/`probe_count` to measure actual recon volume.
+If the experiment needs "max 20 probes", add a dedicated probe budget; do not rely on
+`max_iterations: 20`.
 
 ### Fairness across A vs B/C — second-level prompt injection
 

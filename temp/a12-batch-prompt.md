@@ -3,7 +3,7 @@
 Use this prompt with Claude Code from the repository root on a GCP Compute Engine VM.
 
 ```text
-BLUF: Run A1 and A2 cells against the pre-created a12-batch-autogen study in batches of 20 CVEs until all 22 CVEs are attempted. Do not ask for operator confirmation between batches. After each batch, audit runs for code bugs only — kill, fix, and rerun on true code bugs; report infra failures and continue. Runs append to the persistent study; do not recreate it.
+BLUF: Run A1 and A2 cells against the pre-created a12-batch-autogen study in batches of 20 CVEs until all 200 CVEs are attempted. Do not ask for operator confirmation between batches. After each batch, audit runs for code bugs only — kill, fix, and rerun on true code bugs; report infra failures and continue. Runs append to the persistent study; do not recreate it.
 
 Scope:
 - Cells: A1 and A2 (both cells per task per batch).
@@ -56,7 +56,7 @@ If an image build fails:
 - Continue with remaining tasks. A build failure is infrastructure, not a code bug.
 
 Run one batch:
-22 CVEs total; batch 1 = first 20, batch 2 = remaining 2. Run both A1 and A2 for each batch:
+200 CVEs total; 10 batches of 20 (batches 0–9). Derive each batch's task list from dataset.yaml default_cves in order: batch 0 = entries 1–20, batch 1 = entries 21–40, …, batch 9 = entries 181–200. Run both A1 and A2 for each batch:
   set -a; . deployment/.env; set +a
   POSTGRES_HOST=localhost uv run python -m experiments.shared.scripts.run_matrix \
     --study a12-batch-autogen \
@@ -209,7 +209,7 @@ Batch state:
 Track progress in temp/a12-batch-state.json:
   {
     "study_id": "a12-batch-autogen",
-    "total_cves": 22,
+    "total_cves": 200,
     "batch_size": 20,
     "batches": [
       {
