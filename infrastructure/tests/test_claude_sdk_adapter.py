@@ -5,6 +5,7 @@ Tests verify correct event mapping and error handling.
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -16,17 +17,34 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
+from infrastructure.adapters.worker import claude_sdk_adapter
 from infrastructure.adapters.worker.claude_sdk_adapter import (
     CLAUDE_CODE_CLI_PATH_ENV,
     DEFAULT_MAX_THINKING_TOKENS,
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
 )
-from infrastructure.adapters.worker.shared import EventSequencer
+from infrastructure.adapters.worker.shared import ContainerSessionContext, EventSequencer
 
 
 # Module path for patching (use actual implementation module)
 SDK_ADAPTER_MODULE = "infrastructure.adapters.worker.claude_sdk_adapter"
+
+
+def _container_session(tmp_path: Path) -> ContainerSessionContext:
+    return ContainerSessionContext(
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image="secb-tools:demo.cve-2024-0001-patch",
+        workspace_root=tmp_path,
+        host_source_dir=tmp_path / "src",
+        host_testcase_dir=tmp_path / "testcase",
+        host_work_dir=tmp_path / "src" / "demo",
+        container_source_dir="/src",
+        container_testcase_dir="/testcase",
+        container_working_directory="/src/demo",
+        helper_script=tmp_path / "secb-exec",
+    )
 
 
 class MockTextBlock:
@@ -138,6 +156,54 @@ class TestProcessBlock:
         assert result is not None
         content, _ = result
         assert len(content) < 520  # "Tool result: " + 500 chars
+
+    def test_text_block_rewrites_host_paths_for_events(self, tmp_path: Path) -> None:
+        """TextBlock event content hides run-scoped host mirror paths."""
+        # Given: a Claude text block containing a host mirror path.
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "testcase" / "base_commit_hash"
+        block = MockTextBlock(f"Read {host_path}")
+
+        # When: the adapter converts the block into an event payload.
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block, session)
+
+        # Then: the emitted content uses the canonical container path.
+        assert result == ("Read /testcase/base_commit_hash", "output")
+
+    def test_thinking_block_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ThinkingBlock event content hides run-scoped host mirror paths."""
+        # Given: a Claude thinking block containing a host mirror path.
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "src" / "demo" / "main.c"
+        block = MockThinkingBlock(f"Need to inspect {host_path}")
+
+        # When: the adapter converts the block into an event payload.
+        with patch(f"{SDK_ADAPTER_MODULE}.ThinkingBlock", MockThinkingBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block, session)
+
+        # Then: the emitted content uses the canonical container path.
+        assert result == ("Need to inspect /src/demo/main.c", "thinking")
+
+    def test_tool_result_block_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ToolResultBlock event content hides run-scoped host mirror paths."""
+        # Given: a tool result containing a host mirror path.
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "testcase" / "base_commit_hash"
+        block = MockToolResultBlock(f"{host_path}: f659")
+
+        # When: the adapter converts the block into an event payload.
+        with patch(f"{SDK_ADAPTER_MODULE}.ToolResultBlock", MockToolResultBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block, session)
+
+        # Then: the emitted content uses the canonical container path.
+        assert result == ("Tool result: /testcase/base_commit_hash: f659", "tool_result")
 
     def test_unknown_block_returns_none(self) -> None:
         """Unknown block types are skipped."""
@@ -294,6 +360,29 @@ class TestClaudeAgentSDKAdapter:
         assert event.cache_write_tokens == 5
         assert event.reasoning_tokens == 7
         assert event.cost_usd == 0.0123
+
+    def test_make_result_event_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Terminal WorkCompleted content hides run-scoped host mirror paths."""
+        # Given: a result message containing a host mirror path.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        agent_id = uuid4()
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "src" / "demo" / "main.c"
+        message = MockResultMessage(result=f"Updated {host_path}")
+
+        # When: the adapter emits the terminal event.
+        event = adapter._make_result_event(
+            message,
+            sequencer=EventSequencer(agent_id, stream="claude_sdk"),
+            container_session=session,
+        )
+
+        # Then: the event uses the canonical container path.
+        assert isinstance(event, WorkCompleted)
+        assert event.result == "Updated /src/demo/main.c"
 
 
 class TestAdapterIntegration:
@@ -721,15 +810,12 @@ class TestToolUseInputPayload:
             captured.update(kwargs)
             return MagicMock()
 
-        import asyncio as _asyncio
-
         from experiments.shared.scripts.run_metrics import (
             _extract_bash_command,
             _is_cheating_command,
         )
-        from infrastructure.adapters.worker import claude_sdk_adapter
 
-        tool_queue: _asyncio.Queue[tuple[str, str, str | None]] = _asyncio.Queue()
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
         with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
             adapter._build_options(
                 working_dir="/work",
@@ -750,3 +836,43 @@ class TestToolUseInputPayload:
         # Then: the detector recovers the exact command and counts it as cheating.
         assert _extract_bash_command(content) == "git log --oneline -3"
         assert _is_cheating_command("git log --oneline -3") is True
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Tool-use event payloads hide translated host mirror paths."""
+        # Given: a container session and a captured PostToolUse hook.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        session = _container_session(tmp_path)
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=session,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+        host_path = tmp_path / "testcase" / "base_commit_hash"
+
+        # When: the hook sees the host path after input translation.
+        hook_input = MockHookInput(
+            tool_name="Read",
+            tool_input={"file_path": str(host_path)},
+        )
+        await capture_tool_use(hook_input, None, MagicMock())
+
+        # Then: the queued event content uses the canonical container path.
+        content, output_type, tool_name = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_name == "Read"
+        assert "/testcase/base_commit_hash" in content
+        assert str(tmp_path) not in content

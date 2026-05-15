@@ -136,16 +136,28 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
 
                     async for message in client.receive_response():
                         # Yield pending tool events from hooks
-                        async for event in self._drain_queue(tool_queue, sequencer):
+                        async for event in self._drain_queue(
+                            tool_queue,
+                            sequencer,
+                            container_session,
+                        ):
                             yield event
 
                         # Process message content blocks
-                        async for event in self._process_message(message, sequencer):
+                        async for event in self._process_message(
+                            message,
+                            sequencer,
+                            container_session,
+                        ):
                             yield event
 
                         # Handle result message (terminal)
                         if isinstance(message, ResultMessage):
-                            async for event in self._drain_queue(tool_queue, sequencer):
+                            async for event in self._drain_queue(
+                                tool_queue,
+                                sequencer,
+                                container_session,
+                            ):
                                 yield event
 
                             # Emit cost event before terminal event
@@ -157,14 +169,19 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                             if cost_event:
                                 yield cost_event
 
-                            yield self._make_result_event(message, sequencer)
+                            yield self._make_result_event(
+                                message,
+                                sequencer,
+                                container_session,
+                            )
                             return
 
         except TimeoutError:
             yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
 
         except Exception as e:
-            yield sequencer.failed(self._format_error(e))
+            reason = self._sanitize_for_events(self._format_error(e), container_session)
+            yield sequencer.failed(str(reason))
 
     def _build_options(
         self,
@@ -182,7 +199,14 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             "can_use_tool": self._make_permission_callback(container_session),
             "hooks": {
                 "PostToolUse": [
-                    HookMatcher(hooks=[self._make_tool_use_hook(tool_queue)])
+                    HookMatcher(
+                        hooks=[
+                            self._make_tool_use_hook(
+                                tool_queue,
+                                container_session,
+                            )
+                        ]
+                    )
                 ],
             },
         }
@@ -203,8 +227,11 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         stripped = cli_path.strip()
         return stripped or None
 
-    @staticmethod
-    def _make_tool_use_hook(tool_queue: ToolEventQueue) -> ToolUseHook:
+    def _make_tool_use_hook(
+        self,
+        tool_queue: ToolEventQueue,
+        container_session: ContainerSessionContext | None,
+    ) -> ToolUseHook:
         async def capture_tool_use(
             input_data: HookInput,
             _tool_use_id: str | None,
@@ -212,12 +239,19 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         ) -> SyncHookJSONOutput:
             tool_name = getattr(input_data, "tool_name", "unknown")
             tool_input = getattr(input_data, "tool_input", {})
+            sanitized_input = self._sanitize_for_events(
+                tool_input,
+                container_session,
+            )
+            if not isinstance(sanitized_input, dict):
+                sanitized_input = tool_input
             # Mirror claude_code_worker.py:565-567 and openhands_adapter.py:692:
             # append `\nInput: {<json>}` so downstream parsers that expect the
             # JSON-encoded tool input alongside the description (e.g.,
             # bash-command recovery) can find it.
-            detail = json.dumps(tool_input, sort_keys=True, default=str)
-            content = f"{format_tool_event(tool_name, tool_input)}\nInput: {detail}"
+            detail = json.dumps(sanitized_input, sort_keys=True, default=str)
+            description = format_tool_event(tool_name, sanitized_input)
+            content = f"{description}\nInput: {detail}"
             # Audit N-6: pass the canonical tool_name through so the
             # downstream ThoughtCaptured event has a structured field
             # instead of forcing offline metrics to parse the human prefix.
@@ -260,21 +294,24 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         self,
         queue: ToolEventQueue,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> AsyncIterator[ThoughtCaptured]:
         while not queue.empty():
             content, output_type, tool_name = queue.get_nowait()
+            content = str(self._sanitize_for_events(content, container_session))
             yield sequencer.thought(content, output_type, tool_name=tool_name)
 
     async def _process_message(
         self,
         message: Any,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> AsyncIterator[ThoughtCaptured]:
         if not isinstance(message, AssistantMessage):
             return
 
         for block in message.content:
-            result = self._process_block(block)
+            result = self._process_block(block, container_session)
             if result:
                 content, output_type = result
                 yield sequencer.thought(content, output_type)
@@ -325,21 +362,42 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         self,
         message: ResultMessage,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> DomainEvent:
+        result = self._sanitize_for_events(
+            getattr(message, "result", None),
+            container_session,
+        )
         if getattr(message, "is_error", False):
-            return sequencer.failed(getattr(message, "result", None) or "Task failed")
-        return sequencer.completed(getattr(message, "result", None) or "Task completed")
+            return sequencer.failed(str(result or "Task failed"))
+        return sequencer.completed(str(result or "Task completed"))
 
     @staticmethod
-    def _process_block(block: Any) -> tuple[str, str] | None:
+    def _sanitize_for_events(
+        value: Any,
+        container_session: ContainerSessionContext | None,
+    ) -> Any:
+        if container_session is None:
+            return value
+        return container_session.path_mapper.sanitize_host_paths(value)
+
+    @classmethod
+    def _process_block(
+        cls,
+        block: Any,
+        container_session: ContainerSessionContext | None = None,
+    ) -> tuple[str, str] | None:
         if isinstance(block, TextBlock):
-            if block.text.strip():
-                return block.text, "output"
+            text = cls._sanitize_for_events(block.text, container_session)
+            if isinstance(text, str) and text.strip():
+                return text, "output"
         elif isinstance(block, ThinkingBlock):
-            if block.thinking.strip():
-                return block.thinking, "thinking"
+            thinking = cls._sanitize_for_events(block.thinking, container_session)
+            if isinstance(thinking, str) and thinking.strip():
+                return thinking, "thinking"
         elif isinstance(block, ToolResultBlock):
-            content = str(block.content)[:500] if block.content else "(no output)"
+            sanitized = cls._sanitize_for_events(block.content, container_session)
+            content = str(sanitized)[:500] if sanitized else "(no output)"
             return f"Tool result: {content}", "tool_result"
         return None
 
