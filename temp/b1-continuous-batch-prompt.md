@@ -14,6 +14,11 @@ Scope:
 - Use host-side invocation with POSTGRES_HOST=localhost unless you are running inside the Compose app container.
 - Do not run A, B2, C, C2, or worker-only smoke unless debugging explicitly requires a local repro for one anomalous run.
 
+Model configuration notes:
+- B1 boss.model and manager.model can use Sonnet (same as worker) for cost savings. Opus is not required.
+- A-cell configs (A1, A2) use flat mode where boss.model/manager.model are OBSOLETE and ignored.
+- Only B-cells (hierarchical) actually use the boss/manager model settings.
+
 Read first:
 - agent-docs/concurrency-invariants.md
 - experiments/2026-05-13-my-study/configs/B1-ours-claude-noverifier.yaml
@@ -64,6 +69,13 @@ Generate an isolated B1 batch study:
    - source.paths: plugins/security/tests/fixtures/<slug>.json for every selected slug
 7. Store batch state under temp/b1-batch-state.json with selected tasks, batch size 20, completed batches, reruns, anomalies, blocked image builds, and timestamps.
 
+SEC-bench image tag semantics:
+- :latest = full reference state (source + patch + PoC)
+- :patch = source at vulnerable commit + PoC files, NO gold patch (model_patch.diff removed)
+- :poc = source only, no PoC artifacts
+IMPORTANT: :patch images do NOT contain pre-built binaries. The Builder worker MUST compile
+during the run. Binaries are installed to /work/bin/ by the Builder, not pre-baked in the image.
+
 Image prerequisite per batch:
 For each 20-task batch, build missing secb-tools images before running:
   deployment/build-all-images.sh -j 2 --continue-on-error \
@@ -83,8 +95,13 @@ Use exactly one cell and one 20-task set:
     --cells B1 \
     --tasks task1,task2,...,task20 \
     --replicates 1 \
-    --parallel 1 \
+    --parallel 4 \
     --no-render
+
+Parallelism notes:
+- --parallel 4 works well without 429/rate-limit issues.
+- Active workers will be <= min(parallel, pending_tasks).
+- Monitor with: docker ps --filter "name=secbench" --format "{{.Names}}: {{.Status}}"
 
 After batch completion, audit every run in that batch before moving to the next batch.
 
@@ -124,6 +141,19 @@ For each run_id, inspect run_manifest.json, DB events, Docker containers, and ev
 7. Stall:
    - no new DB events for 10 minutes while the run process is alive
    - process alive but no worker events and no active external API request
+
+Known failure modes (not bugs, infrastructure limits):
+- Watchdog timeout: "Agent step exceeded watchdog budget 900s" - single step took >15 min
+- LLM timeout: "LLM request timed out after 120s" - single API call hung
+- OOM kill: exit code 137 - container killed by memory limit
+These are expected for complex CVEs; mark as failed and continue, do not debug endlessly.
+
+Health monitoring during batch:
+- Event activity: docker exec -i arise-db psql -U arise -d arise_events -t -c \
+    "SELECT event_type, count(*) FROM events WHERE occurred_at > now() - interval '5 minutes' GROUP BY event_type ORDER BY count(*) DESC LIMIT 10;"
+- API errors: docker exec -i arise-db psql -U arise -d arise_events -t -c \
+    "SELECT count(*) FROM events WHERE event_type = 'ErrorOccurred' AND occurred_at > now() - interval '30 minutes';"
+- No 429/rate-limit issues observed with --parallel 4 on Sonnet.
 
 Useful DB inspection snippets:
 Set RUN_ID=<root uuid>, then use dockerized psql so host psql is not required:
