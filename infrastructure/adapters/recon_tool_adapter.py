@@ -505,18 +505,26 @@ class ReconToolAdapter:
         """Dispatch a tool call by name to the appropriate method.
 
         Filters arguments to only pass parameters the handler accepts,
-        since LLMs sometimes hallucinate extra kwargs.
+        since LLMs sometimes hallucinate extra kwargs. Validates that
+        required arguments are present before calling.
         """
         import inspect
 
         handler = getattr(self, name, None)
-        if handler is None or name not in {s.name for s in _TOOL_SPECS}:
+        spec = next((s for s in _TOOL_SPECS if s.name == name), None)
+        if handler is None or spec is None:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
         # Filter to only accepted parameters
         sig = inspect.signature(handler)
         valid_params = set(sig.parameters.keys())
         filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
+
+        # Validate required arguments are present
+        if spec.required:
+            missing = [r for r in spec.required if r not in filtered_args]
+            if missing:
+                return json.dumps({"error": f"Missing required argument(s): {', '.join(missing)}"})
 
         try:
             return await handler(**filtered_args)
