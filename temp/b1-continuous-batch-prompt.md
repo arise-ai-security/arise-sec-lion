@@ -3,16 +3,27 @@
 Use this prompt with Claude Code from the repository root.
 
 ```text
-BLUF: Run the B1 experiment continuously in 20-CVE batches until 200 CVE instances are attempted. Do not ask for operator confirmation between batches. After each batch, audit anomalies. If a run is anomalous, kill/clean only that run's resources, delete only that run hierarchy's DB events, remove only that run directory, rerun that task, then continue.
+BLUF: Run the B1 experiment continuously in 10-CVE batches until 200 CVE instances are attempted. Do not ask for operator confirmation between batches. After each batch, audit anomalies. If a run is anomalous, kill/clean only that run's resources, delete only that run hierarchy's DB events, remove only that run directory, rerun that task, then continue.
 
 Scope:
 - Cell: B1 only.
-- Config source: experiments/2026-05-13-my-study/configs/B1-ours-claude-noverifier.yaml.
+- Config source: experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml (already generated).
 - B1 means hierarchical boss -> manager -> worker, skip_judge=true, worker.tool=claude_code.
 - In hierarchical B1, claude_code uses the Claude SDK adapter path, not the flat Claude CLI A-cell path.
-- This is not a smoke test. Use full SEC-bench tasks in batches of 20.
+- This is not a smoke test. Use full SEC-bench tasks in batches of 10.
 - Use host-side invocation with POSTGRES_HOST=localhost unless you are running inside the Compose app container.
 - Do not run A, B2, C, C2, or worker-only smoke unless debugging explicitly requires a local repro for one anomalous run.
+
+Runtime knobs (this round):
+- --parallel 5 on run_matrix (5 simultaneous root tasks per batch).
+- batch_size = 10 tasks per batch (state file already on this cadence).
+- LLM concurrency: orchestration.concurrency.max_concurrent_llm_calls = 8 (already in config/config.yaml; do not lower for this study).
+- LLM gateway: default litellm. If LiteLLM 429 storms appear (>=5 RateLimitError events in any 5-minute window OR >=3 distinct runs failing with RateLimitError back-to-back), STOP the batch and switch the gateway to OpenRouter for subsequent batches by exporting ARISE_LLM_GATEWAY=openrouter (see "OpenRouter cutover" below). Do not flip back without an explicit instruction.
+- Timeouts: keep the minimum that still lets a normal hierarchical run finish. Override only if a baseline regression is observed:
+  * worker.timeout: 3600  (down from 5400)
+  * orchestration.max_run_duration_seconds: 5400  (down from 7200)
+  * orchestration.concurrency.max_agent_step_seconds: 600 (unchanged; watchdog = 1.5x)
+  Do NOT increase timeouts past these values mid-study. Watchdog timeouts on hard CVEs are expected and counted as failed, not retried.
 
 Model configuration notes:
 - B1 boss.model and manager.model can use Sonnet (same as worker) for cost savings. Opus is not required.
@@ -21,7 +32,7 @@ Model configuration notes:
 
 Read first:
 - agent-docs/concurrency-invariants.md
-- experiments/2026-05-13-my-study/configs/B1-ours-claude-noverifier.yaml
+- experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml
 - experiments/shared/scripts/run_matrix.py
 - experiments/shared/harness.py
 - deployment/build-secbench-tools.sh
@@ -29,6 +40,8 @@ Read first:
 - infrastructure/adapters/worker/shared/container_session.py
 - infrastructure/adapters/worker/shared/container_exec.py
 - plugins/security/docker_runtime.py
+- prompts/domains/secbench/manager/exploiter.j2  (Exploit-Validator deliverable contract)
+- bootstrap/infrastructure.py  (ARISE_LLM_GATEWAY env switch)
 
 Pre-flight:
 1. Confirm branch and dirty state. Do not stage/commit anything.
@@ -38,7 +51,7 @@ Pre-flight:
    set -a; . deployment/.env; set +a
    POSTGRES_HOST=localhost uv run python - <<'PY'
 from config.settings import Settings
-s = Settings.from_yaml("experiments/2026-05-13-my-study/configs/B1-ours-claude-noverifier.yaml")
+s = Settings.from_yaml("experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml")
 print(s.database.host, s.database.port, s.database.name)
 PY
 4. Confirm the B1 effective config:
@@ -47,27 +60,12 @@ PY
    - worker.tool == claude_code
    - worker.model == claude-sonnet-4-5-20250929
    - SEC-bench boss/pending/manager recon max_iterations == 20
-5. Confirm Anthropic Opus and Sonnet are reachable with tiny API calls. If Opus returns 529, sleep 60s and retry up to 3 times before starting a batch.
-
-Generate an isolated B1 batch study:
-1. Do not mutate experiments/2026-05-13-my-study/dataset.yaml.
-2. Create an uncommitted generated study under experiments/b1-batch-autogen.
-3. Use the first 200 sorted CVE fixture slugs from plugins/security/tests/fixtures/*.json, filtering to names containing ".cve-".
-4. Write manifest.yaml with only B1:
-   study_id: b1-batch-autogen
-   dataset: dataset.yaml
-   replicates: 1
-   cells:
-     B1: {group: B, runner: arise, config: configs/B1-ours-claude-noverifier.yaml}
-   headline_cells: [B1]
-5. Copy the B1 config into experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml.
-6. Write dataset.yaml with:
-   - name: secbench-200cves-b1
-   - default_cves: all 200 selected slugs
-   - per_cell_overrides: {}
-   - source.kind: deployment-json
-   - source.paths: plugins/security/tests/fixtures/<slug>.json for every selected slug
-7. Store batch state under temp/b1-batch-state.json with selected tasks, batch size 20, completed batches, reruns, anomalies, blocked image builds, and timestamps.
+   - orchestration.concurrency.max_concurrent_llm_calls == 8
+   - worker.timeout <= 3600 (override in config if needed; current effective value should be 3600)
+5. Confirm the active LLM gateway: echo "${ARISE_LLM_GATEWAY:-litellm}". Confirm Anthropic Sonnet is reachable with a tiny call. If a single ping returns 429, sleep 60s and retry up to 3 times before starting a batch. If 3 retries all fail with 429 against litellm, perform the OpenRouter cutover BEFORE launching the batch.
+6. Confirm batch state and resume point:
+   - Read temp/b1-batch-state.json; identify the first batch with status != "completed".
+   - Cross-reference runs/*/run_manifest.json (study_id == "b1-batch-autogen", cell == "B1") against the batch task list. Any task with a non-failed run_manifest and exit_status in {success, failed} is already attempted; skip re-running it unless flagged anomalous below.
 
 SEC-bench image tag semantics:
 - :latest = full reference state (source + patch + PoC)
@@ -77,7 +75,7 @@ IMPORTANT: :patch images do NOT contain pre-built binaries. The Builder worker M
 during the run. Binaries are installed to /work/bin/ by the Builder, not pre-baked in the image.
 
 Image prerequisite per batch:
-For each 20-task batch, build missing secb-tools images before running:
+For each 10-task batch, build missing secb-tools images before running:
   deployment/build-all-images.sh -j 2 --continue-on-error \
     plugins/security/tests/fixtures/<task1>.json \
     ...
@@ -88,18 +86,19 @@ If an image build fails:
 - Continue with the remaining tasks. Do not treat a missing image build as a run anomaly because no run exists yet.
 
 Run one batch:
-Use exactly one cell and one 20-task set:
+Use exactly one cell and one 10-task set:
   set -a; . deployment/.env; set +a
-  POSTGRES_HOST=localhost uv run python -m experiments.shared.scripts.run_matrix \
-    --study b1-batch-autogen \
-    --cells B1 \
-    --tasks task1,task2,...,task20 \
-    --replicates 1 \
-    --parallel 4 \
-    --no-render
+  POSTGRES_HOST=localhost ARISE_LLM_GATEWAY="${ARISE_LLM_GATEWAY:-litellm}" \
+    uv run python -m experiments.shared.scripts.run_matrix \
+      --study b1-batch-autogen \
+      --cells B1 \
+      --tasks task1,task2,...,task10 \
+      --replicates 1 \
+      --parallel 5 \
+      --no-render
 
 Parallelism notes:
-- --parallel 4 works well without 429/rate-limit issues.
+- --parallel 5 is the target. If 429 storms emerge on litellm, do NOT lower parallelism — perform the OpenRouter cutover instead.
 - Active workers will be <= min(parallel, pending_tasks).
 - Monitor with: docker ps --filter "name=secbench" --format "{{.Names}}: {{.Status}}"
 
@@ -141,6 +140,10 @@ For each run_id, inspect run_manifest.json, DB events, Docker containers, and ev
 7. Stall:
    - no new DB events for 10 minutes while the run process is alive
    - process alive but no worker events and no active external API request
+8. Exploiter deliverable (NEW, this round):
+   - run_manifest.deliverables.exploit_validation_results.txt must be true (the Exploit-Validator worker is required to drop /testcase/exploit_validation_results.txt). If missing on a non-failed run, treat as anomaly and rerun the task.
+   - The file (after copy-out under runs/<run_id>/testcase/exploit_validation_results.txt) MUST start with the 8-key machine-readable block (VERDICT, REASON, EXPECTED_SANITIZER_ERROR, OBSERVED_SANITIZER_ERROR, CRASH_FUNCTION_EXPECTED, CRASH_FUNCTION_OBSERVED, DETERMINISM_RUNS, CORRUPTION_ORIGIN_FUNCTION). If the block is missing or malformed, mark anomaly and rerun once.
+   - Also expect /testcase/repro.sh, /testcase/poc.* and the per-role artifacts (poc_operation_map.txt, data_flow_findings.txt, forward_instrumentation.log). Their absence on a "success" run is a soft anomaly — record it in temp/b1-batch-state.json under anomalies but do NOT rerun solely on that basis.
 
 Known failure modes (not bugs, infrastructure limits):
 - Watchdog timeout: "Agent step exceeded watchdog budget 900s" - single step took >15 min
@@ -148,12 +151,23 @@ Known failure modes (not bugs, infrastructure limits):
 - OOM kill: exit code 137 - container killed by memory limit
 These are expected for complex CVEs; mark as failed and continue, do not debug endlessly.
 
-Health monitoring during batch:
+Health monitoring during batch (poll every 60-120s while a batch is running):
 - Event activity: docker exec -i arise-db psql -U arise -d arise_events -t -c \
     "SELECT event_type, count(*) FROM events WHERE occurred_at > now() - interval '5 minutes' GROUP BY event_type ORDER BY count(*) DESC LIMIT 10;"
 - API errors: docker exec -i arise-db psql -U arise -d arise_events -t -c \
-    "SELECT count(*) FROM events WHERE event_type = 'ErrorOccurred' AND occurred_at > now() - interval '30 minutes';"
-- No 429/rate-limit issues observed with --parallel 4 on Sonnet.
+    "SELECT count(*) FROM events WHERE event_type = 'ErrorOccurred' AND occurred_at > now() - interval '10 minutes';"
+- LiteLLM 429 watchdog (NEW): docker exec -i arise-db psql -U arise -d arise_events -t -c \
+    "SELECT count(*) FROM events WHERE event_type='ErrorOccurred' AND payload::text ~* '(RateLimitError|429|rate.?limit)' AND occurred_at > now() - interval '5 minutes';"
+  If this returns >= 5 inside any 5-minute window, OR if >= 3 distinct run_manifest.exit_status='failed' runs in the current batch reference RateLimitError in their event payloads, trigger the OpenRouter cutover below.
+- Exploiter deliverable spot-check: for completed runs in this batch, confirm runs/<id>/testcase/exploit_validation_results.txt exists and grep -E '^VERDICT: (PASS|FAIL)$' is present.
+
+OpenRouter cutover (triggered only by the 429 watchdog above):
+1. Drain in-flight runs: wait for already-launched run_matrix processes to finish naturally — do NOT kill them just because of 429.
+2. For all subsequent batches, prepend the gateway env to every invocation:
+   ARISE_LLM_GATEWAY=openrouter POSTGRES_HOST=localhost uv run python -m experiments.shared.scripts.run_matrix ...
+3. Record cutover_to_openrouter_at (ISO timestamp) and cutover_reason (e.g., "litellm 429 storm: 7 RateLimitError events in 5-min window") in temp/b1-batch-state.json.
+4. Confirm OPENROUTER_API_KEY is set in deployment/.env. If absent, STOP and report blocked_openrouter_missing_key.
+5. Do not flip back to litellm without explicit operator instruction.
 
 Useful DB inspection snippets:
 Set RUN_ID=<root uuid>, then use dockerized psql so host psql is not required:
@@ -246,27 +260,30 @@ SQL
    test ! -e "runs/$RUN_ID"
 5. Rerun only that task once:
    set -a; . deployment/.env; set +a
-   POSTGRES_HOST=localhost uv run python -m experiments.shared.scripts.run_matrix \
-     --study b1-batch-autogen \
-     --cells B1 \
-     --tasks "$TASK" \
-     --replicates 1 \
-     --parallel 1 \
-     --no-render
+   POSTGRES_HOST=localhost ARISE_LLM_GATEWAY="${ARISE_LLM_GATEWAY:-litellm}" \
+     uv run python -m experiments.shared.scripts.run_matrix \
+       --study b1-batch-autogen \
+       --cells B1 \
+       --tasks "$TASK" \
+       --replicates 1 \
+       --parallel 1 \
+       --no-render
 6. Audit the rerun. If the rerun is still anomalous, clean it once more, mark task as failed_after_rerun in temp/b1-batch-state.json, and continue to the next task/batch. Do not loop forever.
 
 Continue policy:
-- After a batch has no unresolved anomalies, immediately continue to the next 20-task batch.
+- After a batch has no unresolved anomalies, immediately continue to the next 10-task batch.
 - Do not ask for user confirmation between batches.
-- Stop only after all 10 batches have been attempted, Docker/DB cleanup has been verified, and temp/b1-batch-state.json has final status.
+- Stop only after all batches up to 200 attempted tasks have been attempted, Docker/DB cleanup has been verified, and temp/b1-batch-state.json has final status.
 
 Final report:
-- BLUF: completed / completed_with_blocked_tasks / stopped_due_to_systemic_failure.
+- BLUF: completed / completed_with_blocked_tasks / stopped_due_to_systemic_failure / stopped_after_openrouter_cutover.
 - Batches attempted and task counts.
 - Successful tasks.
 - Image-build blocked tasks.
 - Tasks rerun and outcome.
 - Remaining anomalies with exact run_id/task evidence.
+- LiteLLM 429 events observed, cutover timestamp if any, gateway used per batch.
+- Exploit-Validator deliverable coverage: count of runs with /testcase/exploit_validation_results.txt present + count with a valid VERDICT line.
 - Confirm no secbench-worker containers remain for failed/cleaned runs.
 - Confirm no broad DB delete was used; all deletes were scoped by root run_id hierarchy.
 ```

@@ -17,6 +17,7 @@ overrides:
   worker.model: claude-sonnet-4-5-20250929
   worker.allowed_tools: [Read, Write, Edit, MultiEdit, Bash, Glob, Grep]
   worker.disallowed_tools: [WebSearch, WebFetch]
-  worker.timeout: 5400
+  worker.timeout: 3600
   worker.max_iterations_per_run: 250
+  orchestration.max_run_duration_seconds: 5400
   output.directory: ./runs
