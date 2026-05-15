@@ -376,10 +376,12 @@ class AgentExecutionService:
 
             for agent_id in new_agents:
                 in_progress.add(agent_id)
+                # ``task_started_at`` is populated inside ``_run_agent_step_safe``
+                # once the LLM semaphore is acquired, so the watchdog budget
+                # measures work time and not time spent queued behind the slot.
                 tasks[agent_id] = asyncio.create_task(
-                    self._run_agent_step_safe(agent_id)
+                    self._run_agent_step_safe(agent_id, task_started_at)
                 )
-                task_started_at[agent_id] = time.monotonic()
                 agent_last_progress_at.setdefault(agent_id, time.monotonic())
 
             now = time.monotonic()
@@ -586,7 +588,11 @@ class AgentExecutionService:
             return "timed_out"
         return "failed"
 
-    async def _run_agent_step_safe(self, agent_id: UUID) -> None:
+    async def _run_agent_step_safe(
+        self,
+        agent_id: UUID,
+        task_started_at: dict[UUID, float] | None = None,
+    ) -> None:
         """Execute agent step with jitter, rate limiting, and a hard per-step timeout.
 
         The hard timeout prevents an orchestrator step from blocking forever in
@@ -599,6 +605,10 @@ class AgentExecutionService:
                 await asyncio.sleep(jitter_ms / 1000.0)
 
             async with self._llm_semaphore:
+                # Watchdog clock starts here so queued time does not count
+                # against the per-step budget.
+                if task_started_at is not None:
+                    task_started_at[agent_id] = time.monotonic()
                 await asyncio.wait_for(
                     self.run_agent_step(agent_id),
                     timeout=self._max_agent_step_seconds,
