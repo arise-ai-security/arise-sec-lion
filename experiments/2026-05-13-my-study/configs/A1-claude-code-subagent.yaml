@@ -11,6 +11,9 @@ extends: config/config.yaml
 overrides:
   orchestration.mode: flat
   orchestration.skip_judge: true
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
   boss.model: claude-opus-4-5-20251101
   manager.model: claude-opus-4-5-20251101
   worker.tool: claude_code
@@ -24,13 +27,13 @@ overrides:
   # 250 = generous cap chosen for SEC-bench parity. SecVerifier's documented
   # default is 20; we raise it so flat-mode A-cells aren't iteration-starved
   # relative to hierarchical B/C cells whose work is split across workers.
-  worker.max_iterations_per_run: 250
+  worker.max_iterations_per_run: 2500
   output.directory: ./runs
   worker.tool_params:
     claude_code:
       output_format: stream-json
       include_partial_messages: true
-      max_turns: 250
+      max_turns: 2500
       # In-container Claude CLI authenticates via ANTHROPIC_API_KEY; the
       # operator's ~/.claude config is not bind-mounted (would leak creds).
       use_global_config: false

@@ -7,6 +7,9 @@ extends: config/config.yaml
 overrides:
   orchestration.mode: hierarchical
   orchestration.skip_judge: false
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
   boss.model: claude-opus-4-5-20251101
   manager.model: claude-opus-4-5-20251101
   worker.tool: claude_code
