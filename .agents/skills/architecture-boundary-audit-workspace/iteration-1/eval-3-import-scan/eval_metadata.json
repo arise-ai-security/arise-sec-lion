@@ -1,0 +1,32 @@
+{
+  "eval_id": 3,
+  "eval_name": "import-scan",
+  "prompt": "Are there any files outside plugins/ and bootstrap/composition.py that import from the security plugin?",
+  "assertions": [
+    {
+      "id": "finds-query-app",
+      "text": "Report identifies query/api/app.py importing from plugins.security as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "finds-secbench-runtime",
+      "text": "Report identifies infrastructure/adapters/secbench_runtime.py importing from plugins.security as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "finds-infra-test",
+      "text": "Report identifies infrastructure/tests/test_secbench_runtime.py importing from plugins.security as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "excludes-composition",
+      "text": "Report does NOT flag bootstrap/composition.py — it is the allowed import point",
+      "type": "exclusion_check"
+    },
+    {
+      "id": "excludes-plugins-internal",
+      "text": "Report does NOT flag imports within plugins/ itself",
+      "type": "exclusion_check"
+    }
+  ]
+}

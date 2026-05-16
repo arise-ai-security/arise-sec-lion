@@ -1,0 +1,23 @@
+{
+  "skill_name": "architecture-boundary-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Audit the architecture boundaries of this project",
+      "expected_output": "A full report listing all boundary violations — import violations, security term leakage in generic code, security content in generic prompts, and topology logic in plugins. Should find real violations like query/api/app.py importing SecurityDomainPlugin, core/application hardcoding CVE regex, etc.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Check if any security concepts leaked into the prompt templates that should be generic",
+      "expected_output": "A focused report on prompt templates. Should find CVE-XXXX placeholders in prompts/operations/assess.j2 and decomposition.j2. Should confirm prompts/domains/secbench/ is excluded from the scan.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Are there any files outside plugins/ and bootstrap/composition.py that import from the security plugin?",
+      "expected_output": "Should find query/api/app.py importing SecurityDomainPlugin and infrastructure/adapters/secbench_runtime.py importing from plugins.security. Should clearly state these are violations of the single-composition-root rule.",
+      "files": []
+    }
+  ]
+}

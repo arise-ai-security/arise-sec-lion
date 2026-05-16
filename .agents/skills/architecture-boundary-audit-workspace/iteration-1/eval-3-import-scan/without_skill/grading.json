@@ -1,0 +1,35 @@
+{
+  "eval_id": 3,
+  "eval_name": "import-scan",
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Report identifies query/api/app.py importing from plugins.security as a violation",
+      "passed": true,
+      "evidence": "#1: query/api/app.py line 18"
+    },
+    {
+      "text": "Report identifies infrastructure/adapters/secbench_runtime.py importing from plugins.security as a violation",
+      "passed": true,
+      "evidence": "#2: infrastructure/adapters/secbench_runtime.py lines 10-14"
+    },
+    {
+      "text": "Report identifies infrastructure/tests/test_secbench_runtime.py importing from plugins.security as a violation",
+      "passed": true,
+      "evidence": "#3: infrastructure/tests/test_secbench_runtime.py lines 5-8"
+    },
+    {
+      "text": "Report does NOT flag bootstrap/composition.py — it is the allowed import point",
+      "passed": true,
+      "evidence": "Listed in summary table as 'No (allowed)'"
+    },
+    {
+      "text": "Report does NOT flag imports within plugins/ itself",
+      "passed": true,
+      "evidence": "No plugins/-internal imports appear in findings"
+    }
+  ],
+  "pass_rate": 1.0,
+  "passed": 5,
+  "total": 5
+}

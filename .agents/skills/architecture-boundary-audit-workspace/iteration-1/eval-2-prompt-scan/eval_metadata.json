@@ -1,0 +1,27 @@
+{
+  "eval_id": 2,
+  "eval_name": "prompt-scan",
+  "prompt": "Check if any security concepts leaked into the prompt templates that should be generic",
+  "assertions": [
+    {
+      "id": "finds-assess-cve",
+      "text": "Report identifies CVE-XXXX in prompts/operations/assess.j2 as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "finds-decomposition-cve",
+      "text": "Report identifies CVE-XXXX in prompts/operations/decomposition.j2 as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "excludes-secbench",
+      "text": "Report does NOT flag files under prompts/domains/secbench/ — those are allowed to have security content",
+      "type": "exclusion_check"
+    },
+    {
+      "id": "scans-all-generic-templates",
+      "text": "Report confirms it scanned system.j2, roles/*.j2, operations/*.j2, and context/*.j2",
+      "type": "coverage_check"
+    }
+  ]
+}
