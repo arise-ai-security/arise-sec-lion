@@ -62,6 +62,20 @@ IN_CONTAINER_CLAUDE_EXECUTABLE = "claude"
 SDK_CONTAINER_WRAPPER_PATH = ".arise/claude-sdk-in-container"
 
 
+def _builtin_tools_for_loading(allowed_tools: list[str]) -> list[str]:
+    # `allowed_tools` is the call-time gate; the CLI's `--tools` flag controls
+    # which built-in tool SCHEMAS get loaded into the cached system prefix.
+    # Without `--tools`, the CLI ships its full default catalog (32K-55K
+    # cache_write tokens/session in current telemetry). Filter to bare
+    # built-in names: drop MCP-prefixed entries (loaded via --mcp-config) and
+    # permission patterns like `Bash(ls:*)` (allowedTools-only syntax).
+    return [
+        name
+        for name in allowed_tools
+        if name and not name.startswith("mcp__") and "(" not in name
+    ]
+
+
 @dataclass
 class SDKAdapterConfig:
     """Configuration for Claude Agent SDK adapter."""
@@ -212,6 +226,9 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 ],
             },
         }
+        builtin_tools = _builtin_tools_for_loading(self.config.allowed_tools)
+        if builtin_tools:
+            kwargs["tools"] = builtin_tools
         if self.config.thinking_display is not None:
             kwargs["extra_args"] = {"thinking-display": self.config.thinking_display}
         if self.config.max_thinking_tokens is not None:

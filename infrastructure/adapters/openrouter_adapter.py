@@ -41,6 +41,8 @@ from core.domain.values.llm_response import (
 )
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
 from infrastructure.adapters.litellm_adapter import (
+    _apply_anthropic_cache_to_messages,
+    _apply_anthropic_cache_to_tools,
     _require_model,
     _strip_tool_content,
     _try_parse_content_tool_calls,
@@ -300,12 +302,13 @@ class OpenRouterAdapter(LLMPort):
         # defined. Strip tool turns so the post-iteration "force final answer"
         # call works for both Anthropic-via-OpenRouter and OpenAI-via-OpenRouter.
         outbound_messages = messages if tools else _strip_tool_content(messages)
+        outbound_messages = _apply_anthropic_cache_to_messages(outbound_messages, model)
         kwargs = self._build_kwargs(
             messages=outbound_messages,
             merged_config=merged_config,
             model=model,
             default_max_tokens=4000,
-            tools=tools or None,
+            tools=_apply_anthropic_cache_to_tools(tools or None, model),
         )
         response = await self._call(model=model, **kwargs)
         message = response.choices[0].message

@@ -56,6 +56,61 @@ def _strip_tool_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return cleaned
 
 
+def _supports_anthropic_cache(model: str) -> bool:
+    # Anthropic prompt caching (5-min ephemeral TTL, ~90% read discount)
+    # only applies when the request reaches an Anthropic model. LiteLLM
+    # passes `cache_control` through on these models and ignores/rejects it
+    # elsewhere, so we gate emission defensively.
+    m = model.lower()
+    return (
+        "claude" in m
+        or m.startswith("anthropic/")
+        or m.startswith("bedrock/anthropic.")
+    )
+
+
+def _apply_anthropic_cache_to_messages(
+    messages: list[dict[str, Any]], model: str
+) -> list[dict[str, Any]]:
+    # Mark the first user message for ephemeral caching. On the multi-turn
+    # tool-calling loop and recovery turns this message stays byte-identical
+    # across calls, so subsequent calls hit cache_read instead of paying
+    # full input pricing on the static prompt prefix.
+    if not _supports_anthropic_cache(model):
+        return messages
+    out = list(messages)
+    for i, msg in enumerate(out):
+        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            out[i] = {
+                **msg,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": msg["content"],
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+            break
+    return out
+
+
+def _apply_anthropic_cache_to_tools(
+    tools: list[dict[str, Any]] | None, model: str
+) -> list[dict[str, Any]] | None:
+    # A single marker on the last tool entry tells Anthropic to cache the
+    # entire tools array. The tool-calling loop re-sends the full array on
+    # every turn; without this, every turn pays full input on identical
+    # tool schemas.
+    if not tools or not _supports_anthropic_cache(model):
+        return tools
+    out = list(tools)
+    last = dict(out[-1])
+    last["cache_control"] = {"type": "ephemeral"}
+    out[-1] = last
+    return out
+
+
 class LiteLLMAdapter(LLMPort):
     """Query LLMs via LiteLLM (OpenAI, Anthropic, etc.) with cost tracking."""
 
@@ -328,12 +383,15 @@ class LiteLLMAdapter(LLMPort):
             "top_p": merged_config.get("top_p"),
         }
         if tools:
-            call_kwargs["tools"] = tools
+            call_kwargs["tools"] = _apply_anthropic_cache_to_tools(tools, model)
         else:
             # Anthropic rejects messages containing tool_calls/tool results
             # when no tools are defined. Strip tool content so the fallback
             # "force final answer" call after max iterations works cleanly.
             call_kwargs["messages"] = _strip_tool_content(messages)
+        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(
+            call_kwargs["messages"], model
+        )
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
