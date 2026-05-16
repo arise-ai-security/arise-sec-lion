@@ -52,7 +52,7 @@ orchestration:
     max_concurrent_workers: 1  # Sequential execution so sibling context is populated
     max_concurrent_llm_calls: 8   # Parallel Boss/Manager/Evaluator steps; workers are still serialized via sequential_workers=True + _worker_semaphore=1
     llm_jitter_max_ms: 1500    # Spreads parallel-job bursts to reduce 429 storms.
-    max_agent_step_seconds: 600  # Hard cap per agent step; watchdog at 1.5x.
+    max_agent_step_seconds: 900  # Hard cap per agent step; watchdog at 1.5x.
 
   tool_calling:
     # Iterations control how many tool-calling rounds an agent gets.

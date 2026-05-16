@@ -65,7 +65,7 @@ class ExecutionLimitsBridge:
     max_concurrent_llm_calls: int = 5
     llm_jitter_max_ms: int = 500
     max_run_duration_seconds: float = 1800
-    max_agent_step_seconds: float = 600.0
+    max_agent_step_seconds: float = 900.0
 
     def is_workers_limited(self) -> bool:
         return self.max_concurrent_workers > 0

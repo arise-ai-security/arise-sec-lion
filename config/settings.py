@@ -301,7 +301,7 @@ class ConcurrencyConfig(BaseModel):
     llm_jitter_max_ms: int = 500
     # Hard cap on a single agent step (assess/decompose/judge/dispatch). Stops
     # the orchestrator from blocking forever inside LiteLLM retry storms.
-    max_agent_step_seconds: float = 600.0
+    max_agent_step_seconds: float = 900.0
 
     def is_workers_limited(self) -> bool:
         return self.max_concurrent_workers > 0
