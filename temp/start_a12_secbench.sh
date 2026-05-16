@@ -13,9 +13,9 @@ set -euo pipefail
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-STUDY_ID="2026-04-23-initial-secbench"
+STUDY_ID="a12-batch-autogen"
 CELLS="A1,A2"
-PARALLEL="${PARALLEL:-4}"    # concurrent CVE runs
+PARALLEL="${PARALLEL:-8}"    # concurrent CVE runs
 BUILD_JOBS="${BUILD_JOBS:-4}" # concurrent Docker image builds
 
 while [[ $# -gt 0 ]]; do
@@ -75,7 +75,7 @@ fi
 DATASET="$REPO_DIR/experiments/${STUDY_ID}/dataset.yaml"
 [[ -f "$DATASET" ]] || die "Dataset not found: $DATASET"
 
-mapfile -t ALL_CVES < <(grep '^ *- ' "$DATASET" | awk '{print $2}')
+mapfile -t ALL_CVES < <(grep '^ *- ' "$DATASET" | awk '{print $2}' | grep -v '/')
 [[ ${#ALL_CVES[@]} -gt 0 ]] || die "No CVEs found in $DATASET"
 
 # Resolve expected image name for a CVE slug (mirrors build-secbench-tools.sh logic)

@@ -5,7 +5,7 @@
 #   cd ~/arise-sec-lion
 #   set -a && source deployment/.env && set +a
 #   uv run python -m experiments.shared.scripts.run_matrix \
-#     --study <study-id> --cells A1,A2 --parallel 4
+#     --study <study-id> --cells A1,A2 --parallel 8
 #
 # Usage:
 #   bash gcp_setup.sh --study 2026-04-23-initial-secbench
@@ -218,7 +218,7 @@ if [[ -n "$STUDY_ID" ]]; then
     exit 1
   fi
 
-  mapfile -t CVE_IDS < <(grep '^ *- ' "$DATASET" | awk '{print $2}')
+  mapfile -t CVE_IDS < <(grep '^ *- ' "$DATASET" | awk '{print $2}' | grep -v '/')
   if [[ ${#CVE_IDS[@]} -eq 0 ]]; then
     echo "ERROR: no CVEs found in $DATASET"
     exit 1
@@ -296,9 +296,9 @@ if [[ "$PASS" == "true" ]]; then
   echo "     set -a && source deployment/.env && set +a"
   echo "     uv run python -m experiments.shared.scripts.run_matrix \\"
   if [[ -n "$STUDY_ID" ]]; then
-    echo "       --study ${STUDY_ID} --cells A1,A2 --parallel 4"
+    echo "       --study ${STUDY_ID} --cells A1,A2 --parallel 8"
   else
-    echo "       --study <study-id> --cells A1,A2 --parallel 4"
+    echo "       --study <study-id> --cells A1,A2 --parallel 8"
   fi
   echo "════════════════════════════════════════════════════"
 else
