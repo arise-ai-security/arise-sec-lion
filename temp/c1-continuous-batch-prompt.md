@@ -81,14 +81,14 @@ If an image build fails:
 - Continue with the remaining tasks. Do not treat a missing image build as a run anomaly because no run exists yet.
 
 Run one batch:
-Use exactly one cell and one 20-task set:
+Use exactly one cell and one batch-size set (start with 8 tasks; scale up after validating):
   set -a; . deployment/.env; set +a
   POSTGRES_HOST=localhost uv run python -m experiments.shared.scripts.run_matrix \
     --study c1-batch-autogen \
     --cells C1 \
-    --tasks task1,task2,...,task20 \
+    --tasks task1,task2,...,taskN \
     --replicates 1 \
-    --parallel 1 \
+    --parallel 4 \
     --no-render
 
 After batch completion, audit every run in that batch before moving to the next batch.
@@ -136,6 +136,29 @@ For each run_id, inspect run_manifest.json, DB events, Docker containers, and ev
    - repeated Ollama connection errors
    - qwen3:8b missing after pre-flight
    - worker attempts to call a remote model instead of local Ollama for C1 worker
+9. Ollama connectivity (verify URL normalization fix is working):
+   - After each run, confirm at least one worker-level LLM event exists in the hierarchy
+     (ThoughtCaptured or WorkerCostRecorded with model ollama_chat/qwen3:8b in payload).
+     If no such events exist after 10 minutes, ollama was never reached — treat as ollama stall.
+   - Verify effective_base_url is clean (no trailing dot). Check the run's effective_config.yaml:
+       grep "api_base\|base_url" runs/<run_id>/effective_config.yaml
+     Expected: http://localhost:11434 (no trailing dot). A trailing dot means the URL normalization
+     is not being applied correctly.
+   - If the worker container started but no ollama LLM calls appear in events, check container logs:
+       docker logs <container_id> 2>&1 | grep -i "ollama\|timeout\|connection\|refused"
+10. Timeout classification:
+   - When exit_status is "timeout", identify which agent was active at timeout using the DB:
+       SELECT aggregate_id, event_type, occurred_at
+       FROM events
+       WHERE aggregate_id IN (SELECT aggregate_id FROM targets)
+       ORDER BY occurred_at DESC LIMIT 20;
+   - Record: which agent timed out (boss/manager/worker), how many iterations completed,
+     how many tokens were generated (from WorkerCostRecorded or run_manifest tokens).
+   - If timeout occurred at boss/manager level with no worker events, investigate API latency.
+   - If timeout occurred at worker level, verify worker.timeout=5400 is being applied:
+     a run should timeout at ~5400s of worker execution, not sooner.
+   - Record timeout timing in temp/c1-batch-state.json as: {"task": ..., "exit_status": "timeout",
+     "timeout_phase": "boss|manager|worker", "worker_iterations": N, "run_duration_seconds": N}
 
 Useful DB inspection snippets:
 Set RUN_ID=<root uuid>, then use dockerized psql so host psql is not required:
@@ -233,7 +256,7 @@ SQL
      --cells C1 \
      --tasks "$TASK" \
      --replicates 1 \
-     --parallel 1 \
+     --parallel 4 \
      --no-render
 6. Audit the rerun. If the rerun is still anomalous, clean it once more, mark task as failed_after_rerun in temp/c1-batch-state.json, and continue to the next task/batch. Do not loop forever.
 
