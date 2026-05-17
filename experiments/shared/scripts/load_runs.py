@@ -57,20 +57,25 @@ def default_pool_roots() -> list[Path]:
 def _settings_output_directory() -> Path | None:
     """Resolve ``settings.output.directory`` to an absolute Path, or None.
 
-    Wrapped so the Settings import + load happens at call time, not at
-    module import. Any failure (missing env vars, malformed YAML) downgrades
-    to ``None`` with a warning so the harness still finds runs under
-    ``runs/`` when a developer hasn't set up Postgres yet.
+    Reads the raw merged YAML rather than the full pydantic ``Settings``
+    model. ``Settings.load()`` requires experiment model names that the
+    base ``config.yaml`` intentionally omits (see
+    ``test_base_config_without_models_fails``); validating it just to read
+    ``output.directory`` would emit a misleading "model missing" warning
+    on every cell-less call. Any failure (missing files, malformed YAML)
+    downgrades to ``None`` so the harness still finds runs under ``runs/``.
     """
     try:
-        from config import Settings  # local import: heavy + env-dependent
+        from config.settings import _load_yaml_hierarchy
 
-        settings = Settings.load()
-    except (ValueError, ImportError, FileNotFoundError, yaml.YAMLError) as exc:
-        logger.warning("could not load Settings to resolve output.directory: %s", exc)
+        merged = _load_yaml_hierarchy()
+    except (ImportError, FileNotFoundError, yaml.YAMLError) as exc:
+        logger.warning("could not load YAML to resolve output.directory: %s", exc)
         return None
 
-    raw = settings.output.directory
+    raw = (merged.get("output") or {}).get("directory")
+    if not raw:
+        return None
     candidate = Path(raw)
     if not candidate.is_absolute():
         candidate = (get_repo_root() / candidate).resolve()
