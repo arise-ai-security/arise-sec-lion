@@ -7,13 +7,13 @@ dependencies = [
     "asyncpg>=0.30.0",
     "claude-agent-sdk>=0.1.18",
     "click>=8.1.0",
-    "fastapi>=0.115.0,<0.124.0",
+    "fastapi>=0.115.0",
     "google-adk>=1.21.0",
     "jinja2>=3.1.6",
     "litellm>=1.80.0",
     "mcp>=1.9.0",
-    "openhands-sdk>=1.4.1",
-    "openhands-tools>=1.4.1",
+    "openhands-sdk>=1.20.0",
+    "openhands-tools>=1.20.0",
     "orjson>=3.11.4",
     "pydantic>=2.12.4",
     "pydantic-settings>=2.12.0",
@@ -24,13 +24,17 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "crosshair-tool>=0.0.104",
     "hypothesis>=6.100.0",
+    "mypy>=1.20.2",
     "pre-commit>=4.4.0",
+    "pylint>=4.0.5",
     "pyright>=1.1.407",
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=6.0.0",
     "ruff>=0.14.5",
+    "types-pyyaml>=6.0.12.20260408",
 ]
 
 [tool.pytest.ini_options]
@@ -42,11 +46,15 @@ testpaths = [
     "infrastructure/tests",
     "presentation/tests",
     "bootstrap/tests",
+    "config/tests",
+    "plugins/security/tests",
+    "tests/experiments",
 ]
 markers = [
     "e2e: end-to-end tests (require full infrastructure)",
     "integration: integration tests (require external services)",
     "property: property-based tests (may take longer)",
+    "requires_docker: tests that require a local Docker daemon",
 ]
 addopts = "-v --tb=short"
 
@@ -63,3 +71,17 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+files = [
+    "bootstrap",
+    "config",
+    "core",
+    "experiments",
+    "infrastructure",
+    "plugins",
+    "presentation",
+]
+exclude = '(^|/)(tests|runs|_legacy)/|^scripts/|^dataset-final/|^datasets-legacy/'
+ignore_missing_imports = true

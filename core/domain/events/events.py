@@ -217,11 +217,18 @@ class CodeGenerationStarted(DomainEvent):
 
 
 class ThoughtCaptured(DomainEvent):
-    """Worker tool output captured (thinking, progress, output, debug)."""
+    """Worker tool output captured (thinking, progress, output, debug).
+
+    Audit N-6: ``tool_name`` carries the canonical tool identifier when
+    ``output_type == "tool_use"``. Without it, downstream metric pipelines
+    have to parse the human-formatted ``content`` prefix (``Running:``,
+    ``Reading:``, ...) which is lossy and adapter-specific.
+    """
 
     content: str
     stream: str = "tool"
     output_type: str = "output"
+    tool_name: str | None = None
 
 
 class PromptSent(DomainEvent):
@@ -347,29 +354,21 @@ class WorkerCostRecorded(DomainEvent):
     duration_seconds: float = 0.0
 
     @property
-    def total_recorded_tokens(self) -> int | None:
-        """Return the best available total token count for this worker event."""
-        if self.tokens is not None:
-            return self.tokens
-
-        token_parts = (
-            self.prompt_tokens,
-            self.completion_tokens,
-            self.cache_read_tokens,
-            self.cache_write_tokens,
-            self.reasoning_tokens,
+    def total_recorded_tokens(self) -> int:
+        """Sum of the five token-breakdown buckets (audit N-3)."""
+        return (
+            (self.prompt_tokens or 0)
+            + (self.completion_tokens or 0)
+            + (self.cache_read_tokens or 0)
+            + (self.cache_write_tokens or 0)
+            + (self.reasoning_tokens or 0)
         )
-        if not any(part is not None for part in token_parts):
-            return None
-
-        return sum(part or 0 for part in token_parts)
 
     @property
     def model_costs(self) -> dict[str, float]:
-        """Return the most accurate per-model cost breakdown available."""
         if self.usage_metrics:
             costs: dict[str, float] = {}
-            for usage in self.usage_metrics:
+            for usage in self.usage_metrics:  # pylint: disable=not-an-iterable
                 if not usage.model:
                     continue
                 costs[usage.model] = costs.get(usage.model, 0.0) + usage.accumulated_cost_usd

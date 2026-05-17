@@ -1,0 +1,108 @@
+{
+  "skill_name": "architecture-boundary-audit",
+  "iteration": 1,
+  "configurations": [
+    {
+      "name": "with_skill",
+      "evals": [
+        {
+          "eval_name": "full-audit",
+          "pass_rate": 1.0,
+          "passed": 10,
+          "total": 10,
+          "tokens": 85937,
+          "duration_seconds": 369.8,
+          "violations_found": 37
+        },
+        {
+          "eval_name": "prompt-scan",
+          "pass_rate": 1.0,
+          "passed": 4,
+          "total": 4,
+          "tokens": 62789,
+          "duration_seconds": 170.2,
+          "violations_found": 25
+        },
+        {
+          "eval_name": "import-scan",
+          "pass_rate": 1.0,
+          "passed": 5,
+          "total": 5,
+          "tokens": 36285,
+          "duration_seconds": 62.6,
+          "violations_found": 5
+        }
+      ],
+      "aggregate": {
+        "mean_pass_rate": 1.0,
+        "total_passed": 19,
+        "total_assertions": 19,
+        "mean_tokens": 61670,
+        "mean_duration_seconds": 200.9,
+        "total_violations_found": 67
+      }
+    },
+    {
+      "name": "without_skill",
+      "evals": [
+        {
+          "eval_name": "full-audit",
+          "pass_rate": 0.7,
+          "passed": 7,
+          "total": 10,
+          "tokens": 105847,
+          "duration_seconds": 263.1,
+          "violations_found": 18
+        },
+        {
+          "eval_name": "prompt-scan",
+          "pass_rate": 1.0,
+          "passed": 4,
+          "total": 4,
+          "tokens": 36481,
+          "duration_seconds": 93.0,
+          "violations_found": 2
+        },
+        {
+          "eval_name": "import-scan",
+          "pass_rate": 1.0,
+          "passed": 5,
+          "total": 5,
+          "tokens": 19512,
+          "duration_seconds": 44.9,
+          "violations_found": 3
+        }
+      ],
+      "aggregate": {
+        "mean_pass_rate": 0.9,
+        "total_passed": 16,
+        "total_assertions": 19,
+        "mean_tokens": 53947,
+        "mean_duration_seconds": 133.7,
+        "total_violations_found": 23
+      }
+    }
+  ],
+  "delta": {
+    "pass_rate": "+0.10 (1.0 vs 0.9)",
+    "assertions": "+3 more passed (19 vs 16)",
+    "violations_found": "+44 more violations detected (67 vs 23)",
+    "tokens": "+14% more tokens (61.7k vs 53.9k avg)",
+    "duration": "+50% longer (200.9s vs 133.7s avg)"
+  },
+  "analysis": {
+    "key_findings": [
+      "With-skill found 2x more violations on the full audit (37 vs 18) while using FEWER tokens (86k vs 106k)",
+      "Baseline DISMISSED prompt CVE placeholders as 'Non-Violations' — the skill correctly flagged them",
+      "Baseline used severity tiers (HIGH/MEDIUM/LOW) despite user wanting flat reporting — skill followed format",
+      "Baseline had no Clean Layers section — skill included it per template",
+      "On narrower scans (eval 2, 3), both performed well on core assertions, but skill went further with additional phases",
+      "The with-skill prompt-scan agent proactively ran Phase 1/2 sweeps and found 23 extra violations beyond the prompt focus"
+    ],
+    "non_discriminating_assertions": [
+      "Eval 3 assertions: both with-skill and baseline scored 5/5 — import scanning is straightforward enough that the skill doesn't add much",
+      "Eval 2 core assertions: both found the 2 prompt violations — the baseline was equally thorough for the narrow prompt question"
+    ],
+    "where_skill_matters_most": "The full audit (eval 1) is where the skill shines — it provides a systematic procedure that catches more violations, avoids severity softening, and follows the report format. Without the skill, the agent invents its own severity tiers and dismisses borderline findings."
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "eval_id": 1,
+  "eval_name": "full-audit",
+  "prompt": "Audit the architecture boundaries of this project",
+  "assertions": [
+    {
+      "id": "import-query-app",
+      "text": "Report identifies query/api/app.py importing SecurityDomainPlugin as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "import-secbench-runtime",
+      "text": "Report identifies infrastructure/adapters/secbench_runtime.py importing from plugins.security as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "hardcoded-prompt-parser",
+      "text": "Report identifies core/application/services/prompt/prompt_parser.py hardcoded CVE/security regex as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "hardcoded-toolset-resolver",
+      "text": "Report identifies core/application/services/toolset/toolset_policy_resolver.py hardcoded secbench check as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "config-security",
+      "text": "Report identifies SecurityConfig in config/settings.py as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "prompt-cve-placeholder",
+      "text": "Report identifies CVE-XXXX in prompts/operations/assess.j2 or decomposition.j2 as a violation",
+      "type": "contains_finding"
+    },
+    {
+      "id": "test-data-leakage",
+      "text": "Report identifies security-themed test data in core/ test files as violations",
+      "type": "contains_finding"
+    },
+    {
+      "id": "no-false-severity",
+      "text": "Report does NOT use severity tiers like CRITICAL/HIGH/MEDIUM/LOW/ADVISORY — treats all violations equally",
+      "type": "format_check"
+    },
+    {
+      "id": "structured-report",
+      "text": "Report follows a structured format with tables or clear file:line references for each violation",
+      "type": "format_check"
+    },
+    {
+      "id": "clean-layers",
+      "text": "Report identifies which layers are clean (no violations found)",
+      "type": "contains_section"
+    }
+  ]
+}

@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
 
 def success_rate(outcomes: Sequence[bool]) -> float:
-    """Return the proportion of True entries, or 0.0 when empty."""
     if not outcomes:
         return 0.0
     return sum(1 for x in outcomes if x) / len(outcomes)

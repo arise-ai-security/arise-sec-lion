@@ -54,6 +54,40 @@ if TYPE_CHECKING:
 class AgentSession:
     """Event-sourced aggregate for agent sessions. State derived from replaying events."""
 
+    agent_id: UUID
+    role: AgentRole
+    status: AgentStatus
+    parent_id: UUID | None
+    child_ids: list[UUID]
+    child_reports: dict[UUID, Report]
+    task_description: str
+    result: str | None
+    error_message: str | None
+    config: AgentConfig
+    version: int
+    hierarchy_limits: HierarchyLimits | None
+    briefing: Briefing | None
+    local_decisions: list[str]
+    local_artifacts: list[str]
+    sibling_index: int
+    success_criteria: str
+    target_paths: tuple[str, ...]
+    symbols: tuple[str, ...]
+    search_hints: tuple[str, ...]
+    estimated_complexity: str
+    retry_count: int
+    redecomposition_count: int
+    verification_feedback: str | None
+    verification_score: int | None
+    failed_children: set[UUID]
+    # Per-coroutine reservation bookkeeping for child-spawn OCC (D.2).
+    # NOT event-sourced — lives only on the in-memory aggregate for the
+    # duration of one run_agent_step attempt; reset on every fresh load
+    # and after the orchestrator commits or releases the reservation.
+    pending_reservation: int
+    _changes: list[DomainEvent]
+    _sequence: int
+
     def __init__(self, agent_id: UUID) -> None:
         """Internal. Use AgentSession.create() or load_from_history() instead."""
         self._initialize_defaults(agent_id)
@@ -99,11 +133,9 @@ class AgentSession:
         return self._changes
 
     def mark_changes_as_committed(self) -> None:
-        """Clear uncommitted changes after successful persistence."""
         self._changes.clear()
 
     def assign_task(self, task_description: str) -> None:
-        """Assign task, transitions to ANALYZING status."""
         task_event = TaskAssigned(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -124,6 +156,12 @@ class AgentSession:
             result: Simple result text for the event
             report: Structured Report (optional, provides additional context)
         """
+        # Idempotence: a child is reported terminally at most once. Under
+        # OCC retry or grandparent walks, the same notification can arrive
+        # twice; the second call must no-op.
+        if child_id in self.child_reports or child_id in self.failed_children:
+            return
+
         self._assert_parent_can_receive_child_event(child_id)
 
         if report is None:
@@ -157,7 +195,6 @@ class AgentSession:
             self._emit(work_completed_event)
 
     def _aggregate_child_results(self) -> str:
-        """Combine results from all completed children using structured Reports."""
         lines = ["Subtask results:", ""]
         for child_id in self.child_ids:
             report = self.child_reports.get(child_id)
@@ -184,6 +221,12 @@ class AgentSession:
             child_id: ID of failed child
             reason: Error message from child
         """
+        # Idempotence: a child is reported terminally at most once. Under
+        # OCC retry the same failure notification can arrive twice; the
+        # second call must no-op.
+        if child_id in self.child_reports or child_id in self.failed_children:
+            return
+
         self._assert_parent_can_receive_child_event(child_id)
 
         # Record child failure
@@ -242,7 +285,7 @@ class AgentSession:
     def _(self, event: AgentCreated) -> None:
         self.role = AgentRole(event.role)
         self.parent_id = event.parent_id
-        adapter = TypeAdapter(AgentConfig)
+        adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
         self.config = adapter.validate_python(event.config)
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
@@ -330,7 +373,7 @@ class AgentSession:
             config_dict = self.config.model_dump()
             if "base" in config_dict and isinstance(config_dict["base"], dict):
                 config_dict["base"]["model"] = event.escalated_model
-            adapter = TypeAdapter(AgentConfig)
+            adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
             self.config = adapter.validate_python(config_dict)
         self.version += 1
 
@@ -418,48 +461,49 @@ class AgentSession:
         self.version += 1
 
     def _initialize_defaults(self, agent_id: UUID) -> None:
-        self.agent_id: UUID = agent_id
-        self.role: AgentRole = AgentRole.BOSS
-        self.status: AgentStatus = AgentStatus.PENDING
-        self.parent_id: UUID | None = None
-        self.child_ids: list[UUID] = []
-        self.child_reports: dict[UUID, Report] = {}
-        self.task_description: str = ""
-        self.result: str | None = None
-        self.error_message: str | None = None
-        self.config: AgentConfig
-        self.version: int = 0
-        self._changes: list[DomainEvent] = []
-        self._sequence: int = 0
+        self.agent_id = agent_id
+        self.role = AgentRole.BOSS
+        self.status = AgentStatus.PENDING
+        self.parent_id = None
+        self.child_ids = []
+        self.child_reports = {}
+        self.task_description = ""
+        self.result = None
+        self.error_message = None
+        self.version = 0
+        self._changes = []
+        self._sequence = 0
         # Hierarchy limits for limit enforcement (set by ExecutionService)
-        self.hierarchy_limits: HierarchyLimits | None = None
+        self.hierarchy_limits = None
         # Context passing: briefing received from parent and local state
-        self.briefing: Briefing | None = None
-        self.local_decisions: list[str] = []
-        self.local_artifacts: list[str] = []
+        self.briefing = None
+        self.local_decisions = []
+        self.local_artifacts = []
         # Position among siblings for ordering (0 = first/leftmost)
-        self.sibling_index: int = 0
+        self.sibling_index = 0
         # Verification criteria from subtask (used by verification pipeline)
-        self.success_criteria: str = ""
+        self.success_criteria = ""
         # Structured child scoping (from parent's subtask decomposition)
-        self.target_paths: tuple[str, ...] = ()
-        self.symbols: tuple[str, ...] = ()
-        self.search_hints: tuple[str, ...] = ()
+        self.target_paths = ()
+        self.symbols = ()
+        self.search_hints = ()
         # Parent's complexity hint from the Subtask. ``"simple"`` lets the
         # orchestrator skip the assessment LLM and execute directly.
         # ``"unknown"`` (default) preserves prior behaviour.
-        self.estimated_complexity: str = "unknown"
+        self.estimated_complexity = "unknown"
         # Retry tracking
-        self.retry_count: int = 0
-        self.redecomposition_count: int = 0
+        self.retry_count = 0
+        self.redecomposition_count = 0
         # Verification feedback for retry (populated on VerificationFailed)
-        self.verification_feedback: str | None = None
-        self.verification_score: int | None = None
+        self.verification_feedback = None
+        self.verification_score = None
         # Track failed children for partial-success aggregation
-        self.failed_children: set[UUID] = set()
+        self.failed_children = set()
+        # Per-coroutine reservation count (see D.2). Reset on every fresh
+        # load, every replay, and after commit/release in the orchestrator.
+        self.pending_reservation = 0
 
     def set_hierarchy_limits(self, limits: HierarchyLimits) -> None:
-        """Set hierarchy limits for limit enforcement."""
         self.hierarchy_limits = limits
 
     def build_briefing_for_child(self) -> Briefing:
@@ -470,15 +514,12 @@ class AgentSession:
         return build_briefing(self, self.briefing)
 
     def record_decision(self, decision: str) -> None:
-        """Record a local decision made during execution."""
         self.local_decisions.append(decision)
 
     def record_artifact(self, artifact_key: str) -> None:
-        """Record an artifact produced during execution."""
         self.local_artifacts.append(artifact_key)
 
     def build_report(self) -> Report:
-        """Build structured Report to return to parent."""
         execution_summary: dict[str, Any] = {}
         total_cost = 0.0
         for event in self._changes:
@@ -517,7 +558,6 @@ class AgentSession:
         return self._sequence
 
     def _assert_parent_can_receive_child_event(self, child_id: UUID) -> None:
-        """Validate parent state before applying a child completion/failure event."""
         if self.role not in (AgentRole.MANAGER, AgentRole.BOSS):
             raise DomainInvariantError(f"Requires BOSS/MANAGER, got {self.role}")
         if not self.child_ids:
@@ -545,7 +585,6 @@ class AgentSession:
         minimum_subtasks: int | None = None,
         minimum_depth: int | None = None,
     ) -> None:
-        """Mark task as infeasible within given constraints."""
         event = DecisionInfeasible(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -577,7 +616,6 @@ class AgentSession:
         self._emit(event)
 
     def fail_with_reason(self, reason: str) -> None:
-        """Mark agent as failed with WorkFailed event."""
         failed_event = WorkFailed(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -585,10 +623,6 @@ class AgentSession:
         )
         self._emit(failed_event)
 
-    # -------------------------------------------------------------------------
-    # Pure Domain Methods (event emission only, no I/O)
-    # These are called by the orchestrator after it performs LLM/worker calls.
-    # -------------------------------------------------------------------------
 
     def apply_complexity_result(
         self,
@@ -641,7 +675,6 @@ class AgentSession:
         attempted_value: int,
         action_taken: str,
     ) -> None:
-        """Emit LimitEnforced event (pure domain method)."""
         limit_event = LimitEnforced(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -713,7 +746,6 @@ class AgentSession:
         child_role: str,
         briefing: Briefing,
     ) -> list[tuple[UUID, Subtask]]:
-        """Emit child spawn events for each generated subtask."""
         children_to_spawn: list[tuple[UUID, Subtask]] = []
 
         for sibling_index, subtask in enumerate(subtasks):
@@ -762,7 +794,6 @@ class AgentSession:
         self._emit(started_event)
 
     def apply_worker_event(self, tool_event: DomainEvent) -> None:
-        """Apply a worker tool event with corrected sequence number."""
         event_data = tool_event.model_dump(exclude={"aggregate_id", "sequence_number"})
         event_data["aggregate_id"] = self.agent_id
         event_data["sequence_number"] = self._next_sequence()
@@ -788,7 +819,6 @@ class AgentSession:
         self._emit(event)
 
     def mark_verification_passed(self, feedback: str = "", score: int = 100) -> None:
-        """Record that verification passed (observability event)."""
         event = VerificationPassed(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -802,7 +832,6 @@ class AgentSession:
     # -------------------------------------------------------------------------
 
     def emit_execution_started(self, role: str, depth: int) -> None:
-        """Emit AgentExecutionStarted event for timing observability."""
         event = AgentExecutionStarted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -814,7 +843,6 @@ class AgentSession:
     def emit_execution_finished(
         self, role: str, status: str, duration_seconds: float
     ) -> None:
-        """Emit AgentExecutionFinished event for timing observability."""
         event = AgentExecutionFinished(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -825,7 +853,6 @@ class AgentSession:
         self._emit(event)
 
     def emit_operation_started(self, operation_type: str) -> None:
-        """Emit OperationStarted event for timing observability."""
         event = OperationStarted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -836,7 +863,6 @@ class AgentSession:
     def emit_operation_finished(
         self, operation_type: str, duration_seconds: float
     ) -> None:
-        """Emit OperationFinished event for timing observability."""
         event = OperationFinished(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -850,7 +876,6 @@ class AgentSession:
     # -------------------------------------------------------------------------
 
     def emit_probe_started(self, probe_type: str) -> None:
-        """Emit ProbeStarted event for tool-calling observability."""
         event = ProbeStarted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
@@ -861,7 +886,6 @@ class AgentSession:
     def emit_probe_completed(
         self, probe_type: str, result_summary: str = ""
     ) -> None:
-        """Emit ProbeCompleted event for tool-calling observability."""
         event = ProbeCompleted(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),

@@ -1,0 +1,13 @@
+{
+  "experiments/b1-batch-autogen/reports/enrollment.lock.yaml": {
+    "generated_at": "2026-05-17T03:40:11.755650Z",
+    "generated_by": "experiments/shared/scripts/collect.py",
+    "inputs": [
+      "experiments/b1-batch-autogen/manifest.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/b1-batch-autogen/manifest.yaml": "ae815ffb98343810689445405ff69b09061e570b0f24b59814e0981e4c47070b"
+    },
+    "output_sha256": "610ea3daddd48558203b9018d704e9c1f36e7b944d261c1f5e481e9504410f6b"
+  }
+}

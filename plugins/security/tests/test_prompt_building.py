@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from core.application.services import PromptBuilder, PromptParser
+from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 from core.domain.aggregates.agent_session import AgentRole
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy, SecurityDomainPlugin
@@ -144,3 +145,127 @@ class TestSecurityPromptBuilding:
 
         assert "<cve_instance>" in prompt
         assert "Fixer Worker" in prompt
+
+    def test_secbench_reporter_prompt_uses_canonical_testcase_alias(self) -> None:
+        # Given: a SEC-bench worker prompt for the reporter phase.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="openhands",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: building the reporter worker prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Reporter] Write the final security report",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the prompt directs the file editor to the canonical alias.
+        assert "`/testcase/security_report.md`" in prompt
+        assert "Do NOT use `/testcase/security_report.md`" not in prompt
+        assert "host testcase path" not in prompt
+
+
+class TestFlatPromptBuilding:
+    """Flat-mode (A-cell) control-baseline prompt composition.
+
+    Flat-mode prompts intentionally do NOT include the tree topology's
+    role/operation/worker templates — those are part of our system's
+    contribution under test. See ``SecBenchPromptStrategy.extend_flat_prompt``.
+    """
+
+    def _builder(self) -> PromptBuilder:
+        return PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+    def test_build_flat_prompt_renders_cve_and_pipeline_only(self) -> None:
+        # Given: a flat-mode PromptBuilder + the SEC-bench strategy.
+        builder = self._builder()
+
+        # When: building the flat prompt from a raw dataset slug + CVE context.
+        prompt = builder.build_flat_prompt(
+            task_description="openjpeg.cve-2016-7445",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+            subagent_enabled=False,
+        )
+
+        # Then: the CVE context and the 4-phase pipeline overview are present.
+        assert "<cve_instance>" in prompt
+        assert "## Vulnerability Reproduction — 4-Phase Process" in prompt
+        assert "demo.cve-2024-0001" in prompt
+        assert "<task>\nopenjpeg.cve-2016-7445\n</task>" in prompt
+
+    def test_build_flat_prompt_excludes_tree_topology_templates(self) -> None:
+        # Given: a flat-mode PromptBuilder.
+        builder = self._builder()
+
+        # When: building the flat prompt.
+        prompt = builder.build_flat_prompt(
+            task_description="openjpeg.cve-2016-7445",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+            subagent_enabled=False,
+        )
+
+        # Then: none of our tree-tier templates leak into the flat prompt.
+        assert "You are an agent in a recursive multi-agent hierarchy" not in prompt
+        assert "You are a **WORKER** agent" not in prompt
+        assert "## Task Execution" not in prompt
+        assert "## Security Research Mindset" not in prompt
+        assert "## Builder Worker — Step-by-Step" not in prompt
+        assert "Create exactly 4 subtasks" not in prompt  # boss.j2 decomposition leak
+
+    def test_build_flat_prompt_includes_subagent_note_when_enabled(self) -> None:
+        # Given: a flat-mode PromptBuilder.
+        builder = self._builder()
+
+        # When: building with subagent_enabled=True (A1).
+        prompt = builder.build_flat_prompt(
+            task_description="openjpeg.cve-2016-7445",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+            subagent_enabled=True,
+        )
+
+        # Then: the Task-tool capability note appears exactly once, between
+        # the pipeline overview and the task block.
+        assert prompt.count(FLAT_SUBAGENT_NOTE) == 1
+        pipeline_marker = "## Vulnerability Reproduction — 4-Phase Process"
+        task_marker = "<task>\nopenjpeg.cve-2016-7445\n</task>"
+        assert prompt.index(pipeline_marker) < prompt.index(FLAT_SUBAGENT_NOTE)
+        assert prompt.index(FLAT_SUBAGENT_NOTE) < prompt.index(task_marker)
+
+    def test_build_flat_prompt_omits_subagent_note_when_disabled(self) -> None:
+        # Given: a flat-mode PromptBuilder.
+        builder = self._builder()
+
+        # When: building with subagent_enabled=False (A2).
+        prompt = builder.build_flat_prompt(
+            task_description="openjpeg.cve-2016-7445",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+            subagent_enabled=False,
+        )
+
+        # Then: the note is absent.
+        assert FLAT_SUBAGENT_NOTE not in prompt
+
+    def test_build_flat_prompt_without_cve_returns_just_task_block(self) -> None:
+        # Given: a flat-mode PromptBuilder with no CVE context.
+        builder = self._builder()
+
+        # When: building without a domain context.
+        prompt = builder.build_flat_prompt(
+            task_description="openjpeg.cve-2016-7445",
+            agent_id=uuid4(),
+            domain_context=None,
+            subagent_enabled=False,
+        )
+
+        # Then: the strategy returns None, so only the task block survives.
+        assert prompt == "<task>\nopenjpeg.cve-2016-7445\n</task>"

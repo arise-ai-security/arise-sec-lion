@@ -4,20 +4,66 @@ Uses mocking to avoid requiring actual Claude Agent SDK installation and API cal
 Tests verify correct event mapping and error handling.
 """
 
+import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from core.domain.events.events import ThoughtCaptured, WorkCompleted, WorkFailed
+from core.domain.events.events import (
+    ThoughtCaptured,
+    WorkCompleted,
+    WorkerCostRecorded,
+    WorkFailed,
+)
+from infrastructure.adapters.worker import claude_sdk_adapter
 from infrastructure.adapters.worker.claude_sdk_adapter import (
+    CLAUDE_CODE_CLI_PATH_ENV,
+    DEFAULT_MAX_THINKING_TOKENS,
     ClaudeAgentSDKAdapter,
     SDKAdapterConfig,
 )
+from infrastructure.adapters.worker.shared import ContainerSessionContext, EventSequencer
 
 
 # Module path for patching (use actual implementation module)
 SDK_ADAPTER_MODULE = "infrastructure.adapters.worker.claude_sdk_adapter"
+
+
+def _container_session(tmp_path: Path) -> ContainerSessionContext:
+    return ContainerSessionContext(
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image="secb-tools:demo.cve-2024-0001-patch",
+        workspace_root=tmp_path,
+        host_source_dir=tmp_path / "src",
+        host_testcase_dir=tmp_path / "testcase",
+        host_work_dir=tmp_path / "src" / "demo",
+        container_source_dir="/src",
+        container_testcase_dir="/testcase",
+        container_working_directory="/src/demo",
+        helper_script=tmp_path / "secb-exec",
+    )
+
+
+def _container_session_payload(tmp_path: Path) -> dict[str, str]:
+    session = _container_session(tmp_path)
+    return {
+        "container_id": session.container_id,
+        "container_name": session.container_name,
+        "image": session.image,
+        "workspace_root": str(session.workspace_root),
+        "host_source_dir": str(session.host_source_dir),
+        "host_testcase_dir": str(session.host_testcase_dir),
+        "host_work_dir": str(session.host_work_dir),
+        "container_source_dir": session.container_source_dir,
+        "container_testcase_dir": session.container_testcase_dir,
+        "container_working_directory": session.container_working_directory,
+        "container_work_dir": session.container_work_dir,
+        "container_workspace_root": session.container_workspace_root,
+        "helper_script": str(session.helper_script),
+    }
 
 
 class MockTextBlock:
@@ -51,9 +97,17 @@ class MockAssistantMessage:
 class MockResultMessage:
     """Mock ResultMessage from claude-agent-sdk."""
 
-    def __init__(self, result: str, is_error: bool = False) -> None:
+    def __init__(
+        self,
+        result: str,
+        is_error: bool = False,
+        usage: dict[str, int] | None = None,
+        total_cost_usd: float | None = None,
+    ) -> None:
         self.result = result
         self.is_error = is_error
+        self.usage = usage or {}
+        self.total_cost_usd = total_cost_usd
 
 
 async def async_iter(items):
@@ -69,9 +123,7 @@ class TestProcessBlock:
         """TextBlock maps to output type."""
         block = MockTextBlock("Hello world")
 
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
-        ):
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result == ("Hello world", "output")
@@ -80,9 +132,7 @@ class TestProcessBlock:
         """Empty TextBlock is skipped."""
         block = MockTextBlock("   ")
 
-        with patch(
-            f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock
-        ):
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
             result = ClaudeAgentSDKAdapter._process_block(block)
 
         assert result is None
@@ -126,6 +176,54 @@ class TestProcessBlock:
         content, _ = result
         assert len(content) < 520  # "Tool result: " + 500 chars
 
+    def test_text_block_rewrites_host_paths_for_events(self, tmp_path: Path) -> None:
+        """TextBlock event content hides run-scoped host mirror paths."""
+        # Given: a Claude text block containing a host mirror path.
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "testcase" / "base_commit_hash"
+        block = MockTextBlock(f"Read {host_path}")
+
+        # When: the adapter converts the block into an event payload.
+        with patch(f"{SDK_ADAPTER_MODULE}.TextBlock", MockTextBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block, session)
+
+        # Then: the emitted content uses the canonical container path.
+        assert result == ("Read /testcase/base_commit_hash", "output")
+
+    def test_thinking_block_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ThinkingBlock event content hides run-scoped host mirror paths."""
+        # Given: a Claude thinking block containing a host mirror path.
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "src" / "demo" / "main.c"
+        block = MockThinkingBlock(f"Need to inspect {host_path}")
+
+        # When: the adapter converts the block into an event payload.
+        with patch(f"{SDK_ADAPTER_MODULE}.ThinkingBlock", MockThinkingBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block, session)
+
+        # Then: the emitted content uses the canonical container path.
+        assert result == ("Need to inspect /src/demo/main.c", "thinking")
+
+    def test_tool_result_block_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ToolResultBlock event content hides run-scoped host mirror paths."""
+        # Given: a tool result containing a host mirror path.
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "testcase" / "base_commit_hash"
+        block = MockToolResultBlock(f"{host_path}: f659")
+
+        # When: the adapter converts the block into an event payload.
+        with patch(f"{SDK_ADAPTER_MODULE}.ToolResultBlock", MockToolResultBlock):
+            result = ClaudeAgentSDKAdapter._process_block(block, session)
+
+        # Then: the emitted content uses the canonical container path.
+        assert result == ("Tool result: /testcase/base_commit_hash: f659", "tool_result")
+
     def test_unknown_block_returns_none(self) -> None:
         """Unknown block types are skipped."""
 
@@ -150,6 +248,9 @@ class TestSDKAdapterConfig:
         assert "Edit" in config.allowed_tools
         assert "Bash" in config.allowed_tools
         assert config.permission_mode == "bypassPermissions"
+        assert config.max_thinking_tokens == DEFAULT_MAX_THINKING_TOKENS
+        assert config.thinking_display == "summarized"
+        assert config.cli_path is None
 
     def test_custom_values(self) -> None:
         """Config accepts custom values."""
@@ -157,13 +258,21 @@ class TestSDKAdapterConfig:
             model="claude-sonnet-4",
             timeout_seconds=600,
             allowed_tools=["Read", "Bash"],
+            disallowed_tools=["Write"],
             permission_mode="default",
+            max_thinking_tokens=None,
+            thinking_display=None,
+            cli_path="/usr/local/bin/claude",
         )
 
         assert config.model == "claude-sonnet-4"
         assert config.timeout_seconds == 600
         assert config.allowed_tools == ["Read", "Bash"]
+        assert config.disallowed_tools == ["Write"]
         assert config.permission_mode == "default"
+        assert config.max_thinking_tokens is None
+        assert config.thinking_display is None
+        assert config.cli_path == "/usr/local/bin/claude"
 
 
 class TestClaudeAgentSDKAdapter:
@@ -191,6 +300,35 @@ class TestClaudeAgentSDKAdapter:
         """Adapter uses consistent stream name."""
         assert ClaudeAgentSDKAdapter.STREAM_NAME == "claude_sdk"
 
+    def test_build_options_passes_tool_policy_verbatim_to_sdk(self) -> None:
+        """Configured allowlist and denylist reach ClaudeAgentOptions unchanged."""
+        # Given: an adapter with explicit built-in and custom tool policy.
+        adapter = ClaudeAgentSDKAdapter(
+            SDKAdapterConfig(
+                allowed_tools=["Read", "Bash", "mcp__custom_tools__run"],
+                disallowed_tools=["WebFetch", "Task"],
+            )
+        )
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: policy is passed through for Claude SDK validation/enforcement.
+        assert captured["allowed_tools"] == ["Read", "Bash", "mcp__custom_tools__run"]
+        assert captured["disallowed_tools"] == ["WebFetch", "Task"]
+
     def test_format_error_cli_not_found(self) -> None:
         """CLI not found errors get helpful message."""
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
@@ -208,6 +346,62 @@ class TestClaudeAgentSDKAdapter:
 
         assert "Claude SDK adapter error" in result
         assert "ValueError" in result
+
+    def test_make_cost_event_records_token_breakdown(self) -> None:
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(model="claude-sonnet-4-6"))
+        agent_id = uuid4()
+        message = MockResultMessage(
+            result="done",
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 25,
+                "cache_read_input_tokens": 10,
+                "cache_creation_input_tokens": 5,
+                "thinking_tokens": 7,
+            },
+            total_cost_usd=0.0123,
+        )
+
+        event = adapter._make_cost_event(
+            message,
+            sequencer=EventSequencer(agent_id, stream="claude_sdk"),
+        )
+
+        # Audit N-3: `tokens` is the INCLUSIVE total across all five buckets,
+        # not just prompt+completion (which historically undercounted cache
+        # and reasoning and made cross-cell token comparisons asymmetric).
+        assert isinstance(event, WorkerCostRecorded)
+        assert event.model == "claude-sonnet-4-6"
+        assert event.tokens == 100 + 25 + 10 + 5 + 7
+        assert event.prompt_tokens == 100
+        assert event.completion_tokens == 25
+        assert event.cache_read_tokens == 10
+        assert event.cache_write_tokens == 5
+        assert event.reasoning_tokens == 7
+        assert event.cost_usd == 0.0123
+
+    def test_make_result_event_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Terminal WorkCompleted content hides run-scoped host mirror paths."""
+        # Given: a result message containing a host mirror path.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        agent_id = uuid4()
+        session = _container_session(tmp_path)
+        host_path = tmp_path / "src" / "demo" / "main.c"
+        message = MockResultMessage(result=f"Updated {host_path}")
+
+        # When: the adapter emits the terminal event.
+        event = adapter._make_result_event(
+            message,
+            sequencer=EventSequencer(agent_id, stream="claude_sdk"),
+            container_session=session,
+        )
+
+        # Then: the event uses the canonical container path.
+        assert isinstance(event, WorkCompleted)
+        assert event.result == "Updated /src/demo/main.c"
 
 
 class TestAdapterIntegration:
@@ -249,14 +443,11 @@ class TestAdapterIntegration:
             mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client_class.__aexit__ = AsyncMock(return_value=None)
 
-            with patch.object(
-                claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class
-            ), patch.object(
-                claude_sdk_adapter, "AssistantMessage", MockAssistantMessage
-            ), patch.object(
-                claude_sdk_adapter, "ResultMessage", MockResultMessage
-            ), patch.object(
-                claude_sdk_adapter, "TextBlock", MockTextBlock
+            with (
+                patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class),
+                patch.object(claude_sdk_adapter, "AssistantMessage", MockAssistantMessage),
+                patch.object(claude_sdk_adapter, "ResultMessage", MockResultMessage),
+                patch.object(claude_sdk_adapter, "TextBlock", MockTextBlock),
             ):
                 events = []
                 async for event in adapter.run_session(
@@ -275,6 +466,62 @@ class TestAdapterIntegration:
 
                 assert isinstance(events[-1], WorkCompleted)
                 assert events[-1].result == "Task completed successfully"
+
+    @pytest.mark.asyncio
+    async def test_container_execution_does_not_prefix_prompt(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Containerized SDK mode gives Claude the original task prompt."""
+        # Given: a container-backed task and a mocked SDK client.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        agent_id = uuid4()
+        result_msg = MockResultMessage(result="done")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=async_iter([result_msg]))
+
+        mock_client_class = MagicMock()
+        mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options),
+            patch.object(
+                claude_sdk_adapter,
+                "prepare_claude_container_user",
+                AsyncMock(),
+            ),
+            patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class),
+            patch.object(claude_sdk_adapter, "ResultMessage", MockResultMessage),
+        ):
+            events = []
+
+            # When: running a container-backed SDK session.
+            async for event in adapter.run_session(
+                {
+                    "task_description": "solve the bug",
+                    "agent_id": agent_id,
+                    "working_directory": str(tmp_path),
+                    "container_session": _container_session_payload(tmp_path),
+                }
+            ):
+                events.append(event)
+
+        # Then: the active prompt is the original task, not the old mapping prefix.
+        mock_client.query.assert_awaited_once_with("solve the bug")
+        assert "Container-backed workspace" not in mock_client.query.await_args.args[0]
+        assert isinstance(events[-1], WorkCompleted)
+
+        # And: the SDK options use the in-container wrapper path.
+        wrapper = Path(captured["cli_path"])  # type: ignore[arg-type]
+        assert wrapper == tmp_path / ".arise" / "claude-sdk-in-container"
 
     @pytest.mark.asyncio
     async def test_error_result(self) -> None:
@@ -302,18 +549,15 @@ class TestAdapterIntegration:
 
             mock_client = AsyncMock()
             mock_client.query = AsyncMock()
-            mock_client.receive_response = MagicMock(
-                return_value=async_iter([result_msg])
-            )
+            mock_client.receive_response = MagicMock(return_value=async_iter([result_msg]))
 
             mock_client_class = MagicMock()
             mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client_class.__aexit__ = AsyncMock(return_value=None)
 
-            with patch.object(
-                claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class
-            ), patch.object(
-                claude_sdk_adapter, "ResultMessage", MockResultMessage
+            with (
+                patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class),
+                patch.object(claude_sdk_adapter, "ResultMessage", MockResultMessage),
             ):
                 events = []
                 async for event in adapter.run_session(
@@ -327,3 +571,521 @@ class TestAdapterIntegration:
                 assert len(events) == 1
                 assert isinstance(events[0], WorkFailed)
                 assert "file not found" in events[0].reason
+
+    @pytest.mark.asyncio
+    async def test_query_timeout_yields_work_failed(self) -> None:
+        """A hanging SDK query is bounded by the adapter timeout."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(timeout_seconds=0.01))
+
+        async def _hang(_message: str) -> None:
+            await asyncio.sleep(10)
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock(side_effect=_hang)
+        mock_client.receive_response = MagicMock(return_value=async_iter([]))
+
+        mock_client_class = MagicMock()
+        mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class):
+            events = []
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Test task",
+                    "agent_id": uuid4(),
+                }
+            ):
+                events.append(event)
+
+        assert isinstance(events[-1], WorkFailed)
+        assert "timed out" in events[-1].reason
+
+    @pytest.mark.asyncio
+    async def test_receive_response_timeout_yields_work_failed(self) -> None:
+        """A hanging SDK response stream is bounded by the adapter timeout."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(timeout_seconds=0.01))
+
+        async def _hang_stream():
+            await asyncio.sleep(10)
+            if False:
+                yield None
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=_hang_stream())
+
+        mock_client_class = MagicMock()
+        mock_client_class.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(claude_sdk_adapter, "ClaudeSDKClient", return_value=mock_client_class):
+            events = []
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Test task",
+                    "agent_id": uuid4(),
+                }
+            ):
+                events.append(event)
+
+        assert isinstance(events[-1], WorkFailed)
+        assert "timed out" in events[-1].reason
+
+
+class TestMCPServersWiring:
+    """Verify task_context['mcp_servers'] reaches ClaudeAgentOptions."""
+
+    def test_extract_mcp_servers_returns_none_when_absent(self) -> None:
+        # Given/When/Then
+        assert ClaudeAgentSDKAdapter._extract_mcp_servers({}) is None
+        assert ClaudeAgentSDKAdapter._extract_mcp_servers({"mcp_servers": {}}) is None
+
+    def test_extract_mcp_servers_adds_stdio_type_per_entry(self) -> None:
+        # Given: a raw stdio spec keyed by server name.
+        raw = {
+            "custom_tools": {
+                "command": "python",
+                "args": ["-m", "example.tools_server"],
+                "env": {"ARISE_CONTAINER_ID": "abc"},
+            }
+        }
+
+        # When
+        result = ClaudeAgentSDKAdapter._extract_mcp_servers({"mcp_servers": raw})
+
+        # Then: the SDK-shaped mapping carries type=stdio.
+        assert result is not None
+        assert result["custom_tools"]["type"] == "stdio"
+        assert result["custom_tools"]["command"] == "python"
+        assert result["custom_tools"]["env"]["ARISE_CONTAINER_ID"] == "abc"
+
+    def test_extract_mcp_servers_rewrites_for_in_container_execution(self) -> None:
+        """Containerized SDK mode launches MCP servers inside the same container."""
+        # Given: a host-side SEC-bench MCP stdio spec.
+        raw = {
+            "security_tools": {
+                "command": "python",
+                "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                "env": {
+                    "ARISE_SECBENCH_HELPER_SCRIPT": "/tmp/secb-exec",
+                    "ARISE_SECBENCH_CONTAINER_ID": "abc123def456",
+                },
+            }
+        }
+
+        # When: extracting SDK MCP config for in-container Claude.
+        result = ClaudeAgentSDKAdapter._extract_mcp_servers(
+            {"mcp_servers": raw},
+            in_container=True,
+        )
+
+        # Then: the SDK-shaped config points at the bundled in-container MCP server.
+        assert result is not None
+        server = result["security_tools"]
+        assert server["type"] == "stdio"
+        assert server["command"] == "/opt/arise-mcp/venv/bin/python"
+        assert server["args"] == ["-m", "plugins.security.mcp.security_tools_server"]
+        assert "ARISE_SECBENCH_HELPER_SCRIPT" not in server["env"]
+        assert server["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
+        assert server["env"]["PYTHONPATH"] == "/opt/arise-mcp"
+
+    def test_build_options_passes_mcp_servers_to_claude_agent_options(self) -> None:
+        """``mcp_servers`` keyword reaches ``ClaudeAgentOptions`` constructor."""
+        # Given: an adapter and a captured ClaudeAgentOptions stub.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+                mcp_servers={
+                    "custom_tools": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "example.tools_server"],
+                        "env": {},
+                    }
+                },
+            )
+
+        # Then: ClaudeAgentOptions received a mcp_servers kwarg with the spec.
+        assert "mcp_servers" in captured
+        assert "custom_tools" in captured["mcp_servers"]  # type: ignore[index]
+        assert captured["mcp_servers"]["custom_tools"]["command"] == "python"  # type: ignore[index]
+
+    def test_build_options_omits_mcp_servers_when_unset(self) -> None:
+        """No ``mcp_servers`` kwarg when not provided."""
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        assert "mcp_servers" not in captured
+
+    def test_build_options_enables_summarized_thinking_by_default(self) -> None:
+        """Default B-cell SDK options request visible Claude thinking blocks."""
+        # Given: an adapter and a captured ClaudeAgentOptions stub.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: ClaudeAgentOptions receives fixed-budget thinking and summarized output.
+        assert captured["max_thinking_tokens"] == DEFAULT_MAX_THINKING_TOKENS
+        assert captured["extra_args"] == {"thinking-display": "summarized"}
+
+    def test_build_options_uses_claude_cli_path_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Env override selects the Claude Code executable used by the SDK."""
+        # Given: an environment override for the SDK transport's CLI path.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, " /usr/local/bin/claude ")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: ClaudeAgentOptions bypasses the SDK bundled CLI.
+        assert captured["cli_path"] == "/usr/local/bin/claude"
+
+    def test_configured_cli_path_overrides_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An explicit config path wins over the process environment."""
+        # Given: both an env override and an explicit adapter config path.
+        adapter = ClaudeAgentSDKAdapter(
+            SDKAdapterConfig(cli_path="/opt/claude/bin/claude")
+        )
+        monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, "/usr/local/bin/claude")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        # When: building SDK options.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=MagicMock(),
+                container_session=None,
+            )
+
+        # Then: explicit config remains the strongest override.
+        assert captured["cli_path"] == "/opt/claude/bin/claude"
+
+    def test_build_options_uses_container_wrapper_when_session_exists(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Container-backed SDK sessions launch Claude through a docker wrapper."""
+        # Given: a container session and a host CLI override that must not leak
+        # into containerized mode.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        session = _container_session(tmp_path)
+        monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, "/usr/local/bin/claude")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        # When: building SDK options for a container-backed worker call.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir=str(tmp_path),
+                tool_queue=MagicMock(),
+                container_session=session,
+            )
+
+        # Then: the SDK executable is a run-scoped wrapper, not the host CLI.
+        wrapper = Path(captured["cli_path"])  # type: ignore[arg-type]
+        assert wrapper == tmp_path / ".arise" / "claude-sdk-in-container"
+        assert wrapper.exists()
+        assert captured["can_use_tool"] is None
+        assert captured["cwd"] == str(tmp_path)
+
+        # And: the wrapper runs Claude inside the SEC-bench container cwd.
+        content = wrapper.read_text(encoding="utf-8")
+        assert "docker exec -i" in content
+        assert "--user 1000:1000" in content
+        assert "-w /src/demo" in content
+        assert "abc123def456 claude \"$@\"" in content
+
+    def test_build_options_resolves_relative_container_wrapper_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """SDK cli_path stays valid even when the run workspace is relative."""
+        # Given: a container session carrying the relative workspace shape used
+        # by smoke runs and study output.directory="./runs".
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        session = _container_session(Path("runs") / f"smoke-{tmp_path.name}")
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        # When: building SDK options for the relative workspace.
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir=str(session.workspace_root),
+                tool_queue=MagicMock(),
+                container_session=session,
+            )
+
+        # Then: cli_path is absolute, so SDK cwd cannot reinterpret it.
+        wrapper = Path(captured["cli_path"])  # type: ignore[arg-type]
+        assert wrapper.is_absolute()
+        assert wrapper.exists()
+        assert wrapper.name == "claude-sdk-in-container"
+
+
+class MockHookInput:
+    """Stub for claude_agent_sdk HookInput with attributes the hook reads."""
+
+    def __init__(self, tool_name: str, tool_input: dict) -> None:
+        self.tool_name = tool_name
+        self.tool_input = tool_input
+
+
+def _extract_capture_tool_use_hook(captured_kwargs: dict[str, object]):
+    """Pull the PostToolUse callback out of the ClaudeAgentOptions kwargs."""
+    hooks = captured_kwargs["hooks"]
+    assert isinstance(hooks, dict)
+    matchers = hooks["PostToolUse"]
+    assert isinstance(matchers, list)
+    assert matchers
+    # HookMatcher is a dataclass with a public `hooks` list of callables.
+    return matchers[0].hooks[0]
+
+
+class TestToolUseInputPayload:
+    """BUG-EVENT1 regression: tool_use events must include the input payload.
+
+    Sibling adapters (`claude_code_worker.py:565-567`, `openhands_adapter.py:692`)
+    append ``\\nInput: {<json>}`` to tool_use content so the cross-cell
+    cheating-attempt detector in `experiments/shared/scripts/run_metrics.py`
+    can recover the Bash command string. Pre-fix, this adapter dropped the
+    payload and made B-cell Bash commands invisible to the detector.
+    """
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_appends_input_json_payload(self) -> None:
+        """Hook content carries ``\\nInput: {...}`` with the Bash command string."""
+        # Given: an adapter and a fake ClaudeAgentOptions that captures kwargs.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        import asyncio as _asyncio
+
+        from infrastructure.adapters.worker import claude_sdk_adapter
+
+        tool_queue: _asyncio.Queue[tuple[str, str, str | None]] = _asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=None,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+
+        # When: the PostToolUse hook fires for a Bash command.
+        hook_input = MockHookInput(
+            tool_name="Bash",
+            tool_input={"command": "git log --oneline -3"},
+        )
+        await capture_tool_use(hook_input, None, MagicMock())
+
+        # Then: the queued content carries the canonical `\nInput: {<json>}` suffix
+        # AND the literal command string.
+        content, output_type, tool_name = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_name == "Bash"
+        assert "\nInput: " in content, (
+            "tool_use content must include the `\\nInput: ` JSON suffix so the "
+            "cheating-attempt detector can extract the Bash command (BUG-EVENT1)."
+        )
+        assert "git log --oneline -3" in content
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_payload_parses_back_via_detector(self) -> None:
+        """Emitted content round-trips through the cheating-attempt detector.
+
+        Cross-cutting integration check: the content this adapter emits must be
+        parseable by `run_metrics._extract_bash_command` and recognised as a
+        cheating signature by `_is_cheating_command`.
+        """
+        # Given: an adapter and captured options kwargs.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        from experiments.shared.scripts.run_metrics import (
+            _extract_bash_command,
+            _is_cheating_command,
+        )
+
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=None,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+
+        # When: a cheating-signature Bash command flows through the hook.
+        hook_input = MockHookInput(
+            tool_name="Bash",
+            tool_input={"command": "git log --oneline -3"},
+        )
+        await capture_tool_use(hook_input, None, MagicMock())
+        content, _, _ = tool_queue.get_nowait()
+
+        # Then: the detector recovers the exact command and counts it as cheating.
+        assert _extract_bash_command(content) == "git log --oneline -3"
+        assert _is_cheating_command("git log --oneline -3") is True
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_rewrites_host_paths_for_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Tool-use event payloads hide translated host mirror paths."""
+        # Given: a container session and a captured PostToolUse hook.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        session = _container_session(tmp_path)
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=session,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+        host_path = tmp_path / "testcase" / "base_commit_hash"
+
+        # When: the hook sees the host path after input translation.
+        hook_input = MockHookInput(
+            tool_name="Read",
+            tool_input={"file_path": str(host_path)},
+        )
+        await capture_tool_use(hook_input, None, MagicMock())
+
+        # Then: the queued event content uses the canonical container path.
+        content, output_type, tool_name = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_name == "Read"
+        assert "/testcase/base_commit_hash" in content
+        assert str(tmp_path) not in content
+
+    @pytest.mark.asyncio
+    async def test_capture_tool_use_accepts_sdk_typed_dict_input(self) -> None:
+        """Current Claude SDK hook input is dict-shaped at runtime."""
+        # Given: a captured PostToolUse hook.
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
+        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
+            adapter._build_options(
+                working_dir="/work",
+                tool_queue=tool_queue,
+                container_session=None,
+            )
+
+        capture_tool_use = _extract_capture_tool_use_hook(captured)
+
+        # When: the installed SDK passes a TypedDict-like hook payload.
+        await capture_tool_use(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/testcase/base_commit_hash"},
+                "tool_response": "ad487",
+            },
+            None,
+            MagicMock(),
+        )
+
+        # Then: the queued event preserves tool name and input.
+        content, output_type, tool_name = tool_queue.get_nowait()
+        assert output_type == "tool_use"
+        assert tool_name == "Read"
+        assert "Reading: /testcase/base_commit_hash" in content
+        assert '"/testcase/base_commit_hash"' in content

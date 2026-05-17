@@ -53,7 +53,7 @@ services:
     environment:
       ARISE_INFRA_POSTGRES_HOST: db
       DOCKER_HOST: unix:///var/run/docker.sock  # Enable DooD for SEC-bench workers
-      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-.}  # Host path for DooD volume mapping
+      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT}  # Host path for DooD volume mapping
     command: sleep infinity
     stdin_open: true
     tty: true
@@ -75,7 +75,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ../data/postgres:/var/lib/postgresql/data
       - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-arise}
@@ -125,7 +125,7 @@ services:
     env_file: .env.dev
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock  # Enable DooD for SEC-bench workers
-      - HOST_PROJECT_ROOT=${HOST_PROJECT_ROOT:-.}  # Host path for DooD volume mapping
+      - HOST_PROJECT_ROOT=${HOST_PROJECT_ROOT}  # Host path for DooD volume mapping
     command: sleep infinity
     stdin_open: true
     tty: true
@@ -168,5 +168,4 @@ services:
       retries: 5
 
 volumes:
-  postgres_data:
   secbench_output:  # Shared volume for SEC-bench artifacts between containers

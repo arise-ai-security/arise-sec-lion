@@ -31,6 +31,7 @@ class DispatchContext:
     get_run_output_path: Callable[[], Path | None]
     get_working_directory: Callable[[], str | None]
     get_workspace_context: Callable[[], str | None]
+    persist_checkpoint: Callable[[AgentSession], Awaitable[object]] | None = None
 
 
 class RoleHandler(ABC):
@@ -80,14 +81,20 @@ class PendingHandler(RoleHandler):
         self._context = context
 
     async def handle(self, agent: AgentSession) -> None:
-        await self._context.orchestrator.assess_task(agent)
+        await self._context.orchestrator.assess_task(
+            agent,
+            persist_checkpoint=self._context.persist_checkpoint,
+        )
 
 
 class EvaluatorHandler(LifecycleRoleHandler):
     """Handle task decomposition for boss and manager agents."""
 
     async def _execute(self, agent: AgentSession) -> None:
-        await self._context.orchestrator.evaluate_task(agent)
+        await self._context.orchestrator.evaluate_task(
+            agent,
+            persist_checkpoint=self._context.persist_checkpoint,
+        )
 
 
 class WorkerHandler(LifecycleRoleHandler):
@@ -122,6 +129,7 @@ class WorkerHandler(LifecycleRoleHandler):
                     task_context_overrides=(
                         worker_context.task_context if worker_context else None
                     ),
+                    persist_checkpoint=self._context.persist_checkpoint,
                 )
             finally:
                 await self._cleanup_worker_context(
@@ -177,7 +185,6 @@ class WorkerHandler(LifecycleRoleHandler):
 
 
 def build_role_handlers(context: DispatchContext) -> dict[AgentRole, RoleHandler]:
-    """Build the role-dispatch registry for execution."""
     evaluator = EvaluatorHandler(context)
     return {
         AgentRole.PENDING: PendingHandler(context),

@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import shutil
+import subprocess
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
-from plugins.security import SecurityDomainPlugin
+from core.application.execution_service import FlatModeBundle
+from core.application.run_invariants import (
+    TaskPromptSpec,
+    ToolPolicy,
+    build_timeouts,
+    build_workspace_spec,
+)
+from core.application.services import PromptBuilder
+from infrastructure.workers import ClaudeCodeWorker
+from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
 from presentation.cli import CLI, CLIConfig
 
@@ -13,13 +28,22 @@ from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
 
 
+logger = logging.getLogger(__name__)
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
-    from config import Settings
-    from core.application.execution_service import ProgressCallback
+    from config import ApiSettings, Settings
+    from core.application.execution_service import (
+        FlatInvariantBuilder,
+        ProgressCallback,
+    )
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
+    from core.ports.worker_port import WorkerPort
+    from infrastructure.cleanup.registry import CleanupRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,11 +55,14 @@ class DomainComponents:
     domain_key: str | None = None
 
 
-def _build_security_components(settings: Settings) -> DomainComponents:
+def _build_security_components(settings: Settings | ApiSettings) -> DomainComponents:
     if not settings.security.enabled:
         return DomainComponents()
 
-    runtime = DockerSecBenchRuntime()
+    runtime = DockerSecBenchRuntime(
+        network_mode=settings.security.worker_network_mode,
+        timeout_seconds=settings.security.worker_docker_timeout_seconds,
+    )
     plugin = SecurityDomainPlugin(enabled_tools=settings.security.tools)
     plugin.set_container_runtime(runtime)
     return DomainComponents(
@@ -45,14 +72,14 @@ def _build_security_components(settings: Settings) -> DomainComponents:
     )
 
 
-_DOMAIN_COMPONENT_BUILDERS: dict[str, Callable[[Settings], DomainComponents]] = {
+_DOMAIN_COMPONENT_BUILDERS: dict[str, Callable[[Settings | ApiSettings], DomainComponents]] = {
     "security": _build_security_components,
 }
 
 _DOMAIN_COMPONENT_ORDER: tuple[str, ...] = tuple(_DOMAIN_COMPONENT_BUILDERS)
 
 
-def build_domain_plugin(settings: Settings) -> DomainPlugin | None:
+def build_domain_plugin(settings: Settings | ApiSettings) -> DomainPlugin | None:
     """Return the first enabled domain plugin, or None.
 
     Intended for query API bootstrap where only the plugin (not full
@@ -61,8 +88,7 @@ def build_domain_plugin(settings: Settings) -> DomainPlugin | None:
     return get_first_enabled_domain_components(settings).plugin
 
 
-def get_first_enabled_domain_components(settings: Settings) -> DomainComponents:
-    """Return the first enabled domain plugin bundle, if any."""
+def get_first_enabled_domain_components(settings: Settings | ApiSettings) -> DomainComponents:
     for name in _DOMAIN_COMPONENT_ORDER:
         components = _DOMAIN_COMPONENT_BUILDERS[name](settings)
         if components.plugin is not None:
@@ -76,7 +102,6 @@ def get_run_domain_components(
     requested_domain: str | None,
     context_file: object | None,
 ) -> DomainComponents:
-    """Return the domain bundle for a run when explicitly requested."""
     if requested_domain is None and context_file is None:
         return DomainComponents()
 
@@ -85,30 +110,229 @@ def get_run_domain_components(
     return builder(settings) if builder is not None else DomainComponents()
 
 
+def _build_flat_worker(settings: Settings) -> WorkerPort:
+    """Construct the ``WorkerPort`` adapter used by flat-mode dispatch.
+
+    Today only the ``claude_code`` worker is wired for flat mode at
+    composition time. Other backends (openhands, google_adk) raise
+    ``NotImplementedError`` so a misconfigured run fails loudly at
+    composition time. Add branches here when additional flat-mode workers
+    land.
+    """
+    tool = settings.worker.tool
+    if tool == "claude_code":
+        params = settings.worker.tool_params.claude_code
+        if params is None:
+            raise RuntimeError(
+                "worker.tool_params.claude_code must be populated when "
+                "worker.tool='claude_code'"
+            )
+        return ClaudeCodeWorker(
+            model=settings.worker.model,
+            output_format=params.output_format,
+            include_partial_messages=params.include_partial_messages,
+            max_turns=params.max_turns,
+            use_global_config=params.use_global_config,
+        )
+    raise NotImplementedError(
+        f"flat mode currently supports only worker.tool='claude_code'; got {tool!r}. "
+        "openhands and google_adk flat-mode adapters are not yet wired."
+    )
+
+
+def _make_flat_invariant_builder(
+    *,
+    settings: Settings,
+    prompt_builder: PromptBuilder,
+    context_file: Path | None = None,
+) -> FlatInvariantBuilder:
+    """Return a closure that produces a ``FlatModeBundle`` per flat-mode run.
+
+    The closure validates that ``domain_context`` is a ``CVEInstance``, then
+    assembles the four ``run_invariants`` value objects from ``Settings`` and
+    the run-scoped inputs. The rendered prompt is composed via
+    ``prompt_builder.build_flat_prompt`` so the same ``PromptBuilder``
+    instance is shared with ``ApplicationConfig`` (and hence the live
+    ``AgentExecutionService``).
+
+    ``context_file`` is reserved for a future refinement that lets the
+    closure ingest CVE metadata from a JSON path when the inferred
+    ``domain_context`` is sparse; the current closure does not consume it.
+    """
+    del context_file  # Reserved; remove the ``del`` when consumed.
+
+    # ``subagent_enabled`` is derived once at factory time — settings are
+    # constant for the lifetime of this closure. The flat prompt appends
+    # ``FLAT_SUBAGENT_NOTE`` only when the tool policy allows ``Task``.
+    # Assumes ``allowed_tools: ["*"]``; a future config that pins an
+    # explicit allowlist excluding ``Task`` (instead of relying on
+    # ``disallowed_tools``) would silently still get the subagent note here
+    # even though the CLI receives no ``Task`` entitlement. Revisit the
+    # predicate when introducing such a config.
+    subagent_enabled = "Task" not in settings.worker.disallowed_tools
+
+    def _builder(
+        *,
+        task: str,
+        domain_context: object | None,
+        run_dir: Path,
+    ) -> FlatModeBundle:
+        if not isinstance(domain_context, CVEInstance):
+            raise ValueError(
+                "flat mode requires a CVEInstance domain_context; got "
+                f"{type(domain_context).__name__}"
+            )
+
+        # Flat-mode tool policy is expressed at the top level in YAML; for
+        # example, some configs set ``worker.disallowed_tools: ["Task"]`` to
+        # suppress Claude's Task subagent tool. Read from there directly;
+        # ``tool_params.claude_code.{allowed,disallowed}_tools`` are the
+        # per-runner defaults and are NOT the source of truth for the
+        # flat-mode policy contract.
+        tool_policy = ToolPolicy(
+            allowed=tuple(settings.worker.allowed_tools),
+            disallowed=tuple(settings.worker.disallowed_tools),
+            allowed_bash_commands=(
+                tuple(settings.security.tools) if settings.security.enabled else ()
+            ),
+        )
+
+        rendered_prompt = prompt_builder.build_flat_prompt(
+            task_description=task,
+            agent_id=uuid4(),
+            domain_context=domain_context,
+            subagent_enabled=subagent_enabled,
+        )
+        spec = TaskPromptSpec(
+            rendered_prompt=rendered_prompt,
+            prompt_sha=sha256(rendered_prompt.encode("utf-8")).hexdigest(),
+            cve_context=domain_context.to_template_context(),
+            task=task,
+        )
+        return FlatModeBundle(
+            spec=spec,
+            tool_policy=tool_policy,
+            timeouts=build_timeouts(settings),
+            workspace=build_workspace_spec(run_dir=run_dir, extras={}),
+        )
+
+    return _builder
+
+
+def _docker_pid_cleanup() -> None:
+    """Remove every container labeled with this process's PID.
+
+    Second line of defense against leaked worker/seed containers. The
+    happy-path try/finally in flat-mode + the hierarchical role dispatch
+    already call ``cleanup_worker_execution``. This handler covers the
+    SIGKILL / SIGTERM / SIGINT / atexit paths where in-process cleanup
+    cannot run — it fires from the :class:`CleanupRegistry` once.
+
+    Best-effort: every failure is logged and swallowed because the handler
+    runs during process teardown when other state may already be torn
+    down. A raise here would block the registry's remaining handlers.
+    """
+    pid = os.getpid()
+    docker = shutil.which("docker")
+    if docker is None:
+        logger.warning("docker executable not found; skipping PID-label cleanup")
+        return
+    try:
+        listing = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
+            [
+                docker, "ps", "-a",
+                "--filter", f"label=arise.session_pid={pid}",
+                "--format", "{{.ID}}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        ids = [line.strip() for line in listing.stdout.splitlines() if line.strip()]
+        if not ids:
+            return
+        subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
+            [docker, "rm", "-f", *ids],
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+    except Exception:
+        logger.warning("docker PID-label cleanup failed", exc_info=True)
+
+
 def create_runtime_cli(
     settings: Settings,
     *,
     progress_callback: ProgressCallback | None = None,
     domain_components: DomainComponents | None = None,
+    context_file: Path | None = None,
+    cleanup_registry: CleanupRegistry | None = None,
 ) -> CLI:
-    """Create a CLI with fully wired infrastructure and optional domain pieces."""
     active_domain_components = domain_components or DomainComponents()
+
+    # Register the Docker PID-label cleanup handler when the security plugin
+    # is active. Other plugins (and the query-only paths that pass
+    # ``cleanup_registry=None``) do not produce Docker workload, so the
+    # registration is conditional. The handler itself is best-effort and
+    # idempotent against an empty container set.
+    if cleanup_registry is not None and isinstance(
+        active_domain_components.plugin, SecurityDomainPlugin
+    ):
+        cleanup_registry.register("docker-by-pid", _docker_pid_cleanup)
+
+    openhands_params = settings.worker.tool_params.openhands
+    worker_mcp_tools = (
+        list(openhands_params.mcp_tools)
+        if settings.worker.tool == "openhands" and openhands_params is not None
+        else None
+    )
     infra = get_infrastructure(
         InfrastructureConfig(
             postgres_connection_string=settings.database.connection_string,
+            pool_min=settings.database.pool_min,
+            pool_max=settings.database.pool_max,
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
             worker_tool_timeout=settings.worker.timeout,
+            worker_allowed_tools=list(settings.worker.allowed_tools),
+            worker_disallowed_tools=list(settings.worker.disallowed_tools),
+            worker_mcp_tools=worker_mcp_tools,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
             format_repairer_enabled=settings.format_repairer.enabled,
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,
             format_repairer_api_base=settings.format_repairer.api_base,
+            format_repairer_max_concurrent=settings.format_repairer.max_concurrent,
         )
     )
 
     plugin = active_domain_components.plugin
+
+    # Construct PromptBuilder once and share it between the flat-mode closure
+    # (which needs it to render the flat prompt at run time) and the
+    # AgentExecutionService (which needs it for hierarchical mode). Keeping
+    # one instance avoids divergent Jinja envs and double initialization.
+    prompt_builder = PromptBuilder(
+        "prompts",
+        settings.worker.tool,
+        strategy=active_domain_components.prompt_strategy,
+        domain_plugin=plugin,
+    )
+
+    is_flat = settings.orchestration.mode == "flat"
+    flat_worker = _build_flat_worker(settings) if is_flat else None
+    flat_invariant_builder = (
+        _make_flat_invariant_builder(
+            settings=settings,
+            prompt_builder=prompt_builder,
+            context_file=context_file,
+        )
+        if is_flat
+        else None
+    )
 
     app = get_application(
         infra,
@@ -127,8 +351,12 @@ def create_runtime_cli(
             default_worker_tool=settings.worker.tool,
             domain_plugin=plugin,
             prompt_strategy=active_domain_components.prompt_strategy,
+            prompt_builder=prompt_builder,
             progress_callback=progress_callback,
             domain_key=active_domain_components.domain_key,
+            mode=settings.orchestration.mode,
+            flat_worker=flat_worker,
+            flat_invariant_builder=flat_invariant_builder,
         ),
     )
 

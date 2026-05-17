@@ -37,7 +37,6 @@ router = APIRouter()
 
 
 def _agent_list_item_to_schema(item: AgentListItem) -> AgentListItemSchema:
-    """Convert AgentListItem read model to API schema."""
     return AgentListItemSchema(
         id=str(item.agent_id),
         role=item.role,
@@ -80,8 +79,6 @@ def _agent_node_to_schema(
 
 
 def _agent_summary_to_schema(summary: AgentSummary) -> AgentSummarySchema:
-    """Convert AgentSummary read model to API schema."""
-    # Build briefing schema if parent context exists
     briefing_schema = None
     if summary.parent_task and summary.parent_role:
         briefing_schema = BriefingSummarySchema(
@@ -241,7 +238,6 @@ async def get_agent_hierarchy(
     projection = AgentListProjection()
     agents_by_id = projection.project_all(hierarchy_events)
 
-    # Build hierarchy tree using dedicated service
     builder = HierarchyBuilder(agents_by_id)
     try:
         hierarchy = builder.build(agent_id)

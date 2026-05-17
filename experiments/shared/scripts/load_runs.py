@@ -1,8 +1,13 @@
-"""Walk the runs/ pool and yield `run_manifest.json` records matching a filter.
+"""Walk runs pool roots and yield `run_manifest.json` records matching a filter.
+
+A "pool root" is any directory that holds `<run_id>/run_manifest.json`
+subdirectories. By default this loader walks ``<repo_root>/runs`` and the
+configured ``settings.output.directory`` (defaulting to ``./output`` under
+the repo root). Tests can override the search by passing explicit
+``pool_roots`` and bypass the Settings dependency.
 
 Returns plain ``list[dict]`` so study-specific scripts can adopt pandas
-(or not) as they see fit. Legacy runs namespaced under `runs/_legacy/` are
-included unless ``include_legacy=False``.
+(or not) as they see fit.
 
 Usage::
 
@@ -12,7 +17,6 @@ Usage::
         study_id="2026-04-22-demo",
         cells=["A1", "B2"],
     )
-    # → list[dict] shaped like `run_manifest.json`
 """
 
 from __future__ import annotations
@@ -22,35 +26,102 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
+
 from experiments.shared.scripts._paths import get_repo_root
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
 
 logger = logging.getLogger(__name__)
 
 
-def _runs_pool_root(output_directory: str | Path | None = None) -> Path:
-    if output_directory is None:
-        return get_repo_root() / "runs"
-    return Path(output_directory)
+def default_pool_roots() -> list[Path]:
+    """Return the pool roots scanned when no explicit roots are supplied.
+
+    Walks ``<repo_root>/runs`` plus the configured ``settings.output.directory``
+    (loaded lazily so tests that don't need Settings — and don't have a
+    ``POSTGRES_PASSWORD`` available — aren't forced to instantiate it).
+    """
+    repo_root = get_repo_root()
+    roots: list[Path] = [repo_root / "runs"]
+
+    output_dir = _settings_output_directory()
+    if output_dir is not None and output_dir not in roots:
+        roots.append(output_dir)
+    return roots
 
 
-def _iter_manifest_paths(runs_pool: Path, include_legacy: bool) -> Iterable[Path]:
-    """Yield every `run_manifest.json` beneath the pool."""
-    if not runs_pool.is_dir():
+def _settings_output_directory() -> Path | None:
+    """Resolve ``settings.output.directory`` to an absolute Path, or None.
+
+    Reads the raw merged YAML rather than the full pydantic ``Settings``
+    model. ``Settings.load()`` requires experiment model names that the
+    base ``config.yaml`` intentionally omits (see
+    ``test_base_config_without_models_fails``); validating it just to read
+    ``output.directory`` would emit a misleading "model missing" warning
+    on every cell-less call. Any failure (missing files, malformed YAML)
+    downgrades to ``None`` so the harness still finds runs under ``runs/``.
+    """
+    try:
+        from config.settings import _load_yaml_hierarchy
+
+        merged = _load_yaml_hierarchy()
+    except (ImportError, FileNotFoundError, yaml.YAMLError) as exc:
+        logger.warning("could not load YAML to resolve output.directory: %s", exc)
+        return None
+
+    raw = (merged.get("output") or {}).get("directory")
+    if not raw:
+        return None
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = (get_repo_root() / candidate).resolve()
+    return candidate
+
+
+def _resolve_pool_roots(
+    *,
+    pool_roots: Iterable[Path] | None,
+    output_directory: str | Path | None,
+) -> list[Path]:
+    """Reconcile the explicit overrides into a deduplicated list of roots.
+
+    ``pool_roots`` (when given) wins outright — tests use it to point the
+    walker at a tmp dir without touching Settings. ``output_directory``
+    is the legacy single-root override; we keep it for back-compat. Falling
+    through both yields the default pool roots.
+    """
+    if pool_roots is not None:
+        return list(dict.fromkeys(Path(p) for p in pool_roots))
+    if output_directory is not None:
+        return [Path(output_directory)]
+    return default_pool_roots()
+
+
+def _iter_manifest_paths_for_root(root: Path) -> Iterator[Path]:
+    if not root.is_dir():
         return
 
-    for manifest in runs_pool.glob("*/run_manifest.json"):
+    for manifest in root.glob("*/run_manifest.json"):
         yield manifest
 
-    if include_legacy:
-        legacy_root = runs_pool / "_legacy"
-        if legacy_root.is_dir():
-            for manifest in legacy_root.glob("*/run_manifest.json"):
-                yield manifest
+
+def iter_run_manifests(
+    pool_roots: Iterable[Path] | None = None,
+    *,
+    output_directory: str | Path | None = None,
+) -> Iterator[Path]:
+    """Yield every `run_manifest.json` under the resolved pool roots.
+
+    Public so other scripts (notably ``collect.build_enrollment_lock``)
+    don't need to redefine the walker.
+    """
+    resolved = _resolve_pool_roots(pool_roots=pool_roots, output_directory=output_directory)
+    for root in resolved:
+        yield from _iter_manifest_paths_for_root(root)
 
 
 def _matches(record: dict[str, Any], **filters: Any) -> bool:
@@ -82,19 +153,26 @@ def load_runs(
     tasks: Iterable[str] | None = None,
     exit_status: str | None = None,
     kind: str | None = None,
-    include_legacy: bool = True,
     output_directory: str | Path | None = None,
+    pool_roots: Iterable[Path] | None = None,
 ) -> list[dict[str, Any]]:
-    """Load every matching `run_manifest.json` as a list of dicts."""
-    pool = _runs_pool_root(output_directory)
+    """Load every matching `run_manifest.json` as a list of dicts.
 
+    Walks every pool root (see ``default_pool_roots``) by default; pass
+    ``pool_roots`` to override (tests do this) or ``output_directory`` to
+    keep the single-root legacy behavior.
+    """
     # Collapse any one-shot iterable filters (e.g. generators) into a frozen
     # set so they survive the per-record matching loop.
     cells_set = frozenset(cells) if cells is not None else None
     tasks_set = frozenset(tasks) if tasks is not None else None
 
     records: list[dict[str, Any]] = []
-    for manifest_path in _iter_manifest_paths(pool, include_legacy=include_legacy):
+    seen_run_ids: set[str] = set()
+    for manifest_path in iter_run_manifests(
+        pool_roots=pool_roots,
+        output_directory=output_directory,
+    ):
         try:
             raw = manifest_path.read_text(encoding="utf-8")
             record = json.loads(raw)
@@ -104,6 +182,15 @@ def load_runs(
         if not isinstance(record, dict):
             logger.warning("skipping non-object manifest: %s", manifest_path)
             continue
+        run_id = record.get("run_id")
+        if isinstance(run_id, str) and run_id in seen_run_ids:
+            # Same run_id surfacing in two pool roots means migration
+            # left a duplicate; collect.build_enrollment_lock raises in
+            # that case. load_runs is the read-only path, so we just keep
+            # the first record we saw and drop the dup.
+            continue
+        if isinstance(run_id, str):
+            seen_run_ids.add(run_id)
         if _matches(
             record,
             cells=cells_set,

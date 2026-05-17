@@ -1,0 +1,60 @@
+{
+  "eval_id": 1,
+  "eval_name": "full-audit",
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Report identifies query/api/app.py importing SecurityDomainPlugin as a violation",
+      "passed": true,
+      "evidence": "V-05: query/api/app.py lines 18, 26-29"
+    },
+    {
+      "text": "Report identifies infrastructure/adapters/secbench_runtime.py importing from plugins.security as a violation",
+      "passed": true,
+      "evidence": "V-03: infrastructure/adapters/secbench_runtime.py entire file"
+    },
+    {
+      "text": "Report identifies core/application/services/prompt/prompt_parser.py hardcoded CVE/security regex as a violation",
+      "passed": true,
+      "evidence": "V-02: prompt_parser.py lines 78-79"
+    },
+    {
+      "text": "Report identifies core/application/services/toolset/toolset_policy_resolver.py hardcoded secbench check as a violation",
+      "passed": true,
+      "evidence": "V-01: toolset_policy_resolver.py lines 162-164"
+    },
+    {
+      "text": "Report identifies SecurityConfig in config/settings.py as a violation",
+      "passed": true,
+      "evidence": "V-10: config/settings.py lines 254-261, 288"
+    },
+    {
+      "text": "Report identifies CVE-XXXX in prompts/operations/assess.j2 or decomposition.j2 as a violation",
+      "passed": false,
+      "evidence": "DISMISSED as non-violation. Listed under 'Non-Violations (Architectural Design Reviewed and Accepted)' item 3: 'While mildly suggestive of the security domain, these are template examples for the LLM and could reasonably be replaced with more neutral examples.' The baseline decided these were acceptable, contradicting the hard-requirement policy."
+    },
+    {
+      "text": "Report identifies security-themed test data in core/ test files as violations",
+      "passed": true,
+      "evidence": "V-16, V-17 mention test files with security coupling"
+    },
+    {
+      "text": "Report does NOT use severity tiers like CRITICAL/HIGH/MEDIUM/LOW/ADVISORY — treats all violations equally",
+      "passed": false,
+      "evidence": "Report uses HIGH/MEDIUM/LOW severity tiers throughout. Summary table has a 'Severity' column. Sections are 'HIGH Severity', 'MEDIUM Severity', 'LOW Severity'."
+    },
+    {
+      "text": "Report follows a structured format with tables or clear file:line references for each violation",
+      "passed": true,
+      "evidence": "Each violation has V-XX numbering with file, line, code, and problem description"
+    },
+    {
+      "text": "Report identifies which layers are clean (no violations found)",
+      "passed": false,
+      "evidence": "No 'Clean Layers' section. Has a 'Non-Violations' section but that's about accepted design choices, not clean layers."
+    }
+  ],
+  "pass_rate": 0.7,
+  "passed": 7,
+  "total": 10
+}

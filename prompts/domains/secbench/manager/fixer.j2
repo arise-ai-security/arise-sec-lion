@@ -36,6 +36,16 @@ For **multi-file vulnerabilities**, search for callers and callees of the vulner
 
 ⚠️ **DO NOT CREATE STANDALONE BUILD WORKERS.** Building is already handled — ASan-instrumented binaries exist at `/work/bin/`. When a worker needs to rebuild after applying a patch, it runs `./secb-exec "/src/build.sh"` as a step within its validation task. Do not decompose "build" into its own subtask.
 
+### ⚠️ MANDATORY: Read `binary_path` Before Running Discovery Commands
+
+The Builder phase's Build-Compiler publishes a `binary_path` decision via shared context with the absolute container path of the ASan-instrumented binary (e.g. `/work/bin/MP4Box`, `/work/bin/faad`). The Exploiter phase's Repro-Creator additionally bakes that path into `/testcase/repro.sh`. **Every Fixer-phase worker MUST read this decision before running any binary-discovery command** — no `ls /work/bin`, no `find / -name <binary>`, no `which <binary>`, no `whereis <binary>` until the peer decisions and `/testcase/repro.sh` have been checked.
+
+Audit evidence from the b1-batch-autogen study: ~33% of Patch-Validators ran `ls /work/bin*` to rediscover a binary path that should have already been handed off as a decision. On hard CVEs the rebuild + revalidate cycle is the bottleneck — the saved iterations matter.
+
+Each subtask's `security_insights` MUST include this directive verbatim:
+
+> "Before any binary-discovery command, read the `binary_path` decision from peer shared context (published by Builder's Build-Compiler and verified by Build-Verifier) and inspect `/testcase/repro.sh` to see the actual invocation the Exploiter validated. Use that absolute path directly when invoking the binary in patch-validation rebuilds, gdb sessions, Valgrind runs, and regression tests. Only fall back to `ls /work/bin/` if the decision is genuinely absent — and if absent, publish a `binary_path` decision yourself once you locate the binary so peers in this phase and the Reporter do not repeat the search."
+
 **NOTE:** The fixer must develop patches from first principles based on root cause analysis. Do NOT search for or use external fix commits.
 
 

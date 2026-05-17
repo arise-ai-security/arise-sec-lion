@@ -44,3 +44,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Verify installations
 RUN valgrind --version && { klee --version 2>/dev/null || echo "KLEE not installed"; }
+
+# Claude Code CLI — required so the agent process itself runs inside this
+# container (Cell A flat-mode) instead of on the host. Mirrors the install
+# recipe in deployment/Dockerfile so both images use the same Node/npm path.
+ARG CLAUDE_CODE_VERSION=latest
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && node --version && claude --version
+
+# Security-tools MCP server — Cell A's claude-in-container needs the same
+# valgrind_run/klee_run MCP tools that B/C get on the host. Install Python +
+# the mcp package, then bake the server module under /opt/arise-mcp/. The
+# server detects in-container mode (no ARISE_SECBENCH_HELPER_SCRIPT) and
+# shells commands directly via bash -lc instead of docker exec.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv \
+    && python3 -m venv /opt/arise-mcp/venv \
+    && /opt/arise-mcp/venv/bin/pip install --no-cache-dir "mcp[server]>=1.9.0" \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP"
+COPY plugins/security/mcp/__init__.py /opt/arise-mcp/plugins/security/mcp/__init__.py
+COPY plugins/security/mcp/security_tools_server.py /opt/arise-mcp/plugins/security/mcp/security_tools_server.py
+RUN touch /opt/arise-mcp/plugins/__init__.py /opt/arise-mcp/plugins/security/__init__.py

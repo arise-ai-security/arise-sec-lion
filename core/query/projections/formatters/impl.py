@@ -10,7 +10,6 @@ from core.query.projections.registry import register_formatter
 
 
 def _event_to_dict(event: DomainEvent) -> dict[str, Any]:
-    """Convert DomainEvent to JSON-serializable dict via Pydantic."""
     data = event.model_dump(mode="json")
     data["event_type"] = type(event).__name__
     return data

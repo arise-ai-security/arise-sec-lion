@@ -173,3 +173,26 @@ class SecBenchPromptStrategy:
             )
 
         return chain
+
+    def extend_flat_prompt(
+        self,
+        chain: "TemplateChain",
+        context: PromptContext,
+    ) -> "TemplateChain | None":
+        """Compose the SEC-bench flat-mode prompt.
+
+        Renders the CVE problem statement plus a minimal 4-phase task
+        structure (``flat_pipeline.j2``, a subset of ``boss.j2`` with
+        decomposition mechanics stripped). The role/operation/worker
+        templates are intentionally NOT rendered here — those encode the
+        tree topology's engineering and would contaminate the flat
+        baseline.
+        """
+        cve_instance = _as_cve_instance(context.domain_context)
+        if cve_instance is None:
+            return None
+
+        cve_ctx = cve_instance.to_template_context()
+        return _with_cve_display(chain, cve_instance, phase=None).render(
+            "domains/secbench/flat_pipeline.j2", **cve_ctx
+        )

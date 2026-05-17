@@ -1,0 +1,10 @@
+study_id: c1-batch-autogen
+dataset: dataset.yaml
+replicates: 1
+cells:
+  C1:
+    group: C
+    runner: arise
+    config: configs/C1-qwen-noverifier.yaml
+headline_cells:
+- C1

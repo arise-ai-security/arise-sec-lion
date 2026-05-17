@@ -1,0 +1,30 @@
+{
+  "eval_id": 2,
+  "eval_name": "prompt-scan",
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Report identifies CVE-XXXX in prompts/operations/assess.j2 as a violation",
+      "passed": true,
+      "evidence": "Violation 1: assess.j2 line 110"
+    },
+    {
+      "text": "Report identifies CVE-XXXX in prompts/operations/decomposition.j2 as a violation",
+      "passed": true,
+      "evidence": "Violation 2: decomposition.j2 line 80"
+    },
+    {
+      "text": "Report does NOT flag files under prompts/domains/secbench/ — those are allowed to have security content",
+      "passed": true,
+      "evidence": "No secbench files flagged"
+    },
+    {
+      "text": "Report confirms it scanned system.j2, roles/*.j2, operations/*.j2, and context/*.j2",
+      "passed": true,
+      "evidence": "Clean Files table lists all 9 clean templates"
+    }
+  ],
+  "pass_rate": 1.0,
+  "passed": 4,
+  "total": 4
+}

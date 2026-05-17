@@ -5,6 +5,7 @@
 # Git
 .git
 .gitignore
+.worktrees
 
 # IDE
 .idea
@@ -23,6 +24,12 @@ __pycache__
 *.egg-info
 dist
 build
+
+# Node/frontend build artifacts
+node_modules
+query/web/node_modules
+query/web/dist
+query/web/.next
 
 # Environment files (secrets)
 .env

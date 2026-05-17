@@ -7,8 +7,12 @@ Uses PostToolUse hooks for capturing tool invocations as events.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+import json
+import os
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
+from time import time
 from typing import Any, Literal
 from uuid import UUID
 
@@ -19,7 +23,6 @@ from claude_agent_sdk import (
     HookContext,
     HookInput,
     HookMatcher,
-    PermissionResultAllow,
     ResultMessage,
     TextBlock,
     ThinkingBlock,
@@ -30,10 +33,47 @@ from claude_agent_sdk.types import SyncHookJSONOutput
 from core.domain.events.events import DomainEvent, ThoughtCaptured
 
 from .base import WorkerAdapterBase
-from .shared import ContainerSessionContext, EventSequencer, format_tool_event
+from .shared import (
+    ContainerSessionContext,
+    EventSequencer,
+    UsageBreakdown,
+    build_claude_container_env,
+    emit_cost,
+    format_tool_event,
+    prepare_claude_container_user,
+    to_in_container_mcp_servers,
+    to_sdk_mcp_servers,
+    write_docker_exec_wrapper,
+)
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+type ThinkingDisplay = Literal["summarized", "omitted"]
+type ToolEvent = tuple[str, str, str | None]
+type ToolEventQueue = asyncio.Queue[ToolEvent]
+type ToolUseHook = Callable[
+    [HookInput, str | None, HookContext],
+    Awaitable[SyncHookJSONOutput],
+]
+
+DEFAULT_MAX_THINKING_TOKENS = 63_999
+CLAUDE_CODE_CLI_PATH_ENV = "CLAUDE_CODE_CLI_PATH"
+IN_CONTAINER_CLAUDE_EXECUTABLE = "claude"
+SDK_CONTAINER_WRAPPER_PATH = ".arise/claude-sdk-in-container"
+
+
+def _builtin_tools_for_loading(allowed_tools: list[str]) -> list[str]:
+    # `allowed_tools` is the call-time gate; the CLI's `--tools` flag controls
+    # which built-in tool SCHEMAS get loaded into the cached system prefix.
+    # Without `--tools`, the CLI ships its full default catalog (32K-55K
+    # cache_write tokens/session in current telemetry). Filter to bare
+    # built-in names: drop MCP-prefixed entries (loaded via --mcp-config) and
+    # permission patterns like `Bash(ls:*)` (allowedTools-only syntax).
+    return [
+        name
+        for name in allowed_tools
+        if name and not name.startswith("mcp__") and "(" not in name
+    ]
 
 
 @dataclass
@@ -45,7 +85,11 @@ class SDKAdapterConfig:
     allowed_tools: list[str] = field(
         default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
     )
+    disallowed_tools: list[str] = field(default_factory=list)
     permission_mode: PermissionMode = "bypassPermissions"
+    max_thinking_tokens: int | None = DEFAULT_MAX_THINKING_TOKENS
+    thinking_display: ThinkingDisplay | None = "summarized"
+    cli_path: str | None = None
 
 
 class ClaudeAgentSDKAdapter(WorkerAdapterBase):
@@ -70,7 +114,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         super().__init__(timeout_seconds=self.config.timeout_seconds)
 
     def _get_tool_name(self) -> str:
-        """Return tool identifier for cost tracking."""
         return "claude_code"
 
     async def _execute_task(
@@ -86,121 +129,215 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         Yields events as they are produced, not after completion.
         Uses PostToolUse hooks to capture tool invocations.
         """
-        self._start_timing()
-        tool_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        started_at = time()
+        tool_queue: ToolEventQueue = asyncio.Queue()
         container_session = ContainerSessionContext.from_task_context(task_context)
         if container_session is not None:
-            task_description = container_session.apply_task_prefix(
-                task_description,
-                auto_shell=True,
-            )
+            await prepare_claude_container_user(container_session)
 
         try:
             options = self._build_options(
                 working_dir,
                 tool_queue,
                 container_session,
+                mcp_servers=self._extract_mcp_servers(
+                    task_context,
+                    in_container=container_session is not None,
+                ),
             )
 
-            async with ClaudeSDKClient(options=options) as client:
-                await client.query(task_description)
+            async with asyncio.timeout(self.timeout_seconds):
+                async with ClaudeSDKClient(options=options) as client:
+                    await client.query(task_description)
 
-                async for message in client.receive_response():
-                    # Yield pending tool events from hooks
-                    async for event in self._drain_queue(tool_queue, sequencer):
-                        yield event
-
-                    # Process message content blocks
-                    async for event in self._process_message(message, sequencer):
-                        yield event
-
-                    # Handle result message (terminal)
-                    if isinstance(message, ResultMessage):
-                        async for event in self._drain_queue(tool_queue, sequencer):
+                    async for message in client.receive_response():
+                        # Yield pending tool events from hooks
+                        async for event in self._drain_queue(
+                            tool_queue,
+                            sequencer,
+                            container_session,
+                        ):
                             yield event
 
-                        # Emit cost event before terminal event
-                        cost_event = self._make_cost_event(message, sequencer)
-                        if cost_event:
-                            yield cost_event
+                        # Process message content blocks
+                        async for event in self._process_message(
+                            message,
+                            sequencer,
+                            container_session,
+                        ):
+                            yield event
 
-                        yield self._make_result_event(message, sequencer)
-                        return
+                        # Handle result message (terminal)
+                        if isinstance(message, ResultMessage):
+                            async for event in self._drain_queue(
+                                tool_queue,
+                                sequencer,
+                                container_session,
+                            ):
+                                yield event
+
+                            # Emit cost event before terminal event
+                            cost_event = self._make_cost_event(
+                                message,
+                                sequencer,
+                                duration_seconds=time() - started_at,
+                            )
+                            if cost_event:
+                                yield cost_event
+
+                            yield self._make_result_event(
+                                message,
+                                sequencer,
+                                container_session,
+                            )
+                            return
 
         except TimeoutError:
-            yield sequencer.failed(
-                f"Task timed out after {self.timeout_seconds} seconds"
-            )
+            yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
 
         except Exception as e:
-            yield sequencer.failed(self._format_error(e))
+            reason = self._sanitize_for_events(self._format_error(e), container_session)
+            yield sequencer.failed(str(reason))
 
     def _build_options(
         self,
         working_dir: str,
-        tool_queue: asyncio.Queue[tuple[str, str]],
+        tool_queue: ToolEventQueue,
         container_session: ContainerSessionContext | None,
+        mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> ClaudeAgentOptions:
-        """Build SDK options with PostToolUse hook for event capture."""
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "cwd": working_dir,
+            "allowed_tools": list(self.config.allowed_tools),
+            "disallowed_tools": list(self.config.disallowed_tools),
+            "permission_mode": self.config.permission_mode,
+            "can_use_tool": None,
+            "hooks": {
+                "PostToolUse": [
+                    HookMatcher(
+                        hooks=[
+                            self._make_tool_use_hook(
+                                tool_queue,
+                                container_session,
+                            )
+                        ]
+                    )
+                ],
+            },
+        }
+        builtin_tools = _builtin_tools_for_loading(self.config.allowed_tools)
+        if builtin_tools:
+            kwargs["tools"] = builtin_tools
+        if self.config.thinking_display is not None:
+            kwargs["extra_args"] = {"thinking-display": self.config.thinking_display}
+        if self.config.max_thinking_tokens is not None:
+            kwargs["max_thinking_tokens"] = self.config.max_thinking_tokens
+        if container_session is not None:
+            kwargs["cli_path"] = str(self._write_in_container_cli_wrapper(container_session))
+        elif cli_path := self._effective_cli_path():
+            kwargs["cli_path"] = cli_path
+        if mcp_servers:
+            kwargs["mcp_servers"] = mcp_servers
+        return ClaudeAgentOptions(**kwargs)
 
+    def _write_in_container_cli_wrapper(
+        self,
+        container_session: ContainerSessionContext,
+    ) -> Path:
+        return write_docker_exec_wrapper(
+            path=(container_session.workspace_root / SDK_CONTAINER_WRAPPER_PATH).resolve(),
+            container_session=container_session,
+            executable=IN_CONTAINER_CLAUDE_EXECUTABLE,
+            env=build_claude_container_env(scratch_container_dir=None),
+        )
+
+    def _effective_cli_path(self) -> str | None:
+        cli_path = self.config.cli_path or os.getenv(CLAUDE_CODE_CLI_PATH_ENV)
+        if cli_path is None:
+            return None
+        stripped = cli_path.strip()
+        return stripped or None
+
+    def _make_tool_use_hook(
+        self,
+        tool_queue: ToolEventQueue,
+        container_session: ContainerSessionContext | None,
+    ) -> ToolUseHook:
         async def capture_tool_use(
             input_data: HookInput,
             _tool_use_id: str | None,
             _context: HookContext,
         ) -> SyncHookJSONOutput:
-            """Hook callback to capture tool invocations."""
-            tool_name = getattr(input_data, "tool_name", "unknown")
-            tool_input = getattr(input_data, "tool_input", {})
-            content = format_tool_event(tool_name, tool_input)
-            await tool_queue.put((content, "tool_use"))
+            tool_name, tool_input = self._extract_hook_tool_call(input_data)
+            sanitized_input = self._sanitize_for_events(
+                tool_input,
+                container_session,
+            )
+            if not isinstance(sanitized_input, dict):
+                sanitized_input = tool_input
+            # Mirror claude_code_worker.py:565-567 and openhands_adapter.py:692:
+            # append `\nInput: {<json>}` so downstream parsers that expect the
+            # JSON-encoded tool input alongside the description (e.g.,
+            # bash-command recovery) can find it.
+            detail = json.dumps(sanitized_input, sort_keys=True, default=str)
+            description = format_tool_event(tool_name, sanitized_input)
+            content = f"{description}\nInput: {detail}"
+            # Audit N-6: pass the canonical tool_name through so the
+            # downstream ThoughtCaptured event has a structured field
+            # instead of forcing offline metrics to parse the human prefix.
+            await tool_queue.put((content, "tool_use", tool_name))
             return SyncHookJSONOutput()
 
-        async def can_use_tool(
-            tool_name: str,
-            tool_input: dict[str, Any],
-            _context: Any,
-        ) -> PermissionResultAllow:
-            if container_session is None:
-                return PermissionResultAllow()
-            return PermissionResultAllow(
-                updated_input=container_session.translate_tool_input(
-                    tool_name,
-                    tool_input,
-                )
-            )
+        return capture_tool_use
 
-        return ClaudeAgentOptions(
-            model=self.config.model,
-            cwd=working_dir,
-            allowed_tools=self.config.allowed_tools,
-            permission_mode=self.config.permission_mode,
-            can_use_tool=can_use_tool if container_session is not None else None,
-            hooks={
-                "PostToolUse": [HookMatcher(hooks=[capture_tool_use])],
-            },
-        )
+    @staticmethod
+    def _extract_hook_tool_call(input_data: HookInput) -> tuple[str, dict[str, Any]]:
+        if isinstance(input_data, Mapping):
+            raw_name = input_data.get("tool_name", "unknown")
+            raw_input = input_data.get("tool_input", {})
+        else:
+            raw_name = getattr(input_data, "tool_name", "unknown")
+            raw_input = getattr(input_data, "tool_input", {})
+        tool_name = raw_name if isinstance(raw_name, str) else "unknown"
+        tool_input = raw_input if isinstance(raw_input, dict) else {}
+        return tool_name, tool_input
+
+    @staticmethod
+    def _extract_mcp_servers(
+        task_context: dict[str, Any],
+        *,
+        in_container: bool = False,
+    ) -> dict[str, dict[str, Any]] | None:
+        servers = task_context.get("mcp_servers")
+        if not isinstance(servers, dict) or not servers:
+            return None
+        if in_container:
+            servers = to_in_container_mcp_servers(servers)
+        return to_sdk_mcp_servers(servers)
 
     async def _drain_queue(
         self,
-        queue: asyncio.Queue[tuple[str, str]],
+        queue: ToolEventQueue,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> AsyncIterator[ThoughtCaptured]:
-        """Drain all pending events from queue."""
         while not queue.empty():
-            content, output_type = queue.get_nowait()
-            yield sequencer.thought(content, output_type)
+            content, output_type, tool_name = queue.get_nowait()
+            content = str(self._sanitize_for_events(content, container_session))
+            yield sequencer.thought(content, output_type, tool_name=tool_name)
 
     async def _process_message(
         self,
         message: Any,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> AsyncIterator[ThoughtCaptured]:
-        """Process SDK message and yield domain events."""
         if not isinstance(message, AssistantMessage):
             return
 
         for block in message.content:
-            result = self._process_block(block)
+            result = self._process_block(block, container_session)
             if result:
                 content, output_type = result
                 yield sequencer.thought(content, output_type)
@@ -209,8 +346,9 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         self,
         message: ResultMessage,
         sequencer: EventSequencer,
+        *,
+        duration_seconds: float = 0.0,
     ) -> DomainEvent | None:
-        """Create WorkerCostRecorded event from ResultMessage if cost data available."""
         cost_usd = getattr(message, "total_cost_usd", None)
         usage = getattr(message, "usage", None) or {}
 
@@ -218,44 +356,78 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         if cost_usd is None and not usage:
             return None
 
-        total_tokens = None
         if usage:
-            total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            breakdown = UsageBreakdown(
+                prompt_tokens=self._usage_int(usage, "input_tokens"),
+                completion_tokens=self._usage_int(usage, "output_tokens"),
+                cache_read_tokens=self._usage_int(usage, "cache_read_input_tokens"),
+                cache_write_tokens=self._usage_int(usage, "cache_creation_input_tokens"),
+                reasoning_tokens=(
+                    self._usage_int(usage, "reasoning_tokens")
+                    + self._usage_int(usage, "thinking_tokens")
+                ),
+                cost_usd=cost_usd,
+            )
+        else:
+            breakdown = UsageBreakdown(cost_usd=cost_usd)
 
-        return sequencer.cost_recorded(
+        return emit_cost(
+            sequencer,
             tool_name=self._get_tool_name(),
-            cost_usd=cost_usd or 0.0,
-            duration_seconds=self._get_duration(),
+            duration_seconds=duration_seconds,
             model=self.config.model,
-            tokens=total_tokens,
+            breakdown=breakdown,
         )
+
+    @staticmethod
+    def _usage_int(usage: Any, key: str) -> int:
+        value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+        return int(value or 0)
 
     def _make_result_event(
         self,
         message: ResultMessage,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> DomainEvent:
-        """Create terminal event from ResultMessage."""
+        result = self._sanitize_for_events(
+            getattr(message, "result", None),
+            container_session,
+        )
         if getattr(message, "is_error", False):
-            return sequencer.failed(getattr(message, "result", None) or "Task failed")
-        return sequencer.completed(getattr(message, "result", None) or "Task completed")
+            return sequencer.failed(str(result or "Task failed"))
+        return sequencer.completed(str(result or "Task completed"))
 
     @staticmethod
-    def _process_block(block: Any) -> tuple[str, str] | None:
-        """Process a single content block, returning (content, output_type) or None."""
+    def _sanitize_for_events(
+        value: Any,
+        container_session: ContainerSessionContext | None,
+    ) -> Any:
+        if container_session is None:
+            return value
+        return container_session.path_mapper.sanitize_host_paths(value)
+
+    @classmethod
+    def _process_block(
+        cls,
+        block: Any,
+        container_session: ContainerSessionContext | None = None,
+    ) -> tuple[str, str] | None:
         if isinstance(block, TextBlock):
-            if block.text.strip():
-                return block.text, "output"
+            text = cls._sanitize_for_events(block.text, container_session)
+            if isinstance(text, str) and text.strip():
+                return text, "output"
         elif isinstance(block, ThinkingBlock):
-            if block.thinking.strip():
-                return block.thinking, "thinking"
+            thinking = cls._sanitize_for_events(block.thinking, container_session)
+            if isinstance(thinking, str) and thinking.strip():
+                return thinking, "thinking"
         elif isinstance(block, ToolResultBlock):
-            content = str(block.content)[:500] if block.content else "(no output)"
+            sanitized = cls._sanitize_for_events(block.content, container_session)
+            content = str(sanitized)[:500] if sanitized else "(no output)"
             return f"Tool result: {content}", "tool_result"
         return None
 
     def _format_error(self, error: Exception) -> str:
-        """Format exception as user-friendly error message."""
         error_str = str(error).lower()
         if "cli" in error_str and ("not found" in error_str or "missing" in error_str):
             return (
@@ -264,3 +436,6 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 "pip install --force-reinstall claude-agent-sdk"
             )
         return f"Claude SDK adapter error: {error!r}"
+
+    def _format_unexpected_error(self, error: Exception) -> str:
+        return self._format_error(error)

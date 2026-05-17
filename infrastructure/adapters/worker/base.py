@@ -6,11 +6,10 @@ Only truly shared behavior belongs here.
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from time import time
 from typing import Any
 from uuid import UUID
 
-from core.domain.events.events import DomainEvent
+from core.domain.events.events import DomainEvent, WorkCompleted, WorkFailed
 from core.ports.runtime_ports import WorkerToolPort
 
 from .shared import EventSequencer, validate_task_context
@@ -28,10 +27,11 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
 
     Provides shared helpers:
         _create_sequencer(): Create EventSequencer with STREAM_NAME
-        _start_timing() / _get_duration(): Timing helpers for cost tracking
 
     Adapter-specific logic (error formatting, cost extraction, event processing)
-    stays in the respective subclass.
+    stays in the respective subclass. Each adapter owns its own per-call timing
+    (local ``started_at = time()`` inside ``_execute_task``) so concurrent
+    sessions of the same adapter instance never share a clock.
     """
 
     STREAM_NAME: str  # Subclass must define
@@ -43,7 +43,6 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
             timeout_seconds: Default timeout for task execution.
         """
         self.timeout_seconds = timeout_seconds
-        self._start_time: float = 0.0
 
     async def run_session(
         self, task_context: dict[str, Any]
@@ -55,19 +54,28 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         2. Create sequencer
         3. Delegate to _execute_task()
 
-        Error handling is left to subclasses for SDK-specific formatting.
+        SDK-specific error handling stays in subclasses. This wrapper is only
+        a final safety net so unexpected subclass escapes still produce a
+        terminal worker event.
         """
         task_description, agent_id, working_dir = validate_task_context(task_context)
         sequencer = self._create_sequencer(agent_id)
+        terminal_emitted = False
 
-        async for event in self._execute_task(
-            task_description=task_description,
-            agent_id=agent_id,
-            working_dir=working_dir,
-            sequencer=sequencer,
-            task_context=task_context,
-        ):
-            yield event
+        try:
+            async for event in self._execute_task(
+                task_description=task_description,
+                agent_id=agent_id,
+                working_dir=working_dir,
+                sequencer=sequencer,
+                task_context=task_context,
+            ):
+                if isinstance(event, (WorkCompleted, WorkFailed)):
+                    terminal_emitted = True
+                yield event
+        except Exception as error:
+            if not terminal_emitted:
+                yield sequencer.failed(self._format_unexpected_error(error))
 
     @abstractmethod
     async def _execute_task(
@@ -81,9 +89,11 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         """Execute task and yield events.
 
         Subclass must:
-        - Call self._start_timing() at the beginning
+        - Record ``started_at = time()`` locally at the beginning so concurrent
+          calls do not share state via the adapter instance
         - Yield ThoughtCaptured events during execution
-        - Call sequencer.cost_recorded() with cost data
+        - Call sequencer.cost_recorded() with cost data, passing
+          ``duration_seconds=time() - started_at``
         - Yield WorkCompleted or WorkFailed as final event
         - Handle errors with SDK-specific formatting
 
@@ -106,20 +116,8 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         """
         ...
 
+    def _format_unexpected_error(self, error: Exception) -> str:
+        return f"{self._get_tool_name()} adapter error: {error!r}"
+
     def _create_sequencer(self, agent_id: UUID) -> EventSequencer:
-        """Create EventSequencer tagged with this adapter's STREAM_NAME."""
         return EventSequencer(agent_id, stream=self.STREAM_NAME)
-
-    def _start_timing(self) -> None:
-        """Record start time for duration tracking.
-
-        Call at the beginning of _execute_task().
-        """
-        self._start_time = time()
-
-    def _get_duration(self) -> float:
-        """Get elapsed seconds since _start_timing().
-
-        Use when calling sequencer.cost_recorded().
-        """
-        return time() - self._start_time if self._start_time else 0.0

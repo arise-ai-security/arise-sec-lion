@@ -109,7 +109,7 @@ class AgentSummaryReadModel:
                 status = "in_progress"
             elif isinstance(event, WorkCompleted):
                 status = "completed"
-            elif isinstance(event, WorkFailed) or isinstance(event, VerificationFailed) or isinstance(event, DecisionInfeasible):
+            elif isinstance(event, (WorkFailed, VerificationFailed, DecisionInfeasible)):
                 status = "failed"
             elif isinstance(event, RetryScheduled):
                 # FAILED → ANALYZING: agent is retrying, no longer terminal
@@ -186,7 +186,7 @@ class AgentQueryService:
         failed = 0
         active = 0
 
-        for agent_id, events in all_events.items():
+        for events in all_events.values():
             summary = AgentSummaryReadModel.from_events(events)
             if summary is None:
                 continue
@@ -206,7 +206,35 @@ class AgentQueryService:
             active=active,
         )
 
-    async def get_active_agent_ids(
+    async def get_event_counts(
+        self, agent_ids: list[UUID]
+    ) -> dict[UUID, int]:
+        """Return number of persisted events per agent.
+
+        Used by the system loop's staleness watchdog to detect agents that
+        keep getting re-scheduled by ``get_active_agent_ids`` but never emit
+        any new events (boss-in-judge-loop, manager re-decomposition cycle,
+        etc.) — a pattern the per-task wall-clock watchdog cannot catch
+        because each individual ``run_agent_step`` call completes quickly.
+        """
+        if not agent_ids:
+            return {}
+        return await self._repository.get_event_counts(agent_ids)
+
+    async def get_subtree_event_counts(
+        self, agent_ids: list[UUID]
+    ) -> dict[UUID, int]:
+        """Return event counts across entire descendant subtree per agent.
+
+        Uses a recursive CTE over ChildSpawned links so that a manager waiting
+        for queued sub-workers is not mistakenly declared stale — the manager
+        emits no own-events while waiting, but its subtree does.
+        """
+        if not agent_ids:
+            return {}
+        return await self._repository.get_subtree_event_counts(agent_ids)
+
+    async def get_active_agent_ids(  # noqa: PLR0912
         self,
         root_id: UUID | None = None,
         sequential_workers: bool = False,
@@ -230,7 +258,6 @@ class AgentQueryService:
         else:
             all_events = await self._repository.get_all_events_grouped()
 
-        # Build summaries for all agents
         summaries: dict[UUID, AgentSummaryReadModel] = {}
         for agent_id, events in all_events.items():
             summary = AgentSummaryReadModel.from_events(events)
@@ -297,7 +324,7 @@ class AgentQueryService:
 
         # Sort by path and return only the leftmost eligible worker
         eligible_workers.sort(key=lambda x: x[1])
-        return non_workers + [eligible_workers[0][0]]
+        return [*non_workers, eligible_workers[0][0]]
 
     def _get_dag_ready_workers(
         self,
@@ -345,8 +372,11 @@ class AgentQueryService:
             if sib_id in summaries:
                 sib = summaries[sib_id]
                 sibling_status[sib.sibling_index] = sib.is_terminal
+        effective_deps = [
+            d for d in summary.depends_on if d != summary.sibling_index
+        ]
         return all(
-            sibling_status.get(dep_idx, False) for dep_idx in summary.depends_on
+            sibling_status.get(dep_idx, False) for dep_idx in effective_deps
         )
 
     @staticmethod
@@ -372,9 +402,13 @@ class AgentQueryService:
                         if sib_id in summaries:
                             sib = summaries[sib_id]
                             sibling_status[sib.sibling_index] = sib.is_terminal
+                    effective_deps = [
+                        d for d in ancestor.depends_on
+                        if d != ancestor.sibling_index
+                    ]
                     if not all(
                         sibling_status.get(dep_idx, False)
-                        for dep_idx in ancestor.depends_on
+                        for dep_idx in effective_deps
                     ):
                         return False
             current_id = ancestor.parent_id
@@ -392,7 +426,7 @@ class AgentQueryService:
         This allows lexicographic sorting for left-to-right order.
         """
         path: list[int] = []
-        current_id = agent_id
+        current_id: UUID | None = agent_id
 
         while current_id is not None and current_id in summaries:
             summary = summaries[current_id]
@@ -406,7 +440,6 @@ class AgentQueryService:
         self,
         summaries: dict[UUID, "AgentSummaryReadModel"],
     ) -> dict[UUID | None, list[UUID]]:
-        """Build parent->children map for efficient tree traversal. O(n)."""
         children_map: dict[UUID | None, list[UUID]] = {}
         for agent_id, summary in summaries.items():
             parent = summary.parent_id
@@ -414,35 +447,6 @@ class AgentQueryService:
                 children_map[parent] = []
             children_map[parent].append(agent_id)
         return children_map
-
-    def _get_hierarchy_ids(
-        self,
-        root_id: UUID,
-        summaries: dict[UUID, "AgentSummaryReadModel"],
-        children_map: dict[UUID | None, list[UUID]] | None = None,
-    ) -> set[UUID]:
-        """Get all agent IDs that belong to a hierarchy rooted at root_id.
-
-        Traverses the tree top-down from root to find all descendants.
-        """
-        if root_id not in summaries:
-            return set()
-
-        if children_map is None:
-            children_map = self._build_children_map(summaries)
-
-        # BFS from root to collect all descendants
-        hierarchy: set[UUID] = {root_id}
-        queue = [root_id]
-
-        while queue:
-            current = queue.pop(0)
-            for child_id in children_map.get(current, []):
-                if child_id not in hierarchy:
-                    hierarchy.add(child_id)
-                    queue.append(child_id)
-
-        return hierarchy
 
     def _is_subtree_complete(
         self,
@@ -468,39 +472,6 @@ class AgentQueryService:
                 return False
 
         return True
-
-    def _has_incomplete_left_siblings(
-        self,
-        agent_id: UUID,
-        summaries: dict[UUID, "AgentSummaryReadModel"],
-        children_map: dict[UUID | None, list[UUID]],
-    ) -> bool:
-        """Check if agent has any incomplete left sibling subtrees.
-
-        Walks up ancestor chain, checking at each level for left siblings
-        (lower sibling_index). For each left sibling, verifies the ENTIRE
-        subtree is complete (all descendants terminal), not just the root.
-        """
-        current_id = agent_id
-
-        while current_id is not None and current_id in summaries:
-            summary = summaries[current_id]
-            parent_id = summary.parent_id
-
-            if parent_id is not None:
-                # Check siblings via children_map
-                for sibling_id in children_map.get(parent_id, []):
-                    sibling = summaries[sibling_id]
-                    if sibling.sibling_index < summary.sibling_index:
-                        # Check if ENTIRE subtree is complete, not just the root
-                        if not self._is_subtree_complete(
-                            sibling_id, summaries, children_map
-                        ):
-                            return True
-
-            current_id = parent_id
-
-        return False
 
     def _compute_all_subtree_completions(
         self,
@@ -538,7 +509,6 @@ class AgentQueryService:
             cache[agent_id] = True
             return True
 
-        # Compute for all agents
         for agent_id in summaries:
             if agent_id not in cache:
                 compute_completion(agent_id)
@@ -554,7 +524,7 @@ class AgentQueryService:
 
         O(depth) instead of O(n) per call since subtree completion is cached.
         """
-        current_id = agent_id
+        current_id: UUID | None = agent_id
 
         while current_id is not None and current_id in summaries:
             summary = summaries[current_id]
@@ -564,10 +534,12 @@ class AgentQueryService:
                 current_sibling_index = summary.sibling_index
                 for sibling_id in children_map.get(parent_id, []):
                     sibling = summaries[sibling_id]
-                    if sibling.sibling_index < current_sibling_index:
-                        # Use cached result instead of recursive computation
-                        if not subtree_complete_cache.get(sibling_id, True):
-                            return True
+                    # Use cached result instead of recursive computation.
+                    if (
+                        sibling.sibling_index < current_sibling_index
+                        and not subtree_complete_cache.get(sibling_id, True)
+                    ):
+                        return True
 
             current_id = parent_id
 
@@ -585,12 +557,11 @@ class AgentQueryService:
         """
         # Count depth first to pre-allocate
         depth = 0
-        current_id = agent_id
+        current_id: UUID | None = agent_id
         while current_id is not None and current_id in summaries:
             depth += 1
             current_id = summaries[current_id].parent_id
 
-        # Build result directly in correct order
         result = [0] * depth
         current_id = agent_id
         idx = depth - 1
@@ -602,11 +573,6 @@ class AgentQueryService:
 
         return tuple(result)
 
-    async def is_hierarchy_complete(self, root_id: UUID) -> bool:
-        """Check if all agents in hierarchy have reached terminal state."""
-        active_ids = await self.get_active_agent_ids(root_id=root_id)
-        return len(active_ids) == 0
-
     # -------------------------------------------------------------------------
     # Sibling View (implements SiblingViewPort)
     # -------------------------------------------------------------------------
@@ -617,7 +583,6 @@ class AgentQueryService:
         parent_id: UUID | None,
         root_id: UUID,
     ) -> Handoff:
-        """Build complete handoff view for a worker."""
         parent_task = await self._get_parent_task(parent_id)
         current_sibling_index = await self._get_current_sibling_index(agent_id)
         sibling_statuses = await self._get_sibling_statuses(agent_id, parent_id)

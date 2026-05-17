@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.ports.domain_plugin_port import WorkspacePathAlias
+from infrastructure.adapters.workspace_paths import WorkspacePathMapper
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,7 @@ class ReconToolAdapter:
 
     def __init__(self, working_directory: str = ".") -> None:
         self._workdir = Path(working_directory).resolve()
+        self._path_mapper = WorkspacePathMapper()
 
     def set_working_directory(self, path: str) -> None:
         """Update the working directory for this adapter.
@@ -115,6 +119,22 @@ class ReconToolAdapter:
         """
         self._workdir = Path(path).resolve()
 
+    def set_path_aliases(self, aliases: tuple[WorkspacePathAlias, ...]) -> None:
+        """Map domain/container paths to host paths under the working directory."""
+        normalized = []
+        for alias in aliases:
+            virtual_path = alias.virtual_path.rstrip("/") or "/"
+            if not virtual_path.startswith("/"):
+                raise ValueError(f"Path alias must be absolute: {alias.virtual_path}")
+
+            host_path = self._ensure_within_workdir(
+                Path(alias.host_path).resolve(),
+                alias.host_path,
+            )
+            normalized.append(WorkspacePathAlias(virtual_path, str(host_path)))
+
+        self._path_mapper = WorkspacePathMapper(tuple(normalized))
+
     @property
     def name(self) -> str:
         """Stable toolset identifier used in config resolution."""
@@ -123,15 +143,32 @@ class ReconToolAdapter:
     def _resolve_path(self, path: str) -> Path:
         """Resolve a path relative to working directory, preventing escapes.
 
-        Absolute paths are resolved as-is (the LLM may reference paths
-        from the domain context like /src/project). Relative paths are
-        resolved against the working directory.
+        Absolute domain paths may be mapped through run-scoped aliases
+        such as ``/src`` or ``/testcase``. Other paths must already be
+        inside the working directory or be relative to it.
         """
+        aliased = self._map_path_alias(path)
+        if aliased is not None:
+            return self._ensure_within_workdir(aliased.resolve(), path)
+
         if Path(path).is_absolute():
-            return Path(path).resolve()
+            return self._ensure_within_workdir(Path(path).resolve(), path)
+
         resolved = (self._workdir / path).resolve()
-        if not str(resolved).startswith(str(self._workdir)):
-            raise ValueError(f"Path escapes working directory: {path}")
+        return self._ensure_within_workdir(resolved, path)
+
+    def _map_path_alias(self, path: str) -> Path | None:
+        if not Path(path).is_absolute():
+            return None
+
+        host_path = self._path_mapper.virtual_to_host(path)
+        return Path(host_path) if host_path is not None else None
+
+    def _ensure_within_workdir(self, resolved: Path, display_path: str) -> Path:
+        try:
+            resolved.relative_to(self._workdir)
+        except ValueError as e:
+            raise ValueError(f"Path escapes working directory: {display_path}") from e
         return resolved
 
     async def read_file(
@@ -172,7 +209,6 @@ class ReconToolAdapter:
             return f"Error reading '{path}': {e}"
 
     async def list_directory(self, path: str) -> str:
-        """List directory entries with type indicators (/ for dirs)."""
         resolved = self._resolve_path(path)
         if not resolved.is_dir():
             return f"Error: '{path}' is not a directory or does not exist."
@@ -211,7 +247,6 @@ class ReconToolAdapter:
             if not result:
                 return f"No matches found for pattern '{pattern}'."
 
-            # Make paths relative to workdir for readability
             workdir_str = str(self._workdir) + os.sep
             result = result.replace(workdir_str, "")
             return result
@@ -222,7 +257,6 @@ class ReconToolAdapter:
             return f"Search error: {e}"
 
     async def find_file(self, pattern: str, path: str = ".") -> str:
-        """Find files matching a glob pattern."""
         resolved = self._resolve_path(path)
 
         try:
@@ -246,7 +280,6 @@ class ReconToolAdapter:
             return f"Find error: {e}"
 
     async def get_file_structure(self, path: str = ".", max_depth: int = 3) -> str:
-        """Get a tree view of the directory structure."""
         resolved = self._resolve_path(path)
         if not resolved.is_dir():
             return f"Error: '{path}' is not a directory."
@@ -263,7 +296,6 @@ class ReconToolAdapter:
         max_depth: int,
         lines: list[str],
     ) -> None:
-        """Recursively build tree output."""
         if depth >= max_depth:
             return
 
@@ -334,7 +366,6 @@ class ReconToolAdapter:
         )
 
     async def _ctags_symbols(self, resolved: Path, display_path: str) -> str | None:
-        """Extract symbols using ctags. Returns None if ctags unavailable."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ctags", "--output-format=json", "--fields=+nKS",
@@ -406,7 +437,6 @@ class ReconToolAdapter:
 
     @staticmethod
     def _find_symbol_line(lines: list[str], symbol_name: str, suffix: str) -> int | None:
-        """Find the start line (0-indexed) of a named symbol."""
         suffix = suffix.lower()
         for i, line in enumerate(lines):
             stripped = line.strip()
@@ -423,7 +453,6 @@ class ReconToolAdapter:
 
     @staticmethod
     def _find_symbol_end(lines: list[str], start: int, suffix: str) -> int:
-        """Find the end line (0-indexed) of a symbol starting at `start`."""
         suffix = suffix.lower()
 
         if suffix in (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"):
@@ -456,7 +485,6 @@ class ReconToolAdapter:
         return min(start + 50, len(lines) - 1)
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return tool definitions in OpenAI function-calling format."""
         return [
             {
                 "type": "function",
@@ -477,12 +505,14 @@ class ReconToolAdapter:
         """Dispatch a tool call by name to the appropriate method.
 
         Filters arguments to only pass parameters the handler accepts,
-        since LLMs sometimes hallucinate extra kwargs.
+        since LLMs sometimes hallucinate extra kwargs. Validates that
+        required arguments are present before calling.
         """
         import inspect
 
         handler = getattr(self, name, None)
-        if handler is None or name not in {s.name for s in _TOOL_SPECS}:
+        spec = next((s for s in _TOOL_SPECS if s.name == name), None)
+        if handler is None or spec is None:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
         # Filter to only accepted parameters
@@ -490,4 +520,13 @@ class ReconToolAdapter:
         valid_params = set(sig.parameters.keys())
         filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
 
-        return await handler(**filtered_args)
+        # Validate required arguments are present
+        if spec.required:
+            missing = [r for r in spec.required if r not in filtered_args]
+            if missing:
+                return json.dumps({"error": f"Missing required argument(s): {', '.join(missing)}"})
+
+        try:
+            return await handler(**filtered_args)
+        except ValueError as e:
+            return f"Error: {e}"

@@ -22,7 +22,6 @@ class ParsedDecision(BaseModel):
 
     @classmethod
     def from_element(cls, elem: ET.Element) -> Self | None:
-        """Parse from XML element, returns None if invalid."""
         if not (key := elem.get("key")):
             return None
         if (value_elem := elem.find("value")) is None:
@@ -44,7 +43,6 @@ class ParsedArtifact(BaseModel):
 
     @classmethod
     def from_element(cls, elem: ET.Element) -> Self | None:
-        """Parse from XML element, returns None if invalid."""
         if not (key := elem.get("key")):
             return None
         return cls(key=key, description=_text(elem))

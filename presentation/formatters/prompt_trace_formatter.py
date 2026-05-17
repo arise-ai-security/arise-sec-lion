@@ -73,7 +73,6 @@ class TreeRenderer(PromptTraceRenderer):
         indent: int,
         options: RenderOptions,
     ) -> None:
-        """Render single agent node with its prompts."""
         # Apply filters
         if options.max_depth is not None and node.depth > options.max_depth:
             return
@@ -117,7 +116,6 @@ class TreeRenderer(PromptTraceRenderer):
         index: int,
         options: RenderOptions,
     ) -> None:
-        """Render a single prompt with sections grouped by provenance."""
         timestamp = prompt.occurred_at.strftime("%Y-%m-%dT%H:%M:%S")
         lines.append(f"{prefix}   ┌─ Prompt #{index} ({timestamp}) [{prompt.prompt_type}] → {prompt.target}")
         lines.append(f"{prefix}   │")
@@ -160,7 +158,6 @@ class JsonRenderer(PromptTraceRenderer):
         return json.dumps(data, indent=2, default=str)
 
     def _node_to_dict(self, node: AgentNode, options: RenderOptions) -> dict[str, Any]:
-        """Convert AgentNode to dictionary."""
         # Apply filters
         if options.max_depth is not None and node.depth > options.max_depth:
             return {}
@@ -184,7 +181,6 @@ class JsonRenderer(PromptTraceRenderer):
         }
 
     def _prompt_to_dict(self, prompt: ParsedPrompt, options: RenderOptions) -> dict[str, Any]:
-        """Convert ParsedPrompt to dictionary."""
         sections_by_provenance: dict[str, list[dict]] = {}
 
         for section in prompt.sections:
@@ -231,7 +227,6 @@ class SiblingFlowRenderer(PromptTraceRenderer):
         lines: list[str],
         options: RenderOptions,
     ) -> None:
-        """Find managers/boss with worker children and show sibling flow."""
         # Check if this node has worker children
         worker_children = [c for c in node.children if c.role == "worker"]
 
@@ -258,7 +253,6 @@ class SiblingFlowRenderer(PromptTraceRenderer):
         lines: list[str],
         options: RenderOptions,
     ) -> None:
-        """Render what sibling data this worker received."""
         short_id = str(worker.agent_id)[:8]
         task_preview = worker.task[:40] + "..." if len(worker.task) > 40 else worker.task
 
@@ -284,7 +278,6 @@ class SiblingFlowRenderer(PromptTraceRenderer):
 
 
 def get_renderer(format_type: str) -> PromptTraceRenderer:
-    """Factory function to get appropriate renderer."""
     renderers: dict[str, PromptTraceRenderer] = {
         "tree": TreeRenderer(),
         "json": JsonRenderer(),

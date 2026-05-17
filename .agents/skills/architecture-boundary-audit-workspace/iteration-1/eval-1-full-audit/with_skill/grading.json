@@ -1,0 +1,60 @@
+{
+  "eval_id": 1,
+  "eval_name": "full-audit",
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "Report identifies query/api/app.py importing SecurityDomainPlugin as a violation",
+      "passed": true,
+      "evidence": "Import table row 1: query/api/app.py line 18, from plugins.security import SecurityDomainPlugin"
+    },
+    {
+      "text": "Report identifies infrastructure/adapters/secbench_runtime.py importing from plugins.security as a violation",
+      "passed": true,
+      "evidence": "Import table rows 2-3: secbench_runtime.py lines 10 and 14"
+    },
+    {
+      "text": "Report identifies core/application/services/prompt/prompt_parser.py hardcoded CVE/security regex as a violation",
+      "passed": true,
+      "evidence": "Security Logic table row 2: prompt_parser.py line 79 with regex pattern"
+    },
+    {
+      "text": "Report identifies core/application/services/toolset/toolset_policy_resolver.py hardcoded secbench check as a violation",
+      "passed": true,
+      "evidence": "Security Logic table row 1: toolset_policy_resolver.py line 163"
+    },
+    {
+      "text": "Report identifies SecurityConfig in config/settings.py as a violation",
+      "passed": true,
+      "evidence": "Security References table row 10: config/settings.py line 254, SecurityConfig"
+    },
+    {
+      "text": "Report identifies CVE-XXXX in prompts/operations/assess.j2 or decomposition.j2 as a violation",
+      "passed": true,
+      "evidence": "Security Content in Generic Prompts section: rows 1-2 for decomposition.j2:80 and assess.j2:110"
+    },
+    {
+      "text": "Report identifies security-themed test data in core/ test files as violations",
+      "passed": true,
+      "evidence": "Security References in Test Code section: 18 entries across core/, presentation/, bootstrap/, infra/ tests"
+    },
+    {
+      "text": "Report does NOT use severity tiers like CRITICAL/HIGH/MEDIUM/LOW/ADVISORY — treats all violations equally",
+      "passed": true,
+      "evidence": "Report uses type-based categories (Import Boundary, Security Logic, Security References, Test Code, Prompts, Topology) with no severity labels on individual violations. Summary table at end uses structural highlighting but no severity tiers."
+    },
+    {
+      "text": "Report follows a structured format with tables or clear file:line references for each violation",
+      "passed": true,
+      "evidence": "All sections use markdown tables with #, File, Line, code/term, and context/description columns"
+    },
+    {
+      "text": "Report identifies which layers are clean (no violations found)",
+      "passed": true,
+      "evidence": "Clean Layers section lists: plugins/, prompts/domains/secbench/, system.j2, roles/, context/, query/ (ex app.py)"
+    }
+  ],
+  "pass_rate": 1.0,
+  "passed": 10,
+  "total": 10
+}

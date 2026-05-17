@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
+from config._paths import get_repo_root
 from presentation.persistence.invocation_hash import compute_invocation_sha256
 
 
@@ -22,6 +24,16 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+EFFECTIVE_CONFIG_FILENAME = "effective_config.yaml"
+
+# Per-invocation run-result file path (set by the harness for parallel matrix
+# dispatch). The shared `.last_run.json` pointer races between concurrent
+# `main.py run` invocations because it is a single-slot file; a unique path
+# per invocation cannot. When this env var is set, the CLI writes the same
+# `boss_id`/`status` payload to that path as well, atomically.
+RUN_RESULT_ENV_VAR = "ARISE_RUN_RESULT_PATH"
 
 
 class _CostView(Protocol):
@@ -74,7 +86,6 @@ class LastRunInfo:
 
     @classmethod
     def from_dict(cls, data: dict) -> LastRunInfo:
-        """Deserialize from dictionary."""
         return cls(
             boss_id=UUID(data["boss_id"]),
             task=data["task"],
@@ -84,7 +95,6 @@ class LastRunInfo:
 
 
 def _current_git_sha() -> str | None:
-    """Return the current HEAD sha, or None when git isn't usable."""
     git_bin = shutil.which("git")
     if git_bin is None:
         logger.warning("git not found on PATH; omitting git_sha from run manifest")
@@ -102,8 +112,21 @@ def _current_git_sha() -> str | None:
     return result.stdout.strip() or None
 
 
+def _compute_uv_lock_sha256() -> str | None:
+    """Return sha256 of the repo's ``uv.lock``, or None when absent.
+
+    Recorded alongside ``git_sha`` so a run can be traced back to the exact
+    dependency graph used at execution time. Missing lockfiles (e.g. on
+    contributors not using uv) downgrade gracefully to ``None`` rather than
+    failing the manifest write.
+    """
+    lock = get_repo_root() / "uv.lock"
+    if not lock.is_file():
+        return None
+    return hashlib.sha256(lock.read_bytes()).hexdigest()
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Write JSON atomically: tmp file in same dir + rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
@@ -137,7 +160,6 @@ class RunPersistence:
         return self._output_dir / self.FILENAME
 
     def get_last_run(self) -> LastRunInfo | None:
-        """Read last run info from disk."""
         if not self._path.exists():
             return None
         try:
@@ -152,20 +174,42 @@ class RunPersistence:
         task: str,
         status: str,
     ) -> None:
-        """Save last run info to disk."""
+        """Save last run info to disk atomically.
+
+        Atomic write so interactive consumers (``main.py last``,
+        ``main.py prompts --last``) never see a half-written pointer
+        even if the writer is interrupted or two CLI invocations land
+        on the file at the same moment.
+        """
         self._output_dir.mkdir(parents=True, exist_ok=True)
         info = LastRunInfo(
             boss_id=boss_id,
             task=task,
-            started_at=datetime.now(),
+            started_at=datetime.now(UTC),
             status=status,
         )
-        self._path.write_text(json.dumps(info.to_dict(), indent=2))
+        _atomic_write_json(self._path, info.to_dict())
 
     def get_last_run_id(self) -> UUID | None:
-        """Get boss_id from last run, if available."""
         info = self.get_last_run()
         return info.boss_id if info else None
+
+    @staticmethod
+    def maybe_write_run_result(boss_id: UUID, status: str) -> None:
+        """Write a per-invocation run-result JSON if ``ARISE_RUN_RESULT_PATH`` is set.
+
+        The harness sets the env var to a unique path per ``main.py run``
+        subprocess so it can recover the ``boss_id`` without relying on the
+        shared, race-prone ``.last_run.json`` pointer. No-op when the env var
+        is unset (e.g. interactive ``main.py run`` from a terminal).
+        """
+        result_path = os.environ.get(RUN_RESULT_ENV_VAR)
+        if not result_path:
+            return
+        _atomic_write_json(
+            Path(result_path),
+            {"boss_id": str(boss_id), "status": status},
+        )
 
     async def write_run_manifest(
         self,
@@ -195,6 +239,8 @@ class RunPersistence:
             "ended_at": _to_iso(wall_ended_at),
             "exit_status": exit_status,
             "git_sha": _current_git_sha(),
+            "uv_lock_sha256": _compute_uv_lock_sha256(),
+            "effective_config_path": EFFECTIVE_CONFIG_FILENAME,
             "invocation_sha256": compute_invocation_sha256(
                 settings=settings,
                 task=task,
@@ -220,7 +266,6 @@ class RunPersistence:
 
 
 def _to_iso(moment: datetime) -> str:
-    """Return an ISO8601 string in UTC with a trailing Z."""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")

@@ -61,7 +61,6 @@ class RetryPolicy:
 
         await self._repository.persist_events(
             agent,
-            agent.version - 1,
             self._progress_callback,
         )
         return True
@@ -85,7 +84,6 @@ class RetryPolicy:
         return failures >= retry_cfg.circuit_breaker_threshold
 
     def _get_escalated_model(self, agent: AgentSession) -> str | None:
-        """Get the next healthy model from the escalation chain."""
         chain = self._get_model_chain()
         if not chain:
             return None
@@ -104,5 +102,4 @@ class RetryPolicy:
 
     @staticmethod
     def _get_current_model(agent: AgentSession) -> str | None:
-        base = getattr(agent.config, "base", None)
-        return getattr(base, "model", None)
+        return agent.config.base.model

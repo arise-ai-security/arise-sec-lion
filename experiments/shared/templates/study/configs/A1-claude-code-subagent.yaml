@@ -1,0 +1,39 @@
+# Cell A1 — flat Claude Code CLI baseline with sub-agents ENABLED.
+# `orchestration.mode: flat` collapses the boss/manager/worker hierarchy
+# into a single Claude Code session; the Task tool is allowed so the model
+# can spawn child agents. A1 vs A2 isolates the value of CLI subagents
+# under an identical worker model. CVE context and the SEC-bench container
+# workspace are passed through the unified entrypoint so metrics and
+# artifacts stay comparable to B/C.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: flat
+  orchestration.skip_judge: true
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
+  boss.model: claude-opus-4-5-20251101
+  manager.model: claude-opus-4-5-20251101
+  worker.tool: claude_code
+  worker.model: claude-sonnet-4-5-20250929
+  # Worker tool surface — pinned by BUG-TOOL1 (research/findings/00-synthesis.md
+  # row BUG-TOOL1). MCP-served security tools (Valgrind, KLEE) and the
+  # orchestration recon toolset are governed separately and remain available.
+  worker.allowed_tools: [Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]
+  worker.disallowed_tools: [WebSearch, WebFetch]
+  worker.timeout: 5400
+  # 250 = generous cap chosen for SEC-bench parity. SecVerifier's documented
+  # default is 20; we raise it so flat-mode A-cells aren't iteration-starved
+  # relative to hierarchical B/C cells whose work is split across workers.
+  worker.max_iterations_per_run: 2500
+  output.directory: ./runs
+  worker.tool_params:
+    claude_code:
+      output_format: stream-json
+      include_partial_messages: true
+      max_turns: 2500
+      # In-container Claude CLI authenticates via ANTHROPIC_API_KEY; the
+      # operator's ~/.claude config is not bind-mounted (would leak creds).
+      use_global_config: false

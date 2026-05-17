@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
-from uuid import UUID
+from typing import TYPE_CHECKING, cast
 
-from core.domain.values.json_types import JsonObject
 from core.domain.values.prompt_trace import SectionProvenance
-from core.ports.domain_plugin_port import DomainPlugin, PreparedRunWorkspace, WorkerExecutionContext
-from plugins.security.container_runtime import (
-    SecBenchContainerSession,
-    SecBenchWorkspace,
-    SecurityContainerRuntime,
+from core.ports.domain_plugin_port import (
+    DomainPlugin,
+    PreparedRunWorkspace,
+    WorkerExecutionContext,
 )
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
@@ -24,7 +21,17 @@ from plugins.security.security_tool import get_tools_for_phase
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from uuid import UUID
+
     from core.application.services import PromptStrategy
+    from core.application.services.prompt.prompt_builder import TemplateChain
+    from core.domain.values.json_types import JsonObject
+    from plugins.security.container_runtime import (
+        SecBenchContainerSession,
+        SecBenchWorkspace,
+        SecurityContainerRuntime,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -47,10 +54,15 @@ class SecurityDomainPlugin(DomainPlugin):
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
+        # Audit §13#9: per-root asyncio.Lock around the
+        # `_sessions[root_id]` check-and-set in prepare_worker_execution.
+        # With the orchestrator's default `max_concurrent_workers=1` the
+        # lock is never contended; raising that knob without the lock
+        # would let two sibling workers in the same run race past the
+        # check-and-start and create two containers.
+        self._session_locks: dict[UUID, asyncio.Lock] = {}
 
-    def set_container_runtime(
-        self, container_runtime: SecurityContainerRuntime | None
-    ) -> None:
+    def set_container_runtime(self, container_runtime: SecurityContainerRuntime | None) -> None:
         """Attach the runtime after bootstrap creates infrastructure."""
         self._container_runtime = container_runtime
 
@@ -84,13 +96,11 @@ class SecurityDomainPlugin(DomainPlugin):
         if not tools:
             return prompt
 
-        chain = chain_factory()  # type: ignore[assignment]
-        enrichment = (
-            chain.render(
-                "domains/secbench/tools.j2",
-                security_tools=[tool.model_dump() for tool in tools],
-            ).build()
-        )
+        chain = cast("TemplateChain", chain_factory())
+        enrichment = chain.render(
+            "domains/secbench/tools.j2",
+            security_tools=[tool.model_dump() for tool in tools],
+        ).build()
         return f"{prompt}\n\n{enrichment}"
 
     def get_run_metadata(self, domain_context: object) -> JsonObject:
@@ -151,7 +161,10 @@ class SecurityDomainPlugin(DomainPlugin):
             )
             self._workspaces[root_id] = existing
 
-        return PreparedRunWorkspace(working_directory=str(existing.host_root))
+        return PreparedRunWorkspace(
+            working_directory=str(existing.host_root),
+            path_aliases=existing.path_aliases(),
+        )
 
     async def prepare_worker_execution(
         self,
@@ -176,19 +189,48 @@ class SecurityDomainPlugin(DomainPlugin):
                 return None
             workspace = self._workspaces[root_id]
 
-        if root_id in self._sessions:
-            raise RuntimeError(f"SEC-bench container already active for run {root_id}")
-
-        session = await self._container_runtime.start_session(
-            cve=cve_instance,
-            workspace=workspace,
-            agent_id=agent_id,
+        from plugins.security.mcp.security_tools_server import (
+            build_stdio_config as build_mcp_stdio_config,
         )
-        self._sessions[root_id] = session
+
+        # Audit §13#9: serialize the check-and-start under a per-root lock
+        # so two concurrent prepare_worker_execution calls for the same
+        # root_id can't both pass the membership check and race to
+        # start_session.
+        lock = self._session_locks.setdefault(root_id, asyncio.Lock())
+        async with lock:
+            if root_id in self._sessions:
+                raise RuntimeError(
+                    f"SEC-bench container already active for run {root_id}"
+                )
+
+            session = await self._container_runtime.start_session(
+                cve=cve_instance,
+                workspace=workspace,
+                agent_id=agent_id,
+            )
+            self._sessions[root_id] = session
 
         return WorkerExecutionContext(
             working_directory=str(workspace.host_root),
-            task_context={"container_session": session.to_task_context()},
+            task_context={
+                "container_session": session.to_task_context(),
+                "mcp_servers": {
+                    "security_tools": build_mcp_stdio_config(
+                        container_id=session.container_id,
+                        helper_script=str(workspace.helper_script),
+                        work_dir=workspace.container_working_directory,
+                        host_source_dir=str(workspace.host_source_dir),
+                        host_testcase_dir=str(workspace.host_testcase_dir),
+                        host_work_root=str(workspace.host_work_root),
+                        workspace_root=str(workspace.host_root),
+                        container_source_dir=workspace.container_source_dir,
+                        container_testcase_dir=workspace.container_testcase_dir,
+                        container_work_dir=workspace.container_work_dir,
+                        container_workspace_root=workspace.container_workspace_root,
+                    ),
+                },
+            },
         )
 
     async def cleanup_worker_execution(

@@ -1,45 +1,41 @@
-"""Top-level study harness: `run-ours` and `run-baseline` subcommands.
+"""Top-level study harness: `run-arise` subcommand.
 
-Depends only on stdlib + subprocess + yaml plus the cross-study utilities
+Depends only on stdlib + yaml plus the cross-study utilities
 in ``experiments/shared/scripts``. No import of core/, plugins/, or
 infrastructure/ — the harness is pure orchestration around ``main.py run``
-and baseline subprocesses (spec §8).
+(spec §8).
 
-Run the A/B cells sequentially by default: the harness relies on
-``runs/.last_run.json`` to learn the boss_id emitted by ``main.py run``,
-and that file is inherently a single-slot pointer (spec §12).
+Each ``main.py run`` subprocess receives a unique per-invocation result file
+via the ``ARISE_RUN_RESULT_PATH`` env var so the harness can recover its
+``boss_id`` without racing on the shared ``.last_run.json`` pointer (which
+remains in use for interactive UI workflows only). This makes the matrix
+runner safe under ``--parallel >1`` (spec §12 + N-4 audit fix).
 
 Usage::
 
-    python -m experiments.shared.harness run-ours \\
+    python -m experiments.shared.harness run-arise \\
         --study 2026-04-22-demo \\
         --cell B2 \\
         --task gpac.cve-2021-40575 \\
-        --attempt 0 \\
+        --replicate 0 \\
         --config experiments/2026-04-22-demo/configs/B2.yaml
-
-    python -m experiments.shared.harness run-baseline \\
-        --study 2026-04-22-demo \\
-        --cell A1 \\
-        --task gpac.cve-2021-40575 \\
-        --attempt 0 \\
-        --variant claude-code-subagent
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import json
 import logging
-import shutil
-import subprocess
+import os
+import signal
 import sys
-from datetime import UTC, datetime
+import tempfile
+from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from typing import Any
+from uuid import UUID
 
 import yaml
 
@@ -48,17 +44,34 @@ from experiments.shared.scripts.project_events import project_events_to_jsonl
 from experiments.shared.scripts.register_run import register_run
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+# The harness passes a unique result-file path to each subprocess via this env
+# var so concurrent `main.py run` invocations cannot misattribute each other's
+# run_id. See `presentation/persistence/run_persistence.py:RUN_RESULT_ENV_VAR`.
+RUN_RESULT_ENV_VAR = "ARISE_RUN_RESULT_PATH"
+_SUBPROCESS_TIMEOUT_EXIT_CODE = 124
+_SUBPROCESS_TERM_GRACE_SECONDS = 30.0
 
 
 logger = logging.getLogger(__name__)
 
 
-_BASELINE_MODULES: dict[str, str] = {
-    "claude-code-subagent": "experiments.shared.baselines.run_claude_code",
-    "claude-code-nosubagent": "experiments.shared.baselines.run_claude_code_no_subagent",
-}
+class MainPyTimeoutError(RuntimeError):
+    """Raised when the parent kills a hung ``main.py run`` child."""
+
+
+@dataclass(frozen=True)
+class MainPyInvocation:
+    cmd: list[str]
+    cwd: Path
+    env: dict[str, str]
+    timeout_seconds: float
+
+
+@dataclass(frozen=True)
+class _PreparedRunArise:
+    context_file: Path
+    pool: Path
+    result_path: Path
 
 
 # =============================================================================
@@ -90,7 +103,7 @@ def _load_dataset(study_id: str, manifest: dict[str, Any] | None = None) -> dict
     return _load_yaml(dataset_path)
 
 
-def _ensure_task_coverage(dataset: dict[str, Any]) -> dict[str, Path]:
+def ensure_task_coverage(dataset: dict[str, Any]) -> dict[str, Path]:
     """Pre-flight: every task the harness might run must have a source.paths entry.
 
     The "task set" is the union of ``default_cves`` and every
@@ -135,8 +148,7 @@ def _ensure_task_coverage(dataset: dict[str, Any]) -> dict[str, Path]:
         match = _match_path_for_task(task, paths)
         if match is None:
             raise ValueError(
-                f"dataset.source.paths has no entry matching task {task!r}; "
-                f"found paths: {paths}"
+                f"dataset.source.paths has no entry matching task {task!r}; found paths: {paths}"
             )
         resolved = get_repo_root() / match
         if not resolved.is_file():
@@ -158,21 +170,19 @@ def _match_path_for_task(task: str, paths: list[str]) -> str | None:
 
     # First pass: exact stem match (dot-vs-dash drift tolerant).
     for path in paths:
-        stem = Path(path).stem.lower()
+        stem = Path(path).stem.lower().replace(".", "-")
         if normalized == stem:
             return path
 
     # Second pass: substring fallback, only if no exact match exists.
     for path in paths:
-        stem = Path(path).stem.lower()
+        stem = Path(path).stem.lower().replace(".", "-")
         if normalized in stem:
             return path
     return None
 
 
-def _resolve_effective_cves(
-    dataset: dict[str, Any], cell: str
-) -> list[str]:
+def resolve_effective_cves(dataset: dict[str, Any], cell: str) -> list[str]:
     defaults: list[str] = list(dataset.get("default_cves") or [])
     overrides = dataset.get("per_cell_overrides") or {}
     cell_override = overrides.get(cell) or {}
@@ -191,62 +201,71 @@ def _validate_cell_declared(manifest: dict[str, Any], cell: str) -> None:
     cells = manifest.get("cells") or {}
     if not isinstance(cells, dict) or cell not in cells:
         declared = ", ".join(sorted(cells)) if isinstance(cells, dict) else "<none>"
-        raise ValueError(
-            f"cell {cell!r} is not declared in study.cells (declared: {declared})"
-        )
+        raise ValueError(f"cell {cell!r} is not declared in study.cells (declared: {declared})")
 
 
 # =============================================================================
-# `run-ours` path
+# `run-arise` path
 # =============================================================================
 
 
-def _read_last_run_id(runs_root: Path) -> UUID:
-    pointer = runs_root / ".last_run.json"
-    if not pointer.is_file():
+def _read_run_result(result_path: Path) -> UUID:
+    """Read the per-invocation run-result JSON written by ``cli.py``.
+
+    The path is unique per ``main.py run`` invocation (created by the harness
+    via ``tempfile.mkstemp``) so concurrent matrix dispatches cannot stomp
+    on each other's run_id — the shared ``.last_run.json`` pointer suffers
+    exactly that race under ``--parallel >1``. The harness pre-creates the
+    file as an empty placeholder so the subprocess can atomically replace
+    it; an empty payload therefore means the subprocess never wrote.
+    """
+    if not result_path.is_file():
         raise FileNotFoundError(
-            f"missing {pointer}; `main.py run` must have failed before writing it"
+            f"missing {result_path}; `main.py run` must have failed before writing it"
         )
-    data = json.loads(pointer.read_text(encoding="utf-8"))
+    text = result_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise FileNotFoundError(
+            f"empty run-result at {result_path}; `main.py run` exited before writing it"
+        )
+    data = json.loads(text)
     try:
         return UUID(data["boss_id"])
     except (KeyError, ValueError) as exc:
-        raise ValueError(f".last_run.json is missing or has an invalid boss_id: {data}") from exc
+        raise ValueError(f"{result_path} has invalid/missing boss_id: {data}") from exc
 
 
-def _last_run_snapshot(runs_root: Path) -> tuple[str | None, float | None]:
-    """Return (boss_id, mtime) for the current `.last_run.json`, if present.
-
-    Used as a before/after check so we never enroll a stale pointer when
-    `main.py run` dies before it can update the file (spec §8 + codex
-    review Phase 3 P1).
-    """
-    pointer = runs_root / ".last_run.json"
-    if not pointer.is_file():
-        return None, None
+def _result_file_has_payload(result_path: Path) -> bool:
     try:
-        data = json.loads(pointer.read_text(encoding="utf-8"))
-        boss_id = data.get("boss_id")
-    except (OSError, json.JSONDecodeError):
-        return None, None
-    try:
-        mtime = pointer.stat().st_mtime
+        return bool(result_path.read_text(encoding="utf-8").strip())
     except OSError:
-        mtime = None
-    return boss_id, mtime
+        return False
 
 
-def _invoke_main_py(
+def _subprocess_timeout_seconds() -> float:
+    return float(os.environ.get("ARISE_SUBPROCESS_TIMEOUT_SECONDS", "7800"))
+
+
+def _subprocess_term_grace_seconds() -> float:
+    return float(
+        os.environ.get("ARISE_SUBPROCESS_TERM_GRACE_SECONDS", _SUBPROCESS_TERM_GRACE_SECONDS)
+    )
+
+
+def _build_main_py_invocation(
     *,
     config: Path,
     task: str,
     context_file: Path,
+    result_path: Path,
     python_bin: str | None = None,
-) -> int:
-    """Run ``python main.py -c <config> run <task> --domain security --domain-context-file <path>``.
+) -> MainPyInvocation:
+    """Build the exact ``main.py run`` invocation used by the harness.
 
     `-c` MUST come BEFORE the `run` subcommand (top-level flag, see
-    bootstrap/bootstrap.py:67). Returns the subprocess exit code.
+    bootstrap/bootstrap.py:67). The subprocess inherits ``ARISE_RUN_RESULT_PATH``
+    pointing at ``result_path`` so the CLI can emit a per-invocation
+    ``{boss_id, status}`` payload there.
     """
     python = python_bin or sys.executable
     main_py = get_repo_root() / "main.py"
@@ -262,78 +281,237 @@ def _invoke_main_py(
         "--domain-context-file",
         str(context_file),
     ]
+    env = {**os.environ, RUN_RESULT_ENV_VAR: str(result_path)}
+    return MainPyInvocation(
+        cmd=cmd,
+        cwd=get_repo_root(),
+        env=env,
+        timeout_seconds=_subprocess_timeout_seconds(),
+    )
+
+
+def _invoke_main_py(
+    *,
+    config: Path,
+    task: str,
+    context_file: Path,
+    result_path: Path,
+    python_bin: str | None = None,
+) -> int:
+    """Run ``python main.py -c <config> run <task>`` and return its exit code."""
+    return asyncio.run(
+        _invoke_main_py_async(
+            config=config,
+            task=task,
+            context_file=context_file,
+            result_path=result_path,
+            python_bin=python_bin,
+        )
+    )
+
+
+async def _invoke_main_py_async(
+    *,
+    config: Path,
+    task: str,
+    context_file: Path,
+    result_path: Path,
+    python_bin: str | None = None,
+) -> int:
+    """Run ``main.py run`` under parent-side async process supervision."""
+    invocation = _build_main_py_invocation(
+        config=config,
+        task=task,
+        context_file=context_file,
+        result_path=result_path,
+        python_bin=python_bin,
+    )
+    cmd = invocation.cmd
     logger.info("invoking: %s", " ".join(cmd))
-    completed = subprocess.run(cmd, check=False, cwd=get_repo_root())  # noqa: S603
-    return completed.returncode
+
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=invocation.cwd,
+        env=invocation.env,
+        start_new_session=True,
+    )
+    try:
+        return await asyncio.wait_for(process.wait(), timeout=invocation.timeout_seconds)
+    except TimeoutError:
+        logger.error(
+            "subprocess timed out after %.0fs: %s",
+            invocation.timeout_seconds,
+            " ".join(cmd),
+        )
+        await _terminate_process_tree(
+            process,
+            reason="timeout",
+            grace_seconds=_subprocess_term_grace_seconds(),
+        )
+        await _cleanup_labeled_containers_for_pid(process.pid)
+        return _SUBPROCESS_TIMEOUT_EXIT_CODE
+    except asyncio.CancelledError:
+        logger.warning("subprocess dispatch cancelled; terminating: %s", " ".join(cmd))
+        await _terminate_process_tree(
+            process,
+            reason="cancellation",
+            grace_seconds=_subprocess_term_grace_seconds(),
+        )
+        await _cleanup_labeled_containers_for_pid(process.pid)
+        raise
 
 
-def run_ours(
+async def _terminate_process_tree(
+    process: asyncio.subprocess.Process,
+    *,
+    reason: str,
+    grace_seconds: float,
+) -> None:
+    if process.returncode is not None:
+        return
+
+    logger.warning(
+        "terminating process group for pid=%d after %s; grace=%.1fs",
+        process.pid,
+        reason,
+        grace_seconds,
+    )
+    if os.name == "posix":
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+    else:
+        process.terminate()
+
+    try:
+        await asyncio.wait_for(process.wait(), timeout=grace_seconds)
+    except TimeoutError:
+        logger.warning(
+            "process pid=%d ignored SIGTERM after %.1fs; sending SIGKILL",
+            process.pid,
+            grace_seconds,
+        )
+    finally:
+        if os.name == "posix":
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+        elif process.returncode is None:
+            process.kill()
+
+    if process.returncode is None:
+        with suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+
+
+async def _cleanup_labeled_containers_for_pid(pid: int) -> None:
+    container_ids = await _docker_container_ids_for_pid(pid)
+    if not container_ids:
+        return
+
+    logger.warning(
+        "removing %d Docker container(s) labeled arise.session_pid=%d",
+        len(container_ids),
+        pid,
+    )
+    await _run_docker_cleanup("docker", "rm", "-f", *container_ids, deadline_seconds=60.0)
+
+
+async def _docker_container_ids_for_pid(pid: int) -> list[str]:
+    result = await _run_docker_cleanup(
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        f"label=arise.session_pid={pid}",
+        "--format",
+        "{{.ID}}",
+        deadline_seconds=30.0,
+    )
+    if result is None:
+        return []
+    return [line.strip() for line in result.splitlines() if line.strip()]
+
+
+async def _run_docker_cleanup(*cmd: str, deadline_seconds: float) -> str | None:
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=deadline_seconds,
+        )
+    except FileNotFoundError:
+        logger.warning("docker executable not found; skipping container cleanup")
+        return None
+    except TimeoutError:
+        logger.warning("docker cleanup command timed out: %s", " ".join(cmd))
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        return None
+
+    if process.returncode != 0:
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        logger.warning(
+            "docker cleanup command failed with %d: %s%s",
+            process.returncode,
+            " ".join(cmd),
+            f" ({stderr_text})" if stderr_text else "",
+        )
+        return None
+    return stdout.decode("utf-8", errors="replace")
+
+
+def _read_run_result_after_exit(
+    *,
+    exit_code: int,
+    result_path: Path,
+) -> UUID:
+    # `main.py run` exits non-zero on failed/timeout runs, but the run manifest
+    # still carries the outcome. We do NOT bail out here — enroll the run so
+    # its exit_status is discoverable. A raise happens only if the result
+    # file wasn't written by this subprocess (meaning the run died before any
+    # artifacts landed on disk).
+    if exit_code != 0:
+        logger.warning("`main.py run` exited with %d; continuing enrollment", exit_code)
+    if exit_code == _SUBPROCESS_TIMEOUT_EXIT_CODE and not _result_file_has_payload(result_path):
+        raise MainPyTimeoutError(
+            "`main.py run` timed out and was killed before writing its run-result file"
+        )
+    return _read_run_result(result_path)
+
+
+async def _project_and_register_run(
     *,
     study_id: str,
     cell: str,
     task: str,
-    attempt: int,
+    replicate: int,
     config: Path,
-    runs_root: Path | None = None,
-) -> UUID:
-    """Execute an A/B run through `main.py run` and enroll it in the study."""
-    manifest = _load_study_manifest(study_id)
-    _validate_cell_declared(manifest, cell)
-    dataset = _load_dataset(study_id, manifest=manifest)
-
-    coverage = _ensure_task_coverage(dataset)
-    effective = _resolve_effective_cves(dataset, cell)
-    if task not in effective:
-        raise ValueError(
-            f"task {task!r} is not in the effective CVE set for cell {cell!r}: {effective}"
-        )
-
-    context_file = coverage[task]
-    pool = runs_root or _runs_root()
-    # Capture the pointer state BEFORE the subprocess so we can tell the
-    # difference between "this run advanced it" vs. "we're about to enroll a
-    # stale pointer from a previous run" (codex review Phase 3 P1).
-    prev_boss_id, prev_mtime = _last_run_snapshot(pool)
-
-    exit_code = _invoke_main_py(config=config, task=task, context_file=context_file)
-    # `main.py run` exits non-zero on failed/timeout runs, but the run manifest
-    # still carries the outcome. We do NOT bail out here — enroll the run so
-    # its exit_status is discoverable. A raise happens only if .last_run.json
-    # wasn't advanced by this subprocess (meaning the run died before any
-    # artifacts landed on disk).
-    if exit_code != 0:
-        logger.warning("`main.py run` exited with %d; continuing enrollment", exit_code)
-
-    curr_boss_id, curr_mtime = _last_run_snapshot(pool)
-    if curr_boss_id is None:
-        raise FileNotFoundError(
-            "`main.py run` produced no `.last_run.json`; refusing to enroll"
-        )
-    pointer_advanced = (curr_boss_id != prev_boss_id) or (
-        prev_mtime is not None and curr_mtime is not None and curr_mtime > prev_mtime
-    )
-    if not pointer_advanced:
-        raise RuntimeError(
-            "`.last_run.json` was not advanced by the subprocess (boss_id="
-            f"{curr_boss_id!r}); refusing to enroll a stale pointer."
-        )
-    run_id = UUID(curr_boss_id)
-
-    # Write events.jsonl + enroll into the study manifest. Pass the pinned
-    # config so the projection queries the same Postgres instance `main.py
-    # run` just wrote to.
+    pool: Path,
+    run_id: UUID,
+) -> None:
+    # Write events.jsonl + stamp the per-run manifest with cell/task/replicate.
+    # Pass the pinned config so the projection queries the same Postgres
+    # instance `main.py run` just wrote to. The study manifest is design-only
+    # (PR 1): the enrollment roster is regenerated by collect.py. The run is
+    # still enrolled on projection failure but with projection_status=failed
+    # so collect.py can exclude it from rollups (audit N-2).
     events_path = pool / str(run_id) / "events.jsonl"
+    projection_status = "ok"
     try:
-        asyncio.run(
-            project_events_to_jsonl(
-                run_id=run_id,
-                output_path=events_path,
-                config_path=config,
-            )
+        await project_events_to_jsonl(
+            run_id=run_id,
+            output_path=events_path,
+            config_path=config,
         )
     except Exception:
+        projection_status = "failed"
         logger.exception(
-            "event projection failed for run_id=%s; continuing with enrollment",
+            "event projection failed for run_id=%s; enrolling with projection_status=failed",
             run_id,
         )
 
@@ -342,144 +520,155 @@ def run_ours(
         run_id=run_id,
         cell=cell,
         task=task,
-        attempt=attempt,
+        replicate=replicate,
         output_directory=pool,
+        projection_status=projection_status,
     )
-    return run_id
 
 
-# =============================================================================
-# `run-baseline` path
-# =============================================================================
-
-
-def _pick_baseline_runner(variant: str) -> Callable[..., dict[str, object]]:
-    module_name = _BASELINE_MODULES.get(variant)
-    if module_name is None:
-        raise ValueError(
-            f"unknown baseline variant {variant!r}; "
-            f"known variants: {sorted(_BASELINE_MODULES)}"
-        )
-    module = importlib.import_module(module_name)
-    if not hasattr(module, "run_baseline"):
-        raise RuntimeError(f"baseline module {module_name} has no run_baseline()")
-    return module.run_baseline
-
-
-def _current_git_sha() -> str | None:
-    git_bin = shutil.which("git")
-    if git_bin is None:
-        return None
-    try:
-        result = subprocess.run(  # noqa: S603
-            [git_bin, "rev-parse", "HEAD"],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-    except (subprocess.CalledProcessError, OSError):
-        return None
-    return result.stdout.strip() or None
-
-
-def _iso_utc(moment: datetime) -> str:
-    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-def run_baseline(
+def _prepare_run_arise(
     *,
     study_id: str,
     cell: str,
     task: str,
-    attempt: int,
-    variant: str,
-    runs_root: Path | None = None,
-) -> UUID:
-    """Mint a run_id, run the baseline, write its manifest, and enroll.
-
-    KNOWN LIMITATION: this path does NOT yet materialize the SEC-bench
-    workspace (`/src`, `/testcase`, `secb`) that `main.py run` prepares via
-    SecurityDomainPlugin. Baselines therefore start from an empty run dir and
-    must rely on the shared briefing + context JSON to locate the target
-    source. A follow-up should expose workspace prep as a standalone CLI that
-    the harness can shell out to before dispatching to the baseline runner.
-    """
-    runner = _pick_baseline_runner(variant)
-
+    config: Path,
+    runs_root: Path | None,
+) -> _PreparedRunArise:
     manifest = _load_study_manifest(study_id)
     _validate_cell_declared(manifest, cell)
     dataset = _load_dataset(study_id, manifest=manifest)
-    coverage = _ensure_task_coverage(dataset)
 
-    effective = _resolve_effective_cves(dataset, cell)
+    coverage = ensure_task_coverage(dataset)
+    effective = resolve_effective_cves(dataset, cell)
     if task not in effective:
         raise ValueError(
             f"task {task!r} is not in the effective CVE set for cell {cell!r}: {effective}"
         )
 
-    context_file = coverage[task]
-    pool = runs_root or _runs_root()
-    run_id, run_dir = _mint_fresh_run_dir(pool)
-
-    started = datetime.now(UTC)
-    extras = runner(
-        run_dir=run_dir,
-        task_prompt=task,
-        context_file=context_file,
+    pool = runs_root or _runs_root(config)
+    pool.mkdir(parents=True, exist_ok=True)
+    # Per-invocation result file: a unique path per `main.py run` subprocess
+    # so concurrent matrix jobs cannot misattribute each other's run_id.
+    # `mkstemp` atomically creates the file; the subprocess overwrites it
+    # via the atomic-write helper in run_persistence.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".run-result-{cell}-{task}-", suffix=".json", dir=str(pool)
     )
-    ended = datetime.now(UTC)
+    os.close(fd)
+    return _PreparedRunArise(
+        context_file=coverage[task],
+        pool=pool,
+        result_path=Path(tmp_name),
+    )
 
-    baseline_payload: dict[str, Any] = {
-        "run_id": str(run_id),
-        "kind": "claude_code_baseline",
-        "started_at": _iso_utc(started),
-        "ended_at": _iso_utc(ended),
-        "exit_status": extras.get("exit_status", "failed"),
-        "variant": extras.get("variant", variant),
-        "git_sha": _current_git_sha(),
-    }
-    manifest_path = run_dir / "run_manifest.json"
-    tmp = manifest_path.with_name(manifest_path.name + ".tmp")
-    tmp.write_text(json.dumps(baseline_payload, indent=2, sort_keys=True) + "\n")
-    tmp.replace(manifest_path)
 
-    register_run(
+def run_arise(
+    *,
+    study_id: str,
+    cell: str,
+    task: str,
+    replicate: int,
+    config: Path,
+    runs_root: Path | None = None,
+) -> UUID:
+    """Execute an A/B run through `main.py run` and enroll it in the study."""
+    prepared = _prepare_run_arise(
         study_id=study_id,
-        run_id=run_id,
         cell=cell,
         task=task,
-        attempt=attempt,
-        output_directory=pool,
+        config=config,
+        runs_root=runs_root,
+    )
+
+    try:
+        exit_code = _invoke_main_py(
+            config=config,
+            task=task,
+            context_file=prepared.context_file,
+            result_path=prepared.result_path,
+        )
+        run_id = _read_run_result_after_exit(
+            exit_code=exit_code,
+            result_path=prepared.result_path,
+        )
+    finally:
+        prepared.result_path.unlink(missing_ok=True)
+
+    asyncio.run(
+        _project_and_register_run(
+            study_id=study_id,
+            cell=cell,
+            task=task,
+            replicate=replicate,
+            config=config,
+            pool=prepared.pool,
+            run_id=run_id,
+        )
     )
     return run_id
 
 
-def _runs_root() -> Path:
-    return get_repo_root() / "runs"
-
-
-_MAX_RUN_ID_RETRIES = 3
-
-
-def _mint_fresh_run_dir(pool: Path) -> tuple[UUID, Path]:
-    """Mint a uuid4 and create ``pool/<uuid>/`` exclusively.
-
-    uuid4 collisions are astronomically unlikely, but ``exist_ok=True`` would
-    silently overwrite an existing run directory. Retry up to
-    ``_MAX_RUN_ID_RETRIES`` times on FileExistsError; other OSErrors
-    propagate so disk/permission failures are not masked.
-    """
-    for _attempt in range(_MAX_RUN_ID_RETRIES):
-        candidate = uuid4()
-        run_dir = pool / str(candidate)
-        try:
-            run_dir.mkdir(parents=True, exist_ok=False)
-        except FileExistsError:
-            continue
-        return candidate, run_dir
-    raise RuntimeError(
-        f"failed to mint a unique run_id after {_MAX_RUN_ID_RETRIES} attempts"
+async def run_arise_async(
+    *,
+    study_id: str,
+    cell: str,
+    task: str,
+    replicate: int,
+    config: Path,
+    runs_root: Path | None = None,
+) -> UUID:
+    """Async variant used by matrix dispatch to supervise subprocesses directly."""
+    prepared = _prepare_run_arise(
+        study_id=study_id,
+        cell=cell,
+        task=task,
+        config=config,
+        runs_root=runs_root,
     )
+
+    try:
+        exit_code = await _invoke_main_py_async(
+            config=config,
+            task=task,
+            context_file=prepared.context_file,
+            result_path=prepared.result_path,
+        )
+        run_id = _read_run_result_after_exit(
+            exit_code=exit_code,
+            result_path=prepared.result_path,
+        )
+    finally:
+        prepared.result_path.unlink(missing_ok=True)
+
+    await _project_and_register_run(
+        study_id=study_id,
+        cell=cell,
+        task=task,
+        replicate=replicate,
+        config=config,
+        pool=prepared.pool,
+        run_id=run_id,
+    )
+    return run_id
+
+
+def _runs_root(config: Path | None = None) -> Path:
+    if config is None:
+        return get_repo_root() / "runs"
+    try:
+        from config.overlay import resolve_overlay
+
+        materialized = resolve_overlay(config, repo_root=get_repo_root())
+        raw_output = ((materialized.get("output") or {}).get("directory"))
+        if isinstance(raw_output, str) and raw_output.strip():
+            candidate = Path(raw_output)
+            return candidate if candidate.is_absolute() else get_repo_root() / candidate
+    except Exception:
+        logger.exception(
+            "failed to resolve output.directory from %s; falling back to runs/",
+            config,
+        )
+    return get_repo_root() / "runs"
 
 
 # =============================================================================
@@ -494,23 +683,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    ours = sub.add_parser("run-ours", help="Invoke `main.py run` and enroll it")
-    ours.add_argument("--study", required=True)
-    ours.add_argument("--cell", required=True)
-    ours.add_argument("--task", required=True)
-    ours.add_argument("--attempt", type=int, required=True)
-    ours.add_argument("--config", type=Path, required=True)
-
-    baseline = sub.add_parser("run-baseline", help="Run a baseline tool and enroll it")
-    baseline.add_argument("--study", required=True)
-    baseline.add_argument("--cell", required=True)
-    baseline.add_argument("--task", required=True)
-    baseline.add_argument("--attempt", type=int, required=True)
-    baseline.add_argument(
-        "--variant",
-        required=True,
-        choices=sorted(_BASELINE_MODULES),
-    )
+    arise = sub.add_parser("run-arise", help="Invoke `main.py run` and enroll it")
+    arise.add_argument("--study", required=True)
+    arise.add_argument("--cell", required=True)
+    arise.add_argument("--task", required=True)
+    arise.add_argument("--replicate", type=int, required=True)
+    arise.add_argument("--config", type=Path, required=True)
 
     return parser
 
@@ -520,21 +698,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
     try:
-        if args.command == "run-ours":
-            run_ours(
+        if args.command == "run-arise":
+            run_arise(
                 study_id=args.study,
                 cell=args.cell,
                 task=args.task,
-                attempt=args.attempt,
+                replicate=args.replicate,
                 config=args.config,
-            )
-        elif args.command == "run-baseline":
-            run_baseline(
-                study_id=args.study,
-                cell=args.cell,
-                task=args.task,
-                attempt=args.attempt,
-                variant=args.variant,
             )
         else:
             logger.error("unknown subcommand: %s", args.command)

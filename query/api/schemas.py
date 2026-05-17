@@ -228,9 +228,9 @@ class LLMConfigSchema(BaseModel):
 class InfrastructureConfigSchema(BaseModel):
     """Schema for infrastructure configuration (safe subset)."""
 
-    llm_model_boss: str = Field(..., description="LLM model for BOSS agent")
+    llm_model_boss: str | None = Field(None, description="LLM model for BOSS agent")
     worker_tool_type: str = Field(..., description="Default worker tool type")
-    worker_tool_model: str = Field(..., description="Model for OpenHands worker")
+    worker_tool_model: str | None = Field(None, description="Model for worker tool")
     worker_tool_timeout: int = Field(..., description="Worker tool timeout (seconds)")
 
 
@@ -356,10 +356,8 @@ class ExecutionSummarySchema(BaseModel):
         default_factory=RoleCountSchema, description="Agent counts by role"
     )
 
-    # Cost breakdown
     cost: CostBreakdownSchema = Field(..., description="Cost breakdown")
 
-    # Execution timing
     timing: ExecutionTimingSchema = Field(..., description="Execution timing details")
 
     # Derived fields

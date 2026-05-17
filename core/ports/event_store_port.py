@@ -27,18 +27,28 @@ class EventStoreConnectPort(Protocol):
         ...
 
     async def initialize_schema(self) -> None:
-        """Create tables/schema."""
         ...
 
 
 class EventStoreWritePort(Protocol):
-    """Append-only write operations with Optimistic Concurrency Control."""
+    """Append-only write operations with Optimistic Concurrency Control.
 
-    async def append(self, event: DomainEvent, expected_version: int) -> None:
-        """Append event with OCC. Raises ConcurrencyError if version mismatch."""
+    OCC is enforced solely by the UNIQUE(aggregate_id, sequence_number)
+    constraint on the underlying storage. Concurrent writers that compute
+    the same next sequence_number will race for that constraint, and the
+    loser receives a ConcurrencyError. No explicit version parameter is
+    needed; the sequence_number carried on each event is the version.
+    """
+
+    async def append(self, event: DomainEvent) -> None:
+        """Append event with OCC.
+
+        Raises ConcurrencyError if another writer already persisted an
+        event with the same (aggregate_id, sequence_number).
+        """
         ...
 
-    async def append_batch(self, events: list[DomainEvent], expected_version: int) -> None:
+    async def append_batch(self, events: list[DomainEvent]) -> None:
         """Append multiple events atomically in a single transaction.
 
         Significantly faster than individual appends for workers
@@ -46,7 +56,6 @@ class EventStoreWritePort(Protocol):
 
         Args:
             events: List of events to persist.
-            expected_version: Expected version before first event.
         """
         ...
 
@@ -78,7 +87,36 @@ class EventStoreReadPort(Protocol):
         ...
 
     async def get_all_aggregate_ids(self) -> list[UUID]:
-        """Get all aggregate UUIDs that have events."""
+        ...
+
+    async def count_events(self, aggregate_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events for multiple aggregates.
+
+        Args:
+            aggregate_ids: Aggregate UUIDs to count events for.
+
+        Returns:
+            Dict mapping each aggregate_id to its event count. Aggregates with
+            no events are mapped to 0.
+        """
+        ...
+
+    async def count_subtree_events(self, root_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events across the entire descendant subtree for each root.
+
+        Uses a recursive CTE to traverse ChildSpawned links and sum all events
+        under each root aggregate. This is used by the staleness watchdog so
+        that a manager waiting for queued children is not mistakenly killed —
+        the manager itself emits no new events while waiting, but its subtree
+        does.
+
+        Args:
+            root_ids: Root aggregate UUIDs to compute subtree counts for.
+
+        Returns:
+            Dict mapping each root_id to the total event count in its subtree
+            (including the root itself). Roots with no events are mapped to 0.
+        """
         ...
 
     async def get_all_events_grouped(
@@ -209,4 +247,3 @@ class EventStorePort(EventStoreConnectPort, EventStoreWritePort, EventStoreReadP
     Implementations should inherit from this composite interface.
     Clients should depend on the narrowest interface they need.
     """
-

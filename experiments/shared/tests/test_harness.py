@@ -1,15 +1,18 @@
 """Integration tests for the study harness (spec §8 + §11).
 
 Uses a stubbed ``_invoke_main_py`` that emulates ``python main.py run``
-writing to `.last_run.json` and a manifest, and a fake baseline module
-registered in ``_BASELINE_MODULES``. No real subprocesses are spawned.
+writing to its per-invocation result file (audit N-4 replaces the shared
+``.last_run.json`` pointer) and a manifest. No real subprocesses are
+spawned.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
 from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -40,9 +43,9 @@ def _write_study(
         yaml.safe_dump(
             {
                 "study_id": study_id,
+                "schema_version": 2,
                 "cells": cells,
                 "dataset": "dataset.yaml",
-                "runs": [],
             },
             sort_keys=False,
         )
@@ -71,7 +74,7 @@ def _write_study(
 
 
 # -----------------------------
-# run-ours
+# run-arise
 # -----------------------------
 
 
@@ -81,21 +84,16 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     state: dict[str, object] = {"boss_id": None}
 
-    def _fake_invoke(*, config, task, context_file, python_bin=None) -> int:  # noqa: ARG001
+    def _fake_invoke(*, result_path, **_kwargs: object) -> int:
         runs_root = harness._runs_root()
         runs_root.mkdir(parents=True, exist_ok=True)
         boss_id = uuid4()
         state["boss_id"] = boss_id
-        # Simulate the runtime writing `.last_run.json` and a minimal manifest.
-        (runs_root / ".last_run.json").write_text(
-            json.dumps(
-                {
-                    "boss_id": str(boss_id),
-                    "task": task,
-                    "started_at": "2026-04-22T00:00:00",
-                    "status": "success",
-                }
-            )
+        # Simulate the runtime writing the per-invocation result file
+        # (audit N-4) and a minimal manifest.
+        result_path.write_text(
+            json.dumps({"boss_id": str(boss_id), "status": "success"}),
+            encoding="utf-8",
         )
         run_dir = runs_root / str(boss_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -130,7 +128,7 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     return state
 
 
-def test_run_ours_enrolls_run_into_study(
+def test_run_arise_enrolls_run_into_study(
     repo_root: Path,
     stub_main_py_success: dict[str, object],
 ) -> None:
@@ -143,12 +141,12 @@ def test_run_ours_enrolls_run_into_study(
         default_cves=["gpac.cve-2021-40575"],
     )
 
-    # When: run-ours is invoked for that cell/task.
-    run_id = harness.run_ours(
+    # When: run-arise is invoked for that cell/task.
+    run_id = harness.run_arise(
         study_id=study_id,
         cell="B2",
         task="gpac.cve-2021-40575",
-        attempt=0,
+        replicate=0,
         config=repo_root / "fake-config.yaml",
     )
 
@@ -156,32 +154,33 @@ def test_run_ours_enrolls_run_into_study(
     assert run_id == stub_main_py_success["boss_id"]
 
     # And: the run manifest now carries experiment-level fields.
-    run_manifest = json.loads(
-        (repo_root / "runs" / str(run_id) / "run_manifest.json").read_text()
-    )
+    run_manifest = json.loads((repo_root / "runs" / str(run_id) / "run_manifest.json").read_text())
     assert run_manifest["study_id"] == study_id
     assert run_manifest["cell"] == "B2"
     assert run_manifest["task"] == "gpac.cve-2021-40575"
-    assert run_manifest["attempt"] == 0
+    assert run_manifest["replicate"] == 0
 
-    # And: the study manifest lists the run.
+    # And: the study manifest is design-only — register_run no longer writes
+    # a `runs:` list back into it (PR 1: enrollment moved to the lockfile).
     study_manifest = yaml.safe_load(
         (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
     )
-    assert len(study_manifest["runs"]) == 1
-    assert study_manifest["runs"][0]["run_id"] == str(run_id)
+    assert "runs" not in study_manifest
 
     # And: events.jsonl was produced (by the fake projector).
     assert (repo_root / "runs" / str(run_id) / "events.jsonl").exists()
 
 
-def test_run_ours_rejects_stale_last_run_pointer(
+def test_run_arise_rejects_subprocess_that_never_wrote_result(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If `main.py run` exits non-zero without touching `.last_run.json`,
-    the harness refuses to enroll the previous run's boss_id (codex P1)."""
-    # Given: a study, and a pre-existing `.last_run.json` from an unrelated run.
+    """If `main.py run` exits non-zero without writing its per-invocation
+    result file, the harness refuses to enroll (audit N-4 replaces the
+    `.last_run.json` stale-pointer detection — the new contract is that
+    each subprocess MUST write its result file)."""
+    # Given: a study, and a pre-existing `.last_run.json` from an unrelated run
+    # (which the harness must now ignore entirely — it only reads result_path).
     study_id = "2026-04-22-stale-test"
     _write_study(
         repo_root,
@@ -203,24 +202,71 @@ def test_run_ours_rejects_stale_last_run_pointer(
         )
     )
 
-    def _fake_invoke_that_fails(*, config, task, context_file, python_bin=None) -> int:  # noqa: ARG001
-        # Subprocess fails before RunPersistence.save_last_run() runs.
+    def _fake_invoke_that_fails(*, config, task, context_file, result_path,  # noqa: ARG001
+                                python_bin=None) -> int:  # noqa: ARG001
+        # Subprocess fails before cli.py.maybe_write_run_result runs.
+        # The pre-created empty result file remains; the harness must refuse.
         return 1
 
     monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke_that_fails)
 
-    # When/Then: harness detects the stale pointer and aborts.
-    with pytest.raises(RuntimeError, match="was not advanced"):
-        harness.run_ours(
+    # When/Then: harness aborts because the result file is empty.
+    with pytest.raises(FileNotFoundError, match="run-result"):
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="gpac.cve-2021-40575",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
 
-def test_run_ours_aborts_on_task_not_in_cell_scope(
+def test_run_arise_reports_parent_killed_timeout(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    study_id = "2026-04-22-timeout-test"
+    _write_study(
+        repo_root,
+        study_id=study_id,
+        cells={"B2": {"config": "configs/B2.yaml", "harness": "ours"}},
+        default_cves=["gpac.cve-2021-40575"],
+    )
+
+    def _fake_timeout(**_kwargs: object) -> int:
+        return harness._SUBPROCESS_TIMEOUT_EXIT_CODE
+
+    monkeypatch.setattr(harness, "_invoke_main_py", _fake_timeout)
+
+    with pytest.raises(harness.MainPyTimeoutError, match="timed out"):
+        harness.run_arise(
+            study_id=study_id,
+            cell="B2",
+            task="gpac.cve-2021-40575",
+            replicate=0,
+            config=repo_root / "fake-config.yaml",
+        )
+
+
+def test_terminate_process_tree_kills_child_process() -> None:
+    async def _exercise() -> int:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(30)",
+            start_new_session=True,
+        )
+        await harness._terminate_process_tree(
+            process,
+            reason="test",
+            grace_seconds=0.01,
+        )
+        return process.returncode
+
+    assert asyncio.run(_exercise()) is not None
+
+
+def test_run_arise_aborts_on_task_not_in_cell_scope(
     repo_root: Path,
     stub_main_py_success: dict[str, object],  # noqa: ARG001 - ensures stubs registered
 ) -> None:
@@ -236,16 +282,16 @@ def test_run_ours_aborts_on_task_not_in_cell_scope(
 
     # When/Then
     with pytest.raises(ValueError, match="not in the effective CVE set"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="cve-b",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
 
-def test_run_ours_aborts_when_source_path_missing(
+def test_run_arise_aborts_when_source_path_missing(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -286,86 +332,13 @@ def test_run_ours_aborts_when_source_path_missing(
 
     # When/Then
     with pytest.raises(ValueError, match="no entry matching task"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="gpac.cve-2021-40575",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
-
-
-# -----------------------------
-# run-baseline
-# -----------------------------
-
-
-@pytest.fixture
-def stub_baseline_runner(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """Register a fake baseline module in _BASELINE_MODULES for the test."""
-
-    calls: dict[str, object] = {"ran": False, "run_dir": None, "task": None}
-
-    def _fake_run_baseline(*, run_dir, task_prompt, context_file, **_kwargs):
-        calls["ran"] = True
-        calls["run_dir"] = run_dir
-        calls["task"] = task_prompt
-        calls["context_file"] = context_file
-        (run_dir / "stdout_stderr.log").write_text("fake baseline output\n")
-        return {"variant": "fake-variant", "exit_status": "success"}
-
-    class _FakeModule:
-        run_baseline = staticmethod(_fake_run_baseline)
-
-    fake_name = "experiments.shared.baselines.fake_variant"
-    monkeypatch.setattr(
-        harness,
-        "_BASELINE_MODULES",
-        {**harness._BASELINE_MODULES, "fake-variant": fake_name},
-    )
-    import sys
-
-    monkeypatch.setitem(sys.modules, fake_name, _FakeModule())
-    return calls
-
-
-def test_run_baseline_enrolls_newly_minted_run(
-    repo_root: Path,
-    stub_baseline_runner: dict[str, object],
-) -> None:
-    # Given: a study with an A-cell declared.
-    study_id = "2026-04-22-baseline-test"
-    _write_study(
-        repo_root,
-        study_id=study_id,
-        cells={"A1": {"config": "configs/A1.yaml", "harness": "baseline"}},
-        default_cves=["gpac.cve-2021-40575"],
-    )
-
-    # When: run-baseline dispatches to the fake variant.
-    run_id = harness.run_baseline(
-        study_id=study_id,
-        cell="A1",
-        task="gpac.cve-2021-40575",
-        attempt=0,
-        variant="fake-variant",
-    )
-
-    # Then: the baseline was invoked in a fresh runs/<uuid>/ dir.
-    assert stub_baseline_runner["ran"] is True
-    assert isinstance(run_id, UUID)
-    run_dir = repo_root / "runs" / str(run_id)
-    assert (run_dir / "stdout_stderr.log").exists()
-
-    # And: the manifest carries baseline-flavored fields and enrollment merge.
-    manifest = json.loads((run_dir / "run_manifest.json").read_text())
-    assert manifest["kind"] == "claude_code_baseline"
-    assert manifest["variant"] == "fake-variant"
-    assert manifest["exit_status"] == "success"
-    assert manifest["study_id"] == study_id
-    assert manifest["cell"] == "A1"
-    assert manifest["task"] == "gpac.cve-2021-40575"
-    assert manifest["attempt"] == 0
 
 
 def test_match_path_for_task_prefers_exact_stem() -> None:
@@ -378,7 +351,10 @@ def test_match_path_for_task_prefers_exact_stem() -> None:
     task = "foo.cve-2021-1234"
 
     # When/Then: exact match is chosen, even though it appears second.
-    assert harness._match_path_for_task(task, paths) == "deployment/cve-instances/foo-cve-2021-1234.json"
+    assert (
+        harness._match_path_for_task(task, paths)
+        == "deployment/cve-instances/foo-cve-2021-1234.json"
+    )
 
 
 def test_match_path_for_task_falls_back_to_substring() -> None:
@@ -388,29 +364,9 @@ def test_match_path_for_task_falls_back_to_substring() -> None:
 
     # When/Then: substring fallback picks the only candidate.
     assert (
-        harness._match_path_for_task(task, paths) == "deployment/cve-instances/openjpeg-cve-2016-7445-extra.json"
+        harness._match_path_for_task(task, paths)
+        == "deployment/cve-instances/openjpeg-cve-2016-7445-extra.json"
     )
-
-
-def test_run_baseline_rejects_unknown_variant(repo_root: Path) -> None:
-    # Given: a valid study.
-    study_id = "2026-04-22-unknown-variant"
-    _write_study(
-        repo_root,
-        study_id=study_id,
-        cells={"A1": {"config": "x", "harness": "baseline"}},
-        default_cves=["cve-a"],
-    )
-
-    # When/Then
-    with pytest.raises(ValueError, match="unknown baseline variant"):
-        harness.run_baseline(
-            study_id=study_id,
-            cell="A1",
-            task="cve-a",
-            attempt=0,
-            variant="not-a-real-variant",
-        )
 
 
 # -----------------------------
@@ -418,13 +374,13 @@ def test_run_baseline_rejects_unknown_variant(repo_root: Path) -> None:
 # -----------------------------
 
 
-def test_run_ours_builds_main_py_argv_in_exact_order(
+def test_run_arise_builds_main_py_argv_in_exact_order(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Spec §8: argv MUST be ``-c <config>`` BEFORE the ``run`` subcommand,
     and ``--domain-context-file`` is required for ``--domain security``."""
-    # Given: a well-formed study and a captured subprocess.run call.
+    # Given: a well-formed study and a captured invocation.
     study_id = "2026-04-22-argv-order"
     _write_study(
         repo_root,
@@ -435,29 +391,34 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
 
     captured: dict[str, object] = {}
 
-    def _fake_subprocess_run(cmd, *, check, cwd):  # noqa: ARG001
-        captured["cmd"] = list(cmd)
-        captured["cwd"] = cwd
-        # Simulate the runtime writing `.last_run.json` + run_manifest.
+    def _fake_invoke(*, config, task, context_file, result_path, python_bin=None) -> int:
+        invocation = harness._build_main_py_invocation(
+            config=config,
+            task=task,
+            context_file=context_file,
+            result_path=result_path,
+            python_bin=python_bin,
+        )
+        captured["cmd"] = list(invocation.cmd)
+        captured["cwd"] = invocation.cwd
+        captured["env"] = invocation.env
         runs_root = harness._runs_root()
         runs_root.mkdir(parents=True, exist_ok=True)
         boss_id = uuid4()
         captured["boss_id"] = boss_id
-        (runs_root / ".last_run.json").write_text(
-            json.dumps({"boss_id": str(boss_id), "status": "success"})
+        # Simulate cli.py writing its per-invocation result file.
+        result_path.write_text(
+            json.dumps({"boss_id": str(boss_id), "status": "success"}),
+            encoding="utf-8",
         )
         run_dir = runs_root / str(boss_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "run_manifest.json").write_text(
             json.dumps({"run_id": str(boss_id), "kind": "ours"}, sort_keys=True) + "\n"
         )
+        return 0
 
-        class _Completed:
-            returncode = 0
-
-        return _Completed()
-
-    monkeypatch.setattr(harness.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke)
 
     async def _fake_project_events(*, run_id, output_path, config_path=None):  # noqa: ARG001
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -469,11 +430,11 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
     config_path = repo_root / "fake-config.yaml"
 
     # When
-    harness.run_ours(
+    harness.run_arise(
         study_id=study_id,
         cell="B2",
         task="gpac.cve-2021-40575",
-        attempt=0,
+        replicate=0,
         config=config_path,
     )
 
@@ -493,9 +454,13 @@ def test_run_ours_builds_main_py_argv_in_exact_order(
     assert cmd[8] == "--domain-context-file"
     # The context file is resolved from the dataset source.paths entry.
     assert cmd[9].endswith("gpac-cve-2021-40575.json")
+    assert captured["cwd"] == repo_root
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert harness.RUN_RESULT_ENV_VAR in env
 
 
-def test_run_ours_aborts_when_subset_references_unknown_cve(
+def test_run_arise_aborts_when_subset_references_unknown_cve(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -522,16 +487,16 @@ def test_run_ours_aborts_when_subset_references_unknown_cve(
 
     # When/Then: harness aborts with a clear error listing offending slugs.
     with pytest.raises(ValueError, match="must be a subset of default_cves"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="B2",
             task="cve-a",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
 
 
-def test_run_ours_aborts_when_cell_not_declared(
+def test_run_arise_aborts_when_cell_not_declared(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -552,209 +517,10 @@ def test_run_ours_aborts_when_cell_not_declared(
 
     # When/Then
     with pytest.raises(ValueError, match=r"not declared in study\.cells"):
-        harness.run_ours(
+        harness.run_arise(
             study_id=study_id,
             cell="Z9",
             task="cve-a",
-            attempt=0,
+            replicate=0,
             config=repo_root / "fake-config.yaml",
         )
-
-
-def test_run_baseline_aborts_when_cell_not_declared(
-    repo_root: Path,
-    stub_baseline_runner: dict[str, object],
-) -> None:
-    """Unknown cell must abort BEFORE the baseline runs (must-fix #2)."""
-    # Given: a study declaring only A1.
-    study_id = "2026-04-22-baseline-unknown-cell"
-    _write_study(
-        repo_root,
-        study_id=study_id,
-        cells={"A1": {"config": "x", "harness": "baseline"}},
-        default_cves=["cve-a"],
-    )
-
-    # When/Then
-    with pytest.raises(ValueError, match=r"not declared in study\.cells"):
-        harness.run_baseline(
-            study_id=study_id,
-            cell="Z9",
-            task="cve-a",
-            attempt=0,
-            variant="fake-variant",
-        )
-    # And: the baseline runner was never invoked.
-    assert stub_baseline_runner["ran"] is False
-
-
-def test_run_baseline_retries_on_uuid_collision(
-    repo_root: Path,
-    stub_baseline_runner: dict[str, object],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """uuid4 collisions must retry instead of silently overwriting a run dir
-    (must-fix #5)."""
-    # Given: a study + a pre-existing run dir that collides with the first two
-    # uuid4 values we'll mint.
-    study_id = "2026-04-22-uuid-collision"
-    _write_study(
-        repo_root,
-        study_id=study_id,
-        cells={"A1": {"config": "x", "harness": "baseline"}},
-        default_cves=["cve-a"],
-    )
-
-    colliding_uuid = uuid4()
-    fresh_uuid = uuid4()
-    runs_pool = repo_root / "runs"
-    runs_pool.mkdir(parents=True, exist_ok=True)
-    (runs_pool / str(colliding_uuid)).mkdir()  # taken
-
-    calls = iter([colliding_uuid, colliding_uuid, fresh_uuid])
-
-    def _fake_uuid4():
-        return next(calls)
-
-    monkeypatch.setattr(harness, "uuid4", _fake_uuid4)
-
-    # When
-    run_id = harness.run_baseline(
-        study_id=study_id,
-        cell="A1",
-        task="cve-a",
-        attempt=0,
-        variant="fake-variant",
-    )
-
-    # Then: the fresh uuid4 is used, and the collided dir is untouched.
-    assert run_id == fresh_uuid
-    assert stub_baseline_runner["run_dir"] == runs_pool / str(fresh_uuid)
-    # And: the colliding dir is still empty (not overwritten by the baseline).
-    assert list((runs_pool / str(colliding_uuid)).iterdir()) == []
-
-
-def test_run_baseline_raises_after_max_uuid_retries(
-    repo_root: Path,
-    stub_baseline_runner: dict[str, object],  # noqa: ARG001
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Three collisions in a row must surface as a RuntimeError (must-fix #5)."""
-    study_id = "2026-04-22-uuid-retry-exhausted"
-    _write_study(
-        repo_root,
-        study_id=study_id,
-        cells={"A1": {"config": "x", "harness": "baseline"}},
-        default_cves=["cve-a"],
-    )
-
-    colliding_uuid = uuid4()
-    runs_pool = repo_root / "runs"
-    runs_pool.mkdir(parents=True, exist_ok=True)
-    (runs_pool / str(colliding_uuid)).mkdir()
-
-    monkeypatch.setattr(harness, "uuid4", lambda: colliding_uuid)
-
-    # When/Then
-    with pytest.raises(RuntimeError, match="failed to mint a unique run_id"):
-        harness.run_baseline(
-            study_id=study_id,
-            cell="A1",
-            task="cve-a",
-            attempt=0,
-            variant="fake-variant",
-        )
-
-
-# -----------------------------
-# Baseline env-sanitization (must-fix #3)
-# -----------------------------
-
-
-def test_claude_code_baseline_strips_secrets_from_subprocess_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Baseline subprocess env must never include DB / non-Anthropic LLM secrets."""
-    from experiments.shared.baselines import run_claude_code as baseline
-
-    # Given: a populated process env with secrets and one allowlisted key.
-    monkeypatch.setenv("POSTGRES_PASSWORD", "SECRET_DB")
-    monkeypatch.setenv("POSTGRES_HOST", "db.internal")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
-    monkeypatch.setenv("GOOGLE_API_KEY", "google-secret")
-    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
-    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-secret")
-    monkeypatch.setenv("LLM_API_KEY", "llm-secret")
-    monkeypatch.setenv("ARISE_ENV", "production")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
-
-    captured: dict[str, object] = {}
-
-    def _fake_run(cmd, **kwargs):  # noqa: ARG001
-        captured["env"] = dict(kwargs.get("env") or {})
-
-        class _Completed:
-            returncode = 0
-
-        return _Completed()
-
-    monkeypatch.setattr(baseline.subprocess, "run", _fake_run)
-    monkeypatch.setattr(baseline.shutil, "which", lambda _cmd: "/usr/bin/claude")
-
-    run_dir = tmp_path / "run"
-
-    # When
-    baseline.run_baseline(run_dir=run_dir, task_prompt="demo task")
-
-    # Then: secrets are stripped.
-    env = captured["env"]
-    assert isinstance(env, dict)
-    for stripped in (
-        "POSTGRES_PASSWORD",
-        "POSTGRES_HOST",
-        "OPENAI_API_KEY",
-        "GOOGLE_API_KEY",
-        "GEMINI_API_KEY",
-        "OLLAMA_API_KEY",
-        "LLM_API_KEY",
-        "ARISE_ENV",
-    ):
-        assert stripped not in env, f"{stripped} leaked into subprocess env"
-
-    # And: ANTHROPIC_API_KEY is preserved (the baseline needs it).
-    assert env["ANTHROPIC_API_KEY"] == "sk-anthropic"
-
-
-def test_claude_code_nosubagent_strips_secrets_from_subprocess_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Same allowlist applies to the nosubagent variant (must-fix #3)."""
-    from experiments.shared.baselines import run_claude_code_no_subagent as baseline
-
-    monkeypatch.setenv("POSTGRES_PASSWORD", "SECRET_DB")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
-
-    captured: dict[str, object] = {}
-
-    def _fake_run(cmd, **kwargs):  # noqa: ARG001
-        captured["env"] = dict(kwargs.get("env") or {})
-
-        class _Completed:
-            returncode = 0
-
-        return _Completed()
-
-    monkeypatch.setattr(baseline.subprocess, "run", _fake_run)
-    monkeypatch.setattr(baseline.shutil, "which", lambda _cmd: "/usr/bin/claude")
-
-    # When
-    baseline.run_baseline(run_dir=tmp_path / "run", task_prompt="demo task")
-
-    env = captured["env"]
-    assert isinstance(env, dict)
-    assert "POSTGRES_PASSWORD" not in env
-    assert "OPENAI_API_KEY" not in env
-    assert env["ANTHROPIC_API_KEY"] == "sk-anthropic"

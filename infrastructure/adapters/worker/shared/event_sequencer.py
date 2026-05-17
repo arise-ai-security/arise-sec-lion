@@ -52,15 +52,23 @@ class EventSequencer:
 
     @property
     def current_sequence(self) -> int:
-        """Return current sequence number (for testing/debugging)."""
         return self._sequence
 
-    def thought(self, content: str, output_type: str) -> ThoughtCaptured:
+    def thought(
+        self,
+        content: str,
+        output_type: str,
+        *,
+        tool_name: str | None = None,
+    ) -> ThoughtCaptured:
         """Create a ThoughtCaptured event and increment sequence.
 
         Args:
             content: The thought content to capture.
             output_type: Type classification (thinking, output, progress, etc.).
+            tool_name: Canonical tool identifier when output_type == "tool_use".
+                Optional kw-only so callers that don't emit tool events can omit
+                it (audit N-6).
 
         Returns:
             ThoughtCaptured event with current sequence number.
@@ -71,6 +79,7 @@ class EventSequencer:
             content=_sanitize_for_jsonb(content),
             stream=self._stream,
             output_type=output_type,
+            tool_name=tool_name,
         )
         self._sequence += 1
         return event

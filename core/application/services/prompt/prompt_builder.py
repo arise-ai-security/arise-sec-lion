@@ -22,6 +22,16 @@ from core.domain.values.enums import AgentRole
 from core.domain.values.prompt_capabilities import PromptCapabilities
 
 
+# Appended to the flat-mode prompt when the tool policy allows Claude's
+# Task subagent tool. Without this note, Claude rarely exercises Task, so
+# toggling Task availability degenerates into noise unless the prompt is
+# also adjusted.
+FLAT_SUBAGENT_NOTE = (
+    "Note: The Task subagent tool is available; use it at your discretion to "
+    "decompose complex steps."
+)
+
+
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
@@ -70,8 +80,8 @@ class TemplateChain:
         self._parts.append(content)
         return self
 
-    def text_if(self, condition: Any, content: str) -> Self:
-        if condition:
+    def text_if(self, condition: Any, content: str | None) -> Self:
+        if condition and content is not None:
             self._parts.append(content)
         return self
 
@@ -104,7 +114,6 @@ class PromptBuilder:
 
     @staticmethod
     def _normalize_prompt_text(text: str) -> str:
-        """Normalize whitespace for prompt deduplication checks."""
         return " ".join(text.split())
 
     def _maybe_user_prompt_block(
@@ -133,19 +142,16 @@ class PromptBuilder:
         user_prompt: str,
         domain_context: object | None = None,
     ) -> None:
-        """Set global context for this run (called once at start)."""
         self._user_prompt = user_prompt
         self._domain_context = domain_context
 
     def chain(self) -> TemplateChain:
-        """Create a new template chain builder."""
         return TemplateChain(self.env, "template")
 
     def _limits_context(
         self,
         hierarchy_limits: "HierarchyLimits | None",
     ) -> dict[str, Any]:
-        """Build limits context dict for templates."""
         if hierarchy_limits is None:
             return {
                 "max_subtasks": None,
@@ -193,7 +199,6 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        """Build prompt for PENDING agent task assessment."""
         limits = self._limits_context(hierarchy_limits)
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -257,7 +262,6 @@ class PromptBuilder:
         hierarchy_limits: "HierarchyLimits | None" = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        """Build prompt for BOSS agent task delegation."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -317,7 +321,6 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        """Build prompt for MANAGER agent task decomposition."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -393,6 +396,39 @@ class PromptBuilder:
             chain_factory=self.chain,
         )
 
+    def build_flat_prompt(
+        self,
+        task_description: str,
+        agent_id: UUID,
+        domain_context: object | None = None,
+        subagent_enabled: bool = False,
+    ) -> str:
+        """Build the flat-mode (single-agent) prompt.
+
+        Delegates to the active domain strategy's ``extend_flat_prompt``,
+        optionally appends ``FLAT_SUBAGENT_NOTE`` (when the tool policy
+        enables Claude's ``Task``), and appends the task slug. When no
+        strategy or no domain context is supplied, the prompt collapses to
+        the note (when enabled) plus the task slug.
+        """
+        prompt_ctx = PromptContext(
+            task_description=task_description,
+            agent_id=agent_id,
+            agent_role=AgentRole.WORKER,
+            default_tool=self.default_tool,
+            domain_context=domain_context,
+        )
+        chain = self.chain()
+        extended_chain = (
+            self._strategy.extend_flat_prompt(chain, prompt_ctx)
+            if self._strategy is not None
+            else None
+        )
+        body = (extended_chain or chain).build()
+        task_block = f"<task>\n{task_description}\n</task>"
+        parts = [p for p in (body, FLAT_SUBAGENT_NOTE if subagent_enabled else "", task_block) if p]
+        return "\n\n".join(parts)
+
     def build_worker_prompt(
         self,
         task_description: str,
@@ -402,7 +438,6 @@ class PromptBuilder:
         domain_context: object | None = None,
         briefing: "Briefing | None" = None,
     ) -> str:
-        """Build prompt for WORKER agent task execution."""
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id or UUID("00000000-0000-0000-0000-000000000000"),

@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from config import Settings
 from core.query.projections import ProjectionPipelineBuilder
+from infrastructure.adapters import sinks as _sinks  # noqa: F401 — registers @register_sink classes
 from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
 
@@ -72,13 +76,69 @@ async def project_events_to_jsonl(
         raise ValueError(f"no events found for run_id={run_id}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
-        for event in events:
-            handle.write(event.model_dump_json())
-            handle.write("\n")
-
+    _atomic_write_events_jsonl(output_path, events)
     logger.info("wrote %d events to %s", len(events), output_path)
     return len(events)
+
+
+def _atomic_write_events_jsonl(output_path: Path, events: list[DomainEvent]) -> None:
+    """Write events to a tmp file with fsync, then atomically replace target.
+
+    Crash-safety contract: a reader sees either the full new file or the
+    previous file (or no file). A killed harness mid-write cannot leave a
+    truncated `events.jsonl` that the reader silently skips lines from
+    (audit N-1). Mirrors the tmp+fsync+replace pattern in
+    ``presentation/persistence/run_persistence.py:_atomic_write_json``.
+
+    Each line is the event's `model_dump(mode="json")` payload extended with
+    an explicit ``event_type`` discriminator (audit N-5). The base
+    ``DomainEvent`` schema declares no class-name field, so without the
+    discriminator the metrics reader has to infer the type from a brittle
+    set of field-tuple heuristics that miss 25 of 32 subclasses.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=output_path.name + ".",
+        suffix=".tmp",
+        dir=str(output_path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for event in events:
+                # Build the payload then overwrite the discriminator last so a
+                # future DomainEvent subclass that happens to declare its own
+                # ``event_type`` field cannot shadow the class name we need
+                # for downstream dispatch.
+                payload = event.model_dump(mode="json")
+                payload["event_type"] = type(event).__name__
+                handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.replace(output_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    # Best-effort directory fsync so the rename is durable across a kernel
+    # panic. Outside the outer try/except because the replace already
+    # succeeded: the file IS on disk, so a fsync failure must not stamp
+    # projection_status=failed on a healthy run.
+    try:
+        dir_fd = os.open(str(output_path.parent), os.O_DIRECTORY)
+    except (OSError, AttributeError):
+        return
+    try:
+        try:
+            os.fsync(dir_fd)
+        except OSError as exc:
+            logger.warning(
+                "directory fsync failed for %s: %s; file written but rename "
+                "may not survive a kernel panic",
+                output_path.parent,
+                exc,
+            )
+    finally:
+        os.close(dir_fd)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

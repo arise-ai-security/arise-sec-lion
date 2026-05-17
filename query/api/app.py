@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import Settings
+from config import ApiSettings
 from core.ports.event_store_port import EventStorePort
 from query.api.routes import agents, config, events, prompt_trace, prompts
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 # Factory functions injected by bootstrap layer (avoids query→plugins/infrastructure dependency)
 _event_store_factory: Callable[[str], EventStorePort] | None = None
-_domain_plugin_factory: Callable[["Settings"], "DomainPlugin | None"] | None = None
+_domain_plugin_factory: Callable[["ApiSettings"], "DomainPlugin | None"] | None = None
 
 
 def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
@@ -34,17 +34,17 @@ def set_event_store_factory(factory: Callable[[str], EventStorePort]) -> None:
     Called by bootstrap layer to inject the concrete implementation.
     This avoids query layer importing from infrastructure.
     """
-    global _event_store_factory
+    global _event_store_factory  # noqa: PLW0603 - bootstrap injects query-layer factories
     _event_store_factory = factory
 
 
-def set_domain_plugin_factory(factory: Callable[["Settings"], "DomainPlugin | None"]) -> None:
+def set_domain_plugin_factory(factory: Callable[["ApiSettings"], "DomainPlugin | None"]) -> None:
     """Set the domain plugin factory function.
 
     Called by bootstrap layer to inject the concrete domain plugin builder.
     This avoids query layer importing from plugins.
     """
-    global _domain_plugin_factory
+    global _domain_plugin_factory  # noqa: PLW0603 - bootstrap injects query-layer factories
     _domain_plugin_factory = factory
 
 
@@ -65,10 +65,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "Use query.api.bootstrap:create_app instead of query.api.app:create_app"
         )
 
-    # Load settings from config files and environment variables
-    settings = Settings.load()
+    settings = app.state.settings
 
-    # Create and connect the event store
     event_store = _event_store_factory(settings.database.connection_string)
     await event_store.connect()
 
@@ -84,7 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app(
     title: str = "Arise Sec Lion",
     static_dir: Path | None = None,
-    settings: Settings | None = None,
+    settings: ApiSettings | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -99,7 +97,7 @@ def create_app(
     """
     # Load settings if not provided
     if settings is None:
-        settings = Settings.load()
+        settings = ApiSettings.load()
 
     # Default to web dist directory if not specified
     if static_dir is None:
@@ -115,6 +113,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    app.state.settings = settings
     app.state.domain_plugin = _domain_plugin_factory(settings) if _domain_plugin_factory else None
 
     # CORS middleware (configured via config.yaml)

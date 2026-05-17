@@ -9,7 +9,9 @@ from config import (
     ConcurrencyConfig,
     CorsConfig,
     DatabaseConfig,
+    FormatRepairerConfig,
     ManagerConfig,
+    OpenHandsParams,
     OrchestrationConfig,
     OutputConfig,
     RetryConfig,
@@ -18,6 +20,7 @@ from config import (
     ToolCallingConfig,
     TopologyConfig,
     WorkerConfig,
+    WorkerToolParams,
 )
 from presentation.persistence.invocation_hash import (
     _redacted_settings_blob,
@@ -48,6 +51,7 @@ def _make_settings(**overrides: Any) -> Settings:
             tool="openhands",
             timeout=600,
             max_iterations_per_run=20,
+            tool_params=WorkerToolParams(openhands=OpenHandsParams()),
         ),
         orchestration=OrchestrationConfig(
             max_retries=3,
@@ -69,11 +73,11 @@ def _make_settings(**overrides: Any) -> Settings:
         ),
         output=OutputConfig(
             verbose=True,
-            show_progress=True,
             log_level="INFO",
             directory="./runs",
         ),
         security=SecurityConfig(enabled=True, tools=["valgrind"]),
+        format_repairer=FormatRepairerConfig(model="gpt-5.4-mini"),
         cors=CorsConfig(),
     )
     return base.model_copy(update=overrides) if overrides else base

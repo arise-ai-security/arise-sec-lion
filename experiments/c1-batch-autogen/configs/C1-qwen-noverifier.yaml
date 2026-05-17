@@ -1,0 +1,32 @@
+# Cell C1 — our hierarchy with OpenHands-driven local Qwen worker, Judge OFF.
+# Boss/Manager use Sonnet for headline parity with the A-cell Claude baseline.
+# (Claude Sonnet → local Qwen). C1 vs C2 isolates the Judge contribution
+# within the Qwen-worker arm.
+#
+# Requires a local Ollama daemon serving `qwen3:8b` reachable from the worker
+# container; on Linux the docker-compose extra_hosts pin handles routing.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: true
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
+  # Workers stay sequential (sibling-view invariant). LLM semaphore is widened
+  # so Sonnet assess/decompose for queued siblings can pipeline while the one
+  # active worker runs. Per-step / run budgets scaled for Qwen-on-Mac.
+  orchestration.concurrency.max_concurrent_llm_calls: 8
+  orchestration.concurrency.max_agent_step_seconds: 1800
+  orchestration.max_run_duration_seconds: 21600
+  boss.model: claude-sonnet-4-5-20250929
+  manager.model: claude-sonnet-4-5-20250929
+  worker.tool: openhands
+  worker.model: ollama_chat/qwen3:8b
+  worker.allowed_tools: [file_editor, glob, grep]
+  # OpenHands native tools are allowlisted above; terminal/browser are omitted.
+  worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 250
+  output.directory: ./runs

@@ -257,6 +257,38 @@ async def test_write_run_manifest_empty_deliverables_when_no_testcase_dir(
 
 
 @pytest.mark.asyncio
+async def test_write_run_manifest_records_provenance_fields(tmp_path: Path) -> None:
+    """PR 6: manifest carries uv_lock_sha256 and effective_config_path so a run
+    can be tied back to its dependency graph and per-run config snapshot."""
+    # Given: persistence pointed at a tmp runs dir.
+    persistence = RunPersistence(tmp_path)
+    run_id = uuid4()
+
+    # When: writing the manifest.
+    path = await persistence.write_run_manifest(
+        run_id,
+        settings=_make_settings(),
+        task="task",
+        domain_context_path=None,
+        exit_status="success",
+        wall_started_at=datetime(2026, 1, 1, tzinfo=UTC),
+        wall_ended_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+        summary=ProjectionSummary.empty(),
+    )
+
+    # Then: the manifest carries both provenance fields.
+    payload = json.loads(path.read_text())
+    # uv_lock_sha256 is the sha256 of the repo's uv.lock when present;
+    # otherwise None. The repo under test has uv.lock so we expect a hex digest.
+    uv_lock_sha = payload["uv_lock_sha256"]
+    assert uv_lock_sha is None or len(uv_lock_sha) == 64
+    if uv_lock_sha is not None:
+        int(uv_lock_sha, 16)  # must be hex
+    # effective_config_path is documented relative location of the snapshot.
+    assert payload["effective_config_path"] == "effective_config.yaml"
+
+
+@pytest.mark.asyncio
 async def test_write_run_manifest_is_atomic_on_rewrite(tmp_path: Path) -> None:
     # Given: an existing manifest with stale content.
     persistence = RunPersistence(tmp_path)

@@ -404,11 +404,14 @@ async def test_run_agent_step_retries_on_concurrency_error(
     mock_event_store.get_events.return_value = [event1, event2]
     mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
 
-    # First append_batch fails with ConcurrencyError, retry succeeds
+    # First append_batch (early prompt-envelope checkpoint) fails with
+    # ConcurrencyError; the retry's checkpoint succeeds, and the final
+    # end-of-step persist also succeeds.
     # (Multiple events use append_batch, not append)
     mock_event_store.append_batch.side_effect = [
-        ConcurrencyError(aggregate_id=str(agent_id), expected_version=2, actual_version=3),
-        None,  # Retry succeeds
+        ConcurrencyError(aggregate_id=str(agent_id), actual_version=3),
+        None,  # Retry's early checkpoint succeeds
+        None,  # Retry's end-of-step persist succeeds
     ]
 
     # When: Run agent step
@@ -448,7 +451,7 @@ async def test_run_agent_step_raises_after_max_retries(
 
     # All appends fail with ConcurrencyError (use append_batch for multiple events)
     mock_event_store.append_batch.side_effect = ConcurrencyError(
-        aggregate_id=str(agent_id), expected_version=2, actual_version=3
+        aggregate_id=str(agent_id), actual_version=3
     )
 
     # When/Then: Should raise ConcurrencyError after max retries
@@ -600,10 +603,10 @@ async def test_run_agent_step_creates_children_when_boss_spawns(
     # Track all append/append_batch calls to verify child creation
     all_events = []
 
-    async def track_append(event, expected_version):
+    async def track_append(event):
         all_events.append(event)
 
-    async def track_append_batch(events, expected_version):
+    async def track_append_batch(events):
         all_events.extend(events)
 
     mock_event_store.append.side_effect = track_append
@@ -746,10 +749,10 @@ async def test_run_agent_step_notifies_parent_when_child_completes(
     # Track append/append_batch calls
     all_events = []
 
-    async def track_append(event, expected_version):
+    async def track_append(event):
         all_events.append(event)
 
-    async def track_append_batch(events, expected_version):
+    async def track_append_batch(events):
         all_events.extend(events)
 
     mock_event_store.append.side_effect = track_append
@@ -849,3 +852,198 @@ async def test_get_active_agent_ids_filters_terminal_agents(execution_service, m
     # Then: Only the active agent should be returned
     assert len(active_ids) == 1
     assert active_ids[0] == active_agent_id
+
+
+@pytest.mark.asyncio
+async def test_run_agent_step_releases_reservation_on_concurrency_error(
+    execution_service, mock_event_store, mock_llm_port
+):
+    """The OCC retry path must release any child-spawn reservation held
+    by the failed attempt before reloading (D.2). Otherwise concurrent
+    managers leak slots and the cap silently shrinks across retries.
+    """
+
+    # Given: a PENDING agent that will produce subtasks on LLM response
+    agent_id = uuid4()
+    event1 = AgentCreated(
+        aggregate_id=agent_id,
+        sequence_number=1,
+        role=AgentRole.PENDING.value,
+        parent_id=None,
+        config=_test_config(),
+    )
+    event2 = TaskAssigned(
+        aggregate_id=agent_id, sequence_number=2, task_description="Spawn"
+    )
+    mock_event_store.get_events.return_value = [event1, event2]
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
+
+    # And: a factory state where we manually plant a reservation on the
+    # in-memory agent post-dispatch via a side effect mimic. We don't
+    # need a real decomposition path here — exercise the release by
+    # asserting it is invoked when the agent already has pending=2.
+    child_factory = execution_service._child_factory
+    child_factory._max_total_agents = 10  # bounded
+    child_factory.reset(initial_count=0)
+    # Pre-stash a reservation to simulate the dispatch having reserved.
+    await child_factory.try_reserve(2)
+    assert child_factory.reserved == 2
+
+    # First append_batch (early prompt-envelope checkpoint) raises
+    # ConcurrencyError; the retry's checkpoint and end-of-step persist succeed.
+    mock_event_store.append_batch.side_effect = [
+        ConcurrencyError(aggregate_id=str(agent_id), actual_version=3),
+        None,  # retry early checkpoint
+        None,  # retry end-of-step persist
+    ]
+
+    # We intercept _dispatch_agent_action so it always stamps the agent
+    # with pending_reservation=2 on every attempt (this is what
+    # _spawn_children does in real life). This makes the release path
+    # the unit under test.
+    original_dispatch = execution_service._dispatch_agent_action
+
+    async def stamp_then_dispatch(agent):
+        agent.pending_reservation = 2
+        await original_dispatch(agent)
+
+    execution_service._dispatch_agent_action = stamp_then_dispatch  # type: ignore[method-assign]
+
+    # When: run_agent_step is invoked
+    await execution_service.run_agent_step(agent_id)
+
+    # Then: the factory's reserved count was released back to zero by
+    # the OCC retry path. (Without the release, it would be 2 after the
+    # first failed attempt and grow further on retries.)
+    assert child_factory.reserved == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_reservation_released_on_generic_exception(
+    execution_service, mock_event_store, mock_llm_port
+):
+    """Codex review HIGH #1: the non-OCC failure path must release the
+    pending child-spawn reservation. Otherwise a save_new_agent error
+    wrapped as EventStoreError (e.g. unique violation in the postgres
+    adapter) leaves ``_reserved`` parked permanently, and the next
+    caller's ``try_reserve`` falsely fails with
+    ``reservation_failed:total_agents``.
+
+    The OCC path is already covered by
+    ``test_run_agent_step_releases_reservation_on_concurrency_error``.
+    This test pins the non-OCC arm.
+    """
+    from core.domain.exceptions import EventStoreError
+
+    # Given: a PENDING agent so dispatch will run, plus a bounded factory.
+    agent_id = uuid4()
+    event1 = AgentCreated(
+        aggregate_id=agent_id,
+        sequence_number=1,
+        role=AgentRole.PENDING.value,
+        parent_id=None,
+        config=_test_config(),
+    )
+    event2 = TaskAssigned(
+        aggregate_id=agent_id, sequence_number=2, task_description="Spawn"
+    )
+    mock_event_store.get_events.return_value = [event1, event2]
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
+
+    child_factory = execution_service._child_factory
+    child_factory._max_total_agents = 10
+    child_factory.reset(initial_count=0)
+    await child_factory.try_reserve(3)
+    assert child_factory.reserved == 3
+
+    # Stamp the in-memory agent with the reservation count so the
+    # release helper can see it — mirrors what _spawn_children does.
+    original_dispatch = execution_service._dispatch_agent_action
+
+    async def stamp_then_dispatch(agent):
+        agent.pending_reservation = 3
+        await original_dispatch(agent)
+
+    execution_service._dispatch_agent_action = stamp_then_dispatch  # type: ignore[method-assign]
+
+    # And: the persist path raises a NON-ConcurrencyError. This mirrors
+    # the failure mode where save_new_agent hits a DB constraint that
+    # gets wrapped as EventStoreError by postgres_event_store:210.
+    mock_event_store.append_batch.side_effect = EventStoreError(
+        "simulated DB write failure"
+    )
+
+    # When: run_agent_step is invoked
+    with pytest.raises(EventStoreError):
+        await execution_service.run_agent_step(agent_id)
+
+    # Then: the failed attempt did not leak the reservation; the factory
+    # is back to 0 reserved so a subsequent caller can use the full cap.
+    assert child_factory.reserved == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_reservation_released_on_runtime_error(
+    execution_service, mock_event_store, mock_llm_port
+):
+    """Codex review HIGH #1 generalisation: ANY non-OCC exception must
+    release the reservation, not just ``EventStoreError``. A bare
+    ``RuntimeError`` raised mid-dispatch (e.g. an LLM bug or a
+    typo-driven KeyError) must not park slots in ``_reserved``.
+    """
+    # Given: a PENDING agent and a bounded factory with a pre-stamped
+    # reservation simulating _spawn_children having reserved.
+    agent_id = uuid4()
+    event1 = AgentCreated(
+        aggregate_id=agent_id,
+        sequence_number=1,
+        role=AgentRole.PENDING.value,
+        parent_id=None,
+        config=_test_config(),
+    )
+    event2 = TaskAssigned(
+        aggregate_id=agent_id, sequence_number=2, task_description="Spawn"
+    )
+    mock_event_store.get_events.return_value = [event1, event2]
+    mock_llm_port.query_with_usage.return_value = _make_llm_response("SIMPLE")
+
+    child_factory = execution_service._child_factory
+    child_factory._max_total_agents = 10
+    child_factory.reset(initial_count=0)
+    await child_factory.try_reserve(2)
+    assert child_factory.reserved == 2
+
+    async def stamp_then_raise(agent):
+        agent.pending_reservation = 2
+        raise RuntimeError("simulated dispatcher bug")
+
+    execution_service._dispatch_agent_action = stamp_then_raise  # type: ignore[method-assign]
+
+    # When: run_agent_step is invoked
+    with pytest.raises(RuntimeError, match="simulated dispatcher bug"):
+        await execution_service.run_agent_step(agent_id)
+
+    # Then: the factory is back to 0 reserved.
+    assert child_factory.reserved == 0
+
+
+def test_sequential_worker_invariant_holds_in_dispatch():
+    """G.3: workers in one run are scheduled sequentially.
+
+    A leaked ThreadPoolExecutor thread on timeout (audit-2 #5) cannot collide
+    with a sibling worker because only one worker is eligible at a time.
+    If this invariant ever breaks, audit-2 #5 must be re-examined.
+    """
+    # Given: the application-layer dispatch surface
+    import inspect
+
+    # When: we capture the source of AgentExecutionService
+    source = inspect.getsource(AgentExecutionService)
+
+    # Then: it still passes sequential_workers=True to get_active_agent_ids,
+    # bounding the OpenHands ThreadPoolExecutor leak window described in
+    # audit-2 #5.
+    assert "sequential_workers=True" in source, (
+        "AgentExecutionService no longer passes sequential_workers=True; "
+        "the audit-2 #5 leak-bound invariant is broken. See G.3 in the plan."
+    )

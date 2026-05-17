@@ -4,7 +4,7 @@ Orchestrates event querying and prompt parsing to build a complete
 hierarchy trace. Uses ports for infrastructure abstraction.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.application.services.prompt.prompt_parser import PromptParser
@@ -64,7 +64,6 @@ class PromptTraceService:
         grouped_events = await self._store.get_hierarchy_events_grouped(root_id)
 
         if not grouped_events:
-            # Return empty trace if no events found
             return HierarchyTrace(
                 root=AgentNode(
                     agent_id=root_id,
@@ -79,13 +78,10 @@ class PromptTraceService:
                 max_depth=0,
             )
 
-        # Build agent data map from events
         agent_data = self._extract_agent_data(grouped_events)
 
-        # Build parent->children mapping
         children_map = self._build_children_map(agent_data)
 
-        # Build tree recursively from root
         root = self._build_tree(root_id, agent_data, children_map, depth=0)
 
         return HierarchyTrace(
@@ -110,7 +106,7 @@ class PromptTraceService:
         agent_data: dict[UUID, dict] = {}
 
         for agent_id, events in grouped_events.items():
-            data = {
+            data: dict[str, Any] = {
                 "role": "unknown",
                 "task": "",
                 "parent_id": None,
@@ -148,7 +144,6 @@ class PromptTraceService:
         self,
         agent_data: dict[UUID, dict],
     ) -> dict[UUID | None, list[UUID]]:
-        """Build parent->children map for efficient tree traversal."""
         children_map: dict[UUID | None, list[UUID]] = {}
 
         for agent_id, data in agent_data.items():
@@ -158,7 +153,7 @@ class PromptTraceService:
             children_map[parent_id].append(agent_id)
 
         # Sort children by sibling_index for left-to-right ordering
-        for parent_id, children in children_map.items():
+        for children in children_map.values():
             children.sort(key=lambda aid: agent_data[aid]["sibling_index"])
 
         return children_map
@@ -170,10 +165,8 @@ class PromptTraceService:
         children_map: dict[UUID | None, list[UUID]],
         depth: int,
     ) -> AgentNode:
-        """Recursively build AgentNode tree from data."""
         data = agent_data.get(agent_id, {})
 
-        # Get children and build their nodes
         child_ids = children_map.get(agent_id, [])
         children = tuple(
             self._build_tree(child_id, agent_data, children_map, depth + 1)
@@ -191,11 +184,9 @@ class PromptTraceService:
         )
 
     def _count_agents(self, node: AgentNode) -> int:
-        """Count total agents in tree."""
         return 1 + sum(self._count_agents(child) for child in node.children)
 
     def _max_depth(self, node: AgentNode) -> int:
-        """Find maximum depth in tree."""
         if not node.children:
             return node.depth
         return max(self._max_depth(child) for child in node.children)

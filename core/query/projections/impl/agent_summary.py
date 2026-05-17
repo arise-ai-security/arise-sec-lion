@@ -3,6 +3,7 @@
 Builds AgentSummary read models from events with efficient child loading.
 """
 
+from typing import Any
 from uuid import UUID
 
 from core.domain.aggregates.agent_session import AgentSession
@@ -168,7 +169,6 @@ class AgentSummaryService:
         # Single batch query for all child statuses
         child_statuses = await self._fetch_child_statuses(child_ids, parent_id)
 
-        # Build subtasks with matched child info
         subtasks = []
         for idx, description in enumerate(descriptions):
             child_id = child_ids[idx] if idx < len(child_ids) else None
@@ -237,15 +237,12 @@ class AgentSummaryService:
         Returns:
             Tuple of (config_strategy, config_details dict).
         """
-        if not hasattr(agent, "config") or not agent.config:
-            return None, {}
-
         config = agent.config
-        strategy = getattr(config, "strategy", None)
+        strategy = config.strategy
         details = self._build_config_details(config, strategy)
         return strategy, details
 
-    def _build_config_details(self, config: object, strategy: str | None) -> dict:
+    def _build_config_details(self, config: Any, strategy: str | None) -> dict:
         """Build config details dict based on strategy type.
 
         Args:

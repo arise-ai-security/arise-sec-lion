@@ -25,15 +25,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Schema hints for the LLM-backed format repairer (FormatRepairerPort).
-# ---------------------------------------------------------------------------
-# We derive the per-object schemas from Pydantic models at runtime so
-# that any new required field, renamed field, or removed field on
-# Subtask / AgentConfig / ConstraintFailure automatically propagates
-# into the repairer prompt. The outer envelope (action/reasoning/
-# subtasks) is hand-parsed and kept as a small template that
-# interpolates the dynamic blocks.
 
 from functools import lru_cache  # noqa: E402  — placed near the schema helpers
 
@@ -100,7 +91,6 @@ required field is missing, which is the correct behavior."""
 
 @lru_cache(maxsize=1)
 def build_subtasks_schema_hint() -> str:
-    """Build the subtasks-list schema hint from current Pydantic models."""
     subtask_schema = _compact_pydantic_schema(Subtask)
     failure_schema = _compact_pydantic_schema(ConstraintFailure)
     return f"""\
@@ -146,12 +136,6 @@ ASSESSMENT_SCHEMA_HINT: str = build_assessment_schema_hint()
 SUBTASKS_SCHEMA_HINT: str = build_subtasks_schema_hint()
 
 
-# ---------------------------------------------------------------------------
-# Standard JSON extraction (GPT / Claude)
-# ---------------------------------------------------------------------------
-# GPT and Claude reliably return a single JSON object, optionally wrapped in
-# a ```json … ``` markdown code block.  The two patterns below handle the
-# code-block case; plain JSON passes through unchanged.
 
 _FULL_CODE_BLOCK_PATTERN = re.compile(
     r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
@@ -325,8 +309,7 @@ def _parse_json(response: str) -> Any:
     raise ValueError(f"LLM response is not valid JSON and repair failed: {clean[:200]}")
 
 
-def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
-    """Normalize various LLM response formats to subtask list."""
+def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:  # noqa: PLR0911
     match data:
         case list() as items:
             return items
@@ -351,7 +334,7 @@ def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:
             raise ValueError(f"Expected list of subtasks, got {type(data).__name__}")
 
 
-def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:
+def _sanitize_llm_subtask(item: dict[str, Any], idx: int) -> dict[str, Any]:  # noqa: PLR0912
     """Normalize LLM-hallucinated values in a subtask dict.
 
     Fixes known hallucination patterns (invalid tool names, non-integer
@@ -464,7 +447,26 @@ def _validate_subtasks(items: list[dict[str, Any]]) -> list[Subtask]:
     # Resolve string depends_on references across all subtasks
     _resolve_depends_on(items)
 
-    config_adapter = TypeAdapter(AgentConfig)
+    # Strip self-references and out-of-range depends_on indices.
+    # Qwen-family models sometimes include a subtask's own index in its
+    # depends_on list, creating an unresolvable scheduling deadlock.
+    # GPT/Claude never generate these, so this is a no-op for them.
+    num_subtasks = len(items)
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict) or "depends_on" not in item:
+            continue
+        original = item["depends_on"]
+        cleaned = [d for d in original if d != idx and 0 <= d < num_subtasks]
+        if len(cleaned) < len(original):
+            dropped = [d for d in original if d == idx or not (0 <= d < num_subtasks)]
+            logger.warning(
+                "Subtask %d: dropped invalid depends_on %r (self-ref or out-of-range)",
+                idx,
+                dropped,
+            )
+            item["depends_on"] = cleaned
+
+    config_adapter: TypeAdapter[AgentConfig] = TypeAdapter(AgentConfig)
     subtasks: list[Subtask] = []
 
     for idx, item in enumerate(items):
@@ -587,7 +589,9 @@ def parse_assessment_response(response: str) -> AssessmentResult:
     if not action:
         raw_subtasks = data.get("subtasks") or data.get("tasks") or data.get("children")
         if raw_subtasks and isinstance(raw_subtasks, list):
-            logger.warning("Assessment missing 'action' field but has subtasks, inferring 'decompose'")
+            logger.warning(
+                "Assessment missing 'action' field but has subtasks, inferring 'decompose'"
+            )
             subtasks = _validate_subtasks(raw_subtasks)
             return AssessmentResult(
                 action="decompose",
@@ -626,7 +630,7 @@ async def _try_repair(
     """
     try:
         repaired = await repairer.repair(response, schema_hint)
-    except Exception as repair_exc:  # noqa: BLE001 — auxiliary, must not propagate
+    except Exception as repair_exc:
         logger.warning(
             "Format repairer raised (%s); falling back to mechanical-parser "
             "error: %s",

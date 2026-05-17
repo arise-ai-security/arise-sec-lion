@@ -44,6 +44,7 @@ This file contains naming rules, import ordering, error handling patterns, and l
 | If your task involves... | Then ALSO run |
 |---|---|
 | Adding/moving modules or directories | `cat .claude/docs/architecture.md` |
+| Concurrency, parallel execution, race conditions, OCC, atomic file writes, Docker cleanup | `cat agent-docs/concurrency-invariants.md` |
 | Implementing features, adding events/adapters | `cat .claude/docs/patterns.md` |
 | Adding or modifying dependencies | `cat .claude/docs/dependencies.md` |
 | Writing or modifying tests | `cat .claude/docs/testing.md` |
@@ -109,7 +110,7 @@ Additional deep-dive docs in `agent-docs/`: `domain-model.md`, `development.md`,
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `ARISE_ENV` | No | Config overlay: `development`, `dev`, `production` | `development` |
+| `ARISE_ENV` | No | Optional local overlay name (`config/config.<value>.yaml`, if present) | `development` |
 | `POSTGRES_PASSWORD` | Yes | Database password (env var only, not in YAML) | -- |
 | `POSTGRES_HOST` | No | Database host | `localhost` |
 | `POSTGRES_PORT` | No | Database port | `5432` |

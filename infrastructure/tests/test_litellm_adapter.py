@@ -6,12 +6,30 @@ the LiteLLM library to provide unified access to multiple LLM providers.
 Tests use mocking to avoid real API calls and costs during testing.
 """
 
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from core.domain.exceptions import LLMError
 from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
+
+
+@pytest.fixture
+def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Replace `asyncio.sleep` in robust_call with an AsyncMock.
+
+    Retry tests would otherwise wait the full backoff window
+    (`base * 2**i` with jitter -- tens of seconds per test) before
+    asserting outcomes. Tests that need to inspect recorded delays
+    use the returned mock; others just rely on the patch to keep
+    wall time low.
+    """
+    sleep_mock = AsyncMock()
+    import infrastructure.io.robust_call as _rc
+    monkeypatch.setattr(_rc.asyncio, "sleep", sleep_mock)
+    return sleep_mock
 
 
 @pytest.mark.asyncio
@@ -114,7 +132,7 @@ async def test_litellm_adapter_authentication_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_litellm_adapter_rate_limit_error() -> None:
+async def test_litellm_adapter_rate_limit_error(_no_real_sleep: AsyncMock) -> None:
     """Test that LiteLLMAdapter wraps rate limit errors in LLMError."""
 
     # Given: Create adapter
@@ -187,8 +205,14 @@ async def test_litellm_adapter_timeout_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_litellm_adapter_service_unavailable_error() -> None:
-    """Test that LiteLLMAdapter wraps service unavailable errors in LLMError."""
+async def test_litellm_adapter_service_unavailable_error(
+    _no_real_sleep: AsyncMock,
+) -> None:
+    """Test that LiteLLMAdapter wraps service unavailable errors in LLMError.
+
+    Note: `ServiceUnavailableError` is retryable; after the retries are
+    exhausted the wrapper raises the unified rate-limit-style message.
+    """
 
     # Given: Create adapter
     adapter = LiteLLMAdapter()
@@ -205,8 +229,10 @@ async def test_litellm_adapter_service_unavailable_error() -> None:
     with patch("infrastructure.adapters.litellm_adapter.litellm.acompletion") as mock_acompletion:
         mock_acompletion.side_effect = service_error
 
-        # When/Then: Query raises LLMError with service unavailable message
-        with pytest.raises(LLMError, match=r"(?i)service unavailable.*gpt-4"):
+        # When/Then: Query raises LLMError after retries are exhausted.
+        # ServiceUnavailable is treated like RateLimit for retry; the
+        # wrapper raises the unified "rate limit exceeded" envelope.
+        with pytest.raises(LLMError, match=r"(?i)rate limit exceeded.*gpt-4"):
             await adapter.query(prompt="Test", config_dict={"model": "gpt-4"})
 
 
@@ -229,7 +255,9 @@ async def test_litellm_adapter_unexpected_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_litellm_adapter_preserves_original_error() -> None:
+async def test_litellm_adapter_preserves_original_error(
+    _no_real_sleep: AsyncMock,
+) -> None:
     """Test that LLMError preserves the original exception."""
 
     # Given: Create adapter
@@ -255,3 +283,64 @@ async def test_litellm_adapter_preserves_original_error() -> None:
         raised_error = exc_info.value
         assert raised_error.original_error is original_error
         assert "Rate limit" in str(raised_error)
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_retry_uses_jitter(
+    _no_real_sleep: AsyncMock,
+) -> None:
+    """RateLimitError retries use jittered exponential backoff via robust_call.
+
+    Mocks `litellm.acompletion` to raise `RateLimitError` three times
+    then succeed, captures every `asyncio.sleep` argument, and asserts:
+
+    1. At least two distinct delays were observed (jitter active --
+       deterministic backoff would emit identical multipliers).
+    2. Each recorded delay lies inside the expected jitter window
+       `[base * 2**i * 0.5, base * 2**i * 1.5]` for attempt index `i`.
+    """
+
+    # Given: an adapter
+    adapter = LiteLLMAdapter()
+
+    # And: litellm.acompletion fails with RateLimitError three times, then
+    # returns a usable mock response on the fourth attempt
+    import litellm.exceptions
+
+    rate_limit_error = litellm.exceptions.RateLimitError(
+        message="Rate limit exceeded",
+        llm_provider="openai",
+        model="gpt-4",
+    )
+    success_response = MagicMock()
+    success_response.choices = [MagicMock()]
+    success_response.choices[0].message.content = "ok"
+
+    expected_retries = LiteLLMAdapter._RATE_LIMIT_RETRIES
+    expected_attempts = expected_retries + 1
+    side_effects = [rate_limit_error] * expected_retries + [success_response]
+
+    with patch(
+        "infrastructure.adapters.litellm_adapter.litellm.acompletion"
+    ) as mock_acompletion:
+        mock_acompletion.side_effect = side_effects
+
+        result = await adapter.query(
+            prompt="Test", config_dict={"model": "gpt-4"}
+        )
+
+    assert result == "ok"
+    assert mock_acompletion.call_count == expected_attempts
+
+    sleep_calls = [c.args[0] for c in _no_real_sleep.call_args_list]
+    assert len(sleep_calls) == expected_retries, sleep_calls
+
+    base = LiteLLMAdapter._RATE_LIMIT_BASE_DELAY
+    backoff = 2.0
+    for i, delay in enumerate(sleep_calls):
+        planned = base * (backoff**i)
+        lower = planned * 0.5
+        upper = planned * 1.5
+        assert lower <= delay <= upper, (
+            f"attempt {i}: delay {delay} not in [{lower}, {upper}]"
+        )

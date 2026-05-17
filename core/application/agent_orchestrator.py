@@ -10,26 +10,26 @@ import json
 import logging
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from core.application.services import SubtaskScope, build_prompt_capabilities
+from core.application.services import (
+    LLMQueryExecutor,
+    SubtaskScope,
+    ToolsetPolicyResolver,
+    VerificationPipeline,
+    build_prompt_capabilities,
+)
 from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
 from core.domain.services import (
     AssessmentResult,
     parse_assessment_response_async,
     parse_subtasks_from_llm_async,
 )
-from core.domain.services.config_resolver import ConfigResolver
+from core.domain.services.config_resolver import ConfigResolver, OperationType
 from core.domain.values.enums import AgentRole, AgentStatus
 
-
-from core.application.services import (
-    LLMQueryExecutor,
-    ToolsetPolicyResolver,
-    VerificationPipeline,
-)
 
 _REAL_CONSTRAINT_FAILURE_KEYWORDS: tuple[str, ...] = (
     "constraints_unsatisfiable",
@@ -182,6 +182,7 @@ def _is_prose_misinterpreted_assessment(
 
 if TYPE_CHECKING:
     from core.application.services import (
+        ActiveToolContext,
         ChildAgentFactory,
         PromptBuilder,
     )
@@ -237,17 +238,25 @@ class AgentOrchestrator:
             format_repairer=format_repairer,
         )
 
-    async def assess_task(self, agent: "AgentSession") -> None:
+    async def assess_task(
+        self,
+        agent: "AgentSession",
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
+    ) -> None:
         """Assess a PENDING agent: execute directly or decompose.
 
         Single LLM call replaces separate complexity evaluation + decomposition.
         On execute → WORKER. On decompose → MANAGER with children spawned.
+
+        ``persist_checkpoint`` is called before the (potentially slow) LLM call so
+        ``OperationStarted`` and ``PromptSent`` are durable in the event store
+        even if the step is later cancelled by the watchdog.
         """
         if agent.role != AgentRole.PENDING:
             agent.fail_with_reason(f"Expected PENDING role, got {agent.role}")
             return
 
-        op = "task_assessment"
+        op: OperationType = "task_assessment"
         with self._timed_operation(agent, op):
             try:
                 # Shortcut: when the parent's decomposition flagged this
@@ -266,7 +275,7 @@ class AgentOrchestrator:
                         "executing directly",
                         agent.agent_id,
                     )
-                    self._apply_assessment_result(
+                    await self._apply_assessment_result(
                         agent,
                         AssessmentResult(
                             action="execute",
@@ -282,7 +291,6 @@ class AgentOrchestrator:
                 domain_context = self._get_domain_context(agent)
                 tool_context = self._toolset_resolver.resolve(agent.role)
 
-                # Build prompt
                 scope = self._build_scope(agent)
                 prompt = self._prompt_builder.build_assessment_prompt(
                     task_description=agent.task_description,
@@ -294,6 +302,13 @@ class AgentOrchestrator:
                     prompt_capabilities=build_prompt_capabilities(tool_context),
                 )
                 agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
+
+                # Flush the prompt envelope before the LLM call so the DB shows
+                # the agent IS doing work — without this the orchestrator looks
+                # silent for the full LLM round-trip (which can be 5+ minutes for
+                # recon-heavy prompts on Sonnet/Opus).
+                if persist_checkpoint is not None:
+                    await persist_checkpoint(agent)
 
                 # Query LLM and parse; retry on malformed JSON. After the
                 # retry loop exhausts (or a glm-style prose preamble was
@@ -427,21 +442,30 @@ class AgentOrchestrator:
                             ),
                         )
 
-                self._apply_assessment_result(agent, result)
+                await self._apply_assessment_result(agent, result)
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 agent.fail_with_reason(f"Assessment failed: {e}")
 
-    async def evaluate_task(self, agent: "AgentSession") -> None:
+    async def evaluate_task(
+        self,
+        agent: "AgentSession",
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
+    ) -> None:
         """Decompose task into subtasks for a BOSS/MANAGER agent.
 
         LLM generates subtasks, limits are enforced, children are spawned.
         On failure, agent is failed with reason.
+
+        ``persist_checkpoint`` is called before the LLM call so ``OperationStarted``
+        and ``PromptSent`` are durable in the event store even if the step is
+        later cancelled. Without this, recon-heavy decomposition prompts produce
+        4-5 minute silent gaps in the event store.
         """
         if agent.role not in (AgentRole.BOSS, AgentRole.MANAGER):
             agent.fail_with_reason(f"Expected BOSS/MANAGER role, got {agent.role}")
             return
 
-        op = "task_decomposition"
+        op: OperationType = "task_decomposition"
         with self._timed_operation(agent, op):
             domain_context = self._get_domain_context(agent)
             tool_context = self._toolset_resolver.resolve(agent.role)
@@ -469,6 +493,12 @@ class AgentOrchestrator:
                 )
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
 
+            # Flush prompt envelope before the LLM call so the event store
+            # shows the boss/manager IS doing work — without this the recon
+            # round-trip is invisible for minutes (see acf44cbc 4m48s gap).
+            if persist_checkpoint is not None:
+                await persist_checkpoint(agent)
+
             # Query LLM (with tool calling if available)
             response = await self._query_llm(
                 agent,
@@ -491,7 +521,7 @@ class AgentOrchestrator:
                 # Already failed/marked-infeasible by helper.
                 return
 
-            failure = self._spawn_children(agent, subtasks)
+            failure = await self._spawn_children(agent, subtasks)
             if failure:
                 agent.fail_with_reason(failure)
                 return
@@ -503,10 +533,16 @@ class AgentOrchestrator:
             workspace_context: str | None = None,
             handoff: "Handoff | None" = None,
             task_context_overrides: dict[str, Any] | None = None,
+            persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
         On failure, agent is failed with reason.
+
+        When ``persist_checkpoint`` is provided, it is awaited after each worker
+        event is applied. This flushes in-flight events to the store so that a
+        watchdog cancellation does not discard the worker's trace (the orchestrator
+        otherwise persists only at end-of-step).
         """
         if agent.role != AgentRole.WORKER:
             agent.fail_with_reason(f"Expected WORKER role, got {agent.role}")
@@ -518,7 +554,6 @@ class AgentOrchestrator:
             tool_name = agent.config.tool
             agent.start_worker_execution(tool_name)
 
-            # Build worker prompt
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
@@ -547,6 +582,12 @@ class AgentOrchestrator:
 
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
+            # Flush the start/prompt envelope before entering the worker stream
+            # so the trace is preserved even if the first SDK event never lands
+            # (e.g., LLM hangs before first token) and the watchdog cancels us.
+            if persist_checkpoint is not None:
+                await persist_checkpoint(agent)
+
             # Run worker session
             task_context: dict[str, Any] = {
                 "agent_id": agent.agent_id,
@@ -564,6 +605,8 @@ class AgentOrchestrator:
             try:
                 async for tool_event in self._worker_port.run_session(task_context):
                     agent.apply_worker_event(tool_event)
+                    if persist_checkpoint is not None:
+                        await persist_checkpoint(agent)
                     if self._realtime_callback and root_id:
                         await self._realtime_callback.on_event(tool_event, root_id)
             except ToolNotAvailableError as e:
@@ -596,8 +639,15 @@ class AgentOrchestrator:
                 duration_seconds=duration,
             )
 
-    def _check_limit_violations(self, agent: "AgentSession", subtasks: list) -> str | None:
-        """Check hard limits. Returns failure reason or None."""
+    async def _check_limit_violations(
+        self, agent: "AgentSession", subtasks: list
+    ) -> str | None:
+        """Check hard limits. Returns failure reason or None.
+
+        Async to compose with the atomic reservation path in
+        ``_spawn_children``; the cap check itself is sync but the
+        cascade keeps the call chain awaitable end-to-end (D.2).
+        """
         limits = agent.hierarchy_limits
         violations: list[dict[str, Any]] = []
 
@@ -639,13 +689,19 @@ class AgentOrchestrator:
 
         return None
 
-    def _spawn_children(
+    async def _spawn_children(
             self,
             agent: "AgentSession",
             subtasks: list["Subtask"],
     ) -> str | None:
-        """Validate limits, determine child role, and spawn children."""
-        failure = self._check_limit_violations(agent, subtasks)
+        """Validate limits, determine child role, and spawn children.
+
+        Async (D.2): after the optimistic sync cap check, atomically
+        reserves ``len(subtasks)`` slots against the factory so concurrent
+        MANAGER evaluations cannot oversubscribe ``max_total_agents``.
+        On reservation failure emits ``LimitEnforced`` and aborts.
+        """
+        failure = await self._check_limit_violations(agent, subtasks)
         if failure:
             return failure
 
@@ -669,6 +725,24 @@ class AgentOrchestrator:
             )
             return None
         # ---------------------------------------------------------------------
+
+        # Atomic reservation: protects against concurrent MANAGER spawn
+        # races where both callers passed the stale-count cap check.
+        max_total = self._child_factory.max_total_agents
+        if max_total > 0:
+            reserved_n = len(subtasks)
+            reserved = await self._child_factory.try_reserve(reserved_n)
+            if not reserved:
+                agent.emit_limit_enforced(
+                    limit_type="total_agents",
+                    limit_value=max_total,
+                    attempted_value=reserved_n,
+                    action_taken="agent_failed",
+                )
+                return "reservation_failed:total_agents"
+            # Stash on the aggregate so the OCC retry handler in
+            # ExecutionService can release the reservation before reload.
+            agent.pending_reservation = reserved_n
 
         limits = agent.hierarchy_limits
         force_worker = False
@@ -768,12 +842,18 @@ class AgentOrchestrator:
             return set()
         return registry.get_tree_role_prefixes(agent.agent_id)
 
-    def _apply_assessment_result(
+    async def _apply_assessment_result(
             self,
             agent: "AgentSession",
             result: AssessmentResult,
     ) -> None:
-        """Apply the parsed assessment outcome to the agent."""
+        """Apply the parsed assessment outcome to the agent.
+
+        Async (D.2): the decompose path awaits ``_spawn_children``, which
+        in turn awaits ``ChildAgentFactory.try_reserve``. Keeping this
+        method sync would silently truthy-check the returned coroutine
+        as ``failure_msg`` and never await it.
+        """
         if result.action == "infeasible":
             if result.constraint_failure is None:
                 agent.fail_with_reason(
@@ -804,7 +884,7 @@ class AgentOrchestrator:
             agent.fail_with_reason("Assessment requested decomposition without subtasks")
             return
 
-        failure_msg = self._spawn_children(agent, result.subtasks)
+        failure_msg = await self._spawn_children(agent, result.subtasks)
         if failure_msg:
             agent.fail_with_reason(failure_msg)
 
@@ -812,7 +892,7 @@ class AgentOrchestrator:
             self,
             agent: "AgentSession",
             prompt: str,
-            operation: str,
+            operation: OperationType,
             tool_context: "ActiveToolContext | None" = None,
     ) -> "LLMResponse":
         """Query the LLM with optional tool-calling context.
@@ -850,7 +930,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         response_content: str,
         original_prompt: str,
-        op: str,
+        op: OperationType,
     ) -> "list[Subtask] | None":
         """Parse decomposition, with one corrective re-prompt on failure.
 
@@ -935,7 +1015,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         original_prompt: str,
         narrative: str,
-        op: str,
+        op: OperationType,
         parse_error: Exception | None,
     ) -> str | None:
         """One corrective LLM turn for a prose-style assessment response.
@@ -964,7 +1044,7 @@ class AgentOrchestrator:
             "Your previous response was prose, not the required output. "
             "The output_format section of the original prompt requires a "
             "single JSON object with an ``action`` field set to either "
-            "``\"execute\"`` (single worker) or ``\"decompose\"`` (with a "
+            '``"execute"`` (single worker) or ``"decompose"`` (with a '
             "``subtasks`` array), or a ``constraints_unsatisfiable`` object "
             "if and only if the limits truly cannot be met. No preamble, "
             "no commentary, no tool calls in this turn. Begin your "
@@ -983,11 +1063,17 @@ class AgentOrchestrator:
                 config_dict=config_dict,
                 tools=[],
             )
-        except Exception as call_exc:  # noqa: BLE001 — auxiliary recovery path
+        except Exception as call_exc:
             logger.warning(
                 "Assessment recovery call failed for agent=%s: %s",
                 agent.agent_id,
                 call_exc,
+            )
+            return None
+        if recovered is None:
+            logger.warning(
+                "Assessment recovery call returned no response for agent=%s",
+                agent.agent_id,
             )
             return None
 
@@ -1007,7 +1093,7 @@ class AgentOrchestrator:
         agent: "AgentSession",
         original_prompt: str,
         narrative: str,
-        op: str,
+        op: OperationType,
         parse_error: Exception,
     ) -> str | None:
         """One corrective LLM turn after a narrative-instead-of-JSON response.
@@ -1054,11 +1140,17 @@ class AgentOrchestrator:
                 config_dict=config_dict,
                 tools=[],
             )
-        except Exception as call_exc:  # noqa: BLE001 — auxiliary recovery path
+        except Exception as call_exc:
             logger.warning(
                 "Decomposition recovery call failed for agent=%s: %s",
                 agent.agent_id,
                 call_exc,
+            )
+            return None
+        if recovered is None:
+            logger.warning(
+                "Decomposition recovery call returned no response for agent=%s",
+                agent.agent_id,
             )
             return None
 
@@ -1074,14 +1166,12 @@ class AgentOrchestrator:
 
     @staticmethod
     def _get_domain_context(agent: "AgentSession") -> object | None:
-        """Extract optional domain context from hierarchy limits."""
         if agent.hierarchy_limits:
             return agent.hierarchy_limits.domain_context
         return None
 
     @staticmethod
     def _build_scope(agent: "AgentSession") -> SubtaskScope | None:
-        """Build SubtaskScope from agent's structured scoping fields."""
         if not (agent.target_paths or agent.symbols or agent.search_hints):
             return None
         return SubtaskScope(
@@ -1095,7 +1185,6 @@ class AgentOrchestrator:
             agent: "AgentSession",
             tool_records: list,
     ) -> None:
-        """Emit ProbeStarted/ProbeCompleted events for each recon tool call."""
         for record in tool_records:
             agent.emit_probe_started(probe_type=record.tool_name)
             agent.emit_probe_completed(

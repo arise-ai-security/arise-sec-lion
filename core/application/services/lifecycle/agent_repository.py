@@ -46,7 +46,6 @@ class AgentRepository:
         self._progress_callback = progress_callback
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
-        """Set the progress callback for event notifications."""
         self._progress_callback = callback
 
     async def load(self, agent_id: UUID) -> AgentSession:
@@ -78,14 +77,14 @@ class AgentRepository:
     async def save(self, agent: AgentSession) -> list[DomainEvent]:
         """Persist uncommitted events and return them.
 
-        Notifies progress callback for each persisted event.
+        Notifies progress callback for each persisted event. OCC is
+        enforced by the event store's UNIQUE(aggregate_id, sequence_number)
+        constraint.
         """
-        current_version = agent.version - len(agent.events)
         uncommitted = list(agent.events)
 
         for event in uncommitted:
-            await self._event_store.append(event, expected_version=current_version)
-            current_version += 1
+            await self._event_store.append(event)
             self._notify_progress(event, agent)
 
         agent.mark_changes_as_committed()
@@ -109,7 +108,6 @@ class AgentRepository:
                 if retry_count >= self._max_retries:
                     raise ConcurrencyError(
                         aggregate_id=str(agent.agent_id),
-                        expected_version=e.expected_version,
                         actual_version=e.actual_version,
                     ) from e
                 # Reload agent for retry
@@ -122,25 +120,24 @@ class AgentRepository:
 
     async def save_new_agent(self, agent: AgentSession) -> None:
         """Save a newly created agent (no retry needed, version starts at 0)."""
-        for idx, event in enumerate(agent.events):
-            await self._event_store.append(event, expected_version=idx)
+        for event in agent.events:
+            await self._event_store.append(event)
             self._notify_progress(event, agent)
         agent.mark_changes_as_committed()
 
     async def persist_events(
         self,
         agent: AgentSession,
-        expected_version: int,
         progress_callback: ProgressCallback | None = None,
     ) -> list[DomainEvent]:
         """Persist uncommitted events with batch optimization.
 
         This method consolidates the event persistence pattern used across
-        the application, eliminating DRY violations.
+        the application, eliminating DRY violations. OCC is enforced by the
+        event store's UNIQUE constraint on (aggregate_id, sequence_number).
 
         Args:
             agent: The agent with uncommitted events.
-            expected_version: The expected version for OCC.
             progress_callback: Optional callback for each persisted event.
                              If None, uses the repository's default callback.
 
@@ -153,9 +150,9 @@ class AgentRepository:
 
         # Batch for efficiency when multiple events
         if len(uncommitted) > 1:
-            await self._event_store.append_batch(uncommitted, expected_version=expected_version)
+            await self._event_store.append_batch(uncommitted)
         else:
-            await self._event_store.append(uncommitted[0], expected_version=expected_version)
+            await self._event_store.append(uncommitted[0])
 
         # Notify progress (use provided callback or fall back to repository default)
         callback = progress_callback if progress_callback is not None else self._progress_callback
@@ -174,10 +171,6 @@ class AgentRepository:
         agent.mark_changes_as_committed()
         return uncommitted
 
-    async def get_all_agent_ids(self) -> list[UUID]:
-        """Get all agent IDs from event store."""
-        return await self._event_store.get_all_aggregate_ids()
-
     async def get_all_events_grouped(self) -> dict[UUID, list[DomainEvent]]:
         """Get all events grouped by aggregate ID.
 
@@ -185,6 +178,14 @@ class AgentRepository:
             Dict mapping aggregate_id to list of events.
         """
         return await self._event_store.get_all_events_grouped()
+
+    async def get_event_counts(self, agent_ids: list[UUID]) -> dict[UUID, int]:
+        """Get persisted event counts for multiple agents."""
+        return await self._event_store.count_events(agent_ids)
+
+    async def get_subtree_event_counts(self, agent_ids: list[UUID]) -> dict[UUID, int]:
+        """Get event counts across entire descendant subtree for multiple agents."""
+        return await self._event_store.count_subtree_events(agent_ids)
 
     async def get_children_events_grouped(
         self, parent_id: UUID
@@ -218,7 +219,6 @@ class AgentRepository:
         return await self._event_store.get_hierarchy_events_grouped(root_id)
 
     def _notify_progress(self, event: DomainEvent, agent: AgentSession) -> None:
-        """Notify progress callback if set."""
         if self._progress_callback is not None:
             try:
                 self._progress_callback(event, agent)

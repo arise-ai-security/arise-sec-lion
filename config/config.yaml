@@ -5,35 +5,38 @@ database:
   name: arise_events
 
 boss:
-  model: gpt-5.3-codex
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 manager:
-  model: gpt-5.3-codex
   max_tokens: 16000  # Needs enough tokens for subtask JSON arrays + recon tool responses
 
 worker:
-  model: gpt-5.3-codex
   tool: openhands
   timeout: 1000
   max_iterations_per_run: 20
+  allowed_tools:
+    - file_editor
+    - glob
+    - grep
+  # OpenHands native tools are allowlisted above; terminal/browser are omitted.
 
 # Output-format repairer: second-tier LLM-backed JSON parser. Only invoked
 # when the deterministic raw_decode/_repair_json chain fails. Distinct
 # from the security-domain "Fixer" agent role.
 #
-# OPT-IN: disabled by default. Set enabled: true when running on models
-# prone to malformed output (qwen3.5, qwen3, deepseek, GLM, unknown).
-# Default repair model — qwen3-coder:480b-cloud (Ollama Cloud) — is
-# coder-tuned for strict JSON output and has no thinking-mode pollution;
-# downgrade to qwen3-coder-next:cloud for a faster/smaller variant.
+# OPT-IN: disabled by default. The repairer is the only repo-level model
+# default: keep it in YAML, not source code, so removing it fails validation.
+# Default: gpt-5.4-mini (OpenAI, low-latency/cost structured-output repair).
+# Claude alternatives: claude-haiku-4-5-20251001 for fastest near-frontier
+# repair, or claude-sonnet-4-6 for higher accuracy.
 format_repairer:
-  enabled: true
-  model: ollama_chat/qwen3-coder:480b-cloud
+  enabled: false
+  model: gpt-5.4-mini
   max_tokens: 16000
   # api_base: https://ollama.com  # uncomment for Ollama Cloud
 
 orchestration:
+  mode: hierarchical                # default; flat is opt-in via overlay
   max_retries: 3
   poll_interval: 0.5  # seconds between orchestration loop iterations
   max_run_duration_seconds: 7200  # hard stop for the full orchestration run (2 hrs)
@@ -47,8 +50,9 @@ orchestration:
 
   concurrency:
     max_concurrent_workers: 1  # Sequential execution so sibling context is populated
-    max_concurrent_llm_calls: 1   # Sequential for deterministic traceability
-    llm_jitter_max_ms: 0       # Max random jitter before LLM calls in ms (0 = disabled)
+    max_concurrent_llm_calls: 8   # Parallel Boss/Manager/Evaluator steps; workers are still serialized via sequential_workers=True + _worker_semaphore=1
+    llm_jitter_max_ms: 1500    # Spreads parallel-job bursts to reduce 429 storms.
+    max_agent_step_seconds: 900  # Hard cap per agent step; watchdog at 1.5x.
 
   tool_calling:
     # Iterations control how many tool-calling rounds an agent gets.
@@ -122,7 +126,6 @@ orchestration:
 
 output:
   verbose: true
-  show_progress: true
   log_level: INFO
   directory: ./output
 
@@ -144,4 +147,4 @@ cors:
 # SEC-bench container settings
 security:
   enabled: true  # Uses worker.timeout for secb commands
-  tools: [valgrind]  # KLEE unavailable in Ubuntu Focal base images
+  tools: [valgrind, klee]  # KLEE is lazy-installed on first use by security_tools_server

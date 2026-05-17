@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
 
 def _recorded_worker_tokens(event: WorkerCostRecorded) -> int:
-    """Return the best available total token count for a worker cost event."""
     return event.total_recorded_tokens or 0
 
 
@@ -88,7 +87,6 @@ class IncrementalSummaryProjection:
         return self._build_summary()
 
     def _process_event(self, event: DomainEvent) -> None:  # noqa: PLR0915
-        """Process a single event incrementally."""
         self._total_events += 1
         self._events_by_type[type(event).__name__] += 1
 
@@ -158,7 +156,6 @@ class IncrementalSummaryProjection:
             self._operation_times[event.operation_type] += event.duration_seconds
 
     def _build_summary(self) -> ProjectionSummary:
-        """Build the summary from accumulated state."""
         if self._total_events == 0:
             return ProjectionSummary.empty()
 
@@ -192,14 +189,12 @@ class IncrementalSummaryProjection:
             budget_exceeded=budget_exceeded,
         )
 
-        # Calculate per-agent times
         per_agent: dict[str, float] = {}
         for agent_id in self._agent_first:
             first = self._agent_first[agent_id]
             last = self._agent_last[agent_id]
             per_agent[str(agent_id)] = (last - first).total_seconds()
 
-        # Calculate per-role times
         per_role: dict[str, float] = defaultdict(float)
         for agent_id_str, duration in per_agent.items():
             uuid_id = UUID(agent_id_str)
@@ -392,7 +387,6 @@ class SummaryProjection(Projection):
             elif isinstance(event, OperationFinished):
                 operation_times[event.operation_type] += event.duration_seconds
 
-        # Build cost summary
         total_cost = llm_cost + worker_cost
         budget_remaining = None
         budget_exceeded = False
@@ -422,7 +416,6 @@ class SummaryProjection(Projection):
             budget_exceeded=budget_exceeded,
         )
 
-        # Build timing summary
         per_agent: dict[str, float] = {}
         for aid, first_event in agent_first.items():
             per_agent[str(aid)] = (agent_last[aid] - first_event).total_seconds()
@@ -445,200 +438,6 @@ class SummaryProjection(Projection):
 
         return role_map, tuple(errors), cost, timing, dict(events_by_type)
 
-    def _build_role_map(self, events: list[DomainEvent]) -> dict[UUID, str]:
-        """Build agent_id -> role mapping from AgentCreated events.
-
-        Args:
-            events: List of domain events.
-
-        Returns:
-            Mapping of agent UUID to role string (uppercase).
-        """
-        role_map: dict[UUID, str] = {}
-
-        for event in events:
-            if isinstance(event, AgentCreated):
-                role_map[event.aggregate_id] = event.role.upper()
-
-        return role_map
-
-    def _calculate_costs(
-        self, events: list[DomainEvent], role_map: dict[UUID, str]
-    ) -> CostSummary:
-        """Calculate cost breakdown with role correlation.
-
-        Args:
-            events: List of domain events.
-            role_map: Mapping of agent UUID to role string.
-
-        Returns:
-            CostSummary with all breakdowns.
-        """
-        llm_cost = 0.0
-        worker_cost = 0.0
-        total_tokens = 0
-        prompt_tokens = 0
-        completion_tokens = 0
-        cache_read_tokens = 0
-        cache_write_tokens = 0
-        reasoning_tokens = 0
-
-        cost_by_model: dict[str, float] = defaultdict(float)
-        cost_by_operation: dict[str, float] = defaultdict(float)
-        cost_by_agent: dict[str, float] = defaultdict(float)
-        cost_by_role: dict[str, float] = defaultdict(float)
-        tokens_by_role: dict[str, int] = defaultdict(int)
-
-        budget_exceeded = False
-
-        for event in events:
-            if isinstance(event, TokensConsumed):
-                agent_id = event.aggregate_id
-                role = role_map.get(agent_id, "UNKNOWN")
-
-                llm_cost += event.cost_usd
-                total_tokens += event.total_tokens
-                prompt_tokens += event.prompt_tokens
-                completion_tokens += event.completion_tokens
-
-                cost_by_model[event.model] += event.cost_usd
-                cost_by_operation[event.operation] += event.cost_usd
-                cost_by_agent[str(agent_id)] += event.cost_usd
-                cost_by_role[role] += event.cost_usd
-                tokens_by_role[role] += event.total_tokens
-
-            elif isinstance(event, WorkerCostRecorded):
-                agent_id = event.aggregate_id
-                role = role_map.get(agent_id, "UNKNOWN")
-
-                worker_cost += event.cost_usd
-                for model_name, model_cost in event.model_costs.items():
-                    cost_by_model[model_name] += model_cost
-
-                operation_key = f"worker:{event.tool_name}"
-                cost_by_operation[operation_key] += event.cost_usd
-                cost_by_agent[str(agent_id)] += event.cost_usd
-                cost_by_role[role] += event.cost_usd
-
-                recorded_tokens = _recorded_worker_tokens(event)
-                total_tokens += recorded_tokens
-                prompt_tokens += event.prompt_tokens or 0
-                completion_tokens += event.completion_tokens or 0
-                cache_read_tokens += event.cache_read_tokens or 0
-                cache_write_tokens += event.cache_write_tokens or 0
-                reasoning_tokens += event.reasoning_tokens or 0
-                tokens_by_role[role] += recorded_tokens
-
-        total_cost = llm_cost + worker_cost
-
-        # Budget calculation
-        budget_remaining = None
-        if self._budget_limit is not None:
-            budget_remaining = max(0.0, self._budget_limit - total_cost)
-            if total_cost >= self._budget_limit:
-                budget_exceeded = True
-
-        # Round all costs to 6 decimal places for consistency
-        return CostSummary(
-            total_cost_usd=round(total_cost, 6),
-            llm_cost_usd=round(llm_cost, 6),
-            worker_cost_usd=round(worker_cost, 6),
-            total_tokens=total_tokens,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-            reasoning_tokens=reasoning_tokens,
-            cost_by_model={k: round(v, 6) for k, v in cost_by_model.items()},
-            cost_by_operation={k: round(v, 6) for k, v in cost_by_operation.items()},
-            cost_by_agent={k: round(v, 6) for k, v in cost_by_agent.items()},
-            cost_by_role={k: round(v, 6) for k, v in cost_by_role.items()},
-            tokens_by_role=dict(tokens_by_role),
-            budget_limit_usd=self._budget_limit,
-            budget_remaining_usd=(
-                round(budget_remaining, 6) if budget_remaining is not None else None
-            ),
-            budget_exceeded=budget_exceeded,
-        )
-
-    def _calculate_execution_times(
-        self, events: list[DomainEvent], role_map: dict[UUID, str]
-    ) -> ExecutionTimeSummary:
-        """Calculate execution time breakdown from event timestamps.
-
-        Args:
-            events: List of domain events.
-            role_map: Mapping of agent UUID to role string.
-
-        Returns:
-            ExecutionTimeSummary with time breakdowns.
-        """
-        if not events:
-            return ExecutionTimeSummary.empty()
-
-        # Track first/last event per agent
-        agent_first: dict[UUID, datetime] = {}
-        agent_last: dict[UUID, datetime] = {}
-
-        # Track phase times via StatusChanged events
-        phase_times: dict[str, float] = defaultdict(float)
-        agent_phase_start: dict[tuple[UUID, str], datetime] = {}
-
-        # Track operation times via OperationFinished events
-        operation_times: dict[str, float] = defaultdict(float)
-
-        for event in events:
-            agent_id = event.aggregate_id
-
-            # Track first/last event per agent
-            if agent_id not in agent_first:
-                agent_first[agent_id] = event.occurred_at
-            agent_last[agent_id] = event.occurred_at
-
-            # Track phase transitions for duration calculation
-            if isinstance(event, StatusChanged):
-                old_phase = event.old_status.lower()
-                new_phase = event.new_status.lower()
-                phase_key = (agent_id, old_phase)
-
-                # End the old phase if we were tracking it
-                if phase_key in agent_phase_start:
-                    start_time = agent_phase_start[phase_key]
-                    duration = (event.occurred_at - start_time).total_seconds()
-                    phase_times[old_phase] += duration
-                    del agent_phase_start[phase_key]
-
-                # Start tracking the new phase
-                agent_phase_start[(agent_id, new_phase)] = event.occurred_at
-
-            # Track operation durations from OperationFinished events
-            elif isinstance(event, OperationFinished):
-                operation_times[event.operation_type] += event.duration_seconds
-
-        # Calculate per-agent execution times
-        per_agent: dict[str, float] = {}
-        for agent_id, first in agent_first.items():
-            last = agent_last[agent_id]
-            per_agent[str(agent_id)] = (last - first).total_seconds()
-
-        # Calculate per-role execution times
-        per_role: dict[str, float] = defaultdict(float)
-        for agent_id_str, duration in per_agent.items():
-            uuid_id = UUID(agent_id_str)
-            role = role_map.get(uuid_id, "UNKNOWN")
-            per_role[role] += duration
-
-        # Total time is wall-clock from first to last event
-        total_seconds = (events[-1].occurred_at - events[0].occurred_at).total_seconds()
-
-        return ExecutionTimeSummary(
-            total_seconds=total_seconds,
-            per_role=dict(per_role),
-            per_phase=dict(phase_times),
-            per_agent=per_agent,
-            per_operation=dict(operation_times),
-        )
-
     def _calculate_node_counts(self, role_map: dict[UUID, str]) -> NodeCountSummary:
         """Calculate node counts by role.
 
@@ -655,43 +454,4 @@ class SummaryProjection(Projection):
         return NodeCountSummary(
             total=len(role_map),
             by_role=dict(by_role),
-        )
-
-    def _count_by_type(self, events: list[DomainEvent]) -> dict[str, int]:
-        """Count events by type name.
-
-        Args:
-            events: List of domain events.
-
-        Returns:
-            Dict mapping event type name to count.
-        """
-        counter: Counter[str] = Counter()
-        for event in events:
-            counter[type(event).__name__] += 1
-        return dict(counter)
-
-    def _collect_agents(self, events: list[DomainEvent]) -> frozenset[UUID]:
-        """Collect unique agent IDs from events.
-
-        Args:
-            events: List of domain events.
-
-        Returns:
-            Frozenset of unique agent UUIDs.
-        """
-        return frozenset(event.aggregate_id for event in events)
-
-    def _extract_errors(self, events: list[DomainEvent]) -> tuple[DomainEvent, ...]:
-        """Extract WorkFailed events as errors.
-
-        Args:
-            events: List of domain events.
-
-        Returns:
-            Tuple of WorkFailed events.
-        """
-        return tuple(
-            event for event in events
-            if isinstance(event, (WorkFailed, VerificationFailed, DecisionInfeasible))
         )

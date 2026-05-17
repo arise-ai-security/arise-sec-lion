@@ -287,7 +287,7 @@ class FakeEventStore:
     async def initialize_schema(self) -> None:
         pass
 
-    async def append(self, event: DomainEvent, expected_version: int) -> None:
+    async def append(self, event: DomainEvent) -> None:
         agent_id = event.aggregate_id
         if agent_id not in self._events:
             self._events[agent_id] = []

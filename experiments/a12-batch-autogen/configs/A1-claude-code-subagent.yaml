@@ -1,0 +1,31 @@
+# Cell A1 — flat Claude Code CLI baseline with sub-agents ENABLED.
+# `orchestration.mode: flat` collapses the boss/manager/worker hierarchy
+# into a single Claude Code session; the Task tool is allowed so the model
+# can spawn child agents. A1 vs A2 isolates the value of CLI subagents
+# under an identical worker model. CVE context and the SEC-bench container
+# workspace are passed through the unified entrypoint so metrics and
+# artifacts stay comparable to B/C.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: flat
+  orchestration.skip_judge: true
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
+  boss.model: claude-opus-4-5-20251101
+  manager.model: claude-opus-4-5-20251101
+  worker.tool: claude_code
+  worker.model: claude-sonnet-4-5-20250929
+  worker.allowed_tools: [Read, Write, Edit, MultiEdit, Bash, Glob, Grep, Task]
+  worker.disallowed_tools: [WebSearch, WebFetch]
+  worker.timeout: 5400
+  worker.max_iterations_per_run: 2500
+  output.directory: ./runs
+  worker.tool_params:
+    claude_code:
+      output_format: stream-json
+      include_partial_messages: true
+      max_turns: 2500
+      use_global_config: false

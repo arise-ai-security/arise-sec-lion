@@ -28,26 +28,26 @@ class LLMError(Exception):
 class ConcurrencyError(Exception):
     """Optimistic concurrency conflict - aggregate modified by another process.
 
-    In standard OCC, the caller reloads the aggregate on conflict,
-    so actual_version is optional (caller discovers it on reload).
+    OCC is enforced by the UNIQUE(aggregate_id, sequence_number) constraint
+    on the event store. On conflict, the caller reloads the aggregate and
+    retries. The optional ``actual_version`` is the count of events the
+    losing writer observed (discovered on reload).
     """
 
     def __init__(
         self,
         aggregate_id: str,
-        expected_version: int,
         actual_version: int | None = None,
     ) -> None:
         self.aggregate_id = aggregate_id
-        self.expected_version = expected_version
         self.actual_version = actual_version
         if actual_version is not None:
             msg = (
                 f"Concurrency conflict for {aggregate_id}: "
-                f"expected v{expected_version}, actual v{actual_version}"
+                f"actual v{actual_version}"
             )
         else:
-            msg = f"Concurrency conflict for {aggregate_id}: expected v{expected_version}"
+            msg = f"Concurrency conflict for {aggregate_id}"
         super().__init__(msg)
 
 

@@ -21,7 +21,6 @@ class HierarchyLimits(BaseModel):
     domain_context: object | None = None
 
     def for_child(self) -> Self:
-        """Create limits for child agent (increments depth)."""
         return self.model_copy(update={"current_depth": self.current_depth + 1})
 
     def is_depth_limited(self) -> bool:
@@ -33,7 +32,6 @@ class HierarchyLimits(BaseModel):
         return self.max_children_per_node > 0
 
     def is_total_agents_limited(self) -> bool:
-        """Check if total agents limit is enabled."""
         return self.max_total_agents > 0
 
     def agents_remaining(self) -> int:
@@ -77,14 +75,6 @@ class HierarchyLimits(BaseModel):
             return -1
         return max(0, self.max_depth - self.current_depth)
 
-    def has_domain_context(self) -> bool:
-        """Check if the hierarchy carries domain-specific context."""
-        return self.domain_context is not None
-
-    def with_domain_context(self, domain_context: object) -> Self:
-        """Create new limits with domain context attached."""
-        return self.model_copy(update={"domain_context": domain_context})
-
     @classmethod
     def create_root(
         cls,
@@ -95,7 +85,6 @@ class HierarchyLimits(BaseModel):
         max_total_agents: int = -1,
         domain_context: object | None = None,
     ) -> Self:
-        """Create limits for root (BOSS) agent."""
         return cls(
             current_depth=0,
             max_depth=max_depth,

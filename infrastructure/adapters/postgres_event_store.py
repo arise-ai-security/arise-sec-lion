@@ -93,8 +93,16 @@ class PostgresEventStore(EventStorePort):
 
     SQL_DIR = Path(__file__).parent.parent / "sql"
 
-    def __init__(self, connection_string: str) -> None:
+    def __init__(
+        self,
+        connection_string: str,
+        *,
+        pool_min: int = 10,
+        pool_max: int = 10,
+    ) -> None:
         self.connection_string = connection_string
+        self.pool_min = pool_min
+        self.pool_max = pool_max
         self.pool: asyncpg.Pool | None = None
 
     @classmethod
@@ -104,12 +112,15 @@ class PostgresEventStore(EventStorePort):
 
     @staticmethod
     def _deserialize_event(event_type: str, payload: str | dict) -> DomainEvent:
-        """Deserialize event from stored type and payload."""
         event_class = EVENT_TYPE_REGISTRY.get(event_type)
         if not event_class:
             raise EventStoreError(f"Unknown event type: {event_type}")
 
-        payload_dict = orjson.loads(payload) if isinstance(payload, str) else payload
+        payload_dict = (
+            orjson.loads(payload)  # pylint: disable=no-member
+            if isinstance(payload, str)
+            else payload
+        )
         return event_class(**payload_dict)
 
     @staticmethod
@@ -120,14 +131,14 @@ class PostgresEventStore(EventStorePort):
         Worker terminal output (large tool output, binary data)
         can contain these, so strip them before encoding.
         """
-        return orjson.dumps(v).decode("utf-8").replace("\\u0000", "")
+        return orjson.dumps(v).decode("utf-8").replace("\\u0000", "")  # pylint: disable=no-member
 
     async def connect(self) -> None:
         async def init_connection(conn: asyncpg.Connection) -> None:
             await conn.set_type_codec(
                 "jsonb",
                 encoder=self._encode_jsonb,
-                decoder=orjson.loads,
+                decoder=orjson.loads,  # pylint: disable=no-member
                 schema="pg_catalog",
             )
 
@@ -136,6 +147,8 @@ class PostgresEventStore(EventStorePort):
             self.connection_string,
             init=init_connection,
             statement_cache_size=0,
+            min_size=self.pool_min,
+            max_size=self.pool_max,
         )
 
     async def disconnect(self) -> None:
@@ -155,11 +168,12 @@ class PostgresEventStore(EventStorePort):
                 "Failed to initialize event store schema", original_error=e
             ) from e
 
-    async def append(self, event: DomainEvent, expected_version: int) -> None:
+    async def append(self, event: DomainEvent) -> None:
         """Append event with OCC via UNIQUE constraint.
 
-        The UNIQUE(aggregate_id, sequence_number) constraint guarantees
-        only one writer succeeds. On conflict, caller reloads and retries.
+        The UNIQUE(aggregate_id, sequence_number) constraint is the sole
+        OCC guard. Only one writer wins; the loser receives a
+        ConcurrencyError, reloads the aggregate, and retries.
         """
         if not self.pool:
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
@@ -190,7 +204,6 @@ class PostgresEventStore(EventStorePort):
         except asyncpg.UniqueViolationError as e:
             raise ConcurrencyError(
                 aggregate_id=str(event.aggregate_id),
-                expected_version=expected_version,
             ) from e
 
         except Exception as e:
@@ -202,16 +215,16 @@ class PostgresEventStore(EventStorePort):
     async def append_batch(
         self,
         events: list[DomainEvent],
-        expected_version: int,
     ) -> None:
         """Append multiple events atomically in a single transaction.
 
         This is significantly faster than individual appends for workers
-        that produce many events (thoughts, tool uses, etc.).
+        that produce many events (thoughts, tool uses, etc.). The UNIQUE
+        constraint on (aggregate_id, sequence_number) is the sole OCC
+        guard.
 
         Args:
             events: List of events to persist.
-            expected_version: Expected version before first event.
         """
         if not events:
             return
@@ -250,7 +263,6 @@ class PostgresEventStore(EventStorePort):
         except asyncpg.UniqueViolationError as e:
             raise ConcurrencyError(
                 aggregate_id=str(events[0].aggregate_id),
-                expected_version=expected_version,
             ) from e
 
         except Exception as e:
@@ -270,7 +282,6 @@ class PostgresEventStore(EventStorePort):
             raise EventStoreError("Connection pool not initialized. Call connect() first.")
 
         try:
-            # Build query with optional pagination
             query_parts = [
                 "SELECT event_type, payload",
                 "FROM events",
@@ -328,6 +339,84 @@ class PostgresEventStore(EventStorePort):
         except Exception as e:
             raise EventStoreError(
                 "Failed to retrieve all aggregate IDs",
+                original_error=e,
+            ) from e
+
+    async def count_events(self, aggregate_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events for multiple aggregates in a single query."""
+        if not aggregate_ids:
+            return {}
+
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT aggregate_id, COUNT(*)::int AS event_count
+                    FROM events
+                    WHERE aggregate_id = ANY($1::uuid[])
+                    GROUP BY aggregate_id
+                    """,
+                    aggregate_ids,
+                )
+
+            counts = {row["aggregate_id"]: row["event_count"] for row in rows}
+            return {
+                aggregate_id: counts.get(aggregate_id, 0)
+                for aggregate_id in aggregate_ids
+            }
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to count events",
+                original_error=e,
+            ) from e
+
+    async def count_subtree_events(self, root_ids: list[UUID]) -> dict[UUID, int]:
+        """Count events across the entire descendant subtree for each root."""
+        if not root_ids:
+            return {}
+
+        if not self.pool:
+            raise EventStoreError("Connection pool not initialized. Call connect() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    WITH RECURSIVE subtree(root_id, agent_id) AS (
+                        SELECT r.id, r.id
+                        FROM unnest($1::uuid[]) AS r(id)
+
+                        UNION
+
+                        SELECT s.root_id, (e.payload->>'child_id')::uuid
+                        FROM events e
+                        INNER JOIN subtree s ON e.aggregate_id = s.agent_id
+                        WHERE e.event_type = 'ChildSpawned'
+                    )
+                    SELECT s.root_id, COUNT(e.event_id)::int AS total_count
+                    FROM subtree s
+                    INNER JOIN events e ON e.aggregate_id = s.agent_id
+                    GROUP BY s.root_id
+                    """,
+                    root_ids,
+                )
+
+            counts = {row["root_id"]: row["total_count"] for row in rows}
+            return {root_id: counts.get(root_id, 0) for root_id in root_ids}
+
+        except EventStoreError:
+            raise
+
+        except Exception as e:
+            raise EventStoreError(
+                "Failed to count subtree events",
                 original_error=e,
             ) from e
 
@@ -593,7 +682,10 @@ class PostgresEventStore(EventStorePort):
                         FROM events
                         WHERE event_type = 'AgentCreated'
                           AND payload->>'role' = 'boss'
-                        ORDER BY occurred_at DESC
+                        -- G.2: tie-break wall-clock collisions on sequence_number
+                        -- so the projection is deterministic when two BOSS
+                        -- AgentCreated events share occurred_at.
+                        ORDER BY occurred_at DESC, sequence_number DESC
                         LIMIT $1 OFFSET $2
                     ),
                     task_descriptions AS (
@@ -624,7 +716,13 @@ class PostgresEventStore(EventStorePort):
                             'VerificationFailed', 'DecisionInfeasible',
                             'RetryScheduled', 'RedecompositionTriggered'
                         )
-                        ORDER BY e.aggregate_id, e.occurred_at DESC
+                        -- G.2: when wall-clock occurred_at collides, fall
+                        -- back to sequence_number DESC so the projection
+                        -- picks the *later* event deterministically (e.g.
+                        -- WorkCompleted after RetryScheduled at the same
+                        -- timestamp resolves to status='completed').
+                        ORDER BY e.aggregate_id, e.occurred_at DESC,
+                                 e.sequence_number DESC
                     ),
                     run_info AS (
                         SELECT DISTINCT ON (e.aggregate_id)
@@ -633,7 +731,10 @@ class PostgresEventStore(EventStorePort):
                                 e.payload->'domain_metadata',
                                 CASE
                                     WHEN e.payload ? 'instance_id'
-                                    THEN jsonb_build_object('instance_id', e.payload->>'instance_id')
+                                    THEN jsonb_build_object(
+                                        'instance_id',
+                                        e.payload->>'instance_id'
+                                    )
                                     ELSE NULL
                                 END
                             ) as domain_metadata

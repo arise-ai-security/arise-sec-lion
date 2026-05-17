@@ -5,17 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from config import (
-    BossConfig,
-    ConcurrencyConfig,
-    ManagerConfig,
-    ToolCallingConfig,
-    TopologyConfig,
-)
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.execution_service import (
     AgentExecutionService,
     ExecutionServiceDependencies,
+    FlatInvariantBuilder,
     HierarchyLimitsRegistry,
     ProgressCallback,
     ServiceConfig,
@@ -38,9 +32,19 @@ from .realtime_adapter import RealtimeCallbackAdapter
 
 
 if TYPE_CHECKING:
+    from typing import Literal
+
+    from config import (
+        BossConfig,
+        ConcurrencyConfig,
+        ManagerConfig,
+        ToolCallingConfig,
+        TopologyConfig,
+    )
     from core.application.services import PromptStrategy
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.event_store_port import EventStoreReadPort
+    from core.ports.worker_port import WorkerPort
     from presentation.cli import CLI, CLIConfig
 
     from .infrastructure import Infrastructure
@@ -61,6 +65,7 @@ class ExecutionLimitsBridge:
     max_concurrent_llm_calls: int = 5
     llm_jitter_max_ms: int = 500
     max_run_duration_seconds: float = 1800
+    max_agent_step_seconds: float = 900.0
 
     def is_workers_limited(self) -> bool:
         return self.max_concurrent_workers > 0
@@ -87,8 +92,21 @@ class ApplicationConfig:
     skip_judge: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
+    prompt_builder: PromptBuilder | None = None
     progress_callback: ProgressCallback | None = None
     domain_key: str | None = None
+    mode: Literal["hierarchical", "flat"] = "hierarchical"
+    flat_worker: WorkerPort | None = None
+    flat_invariant_builder: FlatInvariantBuilder | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode == "flat" and (
+            self.flat_worker is None or self.flat_invariant_builder is None
+        ):
+            raise ValueError(
+                "orchestration.mode='flat' requires both flat_worker and "
+                "flat_invariant_builder"
+            )
 
 
 @dataclass
@@ -102,7 +120,6 @@ def get_application(
     infrastructure: Infrastructure,
     config: ApplicationConfig,
 ) -> Application:
-    """Create all application services with proper dependency injection."""
     service_config = ServiceConfig(
         max_retries=config.max_retries,
         poll_interval=config.poll_interval,
@@ -110,10 +127,14 @@ def get_application(
         default_worker_tool=config.default_worker_tool,
         boss_config=config.boss_config,
         manager_config=config.manager_config,
+        mode=config.mode,
     )
 
-    # Create collaborators (composition root wiring)
-    prompt_builder = PromptBuilder(
+    # Create collaborators (composition root wiring). Prefer the
+    # PromptBuilder constructed by ``create_runtime_cli`` so the flat-mode
+    # closure and the live service share one instance; fall back to
+    # constructing one for callers that don't set the field.
+    prompt_builder = config.prompt_builder or PromptBuilder(
         "prompts",
         config.default_worker_tool,
         strategy=config.prompt_strategy,
@@ -197,6 +218,8 @@ def get_application(
         prompt_builder=prompt_builder,
         domain_plugin=config.domain_plugin,
         recon_tool=infrastructure.recon_tool,
+        flat_worker=config.flat_worker,
+        flat_invariant_builder=config.flat_invariant_builder,
     )
 
     system_limits = ExecutionLimitsBridge(
@@ -206,6 +229,7 @@ def get_application(
         max_concurrent_workers=config.concurrency.max_concurrent_workers,
         max_concurrent_llm_calls=config.concurrency.max_concurrent_llm_calls,
         llm_jitter_max_ms=config.concurrency.llm_jitter_max_ms,
+        max_agent_step_seconds=config.concurrency.max_agent_step_seconds,
         max_run_duration_seconds=config.max_run_duration_seconds,
     )
 
@@ -225,7 +249,6 @@ def get_cli(
     event_store: EventStoreReadPort,
     config: CLIConfig | None = None,
 ) -> CLI:
-    """Create CLI interface."""
     from presentation.cli import CLI
 
     return CLI(execution_service=execution_service, event_store=event_store, config=config)

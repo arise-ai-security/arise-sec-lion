@@ -13,13 +13,10 @@ LiteLLM pricing source:
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from types import ModuleType
 
 from core.ports.runtime_ports import CostCalculatorPort
 
-
-if TYPE_CHECKING:
-    from types import ModuleType
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +45,11 @@ class ModelPricing:
     output_cost_per_million: float
 
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """Calculate total cost for given token counts."""
         input_cost = (prompt_tokens / TOKENS_PER_MILLION) * self.input_cost_per_million
         output_cost = (completion_tokens / TOKENS_PER_MILLION) * self.output_cost_per_million
         return round(input_cost + output_cost, COST_DECIMAL_PLACES)
 
     def average_cost_per_million(self) -> float:
-        """Average of input and output cost (for when split is unknown)."""
         return (self.input_cost_per_million + self.output_cost_per_million) / 2
 
 
@@ -129,7 +124,6 @@ def _get_cached_model_cost_map() -> dict[str, dict] | None:
 
 
 def _normalize_model_name(model: str) -> str:
-    """Strip provider prefix from model name (e.g., 'openai/gpt-4' -> 'gpt-4')."""
     if "/" in model:
         return model.split("/", 1)[1]
     return model
@@ -287,7 +281,6 @@ class DefaultCostCalculator(CostCalculatorPort):
         )
 
     def _resolve_pricing(self, model: str) -> ModelPricing:
-        """Resolve pricing for a model using all available sources."""
         # Try LiteLLM first (most accurate)
         litellm_pricing = _lookup_litellm_pricing(model)
         if litellm_pricing is not None:

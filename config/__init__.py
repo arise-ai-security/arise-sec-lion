@@ -1,11 +1,17 @@
 """Configuration via Pydantic Settings with phase-specific YAML support."""
 
 from .settings import (
+    ApiSettings,
+    ApiWorkerConfig,
     BossConfig,
+    ClaudeCodeParams,
     ConcurrencyConfig,
     CorsConfig,
     DatabaseConfig,
+    FormatRepairerConfig,
+    GoogleAdkParams,
     ManagerConfig,
+    OpenHandsParams,
     OrchestrationConfig,
     OutputConfig,
     RetryConfig,
@@ -17,16 +23,23 @@ from .settings import (
     ToolsetRoleConfig,
     TopologyConfig,
     WorkerConfig,
+    WorkerToolParams,
     get_environment,
 )
 
 
 __all__ = [
+    "ApiSettings",
+    "ApiWorkerConfig",
     "BossConfig",
+    "ClaudeCodeParams",
     "ConcurrencyConfig",
     "CorsConfig",
     "DatabaseConfig",
+    "FormatRepairerConfig",
+    "GoogleAdkParams",
     "ManagerConfig",
+    "OpenHandsParams",
     "OrchestrationConfig",
     "OutputConfig",
     "RetryConfig",
@@ -38,5 +51,6 @@ __all__ = [
     "ToolsetRoleConfig",
     "TopologyConfig",
     "WorkerConfig",
+    "WorkerToolParams",
     "get_environment",
 ]

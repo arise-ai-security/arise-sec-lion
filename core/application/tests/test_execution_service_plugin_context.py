@@ -30,7 +30,11 @@ from core.domain.events.events import (
     WorkCompleted,
 )
 from core.domain.values.node_message import Handoff
-from core.ports.domain_plugin_port import WorkerExecutionContext
+from core.ports.domain_plugin_port import (
+    PreparedRunWorkspace,
+    WorkerExecutionContext,
+    WorkspacePathAlias,
+)
 
 
 def _test_config() -> dict[str, Any]:
@@ -126,6 +130,58 @@ class AsyncWorkerPort:
             return next(self._events)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+
+class CapturingReconTool:
+    def __init__(self) -> None:
+        self.working_directory: str | None = None
+        self.path_aliases: tuple[WorkspacePathAlias, ...] | None = None
+
+    def set_working_directory(self, path: str) -> None:
+        self.working_directory = path
+
+    def set_path_aliases(self, aliases: tuple[WorkspacePathAlias, ...]) -> None:
+        self.path_aliases = aliases
+
+
+@pytest.mark.asyncio
+async def test_setup_working_directory_configures_recon_path_aliases(
+    tmp_path: Path,
+) -> None:
+    # Given:
+    root_id = uuid4()
+    run_root = tmp_path / "run-root"
+    aliases = (
+        WorkspacePathAlias("/src", str(run_root / "src")),
+        WorkspacePathAlias("/testcase", str(run_root / "testcase")),
+    )
+    domain_plugin = AsyncMock()
+    domain_plugin.prepare_run.return_value = PreparedRunWorkspace(
+        working_directory=str(run_root),
+        path_aliases=aliases,
+    )
+    recon_tool = CapturingReconTool()
+    service = object.__new__(AgentExecutionService)
+    service._config = ServiceConfig(
+        max_retries=3,
+        poll_interval=0.5,
+        output_directory=str(tmp_path),
+        default_worker_tool="claude_code",
+        boss_config=BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
+        manager_config=ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
+    )
+    service._domain_plugin = domain_plugin
+    service._recon_tool = recon_tool
+    service._working_directory = None
+
+    # When:
+    await service._setup_working_directory(root_id, domain_context=None)
+
+    # Then:
+    assert service._working_directory == run_root
+    assert recon_tool.working_directory == str(run_root)
+    assert recon_tool.path_aliases == aliases
+    domain_plugin.prepare_run.assert_awaited_once()
 
 
 @pytest.mark.asyncio

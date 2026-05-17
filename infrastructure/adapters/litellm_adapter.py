@@ -5,6 +5,9 @@ various LLM providers (OpenAI, Anthropic, Google, etc.) with optional
 cost tracking via the CostCalculatorPort.
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
 import re
@@ -14,10 +17,98 @@ from typing import Any
 import litellm
 
 from core.domain.exceptions import LLMError
-from core.domain.values.llm_response import LLMResponse, LLMToolResponse, LLMUsage, ToolCall
+from core.domain.values.llm_response import (
+    LLMResponse,
+    LLMToolResponse,
+    LLMUsage,
+    ToolCall,
+)
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
+from infrastructure.io import robust_call
+
 
 logger = logging.getLogger(__name__)
+
+
+def _require_model(merged_config: dict[str, Any]) -> str:
+    model = merged_config.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise LLMError("LLM model must be configured explicitly")
+    return model
+
+
+def _strip_tool_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove tool_calls and tool-result messages from a conversation history.
+
+    Anthropic rejects messages that reference tools (assistant tool_calls or
+    role=tool results) when no ``tools`` parameter is provided. This is used
+    by the fallback "force final answer" path after max tool iterations.
+    """
+    cleaned: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") == "tool":
+            continue
+        if msg.get("tool_calls"):
+            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+            if not msg.get("content"):
+                msg["content"] = ""
+        cleaned.append(msg)
+    return cleaned
+
+
+def _supports_anthropic_cache(model: str) -> bool:
+    # Anthropic prompt caching (5-min ephemeral TTL, ~90% read discount)
+    # only applies when the request reaches an Anthropic model. LiteLLM
+    # passes `cache_control` through on these models and ignores/rejects it
+    # elsewhere, so we gate emission defensively.
+    m = model.lower()
+    return (
+        "claude" in m
+        or m.startswith("anthropic/")
+        or m.startswith("bedrock/anthropic.")
+    )
+
+
+def _apply_anthropic_cache_to_messages(
+    messages: list[dict[str, Any]], model: str
+) -> list[dict[str, Any]]:
+    # Mark the first user message for ephemeral caching. On the multi-turn
+    # tool-calling loop and recovery turns this message stays byte-identical
+    # across calls, so subsequent calls hit cache_read instead of paying
+    # full input pricing on the static prompt prefix.
+    if not _supports_anthropic_cache(model):
+        return messages
+    out = list(messages)
+    for i, msg in enumerate(out):
+        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            out[i] = {
+                **msg,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": msg["content"],
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+            break
+    return out
+
+
+def _apply_anthropic_cache_to_tools(
+    tools: list[dict[str, Any]] | None, model: str
+) -> list[dict[str, Any]] | None:
+    # A single marker on the last tool entry tells Anthropic to cache the
+    # entire tools array. The tool-calling loop re-sends the full array on
+    # every turn; without this, every turn pays full input on identical
+    # tool schemas.
+    if not tools or not _supports_anthropic_cache(model):
+        return tools
+    out = list(tools)
+    last = dict(out[-1])
+    last["cache_control"] = {"type": "ephemeral"}
+    out[-1] = last
+    return out
 
 
 class LiteLLMAdapter(LLMPort):
@@ -40,14 +131,8 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _is_o_series(model: str) -> bool:
-        """Return True for OpenAI models that reject temperature (O-series, GPT-5)."""
         base = model.split("/")[-1].lower()
         return base.startswith(("o1", "o3", "o4", "gpt-5"))
-
-    @staticmethod
-    def _is_ollama(model: str) -> bool:
-        """Return True for models served via Ollama (local or cloud)."""
-        return model.startswith(("ollama/", "ollama_chat/"))
 
     @staticmethod
     def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
@@ -65,16 +150,21 @@ class LiteLLMAdapter(LLMPort):
 
     @staticmethod
     def _ollama_overrides(model: str) -> dict[str, Any]:
-        """Return extra kwargs for Ollama models (disable thinking mode).
+        """Return extra kwargs for Ollama models.
 
-        Ollama reasoning models (qwen3.5, deepseek-v4-flash, etc.) emit
-        their reasoning either as inline ``<think>`` tags (Qwen) or in a
-        separate ``thinking`` field (DeepSeek), often at the cost of
-        leaving ``content`` empty or near-empty on long structured
-        prompts. Ollama's chat API recognises a top-level ``think: false``
-        flag that disables both behaviours; the older ``options.think``
-        form is ignored by DeepSeek (and by recent Ollama Cloud builds),
-        so we send the flag at the top level only.
+        Applies two critical overrides for Ollama reasoning models
+        (qwen3.5, deepseek-v4-flash, etc.):
+
+        1. **Disable thinking mode** — these models emit reasoning as
+           inline ``<think>`` tags (Qwen) or in a separate ``thinking``
+           field (DeepSeek), often leaving ``content`` empty on long
+           structured prompts.
+
+        2. **Set num_ctx** — Ollama defaults to num_ctx=2048 which
+           truncates prompts longer than ~1500 tokens. Our decomposition
+           prompts are 6-8K tokens; without explicit num_ctx the model
+           cannot see domain-specific rules (e.g. "Builder MUST decompose")
+           buried later in the prompt, causing systematic failures.
 
         litellm's ``reasoning_effort`` param does NOT propagate to Ollama.
         """
@@ -85,10 +175,26 @@ class LiteLLMAdapter(LLMPort):
         # ``data["think"]`` (see litellm/llms/ollama_chat.py). Passing it
         # as a direct kwarg avoids the extra_body merge logic, which
         # behaves differently across providers.
-        return {"think": False}
+        return {
+            "think": False,
+            "num_ctx": 65536,
+        }
+
+    _LLM_TIMEOUT_SECONDS = 120  # Hard timeout for a single LLM call
+    # Cap retries low because 3 retries x 180s x 5 tool-iterations could
+    # compound to ~25 min of DB-silent retry. One retry with a longer cooldown
+    # propagates a 429 storm as an LLMError quickly enough that the per-step
+    # timeout (default 600s) can recycle the agent.
+    _RATE_LIMIT_RETRIES = 1
+    _RATE_LIMIT_BASE_DELAY = 15  # seconds; doubles each retry
 
     async def _call_litellm(self, model: str, **kwargs: Any) -> Any:
-        """Call litellm.acompletion with unified exception handling.
+        """Call litellm.acompletion with timeout, 429 retry, and exception handling.
+
+        Retries rate-limit and service-unavailable errors via
+        ``robust_call.run`` with jittered exponential backoff. Applies a
+        hard per-attempt timeout of ``_LLM_TIMEOUT_SECONDS`` to prevent
+        indefinite hangs when the endpoint is overwhelmed.
 
         Args:
             model: Model identifier (e.g., 'gpt-4', 'claude-3-opus').
@@ -100,39 +206,62 @@ class LiteLLMAdapter(LLMPort):
         Raises:
             LLMError: On any API failure, with specific error messages.
         """
-        try:
-            return await litellm.acompletion(model=model, **kwargs)
+        policy = robust_call.RetryPolicy(
+            max_retries=self._RATE_LIMIT_RETRIES,
+            base_delay=self._RATE_LIMIT_BASE_DELAY,
+            jitter_range=(0.5, 1.5),
+            backoff_base=2.0,
+            retryable=(
+                litellm.exceptions.RateLimitError,
+                litellm.exceptions.ServiceUnavailableError,
+            ),
+        )
 
+        def _log_retry(attempt: int, exc: BaseException, delay: float) -> None:
+            logger.warning(
+                "Rate limited by %s (attempt %d/%d), retrying in %.1fs",
+                model,
+                attempt + 1,
+                self._RATE_LIMIT_RETRIES + 1,
+                delay,
+            )
+
+        try:
+            return await robust_call.run(
+                lambda: litellm.acompletion(model=model, **kwargs),
+                timeout=self._LLM_TIMEOUT_SECONDS,
+                policy=policy,
+                on_retry=_log_retry,
+            )
+        except asyncio.TimeoutError as e:
+            raise LLMError(
+                f"LLM request timed out after {self._LLM_TIMEOUT_SECONDS}s for model '{model}'",
+                original_error=e,
+            ) from e
+        except (
+            litellm.exceptions.RateLimitError,
+            litellm.exceptions.ServiceUnavailableError,
+        ) as e:
+            raise LLMError(
+                f"LLM rate limit exceeded for model '{model}' after "
+                f"{self._RATE_LIMIT_RETRIES + 1} attempts: {e}",
+                original_error=e,
+            ) from e
         except litellm.exceptions.AuthenticationError as e:
             raise LLMError(
                 f"LLM authentication failed for model '{model}': {e}",
                 original_error=e,
             ) from e
-
-        except litellm.exceptions.RateLimitError as e:
-            raise LLMError(
-                f"LLM rate limit exceeded for model '{model}': {e}",
-                original_error=e,
-            ) from e
-
         except litellm.exceptions.APIError as e:
             raise LLMError(
                 f"LLM API error for model '{model}': {e}",
                 original_error=e,
             ) from e
-
         except litellm.exceptions.Timeout as e:
             raise LLMError(
                 f"LLM request timed out for model '{model}': {e}",
                 original_error=e,
             ) from e
-
-        except litellm.exceptions.ServiceUnavailableError as e:
-            raise LLMError(
-                f"LLM service unavailable for model '{model}': {e}",
-                original_error=e,
-            ) from e
-
         except Exception as e:
             raise LLMError(
                 f"Unexpected LLM error for model '{model}': {e}",
@@ -174,7 +303,7 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On API failure or empty response.
         """
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "gpt-4")
+        model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
@@ -207,7 +336,7 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On API failure or empty response.
         """
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "gpt-4")
+        model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
@@ -246,19 +375,23 @@ class LiteLLMAdapter(LLMPort):
         text content (final answer) or tool_calls (requesting tool execution).
         """
         merged_config = {**self.default_config, **config_dict}
-        model = merged_config.get("model", "gpt-4")
+        model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": messages,
             "max_tokens": merged_config.get("max_tokens", 4000),
             "top_p": merged_config.get("top_p"),
         }
-        # Some providers (notably ollama_chat) reject ``tools=[]`` outright;
-        # callers using this method as a multi-turn no-tools query path
-        # (e.g. orchestrator decomposition recovery) pass an empty list to
-        # signal "no tools this turn". Drop the key entirely in that case.
         if tools:
-            call_kwargs["tools"] = tools
+            call_kwargs["tools"] = _apply_anthropic_cache_to_tools(tools, model)
+        else:
+            # Anthropic rejects messages containing tool_calls/tool results
+            # when no tools are defined. Strip tool content so the fallback
+            # "force final answer" call after max iterations works cleanly.
+            call_kwargs["messages"] = _strip_tool_content(messages)
+        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(
+            call_kwargs["messages"], model
+        )
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
@@ -493,26 +626,28 @@ def _match_single_tool_call(
     """
     # Shape 1: {"name": "<tool>", "arguments": {...}}
     if "name" in item and "arguments" in item and isinstance(item["arguments"], dict):
-        if item["name"] in tool_name_set:
+        name = item["name"]
+        if isinstance(name, str) and name in tool_name_set:
             return ToolCall(
                 id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-                name=item["name"],
+                name=name,
                 arguments=item["arguments"],
             )
 
     # Shape 1b: {"name": "<tool>", ...} — name matches a tool, no
     # "arguments" wrapper, and no "description" (which would indicate
     # a subtask rather than a tool call).
+    name = item.get("name")
     if (
-        "name" in item
-        and item["name"] in tool_name_set
+        isinstance(name, str)
+        and name in tool_name_set
         and "description" not in item
         and "arguments" not in item
     ):
         args = {k: v for k, v in item.items() if k != "name"}
         return ToolCall(
             id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-            name=item["name"],
+            name=name,
             arguments=args,
         )
 
@@ -535,7 +670,6 @@ def _match_single_tool_call(
 def _build_tool_param_index(
     tools: list[dict[str, Any]],
 ) -> dict[str, frozenset[str]]:
-    """Build tool-name → parameter-keys index from OpenAI-format tool defs."""
     index: dict[str, frozenset[str]] = {}
     for t in tools:
         func = t.get("function", {})
