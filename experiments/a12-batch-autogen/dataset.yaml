@@ -23,6 +23,7 @@ default_cves:
   - faad2.cve-2021-32278
   - faad2.cve-2018-20194
   - faad2.cve-2018-20362
+  - gpac.cve-2023-5586
   - jq.cve-2023-50246
   - libjpeg-turbo.cve-2020-13790
   - liblouis.cve-2023-26768
@@ -150,6 +151,7 @@ source:
   - plugins/security/tests/fixtures/faad2.cve-2021-32278.json
   - plugins/security/tests/fixtures/faad2.cve-2018-20194.json
   - plugins/security/tests/fixtures/faad2.cve-2018-20362.json
+  - plugins/security/tests/fixtures/gpac.cve-2023-5586.json
   - plugins/security/tests/fixtures/jq.cve-2023-50246.json
   - plugins/security/tests/fixtures/libjpeg-turbo.cve-2020-13790.json
   - plugins/security/tests/fixtures/liblouis.cve-2023-26768.json
