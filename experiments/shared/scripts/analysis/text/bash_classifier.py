@@ -18,6 +18,8 @@ import enum
 import re
 from typing import Final
 
+from experiments.shared.scripts.analysis.text.forbidden_web import BASH_WEB_RE
+
 
 class BashSubtype(str, enum.Enum):
     WEB_VIA_SHELL = "web_via_shell"
@@ -32,16 +34,11 @@ class BashSubtype(str, enum.Enum):
 
 # Ordered list — first match wins. Case-insensitive for all entries
 # (including ``GIT`` whose anchor only constrains leading whitespace, not
-# the case of the literal ``git``).
+# the case of the literal ``git``). ``WEB_VIA_SHELL`` reuses
+# ``forbidden_web.BASH_WEB_RE`` as the single source of truth so the
+# subtype classifier and the forbidden-web detector cannot diverge.
 _BASH_PATTERNS: Final[list[tuple[BashSubtype, re.Pattern[str]]]] = [
-    (
-        BashSubtype.WEB_VIA_SHELL,
-        re.compile(
-            r"\b(curl|wget|nc(?:at)?\s+-|socat\s+|openssl\s+s_client|ftp\s+|sftp\s+)\b"
-            r"|https?://",
-            re.IGNORECASE,
-        ),
-    ),
+    (BashSubtype.WEB_VIA_SHELL, BASH_WEB_RE),
     (
         BashSubtype.RECON,
         re.compile(r"\b(nmap|masscan|gobuster|dirb|nikto|whatweb|hydra)\b", re.IGNORECASE),

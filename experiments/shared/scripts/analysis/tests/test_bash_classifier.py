@@ -83,3 +83,35 @@ def test_git_clone_with_url_is_classified_as_web_via_shell():
     result = classify_bash_command(cmd)
     # Then: WEB_VIA_SHELL wins by priority (acceptable false-positive bias)
     assert result == BashSubtype.WEB_VIA_SHELL
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # ``python3 -c '<requests>'`` — the canonical indirect web-egress
+        # cheat that the forbidden-web detector flags. The classifier
+        # MUST agree with the detector by routing this to WEB_VIA_SHELL
+        # (not OTHER_SHELL). Regression coverage for the bash_classifier
+        # vs forbidden_web divergence bug.
+        "python3 -c \"import requests; requests.get('https://x')\"",
+        "python -c 'import urllib.request'",
+        "python3 -c 'import httpx; httpx.get(\"https://y\")'",
+    ],
+)
+def test_python_dash_c_http_library_invocation_is_web_via_shell(cmd):
+    # When: classified
+    result = classify_bash_command(cmd)
+    # Then: WEB_VIA_SHELL — the python-HTTP-library alternation must be
+    # part of the WEB_VIA_SHELL pattern (sourced from BASH_WEB_RE so the
+    # subtype classifier and forbidden-web detector cannot drift apart).
+    assert result == BashSubtype.WEB_VIA_SHELL
+
+
+def test_python_dash_c_without_http_library_is_other_shell():
+    # Given: a Python one-liner that does NOT import an HTTP client
+    cmd = "python3 -c 'print(1)'"
+    # When: classified
+    result = classify_bash_command(cmd)
+    # Then: OTHER_SHELL — only Python invocations referencing
+    # ``requests``/``urllib``/``httpx`` should match WEB_VIA_SHELL.
+    assert result == BashSubtype.OTHER_SHELL

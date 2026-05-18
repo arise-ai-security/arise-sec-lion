@@ -3,9 +3,9 @@
 The composer is the single entry point external callers use to turn a boss
 aggregate id into a fully populated :class:`RunResult`. It owns the
 run-id contract (design doc §11) — empty event lists raise
-:class:`UnknownRunError` and non-boss first events raise
-:class:`NotABossRunError`. Family validation is delegated to
-``compute_tools``, which raises :class:`UnknownFamilyError` for any
+:class:`UnknownRunError` and aggregates without a ``RunStarted`` event on
+``run_id`` raise :class:`NotABossRunError`. Family validation is delegated
+to ``compute_tools``, which raises :class:`UnknownFamilyError` for any
 family not declared in ``TOOL_TAXONOMY``.
 """
 
@@ -52,20 +52,32 @@ async def compute_run_result(
 
     Raises:
         UnknownRunError: No events found for ``run_id``.
-        NotABossRunError: First event is not ``RunStarted`` on ``run_id``
-            (the supplied id names a non-boss aggregate).
+        NotABossRunError: No ``RunStarted`` event was emitted on the same
+            aggregate as ``run_id`` (the supplied id names a non-boss
+            aggregate). Real boss aggregates emit ``AgentCreated`` (seq=1)
+            and ``TaskAssigned`` (seq=2) before ``RunStarted`` (seq=3+),
+            so the boss predicate is "this aggregate emitted a
+            ``RunStarted`` somewhere in its event stream", not "the first
+            event is ``RunStarted``".
         UnknownFamilyError: ``family`` is not declared in
             ``TOOL_TAXONOMY``. Bubbles up from ``compute_tools``.
     """
     events = await fetch_run_events(conn, run_id)
     if not events:
         raise UnknownRunError(run_id=run_id)
-    root = events[0]
-    if root.event_type != "RunStarted" or root.aggregate_id != run_id:
+    boss_run_started = next(
+        (
+            e
+            for e in events
+            if e.aggregate_id == run_id and e.event_type == "RunStarted"
+        ),
+        None,
+    )
+    if boss_run_started is None:
         raise NotABossRunError(
             run_id=run_id,
-            first_event_type=root.event_type,
-            first_aggregate_id=root.aggregate_id,
+            first_event_type=events[0].event_type,
+            first_aggregate_id=events[0].aggregate_id,
         )
 
     qm = QuantitativeMetrics(

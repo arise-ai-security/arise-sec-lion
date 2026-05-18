@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from experiments.shared.scripts.db.models import EventRow
 
 
-_BASH_WEB_RE: Final[re.Pattern[str]] = re.compile(
+BASH_WEB_RE: Final[re.Pattern[str]] = re.compile(
     r"\b(curl|wget|nc(?:at)?\s+-|"
     r"python3?\s+-c\s+['\"].*?(?:requests|urllib|httpx)|"
     r"socat\s+|openssl\s+s_client|ftp\s+|sftp\s+)"
@@ -59,7 +59,7 @@ def detect_violations(events: Sequence[EventRow]) -> list[WebViolation]:
             continue
         if tool_name == "Bash":
             cmd = _extract_bash_command(content)
-            if cmd and _BASH_WEB_RE.search(cmd):
+            if cmd and BASH_WEB_RE.search(cmd):
                 out.append(
                     WebViolation(
                         via="bash_command",

@@ -387,7 +387,7 @@ from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Final
 
-_BASH_WEB_RE: Final[re.Pattern[str]] = re.compile(
+BASH_WEB_RE: Final[re.Pattern[str]] = re.compile(
     r"\b("
     r"curl|wget|nc(?:at)?\s+-|"
     r"python3?\s+-c\s+['\"].*?(?:requests|urllib|httpx)|"
@@ -433,7 +433,7 @@ def detect_violations(
             continue
         if tool_name == "Bash":
             cmd = _extract_bash_command(content)
-            if cmd and _BASH_WEB_RE.search(cmd):
+            if cmd and BASH_WEB_RE.search(cmd):
                 out.append(WebViolation(
                     via="bash_command",
                     tool_or_cmd=cmd[:_EVIDENCE_CAP],
@@ -468,7 +468,7 @@ Regex-based dispatch over the Bash command string extracted from
 
 | Subtype | Patterns (rough) |
 |---|---|
-| `web_via_shell` | covered by `_BASH_WEB_RE` |
+| `web_via_shell` | covered by `BASH_WEB_RE` |
 | `recon` | `nmap`, `masscan`, `gobuster`, `dirb`, `nikto`, `whatweb`, `hydra` |
 | `security_scan` | `bandit`, `semgrep`, `codeql`, `trivy`, `grype`, `osv-scanner`, `safety` |
 | `exploit` | `sqlmap`, `metasploit`, `msfconsole`, `pwntools` |
@@ -479,29 +479,48 @@ Regex-based dispatch over the Bash command string extracted from
 
 All patterns are stored as a single ordered list of `(BashSubtype,
 re.Pattern)` tuples at the top of `text/bash_classifier.py` so the
-priority is unambiguous and revisable in one place. Subtypes that
-overlap (e.g. a Bash command runs `curl ... | sh`) increment **only
-one** counter — first match in the ordered list wins. Order:
-`web_via_shell` > `recon` > `exploit` > `security_scan` > `build` >
-`test_exec` > `git` > `other_shell`.
+priority is unambiguous and revisable in one place. The `web_via_shell`
+entry imports `BASH_WEB_RE` directly from `text/forbidden_web.py`,
+making the forbidden-web detector the single source of truth for the
+web-egress alternation. This eliminates the divergence risk that would
+otherwise allow a bash command (e.g. `python3 -c '… requests …'`) to be
+flagged as a forbidden-web violation but misclassified as
+`other_shell` by the subtype counter. Subtypes that overlap (e.g. a
+Bash command runs `curl ... | sh`) increment **only one** counter —
+first match in the ordered list wins. Order: `web_via_shell` > `recon`
+> `exploit` > `security_scan` > `build` > `test_exec` > `git` >
+`other_shell`.
 
 ## 11. Run-id semantics & errors
 
 `compute_run_result(conn, run_id)` accepts the BOSS aggregate id. Any
 other aggregate raises `NotABossRunError`. The contract is enforced by
-checking the first event in `fetch_run_events`:
+scanning `fetch_run_events` for a `RunStarted` event on the same
+aggregate as `run_id`:
 
 ```python
 events = await fetch_run_events(conn, run_id)
 if not events:
     raise UnknownRunError(f"no events for {run_id}")
-root = events[0]
-if root.event_type != "RunStarted" or root.aggregate_id != run_id:
+boss_run_started = next(
+    (e for e in events
+     if e.aggregate_id == run_id and e.event_type == "RunStarted"),
+    None,
+)
+if boss_run_started is None:
     raise NotABossRunError(
-        f"{run_id} is not a boss aggregate "
-        f"(first event: {root.event_type} on {root.aggregate_id})"
+        run_id=run_id,
+        first_event_type=events[0].event_type,
+        first_aggregate_id=events[0].aggregate_id,
     )
 ```
+
+Real boss aggregates emit `AgentCreated` (seq=1), `TaskAssigned` (seq=2),
+`RunStarted` (seq=3+) in that order, and `fetch_run_events` returns
+events ordered by `(occurred_at, sequence_number)`. Consequently the
+*first* event on a real boss aggregate is **never** `RunStarted`. The
+boss predicate is therefore "this aggregate emitted a `RunStarted`
+somewhere in its event stream", not "the first event is `RunStarted`".
 
 `errors.py`:
 ```python
@@ -523,8 +542,12 @@ async def compute_run_result(
     events = await fetch_run_events(conn, run_id)
     if not events:
         raise UnknownRunError(run_id)
-    root = events[0]
-    if root.event_type != "RunStarted" or root.aggregate_id != run_id:
+    boss_run_started = next(
+        (e for e in events
+         if e.aggregate_id == run_id and e.event_type == "RunStarted"),
+        None,
+    )
+    if boss_run_started is None:
         raise NotABossRunError(...)
 
     qm = QuantitativeMetrics(
@@ -638,6 +661,35 @@ Picks a known-good A1 run id from the DB and asserts:
    command including comments and descriptions. The design accepts this
    as a conservative false-positive bias (better to flag a false
    positive than miss a real cheat).
+
+### Design correction 2026-05-17
+
+The original §12 used `events[0].event_type == "RunStarted"` for boss
+detection, which was wrong because the event-store ordering places
+`AgentCreated` (seq=1) and `TaskAssigned` (seq=2) before `RunStarted`
+(seq=3+) on real boss aggregates. Every real boss therefore would have
+been mis-classified as non-boss and rejected with `NotABossRunError`.
+Mocked unit tests masked the bug by putting `RunStarted` at index 0 of
+their synthetic event lists; the integration test against a live A1
+boss surfaced it.
+
+Corrected to scan for a `RunStarted` event on the same aggregate as
+`run_id` (see §11 and §12). The happy-path unit test was rewritten to
+mirror the realistic ordering — `AgentCreated(seq=1) →
+TaskAssigned(seq=2) → RunStarted(seq=3) → … → RunCompleted(seq=N)` — so
+the bug cannot regress. An additional regression test exercises a
+multi-event stream where `RunStarted` is present but on a CHILD
+aggregate; the composer correctly rejects it because the boss predicate
+filters on `aggregate_id == run_id`.
+
+In the same pass, `_BASH_WEB_RE` was promoted to the public
+`BASH_WEB_RE` in `text/forbidden_web.py` and reused as the
+`WEB_VIA_SHELL` pattern in `text/bash_classifier.py`. Previously the
+two regexes diverged: `forbidden_web.py` already covered
+`python3 -c '… (requests|urllib|httpx)'` but `bash_classifier.py` did
+not, so the same Bash command was flagged as a forbidden-web
+violation yet bucketed as `other_shell` in the subtype counter. The
+two now share a single source of truth.
 
 ## 15. Extension contract for B/C
 

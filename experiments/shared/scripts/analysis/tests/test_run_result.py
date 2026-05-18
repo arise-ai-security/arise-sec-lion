@@ -32,6 +32,7 @@ from experiments.shared.scripts.analysis.tests.factories import (
     agent_created,
     run_completed,
     run_started,
+    task_assigned,
     tool_use_event,
 )
 
@@ -45,15 +46,20 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_happy_path_returns_fully_populated_run_result():
-    # Given: a synthetic boss-rooted event stream (RunStarted +
-    # AgentCreated + tool_use + RunCompleted) on a single aggregate.
+    # Given: a synthetic boss-rooted event stream that mirrors the real
+    # ordering emitted by ``AgentSession`` — ``AgentCreated`` (seq=1) and
+    # ``TaskAssigned`` (seq=2) precede ``RunStarted`` (seq=3+). The
+    # composer must accept this shape because the production
+    # ``fetch_run_events`` orders by ``(occurred_at, sequence_number)``,
+    # so the first event on a real boss aggregate is NEVER ``RunStarted``.
     run_id = uuid4()
     events = [
-        run_started(run_id, 1, offset_ms=0),
-        agent_created(run_id, 2, role="boss", offset_ms=10),
-        tool_use_event(run_id, 3, "Read", {"file_path": "README.md"}, offset_ms=20),
-        tool_use_event(run_id, 4, "Bash", {"command": "ls -la"}, offset_ms=30),
-        run_completed(run_id, 5, duration_seconds=1.0, offset_ms=1_000),
+        agent_created(run_id, 1, role="boss", offset_ms=0),
+        task_assigned(run_id, 2, task_description="boss task", offset_ms=5),
+        run_started(run_id, 3, offset_ms=10),
+        tool_use_event(run_id, 4, "Read", {"file_path": "README.md"}, offset_ms=20),
+        tool_use_event(run_id, 5, "Bash", {"command": "ls -la"}, offset_ms=30),
+        run_completed(run_id, 6, duration_seconds=1.0, offset_ms=1_000),
     ]
     conn = MagicMock()
 
@@ -148,6 +154,39 @@ async def test_run_started_on_different_aggregate_raises_not_a_boss_run_error():
     assert err.run_id == run_id
     assert err.first_event_type == "RunStarted"
     assert err.first_aggregate_id == other_id
+
+
+async def test_aggregate_with_runstarted_on_different_aggregate_only_still_raises():
+    # Given: a multi-event stream where ``run_id`` emits boss-shaped
+    # framing events (``AgentCreated`` + ``TaskAssigned``) but never a
+    # ``RunStarted`` of its own. The stream DOES contain ``RunStarted``,
+    # but on a CHILD aggregate. Without filtering on aggregate_id, a
+    # naive "any RunStarted in the stream" predicate would mistakenly
+    # accept the call. The composer must reject it because the
+    # ``RunStarted`` is not on ``run_id`` itself.
+    run_id = uuid4()
+    child_id = uuid4()
+    events = [
+        agent_created(run_id, 1, role="boss", offset_ms=0),
+        task_assigned(run_id, 2, task_description="not a real boss", offset_ms=5),
+        agent_created(child_id, 1, role="worker", parent_id=run_id, offset_ms=10),
+        run_started(child_id, 2, offset_ms=15),
+        run_completed(child_id, 3, offset_ms=1_000),
+    ]
+    conn = MagicMock()
+
+    # When/Then: the supplied aggregate id is rejected as non-boss.
+    with (
+        patch(_FETCH_TARGET, new=AsyncMock(return_value=events)),
+        pytest.raises(NotABossRunError) as exc_info,
+    ):
+        await compute_run_result(conn, run_id)
+    err = exc_info.value
+    assert err.run_id == run_id
+    # And: the diagnostic fields reflect the first event in the stream,
+    # which is ``AgentCreated`` on ``run_id``.
+    assert err.first_event_type == "AgentCreated"
+    assert err.first_aggregate_id == run_id
 
 
 async def test_unsupported_family_bubbles_unknown_family_error_from_compute_tools():
