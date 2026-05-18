@@ -1,6 +1,6 @@
 {
   "experiments/a12-batch-autogen/reports/a12_claude_code_cli_metrics.csv": {
-    "generated_at": "2026-05-18T15:09:57.163397Z",
+    "generated_at": "2026-05-18T16:13:27.481182Z",
     "generated_by": "experiments/shared/scripts/a12_analysis.py",
     "inputs": [
       "experiments/a12-batch-autogen/dataset.yaml",
@@ -482,10 +482,10 @@
       "runs/fcf359d6-5ff2-4e5d-9c4e-813b6aad57f7/events.jsonl": "f9e20181056a61f9bca93465cad64860b2241c24de31ed6650f294ffef10d894",
       "runs/fd52af34-9e04-49db-b4ae-c1c0167cb958/events.jsonl": "bd80617635bced4d80c5fb2036b8d7ff930762edad48a41a590bc561a7eeb054"
     },
-    "output_sha256": "6e9dfd05d2ce4c57c81b14f4fd71baeed0d09b5a995437ab3e86b9c2f75ba6e7"
+    "output_sha256": "72d6d8827bde500ed2745ece9cbc6d760dd5ab3cc5295fd262ea81e411a2728e"
   },
   "experiments/a12-batch-autogen/reports/a12_claude_code_cli_pairs.csv": {
-    "generated_at": "2026-05-18T15:09:57.211912Z",
+    "generated_at": "2026-05-18T16:13:27.531385Z",
     "generated_by": "experiments/shared/scripts/a12_analysis.py",
     "inputs": [
       "experiments/a12-batch-autogen/dataset.yaml",
@@ -970,7 +970,7 @@
     "output_sha256": "4c180107946d5a83d3b5f334b3c95a60b736bdd5b9302c2b5c9e65c14d7dc2be"
   },
   "experiments/a12-batch-autogen/reports/a12_claude_code_cli_summary.json": {
-    "generated_at": "2026-05-18T15:09:57.258600Z",
+    "generated_at": "2026-05-18T16:13:27.583716Z",
     "generated_by": "experiments/shared/scripts/a12_analysis.py",
     "inputs": [
       "experiments/a12-batch-autogen/dataset.yaml",
@@ -1452,7 +1452,7 @@
       "runs/fcf359d6-5ff2-4e5d-9c4e-813b6aad57f7/events.jsonl": "f9e20181056a61f9bca93465cad64860b2241c24de31ed6650f294ffef10d894",
       "runs/fd52af34-9e04-49db-b4ae-c1c0167cb958/events.jsonl": "bd80617635bced4d80c5fb2036b8d7ff930762edad48a41a590bc561a7eeb054"
     },
-    "output_sha256": "f662ab6cd981a38f3692fc6fa94b9367897c6b96b1c15093298176b89f72e56d"
+    "output_sha256": "fbe4c072f5043cf189b0054887fa74cfd682065f7cad414c506d0269e9bf53b6"
   },
   "experiments/a12-batch-autogen/reports/enrollment.lock.yaml": {
     "generated_at": "2026-05-18T06:50:15.384478Z",

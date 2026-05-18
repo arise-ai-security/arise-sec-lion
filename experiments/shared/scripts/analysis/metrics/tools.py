@@ -24,6 +24,7 @@ from experiments.shared.scripts.analysis.text.forbidden_web import (
     # Re-using the private ``_extract_bash_command`` helper is justified
     # here: it is the same JSON-extraction routine the design doc §9
     # mandates for Bash content, and duplicating it would violate DRY.
+    SHELL_TOOL_NAMES,
     _extract_bash_command,
     detect_violations,
 )
@@ -58,7 +59,7 @@ TOOL_TAXONOMY: Final[dict[str, dict[ToolCategory, frozenset[str]]]] = {
         ToolCategory.FILE_WRITE: frozenset({"Write"}),
         ToolCategory.FILE_EDIT: frozenset({"Edit", "MultiEdit"}),
         ToolCategory.SEARCH: frozenset({"Glob", "Grep", "ToolSearch"}),
-        ToolCategory.SHELL: frozenset({"Bash"}),
+        ToolCategory.SHELL: SHELL_TOOL_NAMES,
         ToolCategory.TASK_MGMT: frozenset(
             {
                 "TaskCreate",
@@ -70,7 +71,7 @@ TOOL_TAXONOMY: Final[dict[str, dict[ToolCategory, frozenset[str]]]] = {
                 "TodoWrite",
             }
         ),
-        ToolCategory.SUBAGENT_SPAWN: frozenset({"Task"}),
+        ToolCategory.SUBAGENT_SPAWN: frozenset({"Task", "Agent"}),
         ToolCategory.WEB_FORBIDDEN: frozenset({"WebFetch", "WebSearch"}),
         # MCP / OTHER are handled outside the table by classify_tool().
     },
@@ -129,7 +130,7 @@ def compute_tools(
             cmd = _extract_bash_command(content) or ""
             bash_subtypes[classify_bash_command(cmd).value] += 1
 
-    subagent_spawn_count = by_tool_name.get("Task", 0)
+    subagent_spawn_count = by_category.get(ToolCategory.SUBAGENT_SPAWN.value, 0)
 
     violations = detect_violations(events)
     breakdown: Counter[str] = Counter(v.via for v in violations)

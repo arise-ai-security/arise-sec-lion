@@ -31,6 +31,11 @@ BASH_WEB_RE: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _DIRECT_WEB_TOOL_NAMES: Final[frozenset[str]] = frozenset({"WebFetch", "WebSearch"})
+# Tools whose tool_use Input carries a shell ``command`` string. Source of
+# truth for the SHELL taxonomy in :mod:`metrics.tools` — that module imports
+# this set to avoid drift. Monitor (Claude Code v2.1.105+) runs Bash via
+# ``bash -c`` and is therefore in the same forbidden-web risk class as Bash.
+SHELL_TOOL_NAMES: Final[frozenset[str]] = frozenset({"Bash", "Monitor"})
 _INPUT_PREFIX = "\nInput: "
 _EVIDENCE_CAP = 500
 
@@ -57,7 +62,7 @@ def detect_violations(events: Sequence[EventRow]) -> list[WebViolation]:
                 )
             )
             continue
-        if tool_name == "Bash":
+        if tool_name in SHELL_TOOL_NAMES:
             cmd = _extract_bash_command(content)
             if cmd and BASH_WEB_RE.search(cmd):
                 out.append(

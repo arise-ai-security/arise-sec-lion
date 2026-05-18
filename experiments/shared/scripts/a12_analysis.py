@@ -30,8 +30,8 @@ from experiments.shared.scripts.analysis.metrics.tools import (
 )
 from experiments.shared.scripts.analysis.run_result import compute_run_result
 from experiments.shared.scripts.analysis.text.cheating_detector import (
+    _cheating_pattern,
     _extract_bash_command,
-    _is_cheating_command,
 )
 from experiments.shared.scripts.analysis.text.prefixes import recover_tool_name
 from experiments.shared.scripts.db import fetch_run_events, open_connection
@@ -54,6 +54,7 @@ TEMPLATE_PATH = "experiments/shared/templates/a12-analysis-report.md.j2"
 DEFAULT_STARTED_BEFORE = "2026-05-18T13:00:00Z"
 LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 MAX_EVIDENCE_LIST_ITEMS = 12
+PROMPT_SAMPLE_CHAR_LIMIT = 3000
 EVENT_TOP_LEVEL_KEYS = frozenset(
     {
         "event_id",
@@ -65,6 +66,7 @@ EVENT_TOP_LEVEL_KEYS = frozenset(
     }
 )
 SUCCESS_STATUS = "completed"
+NO_CLASSIFIED_FAILURE = "no_classified_failure"
 CODE_RECON_RE = re.compile(
     r"\b(rg|grep|find|ls|cat|sed|awk|head|tail|file|strings|nm|objdump|readelf|cflow)\b",
 )
@@ -72,6 +74,44 @@ SECURITY_TOOL_RE = re.compile(
     r"\b(valgrind|klee|gdb|addr2line|cppcheck|clang-tidy|strace|ltrace|"
     r"afl-fuzz|honggfuzz|libfuzzer|asan_symbolize|asan_options|ubsan_options)\b",
     re.IGNORECASE,
+)
+CHEAT_PATTERN_FIELDS = (
+    (
+        "any_cheat",
+        "Any cheat call",
+        "Any shell tool-use event matching one of the cheat signatures below.",
+        "cheat_tool_calls",
+    ),
+    (
+        "git_log",
+        "`git log`",
+        "Reads commit history.",
+        "cheat_git_log_calls",
+    ),
+    (
+        "git_show",
+        "`git show`",
+        "Reads an object, commit, or historical file snapshot.",
+        "cheat_git_show_calls",
+    ),
+    (
+        "git_reflog",
+        "`git reflog`",
+        "Reads local ref movement history.",
+        "cheat_git_reflog_calls",
+    ),
+    (
+        "git_diff_history_ref",
+        "`git diff <history/ref>`",
+        "Diffs against a history-bearing ref such as `HEAD~1`, SHA, `A..B`, `refs/...`, or `@{1}`.",
+        "cheat_git_diff_history_ref_calls",
+    ),
+    (
+        "git_diff_unparsed",
+        "`git diff` parse fallback",
+        "Malformed shell quoting prevented parsing, but the command began with `git diff`.",
+        "cheat_git_diff_unparsed_calls",
+    ),
 )
 WORK_DIR_RE = re.compile(r"- Work Dir:\s*(`?)(/src/[^\s`]+)\1")
 VALIDATION_KEY_RE = re.compile(r"^([A-Z0-9_]+):\s*(.*)$")
@@ -237,6 +277,11 @@ class StudyRunDiscovery:
 class ToolAuditMetrics:
     actual_tool_calls: int
     cheat_tool_calls: int
+    cheat_git_log_calls: int
+    cheat_git_show_calls: int
+    cheat_git_reflog_calls: int
+    cheat_git_diff_history_ref_calls: int
+    cheat_git_diff_unparsed_calls: int
     recon_tool_calls: int
     security_tool_calls: int
     subagent_tool_calls: int
@@ -341,6 +386,11 @@ class RunRow:
     aggregate_count: int
     actual_tool_calls: int = 0
     cheat_tool_calls: int = 0
+    cheat_git_log_calls: int = 0
+    cheat_git_show_calls: int = 0
+    cheat_git_reflog_calls: int = 0
+    cheat_git_diff_history_ref_calls: int = 0
+    cheat_git_diff_unparsed_calls: int = 0
     recon_tool_calls: int = 0
     security_tool_calls: int = 0
     subagent_tool_calls: int = 0
@@ -506,6 +556,11 @@ class CellSummary:
     forbidden_web_attempts: int
     actual_tool_calls: int = 0
     cheat_tool_calls: int = 0
+    cheat_git_log_calls: int = 0
+    cheat_git_show_calls: int = 0
+    cheat_git_reflog_calls: int = 0
+    cheat_git_diff_history_ref_calls: int = 0
+    cheat_git_diff_unparsed_calls: int = 0
     recon_tool_calls: int = 0
     security_tool_calls: int = 0
     subagent_tool_calls: int = 0
@@ -1120,12 +1175,15 @@ def compute_tool_audit(events: list[EventRow], tools: Any) -> ToolAuditMetrics:
     bash_recon = 0
     bash_security = 0
     cheat_calls = 0
+    cheat_patterns: Counter[str] = Counter()
     for _event, tool_name, content in _iter_tool_use_events(events):
         if classify_tool("A", tool_name) is not ToolCategory.SHELL:
             continue
         command = _extract_bash_command(content) or ""
-        if _is_cheating_command(command):
+        pattern = _cheating_pattern(command)
+        if pattern is not None:
             cheat_calls += 1
+            cheat_patterns[pattern] += 1
         if CODE_RECON_RE.search(command):
             bash_recon += 1
         if SECURITY_TOOL_RE.search(command.replace("-", "_")):
@@ -1143,6 +1201,11 @@ def compute_tool_audit(events: list[EventRow], tools: Any) -> ToolAuditMetrics:
     return ToolAuditMetrics(
         actual_tool_calls=tools.total_tool_calls,
         cheat_tool_calls=cheat_calls,
+        cheat_git_log_calls=cheat_patterns["git_log"],
+        cheat_git_show_calls=cheat_patterns["git_show"],
+        cheat_git_reflog_calls=cheat_patterns["git_reflog"],
+        cheat_git_diff_history_ref_calls=cheat_patterns["git_diff_history_ref"],
+        cheat_git_diff_unparsed_calls=cheat_patterns["git_diff_unparsed"],
         recon_tool_calls=file_read + search + bash_recon,
         security_tool_calls=mcp_security_calls + bash_security,
         subagent_tool_calls=subagent,
@@ -1299,6 +1362,73 @@ def _extract_work_dir(events: list[EventRow]) -> str:
         if match:
             return match.group(2)
     return ""
+
+
+def _prompt_excerpt(prompt: str, *, focus: str = "") -> str:
+    if len(prompt) <= PROMPT_SAMPLE_CHAR_LIMIT:
+        return prompt
+
+    if focus and focus in prompt:
+        head_limit = PROMPT_SAMPLE_CHAR_LIMIT // 2
+        focus_limit = PROMPT_SAMPLE_CHAR_LIMIT - head_limit
+        focus_index = prompt.index(focus)
+        focus_start = max(0, focus_index - focus_limit // 3)
+        focus_end = min(len(prompt), focus_start + focus_limit)
+        focus_start = max(0, focus_end - focus_limit)
+        omitted = focus_start - head_limit
+        if omitted > 0:
+            return (
+                f"{prompt[:head_limit].rstrip()}\n\n"
+                f"... [omitted {omitted:,} chars] ...\n\n"
+                f"{prompt[focus_start:focus_end].strip()}"
+            )
+
+    head_limit = PROMPT_SAMPLE_CHAR_LIMIT // 2
+    tail_limit = PROMPT_SAMPLE_CHAR_LIMIT - head_limit
+    omitted = len(prompt) - head_limit - tail_limit
+    return (
+        f"{prompt[:head_limit].rstrip()}\n\n"
+        f"... [omitted {omitted:,} chars] ...\n\n"
+        f"{prompt[-tail_limit:].lstrip()}"
+    )
+
+
+def _prompt_samples(
+    entries: list[EnrollmentEntry],
+    files_by_run_id: dict[str, RunFiles],
+) -> dict[str, dict[str, Any]]:
+    samples: dict[str, dict[str, Any]] = {}
+    sorted_entries = sorted(
+        entries,
+        key=lambda entry: (entry.cell, entry.task, entry.started_at, entry.run_id),
+    )
+    for cell in ("A1", "A2"):
+        for entry in sorted_entries:
+            if entry.cell != cell:
+                continue
+            events = read_run_events(files_by_run_id[entry.run_id].events_path)
+            for event in events:
+                if event.event_type != "PromptSent":
+                    continue
+                prompt = event.payload.get("prompt")
+                if not isinstance(prompt, str):
+                    continue
+                samples[cell] = {
+                    "run_id": entry.run_id,
+                    "run_id_short": entry.run_id[:8],
+                    "task": entry.task,
+                    "started_at": entry.started_at,
+                    "prompt_chars": len(prompt),
+                    "has_task_subagent_note": "Task subagent tool is available" in prompt,
+                    "excerpt": _prompt_excerpt(
+                        prompt,
+                        focus="Task subagent tool is available",
+                    ),
+                }
+                break
+            if cell in samples:
+                break
+    return samples
 
 
 def _mapped_src_work_dir(run_dir: Path, work_dir: str) -> Path | None:
@@ -1514,6 +1644,11 @@ async def build_run_row(
         aggregate_count=quantitative.aggregate_count,
         actual_tool_calls=tool_audit.actual_tool_calls,
         cheat_tool_calls=tool_audit.cheat_tool_calls,
+        cheat_git_log_calls=tool_audit.cheat_git_log_calls,
+        cheat_git_show_calls=tool_audit.cheat_git_show_calls,
+        cheat_git_reflog_calls=tool_audit.cheat_git_reflog_calls,
+        cheat_git_diff_history_ref_calls=tool_audit.cheat_git_diff_history_ref_calls,
+        cheat_git_diff_unparsed_calls=tool_audit.cheat_git_diff_unparsed_calls,
         recon_tool_calls=tool_audit.recon_tool_calls,
         security_tool_calls=tool_audit.security_tool_calls,
         subagent_tool_calls=tool_audit.subagent_tool_calls,
@@ -1639,6 +1774,15 @@ def summarize_cells(rows: list[RunRow]) -> dict[str, CellSummary]:
             forbidden_web_attempts=sum(row.forbidden_web_attempts for row in cell_rows),
             actual_tool_calls=sum(row.actual_tool_calls for row in cell_rows),
             cheat_tool_calls=sum(row.cheat_tool_calls for row in cell_rows),
+            cheat_git_log_calls=sum(row.cheat_git_log_calls for row in cell_rows),
+            cheat_git_show_calls=sum(row.cheat_git_show_calls for row in cell_rows),
+            cheat_git_reflog_calls=sum(row.cheat_git_reflog_calls for row in cell_rows),
+            cheat_git_diff_history_ref_calls=sum(
+                row.cheat_git_diff_history_ref_calls for row in cell_rows
+            ),
+            cheat_git_diff_unparsed_calls=sum(
+                row.cheat_git_diff_unparsed_calls for row in cell_rows
+            ),
             recon_tool_calls=sum(row.recon_tool_calls for row in cell_rows),
             security_tool_calls=sum(row.security_tool_calls for row in cell_rows),
             subagent_tool_calls=sum(row.subagent_tool_calls for row in cell_rows),
@@ -2231,9 +2375,17 @@ def build_comparisons(pair_rows: list[PairRow]) -> dict[str, Any]:
 def _failure_mode_counts(rows: list[RunRow]) -> dict[str, dict[str, int]]:
     result: dict[str, dict[str, int]] = {}
     for cell in sorted({row.cell for row in rows}):
-        counts = Counter(row.failure_mode or "none" for row in rows if row.cell == cell)
+        counts = Counter(
+            _failure_mode_label(row)
+            for row in rows
+            if row.cell == cell and row.successful == 0
+        )
         result[cell] = dict(sorted(counts.items()))
     return result
+
+
+def _failure_mode_label(row: RunRow) -> str:
+    return row.failure_mode or NO_CLASSIFIED_FAILURE
 
 
 def _cell_value(cells: dict[str, CellSummary], cell: str, field_name: str) -> Any:
@@ -2268,6 +2420,26 @@ def _tool_use_rows(cells: dict[str, CellSummary]) -> list[dict[str, Any]]:
             row[output_key] = total / summary.n if summary.n else None
         rows.append(row)
     return rows
+
+
+def _cheat_analysis(rows: list[RunRow]) -> list[dict[str, Any]]:
+    analysis_rows = []
+    for key, label, definition, field_name in CHEAT_PATTERN_FIELDS:
+        row: dict[str, Any] = {
+            "pattern": key,
+            "label": label,
+            "definition": definition,
+        }
+        for cell in ("A1", "A2"):
+            cell_rows = [run_row for run_row in rows if run_row.cell == cell]
+            calls = sum(int(getattr(run_row, field_name)) for run_row in cell_rows)
+            row[f"{cell}_calls"] = calls
+            row[f"{cell}_avg_per_run"] = calls / len(cell_rows) if cell_rows else None
+            row[f"{cell}_runs"] = sum(
+                int(getattr(run_row, field_name)) > 0 for run_row in cell_rows
+            )
+        analysis_rows.append(row)
+    return analysis_rows
 
 
 def _duplicate_accounting(entries: list[EnrollmentEntry]) -> list[dict[str, Any]]:
@@ -2352,13 +2524,14 @@ def _count_table(
 
 def _failure_analysis(rows: list[RunRow]) -> dict[str, Any]:
     non_success = [row for row in rows if row.successful == 0]
+    classified_failures = [row for row in non_success if row.failure_mode]
     non_login_credit = [
         row
-        for row in non_success
+        for row in classified_failures
         if row.environmental_failure_cause not in {"auth_login", "credit_quota"}
     ]
     status_labels = sorted({row.run_status for row in rows}, key=_status_order)
-    mode_labels = sorted({row.failure_mode or "none" for row in rows})
+    mode_labels = sorted({_failure_mode_label(row) for row in classified_failures})
     phase_labels = [
         "builder",
         "exploiter",
@@ -2376,9 +2549,9 @@ def _failure_analysis(rows: list[RunRow]) -> dict[str, Any]:
         ),
         "failure_mode_counts": _count_table(
             mode_labels,
-            rows,
-            key_name="failure_mode",
-            key_func=lambda row: row.failure_mode or "none",
+            classified_failures,
+            key_name="classification",
+            key_func=_failure_mode_label,
         ),
         "phase_counts_excluding_login_credit": _count_table(
             phase_labels,
@@ -2440,6 +2613,7 @@ def _per_run_breakdown(rows: list[RunRow]) -> list[dict[str, Any]]:
                 "run_id": row.run_id[:8],
                 "started_at": row.started_at,
                 "status": row.run_status,
+                "status_detail": _status_detail(row),
                 "failure_mode": row.failure_mode,
                 "successful": row.successful,
                 "total_cost_usd": row.total_cost_usd if row.has_observed_cost else None,
@@ -2459,6 +2633,14 @@ def _per_run_breakdown(rows: list[RunRow]) -> list[dict[str, Any]]:
             }
         )
     return breakdown
+
+
+def _status_detail(row: RunRow) -> str:
+    if row.failure_mode:
+        return f"{row.run_status} / {row.failure_mode}"
+    if row.successful == 0:
+        return f"{row.run_status} / {NO_CLASSIFIED_FAILURE}"
+    return row.run_status
 
 
 def _ignored_run_dirs(entries: list[EnrollmentEntry]) -> list[str]:
@@ -2492,12 +2674,13 @@ def build_summary(
     rows: list[RunRow],
     pair_rows: list[PairRow],
     entries: list[EnrollmentEntry],
+    pre_dedup_entries: list[EnrollmentEntry] | None = None,
     discovery: StudyRunDiscovery,
     lock_entry_count: int,
     lock_load_error: str,
     lock_discovered_run_id_disagreements: list[str],
     started_before: datetime,
-    pre_dedup_entries: list[EnrollmentEntry] | None = None,
+    files_by_run_id: dict[str, RunFiles],
 ) -> dict[str, Any]:
     if pre_dedup_entries is None:
         pre_dedup_entries = entries
@@ -2559,7 +2742,9 @@ def build_summary(
             "lock_runfile_pre_cutoff_disagreements": lock_discovered_run_id_disagreements,
         },
         "cells": {cell: asdict(summary) for cell, summary in cell_summaries.items()},
+        "prompt_samples": _prompt_samples(entries, files_by_run_id),
         "tool_use_rows": _tool_use_rows(cell_summaries),
+        "cheat_analysis": _cheat_analysis(rows),
         "enrollment_accounting": {
             "by_cell": _duplicate_accounting(pre_dedup_entries),
             "by_started_date": _start_date_accounting(pre_dedup_entries),
@@ -2723,6 +2908,7 @@ async def run_analysis(started_before: datetime) -> dict[str, Any]:
         lock_load_error=lock_load_error,
         lock_discovered_run_id_disagreements=lock_disagreements,
         started_before=started_before,
+        files_by_run_id=files_by_run_id,
     )
     outputs = write_outputs(
         rows=rows,
@@ -2740,7 +2926,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--started-before",
         default=DEFAULT_STARTED_BEFORE,
-        help="Only analyze locked runs whose run_manifest started_at is before this ISO timestamp.",
+        help="Only analyze discovered runs whose DB RunStarted time is before this ISO timestamp.",
     )
     return parser.parse_args()
 

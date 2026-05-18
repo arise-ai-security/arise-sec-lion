@@ -40,14 +40,17 @@ class TestClassifyToolATaxonomy:
             ("Glob", ToolCategory.SEARCH),
             ("Grep", ToolCategory.SEARCH),
             ("ToolSearch", ToolCategory.SEARCH),
-            # SHELL
+            # SHELL — both members. Monitor (Claude Code v2.1.105+) runs Bash
+            # via ``bash -c`` and shares the SHELL classification.
             ("Bash", ToolCategory.SHELL),
+            ("Monitor", ToolCategory.SHELL),
             # TASK_MGMT — representative members
             ("TaskCreate", ToolCategory.TASK_MGMT),
             ("TaskUpdate", ToolCategory.TASK_MGMT),
             ("TodoWrite", ToolCategory.TASK_MGMT),
             # SUBAGENT_SPAWN
             ("Task", ToolCategory.SUBAGENT_SPAWN),
+            ("Agent", ToolCategory.SUBAGENT_SPAWN),
             # WEB_FORBIDDEN — both members
             ("WebFetch", ToolCategory.WEB_FORBIDDEN),
             ("WebSearch", ToolCategory.WEB_FORBIDDEN),
@@ -85,6 +88,15 @@ class TestClassifyToolFallthrough:
         # When: classified under family "A"
         actual = classify_tool("A", "RandomUnknownTool")
         # Then: OTHER is the documented fallthrough
+        assert actual == ToolCategory.OTHER
+
+    def test_skill_tool_is_other(self):
+        # Given: the Claude Code ``Skill`` invocation tool, observed in the
+        # event store but intentionally not in any semantic taxonomy bucket
+        # (it executes an in-conversation skill, not file/shell/search/etc.)
+        # When: classified under family "A"
+        actual = classify_tool("A", "Skill")
+        # Then: OTHER is the deliberate classification
         assert actual == ToolCategory.OTHER
 
 
@@ -228,6 +240,27 @@ class TestComputeToolsSubagentSpawn:
         assert m.subagent_spawn_count == 1
         assert m.by_category == {"subagent_spawn": 1}
         assert m.by_tool_name == {"Task": 1}
+
+    def test_agent_event_counts_as_subagent_spawn(self):
+        # Given: Claude Code stream output naming a delegated sub-agent as Agent
+        agg = uuid4()
+        events = [
+            tool_use_event(
+                agg,
+                seq=1,
+                tool_name="Agent",
+                tool_input={"prompt": "delegate"},
+                set_structured_field=True,
+            )
+        ]
+
+        # When
+        m = compute_tools(events, family="A")
+
+        # Then: the stream-json alias is counted as subagent delegation
+        assert m.subagent_spawn_count == 1
+        assert m.by_category == {"subagent_spawn": 1}
+        assert m.by_tool_name == {"Agent": 1}
 
 
 class TestComputeToolsTaskMgmt:
