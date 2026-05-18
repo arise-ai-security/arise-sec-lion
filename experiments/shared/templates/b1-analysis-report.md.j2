@@ -1,0 +1,377 @@
+# B1 Recursive-Orchestrator Analysis Report
+
+Generated at: `{{ summary.generated_at }}`
+
+Study: `{{ summary.study_id }}`
+
+## Bottom Line
+
+| Metric | B1 |
+|---|---:|
+| Enrolled runs | {{ summary.cells.B1.n }} |
+| Terminal runs | {{ summary.cells.B1.terminal }} |
+| Successful terminal runs | {{ summary.cells.B1.successful }} |
+| Terminal success rate | {{ summary.cells.B1.terminal_success_rate | percent }} |
+| Full real pipeline success | {{ summary.cells.B1.real_pipeline_successes }} |
+| Total observed cost | {{ summary.cells.B1.total_cost_usd | usd }} |
+
+## Cohort Accounting
+
+Membership is reconstructed from host-local sources only — there is no Postgres `events`
+table for B1 in this analysis. The source scope is the intersection of:
+
+1. **CSV events** from `{{ summary.data_integrity.events_csv_path }}` (decoded to
+   `EventRow` rows, grouped by run root via transitive `AgentCreated.parent_id` walk
+   — `b1_analysis.load_b1_events_by_run`).
+2. **Local run files** under `~/b1_export/runs/<run_id>/` (each must contain
+   `run_manifest.json` and `events.jsonl` — `b1_analysis.discover_b1_run_files`).
+
+| Check | Value |
+|---|---:|
+| Source scope | {{ summary.data_integrity.source_scope }} |
+| Dataset CVE tasks | {{ summary.data_integrity.dataset_task_count }} |
+| CSV total event rows | {{ summary.data_integrity.events_csv_total_rows }} |
+| CSV run roots (RunStarted) | {{ summary.data_integrity.csv_run_root_count }} |
+| Runs with `run_manifest.json` | {{ summary.data_integrity.runs_with_manifest }} |
+| Runs with `events.jsonl` | {{ summary.data_integrity.runs_with_events_jsonl }} |
+| Enrolled runs (intersection) | {{ summary.data_integrity.enrolled_runs }} |
+| Terminal rows | {{ summary.data_integrity.terminal_rows }} |
+| Nonterminal rows | {{ summary.data_integrity.nonterminal_rows }} |
+| Missing-cost rows | {{ summary.data_integrity.missing_cost_rows }} |
+| Environmental failures | {{ summary.data_integrity.environmental_failures }} |
+| CSV/runs event-id mismatches | {{ summary.data_integrity.csv_runs_event_id_mismatches }} |
+| CSV/runs full-event mismatches | {{ summary.data_integrity.csv_runs_event_record_mismatches }} |
+| CSV/runs cost mismatches | {{ summary.data_integrity.csv_runs_cost_mismatches }} |
+
+For each enrolled run, the analysis fetches the subtree from the CSV (boss aggregate plus
+all transitively-spawned descendants) and compares it event-for-event with the local
+`events.jsonl` (`b1_analysis.build_b1_run_row` calling `_events_records_match` +
+`_events_costs_match`). The report is emitted only when ordered event ids, full event
+records, and recomputed total cost agree. Disagreement aborts the whole report —
+apple-to-apple with the a12 DB-vs-runs cross-check.
+
+## Sample Input Prompts
+
+Apple-to-apple with the a12 "Sample Input Prompts" section
+(`a12_analysis._prompt_samples`, reused with `cells=("B1",)`). Samples are actual
+`PromptSent` payloads from enrolled top-level run event files. Long prompts are
+rendered as head/focused excerpts (`_prompt_excerpt`, `PROMPT_SAMPLE_CHAR_LIMIT=3000`).
+
+| Cell | Run | CVE / Task | Started At | Prompt Chars | Task Subagent Note |
+|---|---|---|---|---:|---:|
+| B1 | `{{ summary.prompt_samples.B1.run_id_short }}` | {{ summary.prompt_samples.B1.task }} | {{ summary.prompt_samples.B1.started_at }} | {{ summary.prompt_samples.B1.prompt_chars }} | {{ summary.prompt_samples.B1.has_task_subagent_note }} |
+
+### B1 sample prompt
+
+Source run: `{{ summary.prompt_samples.B1.run_id }}`
+
+````text
+{{ summary.prompt_samples.B1.excerpt }}
+````
+
+## Cell-Level Results
+
+| Cell | Enrolled | Terminal | Successful | Terminal Success | Snapshot Success | Missing Cost | Observed Total Cost | Cost / Success | Median Duration (s) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| B1 | {{ summary.cells.B1.n }} | {{ summary.cells.B1.terminal }} | {{ summary.cells.B1.successful }} | {{ summary.cells.B1.terminal_success_rate | percent }} | {{ summary.cells.B1.success_rate | percent }} | {{ summary.cells.B1.missing_cost_runs }} | {{ summary.cells.B1.total_cost_usd | usd }} | {{ summary.cells.B1.cost_per_success_usd | usd }} | {{ summary.cells.B1.median_duration_seconds | num(1) }} |
+
+| Cell | Manager Cost | Worker Cost | Observed Cost Runs | Positive Cost Runs | Zero-Cost Event Runs | Total Tokens |
+|---|---:|---:|---:|---:|---:|---:|
+| B1 | {{ summary.cells.B1.manager_cost_usd | usd }} | {{ summary.cells.B1.worker_cost_usd | usd }} | {{ summary.cells.B1.cost_observed_runs }} | {{ summary.cells.B1.positive_cost_runs }} | {{ summary.cells.B1.zero_cost_event_runs }} | {{ summary.cells.B1.total_tokens }} |
+
+## Hierarchical Tool-Call Breakdown (BOSS / MANAGER / WORKER)
+
+Role is determined by the depth of the emitting aggregate's `AgentCreated.parent_id`
+chain rooted at the boss aggregate (`analysis.metrics.hierarchy.compute_hierarchy_tool_calls`):
+depth 0 → BOSS, depth 1 → MANAGER, depth ≥ 2 → WORKER. Tool-use events from aggregates
+that never received an `AgentCreated` land in `"unknown"` (not shown — count is in the
+`summary.json`).
+
+**B1-specific:** boss aggregates emit `SubtasksDefined` (structured-output decomposition),
+plus one `PromptSent` and one `TokensConsumed` per boss, but **zero** `ThoughtCaptured`
+events. The "BOSS Tool Calls Total = 0" therefore reflects metric definition
+(`ThoughtCaptured(output_type='tool_use')`), not idleness — the boss does work outside
+the "tool call" metric (it does decomposition via structured output instead of tool calls).
+
+- **Nodes total**: number of distinct aggregates at this role across all enrolled runs.
+- **Tool calls total**: count of `ThoughtCaptured(output_type='tool_use')` events at
+  this role across all enrolled runs.
+- **Mean per node**: `tool_calls_total / nodes_total` — average tool-call load on a single
+  agent of this role.
+- **Mean per run**: `tool_calls_total / n_runs` — typical contribution of this role to a
+  single run's total tool calls.
+
+| Role | Nodes Total | Tool Calls Total | Mean / Node | Mean / Run |
+|---|---:|---:|---:|---:|
+| BOSS | {{ summary.hierarchy.B1.boss_nodes_total }} | {{ summary.hierarchy.B1.boss_tool_calls_total }} | {{ summary.hierarchy.B1.boss_tool_calls_mean_per_node | num(2) }} | {{ summary.hierarchy.B1.boss_tool_calls_mean_per_run | num(2) }} |
+| MANAGER | {{ summary.hierarchy.B1.manager_nodes_total }} | {{ summary.hierarchy.B1.manager_tool_calls_total }} | {{ summary.hierarchy.B1.manager_tool_calls_mean_per_node | num(2) }} | {{ summary.hierarchy.B1.manager_tool_calls_mean_per_run | num(2) }} |
+| WORKER | {{ summary.hierarchy.B1.worker_nodes_total }} | {{ summary.hierarchy.B1.worker_tool_calls_total }} | {{ summary.hierarchy.B1.worker_tool_calls_mean_per_node | num(2) }} | {{ summary.hierarchy.B1.worker_tool_calls_mean_per_run | num(2) }} |
+
+### Tool composition by role
+
+For each role, the top 15 tool names by total invocations across enrolled runs. Tool
+names are recovered via `analysis.text.prefixes.recover_tool_name`:
+`tool_name_field → prefix table → "Tool: <name>" regex → "unknown"` (4-step
+precedence — for B1, step 1 carries every event because the SDK populates
+`tool_name_field`).
+
+#### BOSS
+
+| Tool | Calls |
+|---|---:|
+{% for tool, n in summary.hierarchy.B1.boss_tool_composition.items() -%}
+{% if loop.index <= 15 -%}
+| `{{ tool }}` | {{ n }} |
+{% endif -%}
+{% endfor %}
+
+#### MANAGER
+
+| Tool | Calls |
+|---|---:|
+{% for tool, n in summary.hierarchy.B1.manager_tool_composition.items() -%}
+{% if loop.index <= 15 -%}
+| `{{ tool }}` | {{ n }} |
+{% endif -%}
+{% endfor %}
+
+#### WORKER
+
+| Tool | Calls |
+|---|---:|
+{% for tool, n in summary.hierarchy.B1.worker_tool_composition.items() -%}
+{% if loop.index <= 15 -%}
+| `{{ tool }}` | {{ n }} |
+{% endif -%}
+{% endfor %}
+
+## Result Evidence
+
+Apple-to-apple with the a12 report (`a12_analysis.compute_result_evidence`). Each
+per-run flag is `0` or `1`; per-cell columns sum the flags across enrolled runs.
+Validation files under `~/b1_export/runs/<run_id>/testcase/` are parsed line-by-line —
+each line matching `^([A-Z0-9_]+):\s*(.*)$` is collected into a `KEY → VALUE` dict
+(`_parse_validation_file`).
+
+**B1-specific:** B1 runs do not generate `testcase/exploit_validation_results.txt` in
+this batch (the orchestrator's `Exploit Files` count is `0` across all enrolled runs by
+construction). Consequently `Exploiter real success` is also `0` for every B1 run.
+Exploit-related columns are kept for apple-to-apple comparability with a12 — interpret
+them as "B1 did not perform exploit validation," not "all exploits failed."
+
+- **Builder real success** = `1` iff at least one executable file exists under
+  `runs/<run_id>/work/bin/` (recursive walk). "Executable" means `path.is_file()` AND
+  `path.stat().st_mode & 0o111 != 0`. `OSError` from `stat()` → non-executable.
+  (`compute_result_evidence` → `_relative_executables` → `_is_executable_file`.)
+- **Builder evidence runs** = identical to Builder real success in the current code path
+  (both are `int(executable_count > 0)`). Kept as a separate column so a future change
+  to either side can diverge without breaking the report shape.
+- **`work/bin` Executables** = sum of executable-file counts across runs in the cell.
+- **Exploit Files** = `1` iff `testcase/exploit_validation_results.txt` parses to a
+  non-empty dict. B1 does not generate this file (see note above).
+- **Exploiter real success** = AND of five flags incl. `exploit_validation_present`,
+  so `0` for B1 by construction. (See a12 report for the full per-flag breakdown —
+  `_sanitizer_error_matches`, `_crash_function_matches`, `_runs_all_pass`.)
+- **Fix Files** = `1` iff `testcase/patch_validation_results.txt` parses to a non-empty dict.
+- **Fixer real success** = `1` iff ALL of: `patch_validation_present`, `VERDICT == PASS`,
+  `PATCH_APPLY_STATUS == clean`, `BUILD_STATUS == success`,
+  `POST_PATCH_SANITIZER_ERROR ∈ {none, no, no sanitizer error, no errors}`,
+  `REPRO_RUNS_NO_CRASH N/M with N == M AND M >= 3`.
+- **Model Patches** = `1` iff `testcase/model_patch.diff` exists as a regular file.
+- **Repro Scripts** = `1` iff `testcase/repro.sh` exists as a regular file.
+- **Security Reports** = `1` iff `testcase/security_report.md` exists as a regular file.
+- **Full Real Pipeline** = `1` iff `terminal AND successful AND builder_real_success AND
+  exploiter_real_success AND fixer_real_success` (`_real_pipeline_success`,
+  `SUCCESS_STATUS = "completed"`). Because `exploiter_real_success == 0` for all B1
+  runs, this column is also `0` for B1.
+
+| Cell | Builder Real Success | Builder Evidence Runs | `work/bin` Executables | Exploit Files | Exploiter Real Success | Fix Files | Fixer Real Success | Model Patches | Repro Scripts | Security Reports | Full Real Pipeline |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| B1 | {{ summary.cells.B1.builder_real_successes }} | {{ summary.cells.B1.builder_evidence_present }} | {{ summary.cells.B1.builder_executable_count }} | {{ summary.cells.B1.exploit_validation_present }} | {{ summary.cells.B1.exploiter_real_successes }} | {{ summary.cells.B1.patch_validation_present }} | {{ summary.cells.B1.fixer_real_successes }} | {{ summary.cells.B1.model_patch_present }} | {{ summary.cells.B1.repro_script_present }} | {{ summary.cells.B1.security_report_present }} | {{ summary.cells.B1.real_pipeline_successes }} |
+
+| Cell | Exploit Verdict PASS | Exploit Error Match | Exploit Crash Function Match | Patch Verdict PASS | Patch Apply Clean | Patch Build Success | Patch Post-Error None |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| B1 | {{ summary.cells.B1.exploit_verdict_pass }} | {{ summary.cells.B1.exploit_error_match }} | {{ summary.cells.B1.exploit_crash_function_match }} | {{ summary.cells.B1.patch_verdict_pass }} | {{ summary.cells.B1.patch_apply_clean }} | {{ summary.cells.B1.patch_build_success }} | {{ summary.cells.B1.patch_post_error_none }} |
+
+## Tool Use
+
+A **tool call** is one `ThoughtCaptured` event with `payload.output_type == "tool_use"`
+(`analysis.metrics.tools.compute_tools`). The tool name is recovered via
+`recover_tool_name`:
+
+1. Use `payload.tool_name` if present (post-bugfix A / B-family path).
+2. Else inspect the FIRST LINE of `payload.content`. Prefix table:
+   `Running: …` → `Bash`, `Reading: …` → `Read`, `Writing: …` → `Write`,
+   `Editing: …` → `Edit`, `Searching files: …` → `Glob`, `Searching content: …` → `Grep`.
+3. Else match `^Tool: (\S+)` → `<name>`. Else `"unknown"` (still counted).
+
+Each tool name maps to exactly one category (`classify_tool`, family `"A"`):
+`FILE_READ={Read}`, `FILE_WRITE={Write}`, `FILE_EDIT={Edit, MultiEdit}`,
+`SEARCH={Glob, Grep, ToolSearch}`, `SHELL={Bash, Monitor}`,
+`TASK_MGMT={TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop, TaskOutput, TodoWrite}`,
+`SUBAGENT_SPAWN={Task, Agent}`, `WEB_FORBIDDEN={WebFetch, WebSearch}`. Tool names
+starting with `mcp__` or equal to `security_tools` go to `MCP` first (before the table);
+anything else → `OTHER`.
+
+- **Total tool calls** = **Actual tool calls** = per-run count of `ThoughtCaptured(tool_use)`
+  events (`ToolMetrics.total_tool_calls`). Currently both columns are populated from the
+  same counter (`RunRow.total_tool_calls == RunRow.actual_tool_calls`); kept as two
+  columns for forward compatibility.
+- **Cheat calls**: shell tool-use events that can inspect Git history or history-bearing
+  refs. This is an operational metric for answer-leak risk, not a judgment about intent.
+  Each matching tool-use event counts once under the first matched pattern.
+  - Counted: `git log`, `git show`, `git reflog`; `git diff` only when a pre-`--`
+    positional argument is a history/ref token such as `HEAD~1`, a SHA, `A..B`,
+    `refs/...`, or `@{1}`.
+  - Not counted: patch/worktree diffs such as `git diff`, `git diff HEAD`,
+    `git diff --cached`, `git diff -- path`, `git diff Makefile`; ordinary Git
+    commands such as `git status`, `git add`, `git commit`.
+  - Compound shell text is split on `&&`, `||`, `;`, and `|` before classification.
+- **Recon calls** = `file_read_count + search_count + bash_recon_count`. The first two are
+  category counts (`FILE_READ`, `SEARCH`). `bash_recon_count` is the number of SHELL
+  tool_use events whose extracted Bash command matches the case-sensitive regex
+  `\b(rg|grep|find|ls|cat|sed|awk|head|tail|file|strings|nm|objdump|readelf|cflow)\b`
+  (`CODE_RECON_RE`).
+- **Security-tool calls** = `mcp_security_count + bash_security_count`. `mcp_security_count`
+  sums `by_tool_name[name]` across tool_names equal to `security_tools` or starting with
+  `mcp__security_tools`. `bash_security_count` is the number of SHELL tool_use events
+  whose extracted command — after `command.replace("-", "_")` — matches the
+  case-insensitive regex
+  `\b(valgrind|klee|gdb|addr2line|cppcheck|clang-tidy|strace|ltrace|afl-fuzz|`
+  `honggfuzz|libfuzzer|asan_symbolize|asan_options|ubsan_options)\b`
+  (`SECURITY_TOOL_RE`). **Known bug:** the dash → underscore normalisation in
+  `command.replace("-", "_")` prevents the literal patterns `clang-tidy` and `afl-fuzz`
+  from ever matching; commands invoking these two tools are not counted here.
+- **Subagent spawns**: count of tool_use events classified `SUBAGENT_SPAWN` — i.e. recovered
+  tool_name in `{Task, Agent}`.
+- **Task-family calls** = `task_mgmt_count + subagent_spawn_count`. Conceptually distinct
+  signals added together: task-management telemetry plus strict subagent spawning.
+- **Task mgmt**: count of tool_use events classified `TASK_MGMT` — the 7-tool set above.
+- **TaskCreate / TaskUpdate / TaskList**: per-tool-name counts; each is the number of
+  tool_use events whose recovered `tool_name` is exactly `TaskCreate`, `TaskUpdate`, or
+  `TaskList` respectively.
+
+Per-cell `*_Avg` columns are `sum(metric across runs in cell) / N`, where `N` is the
+number of enrolled runs in the cell (`a12_analysis._tool_use_rows`, reused with
+`cell_names=("B1",)`).
+
+| Cell | N | Total Tools Avg | Actual Tools Avg | Cheat Avg | Recon Avg | Security Avg | Subagent Avg | Task-Family Avg | Task Mgmt Avg | TaskCreate Avg | TaskUpdate Avg | TaskList Avg | Shell Avg | File Read Avg | File Write Avg | File Edit Avg | Search Avg |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+{% for row in summary.tool_use_rows -%}
+| {{ row.cell }} | {{ row.n }} | {{ row.total_tool_calls_avg | num(1) }} | {{ row.actual_tool_calls_avg | num(1) }} | {{ row.cheat_calls_avg | num(1) }} | {{ row.recon_calls_avg | num(1) }} | {{ row.security_tool_calls_avg | num(1) }} | {{ row.subagent_spawns_avg | num(2) }} | {{ row.task_family_calls_avg | num(1) }} | {{ row.task_mgmt_calls_avg | num(1) }} | {{ row.task_create_avg | num(1) }} | {{ row.task_update_avg | num(1) }} | {{ row.task_list_avg | num(1) }} | {{ row.shell_calls_avg | num(1) }} | {{ row.file_read_avg | num(1) }} | {{ row.file_write_avg | num(1) }} | {{ row.file_edit_avg | num(1) }} | {{ row.search_avg | num(1) }} |
+{% endfor %}
+
+Sums over enrolled B1 runs (totals, not averages):
+
+| Cell | Total Tool Calls | Cheat | Recon | Security | Subagent Spawns | Task-Family | Task Mgmt | TaskCreate | TaskUpdate | TaskList | Shell | File Read | File Write | File Edit | Search |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| B1 | {{ summary.cells.B1.total_tool_calls }} | {{ summary.cells.B1.cheat_tool_calls }} | {{ summary.cells.B1.recon_tool_calls }} | {{ summary.cells.B1.security_tool_calls }} | {{ summary.cells.B1.subagent_tool_calls }} | {{ summary.cells.B1.task_family_tool_calls }} | {{ summary.cells.B1.task_mgmt_tool_calls }} | {{ summary.cells.B1.task_create_tool_calls }} | {{ summary.cells.B1.task_update_tool_calls }} | {{ summary.cells.B1.task_list_tool_calls }} | {{ summary.cells.B1.shell_tool_calls }} | {{ summary.cells.B1.file_read_tool_calls }} | {{ summary.cells.B1.file_write_tool_calls }} | {{ summary.cells.B1.file_edit_tool_calls }} | {{ summary.cells.B1.search_tool_calls }} |
+
+### Cheat analysis
+
+Pattern breakdown of the same cheat metric (`a12_analysis._cheat_analysis`, reused with
+`cells=("B1",)`). Calls are tool-use events; `Runs` is the number of enrolled runs with
+at least one call in that pattern.
+
+| Pattern | Rule | B1 Calls | B1 Avg/Run | B1 Runs |
+|---|---|---:|---:|---:|
+{% for row in summary.cheat_analysis -%}
+| {{ row.label }} | {{ row.definition }} | {{ row.B1_calls }} | {{ row.B1_avg_per_run | num(3) }} | {{ row.B1_runs }} |
+{% endfor %}
+
+### Bash subtypes
+
+Each SHELL-category tool call is also assigned to exactly one Bash subtype by first-match-wins
+priority in `_BASH_PATTERNS` (`analysis.text.bash_classifier.classify_bash_command`):
+
+`WEB_VIA_SHELL > RECON > EXPLOIT > SECURITY_SCAN > BUILD > TEST_EXEC > GIT > OTHER_SHELL`.
+
+Per-subtype regexes (all case-insensitive, word-bounded unless noted):
+
+- **Bash Recon** (priority bucket): `\b(nmap|masscan|gobuster|dirb|nikto|whatweb|hydra)\b`.
+- **Bash Exploit**: `\b(sqlmap|msfconsole|metasploit|pwntools)\b`.
+- **Bash Security Scan** (priority bucket): `\b(bandit|semgrep|codeql|trivy|grype|osv-scanner|safety)\b`.
+- **Bash Build**: `\b(gcc|g\+\+|clang|clang\+\+|make|cmake|cargo\s+build|go\s+build|meson|ninja)\b`.
+- **Bash Test/Fuzz Exec**: `\b(pytest|gtest|afl-fuzz|libfuzzer)\b` OR literal `./fuzz`.
+- **Bash Git**: `^\s*git\b` (line-anchored).
+- **Bash Other**: didn't match any of the above (default bucket).
+
+**Column-counting nuance.** The columns below are NOT the raw `bash_subtypes` values
+alone. Two columns add a secondary regex counter that is NOT mutually exclusive with the
+priority bucket:
+
+- `Bash Recon = bash_subtypes["recon"] + bash_recon_count` (the latter regex uses
+  `CODE_RECON_RE`). So a `grep` command lands in `bash_subtypes["other_shell"]` (priority
+  list has no `grep`) AND in the `bash_recon_count` extra → it appears in BOTH the
+  "Bash Recon" column AND the "Bash Other" column.
+- `Bash Security Scan = bash_subtypes["security_scan"] + bash_security_count` (the latter
+  uses `SECURITY_TOOL_RE`). A `valgrind` command lands in `bash_subtypes["other_shell"]`
+  AND in `bash_security_count` → it appears in both the "Bash Security Scan" and the
+  "Bash Other" columns.
+
+| Cell | Bash Recon | Bash Exploit | Bash Security Scan | Bash Build | Bash Test/Fuzz Exec | Bash Git | Bash Other |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| B1 | {{ summary.cells.B1.bash_recon_tool_calls }} | {{ summary.cells.B1.bash_exploit_tool_calls }} | {{ summary.cells.B1.bash_security_scan_tool_calls }} | {{ summary.cells.B1.bash_build_tool_calls }} | {{ summary.cells.B1.bash_test_exec_tool_calls }} | {{ summary.cells.B1.bash_git_tool_calls }} | {{ summary.cells.B1.bash_other_shell_tool_calls }} |
+
+## Failure Analysis
+
+Apple-to-apple with the a12 "Failure Analysis" section
+(`a12_analysis._failure_analysis`, reused with `cells=("B1",)`). The Non-Success
+Classification table counts only runs that emitted a boss-level `WorkFailed`
+classification. Successful completed runs and runs without any `WorkFailed` event
+(e.g. still `in_progress`) are excluded. Login/auth and credit/quota failures are
+excluded from phase attribution.
+
+**B1-specific:** because B1 has `exploiter_real_success == 0` for every run by
+construction (no exploit validation stage), every post-builder failure lands in the
+`exploiter` bucket of the phase table below. The `fixer`/`reporter` rows will be `0`
+for B1 — the phase heuristic stops at the first missing artifact in
+builder → exploiter → fixer → reporter order, and `exploiter` is always missing for B1.
+
+| Excluded Operational Cause | B1 |
+|---|---:|
+| Login/authentication | {{ summary.failure_analysis.excluded_login_auth.B1 }} |
+| Credit/quota | {{ summary.failure_analysis.excluded_credit_quota.B1 }} |
+
+| Status | B1 |
+|---|---:|
+{% for row in summary.failure_analysis.status_counts -%}
+| {{ row.status }} | {{ row.B1 }} |
+{% endfor %}
+
+| Non-Success Classification | B1 |
+|---|---:|
+{% for row in summary.failure_analysis.failure_mode_counts -%}
+| {{ row.classification }} | {{ row.B1 }} |
+{% endfor %}
+
+| Failure Phase, Excluding Login/Credit | B1 |
+|---|---:|
+{% for row in summary.failure_analysis.phase_counts_excluding_login_credit -%}
+| {{ row.phase }} | {{ row.B1 }} |
+{% endfor %}
+
+Phase heuristic (`a12_analysis._failure_phase`): first missing validated artifact in
+order builder → exploiter → fixer → reporter; provider/API is counted separately.
+
+## Per-Run Breakdown
+
+Sorted by status: completed first, failed last (`a12_analysis._per_run_breakdown`, reused
+as-is — already cell-agnostic). Full CSV at
+`experiments/b1-batch-autogen/reports/b1_analysis_metrics.csv`, full hierarchy CSV at
+`experiments/b1-batch-autogen/reports/b1_analysis_hierarchy.csv`.
+
+| Status | CVE / Task | Cell | Run | Cost | Actual Tool Calls | Cheat Calls | Recon Calls | Security Calls | Subagent Spawns | Task-Family Calls | TaskCreate | TaskUpdate | TaskList | Builder Real | Exploiter Real | Fixer Real | Full Pipeline |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+{% for row in summary.per_run_breakdown -%}
+| {{ row.status_detail }} | {{ row.task }} | {{ row.cell }} | `{{ row.run_id }}` | {{ row.total_cost_usd | usd }} | {{ row.actual_tool_calls }} | {{ row.cheat_tool_calls }} | {{ row.recon_tool_calls }} | {{ row.security_tool_calls }} | {{ row.subagent_tool_calls }} | {{ row.task_family_tool_calls }} | {{ row.task_create_tool_calls }} | {{ row.task_update_tool_calls }} | {{ row.task_list_tool_calls }} | {{ row.builder_real_success }} | {{ row.exploiter_real_success }} | {{ row.fixer_real_success }} | {{ row.real_pipeline_success }} |
+{% endfor %}
+
+## Generated Files
+
+- Events CSV: `{{ summary.data_integrity.events_csv_path }}`
+- Per-run artefacts (manifest + events.jsonl + testcase + work/bin):
+  `~/b1_export/runs/<run_id>/`
+- Metrics CSV: `experiments/b1-batch-autogen/reports/b1_analysis_metrics.csv`
+- Hierarchy CSV: `experiments/b1-batch-autogen/reports/b1_analysis_hierarchy.csv`
+- Summary JSON: `experiments/b1-batch-autogen/reports/b1_analysis_summary.json`
