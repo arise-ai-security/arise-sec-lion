@@ -229,6 +229,7 @@ def worker_cost_recorded(
     seq: int,
     *,
     tool_name: str = "claude_code",
+    model: str | None = "claude-sonnet",
     cost_usd: float = 0.05,
     duration_seconds: float = 30.0,
     tokens: int = 200,
@@ -241,6 +242,7 @@ def worker_cost_recorded(
 ) -> EventRow:
     payload: dict[str, Any] = {
         "tool_name": tool_name,
+        "model": model,
         "cost_usd": cost_usd,
         "duration_seconds": duration_seconds,
         "tokens": tokens,

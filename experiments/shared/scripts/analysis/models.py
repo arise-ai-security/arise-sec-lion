@@ -13,8 +13,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CostMetrics:
-    total_llm_cost_usd: float
-    total_worker_cost_usd: float
+    manager_cost_usd: float
+    worker_cost_usd: float
+    total_cost_usd: float
     total_tokens: int
     prompt_tokens: int
     completion_tokens: int
@@ -22,8 +23,20 @@ class CostMetrics:
     cache_write_tokens: int
     reasoning_tokens: int
     llm_call_count: int
+    manager_cost_by_model: dict[str, float]
+    worker_cost_by_model: dict[str, float]
     cost_by_model: dict[str, float]
     cost_by_operation: dict[str, float]
+
+    @property
+    def total_llm_cost_usd(self) -> float:
+        """Backward-compatible name for manager/orchestration LLM cost."""
+        return self.manager_cost_usd
+
+    @property
+    def total_worker_cost_usd(self) -> float:
+        """Backward-compatible name for worker-side LLM cost."""
+        return self.worker_cost_usd
 
 
 @dataclass(frozen=True)
