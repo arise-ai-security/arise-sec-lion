@@ -1,0 +1,179 @@
+# A1/A2 Claude Code CLI Analysis Report
+
+Generated at: `{{ summary.generated_at }}`
+
+Study: `{{ summary.study_id }}`
+
+## Bottom Line
+
+| Metric | A1 | A2 |
+|---|---:|---:|
+| Enrolled runs | {{ summary.cells.A1.n }} | {{ summary.cells.A2.n }} |
+| Terminal runs | {{ summary.cells.A1.terminal }} | {{ summary.cells.A2.terminal }} |
+| Successful terminal runs | {{ summary.cells.A1.successful }} | {{ summary.cells.A2.successful }} |
+| Terminal success rate | {{ summary.cells.A1.terminal_success_rate | percent }} | {{ summary.cells.A2.terminal_success_rate | percent }} |
+| Full real pipeline success | {{ summary.cells.A1.real_pipeline_successes }} | {{ summary.cells.A2.real_pipeline_successes }} |
+| Strict subagent spawns | {{ summary.cells.A1.subagent_tool_calls }} | {{ summary.cells.A2.subagent_tool_calls }} |
+| Total observed cost | {{ summary.cells.A1.total_cost_usd | usd }} | {{ summary.cells.A2.total_cost_usd | usd }} |
+
+## Cohort Accounting
+
+Membership is reconstructed from Postgres root events plus top-level
+`runs/<run_id>/events.jsonl`. Run manifests, enrollment lock, and
+`experiments/a12-batch-autogen/results` are not membership sources.
+
+| Check | Value |
+|---|---:|
+| Source scope | {{ summary.data_integrity.source_scope }} |
+| Cutoff UTC | {{ summary.data_integrity.started_before_cutoff }} |
+| Cutoff local | {{ summary.data_integrity.started_before_cutoff_local }} |
+| Dataset CVE tasks | {{ summary.data_integrity.dataset_task_count }} |
+| DB candidate roots | {{ summary.data_integrity.db_candidate_runs }} |
+| Top-level run event files | {{ summary.data_integrity.top_level_run_event_files }} |
+| Source DB+runs entries | {{ summary.data_integrity.source_runfile_entries }} |
+| Cutoff exclusions | {{ summary.data_integrity.excluded_by_started_before_cutoff }} |
+| Pre-dedup enrolled runs | {{ summary.data_integrity.pre_dedup_enrolled_runs }} |
+| CVE dedup exclusions | {{ summary.data_integrity.excluded_by_cve_dedup }} |
+| Enrollment dedup policy | {{ summary.data_integrity.enrollment_dedup_policy }} |
+| Computed rows | {{ summary.data_integrity.computed_rows }} |
+| DB/runs event-id mismatches | {{ summary.data_integrity.db_runs_event_id_mismatches }} |
+| DB/runs full-event mismatches | {{ summary.data_integrity.db_runs_event_record_mismatches }} |
+| DB/runs cost mismatches | {{ summary.data_integrity.db_runs_cost_mismatches }} |
+| Lock/discovered run-id disagreements | {{ summary.data_integrity.lock_discovered_run_id_disagreements | length }} |
+
+| Cell | Enrolled Rows | Unique Task-Replicates | Duplicate Keys | Duplicate Rows | Extra Duplicate Rows |
+|---|---:|---:|---:|---:|---:|
+{% for row in summary.enrollment_accounting.by_cell -%}
+| {{ row.cell }} | {{ row.enrolled_rows }} | {{ row.unique_task_replicates }} | {{ row.duplicate_keys }} | {{ row.duplicate_rows }} | {{ row.duplicate_extra_rows }} |
+{% endfor %}
+
+The table above shows pre-deduplication diagnostics. Cell-level results below count one
+enrolled run per `(cell, task)` — the latest `started_at` (with `run_id` as the deterministic
+tie-breaker) wins. See `data_integrity.excluded_by_cve_dedup` for the dropped-row count.
+
+| DB `RunStarted` Date | A1 | A2 |
+|---|---:|---:|
+{% for row in summary.enrollment_accounting.by_started_date -%}
+| {{ row.date }} | {{ row.A1 }} | {{ row.A2 }} |
+{% endfor %}
+
+## Cell-Level Results
+
+| Cell | Enrolled | Terminal | Successful | Terminal Success | Snapshot Success | Missing Cost | Observed Total Cost | Cost / Success | Median Duration (s) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A1 | {{ summary.cells.A1.n }} | {{ summary.cells.A1.terminal }} | {{ summary.cells.A1.successful }} | {{ summary.cells.A1.terminal_success_rate | percent }} | {{ summary.cells.A1.success_rate | percent }} | {{ summary.cells.A1.missing_cost_runs }} | {{ summary.cells.A1.total_cost_usd | usd }} | {{ summary.cells.A1.cost_per_success_usd | usd }} | {{ summary.cells.A1.median_duration_seconds | num(1) }} |
+| A2 | {{ summary.cells.A2.n }} | {{ summary.cells.A2.terminal }} | {{ summary.cells.A2.successful }} | {{ summary.cells.A2.terminal_success_rate | percent }} | {{ summary.cells.A2.success_rate | percent }} | {{ summary.cells.A2.missing_cost_runs }} | {{ summary.cells.A2.total_cost_usd | usd }} | {{ summary.cells.A2.cost_per_success_usd | usd }} | {{ summary.cells.A2.median_duration_seconds | num(1) }} |
+
+| Cell | Manager Cost | Worker Cost | Observed Cost Runs | Positive Cost Runs | Zero-Cost Event Runs | Total Tokens |
+|---|---:|---:|---:|---:|---:|---:|
+| A1 | {{ summary.cells.A1.manager_cost_usd | usd }} | {{ summary.cells.A1.worker_cost_usd | usd }} | {{ summary.cells.A1.cost_observed_runs }} | {{ summary.cells.A1.positive_cost_runs }} | {{ summary.cells.A1.zero_cost_event_runs }} | {{ summary.cells.A1.total_tokens }} |
+| A2 | {{ summary.cells.A2.manager_cost_usd | usd }} | {{ summary.cells.A2.worker_cost_usd | usd }} | {{ summary.cells.A2.cost_observed_runs }} | {{ summary.cells.A2.positive_cost_runs }} | {{ summary.cells.A2.zero_cost_event_runs }} | {{ summary.cells.A2.total_tokens }} |
+
+## Result Evidence
+
+- Builder real success: executable evidence under `work/bin`.
+- Builder evidence runs: any build-stage executable evidence present.
+- Exploiter real success: `exploit_validation_results.txt` PASS, 3/3 deterministic, error match, crash-function match.
+- Fixer real success: `patch_validation_results.txt` PASS, clean apply, successful rebuild, post-patch error `none`, 3/3 no-crash.
+- Full real pipeline: terminal successful run plus builder, exploiter, and fixer real success.
+- Model patches / repro scripts / security reports: required artifact presence counts.
+
+| Cell | Builder Real Success | Builder Evidence Runs | `work/bin` Executables | Exploit Files | Exploiter Real Success | Fix Files | Fixer Real Success | Model Patches | Repro Scripts | Security Reports | Full Real Pipeline |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A1 | {{ summary.cells.A1.builder_real_successes }} | {{ summary.cells.A1.builder_evidence_present }} | {{ summary.cells.A1.builder_executable_count }} | {{ summary.cells.A1.exploit_validation_present }} | {{ summary.cells.A1.exploiter_real_successes }} | {{ summary.cells.A1.patch_validation_present }} | {{ summary.cells.A1.fixer_real_successes }} | {{ summary.cells.A1.model_patch_present }} | {{ summary.cells.A1.repro_script_present }} | {{ summary.cells.A1.security_report_present }} | {{ summary.cells.A1.real_pipeline_successes }} |
+| A2 | {{ summary.cells.A2.builder_real_successes }} | {{ summary.cells.A2.builder_evidence_present }} | {{ summary.cells.A2.builder_executable_count }} | {{ summary.cells.A2.exploit_validation_present }} | {{ summary.cells.A2.exploiter_real_successes }} | {{ summary.cells.A2.patch_validation_present }} | {{ summary.cells.A2.fixer_real_successes }} | {{ summary.cells.A2.model_patch_present }} | {{ summary.cells.A2.repro_script_present }} | {{ summary.cells.A2.security_report_present }} | {{ summary.cells.A2.real_pipeline_successes }} |
+
+| Cell | Exploit Verdict PASS | Exploit Error Match | Exploit Crash Function Match | Patch Verdict PASS | Patch Apply Clean | Patch Build Success | Patch Post-Error None |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A1 | {{ summary.cells.A1.exploit_verdict_pass }} | {{ summary.cells.A1.exploit_error_match }} | {{ summary.cells.A1.exploit_crash_function_match }} | {{ summary.cells.A1.patch_verdict_pass }} | {{ summary.cells.A1.patch_apply_clean }} | {{ summary.cells.A1.patch_build_success }} | {{ summary.cells.A1.patch_post_error_none }} |
+| A2 | {{ summary.cells.A2.exploit_verdict_pass }} | {{ summary.cells.A2.exploit_error_match }} | {{ summary.cells.A2.exploit_crash_function_match }} | {{ summary.cells.A2.patch_verdict_pass }} | {{ summary.cells.A2.patch_apply_clean }} | {{ summary.cells.A2.patch_build_success }} | {{ summary.cells.A2.patch_post_error_none }} |
+
+## Tool Use
+
+- Actual tool calls: `ThoughtCaptured(output_type='tool_use')`.
+- Total tool calls: metric-layer total projected from Claude Code tool telemetry.
+- Cheat calls: forbidden git-history/ref peeking; plain `git diff HEAD` patch diffs are excluded.
+- Recon calls: file reads/search plus code-recon shell commands.
+- Security-tool calls: security MCP tools plus shell security analyzers/debuggers/fuzzers.
+- Subagent spawns: strict `Task` or `Agent` spawn tool calls.
+- Task-family calls: subagent spawns plus task-management tools.
+- Task mgmt: `TaskCreate` + `TaskUpdate` + `TaskList` family, not strict subagent spawning.
+- TaskCreate/TaskUpdate/TaskList: Claude Code task-management telemetry.
+
+Per-run averages: total metric / enrolled runs.
+
+| Cell | N | Total Tools Avg | Actual Tools Avg | Cheat Avg | Recon Avg | Security Avg | Subagent Avg | Task-Family Avg | Task Mgmt Avg | TaskCreate Avg | TaskUpdate Avg | TaskList Avg | Shell Avg | File Read Avg | File Write Avg | File Edit Avg | Search Avg |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+{% for row in summary.tool_use_rows -%}
+| {{ row.cell }} | {{ row.n }} | {{ row.total_tool_calls_avg | num(1) }} | {{ row.actual_tool_calls_avg | num(1) }} | {{ row.cheat_calls_avg | num(1) }} | {{ row.recon_calls_avg | num(1) }} | {{ row.security_tool_calls_avg | num(1) }} | {{ row.subagent_spawns_avg | num(2) }} | {{ row.task_family_calls_avg | num(1) }} | {{ row.task_mgmt_calls_avg | num(1) }} | {{ row.task_create_avg | num(1) }} | {{ row.task_update_avg | num(1) }} | {{ row.task_list_avg | num(1) }} | {{ row.shell_calls_avg | num(1) }} | {{ row.file_read_avg | num(1) }} | {{ row.file_write_avg | num(1) }} | {{ row.file_edit_avg | num(1) }} | {{ row.search_avg | num(1) }} |
+{% endfor %}
+
+| Cell | Bash Recon | Bash Exploit | Bash Security Scan | Bash Build | Bash Test/Fuzz Exec | Bash Git | Bash Other |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A1 | {{ summary.cells.A1.bash_recon_tool_calls }} | {{ summary.cells.A1.bash_exploit_tool_calls }} | {{ summary.cells.A1.bash_security_scan_tool_calls }} | {{ summary.cells.A1.bash_build_tool_calls }} | {{ summary.cells.A1.bash_test_exec_tool_calls }} | {{ summary.cells.A1.bash_git_tool_calls }} | {{ summary.cells.A1.bash_other_shell_tool_calls }} |
+| A2 | {{ summary.cells.A2.bash_recon_tool_calls }} | {{ summary.cells.A2.bash_exploit_tool_calls }} | {{ summary.cells.A2.bash_security_scan_tool_calls }} | {{ summary.cells.A2.bash_build_tool_calls }} | {{ summary.cells.A2.bash_test_exec_tool_calls }} | {{ summary.cells.A2.bash_git_tool_calls }} | {{ summary.cells.A2.bash_other_shell_tool_calls }} |
+
+## Paired Inference
+
+Pairs are matched by `(task, replicate)`. p-values: binary rows use exact
+McNemar/binomial on discordant pairs; numeric rows use the two-sided sign test
+over non-zero paired deltas.
+
+| Metric | N | Mean A1 | Mean A2 | Mean Delta | Median A1 | Median A2 | Median Delta | Sign/Exact p |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+{% for row in summary.paired.metric_table -%}
+| {{ row.metric }} | {{ row.n }} | {{ row.mean_a1 | metric(row.value_kind) }} | {{ row.mean_a2 | metric(row.value_kind) }} | {{ row.mean_delta | metric(row.value_kind) }} | {{ row.median_a1 | metric(row.value_kind) }} | {{ row.median_a2 | metric(row.value_kind) }} | {{ row.median_delta | metric(row.value_kind) }} | {{ row.sign_or_exact_p | p }} |
+{% endfor %}
+
+| Outcome | N | A1-only | A2-only | Both | Neither | Mean Delta | Exact p |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Builder real success | {{ summary.paired.builder_real_success.paired_n }} | {{ summary.paired.builder_real_success.a1_only }} | {{ summary.paired.builder_real_success.a2_only }} | {{ summary.paired.builder_real_success.both }} | {{ summary.paired.builder_real_success.neither }} | {{ summary.paired.builder_real_success.delta | percent }} | {{ summary.paired.builder_real_success.exact_p | p }} |
+| Exploiter real success | {{ summary.paired.exploiter_real_success.paired_n }} | {{ summary.paired.exploiter_real_success.a1_only }} | {{ summary.paired.exploiter_real_success.a2_only }} | {{ summary.paired.exploiter_real_success.both }} | {{ summary.paired.exploiter_real_success.neither }} | {{ summary.paired.exploiter_real_success.delta | percent }} | {{ summary.paired.exploiter_real_success.exact_p | p }} |
+| Fixer real success | {{ summary.paired.fixer_real_success.paired_n }} | {{ summary.paired.fixer_real_success.a1_only }} | {{ summary.paired.fixer_real_success.a2_only }} | {{ summary.paired.fixer_real_success.both }} | {{ summary.paired.fixer_real_success.neither }} | {{ summary.paired.fixer_real_success.delta | percent }} | {{ summary.paired.fixer_real_success.exact_p | p }} |
+| Full real pipeline | {{ summary.paired.real_pipeline_success.paired_n }} | {{ summary.paired.real_pipeline_success.a1_only }} | {{ summary.paired.real_pipeline_success.a2_only }} | {{ summary.paired.real_pipeline_success.both }} | {{ summary.paired.real_pipeline_success.neither }} | {{ summary.paired.real_pipeline_success.delta | percent }} | {{ summary.paired.real_pipeline_success.exact_p | p }} |
+
+## Failure Analysis
+
+Login/auth and credit/quota failures are excluded from phase attribution.
+
+| Excluded Operational Cause | A1 | A2 |
+|---|---:|---:|
+| Login/authentication | {{ summary.failure_analysis.excluded_login_auth.A1 }} | {{ summary.failure_analysis.excluded_login_auth.A2 }} |
+| Credit/quota | {{ summary.failure_analysis.excluded_credit_quota.A1 }} | {{ summary.failure_analysis.excluded_credit_quota.A2 }} |
+
+| Status | A1 | A2 |
+|---|---:|---:|
+{% for row in summary.failure_analysis.status_counts -%}
+| {{ row.status }} | {{ row.A1 }} | {{ row.A2 }} |
+{% endfor %}
+
+| Failure Mode | A1 | A2 |
+|---|---:|---:|
+{% for row in summary.failure_analysis.failure_mode_counts -%}
+| {{ row.failure_mode }} | {{ row.A1 }} | {{ row.A2 }} |
+{% endfor %}
+
+| Failure Phase, Excluding Login/Credit | A1 | A2 |
+|---|---:|---:|
+{% for row in summary.failure_analysis.phase_counts_excluding_login_credit -%}
+| {{ row.phase }} | {{ row.A1 }} | {{ row.A2 }} |
+{% endfor %}
+
+Phase heuristic: first missing validated artifact in order builder -> exploiter
+-> fixer -> reporter; provider/API is counted separately.
+
+## Per-Run Breakdown
+
+Sorted by status: completed first, failed last.
+
+| Status | CVE / Task | Cell | Run | Cost | Tools | Cheat | Recon | Sec | Subagent | Task* | Create | Update | List | B | E | F | P |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+{% for row in summary.per_run_breakdown -%}
+| {{ row.status }}{% if row.failure_mode %} / {{ row.failure_mode }}{% endif %} | {{ row.task }} | {{ row.cell }} | `{{ row.run_id }}` | {{ row.total_cost_usd | usd }} | {{ row.actual_tool_calls }} | {{ row.cheat_tool_calls }} | {{ row.recon_tool_calls }} | {{ row.security_tool_calls }} | {{ row.subagent_tool_calls }} | {{ row.task_family_tool_calls }} | {{ row.task_create_tool_calls }} | {{ row.task_update_tool_calls }} | {{ row.task_list_tool_calls }} | {{ row.builder_real_success }} | {{ row.exploiter_real_success }} | {{ row.fixer_real_success }} | {{ row.real_pipeline_success }} |
+{% endfor %}
+
+## Generated Files
+
+- `experiments/a12-batch-autogen/reports/a12_claude_code_cli_metrics.csv`
+- `experiments/a12-batch-autogen/reports/a12_claude_code_cli_pairs.csv`
+- `experiments/a12-batch-autogen/reports/a12_claude_code_cli_summary.json`
