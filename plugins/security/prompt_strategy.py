@@ -135,14 +135,22 @@ class SecBenchPromptStrategy:
         chain = _with_cve_display(chain, cve_instance, phase=branch)
         chain = chain.render("domains/secbench/manager.j2", **cve_ctx)
 
-        is_direct_boss_child = context.briefing is not None and len(context.briefing.ancestry) == 1
-        if branch is not None and is_direct_boss_child:
-            chain = (
-                chain
-                .render_if(branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx)
-                .render_if(branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx)
-                .render_if(branch == "fixer", "domains/secbench/manager/fixer.j2", **cve_ctx)
-            )
+        # OBSOLETE 2026-05-17 — manager/{role}.j2 templates were dead code on
+        # the happy path: assess_task → action="decompose" → _apply_assessment_result
+        # spawns children directly, bypassing evaluate_task (which is what
+        # renders these). They were only reachable via trigger_redecomposition.
+        # The .j2 files have been gutted in-place (kept as graveyard files
+        # with an explanatory header). See experiments/b1-batch-autogen/
+        # FINDINGS.md §5.2. This block stays commented as a marker until the
+        # redecomposition path is consciously redesigned.
+        # is_direct_boss_child = context.briefing is not None and len(context.briefing.ancestry) == 1
+        # if branch is not None and is_direct_boss_child:
+        #     chain = (
+        #         chain
+        #         .render_if(branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx)
+        #         .render_if(branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx)
+        #         .render_if(branch == "fixer", "domains/secbench/manager/fixer.j2", **cve_ctx)
+        #     )
 
         return chain
 

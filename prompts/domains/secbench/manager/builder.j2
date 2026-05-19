@@ -1,44 +1,13 @@
-<domain_operation>
-## Builder Manager — Decomposition
-
-Decompose the build setup phase into worker subtasks with explicit roles.
-**Builder is infrastructure work, not code-level analysis** — keep exactly 3 workers (setup → compile → verify).
-Do NOT further decompose into finer-grained tasks. Deeper analysis is for the Exploiter and Fixer phases.
-
-### Phase Deliverables
-- `/testcase/base_commit_hash` (required)
-- `/src/build.sh` (improved, standalone)
-- `/testcase/repo_changes.diff` (if source changes made)
-- `/testcase/packages.txt` (if packages installed)
-
-### Subtasks (use these role names in descriptions)
-
-1. **[Build-Setup]** (index 0): Identify the correct base commit from the vulnerability description. Save the commit hash to `/testcase/base_commit_hash`. If a different commit is required, reset the repository to that commit. Verify the hash file exists before finishing.
-   - `depends_on`: []
-   - `context_sharing`: Publish the base commit hash via `<context-update>` decision.
-
-2. **[Build-Compiler]** (index 1): Run `cd {{ work_dir }} && /src/build.sh` to perform the initial build. Improve `/src/build.sh` to be standalone: remove undefined variables, remove fuzzer commands, add `-j$(nproc)` to make, add `-p` to mkdir, preserve sanitizer flags, keep `make install` if present. Fix build errors (C++17: `-std=c++14` in CXXFLAGS only, implicit int: add types, overload: `-D_GNU_SOURCE`). Rebuild after improvements.
-   **CRITICAL — preserve incremental builds**: Do NOT add `make clean`, `cmake --target clean`, `ninja -t clean`, or any clean step to `build.sh`. Downstream workers (Fixer, Validator) run `build.sh` after small source edits — a clean step forces a full rebuild that can cause timeouts on large projects. The script must support fast incremental rebuilds. Also do NOT inject compiler flags (CFLAGS, CXXFLAGS, LDFLAGS) that differ from how the project was originally built in the Docker image — changing flags invalidates the build cache and triggers a full recompile.
-   **⚠️ MANDATORY — Publish the binary path.** After a successful build, identify the primary ASan-instrumented binary that downstream Exploiter and Fixer workers will invoke (the one the PoC will run, e.g. `MP4Box`, `faad`, `exiv2`, `njs`). Copy or symlink it into `/work/bin/<name>` if the build did not place it there. Then publish a `binary_path` decision via `<context-update>` whose value is the absolute container path (e.g. `/work/bin/MP4Box`). If the project produces multiple binaries that downstream phases will need, also publish `additional_binary_paths` as a newline-separated list. **Do NOT close the task with only a generic "build successful" decision — without a `binary_path` decision, downstream workers waste tool budget running `ls /work/bin`, `find`, and `which` to rediscover the binary, and roughly two-thirds of runs in the b1-batch-autogen study left them to do exactly that.**
-   - `depends_on`: [0]
-   - `context_sharing`: Publish via `<context-update>` decisions: **`binary_path`** (REQUIRED — absolute `/work/bin/<name>` path of the ASan-instrumented binary the PoC will invoke), `build_status` (success/failure with exit code), `build_script_modifications` (one line per non-trivial change). The `binary_path` decision is non-negotiable; treat it like `model_patch.diff` for the Fixer phase.
-
-3. **[Build-Verifier]** (index 2): Verify ALL required deliverables exist: `/testcase/base_commit_hash`, `/src/build.sh`, compiled binaries. Record installed packages to `/testcase/packages.txt` (one per line). Save source changes: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`. Confirm build works end-to-end.
-   **⚠️ Verify the `binary_path` handoff.** Read peer decisions from shared context and confirm that Build-Compiler published a `binary_path` decision. Run `ls -lh <binary_path>` and `file <binary_path>` to confirm the file exists and contains ASan instrumentation (`nm <binary_path> | grep -c -i asan` should be > 0). If `binary_path` was not published or the path does not exist, re-discover the binary, copy it to `/work/bin/<name>`, and publish the corrected `binary_path` decision yourself before finishing — never leave the Builder phase without a published binary path.
-   - `depends_on`: [1]
-   - `context_sharing`: Publish via `<context-update>`: `verified_binary_path` (same value as Build-Compiler's `binary_path`, after `ls -lh` confirmation), `verified_deliverables` (list of `/testcase/*` files that exist), `asan_instrumentation_confirmed` (yes/no with `nm` evidence).
-
-### Decomposition Requirements
-
-- Use the bracketed role names above in each subtask's `description` field.
-- **Mark every subtask `"estimated_complexity": "simple"`.** These three workers are atomic leaves — they must NOT be further decomposed. The orchestrator uses this hint to skip the per-child assessment LLM and execute each worker directly.
-- Set `depends_on` as specified (sequential: setup → compile → verify).
-- **Worker artifact discipline.** In each subtask's `justification`, name the *specific files* the worker must produce in `/testcase/`, not just the analysis steps. Use the ``<tool-or-kind>_<scope>_<purpose>.<ext>`` pattern from the worker prompt (e.g. ``build_<phase>_log.txt``, ``packages_install_log.txt``, ``asan_smoke_<scope>.log``). For every command that produces signal — build output, sanitizer trace, exit code — instruct the worker to save it via ``cmd 2>&1 | tee /testcase/<file>`` so downstream Exploiter/Fixer/Reporter siblings can read it. Always include the required deliverables (``base_commit_hash``, ``packages.txt``, ``repo_changes.diff``, ``/src/build.sh``) plus at least one in-flight artifact per worker.
-- **Cross-phase context sharing.** Instruct every worker to publish, via `<context-update>`, the LIST of files it produced in `/testcase/` — both required deliverables AND in-flight artifacts — each annotated with a one-line description of what it contains and when a downstream worker should read it. Format: one line per file, ``<filename> — <what it contains>; read this when <reason>``. Required files are always assumed visible; the published list tells Exploiter, Fixer, and Reporter which optional artifacts they can grep for evidence instead of re-running analyses.
-- Preserve sanitizer instrumentation throughout the build phase.
-- Each subtask's `justification` MUST include `"role"`, `"security_insights"`, `"security_tools"`, and `"context_sharing"` keys.
-- Instruct workers to install analysis tools: `apt-get install -y cppcheck gdb 2>/dev/null || true`
-- Workers operate autonomously — provide fallback approaches for common build failures in the justification.
-- Instruct each worker to validate upstream peer outcomes before building on them.
-- `success_criteria` for each subtask MUST reference only observable deliverables and exit codes. Do NOT specify which build system the project uses (make, cmake, ninja, rake, meson, etc.) — the worker will discover the correct build tool from `/src/build.sh` and the project's own configuration.
-</domain_operation>
+{# OBSOLETE — content removed 2026-05-17.
+   This template was only reachable via `trigger_redecomposition`
+   (child returns infeasible → parent re-enters ANALYZING →
+   `evaluate_task` renders this). On the happy path
+   (`assess_task` → action="decompose" → `_apply_assessment_result`
+   spawns children directly), `evaluate_task` is never called and this
+   template is never rendered.
+   Decomposition guidance for the Builder phase now lives entirely in
+   `prompts/domains/secbench/assess.j2`; the per-role deliverable
+   contracts live in `prompts/domains/secbench/worker/builder.j2`.
+   The `render_if` call in `plugins/security/prompt_strategy.py`
+   that loaded this file has been commented out. See
+   `experiments/b1-batch-autogen/FINDINGS.md` §5.2 for the analysis. #}
