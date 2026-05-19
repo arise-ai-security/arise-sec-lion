@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from experiments.shared.scripts.analysis.models import HierarchyMetrics
+from experiments.shared.scripts.analysis.text.prefixes import recover_tool_name
 
 
 if TYPE_CHECKING:
@@ -13,6 +15,29 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from experiments.shared.scripts.db.models import EventRow
+
+
+_ROLES = ("boss", "manager", "worker")
+
+
+@dataclass(frozen=True)
+class HierarchyToolMetrics:
+    """Per-role tool-call breakdown for a single boss-rooted run.
+
+    ``role`` is decided by the depth of the emitting aggregate's
+    ``AgentCreated.parent_id`` chain rooted at the boss:
+        depth == 0  -> "boss"
+        depth == 1  -> "manager"
+        depth >= 2  -> "worker"
+
+    Tool-use events emitted by aggregates that never received an
+    ``AgentCreated`` event are bucketed under ``"unknown"`` so they
+    remain visible rather than being silently dropped.
+    """
+
+    tool_calls_by_role: dict[str, int] = field(default_factory=dict)
+    nodes_by_role: dict[str, int] = field(default_factory=dict)
+    tool_calls_by_role_by_name: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 def compute_hierarchy(
@@ -72,6 +97,108 @@ def compute_hierarchy(
         children_spawned=children_spawned,
         children_completed=children_completed,
         children_failed=children_failed,
+    )
+
+
+def compute_hierarchy_tool_calls(
+    events: Sequence[EventRow],
+    *,
+    run_id: UUID,
+) -> HierarchyToolMetrics:
+    """Group tool-use events by the emitting aggregate's role-depth bucket.
+
+    The role-depth bucket is computed once per aggregate by walking the
+    ``AgentCreated.parent_id`` chain (with cycle protection) to the run
+    root. Tool-use events from aggregates that never had an
+    ``AgentCreated`` recorded land in the ``"unknown"`` bucket.
+
+    Args:
+        events: Sequenced events for the run (boss subtree). Events with
+            ``event_type == "ThoughtCaptured"`` and
+            ``payload.output_type == "tool_use"`` are the only ones
+            counted toward the tool-call totals.
+        run_id: The boss aggregate id (the run root).
+
+    Returns:
+        Fully-populated ``HierarchyToolMetrics``. All three canonical
+        roles are always present in ``tool_calls_by_role`` /
+        ``nodes_by_role`` / ``tool_calls_by_role_by_name`` even when
+        their count is zero, so downstream summarisers don't need to
+        defend against missing keys.
+    """
+    parent_of: dict[str, str | None] = {}
+    for event in events:
+        if event.event_type != "AgentCreated":
+            continue
+        agg = str(event.aggregate_id)
+        parent = event.payload.get("parent_id")
+        parent_of[agg] = str(parent) if isinstance(parent, str) and parent else None
+
+    root_str = str(run_id)
+    # Ensure the root is present even if AgentCreated for it isn't first.
+    parent_of.setdefault(root_str, None)
+
+    depth_memo: dict[str, int] = {}
+
+    def depth_of(agg: str) -> int:
+        if agg in depth_memo:
+            return depth_memo[agg]
+        # Iterative walk with cycle detection.
+        path: list[str] = []
+        seen: set[str] = set()
+        node: str | None = agg
+        while node is not None and node not in depth_memo and node not in seen:
+            seen.add(node)
+            path.append(node)
+            node = parent_of.get(node)
+        if node is None:
+            anchor_depth = -1
+        elif node in depth_memo:
+            anchor_depth = depth_memo[node]
+        else:
+            # Cycle: stop here at depth -1 so the cycle root lands at 0.
+            anchor_depth = -1
+        # ``path`` is ordered child-first; reversed walks root-first.
+        for i, p in enumerate(reversed(path)):
+            depth_memo[p] = anchor_depth + 1 + i
+        return depth_memo[agg]
+
+    def role_at(agg: str) -> str:
+        if agg not in parent_of:
+            return "unknown"
+        d = depth_of(agg)
+        if d == 0:
+            return "boss"
+        if d == 1:
+            return "manager"
+        return "worker"
+
+    tool_calls_by_role: dict[str, int] = {r: 0 for r in _ROLES}
+    tool_calls_by_role_by_name: dict[str, dict[str, int]] = {r: {} for r in _ROLES}
+
+    for event in events:
+        if event.event_type != "ThoughtCaptured":
+            continue
+        payload = event.payload
+        if payload.get("output_type") != "tool_use":
+            continue
+        agg = str(event.aggregate_id)
+        role = role_at(agg)
+        tool_calls_by_role[role] = tool_calls_by_role.get(role, 0) + 1
+        tool_name = recover_tool_name(payload.get("content") or "", payload.get("tool_name"))
+        bucket = tool_calls_by_role_by_name.setdefault(role, {})
+        bucket[tool_name] = bucket.get(tool_name, 0) + 1
+
+    nodes_by_role: dict[str, int] = {r: 0 for r in _ROLES}
+    for agg in parent_of:
+        if agg == root_str and not parent_of[agg]:
+            depth_memo.setdefault(agg, 0)
+        nodes_by_role[role_at(agg)] = nodes_by_role.get(role_at(agg), 0) + 1
+
+    return HierarchyToolMetrics(
+        tool_calls_by_role=tool_calls_by_role,
+        nodes_by_role=nodes_by_role,
+        tool_calls_by_role_by_name=tool_calls_by_role_by_name,
     )
 
 

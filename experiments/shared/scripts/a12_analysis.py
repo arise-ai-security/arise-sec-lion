@@ -1396,13 +1396,15 @@ def _prompt_excerpt(prompt: str, *, focus: str = "") -> str:
 def _prompt_samples(
     entries: list[EnrollmentEntry],
     files_by_run_id: dict[str, RunFiles],
+    *,
+    cells: tuple[str, ...] = ("A1", "A2"),
 ) -> dict[str, dict[str, Any]]:
     samples: dict[str, dict[str, Any]] = {}
     sorted_entries = sorted(
         entries,
         key=lambda entry: (entry.cell, entry.task, entry.started_at, entry.run_id),
     )
-    for cell in ("A1", "A2"):
+    for cell in cells:
         for entry in sorted_entries:
             if entry.cell != cell:
                 continue
@@ -2392,7 +2394,11 @@ def _cell_value(cells: dict[str, CellSummary], cell: str, field_name: str) -> An
     return getattr(cells[cell], field_name)
 
 
-def _tool_use_rows(cells: dict[str, CellSummary]) -> list[dict[str, Any]]:
+def _tool_use_rows(
+    cells: dict[str, CellSummary],
+    *,
+    cell_names: tuple[str, ...] = ("A1", "A2"),
+) -> list[dict[str, Any]]:
     fields = [
         ("total_tool_calls_avg", "total_tool_calls"),
         ("actual_tool_calls_avg", "actual_tool_calls"),
@@ -2412,7 +2418,7 @@ def _tool_use_rows(cells: dict[str, CellSummary]) -> list[dict[str, Any]]:
         ("search_avg", "search_tool_calls"),
     ]
     rows: list[dict[str, Any]] = []
-    for cell in ("A1", "A2"):
+    for cell in cell_names:
         summary = cells[cell]
         row: dict[str, Any] = {"cell": cell, "n": summary.n}
         for output_key, field_name in fields:
@@ -2422,7 +2428,11 @@ def _tool_use_rows(cells: dict[str, CellSummary]) -> list[dict[str, Any]]:
     return rows
 
 
-def _cheat_analysis(rows: list[RunRow]) -> list[dict[str, Any]]:
+def _cheat_analysis(
+    rows: list[RunRow],
+    *,
+    cells: tuple[str, ...] = ("A1", "A2"),
+) -> list[dict[str, Any]]:
     analysis_rows = []
     for key, label, definition, field_name in CHEAT_PATTERN_FIELDS:
         row: dict[str, Any] = {
@@ -2430,7 +2440,7 @@ def _cheat_analysis(rows: list[RunRow]) -> list[dict[str, Any]]:
             "label": label,
             "definition": definition,
         }
-        for cell in ("A1", "A2"):
+        for cell in cells:
             cell_rows = [run_row for run_row in rows if run_row.cell == cell]
             calls = sum(int(getattr(run_row, field_name)) for run_row in cell_rows)
             row[f"{cell}_calls"] = calls
@@ -2509,20 +2519,24 @@ def _count_table(
     *,
     key_name: str,
     key_func: Any,
+    cells: tuple[str, ...] = ("A1", "A2"),
 ) -> list[dict[str, Any]]:
     table = []
     for label in labels:
-        table.append(
-            {
-                key_name: label,
-                "A1": sum(row.cell == "A1" and key_func(row) == label for row in rows),
-                "A2": sum(row.cell == "A2" and key_func(row) == label for row in rows),
-            }
-        )
+        entry: dict[str, Any] = {key_name: label}
+        for cell in cells:
+            entry[cell] = sum(
+                row.cell == cell and key_func(row) == label for row in rows
+            )
+        table.append(entry)
     return table
 
 
-def _failure_analysis(rows: list[RunRow]) -> dict[str, Any]:
+def _failure_analysis(
+    rows: list[RunRow],
+    *,
+    cells: tuple[str, ...] = ("A1", "A2"),
+) -> dict[str, Any]:
     non_success = [row for row in rows if row.successful == 0]
     classified_failures = [row for row in non_success if row.failure_mode]
     non_login_credit = [
@@ -2546,38 +2560,35 @@ def _failure_analysis(rows: list[RunRow]) -> dict[str, Any]:
             rows,
             key_name="status",
             key_func=lambda row: row.run_status,
+            cells=cells,
         ),
         "failure_mode_counts": _count_table(
             mode_labels,
             classified_failures,
             key_name="classification",
             key_func=_failure_mode_label,
+            cells=cells,
         ),
         "phase_counts_excluding_login_credit": _count_table(
             phase_labels,
             non_login_credit,
             key_name="phase",
             key_func=_failure_phase,
+            cells=cells,
         ),
         "excluded_login_auth": {
-            "A1": sum(
-                row.cell == "A1" and row.environmental_failure_cause == "auth_login"
+            cell: sum(
+                row.cell == cell and row.environmental_failure_cause == "auth_login"
                 for row in non_success
-            ),
-            "A2": sum(
-                row.cell == "A2" and row.environmental_failure_cause == "auth_login"
-                for row in non_success
-            ),
+            )
+            for cell in cells
         },
         "excluded_credit_quota": {
-            "A1": sum(
-                row.cell == "A1" and row.environmental_failure_cause == "credit_quota"
+            cell: sum(
+                row.cell == cell and row.environmental_failure_cause == "credit_quota"
                 for row in non_success
-            ),
-            "A2": sum(
-                row.cell == "A2" and row.environmental_failure_cause == "credit_quota"
-                for row in non_success
-            ),
+            )
+            for cell in cells
         },
     }
 

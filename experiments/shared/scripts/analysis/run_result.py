@@ -33,36 +33,17 @@ if TYPE_CHECKING:
     import asyncpg
 
 
-async def compute_run_result(
-    conn: asyncpg.Connection,
+def compute_run_result_from_events(
+    events: list,
     run_id: UUID,
     *,
     family: str = "A",
 ) -> RunResult:
-    """Build the per-run quantitative metrics for a boss aggregate.
+    """Synchronous variant of :func:`compute_run_result` for in-memory event lists.
 
-    Args:
-        conn: Open asyncpg connection to the events store.
-        run_id: Boss aggregate id (the run root).
-        family: Cell family used to select the tool taxonomy. Defaults to
-            ``"A"`` for the A1/A2 cohort.
-
-    Returns:
-        Fully populated :class:`RunResult` for ``run_id``.
-
-    Raises:
-        UnknownRunError: No events found for ``run_id``.
-        NotABossRunError: No ``RunStarted`` event was emitted on the same
-            aggregate as ``run_id`` (the supplied id names a non-boss
-            aggregate). Real boss aggregates emit ``AgentCreated`` (seq=1)
-            and ``TaskAssigned`` (seq=2) before ``RunStarted`` (seq=3+),
-            so the boss predicate is "this aggregate emitted a
-            ``RunStarted`` somewhere in its event stream", not "the first
-            event is ``RunStarted``".
-        UnknownFamilyError: ``family`` is not declared in
-            ``TOOL_TAXONOMY``. Bubbles up from ``compute_tools``.
+    Same contract as :func:`compute_run_result` but skips the DB fetch; the
+    caller supplies the already-loaded boss-subtree event list.
     """
-    events = await fetch_run_events(conn, run_id)
     if not events:
         raise UnknownRunError(run_id=run_id)
     boss_run_started = next(
@@ -93,3 +74,36 @@ async def compute_run_result(
         limits=compute_limits(events),
     )
     return RunResult(run_id=run_id, quantitative=qm)
+
+
+async def compute_run_result(
+    conn: asyncpg.Connection,
+    run_id: UUID,
+    *,
+    family: str = "A",
+) -> RunResult:
+    """Build the per-run quantitative metrics for a boss aggregate.
+
+    Args:
+        conn: Open asyncpg connection to the events store.
+        run_id: Boss aggregate id (the run root).
+        family: Cell family used to select the tool taxonomy. Defaults to
+            ``"A"`` for the A1/A2 cohort.
+
+    Returns:
+        Fully populated :class:`RunResult` for ``run_id``.
+
+    Raises:
+        UnknownRunError: No events found for ``run_id``.
+        NotABossRunError: No ``RunStarted`` event was emitted on the same
+            aggregate as ``run_id`` (the supplied id names a non-boss
+            aggregate). Real boss aggregates emit ``AgentCreated`` (seq=1)
+            and ``TaskAssigned`` (seq=2) before ``RunStarted`` (seq=3+),
+            so the boss predicate is "this aggregate emitted a
+            ``RunStarted`` somewhere in its event stream", not "the first
+            event is ``RunStarted``".
+        UnknownFamilyError: ``family`` is not declared in
+            ``TOOL_TAXONOMY``. Bubbles up from ``compute_tools``.
+    """
+    events = await fetch_run_events(conn, run_id)
+    return compute_run_result_from_events(events, run_id, family=family)
