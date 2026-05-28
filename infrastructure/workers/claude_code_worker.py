@@ -396,12 +396,11 @@ class ClaudeCodeWorker:
 
         The Claude CLI refuses to honor ``--permission-mode bypassPermissions``
         (or ``--dangerously-skip-permissions``) when running as uid 0. The
-        secb-tools image inherits root from the SEC-bench base, so we drop
-        privileges only for this exec by passing ``--user 1000:1000`` after
-        preparing a matching passwd/group/home entry in the running container.
-        The bind-mounted source and testcase trees are already
-        world-readable/writable (``DockerSecBenchRuntime._copy_source_tree``
-        chmods them 0o777/0o666).
+        container image may inherit root from its base, so we drop privileges
+        only for this exec by passing ``--user 1000:1000`` after preparing a
+        matching passwd/group/home entry in the running container. The
+        bind-mounted source and testcase trees are assumed to be left
+        world-readable/writable by the domain plugin's workspace preparation.
         """
         return build_docker_exec_argv(
             container_session=container_session,
@@ -458,18 +457,17 @@ class ClaudeCodeWorker:
             except TimeoutError as e:
                 await self._kill_process(process)
                 wall = time.monotonic() - start
-                summary = str(e) or f"Timed out after {timeout_seconds}s"
                 return WorkerResult(
                     run_id=run_id,
                     exit_status="timeout",
                     wall_time_seconds=wall,
-                    output_summary=summary,
+                    output_summary=str(e) or f"Timed out after {timeout_seconds}s",
                     events=tuple(self._events_from_transcript(transcript_path, run_id, wall)),
                 )
 
         wall = time.monotonic() - start
         exit_status: Literal["completed", "failed"] = "completed" if returncode == 0 else "failed"
-        summary = self._summarize_transcript(transcript_path)
+        summary: str | None = self._summarize_transcript(transcript_path)
         events = self._events_from_transcript(transcript_path, run_id, wall)
         return WorkerResult(
             run_id=run_id,
@@ -503,8 +501,7 @@ class ClaudeCodeWorker:
                 if idle_remaining < wait_seconds:
                     wait_seconds = idle_remaining
                     timeout_message = (
-                        "Timed out after "
-                        f"{self._inactivity_timeout_seconds}s without Claude output"
+                        f"Timed out after {self._inactivity_timeout_seconds}s without Claude output"
                     )
             if wait_seconds <= 0:
                 raise TimeoutError(timeout_message)
@@ -606,7 +603,17 @@ class ClaudeCodeWorker:
                 tool_input = raw_input if isinstance(raw_input, dict) else {}
                 formatted = format_tool_event(tool_name, tool_input)
                 detail = json.dumps(tool_input, sort_keys=True, default=str)
-                out.append(sequencer.thought(f"{formatted}\nInput: {detail}", "tool_use"))
+                # Audit N-6 / prefixes.py: pass the canonical tool_name through
+                # to ThoughtCaptured so downstream metrics no longer have to
+                # parse the rendered content prefix to recover it. Mirrors the
+                # B-family SDK path (claude_sdk_adapter.py:289).
+                out.append(
+                    sequencer.thought(
+                        f"{formatted}\nInput: {detail}",
+                        "tool_use",
+                        tool_name=tool_name,
+                    )
+                )
             elif block_type == "tool_result":
                 content = _string_value(block.get("content"))
                 out.append(
