@@ -115,15 +115,15 @@ Each WORKER prompt is composed in this order (rendered once per worker by the se
 2. Phase-specific worker body: `prompts/domains/secbench/worker/<phase>.j2` selected by bracket-prefix detection on the worker's task description (`worker/builder.j2`, `worker/exploiter.j2`, `worker/fixer.j2`, `worker/reporter.j2`) [17].
 3. The shared SEC-bench input block: `inputs/user.j2` + `inputs/cve.j2` + `inputs/control.j2` — identical bytes for Cell A flat-mode persona and every hierarchical BOSS [18, 19].
 
-### 3.4 Dead-code: per-phase **manager** templates
+### 3.4 Removed: per-phase **manager** templates
 
-`prompts/domains/secbench/manager/{builder,exploiter,fixer}.j2` exist but are **dead code on the assess→spawn path** — `assess.j2` is the live decomposition contract; the per-phase manager files carry an explicit "DEAD CODE for the assessment-to-spawn path" disclaimer at line 1 [20]. The exception: the concatenated body of these three manager templates is reused (byte-identically) as the system persona for Cell A flat-mode, locked in by `test_single_agent_persona_locks_to_three_managers` [21]. So edits to the "dead" manager templates auto-propagate to the flat baseline.
+`prompts/domains/secbench/manager/{builder,exploiter,fixer}.j2` were removed in commit `6264ece` ("remove obsolete manager/{role}.j2 templates and their dispatch"). They were dead on the assess→spawn path — `assess.j2` is the live decomposition contract. Earlier docs claim the concatenated body was reused as the Cell A flat-mode persona, but the corresponding test (`test_single_agent_persona_locks_to_three_managers`) had also been removed in a prior commit; flat-mode persona actually comes from `flat_pipeline.j2` (see `plugins/security/prompt_strategy.py::extend_flat_prompt`).
 
 ### 3.5 Known prompt inconsistency — `boss.j2` vs `assess.j2`
 
-`boss.j2:59-60` instructs the BOSS to decompose Exploiter / Fixer into **"4-5 workers"**, while `assess.j2:12,19` mandates **exactly 6 workers** in fixed order [15, 16]. This is a real contradiction; `assess.j2` is documented as the source of truth (per the dead-code disclaimer in §3.4 and the `assess.j2` "EXACT role names" wording [16]). Recommendation: update `boss.j2:59-60` to read "exactly 6". One of the five investigations caught this; it is independently re-verified.
+`boss.j2:59-60` instructs the BOSS to decompose Exploiter / Fixer into **"4-5 workers"**, while `assess.j2:12,19` mandates **exactly 6 workers** in fixed order [15, 16]. This is a real contradiction; `assess.j2` is documented as the source of truth (per the "EXACT role names" wording [16]). Recommendation: update `boss.j2:59-60` to read "exactly 6". One of the five investigations caught this; it is independently re-verified.
 
-**Citations.** [15] `prompts/domains/secbench/boss.j2:16-65` · [16] `prompts/domains/secbench/assess.j2:1-82` · [17] `plugins/security/prompt_strategy.py:83-239` · [18] `prompts/inputs/{user,cve,control}.j2` · [19] `plugins/security/tests/test_prompt_unification_invariants.py:1-300` · [20] `prompts/domains/secbench/manager/{builder,exploiter,fixer}.j2:1` · [21] `plugins/security/tests/test_prompt_unification_invariants.py:300-348`
+**Citations.** [15] `prompts/domains/secbench/boss.j2:16-65` · [16] `prompts/domains/secbench/assess.j2:1-82` · [17] `plugins/security/prompt_strategy.py:83-239` · [18] `prompts/inputs/{user,cve,control}.j2` · [19] `plugins/security/tests/test_prompt_unification_invariants.py:1-300`
 
 ---
 
@@ -581,13 +581,13 @@ cat runs/<run_id>/testcase/repro.sh            # the Repro-Creator's determinist
 ls  runs/<run_id>/src/                         # full host mirror of container /src
 ```
 
-The `git diff` deliverables (`repo_changes.diff`, `model_patch.diff`) are **prompted contracts** rather than orchestrator-side captures: `prompts/domains/secbench/manager/builder.j2:25` and `manager/fixer.j2:149-153` instruct the workers to write them themselves [67].
+The `git diff` deliverables (`repo_changes.diff`, `model_patch.diff`) are **prompted contracts** rather than orchestrator-side captures: `prompts/domains/secbench/worker/builder.j2:54` and `worker/fixer.j2:76-84` instruct the workers to write them themselves [67].
 
 ### 8.4 Per-study aggregation
 
 `collect.py` copies the per-run trace into `experiments/<study>/artifacts/<cell>/<task>/replicate-<n>/<run_id>/`, holding mirrors of `run_manifest.json`, `events.jsonl`, `effective_config.yaml`, `stdout_stderr.log`, and the entire `testcase/` directory [68]. **This directory is created on demand** — if `collect.py` hasn't been run since the last `runs/<run_id>/` was created, the mirror is absent.
 
-**Citations.** [63] `experiments/shared/scripts/register_run.py` · [64] sample `runs/<uuid>/run_manifest.json` · [65] `infrastructure/workers/claude_code_worker.py:92, 464-471` vs `infrastructure/adapters/worker/claude_sdk_adapter.py` · [66] `infrastructure/workers/claude_code_worker.py:294` · [67] `prompts/domains/secbench/{manager/builder.j2:25, manager/fixer.j2:149-153}` · [68] `experiments/2026-04-23-initial-secbench/scripts/collect.py:94-99, 146-173`
+**Citations.** [63] `experiments/shared/scripts/register_run.py` · [64] sample `runs/<uuid>/run_manifest.json` · [65] `infrastructure/workers/claude_code_worker.py:92, 464-471` vs `infrastructure/adapters/worker/claude_sdk_adapter.py` · [66] `infrastructure/workers/claude_code_worker.py:294` · [67] `prompts/domains/secbench/{worker/builder.j2:54, worker/fixer.j2:76-84}` · [68] `experiments/2026-04-23-initial-secbench/scripts/collect.py:94-99, 146-173`
 
 ---
 

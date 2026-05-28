@@ -733,7 +733,6 @@ Tier 1: System Identity       (prompts/system.j2)
 Tier 2: Role Persona           (prompts/roles/{boss,manager,worker,pending}.j2)
   └─ Role-specific behavior and constraints
 Tier 3: Operation Instructions (prompts/operations/{assess,decomposition,execution}.j2)
-  └─ + Context (sibling.j2, workspace.j2)
 Tier 4: Domain Extension       (optional, via PromptStrategy protocol)
   └─ Domain-specific templates (e.g., SEC-bench cybersecurity prompts)
 ```

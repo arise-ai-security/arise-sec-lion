@@ -241,7 +241,7 @@ FROM agent_events WHERE run_id = ? ORDER BY depth, created_at;
 If tasks remain vague at deeper levels, root cause is in prompt chain:
 1. `assess.j2`: Does it give clear criteria for "concrete enough to execute"?
 2. `decomposition.j2`: Does it instruct LLM to make subtasks MORE specific than parent?
-3. Domain templates (`manager/builder.j2` etc.): Enough concrete subtask examples?
+3. Worker templates (`worker/builder.j2`, `worker/exploiter.j2`, `worker/fixer.j2`, `worker/reporter.j2`): Enough concrete subtask examples?
 
 **Fix direction**: Decomposition prompt must require each subtask is strictly more concrete than parent, with exact commands, file paths, and success criteria.
 
