@@ -10,6 +10,7 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable, Coroutine
 
     from core.ports.domain_plugin_port import DomainPlugin
 
@@ -53,14 +54,10 @@ def main(args: list[str] | None = None) -> None:
     cleanup_registry = CleanupRegistry()
     cleanup_registry.install(signals=(signal.SIGTERM, signal.SIGINT))
 
-    handlers = {
+    handlers: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {
         "run": _run_task,
-        "events": lambda a, *, cleanup_registry: _query_projection(
-            a, "events", cleanup_registry=cleanup_registry
-        ),
-        "summary": lambda a, *, cleanup_registry: _query_projection(
-            a, "summary", cleanup_registry=cleanup_registry
-        ),
+        "events": partial(_query_projection, output_type="events"),
+        "summary": partial(_query_projection, output_type="summary"),
         "list": _list_runs,
         "prompts": _trace_prompts,
     }
@@ -86,8 +83,7 @@ def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arise",
         description=(
-            "Arise Sec Lion - A recursive, self-healing multi-agent orchestration "
-            "platform."
+            "Arise Sec Lion - A recursive, self-healing multi-agent orchestration platform."
         ),
     )
     parser.add_argument("-c", "--config", type=Path, help="Path to YAML configuration file")
@@ -129,9 +125,7 @@ def _create_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--format",
             choices=(
-                ["json", "text"]
-                if name == "summary"
-                else ["json", "jsonl", "text", "compact"]
+                ["json", "text"] if name == "summary" else ["json", "jsonl", "text", "compact"]
             ),
             default="json",
         )
@@ -222,8 +216,7 @@ async def _run_task(
             summary = await pipeline.execute_summary(root_agent_id=result.root_id)
     except Exception:
         logger.exception(
-            "Failed to project run summary for %s; manifest will record "
-            "summary_available=false",
+            "Failed to project run summary for %s; manifest will record summary_available=false",
             result.root_id,
         )
 
@@ -315,10 +308,12 @@ def _apply_worker_overrides(settings: Settings, args: argparse.Namespace) -> Set
     if not worker_model and not worker_tool:
         return settings  # No overrides
 
-    new_worker = settings.worker.model_copy(update={
-        **({"model": worker_model} if worker_model else {}),
-        **({"tool": worker_tool} if worker_tool else {}),
-    })
+    new_worker = settings.worker.model_copy(
+        update={
+            **({"model": worker_model} if worker_model else {}),
+            **({"tool": worker_tool} if worker_tool else {}),
+        }
+    )
 
     # Return new settings with updated worker config
     return settings.model_copy(update={"worker": new_worker})
@@ -385,7 +380,7 @@ async def _list_runs(
                     "status": type(evts[-1]).__name__,
                 }
             )
-        runs = sorted(runs, key=lambda x: str(x["started_at"]), reverse=True)[:args.limit]
+        runs = sorted(runs, key=lambda x: str(x["started_at"]), reverse=True)[: args.limit]
 
         if args.format == "json":
             print(json.dumps(runs, indent=2))
@@ -432,8 +427,7 @@ def _resolve_agent_id(
     from presentation.persistence import RunPersistence
 
     agent_id = (
-        requested_agent_id
-        or RunPersistence(Path(settings.output.directory)).get_last_run_id()
+        requested_agent_id or RunPersistence(Path(settings.output.directory)).get_last_run_id()
     )
     if agent_id is None:
         print("Error: No agent-id specified and no last run found.")

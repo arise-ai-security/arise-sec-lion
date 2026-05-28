@@ -83,5 +83,6 @@ files = [
     "plugins",
     "presentation",
 ]
+plugins = ["pydantic.mypy"]
 exclude = '(^|/)(tests|runs|_legacy)/|^scripts/|^dataset-final/|^datasets-legacy/'
 ignore_missing_imports = true

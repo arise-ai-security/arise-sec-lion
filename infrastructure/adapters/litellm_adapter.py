@@ -62,11 +62,7 @@ def _supports_anthropic_cache(model: str) -> bool:
     # passes `cache_control` through on these models and ignores/rejects it
     # elsewhere, so we gate emission defensively.
     m = model.lower()
-    return (
-        "claude" in m
-        or m.startswith("anthropic/")
-        or m.startswith("bedrock/anthropic.")
-    )
+    return "claude" in m or m.startswith("anthropic/") or m.startswith("bedrock/anthropic.")
 
 
 def _apply_anthropic_cache_to_messages(
@@ -389,9 +385,7 @@ class LiteLLMAdapter(LLMPort):
             # when no tools are defined. Strip tool content so the fallback
             # "force final answer" call after max iterations works cleanly.
             call_kwargs["messages"] = _strip_tool_content(messages)
-        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(
-            call_kwargs["messages"], model
-        )
+        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(call_kwargs["messages"], model)
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
@@ -409,9 +403,7 @@ class LiteLLMAdapter(LLMPort):
                 args = tc.function.arguments
                 if isinstance(args, str):
                     args = json.loads(args)
-                tool_calls.append(
-                    ToolCall(id=tc.id, name=tc.function.name, arguments=args)
-                )
+                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
         elif tools and content:
             # Qwen-family models (e.g. qwen3.5 via Ollama) may emit tool calls
             # as plain JSON in message.content instead of populating
@@ -565,16 +557,16 @@ def _try_parse_content_tool_calls(
     if tagged_items:
         tool_name_set = {t.get("function", {}).get("name") for t in tools}
         tool_param_index = _build_tool_param_index(tools)
-        calls: list[ToolCall] = []
+        tagged_calls: list[ToolCall] = []
         for item in tagged_items:
             tc = _match_single_tool_call(item, tool_name_set, tool_param_index)
             if tc is None:
                 return None  # not a tool call — bail to subtask parser
-            calls.append(tc)
-        if calls:
-            for tc in calls:
+            tagged_calls.append(tc)
+        if tagged_calls:
+            for tc in tagged_calls:
                 logger.info("Parsed <tool_call>-tagged tool call: %s", tc.name)
-            return calls
+            return tagged_calls
 
     if not stripped.startswith(("{", "[")):
         return None
@@ -594,10 +586,7 @@ def _try_parse_content_tool_calls(
     else:
         return None
 
-    tool_name_set = {
-        t.get("function", {}).get("name")
-        for t in tools
-    }
+    tool_name_set = {t.get("function", {}).get("name") for t in tools}
     tool_param_index = _build_tool_param_index(tools)
 
     calls: list[ToolCall] = []
@@ -653,10 +642,7 @@ def _match_single_tool_call(
 
     # Shape 2: bare arguments dict — keys subset of exactly one tool
     keys = frozenset(item.keys())
-    candidates = [
-        name for name, params in tool_param_index.items()
-        if keys <= params
-    ]
+    candidates = [name for name, params in tool_param_index.items() if keys <= params]
     if len(candidates) == 1:
         return ToolCall(
             id=f"qwen-text-{uuid.uuid4().hex[:8]}",
