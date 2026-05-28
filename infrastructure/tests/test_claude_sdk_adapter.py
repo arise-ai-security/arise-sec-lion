@@ -803,9 +803,7 @@ class TestMCPServersWiring:
     ) -> None:
         """An explicit config path wins over the process environment."""
         # Given: both an env override and an explicit adapter config path.
-        adapter = ClaudeAgentSDKAdapter(
-            SDKAdapterConfig(cli_path="/opt/claude/bin/claude")
-        )
+        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig(cli_path="/opt/claude/bin/claude"))
         monkeypatch.setenv(CLAUDE_CODE_CLI_PATH_ENV, "/usr/local/bin/claude")
         captured: dict[str, object] = {}
 
@@ -863,7 +861,7 @@ class TestMCPServersWiring:
         assert "docker exec -i" in content
         assert "--user 1000:1000" in content
         assert "-w /src/demo" in content
-        assert "abc123def456 claude \"$@\"" in content
+        assert 'abc123def456 claude "$@"' in content
 
     def test_build_options_resolves_relative_container_wrapper_path(
         self,
@@ -972,8 +970,8 @@ class TestToolUseInputPayload:
         """Emitted content round-trips through the cheating-attempt detector.
 
         Cross-cutting integration check: the content this adapter emits must be
-        parseable by `run_metrics._extract_bash_command` and recognised as a
-        cheating signature by `_is_cheating_command`.
+        parseable by `cheating_detector._extract_bash_command` and recognised
+        as a cheating signature by `_is_cheating_command`.
         """
         # Given: an adapter and captured options kwargs.
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
@@ -983,7 +981,7 @@ class TestToolUseInputPayload:
             captured.update(kwargs)
             return MagicMock()
 
-        from experiments.shared.scripts.run_metrics import (
+        from experiments.shared.scripts.analysis.text.cheating_detector import (
             _extract_bash_command,
             _is_cheating_command,
         )

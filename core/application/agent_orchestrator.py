@@ -104,7 +104,7 @@ def _looks_like_glm_prose_preamble(content: str) -> bool:
     if trimmed.startswith("<think>"):
         end = trimmed.find("</think>")
         if end != -1:
-            trimmed = trimmed[end + len("</think>"):].lstrip()
+            trimmed = trimmed[end + len("</think>") :].lstrip()
     if not trimmed.startswith(_GLM_PROSE_PREAMBLE_OPENERS):
         return False
     head = trimmed[:200]
@@ -152,7 +152,8 @@ def _reasoning_contradicts_execute(reasoning: str) -> bool:
 
 
 def _is_prose_misinterpreted_assessment(
-    result: AssessmentResult, original_content: str,
+    result: AssessmentResult,
+    original_content: str,
 ) -> bool:
     """Detect a glm-style prose response silently parsed as ``execute``.
 
@@ -213,16 +214,16 @@ class AgentOrchestrator:
     """
 
     def __init__(
-            self,
-            llm_port: "LLMPort",
-            worker_port: "WorkerToolPort",
-            prompt_builder: "PromptBuilder",
-            child_factory: "ChildAgentFactory",
-            realtime_callback: "RealtimeCallbackPort | None" = None,
-            llm_query_executor: LLMQueryExecutor | None = None,
-            toolset_resolver: ToolsetPolicyResolver | None = None,
-            skip_judge: bool = False,
-            format_repairer: "FormatRepairerPort | None" = None,
+        self,
+        llm_port: "LLMPort",
+        worker_port: "WorkerToolPort",
+        prompt_builder: "PromptBuilder",
+        child_factory: "ChildAgentFactory",
+        realtime_callback: "RealtimeCallbackPort | None" = None,
+        llm_query_executor: LLMQueryExecutor | None = None,
+        toolset_resolver: ToolsetPolicyResolver | None = None,
+        skip_judge: bool = False,
+        format_repairer: "FormatRepairerPort | None" = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -264,8 +265,8 @@ class AgentOrchestrator:
                 # already scoped it to an atomic worker. Skip the assessment
                 # LLM and execute directly. This is domain-agnostic — the
                 # ``simple`` hint comes from whichever domain prompt drove
-                # the decomposition (e.g. secbench manager templates that
-                # mark Build-Setup/Patch-Creator/etc. as simple).
+                # the decomposition (e.g. domain manager templates marking
+                # atomic leaf workers as simple).
                 # Open-source models otherwise re-decompose these into
                 # duplicates of their own siblings, wasting tokens.
                 if agent.estimated_complexity == "simple":
@@ -351,8 +352,7 @@ class AgentOrchestrator:
                             break
                         if attempt < _ASSESSMENT_PARSE_RETRIES - 1:
                             logger.warning(
-                                "Assessment parse attempt %d/%d failed for "
-                                "agent=%s: %s",
+                                "Assessment parse attempt %d/%d failed for agent=%s: %s",
                                 attempt + 1,
                                 _ASSESSMENT_PARSE_RETRIES,
                                 agent.agent_id,
@@ -361,7 +361,8 @@ class AgentOrchestrator:
                         continue
 
                     if _is_prose_misinterpreted_assessment(
-                        candidate, response.content,
+                        candidate,
+                        response.content,
                     ):
                         # GLM-specific failure mode: model emits "I'll start by
                         # researching…" prose; format repairer transforms it
@@ -373,9 +374,7 @@ class AgentOrchestrator:
                         # productive next step is the corrective re-prompt.
                         # GPT/Qwen/DeepSeek never emit this preamble, so this
                         # branch is glm-only.
-                        last_parse_error = ValueError(
-                            "Prose preamble misclassified as 'execute'"
-                        )
+                        last_parse_error = ValueError("Prose preamble misclassified as 'execute'")
                         logger.warning(
                             "Assessment attempt %d/%d for agent=%s produced a "
                             "prose-style preamble (parsed as 'execute'); "
@@ -527,13 +526,13 @@ class AgentOrchestrator:
                 return
 
     async def execute_task(
-            self,
-            agent: "AgentSession",
-            working_directory: str | None = None,
-            workspace_context: str | None = None,
-            handoff: "Handoff | None" = None,
-            task_context_overrides: dict[str, Any] | None = None,
-            persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
+        self,
+        agent: "AgentSession",
+        working_directory: str | None = None,
+        workspace_context: str | None = None,
+        handoff: "Handoff | None" = None,
+        task_context_overrides: dict[str, Any] | None = None,
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None" = None,
     ) -> None:
         """Execute task for a WORKER agent using worker tool.
 
@@ -568,8 +567,7 @@ class AgentOrchestrator:
                 criteria_block = ""
                 if agent.success_criteria:
                     criteria_block = (
-                        f"\n\n**Success criteria you MUST satisfy:**\n"
-                        f"{agent.success_criteria}\n"
+                        f"\n\n**Success criteria you MUST satisfy:**\n{agent.success_criteria}\n"
                     )
                 prompt += (
                     "\n\n## Previous Attempt Feedback (Retry)\n"
@@ -623,9 +621,9 @@ class AgentOrchestrator:
 
     @contextmanager
     def _timed_operation(
-            self,
-            agent: "AgentSession",
-            operation_type: str,
+        self,
+        agent: "AgentSession",
+        operation_type: str,
     ) -> Iterator[None]:
         """Emit start/finish telemetry around an operation."""
         start_time = time.monotonic()
@@ -639,9 +637,7 @@ class AgentOrchestrator:
                 duration_seconds=duration,
             )
 
-    async def _check_limit_violations(
-        self, agent: "AgentSession", subtasks: list
-    ) -> str | None:
+    async def _check_limit_violations(self, agent: "AgentSession", subtasks: list) -> str | None:
         """Check hard limits. Returns failure reason or None.
 
         Async to compose with the atomic reservation path in
@@ -653,9 +649,9 @@ class AgentOrchestrator:
 
         # Hard limit: children per node
         if (
-                limits is not None
-                and limits.is_children_limited()
-                and len(subtasks) > limits.max_children_per_node
+            limits is not None
+            and limits.is_children_limited()
+            and len(subtasks) > limits.max_children_per_node
         ):
             violations.append(
                 {
@@ -690,9 +686,9 @@ class AgentOrchestrator:
         return None
 
     async def _spawn_children(
-            self,
-            agent: "AgentSession",
-            subtasks: list["Subtask"],
+        self,
+        agent: "AgentSession",
+        subtasks: list["Subtask"],
     ) -> str | None:
         """Validate limits, determine child role, and spawn children.
 
@@ -714,8 +710,7 @@ class AgentOrchestrator:
         if not subtasks:
             # Every proposed subtask was a duplicate → force direct execution
             logger.warning(
-                "Agent %s: all subtasks duplicate sibling roles — "
-                "forcing direct execution",
+                "Agent %s: all subtasks duplicate sibling roles — forcing direct execution",
                 agent.agent_id,
             )
             agent.apply_complexity_result(
@@ -774,9 +769,9 @@ class AgentOrchestrator:
         return m.group(1) if m else None
 
     def _dedup_subtasks_against_siblings(
-            self,
-            agent: "AgentSession",
-            subtasks: list["Subtask"],
+        self,
+        agent: "AgentSession",
+        subtasks: list["Subtask"],
     ) -> list["Subtask"]:
         """Remove subtasks whose role names duplicate the agent's own siblings.
 
@@ -808,8 +803,7 @@ class AgentOrchestrator:
             prefix = self._extract_role_prefix(st.description)
             if prefix and prefix in forbidden:
                 logger.info(
-                    "Agent %s: stripping duplicate subtask [%s] "
-                    "(already covered by sibling/self)",
+                    "Agent %s: stripping duplicate subtask [%s] (already covered by sibling/self)",
                     agent.agent_id,
                     prefix,
                 )
@@ -843,9 +837,9 @@ class AgentOrchestrator:
         return registry.get_tree_role_prefixes(agent.agent_id)
 
     async def _apply_assessment_result(
-            self,
-            agent: "AgentSession",
-            result: AssessmentResult,
+        self,
+        agent: "AgentSession",
+        result: AssessmentResult,
     ) -> None:
         """Apply the parsed assessment outcome to the agent.
 
@@ -856,9 +850,7 @@ class AgentOrchestrator:
         """
         if result.action == "infeasible":
             if result.constraint_failure is None:
-                agent.fail_with_reason(
-                    "Assessment reported infeasible but no failure details"
-                )
+                agent.fail_with_reason("Assessment reported infeasible but no failure details")
                 return
             agent.mark_infeasible(
                 reason=result.constraint_failure.reason,
@@ -889,11 +881,11 @@ class AgentOrchestrator:
             agent.fail_with_reason(failure_msg)
 
     async def _query_llm(
-            self,
-            agent: "AgentSession",
-            prompt: str,
-            operation: OperationType,
-            tool_context: "ActiveToolContext | None" = None,
+        self,
+        agent: "AgentSession",
+        prompt: str,
+        operation: OperationType,
+        tool_context: "ActiveToolContext | None" = None,
     ) -> "LLMResponse":
         """Query the LLM with optional tool-calling context.
 
@@ -949,7 +941,8 @@ class AgentOrchestrator:
         """
         try:
             return await parse_subtasks_from_llm_async(
-                response_content, repairer=self._format_repairer,
+                response_content,
+                repairer=self._format_repairer,
             )
         except InfeasibleError as e:
             if _looks_like_real_constraint_failure(response_content):
@@ -982,12 +975,12 @@ class AgentOrchestrator:
             return None
         try:
             return await parse_subtasks_from_llm_async(
-                recovered, repairer=self._format_repairer,
+                recovered,
+                repairer=self._format_repairer,
             )
         except InfeasibleError as e2:
             logger.warning(
-                "Agent %s reported unsatisfiable constraints (after recovery "
-                "turn): %s",
+                "Agent %s reported unsatisfiable constraints (after recovery turn): %s",
                 agent.agent_id,
                 e2.failure.format_message(),
             )
@@ -999,14 +992,11 @@ class AgentOrchestrator:
             return None
         except ValueError as e2:
             logger.warning(
-                "Failed to parse subtasks for agent=%s after recovery turn: "
-                "%s",
+                "Failed to parse subtasks for agent=%s after recovery turn: %s",
                 agent.agent_id,
                 e2,
             )
-            agent.fail_with_reason(
-                f"Failed to parse subtasks (after recovery): {e2}"
-            )
+            agent.fail_with_reason(f"Failed to parse subtasks (after recovery): {e2}")
             return None
 
     async def _recover_assessment_via_reprompt(
@@ -1182,8 +1172,8 @@ class AgentOrchestrator:
 
     @staticmethod
     def _emit_probe_events(
-            agent: "AgentSession",
-            tool_records: list,
+        agent: "AgentSession",
+        tool_records: list,
     ) -> None:
         for record in tool_records:
             agent.emit_probe_started(probe_type=record.tool_name)

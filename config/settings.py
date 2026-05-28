@@ -84,8 +84,7 @@ class BossConfig(BaseModel):
     api_base: str | None = Field(
         default=None,
         description=(
-            "Optional LiteLLM api_base override "
-            "(e.g. https://ollama.com for Ollama Cloud)."
+            "Optional LiteLLM api_base override (e.g. https://ollama.com for Ollama Cloud)."
         ),
     )
 
@@ -101,8 +100,7 @@ class ManagerConfig(BaseModel):
     api_base: str | None = Field(
         default=None,
         description=(
-            "Optional LiteLLM api_base override "
-            "(e.g. https://ollama.com for Ollama Cloud)."
+            "Optional LiteLLM api_base override (e.g. https://ollama.com for Ollama Cloud)."
         ),
     )
 
@@ -165,8 +163,7 @@ class WorkerConfig(BaseModel):
     base_url: str | None = Field(
         default=None,
         description=(
-            "Optional base URL for the worker LLM "
-            "(e.g. https://ollama.com for Ollama Cloud)."
+            "Optional base URL for the worker LLM (e.g. https://ollama.com for Ollama Cloud)."
         ),
     )
     tool_params: WorkerToolParams = Field(default_factory=WorkerToolParams)
@@ -255,7 +252,7 @@ class ToolsetConfig(BaseModel):
               toolsets:
                 recon: {enabled: false}
           domains:
-            secbench:
+            <domain>:
               manager:
                 max_iterations: 3
                 toolsets:
