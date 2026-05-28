@@ -53,16 +53,16 @@ class TestSecurityPromptBuilding:
         assert "<cve_instance>" in prompt
         assert "demo.cve-2024-0001" in prompt
         assert "**Available tools:**" not in prompt
-        assert "Additional tool-calling capabilities are not available for this assessment." in prompt
+        assert (
+            "Additional tool-calling capabilities are not available for this assessment." in prompt
+        )
 
     def test_secbench_manager_prompt_strategy_path_renders(self) -> None:
         parser = PromptParser()
-        domain_plugin = SecurityDomainPlugin()
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
             strategy=SecBenchPromptStrategy(),
-            domain_plugin=domain_plugin,
         )
         builder.set_run_context(user_prompt="Root SEC-bench request")
 
@@ -89,7 +89,6 @@ class TestSecurityPromptBuilding:
         sections = parser.parse(prompt)
         assert any(section.tag == "persona" for section in sections)
         assert "<cve_instance>" in prompt
-        assert "Builder Manager" in prompt
         assert "<user_prompt>\nRoot SEC-bench request\n</user_prompt>" not in prompt
         assert "[Builder] Verify the environment setup" in prompt
         assert "[Builder-1]" not in prompt
@@ -104,7 +103,6 @@ class TestSecurityPromptBuilding:
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
             strategy=SecBenchPromptStrategy(),
-            domain_plugin=domain_plugin,
         )
 
         briefing = Briefing(

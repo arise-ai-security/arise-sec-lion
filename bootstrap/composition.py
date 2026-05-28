@@ -124,8 +124,7 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
         params = settings.worker.tool_params.claude_code
         if params is None:
             raise RuntimeError(
-                "worker.tool_params.claude_code must be populated when "
-                "worker.tool='claude_code'"
+                "worker.tool_params.claude_code must be populated when worker.tool='claude_code'"
             )
         return ClaudeCodeWorker(
             model=settings.worker.model,
@@ -240,9 +239,13 @@ def _docker_pid_cleanup() -> None:
     try:
         listing = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
             [
-                docker, "ps", "-a",
-                "--filter", f"label=arise.session_pid={pid}",
-                "--format", "{{.ID}}",
+                docker,
+                "ps",
+                "-a",
+                "--filter",
+                f"label=arise.session_pid={pid}",
+                "--format",
+                "{{.ID}}",
             ],
             check=True,
             capture_output=True,
@@ -319,7 +322,6 @@ def create_runtime_cli(
         "prompts",
         settings.worker.tool,
         strategy=active_domain_components.prompt_strategy,
-        domain_plugin=plugin,
     )
 
     is_flat = settings.orchestration.mode == "flat"

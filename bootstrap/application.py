@@ -104,8 +104,7 @@ class ApplicationConfig:
             self.flat_worker is None or self.flat_invariant_builder is None
         ):
             raise ValueError(
-                "orchestration.mode='flat' requires both flat_worker and "
-                "flat_invariant_builder"
+                "orchestration.mode='flat' requires both flat_worker and flat_invariant_builder"
             )
 
 
@@ -138,7 +137,6 @@ def get_application(
         "prompts",
         config.default_worker_tool,
         strategy=config.prompt_strategy,
-        domain_plugin=config.domain_plugin,
     )
 
     repository = AgentRepository(

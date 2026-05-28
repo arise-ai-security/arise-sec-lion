@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -43,27 +42,13 @@ class WorkerExecutionContext:
 class DomainPlugin(Protocol):
     """Optional domain-specific behavior injected from bootstrap."""
 
-    def infer_context(self, task_text: str, **kwargs: object) -> object | None:
-        ...
+    def infer_context(self, task_text: str, **kwargs: object) -> object | None: ...
 
-    def enrich_prompt(
-        self,
-        prompt: str,
-        *,
-        domain_context: object | None,
-        briefing: object | None = None,
-        chain_factory: Callable[[], object] | None = None,
-    ) -> str:
-        ...
+    def get_run_metadata(self, domain_context: object) -> JsonObject: ...
 
-    def get_run_metadata(self, domain_context: object) -> JsonObject:
-        ...
+    def get_tag_mappings(self) -> dict[str, SectionProvenance]: ...
 
-    def get_tag_mappings(self) -> dict[str, SectionProvenance]:
-        ...
-
-    def get_provenance_patterns(self) -> list[tuple[str, SectionProvenance]]:
-        ...
+    def get_provenance_patterns(self) -> list[tuple[str, SectionProvenance]]: ...
 
     async def prepare_run(
         self,
@@ -71,8 +56,7 @@ class DomainPlugin(Protocol):
         root_id: UUID,
         run_output_path: Path,
         domain_context: object | None,
-    ) -> PreparedRunWorkspace | None:
-        ...
+    ) -> PreparedRunWorkspace | None: ...
 
     async def prepare_worker_execution(
         self,
@@ -81,8 +65,7 @@ class DomainPlugin(Protocol):
         agent_id: UUID,
         run_output_path: Path,
         domain_context: object | None,
-    ) -> WorkerExecutionContext | None:
-        ...
+    ) -> WorkerExecutionContext | None: ...
 
     async def cleanup_worker_execution(
         self,
@@ -90,8 +73,6 @@ class DomainPlugin(Protocol):
         root_id: UUID,
         agent_id: UUID,
         domain_context: object | None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    def get_prompt_strategy(self) -> PromptStrategy | None:
-        ...
+    def get_prompt_strategy(self) -> PromptStrategy | None: ...

@@ -52,36 +52,6 @@
         **CONSTRAINT: No agents remaining.** You MUST execute directly.
     {% endif %}
 </operation>
-{% if briefing %}
-
-    <briefing>
-        Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
-        {% if briefing.ancestry %}
-            Ancestry:
-            {% for ancestor in briefing.ancestry %}
-                - [{{ ancestor.role }}] {{ ancestor.task_summary }}
-            {% endfor %}
-        {% endif %}
-        {% if briefing.decisions %}
-            Inherited decisions:
-            {% for decision in briefing.decisions %}
-                - {{ decision }}
-            {% endfor %}
-        {% endif %}
-    </briefing>
-    {% if briefing.subtask_justification %}
-    <thinker_justification>
-        Your supervisor assigned this task with the following context and expectations:
-        {% for key, value in briefing.subtask_justification.items() %}
-            - **{{ key | replace('_', ' ') | title }}**: {{ value }}
-        {% endfor %}
-    </thinker_justification>
-    {% endif %}
-{% endif %}
-
-<task>
-    {{ task_description }}
-</task>
 
 <output_format>
     Return ONLY valid JSON.

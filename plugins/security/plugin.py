@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from core.domain.values.prompt_trace import SectionProvenance
 from core.ports.domain_plugin_port import (
@@ -16,16 +16,13 @@ from core.ports.domain_plugin_port import (
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.image_resolver import resolve_secbench_image
-from plugins.security.prompt_strategy import SecBenchPromptStrategy, detect_benchmark_branch
-from plugins.security.security_tool import get_tools_for_phase
+from plugins.security.prompt_strategy import SecBenchPromptStrategy
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from uuid import UUID
 
     from core.application.services import PromptStrategy
-    from core.application.services.prompt.prompt_builder import TemplateChain
     from core.domain.values.json_types import JsonObject
     from plugins.security.container_runtime import (
         SecBenchContainerSession,
@@ -67,7 +64,7 @@ class SecurityDomainPlugin(DomainPlugin):
         self._container_runtime = container_runtime
 
     def get_prompt_strategy(self) -> PromptStrategy | None:
-        return SecBenchPromptStrategy()
+        return SecBenchPromptStrategy(enabled_tools=self._enabled_tools)
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("context_file") or kwargs.get("cve_file")
@@ -75,33 +72,6 @@ class SecurityDomainPlugin(DomainPlugin):
         if isinstance(cve_file, (str, Path)):
             return CVEInstance.from_json_file(cve_file)
         return self._inference_service.infer_instance(task_text, fail_fast=fail_fast)
-
-    def enrich_prompt(
-        self,
-        prompt: str,
-        *,
-        domain_context: object | None,
-        briefing: object | None = None,
-        chain_factory: Callable[[], object] | None = None,
-    ) -> str:
-        cve_instance = _as_cve_instance(domain_context)
-        if cve_instance is None or not self._enabled_tools or chain_factory is None:
-            return prompt
-
-        phase = detect_benchmark_branch(briefing)  # type: ignore[arg-type]
-        if not phase:
-            return prompt
-
-        tools = get_tools_for_phase(phase, self._enabled_tools)
-        if not tools:
-            return prompt
-
-        chain = cast("TemplateChain", chain_factory())
-        enrichment = chain.render(
-            "domains/secbench/tools.j2",
-            security_tools=[tool.model_dump() for tool in tools],
-        ).build()
-        return f"{prompt}\n\n{enrichment}"
 
     def get_run_metadata(self, domain_context: object) -> JsonObject:
         cve_instance = _as_cve_instance(domain_context)
@@ -200,9 +170,7 @@ class SecurityDomainPlugin(DomainPlugin):
         lock = self._session_locks.setdefault(root_id, asyncio.Lock())
         async with lock:
             if root_id in self._sessions:
-                raise RuntimeError(
-                    f"SEC-bench container already active for run {root_id}"
-                )
+                raise RuntimeError(f"SEC-bench container already active for run {root_id}")
 
             session = await self._container_runtime.start_session(
                 cve=cve_instance,

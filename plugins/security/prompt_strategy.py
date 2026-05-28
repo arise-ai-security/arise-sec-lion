@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from core.application.services import PromptContext
 from plugins.security.cve_instance import CVEInstance
+from plugins.security.security_tool import get_tools_for_phase
 
 
 if TYPE_CHECKING:
@@ -93,6 +94,9 @@ def _with_cve_display(
 class SecBenchPromptStrategy:
     """SEC-bench specific prompt strategy."""
 
+    def __init__(self, enabled_tools: list[str] | None = None) -> None:
+        self._enabled_tools = enabled_tools or []
+
     def extend_assessment_prompt(
         self,
         chain: "TemplateChain",
@@ -132,27 +136,9 @@ class SecBenchPromptStrategy:
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
 
-        chain = _with_cve_display(chain, cve_instance, phase=branch)
-        chain = chain.render("domains/secbench/manager.j2", **cve_ctx)
-
-        # OBSOLETE 2026-05-17 — manager/{role}.j2 templates were dead code on
-        # the happy path: assess_task → action="decompose" → _apply_assessment_result
-        # spawns children directly, bypassing evaluate_task (which is what
-        # renders these). They were only reachable via trigger_redecomposition.
-        # The .j2 files have been gutted in-place (kept as graveyard files
-        # with an explanatory header). See experiments/b1-batch-autogen/
-        # FINDINGS.md §5.2. This block stays commented as a marker until the
-        # redecomposition path is consciously redesigned.
-        # is_direct_boss_child = context.briefing is not None and len(context.briefing.ancestry) == 1
-        # if branch is not None and is_direct_boss_child:
-        #     chain = (
-        #         chain
-        #         .render_if(branch == "builder", "domains/secbench/manager/builder.j2", **cve_ctx)
-        #         .render_if(branch == "exploiter", "domains/secbench/manager/exploiter.j2", **cve_ctx)
-        #         .render_if(branch == "fixer", "domains/secbench/manager/fixer.j2", **cve_ctx)
-        #     )
-
-        return chain
+        return _with_cve_display(chain, cve_instance, phase=branch).render(
+            "domains/secbench/manager.j2", **cve_ctx
+        )
 
     def extend_worker_prompt(
         self,
@@ -173,12 +159,20 @@ class SecBenchPromptStrategy:
 
         if branch is not None:
             chain = (
-                chain
-                .render_if(branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx)
+                chain.render_if(
+                    branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx
+                )
                 .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
                 .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
                 .render_if(branch == "reporter", "domains/secbench/worker/reporter.j2", **cve_ctx)
             )
+            if self._enabled_tools:
+                tools = get_tools_for_phase(branch, self._enabled_tools)
+                if tools:
+                    chain = chain.render(
+                        "domains/secbench/tools.j2",
+                        security_tools=[tool.model_dump() for tool in tools],
+                    )
 
         return chain
 

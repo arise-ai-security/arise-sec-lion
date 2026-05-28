@@ -7,6 +7,7 @@
   Tier 4 (domains/*.j2)    - Optional domain-specific context
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID
@@ -35,7 +36,6 @@ FLAT_SUBAGENT_NOTE = (
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
-    from core.ports.domain_plugin_port import DomainPlugin
 
 
 class TemplateChain:
@@ -97,11 +97,9 @@ class PromptBuilder:
         template_dir: str | Path,
         default_tool: str,
         strategy: PromptStrategy | None = None,
-        domain_plugin: "DomainPlugin | None" = None,
     ) -> None:
         self.template_dir = Path(template_dir)
         self.default_tool = default_tool
-        self._domain_plugin = domain_plugin
         self.env = Environment(
             loader=FileSystemLoader(str(self.template_dir)),
             autoescape=False,  # noqa: S701 - plain text prompts, not HTML
@@ -148,6 +146,42 @@ class PromptBuilder:
     def chain(self) -> TemplateChain:
         return TemplateChain(self.env, "template")
 
+    def _append_volatile_suffix(
+        self,
+        chain: TemplateChain,
+        *,
+        user_prompt: str | None = None,
+        scope: SubtaskScope | None = None,
+        sibling_ctx: dict[str, Any] | None = None,
+        briefing: "Briefing | None" = None,
+        task_description: str | None = None,
+        workspace_context: str | None = None,
+    ) -> TemplateChain:
+        """Append the per-task volatile suffix to a stable-prefix chain.
+
+        The prompt is split into a stable prefix (system + role + operation +
+        strategy-extended domain content) followed by this trailing block of
+        per-task content (handoff, user prompt, scope, briefing, task,
+        workspace). Keeping the stable prefix byte-identical across calls is
+        what lets ``litellm_adapter`` realize prompt-cache hits on multi-turn
+        loops and across agents on the same CVE.
+        """
+        return (
+            chain.text_if(user_prompt, user_prompt)
+            .render_if(scope and scope.has_scope, "context/scope.j2", scope=scope)
+            .render_if(sibling_ctx, "context/sibling.j2", **(sibling_ctx or {}))
+            .render_if(briefing, "context/briefing.j2", briefing=briefing)
+            .text_if(
+                task_description is not None,
+                f"<task>\n    {task_description}\n</task>",
+            )
+            .text_if(
+                workspace_context,
+                f"<workspace>\n    Files in shared workspace:\n    "
+                f"{workspace_context}\n</workspace>",
+            )
+        )
+
     def _limits_context(
         self,
         hierarchy_limits: "HierarchyLimits | None",
@@ -189,6 +223,61 @@ class PromptBuilder:
             "current_total_agents": current_total_agents,
         }
 
+    def _build_role_prompt(
+        self,
+        prompt_ctx: PromptContext,
+        *,
+        role_template: str,
+        operation_template: str,
+        extender: Callable[[TemplateChain, PromptContext], "TemplateChain | None"] | None,
+    ) -> str:
+        """Compose system + role + operation + (strategy extend) + volatile suffix.
+
+        Template-method skeleton shared by assessment / boss / manager / worker
+        prompts. The variations among them collapse to: which role+operation
+        templates to render, and which strategy extender to invoke. Everything
+        else (PromptContext fields, the volatile suffix, the chain.build) lives
+        here.
+        """
+        limits = self._limits_context(prompt_ctx.hierarchy_limits)
+        capabilities = prompt_ctx.prompt_capabilities
+        sibling_ctx = (
+            prompt_ctx.handoff.to_template_dict() if prompt_ctx.handoff is not None else None
+        )
+        chain = (
+            self.chain()
+            .render(
+                "system.j2",
+                default_tool=prompt_ctx.default_tool,
+                agent_role=prompt_ctx.agent_role.value,
+            )
+            .render(role_template)
+            .render(
+                operation_template,
+                default_tool=prompt_ctx.default_tool,
+                has_tools=(capabilities.has_tools if capabilities is not None else False),
+                available_tools=(capabilities.available_tools if capabilities is not None else ()),
+                **limits,
+            )
+        )
+        if extender is not None:
+            extended = extender(chain, prompt_ctx)
+            chain = extended if extended is not None else chain
+        chain = self._append_volatile_suffix(
+            chain,
+            user_prompt=self._maybe_user_prompt_block(
+                task_description=prompt_ctx.task_description,
+                agent_role=prompt_ctx.agent_role,
+                briefing=prompt_ctx.briefing,
+            ),
+            scope=prompt_ctx.scope,
+            sibling_ctx=sibling_ctx,
+            briefing=prompt_ctx.briefing,
+            task_description=prompt_ctx.task_description,
+            workspace_context=prompt_ctx.workspace_context,
+        )
+        return chain.build()
+
     def build_assessment_prompt(
         self,
         task_description: str,
@@ -199,7 +288,6 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
     ) -> str:
-        limits = self._limits_context(hierarchy_limits)
         prompt_ctx = PromptContext(
             task_description=task_description,
             agent_id=agent_id,
@@ -211,47 +299,14 @@ class PromptBuilder:
             scope=scope,
             prompt_capabilities=prompt_capabilities,
         )
-        chain = (
-            self.chain()
-            .render(
-                "system.j2",
-                default_tool=self.default_tool,
-                agent_role=AgentRole.PENDING.value,
-            )
-            .render("roles/pending.j2")
-            .text_if(
-                user_prompt := self._maybe_user_prompt_block(
-                    task_description=task_description,
-                    agent_role=AgentRole.PENDING,
-                    briefing=briefing,
-                ),
-                user_prompt,
-            )
-            .render_if(
-                scope and scope.has_scope,
-                "context/scope.j2",
-                scope=scope,
-            )
-            .render(
-                "operations/assess.j2",
-                task_description=task_description,
-                briefing=briefing,
-                default_tool=self.default_tool,
-                has_tools=(
-                    prompt_capabilities.has_tools if prompt_capabilities is not None else False
-                ),
-                available_tools=(
-                    prompt_capabilities.available_tools if prompt_capabilities is not None else ()
-                ),
-                **limits,
-            )
+        return self._build_role_prompt(
+            prompt_ctx,
+            role_template="roles/pending.j2",
+            operation_template="operations/assess.j2",
+            extender=(
+                self._strategy.extend_assessment_prompt if self._strategy is not None else None
+            ),
         )
-        extended_chain = (
-            self._strategy.extend_assessment_prompt(chain, prompt_ctx)
-            if self._strategy is not None
-            else None
-        )
-        return (extended_chain or chain).build()
 
     def build_boss_delegation_prompt(
         self,
@@ -272,42 +327,12 @@ class PromptBuilder:
             hierarchy_limits=hierarchy_limits,
             prompt_capabilities=prompt_capabilities,
         )
-        limits = self._limits_context(hierarchy_limits)
-        chain = (
-            self.chain()
-            .render(
-                "system.j2",
-                default_tool=self.default_tool,
-                agent_role=AgentRole.BOSS.value,
-            )
-            .render("roles/boss.j2")
-            .text_if(
-                user_prompt := self._maybe_user_prompt_block(
-                    task_description=task_description,
-                    agent_role=AgentRole.BOSS,
-                ),
-                user_prompt,
-            )
-            .render(
-                "operations/decomposition.j2",
-                task_description=task_description,
-                briefing=None,
-                default_tool=self.default_tool,
-                has_tools=(
-                    prompt_capabilities.has_tools if prompt_capabilities is not None else False
-                ),
-                available_tools=(
-                    prompt_capabilities.available_tools if prompt_capabilities is not None else ()
-                ),
-                **limits,
-            )
+        return self._build_role_prompt(
+            prompt_ctx,
+            role_template="roles/boss.j2",
+            operation_template="operations/decomposition.j2",
+            extender=self._strategy.extend_boss_prompt if self._strategy is not None else None,
         )
-        extended_chain = (
-            self._strategy.extend_boss_prompt(chain, prompt_ctx)
-            if self._strategy is not None
-            else None
-        )
-        return (extended_chain or chain).build()
 
     def build_manager_decomposition_prompt(
         self,
@@ -333,67 +358,11 @@ class PromptBuilder:
             scope=scope,
             prompt_capabilities=prompt_capabilities,
         )
-        limits = self._limits_context(hierarchy_limits)
-        chain = (
-            self.chain()
-            .render(
-                "system.j2",
-                default_tool=self.default_tool,
-                agent_role=agent_role.value,
-            )
-            .render("roles/manager.j2")
-            .text_if(
-                user_prompt := self._maybe_user_prompt_block(
-                    task_description=task_description,
-                    agent_role=agent_role,
-                    briefing=briefing,
-                ),
-                user_prompt,
-            )
-            .render_if(
-                scope and scope.has_scope,
-                "context/scope.j2",
-                scope=scope,
-            )
-            .render(
-                "operations/decomposition.j2",
-                task_description=task_description,
-                briefing=briefing,
-                default_tool=self.default_tool,
-                has_tools=(
-                    prompt_capabilities.has_tools if prompt_capabilities is not None else False
-                ),
-                available_tools=(
-                    prompt_capabilities.available_tools if prompt_capabilities is not None else ()
-                ),
-                **limits,
-            )
-        )
-        extended_chain = (
-            self._strategy.extend_manager_prompt(chain, prompt_ctx)
-            if self._strategy is not None
-            else None
-        )
-        return (extended_chain or chain).build()
-
-    def _apply_domain_enrichment(
-        self,
-        prompt: str,
-        *,
-        domain_context: object | None = None,
-        briefing: "Briefing | None" = None,
-    ) -> str:
-        if self._domain_plugin is None:
-            return prompt
-
-        active_domain_context = (
-            domain_context if domain_context is not None else self._domain_context
-        )
-        return self._domain_plugin.enrich_prompt(
-            prompt,
-            domain_context=active_domain_context,
-            briefing=briefing,
-            chain_factory=self.chain,
+        return self._build_role_prompt(
+            prompt_ctx,
+            role_template="roles/manager.j2",
+            operation_template="operations/decomposition.j2",
+            extender=(self._strategy.extend_manager_prompt if self._strategy is not None else None),
         )
 
     def build_flat_prompt(
@@ -448,40 +417,9 @@ class PromptBuilder:
             handoff=handoff,
             workspace_context=workspace_context,
         )
-        sibling_ctx = handoff.to_template_dict() if handoff else {}
-        chain = (
-            self.chain()
-            .render(
-                "system.j2",
-                default_tool=self.default_tool,
-                agent_role=AgentRole.WORKER.value,
-            )
-            .render("roles/worker.j2")
-            .render_if(handoff, "context/sibling.j2", **sibling_ctx)
-            .text_if(
-                user_prompt := self._maybe_user_prompt_block(
-                    task_description=task_description,
-                    agent_role=AgentRole.WORKER,
-                    briefing=briefing,
-                ),
-                user_prompt,
-            )
-            .render(
-                "operations/execution.j2",
-                task_description=task_description,
-                workspace_context=workspace_context,
-                briefing=briefing,
-            )
-        )
-        extended_chain = (
-            self._strategy.extend_worker_prompt(chain, prompt_ctx)
-            if self._strategy is not None
-            else None
-        )
-        prompt = (extended_chain or chain).build()
-
-        return self._apply_domain_enrichment(
-            prompt,
-            domain_context=domain_context,
-            briefing=briefing,
+        return self._build_role_prompt(
+            prompt_ctx,
+            role_template="roles/worker.j2",
+            operation_template="operations/execution.j2",
+            extender=(self._strategy.extend_worker_prompt if self._strategy is not None else None),
         )
