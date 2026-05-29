@@ -97,6 +97,20 @@ def aggregate(per_run: Sequence[dict]) -> dict:
         for mod, k in module_kind.items()
     }
 
+    profile_acc: dict = collections.defaultdict(lambda: collections.defaultdict(list))
+    for metric in per_run:
+        for mod, fields in (_get(metric, "module_profiles") or {}).items():
+            for key, val in fields.items():
+                if val is not None:
+                    profile_acc[mod][key].append(val)
+    module_profiles = {mod: {k: round(statistics.mean(v), 3) for k, v in fields.items()}
+                       for mod, fields in profile_acc.items()}
+    flow_acc: dict = collections.Counter()
+    for metric in per_run:
+        for pair, cnt in (_get(metric, "module_dataflow") or {}).items():
+            flow_acc[pair] += cnt
+    module_dataflow_mean = {pair: round(total / n_runs, 2) for pair, total in flow_acc.most_common()}
+
     return {
         "n_runs": len(per_run),
         "coupling": {
@@ -127,6 +141,8 @@ def aggregate(per_run: Sequence[dict]) -> dict:
             "writes_by_module_kind": writes_by_module_kind,
         },
         "permutation": perm_summary,
+        "module_profiles": module_profiles,
+        "module_dataflow_mean_per_run": module_dataflow_mean,
     }
 
 

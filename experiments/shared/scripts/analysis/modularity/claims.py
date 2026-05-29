@@ -382,6 +382,14 @@ def permutation_nulls(rm: RunModel, n_perm: int = 1000, seed: int = 20260529) ->
     return out
 
 
+def module_dataflow_counts(rm: RunModel) -> dict[str, int]:
+    """Directed producer->consumer dataflow edge counts per module pair (``a->b``)."""
+    counts: dict[str, int] = collections.Counter()
+    for flow in rm.dataflows:
+        counts[f"{flow.writer_module}->{flow.reader_module}"] += 1
+    return dict(counts)
+
+
 def compute_run_metrics(rm: RunModel, n_perm: int = 1000) -> dict:
     """All claim metrics for one run, JSON-serializable."""
     return {
@@ -392,5 +400,7 @@ def compute_run_metrics(rm: RunModel, n_perm: int = 1000) -> dict:
         "task_overlap": compute_task_overlap(rm),
         "file_overlap": compute_file_overlap(rm),
         "global_context": compute_global_context(rm),
+        "module_profiles": compute_module_profiles(rm),
+        "module_dataflow": module_dataflow_counts(rm),
         "permutation": permutation_nulls(rm, n_perm=n_perm),
     }

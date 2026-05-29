@@ -64,10 +64,10 @@
     "recovery_nmi_dataflow_only": {
       "n": 77,
       "median": 0.6534088493232713,
-      "mean": 0.6547370490362806,
+      "mean": 0.6547370490362805,
       "iqr": [
-        0.6222674912651225,
-        0.6907797577878281
+        0.6222674912651224,
+        0.690779757787828
       ],
       "ci95_mean": [
         0.6408362112687374,
@@ -78,7 +78,7 @@
     },
     "recovery_nmi_random_baseline": {
       "n": 81,
-      "median": 0.3889850529522945,
+      "median": 0.38898505295229446,
       "mean": 0.43188511558112064,
       "iqr": [
         0.36544326769403285,
@@ -242,5 +242,50 @@
       "median_observed": 1.0,
       "median_null_mean": 0.734
     }
+  },
+  "module_profiles": {
+    "builder": {
+      "intra_weight": 6.086,
+      "inter_weight": 0.395,
+      "coupling_ratio": 0.058,
+      "afferent_ca": 0.395,
+      "efferent_ce": 0,
+      "instability": 0.0
+    },
+    "reporter": {
+      "intra_weight": 0,
+      "inter_weight": 1.025,
+      "coupling_ratio": 0.395,
+      "afferent_ca": 0,
+      "efferent_ce": 1.025,
+      "instability": 1.0
+    },
+    "fixer": {
+      "intra_weight": 8.222,
+      "inter_weight": 6.272,
+      "coupling_ratio": 0.522,
+      "afferent_ca": 0.667,
+      "efferent_ce": 5.605,
+      "instability": 0.876
+    },
+    "exploiter": {
+      "intra_weight": 15.642,
+      "inter_weight": 5.938,
+      "coupling_ratio": 0.292,
+      "afferent_ca": 5.753,
+      "efferent_ce": 0.185,
+      "instability": 0.039
+    }
+  },
+  "module_dataflow_mean_per_run": {
+    "exploiter->exploiter": 5.62,
+    "exploiter->fixer": 5.46,
+    "fixer->fixer": 3.23,
+    "fixer->reporter": 0.67,
+    "builder->builder": 0.6,
+    "exploiter->reporter": 0.3,
+    "builder->exploiter": 0.19,
+    "builder->fixer": 0.15,
+    "builder->reporter": 0.06
   }
 }
