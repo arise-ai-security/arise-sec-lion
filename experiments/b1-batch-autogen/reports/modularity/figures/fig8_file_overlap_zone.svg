@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="430" font-family="ui-sans-serif,Helvetica,Arial,sans-serif" font-size="12">
+<rect width="760" height="430" fill="white"/>
+<text x="14" y="26" font-size="15" font-weight="bold">Cross-module file interaction by zone (mean/run)</text>
+<line x1="72" y1="334.0" x2="610" y2="334.0" stroke="#eee"/>
+<text x="64" y="338.0" text-anchor="end" fill="#555">0.00</text>
+<line x1="72" y1="278.0" x2="610" y2="278.0" stroke="#eee"/>
+<text x="64" y="282.0" text-anchor="end" fill="#555">0.90</text>
+<line x1="72" y1="222.0" x2="610" y2="222.0" stroke="#eee"/>
+<text x="64" y="226.0" text-anchor="end" fill="#555">1.80</text>
+<line x1="72" y1="166.0" x2="610" y2="166.0" stroke="#eee"/>
+<text x="64" y="170.0" text-anchor="end" fill="#555">2.70</text>
+<line x1="72" y1="110.0" x2="610" y2="110.0" stroke="#eee"/>
+<text x="64" y="114.0" text-anchor="end" fill="#555">3.60</text>
+<line x1="72" y1="54.0" x2="610" y2="54.0" stroke="#eee"/>
+<text x="64" y="58.0" text-anchor="end" fill="#555">4.51</text>
+<text x="16" y="194" transform="rotate(-90 16 194)" text-anchor="middle" fill="#333">count / run</text>
+<rect x="89.9" y="285.7" width="47.8" height="48.3" fill="#08519c"/>
+<rect x="137.8" y="54.0" width="47.8" height="280.0" fill="#6baed6"/>
+<rect x="185.6" y="87.0" width="47.8" height="247.0" fill="#fd8d3c"/>
+<text x="161.7" y="352" text-anchor="middle">src</text>
+<rect x="269.3" y="333.2" width="47.8" height="0.8" fill="#08519c"/>
+<rect x="317.1" y="232.7" width="47.8" height="101.3" fill="#6baed6"/>
+<rect x="364.9" y="157.6" width="47.8" height="176.4" fill="#fd8d3c"/>
+<text x="341.0" y="352" text-anchor="middle">testcase</text>
+<rect x="448.6" y="334.0" width="47.8" height="0.0" fill="#08519c"/>
+<rect x="496.4" y="334.0" width="47.8" height="0.0" fill="#6baed6"/>
+<rect x="544.2" y="334.0" width="47.8" height="0.0" fill="#fd8d3c"/>
+<text x="520.3" y="352" text-anchor="middle">work</text>
+<line x1="72" y1="334" x2="610" y2="334" stroke="#333"/>
+<rect x="626" y="58" width="12" height="12" fill="#08519c"/>
+<text x="642" y="69">write-write</text>
+<rect x="626" y="78" width="12" height="12" fill="#6baed6"/>
+<text x="642" y="89">read-overlap</text>
+<rect x="626" y="98" width="12" height="12" fill="#fd8d3c"/>
+<text x="642" y="109">producer-consumer</text>
+</svg>

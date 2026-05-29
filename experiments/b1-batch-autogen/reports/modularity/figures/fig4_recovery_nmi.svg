@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="430" font-family="ui-sans-serif,Helvetica,Arial,sans-serif" font-size="12">
+<rect width="760" height="430" fill="white"/>
+<text x="14" y="26" font-size="15" font-weight="bold">Module recovery: detected communities vs labels</text>
+<line x1="72" y1="334.0" x2="610" y2="334.0" stroke="#eee"/>
+<text x="64" y="338.0" text-anchor="end" fill="#555">0.00</text>
+<line x1="72" y1="278.0" x2="610" y2="278.0" stroke="#eee"/>
+<text x="64" y="282.0" text-anchor="end" fill="#555">0.20</text>
+<line x1="72" y1="222.0" x2="610" y2="222.0" stroke="#eee"/>
+<text x="64" y="226.0" text-anchor="end" fill="#555">0.40</text>
+<line x1="72" y1="166.0" x2="610" y2="166.0" stroke="#eee"/>
+<text x="64" y="170.0" text-anchor="end" fill="#555">0.60</text>
+<line x1="72" y1="110.0" x2="610" y2="110.0" stroke="#eee"/>
+<text x="64" y="114.0" text-anchor="end" fill="#555">0.80</text>
+<line x1="72" y1="54.0" x2="610" y2="54.0" stroke="#eee"/>
+<text x="64" y="58.0" text-anchor="end" fill="#555">1.00</text>
+<text x="16" y="194" transform="rotate(-90 16 194)" text-anchor="middle" fill="#333">NMI (median, 95% CI)</text>
+<rect x="89.9" y="123.1" width="143.5" height="210.9" fill="#08519c"/>
+<line x1="161.7" y1="114.0" x2="161.7" y2="132.2" stroke="#333"/>
+<line x1="158.7" y1="114.0" x2="164.7" y2="114.0" stroke="#333"/>
+<text x="161.7" y="352" text-anchor="middle">full graph</text>
+<rect x="269.3" y="151.0" width="143.5" height="183.0" fill="#08519c"/>
+<line x1="341.0" y1="147.1" x2="341.0" y2="155.0" stroke="#333"/>
+<line x1="338.0" y1="147.1" x2="344.0" y2="147.1" stroke="#333"/>
+<text x="341.0" y="352" text-anchor="middle">dataflow-only</text>
+<rect x="448.6" y="225.1" width="143.5" height="108.9" fill="#08519c"/>
+<line x1="520.3" y1="217.7" x2="520.3" y2="232.4" stroke="#333"/>
+<line x1="517.3" y1="217.7" x2="523.3" y2="217.7" stroke="#333"/>
+<text x="520.3" y="352" text-anchor="middle">random baseline</text>
+<line x1="72" y1="334" x2="610" y2="334" stroke="#333"/>
+<rect x="626" y="58" width="12" height="12" fill="#08519c"/>
+<text x="642" y="69">NMI vs labels</text>
+</svg>

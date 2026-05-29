@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="470" height="434" font-family="ui-monospace,Menlo,monospace" font-size="11">
+<rect width="470" height="434" fill="white"/>
+<text x="14" y="26" font-size="15" font-weight="bold">Module x module interaction DSM (mean/run)</text>
+<text x="14" y="44" font-size="10" fill="#666">darker = more interaction (max 15.6); black lines = module boundaries</text>
+<text x="179.0" y="98" transform="rotate(-45 179.0 98)">builder</text>
+<text x="237.0" y="98" transform="rotate(-45 237.0 98)">exploiter</text>
+<text x="295.0" y="98" transform="rotate(-45 295.0 98)">fixer</text>
+<text x="353.0" y="98" transform="rotate(-45 353.0 98)">reporter</text>
+<text x="411.0" y="98" transform="rotate(-45 411.0 98)">boss</text>
+<text x="142" y="137.0" text-anchor="end">builder</text>
+<rect x="150" y="104" width="58" height="58" fill="#9aacc5" stroke="#dde" stroke-width="0.5"/>
+<text x="179.0" y="137.0" text-anchor="middle" fill="#123">6.1</text>
+<rect x="208" y="104" width="58" height="58" fill="#f4f9fd" stroke="#dde" stroke-width="0.5"/>
+<text x="237.0" y="137.0" text-anchor="middle" fill="#123">0.2</text>
+<rect x="266" y="104" width="58" height="58" fill="#f5f9fe" stroke="#dde" stroke-width="0.5"/>
+<text x="295.0" y="137.0" text-anchor="middle" fill="#123">0.1</text>
+<rect x="324" y="104" width="58" height="58" fill="#f6fafe" stroke="#dde" stroke-width="0.5"/>
+<text x="353.0" y="137.0" text-anchor="middle" fill="#123">0.1</text>
+<rect x="382" y="104" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="411.0" y="137.0" text-anchor="middle" fill="#123">2</text>
+<text x="142" y="195.0" text-anchor="end">exploiter</text>
+<rect x="150" y="162" width="58" height="58" fill="#f4f9fd" stroke="#dde" stroke-width="0.5"/>
+<text x="179.0" y="195.0" text-anchor="middle" fill="#123">0.2</text>
+<rect x="208" y="162" width="58" height="58" fill="#08306b" stroke="#dde" stroke-width="0.5"/>
+<text x="237.0" y="195.0" text-anchor="middle" fill="#fff">15.6</text>
+<rect x="266" y="162" width="58" height="58" fill="#a4b4cb" stroke="#dde" stroke-width="0.5"/>
+<text x="295.0" y="195.0" text-anchor="middle" fill="#123">5.5</text>
+<rect x="324" y="162" width="58" height="58" fill="#f2f7fc" stroke="#dde" stroke-width="0.5"/>
+<text x="353.0" y="195.0" text-anchor="middle" fill="#123">0.3</text>
+<rect x="382" y="162" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="411.0" y="195.0" text-anchor="middle" fill="#123">2</text>
+<text x="142" y="253.0" text-anchor="end">fixer</text>
+<rect x="150" y="220" width="58" height="58" fill="#f5f9fe" stroke="#dde" stroke-width="0.5"/>
+<text x="179.0" y="253.0" text-anchor="middle" fill="#123">0.1</text>
+<rect x="208" y="220" width="58" height="58" fill="#a4b4cb" stroke="#dde" stroke-width="0.5"/>
+<text x="237.0" y="253.0" text-anchor="middle" fill="#123">5.5</text>
+<rect x="266" y="220" width="58" height="58" fill="#7990b1" stroke="#dde" stroke-width="0.5"/>
+<text x="295.0" y="253.0" text-anchor="middle" fill="#fff">8.2</text>
+<rect x="324" y="220" width="58" height="58" fill="#edf2f9" stroke="#dde" stroke-width="0.5"/>
+<text x="353.0" y="253.0" text-anchor="middle" fill="#123">0.7</text>
+<rect x="382" y="220" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="411.0" y="253.0" text-anchor="middle" fill="#123">2</text>
+<text x="142" y="311.0" text-anchor="end">reporter</text>
+<rect x="150" y="278" width="58" height="58" fill="#f6fafe" stroke="#dde" stroke-width="0.5"/>
+<text x="179.0" y="311.0" text-anchor="middle" fill="#123">0.1</text>
+<rect x="208" y="278" width="58" height="58" fill="#f2f7fc" stroke="#dde" stroke-width="0.5"/>
+<text x="237.0" y="311.0" text-anchor="middle" fill="#123">0.3</text>
+<rect x="266" y="278" width="58" height="58" fill="#edf2f9" stroke="#dde" stroke-width="0.5"/>
+<text x="295.0" y="311.0" text-anchor="middle" fill="#123">0.7</text>
+<rect x="324" y="278" width="58" height="58" fill="#f7fbff" stroke="#dde" stroke-width="0.5"/>
+<rect x="382" y="278" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="411.0" y="311.0" text-anchor="middle" fill="#123">2</text>
+<text x="142" y="369.0" text-anchor="end">boss</text>
+<rect x="150" y="336" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="179.0" y="369.0" text-anchor="middle" fill="#123">2</text>
+<rect x="208" y="336" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="237.0" y="369.0" text-anchor="middle" fill="#123">2</text>
+<rect x="266" y="336" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="295.0" y="369.0" text-anchor="middle" fill="#123">2</text>
+<rect x="324" y="336" width="58" height="58" fill="#d8e1ec" stroke="#dde" stroke-width="0.5"/>
+<text x="353.0" y="369.0" text-anchor="middle" fill="#123">2</text>
+<rect x="382" y="336" width="58" height="58" fill="#f7fbff" stroke="#dde" stroke-width="0.5"/>
+</svg>
