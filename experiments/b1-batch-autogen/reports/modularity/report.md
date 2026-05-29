@@ -59,8 +59,8 @@ Producer→consumer dataflow (mean edges/run, top): exploiter->fixer 5.46, fixer
 ## Figures — what each shows and how to read it
 
 ### `figures/fig1_node_dsm.svg`
-- **Shows:** Node×node matrix for one representative run; rows/cols = nodes grouped by module (black lines = module boundaries), cell darkness = interaction-graph weight (messages + dataflow).
-- **Read:** Dense dark blocks ON the diagonal = high within-module cohesion; near-empty OFF-block cells = low inter-module coupling. Good modularity = a clean block-diagonal.
+- **Shows:** Role-resolved DSM aggregated across ALL runs: rows/cols = role slots (module × manager/worker tier), cell = mean interaction weight per run between slots; black lines = module boundaries.
+- **Read:** Dense dark blocks ON the diagonal (manager↔worker within a module) = cohesion; near-empty OFF-block cells = low inter-module coupling; the boss row/col is the relay. A clean block-diagonal = modular. This is the all-runs average, not a single sample.
 
 ### `figures/fig2_module_dsm.svg`
 - **Shows:** Module×module matrix; cell = mean interaction weight per run; diagonal = cohesion, off-diagonal = coupling, the boss row/column = the relay.
@@ -101,22 +101,44 @@ Producer→consumer dataflow (mean edges/run, top): exploiter->fixer 5.46, fixer
 - Global-context reads are not logged; only writes are observed.
 - Cross-aggregate ordering uses `occurred_at` (coarse); producer/consumer timing is approximate.
 
-## Appendix A — Operational definitions (exactly as computed)
+## Appendix A — Operational definitions (plain meaning + exact logic)
 
-These are **operationalizations specific to this event data**, inspired by but **not identical to** the textbook software-engineering metrics. Each gives the exact logic (code in `experiments/shared/scripts/analysis/modularity/`).
+Every metric is an **operationalization specific to this event log** — inspired by the classic software-engineering ideas, but computed from agent events and **not identical** to the textbook metric. Each entry gives (a) the plain question it answers, (b) exactly how it is computed, and (c) how to read it. Code is in `experiments/shared/scripts/analysis/modularity/`.
 
-- **Node** = an `aggregate_id` that has an `AgentCreated` event. **Module** = the `[Builder]/[Exploiter]/[Fixer]/[Reporter]` bracket of the node's depth-1 ancestor (direct child of the boss root); the root = `boss`; no bracket = `unknown`. (`modules.LabeledModules`)
-- **Interaction graph** = undirected weighted graph over nodes; weight(u,v) = (#persisted messages u↔v: each `ChildSpawned` parent→child + each `ChildCompleted`/`ChildFailed` child→parent) + (#producer→consumer dataflow edges u↔v). (`claims.interaction_weights`)
-- **Dataflow edge (producer→consumer)** = per normalized path, order touches by (occurred_at, seq); a read/search of the path by node B that follows the most recent write/edit by a *different* node A emits a directed edge A→B ("last-writer-before-read"). (`normalize.build_dataflows`)
-- **Cohesion (intra-module weight)** = Σ interaction-graph edge weights with both endpoints in the same non-boss module. **Coupling (inter-module weight)** = Σ weights with endpoints in two different non-boss modules. **coupling ratio** = inter/(intra+inter). NOTE: a weighted-edge-sum operationalization, *not* LCOM/relational cohesion. (`claims.compute_module_profiles`)
-- **inter_module_fraction (run)** = inter/(intra+inter) over all module-pair edges; boss-relay edges excluded from both numerator and denominator. (`claims.compute_coupling`)
-- **Modularity Q** = Newman weighted modularity of the *labeled* partition on the interaction graph: Q = Σ_c [L_c/m − (D_c/2m)²], where L_c = internal edge weight of module c, D_c = summed weighted degree of its nodes, m = total edge weight. (`graph.modularity`)
-- **Community detection** = greedy agglomerative: repeatedly merge the two edge-connected communities whose merge most increases Q, until none improves it. (`graph.greedy_communities`)
-- **Recovery NMI / ARI** = agreement between the labeled-module partition and the greedy-community partition over the same nodes (label-name-invariant). NMI = 2·MI/(H_a+H_b); ARI = chance-adjusted Rand. (`graph.normalized_mutual_info`, `adjusted_rand_index`)
-- **Dataflow-only recovery** = recovery NMI where community detection runs on the dataflow-only edge weights (messages excluded) — the behavioral lower bound. **Random-partition baseline** = mean NMI over 20 random node→module relabelings (module sizes preserved) vs the true labels — the chance floor.
-- **Permutation null (coupling)** = statistic is the fraction of dataflow edges that are cross-module (both endpoints non-boss); null = 1000× shuffle of module labels among non-boss nodes (sizes fixed); z = (obs − null_mean)/null_sd; one-sided p = (#{perm ≤ obs}+1)/(N+1) (add-one estimator). (`claims.permutation_nulls`)
-- **Instability I (per module)** = from CROSS-MODULE dataflow edges only: Ca(m) = #edges where m is the WRITER (m's output consumed elsewhere ⇒ afferent/depended-upon), Ce(m) = #edges where m is the READER (m consumes others ⇒ efferent/depends-on); I = Ce/(Ca+Ce). NOTE: maps Martin's instability onto dataflow direction; *not* package class-dependency counting. (`claims.compute_module_profiles`)
-- **Recon-read Jaccard (task overlap)** = per module, the set of files recon-read (op∈{read,search}, confidence∈{high,med}); statistic = mean pairwise |A∩B|/|A∪B| over module pairs. (`claims.compute_task_overlap`)
-- **Write-write overlap** = per zone, #distinct normalized paths written/edited (HIGH-confidence) by ≥2 different modules. **Producer→consumer** = directed dataflow edges aggregated by module pair. (`claims.compute_file_overlap`, `dsm.module_dataflow_matrix`)
-- **Global-context write** = a `DecisionRecorded` or `ArtifactStored` event on the SharedStore aggregate (`uuid5(NS, run_id)`), attributed to its author module via `decided_by`/`stored_by`. (`claims.compute_global_context`)
-- **File touch / confidence / zone** = from `ThoughtCaptured` tool_use (Read/Write/Edit → `file_path`/prefix = HIGH; Bash/security-shell → `/src|/testcase|/work` tokens in the command = LOW; Grep/Glob → search `path` = MED) and `ProbeCompleted.result_summary` (read_symbol/read_file header, search-match lines = MED). **zone** = first path segment (`src`/`testcase`/`work`/`other`). (`paths.extract_touches`)
+### A.0 Building blocks (everything else is built from these)
+
+- **Node** — one agent in the run; concretely an event-store `aggregate_id` that has an `AgentCreated` event. The Boss, the four phase managers, and every worker are nodes.
+- **Module** — *which phase a node belongs to.* Walk from the node up its parent chain to the **depth-1 ancestor** (the direct child of the Boss) and read that ancestor's `[Builder]/[Exploiter]/[Fixer]/[Reporter]` task prefix; the Boss itself is `boss`, a node with no bracketed ancestor is `unknown`. Intuition: a node inherits the phase of the subtree it lives in. (`modules.LabeledModules`)
+- **Touch** — *one file access by a node*, recovered from the log: it records the node, the normalized file path, the operation (read / write / edit / search / exec), a **confidence** (HIGH when the path is explicit in the tool call, LOW when scraped from a shell command), and a **zone** = the top-level directory: `/src` = target source, `/testcase` = deliverables + cross-phase handoff, `/work` = scratch. (`paths.extract_touches`)
+- **Dataflow edge (producer→consumer)** — *a behavioral dependency between two nodes.* If node A writes a file and later node B reads that same file (B≠A), record a directed dependency A→B. (Per file, touches are sorted in time and each read is linked to the most recent earlier write — "last-writer-before-read".) Intuition: "B used what A produced." (`normalize.build_dataflows`)
+- **Interaction graph** — *the central structure every coupling/modularity number is computed on.* One vertex per node; an undirected edge between two nodes weighted by how much they interact = (#messages between them) + (#producer→consumer file dependencies between them), where a "message" is a parent briefing a child (`ChildSpawned`) or a child reporting back (`ChildCompleted`/`Failed`). The DSM figures are simply this graph drawn as a matrix. (`claims.interaction_weights`)
+
+### A.1 Coupling & cohesion — how self-contained is each module?
+
+- **Cohesion (intra-module interaction)** — *how much does a module talk to itself?* Sum of interaction-graph edge weights whose two endpoints are in the **same** module. Higher = the module's nodes coordinate mostly internally. (A weighted-edge sum — *not* the textbook LCOM.)
+- **Coupling (inter-module interaction)** — *how much do different modules talk to each other?* Sum of edge weights between **two different** non-boss modules. Lower = better-encapsulated modules.
+- **Coupling ratio** — coupling / (cohesion + coupling) for a module: the fraction of its interaction that crosses its own boundary. 0 = fully self-contained, 1 = all cross-module. (`claims.compute_module_profiles`)
+- **inter_module_fraction (per run)** — the run-level version: cross-module interaction / total non-boss interaction (Boss-relay edges excluded from both sides, since the Boss is wiring, not a module). (`claims.compute_coupling`)
+
+### A.2 Is the module structure *real*? — recovery
+
+- **Modularity Q (Newman)** — *is the prescribed Builder/Exploiter/Fixer/Reporter grouping a good partition of the interaction graph?* One number = (fraction of edge weight that falls **inside** modules) − (what you'd expect if the same edges were rewired at random while preserving each node's degree). Formula Q = Σ_modules [ L_c/m − (D_c/2m)² ] (L_c = internal edge weight of module c, D_c = total degree of its nodes, m = total edge weight). Read: >0 = more internal clustering than chance; ~0.3–0.7 is a typical "modular" range. (`graph.modularity`)
+- **Community detection (greedy)** — *if we did NOT know the modules, would the graph reveal them?* An unsupervised algorithm groups nodes to maximize Q: start with each node alone, then repeatedly merge the two connected groups whose merge most increases Q, until no merge helps. The result is the "discovered" grouping. (`graph.greedy_communities`)
+- **Recovery NMI / ARI** — *do the discovered groups match the real modules?* Compare the discovered grouping to the true `[Builder]/…` labels. NMI (normalized mutual information) and ARI (adjusted Rand index) each run ~0 (no better than chance) → 1 (identical grouping) and ignore the arbitrary group names. High = the modular structure is visible in behavior, not just in the labels. (`graph.normalized_mutual_info`, `adjusted_rand_index`)
+- **Dataflow-only recovery** — the same NMI but the graph uses **only** producer→consumer file edges (parent/child messages dropped, since those follow the tree that *defines* the modules). This is the stricter, purely-behavioral recovery; it is lower than the full-graph number, and the gap between them measures how much recovery is "given" by tree topology.
+- **Random-partition baseline** — the chance floor for recovery: randomly relabel nodes into modules (keeping each module's size), compute NMI vs the true labels, average over 20 shuffles. Recovery only counts as evidence if it sits well above this floor.
+
+### A.3 Is the low coupling actually below chance? — permutation null
+
+- **Permutation null** — *the observed cross-module coupling is low, but is it lower than chance?* The statistic is the fraction of producer→consumer edges that cross module boundaries. We build a null by **shuffling which module each (non-boss) node belongs to** — keeping module sizes fixed — and recomputing the statistic 1000×. We report z = (observed − mean of shuffles) / sd and a one-sided p = (#shuffles ≤ observed + 1)/(1000 + 1). Read: z well below 0 = the real modules are more self-contained than a random regrouping. (`claims.permutation_nulls`)
+
+### A.4 Producer vs consumer role — instability
+
+- **Instability I (per module)** — *is a module mainly a producer others depend on (stable), or a consumer that depends on others (unstable)?* Using only **cross-module** dataflow edges: Ca(m) = #edges where m is the WRITER (its output is consumed elsewhere ⇒ others depend on it); Ce(m) = #edges where m is the READER (it consumes others' output ⇒ it depends on them). I = Ce/(Ca+Ce), from 0 (pure producer, stable) to 1 (pure consumer, unstable). Builder ≈ 0 (everyone uses its build); Reporter ≈ 1 (reads all, feeds none). Applies Martin's instability idea to file dataflow — *not* class-dependency counting. (`claims.compute_module_profiles`)
+
+### A.5 The three claim metrics
+
+- **Recon-read overlap (Claim 2 — duplicated analysis)** — *do modules redo each other's reading?* For each module take the set of files it read during analysis; the statistic is the average pairwise Jaccard overlap |A∩B|/|A∪B| between modules' read-sets. High = modules re-read the same files (duplicated work). (`claims.compute_task_overlap`)
+- **Write-write overlap (Claim 3 — contention)** — *do modules edit the same files?* Per zone, the number of distinct files that ≥2 different modules both wrote/edited (HIGH-confidence writes only); `write_write_pairs` records which module pairs collide. (`claims.compute_file_overlap`)
+- **Producer→consumer by zone** — the count of cross-module dataflow edges per zone — the legitimate handoff (one phase's output feeds the next). (`dsm.module_dataflow_matrix`)
+- **Global-context write** — one entry a worker published to the shared blackboard: a `DecisionRecorded` (key→value+rationale) or `ArtifactStored` (key→description), attributed to the author's module. Measures how much each module relies on shared state. (`claims.compute_global_context`)

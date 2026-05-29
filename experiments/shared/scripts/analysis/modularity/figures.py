@@ -42,15 +42,6 @@ def _aggregate_profiles(models: Sequence[RunModel]) -> dict[str, dict]:
             for m, fields in acc.items()}
 
 
-def _pick_representative(models: Sequence[RunModel]) -> RunModel | None:
-    full = [m for m in models if set(BENCHMARK_MODULES) <= set(m.assign.modules())]
-    pool = full or list(models)
-    if not pool:
-        return None
-    pool = sorted(pool, key=lambda m: len(m.table.nodes))
-    return pool[len(pool) // 2]
-
-
 def build_figures(per_run: Sequence[dict], agg: dict, models: Sequence[RunModel],
                   outdir: str | Path) -> tuple[list[tuple[str, str]], dict, dict]:
     outdir = Path(outdir)
@@ -69,17 +60,19 @@ def build_figures(per_run: Sequence[dict], agg: dict, models: Sequence[RunModel]
         module_flow.update(dsm.module_dataflow_matrix(model))
     profiles = _aggregate_profiles(models)
 
-    # F1 — node x node DSM (representative run)
-    rep = _pick_representative(models)
-    if rep is not None:
-        _, labels, matrix, blocks = dsm.node_dsm(rep)
-        short = [lab[:3] for lab in labels]
-        save("fig1_node_dsm.svg",
-             dsm.render_heatmap_svg(matrix, short, short, title=f"Node x node DSM - {rep.task}",
-                                    block_boundaries=blocks, cell=22),
-             f"Node x node interaction DSM for a representative run ({rep.task}); cell = message + "
-             "dataflow weight, nodes grouped by module. Dense block-diagonals are within-module "
-             "cohesion; sparse off-blocks are inter-module coupling.")
+    # F1 — role-resolved DSM, MEAN interaction/run aggregated across ALL runs
+    slots, slot_matrix, slot_blocks = dsm.role_slot_dsm(models)
+    slot_labels = [s.replace("builder/", "bld·").replace("exploiter/", "exp·")
+                   .replace("fixer/", "fix·").replace("reporter/", "rep·")
+                   .replace("mgr", "M").replace("wkr", "W") for s in slots]
+    save("fig1_node_dsm.svg",
+         dsm.render_heatmap_svg(slot_matrix, slot_labels, slot_labels,
+                                title=f"Role-resolved DSM (mean interaction/run, n={n} runs)",
+                                annotate=True, block_boundaries=slot_blocks, cell=52),
+         f"Mean interaction weight PER RUN between role slots (module × manager/worker tier), aggregated "
+         f"across all {n} runs (not a single sample); black lines = module boundaries. Dense within-module "
+         "blocks (manager↔worker) = cohesion; sparse off-block cells = low inter-module coupling; the boss "
+         "row/column is the relay.")
 
     # F2 — module x module interaction DSM (mean/run)
     present = [m for m in _MODS_BOSS if any(m in pair for pair in module_inter)]

@@ -49,6 +49,13 @@ def test_node_dsm_square_and_blocks_cover_nodes():
     assert matrix == [list(col) for col in zip(*matrix)]  # symmetric
 
 
+def test_role_slot_dsm_aggregates_across_runs():
+    slots, matrix, blocks = dsm.role_slot_dsm([_model(), _model()])
+    assert "builder/mgr" in slots and "builder/wkr" in slots
+    assert len(matrix) == len(slots) == sum(blocks)
+    assert all(len(row) == len(slots) for row in matrix)
+
+
 def test_heatmap_svg_well_formed():
     svg = dsm.render_heatmap_svg([[0.0, 2.0], [2.0, 0.0]], ["a", "b"], ["a", "b"],
                                  title="t", annotate=True, block_boundaries=[1, 1])

@@ -79,6 +79,67 @@ def node_dsm(rm: RunModel) -> tuple[list[str], list[str], list[list[float]], lis
     return ordered, labels, matrix, blocks
 
 
+def _node_slot(rm: RunModel, node: str) -> str:
+    """Canonical role slot for a node: ``boss`` or ``<module>/<mgr|wkr>``.
+
+    ``mgr`` = the module root (depth-1, direct child of boss); ``wkr`` = deeper.
+    Slots align across runs even though individual node ids/counts do not, so
+    per-run DSMs can be averaged.
+    """
+    module = rm.module_of(node)
+    if module == "boss":
+        return "boss"
+    tier = "mgr" if rm.table.nodes[node].parent_id == rm.table.root_id else "wkr"
+    return f"{module}/{tier}"
+
+
+def role_slot_dsm(models) -> tuple[list[str], list[list[float]], list[int]]:
+    """Aggregate role-resolved DSM: MEAN interaction weight per run across ALL runs.
+
+    Rows/cols are canonical role slots (module × manager/worker tier); cell =
+    mean per-run interaction weight between slots, averaged over ``models``.
+    Returns (ordered slots, matrix, module-block sizes).
+    """
+    accum: dict[tuple[str, str], float] = collections.Counter()
+    seen: set[str] = set()
+    for rm in models:
+        slot = {node: _node_slot(rm, node) for node in rm.table.nodes}
+        seen.update(slot.values())
+        for (u, v), w in interaction_weights(rm).items():
+            accum[tuple(sorted((slot[u], slot[v])))] += w
+    n = max(len(models), 1)
+
+    order: list[str] = []
+    for module in _MODULE_ORDER:
+        if module == "boss":
+            continue
+        for tier in ("mgr", "wkr"):
+            if f"{module}/{tier}" in seen:
+                order.append(f"{module}/{tier}")
+    if "boss" in seen:
+        order.append("boss")
+
+    idx = {s: i for i, s in enumerate(order)}
+    matrix = [[0.0] * len(order) for _ in order]
+    for (a, b), total in accum.items():
+        if a in idx and b in idx:
+            matrix[idx[a]][idx[b]] += total / n
+            if a != b:
+                matrix[idx[b]][idx[a]] += total / n
+
+    blocks: list[int] = []
+    current, count = None, 0
+    for slot in order:
+        module = slot.split("/")[0]
+        if current is not None and module != current:
+            blocks.append(count)
+            count = 0
+        current, count = module, count + 1
+    if count:
+        blocks.append(count)
+    return order, matrix, blocks
+
+
 def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 

@@ -4,7 +4,7 @@
 
 ![fig1_node_dsm.svg](figures/fig1_node_dsm.svg)
 
-Node x node interaction DSM for a representative run (faad2.cve-2018-20358); cell = message + dataflow weight, nodes grouped by module. Dense block-diagonals are within-module cohesion; sparse off-blocks are inter-module coupling.
+Mean interaction weight PER RUN between role slots (module × manager/worker tier), aggregated across all 81 runs (not a single sample); black lines = module boundaries. Dense within-module blocks (manager↔worker) = cohesion; sparse off-block cells = low inter-module coupling; the boss row/column is the relay.
 
 ## fig2_module_dsm.svg
 
