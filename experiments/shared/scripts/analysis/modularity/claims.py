@@ -259,14 +259,17 @@ def compute_global_context(rm: RunModel) -> dict:
     real = set(real_modules(rm))
     by_module = collections.Counter()
     by_kind = collections.Counter()
+    by_module_kind: dict = collections.defaultdict(collections.Counter)
     for write in rm.global_writes:
         by_kind[write.kind] += 1
         if write.author_module in real:
             by_module[write.author_module] += 1
+            by_module_kind[write.author_module][write.kind] += 1
     return {
         "global_writes_total": len(rm.global_writes),
         "global_writes_by_kind": dict(by_kind),
         "global_writes_by_module": dict(by_module),
+        "global_writes_by_module_kind": {m: dict(k) for m, k in by_module_kind.items()},
     }
 
 

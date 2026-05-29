@@ -16,8 +16,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.8938718872192425,
       "recovery_ari": 0.8818897637795275,
-      "recovery_nmi_dataflow_only": 0.6860117511105643,
-      "recovery_nmi_random_baseline": 0.32694338587642363,
+      "recovery_nmi_dataflow_only": 0.6860117511105642,
+      "recovery_nmi_random_baseline": 0.3269433858764236,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 5
     },
@@ -67,6 +67,24 @@
         "exploiter": 38,
         "fixer": 26,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 21,
+          "artifact": 17
+        },
+        "fixer": {
+          "decision": 17,
+          "artifact": 9
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -161,6 +179,16 @@
       "global_writes_by_module": {
         "exploiter": 30,
         "fixer": 20
+      },
+      "global_writes_by_module_kind": {
+        "exploiter": {
+          "decision": 18,
+          "artifact": 12
+        },
+        "fixer": {
+          "decision": 12,
+          "artifact": 8
+        }
       }
     },
     "permutation": {
@@ -204,7 +232,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7440870110187376,
       "recovery_ari": 0.6840277777777778,
-      "recovery_nmi_dataflow_only": 0.7064947368355129,
+      "recovery_nmi_dataflow_only": 0.706494736835513,
       "recovery_nmi_random_baseline": 0.43071981548862254,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 4
@@ -251,6 +279,20 @@
         "builder": 15,
         "exploiter": 21,
         "fixer": 6
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 11,
+          "artifact": 10
+        },
+        "fixer": {
+          "decision": 4,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -294,7 +336,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7732252908558023,
       "recovery_ari": 0.713148503980236,
-      "recovery_nmi_dataflow_only": 0.6270937615068919,
+      "recovery_nmi_dataflow_only": 0.627093761506892,
       "recovery_nmi_random_baseline": 0.32151176505066154,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 9
@@ -345,6 +387,20 @@
         "builder": 13,
         "exploiter": 36,
         "fixer": 24
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 19
+        },
+        "fixer": {
+          "decision": 14,
+          "artifact": 10
+        }
       }
     },
     "permutation": {
@@ -439,6 +495,20 @@
         "builder": 9,
         "exploiter": 36,
         "fixer": 24
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 4,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 15,
+          "artifact": 21
+        },
+        "fixer": {
+          "decision": 12,
+          "artifact": 12
+        }
       }
     },
     "permutation": {
@@ -483,7 +553,7 @@
       "recovery_nmi": 0.7193387409192137,
       "recovery_ari": 0.6100491534680502,
       "recovery_nmi_dataflow_only": 0.6452852260830982,
-      "recovery_nmi_random_baseline": 0.40020947340807567,
+      "recovery_nmi_random_baseline": 0.4002094734080757,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 15
     },
@@ -532,6 +602,20 @@
         "builder": 5,
         "exploiter": 23,
         "fixer": 16
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 3,
+          "artifact": 2
+        },
+        "exploiter": {
+          "decision": 9,
+          "artifact": 14
+        },
+        "fixer": {
+          "decision": 11,
+          "artifact": 5
+        }
       }
     },
     "permutation": {
@@ -623,6 +707,20 @@
         "builder": 18,
         "exploiter": 30,
         "fixer": 9
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 10
+        },
+        "exploiter": {
+          "decision": 18,
+          "artifact": 12
+        },
+        "fixer": {
+          "decision": 5,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -717,6 +815,20 @@
         "builder": 15,
         "exploiter": 12,
         "fixer": 26
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 6,
+          "artifact": 6
+        },
+        "fixer": {
+          "decision": 18,
+          "artifact": 8
+        }
       }
     },
     "permutation": {
@@ -804,6 +916,16 @@
       "global_writes_by_module": {
         "builder": 19,
         "fixer": 9
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 12
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 6
+        }
       }
     },
     "permutation": {
@@ -845,7 +967,7 @@
       "modularity_labeled": 0.28355879292403746,
       "modularity_louvain": 0.4188345473465141,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.7440870110187378,
+      "recovery_nmi": 0.7440870110187376,
       "recovery_ari": 0.6840277777777778,
       "recovery_nmi_dataflow_only": 0.5699844896424973,
       "recovery_nmi_random_baseline": 0.43071981548862254,
@@ -899,6 +1021,24 @@
         "exploiter": 46,
         "fixer": 9,
         "reporter": 6
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 22,
+          "artifact": 24
+        },
+        "fixer": {
+          "decision": 5,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 3,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -940,9 +1080,9 @@
       "modularity_labeled": 0.3515625,
       "modularity_louvain": 0.42874999999999996,
       "louvain_n_communities": 4,
-      "recovery_nmi": 0.7480285670489828,
+      "recovery_nmi": 0.7480285670489826,
       "recovery_ari": 0.6490588949605344,
-      "recovery_nmi_dataflow_only": 0.6534088493232711,
+      "recovery_nmi_dataflow_only": 0.6534088493232713,
       "recovery_nmi_random_baseline": 0.36138229805514926,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 5
@@ -994,6 +1134,24 @@
         "exploiter": 33,
         "fixer": 8,
         "reporter": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 16
+        },
+        "fixer": {
+          "decision": 5,
+          "artifact": 3
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -1083,6 +1241,20 @@
         "builder": 12,
         "exploiter": 19,
         "fixer": 8
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 10,
+          "artifact": 9
+        },
+        "fixer": {
+          "decision": 7,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -1126,7 +1298,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
-      "recovery_nmi_dataflow_only": 0.6699412384049416,
+      "recovery_nmi_dataflow_only": 0.6699412384049417,
       "recovery_nmi_random_baseline": 0.3928865164134799,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 3
@@ -1175,6 +1347,24 @@
         "exploiter": 23,
         "fixer": 18,
         "reporter": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 13,
+          "artifact": 10
+        },
+        "fixer": {
+          "decision": 11,
+          "artifact": 7
+        },
+        "reporter": {
+          "decision": 2,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -1218,7 +1408,7 @@
       "louvain_n_communities": 2,
       "recovery_nmi": 0.7222658756735342,
       "recovery_ari": 0.7808764940239044,
-      "recovery_nmi_dataflow_only": 0.6600359164904801,
+      "recovery_nmi_dataflow_only": 0.6600359164904802,
       "recovery_nmi_random_baseline": 0.5163268875855962,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 2
@@ -1266,6 +1456,24 @@
         "exploiter": 17,
         "fixer": 6,
         "reporter": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 1,
+          "artifact": 4
+        },
+        "exploiter": {
+          "decision": 7,
+          "artifact": 10
+        },
+        "fixer": {
+          "decision": 2,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -1307,7 +1515,7 @@
       "modularity_labeled": 0.26844411979547117,
       "modularity_louvain": 0.41344046749452157,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.7440870110187376,
+      "recovery_nmi": 0.7440870110187378,
       "recovery_ari": 0.6840277777777778,
       "recovery_nmi_dataflow_only": 0.5953483243358715,
       "recovery_nmi_random_baseline": 0.4447413225337556,
@@ -1358,6 +1566,20 @@
         "builder": 15,
         "exploiter": 29,
         "fixer": 7
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 12
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -1402,7 +1624,7 @@
       "recovery_nmi": 0.6859378409046889,
       "recovery_ari": 0.4961580680570801,
       "recovery_nmi_dataflow_only": 0.6534088493232711,
-      "recovery_nmi_random_baseline": 0.3914758357386218,
+      "recovery_nmi_random_baseline": 0.39147583573862177,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 6
     },
@@ -1452,6 +1674,24 @@
         "exploiter": 23,
         "fixer": 11,
         "reporter": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 10,
+          "artifact": 13
+        },
+        "fixer": {
+          "decision": 6,
+          "artifact": 5
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -1495,7 +1735,7 @@
       "louvain_n_communities": 4,
       "recovery_nmi": 0.7225726749142691,
       "recovery_ari": 0.5638200183654729,
-      "recovery_nmi_dataflow_only": 0.5970446299737374,
+      "recovery_nmi_dataflow_only": 0.5970446299737375,
       "recovery_nmi_random_baseline": 0.32151176505066154,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 17
@@ -1545,6 +1785,20 @@
         "builder": 12,
         "exploiter": 21,
         "fixer": 25
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 10,
+          "artifact": 11
+        },
+        "fixer": {
+          "decision": 15,
+          "artifact": 10
+        }
       }
     },
     "permutation": {
@@ -1588,7 +1842,7 @@
       "louvain_n_communities": 4,
       "recovery_nmi": 0.971262324052962,
       "recovery_ari": 0.9823386817499712,
-      "recovery_nmi_dataflow_only": 0.6877441367963997,
+      "recovery_nmi_dataflow_only": 0.6877441367963995,
       "recovery_nmi_random_baseline": 0.3654432676940329,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 0
@@ -1631,6 +1885,20 @@
         "builder": 17,
         "exploiter": 10,
         "fixer": 18
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 10,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 5,
+          "artifact": 5
+        },
+        "fixer": {
+          "decision": 10,
+          "artifact": 8
+        }
       }
     },
     "permutation": {
@@ -1674,7 +1942,7 @@
       "louvain_n_communities": 4,
       "recovery_nmi": 0.7384806775121854,
       "recovery_ari": 0.6102416046193587,
-      "recovery_nmi_dataflow_only": 0.5211515293044999,
+      "recovery_nmi_dataflow_only": 0.5211515293044998,
       "recovery_nmi_random_baseline": 0.3323919586215658,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 16
@@ -1725,6 +1993,20 @@
         "builder": 12,
         "exploiter": 43,
         "fixer": 24
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 23,
+          "artifact": 20
+        },
+        "fixer": {
+          "decision": 17,
+          "artifact": 7
+        }
       }
     },
     "permutation": {
@@ -1769,7 +2051,7 @@
       "recovery_nmi": 0.6813054359434282,
       "recovery_ari": 0.6077032810271041,
       "recovery_nmi_dataflow_only": 0.706141700184422,
-      "recovery_nmi_random_baseline": 0.5163268875855963,
+      "recovery_nmi_random_baseline": 0.5163268875855962,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 9
     },
@@ -1816,6 +2098,20 @@
         "builder": 7,
         "exploiter": 38,
         "fixer": 6
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 3,
+          "artifact": 4
+        },
+        "exploiter": {
+          "decision": 22,
+          "artifact": 16
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -1860,7 +2156,7 @@
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
       "recovery_nmi_dataflow_only": 0.7148415311189272,
-      "recovery_nmi_random_baseline": 0.37669840622095696,
+      "recovery_nmi_random_baseline": 0.3766984062209569,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
     },
@@ -1908,6 +2204,16 @@
       "global_writes_by_module": {
         "builder": 14,
         "exploiter": 28
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 11,
+          "artifact": 17
+        }
       }
     },
     "permutation": {
@@ -1949,7 +2255,7 @@
       "modularity_labeled": 0.2688875669244497,
       "modularity_louvain": 0.34414039262343843,
       "louvain_n_communities": 4,
-      "recovery_nmi": 0.7946996234971083,
+      "recovery_nmi": 0.7946996234971085,
       "recovery_ari": 0.6299655927431967,
       "recovery_nmi_dataflow_only": 0.5918105196813084,
       "recovery_nmi_random_baseline": 0.4447413225337556,
@@ -2001,6 +2307,16 @@
       "global_writes_by_module": {
         "builder": 15,
         "exploiter": 25
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 12,
+          "artifact": 13
+        }
       }
     },
     "permutation": {
@@ -2093,6 +2409,20 @@
         "builder": 15,
         "exploiter": 42,
         "fixer": 7
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 20,
+          "artifact": 22
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -2134,7 +2464,7 @@
       "modularity_labeled": 0.40691000918273645,
       "modularity_louvain": 0.42688246097337007,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.7732252908558022,
+      "recovery_nmi": 0.7732252908558023,
       "recovery_ari": 0.713148503980236,
       "recovery_nmi_dataflow_only": 0.66965020882712,
       "recovery_nmi_random_baseline": 0.3016347474967082,
@@ -2187,6 +2517,20 @@
         "builder": 14,
         "exploiter": 23,
         "fixer": 31
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 12,
+          "artifact": 11
+        },
+        "fixer": {
+          "decision": 22,
+          "artifact": 9
+        }
       }
     },
     "permutation": {
@@ -2270,6 +2614,16 @@
       "global_writes_by_module": {
         "exploiter": 6,
         "fixer": 10
+      },
+      "global_writes_by_module_kind": {
+        "exploiter": {
+          "decision": 3,
+          "artifact": 3
+        },
+        "fixer": {
+          "decision": 5,
+          "artifact": 5
+        }
       }
     },
     "permutation": {
@@ -2313,7 +2667,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.8938718872192425,
       "recovery_ari": 0.8818897637795275,
-      "recovery_nmi_dataflow_only": 0.7080065196737306,
+      "recovery_nmi_dataflow_only": 0.7080065196737305,
       "recovery_nmi_random_baseline": 0.3016347474967082,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 4
@@ -2362,6 +2716,20 @@
         "builder": 16,
         "exploiter": 28,
         "fixer": 24
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 11
+        },
+        "fixer": {
+          "decision": 13,
+          "artifact": 11
+        }
       }
     },
     "permutation": {
@@ -2455,6 +2823,20 @@
         "builder": 13,
         "fixer": 6,
         "reporter": 2
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 6
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 3
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -2498,8 +2880,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.6222674912651224,
-      "recovery_nmi_random_baseline": 0.3654432676940329,
+      "recovery_nmi_dataflow_only": 0.6222674912651225,
+      "recovery_nmi_random_baseline": 0.36544326769403285,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 13
     },
@@ -2549,6 +2931,20 @@
         "builder": 14,
         "exploiter": 36,
         "fixer": 26
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 19,
+          "artifact": 17
+        },
+        "fixer": {
+          "decision": 18,
+          "artifact": 8
+        }
       }
     },
     "permutation": {
@@ -2590,7 +2986,7 @@
       "modularity_labeled": 0.3452777777777778,
       "modularity_louvain": 0.39041666666666663,
       "louvain_n_communities": 4,
-      "recovery_nmi": 0.69636665331111,
+      "recovery_nmi": 0.6963666533111098,
       "recovery_ari": 0.4955428013188423,
       "recovery_nmi_dataflow_only": 0.4972268046044809,
       "recovery_nmi_random_baseline": 0.3654432676940329,
@@ -2643,6 +3039,20 @@
         "builder": 13,
         "exploiter": 19,
         "fixer": 26
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 8,
+          "artifact": 11
+        },
+        "fixer": {
+          "decision": 15,
+          "artifact": 11
+        }
       }
     },
     "permutation": {
@@ -2684,9 +3094,9 @@
       "modularity_labeled": 0.16143428747306854,
       "modularity_louvain": 0.3638042474607571,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.7028080292445139,
+      "recovery_nmi": 0.7028080292445138,
       "recovery_ari": 0.5960044395116537,
-      "recovery_nmi_dataflow_only": 0.7467536290913939,
+      "recovery_nmi_dataflow_only": 0.746753629091394,
       "recovery_nmi_random_baseline": 0.43071981548862254,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 15
@@ -2737,6 +3147,24 @@
         "exploiter": 43,
         "fixer": 7,
         "reporter": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 21,
+          "artifact": 22
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -2780,8 +3208,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.8828159045572986,
       "recovery_ari": 0.8518558364712211,
-      "recovery_nmi_dataflow_only": 0.5549060108828014,
-      "recovery_nmi_random_baseline": 0.36544326769403285,
+      "recovery_nmi_dataflow_only": 0.5549060108828013,
+      "recovery_nmi_random_baseline": 0.3654432676940329,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 8
     },
@@ -2827,6 +3255,20 @@
         "builder": 17,
         "exploiter": 42,
         "fixer": 26
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 10,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 21,
+          "artifact": 21
+        },
+        "fixer": {
+          "decision": 16,
+          "artifact": 10
+        }
       }
     },
     "permutation": {
@@ -2916,6 +3358,16 @@
       "global_writes_by_module": {
         "builder": 15,
         "exploiter": 9
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 10,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 5,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -2959,7 +3411,7 @@
       "louvain_n_communities": 4,
       "recovery_nmi": 0.971262324052962,
       "recovery_ari": 0.9823386817499712,
-      "recovery_nmi_dataflow_only": 0.6577031584408596,
+      "recovery_nmi_dataflow_only": 0.6577031584408598,
       "recovery_nmi_random_baseline": 0.36544326769403285,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 0
@@ -2999,6 +3451,12 @@
       },
       "global_writes_by_module": {
         "builder": 11
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -3085,6 +3543,20 @@
         "exploiter": 10,
         "fixer": 8,
         "reporter": 2
+      },
+      "global_writes_by_module_kind": {
+        "exploiter": {
+          "decision": 6,
+          "artifact": 4
+        },
+        "fixer": {
+          "decision": 4,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -3178,6 +3650,16 @@
       "global_writes_by_module": {
         "builder": 11,
         "exploiter": 33
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 16
+        }
       }
     },
     "permutation": {
@@ -3219,7 +3701,7 @@
       "modularity_labeled": 0.2693877551020408,
       "modularity_louvain": 0.3363265306122448,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.8587789402241437,
+      "recovery_nmi": 0.8587789402241438,
       "recovery_ari": 0.8059701492537313,
       "recovery_nmi_dataflow_only": 0.6498890459922494,
       "recovery_nmi_random_baseline": 0.43071981548862254,
@@ -3271,6 +3753,16 @@
       "global_writes_by_module": {
         "builder": 8,
         "exploiter": 17
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 2,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 9,
+          "artifact": 8
+        }
       }
     },
     "permutation": {
@@ -3314,7 +3806,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.875172023123002,
       "recovery_ari": 0.8352180936995154,
-      "recovery_nmi_dataflow_only": 0.6351542755573858,
+      "recovery_nmi_dataflow_only": 0.6351542755573859,
       "recovery_nmi_random_baseline": 0.36801769639435084,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 8
@@ -3366,6 +3858,24 @@
         "exploiter": 27,
         "fixer": 20,
         "reporter": 2
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 15,
+          "artifact": 12
+        },
+        "fixer": {
+          "decision": 9,
+          "artifact": 11
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -3459,6 +3969,16 @@
       "global_writes_by_module": {
         "exploiter": 33,
         "fixer": 7
+      },
+      "global_writes_by_module_kind": {
+        "exploiter": {
+          "decision": 17,
+          "artifact": 16
+        },
+        "fixer": {
+          "decision": 4,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -3503,7 +4023,7 @@
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
       "recovery_nmi_dataflow_only": 0.690423266498095,
-      "recovery_nmi_random_baseline": 0.3654432676940329,
+      "recovery_nmi_random_baseline": 0.36544326769403285,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
     },
@@ -3553,6 +4073,16 @@
       "global_writes_by_module": {
         "builder": 13,
         "exploiter": 44
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 24,
+          "artifact": 20
+        }
       }
     },
     "permutation": {
@@ -3596,7 +4126,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
-      "recovery_nmi_dataflow_only": 0.643091861712495,
+      "recovery_nmi_dataflow_only": 0.6430918617124949,
       "recovery_nmi_random_baseline": 0.36801769639435084,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 12
@@ -3646,6 +4176,16 @@
       "global_writes_by_module": {
         "builder": 19,
         "exploiter": 26
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 10,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 13,
+          "artifact": 13
+        }
       }
     },
     "permutation": {
@@ -3741,6 +4281,24 @@
         "exploiter": 48,
         "fixer": 15,
         "reporter": 2
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 24,
+          "artifact": 24
+        },
+        "fixer": {
+          "decision": 7,
+          "artifact": 8
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -3782,9 +4340,9 @@
       "modularity_labeled": 0.39180000000000004,
       "modularity_louvain": 0.43460000000000004,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.875172023123002,
+      "recovery_nmi": 0.8751720231230021,
       "recovery_ari": 0.8352180936995154,
-      "recovery_nmi_dataflow_only": 0.6559612617118712,
+      "recovery_nmi_dataflow_only": 0.6559612617118713,
       "recovery_nmi_random_baseline": 0.36138229805514926,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
@@ -3836,6 +4394,24 @@
         "exploiter": 48,
         "fixer": 16,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 23,
+          "artifact": 25
+        },
+        "fixer": {
+          "decision": 7,
+          "artifact": 9
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -3910,7 +4486,8 @@
     "global_context": {
       "global_writes_total": 0,
       "global_writes_by_kind": {},
-      "global_writes_by_module": {}
+      "global_writes_by_module": {},
+      "global_writes_by_module_kind": {}
     },
     "permutation": {
       "dataflow_inter_fraction": {
@@ -4001,6 +4578,16 @@
       "global_writes_by_module": {
         "builder": 12,
         "exploiter": 7
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 4,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -4044,7 +4631,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.6403904378939322,
+      "recovery_nmi_dataflow_only": 0.6403904378939324,
       "recovery_nmi_random_baseline": 0.3889850529522945,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 13
@@ -4096,6 +4683,20 @@
         "builder": 12,
         "exploiter": 24,
         "fixer": 22
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 4,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 11,
+          "artifact": 13
+        },
+        "fixer": {
+          "decision": 15,
+          "artifact": 7
+        }
       }
     },
     "permutation": {
@@ -4190,6 +4791,16 @@
       "global_writes_by_module": {
         "builder": 17,
         "exploiter": 34
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 18,
+          "artifact": 16
+        }
       }
     },
     "permutation": {
@@ -4233,7 +4844,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.6222551176694499,
+      "recovery_nmi_dataflow_only": 0.62225511766945,
       "recovery_nmi_random_baseline": 0.3654432676940329,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 11
@@ -4285,6 +4896,20 @@
         "builder": 19,
         "exploiter": 20,
         "fixer": 16
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 10
+        },
+        "exploiter": {
+          "decision": 9,
+          "artifact": 11
+        },
+        "fixer": {
+          "decision": 9,
+          "artifact": 7
+        }
       }
     },
     "permutation": {
@@ -4328,7 +4953,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
-      "recovery_nmi_dataflow_only": 0.6475825468689372,
+      "recovery_nmi_dataflow_only": 0.6475825468689371,
       "recovery_nmi_random_baseline": 0.36801769639435084,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 8
@@ -4380,6 +5005,24 @@
         "exploiter": 32,
         "fixer": 7,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 14,
+          "artifact": 18
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -4471,6 +5114,16 @@
       "global_writes_by_module": {
         "builder": 10,
         "exploiter": 16
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 8,
+          "artifact": 8
+        }
       }
     },
     "permutation": {
@@ -4512,7 +5165,7 @@
       "modularity_labeled": 0.2840571088637716,
       "modularity_louvain": 0.3994646044021416,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.7440870110187376,
+      "recovery_nmi": 0.7440870110187378,
       "recovery_ari": 0.6840277777777778,
       "recovery_nmi_dataflow_only": 0.6386033968307672,
       "recovery_nmi_random_baseline": 0.43071981548862254,
@@ -4565,6 +5218,20 @@
         "builder": 11,
         "exploiter": 31,
         "fixer": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 3,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 14
+        },
+        "fixer": {
+          "decision": 4,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -4608,7 +5275,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.6222674912651225,
+      "recovery_nmi_dataflow_only": 0.6222674912651224,
       "recovery_nmi_random_baseline": 0.3889850529522945,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
@@ -4659,6 +5326,24 @@
         "exploiter": 30,
         "fixer": 17,
         "reporter": 2
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 12,
+          "artifact": 18
+        },
+        "fixer": {
+          "decision": 9,
+          "artifact": 8
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -4702,7 +5387,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.8791722396357735,
       "recovery_ari": 0.8533333333333333,
-      "recovery_nmi_dataflow_only": 0.6737285968616668,
+      "recovery_nmi_dataflow_only": 0.673728596861667,
       "recovery_nmi_random_baseline": 0.5302249433689117,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 5
@@ -4752,6 +5437,24 @@
         "exploiter": 4,
         "fixer": 15,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 3,
+          "artifact": 1
+        },
+        "fixer": {
+          "decision": 8,
+          "artifact": 7
+        },
+        "reporter": {
+          "decision": 2,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -4796,7 +5499,7 @@
       "recovery_nmi": 0.8978499788073995,
       "recovery_ari": 0.9234650967199327,
       "recovery_nmi_dataflow_only": 0.6509887309041444,
-      "recovery_nmi_random_baseline": 0.4307198154886225,
+      "recovery_nmi_random_baseline": 0.43071981548862254,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 3
     },
@@ -4846,6 +5549,20 @@
         "builder": 14,
         "exploiter": 28,
         "fixer": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 10,
+          "artifact": 18
+        },
+        "fixer": {
+          "decision": 1,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -4887,9 +5604,9 @@
       "modularity_labeled": 0.22829861111111113,
       "modularity_louvain": 0.375,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.702225899932699,
+      "recovery_nmi": 0.7022258999326989,
       "recovery_ari": 0.5242214532871973,
-      "recovery_nmi_dataflow_only": 0.6973062683963183,
+      "recovery_nmi_dataflow_only": 0.6973062683963182,
       "recovery_nmi_random_baseline": 0.5302249433689117,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 3
@@ -4927,7 +5644,8 @@
     "global_context": {
       "global_writes_total": 0,
       "global_writes_by_kind": {},
-      "global_writes_by_module": {}
+      "global_writes_by_module": {},
+      "global_writes_by_module_kind": {}
     },
     "permutation": {
       "dataflow_inter_fraction": {
@@ -5009,6 +5727,12 @@
       },
       "global_writes_by_module": {
         "builder": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 2,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -5092,6 +5816,12 @@
       },
       "global_writes_by_module": {
         "builder": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 1,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -5133,7 +5863,7 @@
       "modularity_labeled": 0.4054560599750104,
       "modularity_louvain": 0.44918783840066634,
       "louvain_n_communities": 3,
-      "recovery_nmi": 0.875172023123002,
+      "recovery_nmi": 0.8751720231230021,
       "recovery_ari": 0.8352180936995154,
       "recovery_nmi_dataflow_only": 0.6837836921365157,
       "recovery_nmi_random_baseline": 0.36138229805514926,
@@ -5186,6 +5916,20 @@
         "builder": 13,
         "exploiter": 31,
         "fixer": 18
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 18,
+          "artifact": 13
+        },
+        "fixer": {
+          "decision": 9,
+          "artifact": 9
+        }
       }
     },
     "permutation": {
@@ -5280,6 +6024,20 @@
         "builder": 9,
         "exploiter": 34,
         "fixer": 23
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 4,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 15,
+          "artifact": 19
+        },
+        "fixer": {
+          "decision": 11,
+          "artifact": 12
+        }
       }
     },
     "permutation": {
@@ -5323,8 +6081,8 @@
       "louvain_n_communities": 2,
       "recovery_nmi": 0.6666666666666667,
       "recovery_ari": 0.5333333333333333,
-      "recovery_nmi_dataflow_only": 0.6381090426950288,
-      "recovery_nmi_random_baseline": 0.6695770703327825,
+      "recovery_nmi_dataflow_only": 0.6381090426950289,
+      "recovery_nmi_random_baseline": 0.6695770703327826,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 3
     },
@@ -5370,6 +6128,16 @@
       "global_writes_by_module": {
         "builder": 12,
         "exploiter": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 2,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -5464,6 +6232,20 @@
         "builder": 13,
         "exploiter": 30,
         "fixer": 35
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 15,
+          "artifact": 15
+        },
+        "fixer": {
+          "decision": 20,
+          "artifact": 15
+        }
       }
     },
     "permutation": {
@@ -5507,7 +6289,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.6838812885074302,
+      "recovery_nmi_dataflow_only": 0.6838812885074301,
       "recovery_nmi_random_baseline": 0.3654432676940329,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
@@ -5557,6 +6339,20 @@
         "builder": 14,
         "exploiter": 33,
         "fixer": 22
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 16
+        },
+        "fixer": {
+          "decision": 11,
+          "artifact": 11
+        }
       }
     },
     "permutation": {
@@ -5649,6 +6445,20 @@
         "builder": 12,
         "exploiter": 31,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 5,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 10,
+          "artifact": 21
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -5692,8 +6502,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
-      "recovery_nmi_dataflow_only": 0.690779757787828,
-      "recovery_nmi_random_baseline": 0.36138229805514926,
+      "recovery_nmi_dataflow_only": 0.6907797577878281,
+      "recovery_nmi_random_baseline": 0.3613822980551493,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 4
     },
@@ -5742,6 +6552,20 @@
         "builder": 18,
         "exploiter": 36,
         "fixer": 22
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 18,
+          "artifact": 18
+        },
+        "fixer": {
+          "decision": 12,
+          "artifact": 10
+        }
       }
     },
     "permutation": {
@@ -5785,7 +6609,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.6477141600417323,
+      "recovery_nmi_dataflow_only": 0.6477141600417324,
       "recovery_nmi_random_baseline": 0.36544326769403285,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 4
@@ -5833,6 +6657,20 @@
         "builder": 15,
         "exploiter": 15,
         "fixer": 18
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 8,
+          "artifact": 7
+        },
+        "fixer": {
+          "decision": 11,
+          "artifact": 7
+        }
       }
     },
     "permutation": {
@@ -5925,6 +6763,20 @@
         "builder": 11,
         "exploiter": 38,
         "fixer": 20
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 16,
+          "artifact": 22
+        },
+        "fixer": {
+          "decision": 11,
+          "artifact": 9
+        }
       }
     },
     "permutation": {
@@ -5968,7 +6820,7 @@
       "louvain_n_communities": 4,
       "recovery_nmi": 0.8417385488683788,
       "recovery_ari": 0.7799274486094316,
-      "recovery_nmi_dataflow_only": 0.7807068354512379,
+      "recovery_nmi_dataflow_only": 0.7807068354512381,
       "recovery_nmi_random_baseline": 0.43071981548862254,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 10
@@ -6019,6 +6871,16 @@
       "global_writes_by_module": {
         "builder": 15,
         "exploiter": 18
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 8,
+          "artifact": 10
+        }
       }
     },
     "permutation": {
@@ -6111,6 +6973,20 @@
         "builder": 9,
         "fixer": 14,
         "reporter": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 3
+        },
+        "fixer": {
+          "decision": 8,
+          "artifact": 6
+        },
+        "reporter": {
+          "decision": 2,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -6154,7 +7030,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7440870110187378,
       "recovery_ari": 0.6840277777777778,
-      "recovery_nmi_dataflow_only": 0.529521826528333,
+      "recovery_nmi_dataflow_only": 0.5295218265283331,
       "recovery_nmi_random_baseline": 0.43071981548862254,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 14
@@ -6206,6 +7082,24 @@
         "exploiter": 35,
         "fixer": 6,
         "reporter": 5
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 20,
+          "artifact": 15
+        },
+        "fixer": {
+          "decision": 2,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -6249,7 +7143,7 @@
       "louvain_n_communities": 4,
       "recovery_nmi": 0.7531874456235571,
       "recovery_ari": 0.6425470332850941,
-      "recovery_nmi_dataflow_only": 0.5551010800852595,
+      "recovery_nmi_dataflow_only": 0.5551010800852596,
       "recovery_nmi_random_baseline": 0.32694338587642363,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 14
@@ -6298,6 +7192,20 @@
         "builder": 19,
         "exploiter": 34,
         "fixer": 31
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 10,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 16,
+          "artifact": 18
+        },
+        "fixer": {
+          "decision": 19,
+          "artifact": 12
+        }
       }
     },
     "permutation": {
@@ -6341,7 +7249,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.8869631466136481,
       "recovery_ari": 0.8836662749706228,
-      "recovery_nmi_dataflow_only": 0.7521901192843666,
+      "recovery_nmi_dataflow_only": 0.7521901192843665,
       "recovery_nmi_random_baseline": 0.5026262348090008,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 3
@@ -6388,6 +7296,24 @@
         "exploiter": 7,
         "fixer": 29,
         "reporter": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 3,
+          "artifact": 4
+        },
+        "fixer": {
+          "decision": 16,
+          "artifact": 13
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 3
+        }
       }
     },
     "permutation": {
@@ -6431,8 +7357,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
-      "recovery_nmi_dataflow_only": 0.6148540312435804,
-      "recovery_nmi_random_baseline": 0.3613822980551493,
+      "recovery_nmi_dataflow_only": 0.6148540312435803,
+      "recovery_nmi_random_baseline": 0.36138229805514926,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
     },
@@ -6482,6 +7408,24 @@
         "exploiter": 37,
         "fixer": 9,
         "reporter": 7
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 10,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 14,
+          "artifact": 23
+        },
+        "fixer": {
+          "decision": 6,
+          "artifact": 3
+        },
+        "reporter": {
+          "decision": 3,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -6525,8 +7469,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.7114001267007724,
-      "recovery_nmi_random_baseline": 0.36544326769403285,
+      "recovery_nmi_dataflow_only": 0.7114001267007722,
+      "recovery_nmi_random_baseline": 0.3654432676940329,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 8
     },
@@ -6576,6 +7520,20 @@
         "builder": 16,
         "exploiter": 28,
         "fixer": 18
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 10,
+          "artifact": 18
+        },
+        "fixer": {
+          "decision": 7,
+          "artifact": 11
+        }
       }
     },
     "permutation": {
@@ -6672,6 +7630,20 @@
         "builder": 12,
         "exploiter": 23,
         "fixer": 17
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 8,
+          "artifact": 15
+        },
+        "fixer": {
+          "decision": 10,
+          "artifact": 7
+        }
       }
     },
     "permutation": {
@@ -6715,7 +7687,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7440870110187378,
       "recovery_ari": 0.6840277777777778,
-      "recovery_nmi_dataflow_only": 0.5448108805419288,
+      "recovery_nmi_dataflow_only": 0.5448108805419289,
       "recovery_nmi_random_baseline": 0.43071981548862254,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 18
@@ -6765,6 +7737,20 @@
         "builder": 15,
         "exploiter": 40,
         "fixer": 8
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 6
+        },
+        "exploiter": {
+          "decision": 25,
+          "artifact": 15
+        },
+        "fixer": {
+          "decision": 4,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -6858,6 +7844,20 @@
         "builder": 17,
         "exploiter": 26,
         "fixer": 7
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 8,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 11,
+          "artifact": 15
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -6949,6 +7949,24 @@
         "exploiter": 6,
         "fixer": 11,
         "reporter": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 3,
+          "artifact": 3
+        },
+        "fixer": {
+          "decision": 5,
+          "artifact": 6
+        },
+        "reporter": {
+          "decision": 3,
+          "artifact": 1
+        }
       }
     },
     "permutation": {
@@ -6992,7 +8010,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.5130642172904211,
+      "recovery_nmi_dataflow_only": 0.513064217290421,
       "recovery_nmi_random_baseline": 0.3654432676940329,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 8
@@ -7043,6 +8061,20 @@
         "builder": 18,
         "exploiter": 37,
         "fixer": 22
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 18,
+          "artifact": 19
+        },
+        "fixer": {
+          "decision": 12,
+          "artifact": 10
+        }
       }
     },
     "permutation": {
@@ -7086,7 +8118,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7485523961030248,
       "recovery_ari": 0.6454445664105379,
-      "recovery_nmi_dataflow_only": 0.706739115234207,
+      "recovery_nmi_dataflow_only": 0.7067391152342068,
       "recovery_nmi_random_baseline": 0.36138229805514926,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 8
@@ -7138,6 +8170,23 @@
         "exploiter": 21,
         "fixer": 20,
         "reporter": 4
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 6,
+          "artifact": 8
+        },
+        "exploiter": {
+          "decision": 12,
+          "artifact": 9
+        },
+        "fixer": {
+          "decision": 13,
+          "artifact": 7
+        },
+        "reporter": {
+          "artifact": 4
+        }
       }
     },
     "permutation": {
@@ -7225,6 +8274,24 @@
         "exploiter": 6,
         "fixer": 7,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 7,
+          "artifact": 9
+        },
+        "exploiter": {
+          "decision": 3,
+          "artifact": 3
+        },
+        "fixer": {
+          "decision": 3,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 2
+        }
       }
     },
     "permutation": {
@@ -7268,7 +8335,7 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.7582406264619664,
       "recovery_ari": 0.66796875,
-      "recovery_nmi_dataflow_only": 0.680397579715437,
+      "recovery_nmi_dataflow_only": 0.6803975797154369,
       "recovery_nmi_random_baseline": 0.3889850529522945,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 7
@@ -7318,6 +8385,20 @@
         "builder": 9,
         "exploiter": 33,
         "fixer": 27
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 4,
+          "artifact": 5
+        },
+        "exploiter": {
+          "decision": 17,
+          "artifact": 16
+        },
+        "fixer": {
+          "decision": 14,
+          "artifact": 13
+        }
       }
     },
     "permutation": {
@@ -7361,8 +8442,8 @@
       "louvain_n_communities": 3,
       "recovery_nmi": 0.875172023123002,
       "recovery_ari": 0.8352180936995154,
-      "recovery_nmi_dataflow_only": 0.7067391152342068,
-      "recovery_nmi_random_baseline": 0.36801769639435084,
+      "recovery_nmi_dataflow_only": 0.706739115234207,
+      "recovery_nmi_random_baseline": 0.3680176963943509,
       "inter_module_message_count": 0,
       "inter_module_dataflow_count": 4
     },
@@ -7412,6 +8493,24 @@
         "exploiter": 39,
         "fixer": 8,
         "reporter": 3
+      },
+      "global_writes_by_module_kind": {
+        "builder": {
+          "decision": 9,
+          "artifact": 7
+        },
+        "exploiter": {
+          "decision": 24,
+          "artifact": 15
+        },
+        "fixer": {
+          "decision": 4,
+          "artifact": 4
+        },
+        "reporter": {
+          "decision": 1,
+          "artifact": 2
+        }
       }
     },
     "permutation": {

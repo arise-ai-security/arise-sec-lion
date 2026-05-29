@@ -63,11 +63,11 @@
     },
     "recovery_nmi_dataflow_only": {
       "n": 77,
-      "median": 0.6534088493232711,
-      "mean": 0.6547370490362805,
+      "median": 0.6534088493232713,
+      "mean": 0.6547370490362806,
       "iqr": [
         0.6222674912651225,
-        0.690779757787828
+        0.6907797577878281
       ],
       "ci95_mean": [
         0.6408362112687374,
@@ -192,7 +192,33 @@
       "min": 0,
       "max": 85
     },
-    "runs_with_any_writes": 79
+    "runs_with_any_writes": 79,
+    "writes_by_module_kind": {
+      "builder": {
+        "decision_total": 492,
+        "artifact_total": 506,
+        "decision_per_run": 6.07,
+        "artifact_per_run": 6.25
+      },
+      "exploiter": {
+        "decision_total": 985,
+        "artifact_total": 999,
+        "decision_per_run": 12.16,
+        "artifact_per_run": 12.33
+      },
+      "fixer": {
+        "decision_total": 569,
+        "artifact_total": 439,
+        "decision_per_run": 7.02,
+        "artifact_per_run": 5.42
+      },
+      "reporter": {
+        "decision_total": 32,
+        "artifact_total": 56,
+        "decision_per_run": 0.4,
+        "artifact_per_run": 0.69
+      }
+    }
   },
   "permutation": {
     "dataflow_inter_fraction": {

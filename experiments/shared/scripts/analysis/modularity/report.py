@@ -9,6 +9,7 @@ numbers, not asserted — including where a claim is weak.
 
 from __future__ import annotations
 
+import collections
 import random
 import statistics
 from typing import TYPE_CHECKING, Any
@@ -81,6 +82,21 @@ def aggregate(per_run: Sequence[dict]) -> dict:
                 [v for v in series("permutation", stat, "null_mean") if v is not None] or [0]),
         }
 
+    n_runs = len(per_run) or 1
+    module_kind: dict = collections.defaultdict(collections.Counter)
+    for metric in per_run:
+        for mod, kinds in (_get(metric, "global_context", "global_writes_by_module_kind") or {}).items():
+            for kind, count in kinds.items():
+                module_kind[mod][kind] += count
+    writes_by_module_kind = {
+        mod: {
+            "decision_total": k.get("decision", 0), "artifact_total": k.get("artifact", 0),
+            "decision_per_run": round(k.get("decision", 0) / n_runs, 2),
+            "artifact_per_run": round(k.get("artifact", 0) / n_runs, 2),
+        }
+        for mod, k in module_kind.items()
+    }
+
     return {
         "n_runs": len(per_run),
         "coupling": {
@@ -108,6 +124,7 @@ def aggregate(per_run: Sequence[dict]) -> dict:
         "global_context": {
             "writes_total": summary_stats(series("global_context", "global_writes_total")),
             "runs_with_any_writes": sum(1 for v in series("global_context", "global_writes_total") if v),
+            "writes_by_module_kind": writes_by_module_kind,
         },
         "permutation": perm_summary,
     }
@@ -125,6 +142,121 @@ def _inst(value: float | None) -> str:
     return f"{value:.2f}" if value is not None else "n/a"
 
 
+# Operationalizations specific to THIS event data — inspired by, but not identical
+# to, the textbook software-engineering metrics. Each states the exact logic used.
+_DEFINITIONS: list[str] = [
+    "## Appendix A — Operational definitions (exactly as computed)",
+    "",
+    "These are **operationalizations specific to this event data**, inspired by but **not identical to** "
+    "the textbook software-engineering metrics. Each gives the exact logic (code in "
+    "`experiments/shared/scripts/analysis/modularity/`).",
+    "",
+    "- **Node** = an `aggregate_id` that has an `AgentCreated` event. **Module** = the "
+    "`[Builder]/[Exploiter]/[Fixer]/[Reporter]` bracket of the node's depth-1 ancestor (direct child of "
+    "the boss root); the root = `boss`; no bracket = `unknown`. (`modules.LabeledModules`)",
+    "- **Interaction graph** = undirected weighted graph over nodes; weight(u,v) = (#persisted messages "
+    "u↔v: each `ChildSpawned` parent→child + each `ChildCompleted`/`ChildFailed` child→parent) + "
+    "(#producer→consumer dataflow edges u↔v). (`claims.interaction_weights`)",
+    "- **Dataflow edge (producer→consumer)** = per normalized path, order touches by (occurred_at, seq); a "
+    "read/search of the path by node B that follows the most recent write/edit by a *different* node A "
+    "emits a directed edge A→B (\"last-writer-before-read\"). (`normalize.build_dataflows`)",
+    "- **Cohesion (intra-module weight)** = Σ interaction-graph edge weights with both endpoints in the "
+    "same non-boss module. **Coupling (inter-module weight)** = Σ weights with endpoints in two different "
+    "non-boss modules. **coupling ratio** = inter/(intra+inter). NOTE: a weighted-edge-sum "
+    "operationalization, *not* LCOM/relational cohesion. (`claims.compute_module_profiles`)",
+    "- **inter_module_fraction (run)** = inter/(intra+inter) over all module-pair edges; boss-relay edges "
+    "excluded from both numerator and denominator. (`claims.compute_coupling`)",
+    "- **Modularity Q** = Newman weighted modularity of the *labeled* partition on the interaction graph: "
+    "Q = Σ_c [L_c/m − (D_c/2m)²], where L_c = internal edge weight of module c, D_c = summed weighted "
+    "degree of its nodes, m = total edge weight. (`graph.modularity`)",
+    "- **Community detection** = greedy agglomerative: repeatedly merge the two edge-connected communities "
+    "whose merge most increases Q, until none improves it. (`graph.greedy_communities`)",
+    "- **Recovery NMI / ARI** = agreement between the labeled-module partition and the greedy-community "
+    "partition over the same nodes (label-name-invariant). NMI = 2·MI/(H_a+H_b); ARI = chance-adjusted "
+    "Rand. (`graph.normalized_mutual_info`, `adjusted_rand_index`)",
+    "- **Dataflow-only recovery** = recovery NMI where community detection runs on the dataflow-only edge "
+    "weights (messages excluded) — the behavioral lower bound. **Random-partition baseline** = mean NMI "
+    "over 20 random node→module relabelings (module sizes preserved) vs the true labels — the chance floor.",
+    "- **Permutation null (coupling)** = statistic is the fraction of dataflow edges that are cross-module "
+    "(both endpoints non-boss); null = 1000× shuffle of module labels among non-boss nodes (sizes fixed); "
+    "z = (obs − null_mean)/null_sd; one-sided p = (#{perm ≤ obs}+1)/(N+1) (add-one estimator). "
+    "(`claims.permutation_nulls`)",
+    "- **Instability I (per module)** = from CROSS-MODULE dataflow edges only: Ca(m) = #edges where m is "
+    "the WRITER (m's output consumed elsewhere ⇒ afferent/depended-upon), Ce(m) = #edges where m is the "
+    "READER (m consumes others ⇒ efferent/depends-on); I = Ce/(Ca+Ce). NOTE: maps Martin's instability "
+    "onto dataflow direction; *not* package class-dependency counting. (`claims.compute_module_profiles`)",
+    "- **Recon-read Jaccard (task overlap)** = per module, the set of files recon-read (op∈{read,search}, "
+    "confidence∈{high,med}); statistic = mean pairwise |A∩B|/|A∪B| over module pairs. "
+    "(`claims.compute_task_overlap`)",
+    "- **Write-write overlap** = per zone, #distinct normalized paths written/edited (HIGH-confidence) by "
+    "≥2 different modules. **Producer→consumer** = directed dataflow edges aggregated by module pair. "
+    "(`claims.compute_file_overlap`, `dsm.module_dataflow_matrix`)",
+    "- **Global-context write** = a `DecisionRecorded` or `ArtifactStored` event on the SharedStore "
+    "aggregate (`uuid5(NS, run_id)`), attributed to its author module via `decided_by`/`stored_by`. "
+    "(`claims.compute_global_context`)",
+    "- **File touch / confidence / zone** = from `ThoughtCaptured` tool_use (Read/Write/Edit → "
+    "`file_path`/prefix = HIGH; Bash/security-shell → `/src|/testcase|/work` tokens in the command = LOW; "
+    "Grep/Glob → search `path` = MED) and `ProbeCompleted.result_summary` (read_symbol/read_file header, "
+    "search-match lines = MED). **zone** = first path segment (`src`/`testcase`/`work`/`other`). "
+    "(`paths.extract_touches`)",
+]
+
+# (filename) -> (what it shows, how to read it / what "good" looks like).
+_FIGURE_GUIDE: dict[str, tuple[str, str]] = {
+    "fig1_node_dsm.svg": (
+        "Node×node matrix for one representative run; rows/cols = nodes grouped by module (black lines = "
+        "module boundaries), cell darkness = interaction-graph weight (messages + dataflow).",
+        "Dense dark blocks ON the diagonal = high within-module cohesion; near-empty OFF-block cells = low "
+        "inter-module coupling. Good modularity = a clean block-diagonal."),
+    "fig2_module_dsm.svg": (
+        "Module×module matrix; cell = mean interaction weight per run; diagonal = cohesion, off-diagonal = "
+        "coupling, the boss row/column = the relay.",
+        "Bright diagonal + bright boss row/col with DIM non-boss off-diagonal = cohesive modules whose only "
+        "cross-talk is via the boss."),
+    "fig3_module_dataflow_dsm.svg": (
+        "Directed 4×4; row = producer (writes a file), column = consumer (reads it); cell = mean "
+        "producer→consumer edges/run.",
+        "Mass on the Builder→Exploiter→Fixer→Reporter super-diagonal = data flows along the prescribed "
+        "pipeline; little back-flow or off-pipeline coupling."),
+    "fig4_recovery_nmi.svg": (
+        "Bars = NMI of unsupervised communities vs the true module labels, for the full graph, the "
+        "dataflow-only graph, and a random-partition baseline; error bars = 95% CI.",
+        "Full and dataflow-only well ABOVE the random baseline = modules are recoverable from behavior; the "
+        "full-minus-dataflow gap = how much recovery is driven by tree topology vs behavior."),
+    "fig5_coupling_null_z.svg": (
+        "Histogram of per-run z-scores: observed inter-module dataflow fraction vs the label-permutation "
+        "null; dashed line at z=0.",
+        "Mass LEFT of 0 = coupling below chance (more self-contained than random labeling); the further "
+        "left, the stronger. Mean z ≈ −1.8."),
+    "fig6_module_instability.svg": (
+        "Bars = mean instability I = Ce/(Ca+Ce) per module.",
+        "An ASCENDING Builder→Reporter pattern = stable producers → unstable consumers, i.e. the data "
+        "dependency direction mirrors the prescribed DAG (Conway's law)."),
+    "fig7_cohesion_coupling.svg": (
+        "Per module, two bars: intra-module (cohesion) vs inter-module (coupling) interaction weight per run.",
+        "Intra > inter for every module = each module talks to itself more than to others — cohesive and "
+        "loosely coupled."),
+    "fig8_file_overlap_zone.svg": (
+        "Per workspace zone (`/src`,`/testcase`,`/work`), bars: write-write overlap, read-overlap, and "
+        "producer→consumer edges per run.",
+        "Low write-write everywhere = little contention; read-overlap concentrated in `/src` = shared input "
+        "(expected, not a defect); producer→consumer in `/testcase` and `/src` = the prescribed handoff."),
+}
+
+
+def _figure_guide_lines(figures: list) -> list[str]:
+    lines = ["## Figures — what each shows and how to read it", ""]
+    for name, _caption in figures:
+        shows, how = _FIGURE_GUIDE.get(name, ("", ""))
+        lines.append(f"### `figures/{name}`")
+        if shows:
+            lines.append(f"- **Shows:** {shows}")
+        if how:
+            lines.append(f"- **Read:** {how}")
+        lines.append("")
+    return lines
+
+
 def render_markdown(agg: dict, *, study: str, provenance: dict, extra: dict | None = None) -> str:
     extra = extra or {}
     profiles = extra.get("profiles", {})
@@ -135,6 +267,7 @@ def render_markdown(agg: dict, *, study: str, provenance: dict, extra: dict | No
     nmi, ari = c["recovery_nmi"], c["recovery_ari"]
     df_perm = p["dataflow_inter_fraction"]
     flow_txt = ", ".join(f"{k} {v}" for k, v in sorted(module_flow.items(), key=lambda kv: -kv[1])[:8])
+    wmk = g.get("writes_by_module_kind", {})
     lines = [
         f"# Subtree Modularization — {study}",
         "",
@@ -161,7 +294,7 @@ def render_markdown(agg: dict, *, study: str, provenance: dict, extra: dict | No
         "- **Recovery:** greedy modularity-maximizing community detection vs the labels (NMI/ARI), with a "
         "dataflow-only variant and a random-partition baseline.",
         "- **Null model:** per run, shuffle module labels among non-boss nodes (sizes fixed), recompute; "
-        "one-sided p = P(perm ≤ observed). **Instability** I = Ce/(Ca+Ce) from cross-module dataflow.",
+        "one-sided p = (#{perm ≤ observed}+1)/(N+1). **Instability** I = Ce/(Ca+Ce) from cross-module dataflow.",
         "",
         "## Claim 1 — low inter-module coupling, high cohesion, recoverable modules",
         f"- **Inter-module persisted messages: {c['inter_module_message_count_total']} total** "
@@ -193,8 +326,25 @@ def render_markdown(agg: dict, *, study: str, provenance: dict, extra: dict | No
         "## Claim 1b — minimized global-context reliance",
         f"- **Shared-store writes per run:** {_fmt(g['writes_total'])}; "
         f"{g['runs_with_any_writes']}/{agg['n_runs']} runs use the channel.",
-        "- Interpretation: the global context is **heavily used** (not minimized). Reads are not "
-        "event-logged, so consumption is not directly observable; writes alone show active reliance.",
+        "",
+        "| module | decisions/run | artifacts/run | total/run |",
+        "|---|---|---|---|",
+        *[f"| {m} | {wmk.get(m, {}).get('decision_per_run', 0)} "
+          f"| {wmk.get(m, {}).get('artifact_per_run', 0)} "
+          f"| {round(wmk.get(m, {}).get('decision_per_run', 0) + wmk.get(m, {}).get('artifact_per_run', 0), 2)} |"
+          for m in ("builder", "exploiter", "fixer", "reporter")],
+        "",
+        "- Interpretation: the global context is **heavily used** (not minimized) — Exploiter writes ~2× the "
+        "others; Reporter is near-silent. Reads are not event-logged, so consumption is not directly "
+        "observable; writes alone show active reliance.",
+        "- **Content characterization** (all 81 runs): the store is a **module-partitioned annotation "
+        "layer, not a payload store** — **0 of ~2,000 artifacts contain actual file content** (diffs/dumps); "
+        "values are prose descriptions/pointers to workspace files (median ~93 chars). The per-module "
+        "division matches the prompts (Builder→build/env, Exploiter→PoC+findings, Fixer→patch+validation), "
+        "but the **key vocabulary is ~75% run-unique/ad-hoc** — e.g. the prompt's 'MANDATORY' `binary_path` "
+        "key appears verbatim in only 2/81 runs (the concept in 56/81, fragmented across 20+ spellings). So "
+        "the shared state functions as a human-readable changelog, not the machine-keyable table the "
+        "prompts specify.",
         "",
         "## Claim 3 — no cross-module file contention",
         f"- **Write-write overlap (same file written by ≥2 modules), totals by zone:** "
@@ -219,9 +369,7 @@ def render_markdown(agg: dict, *, study: str, provenance: dict, extra: dict | No
         "",
         (f"Producer→consumer dataflow (mean edges/run, top): {flow_txt}" if flow_txt else ""),
         "",
-        "## Figures (SVG in `figures/`, captions in `FIGURES.md`)",
-        *[f"- **`figures/{name}`** — {cap}" for name, cap in figures],
-        "",
+        *_figure_guide_lines(figures),
         "## Bottom line",
         "- **Supported:** the modular *structure* is real and **recoverable above chance** (NMI/ARI well "
         "above a random-partition baseline; positive Q), and inter-module data coupling runs **below a "
@@ -243,5 +391,7 @@ def render_markdown(agg: dict, *, study: str, provenance: dict, extra: dict | No
         f"{provenance.get('patch_recall', 'n/a')}).",
         "- Global-context reads are not logged; only writes are observed.",
         "- Cross-aggregate ordering uses `occurred_at` (coarse); producer/consumer timing is approximate.",
+        "",
+        *_DEFINITIONS,
     ]
     return "\n".join(lines)
