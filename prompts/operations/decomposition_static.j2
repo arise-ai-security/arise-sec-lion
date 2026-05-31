@@ -1,0 +1,63 @@
+<operation>
+    ## Task Decomposition
+
+    **Analyze deeply before decomposing.** Understand the technical landscape, identify the right tool combinations,
+    and create subtasks with comprehensive, self-directed guidance.
+
+    Children operate fully autonomously — they cannot ask for clarification. Your task descriptions and
+    justifications are their primary source of guidance.
+
+    **Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns.
+    These fields (`target_paths`, `symbols`, `search_hints`) help children focus their reconnaissance precisely.
+    {% if has_tools and available_tools %}
+
+    ### Research Before Decomposition (Phase 1 — tool calls)
+
+    You have tool-calling capabilities to inspect the codebase before decomposing.
+    **Use these tools to make informed decomposition decisions** — do not decompose blindly.
+
+    **Available tools:**
+    {% for tool in available_tools %}
+        - `{{ tool.signature }}` — {{ tool.description }}
+    {% endfor %}
+
+    **Research workflow** (precision-first):
+    1. Start with scope hints (target_paths, symbols, search_hints) if provided
+    2. Use `get_file_structure` to understand the codebase layout
+    3. Use `search_codebase` to find relevant code patterns
+    4. Use `get_symbols_overview` to identify key functions and classes
+    5. Use `read_symbol` or `read_file` for targeted deep reads of critical code
+    6. Use your findings to create informed, specific subtask descriptions with:
+       - Exact file paths and function names you discovered
+       - Specific code patterns or issues you identified
+       - Tool combinations that would help workers analyze the code
+
+    > **IMPORTANT — Two separate phases:**
+    > **Phase 1** (now): Call the research tools above via the function-calling interface.
+    > The system executes each tool and returns results to you.
+    > **Phase 2** (after research): Produce your FINAL decomposition as a plain JSON array
+    > of subtask objects (see `<output_format>` below). This is ordinary text output,
+    > **NOT** a tool call. Do not wrap subtasks in tool-call syntax.
+    {% endif %}
+
+    ### Task Description Quality
+    Each subtask description must be **self-contained** — a child reading only the description and justification
+    must be able to execute autonomously. Workers use smaller models with limited context, so be **precise and compact**:
+    - Specific actions (not vague goals) — say exactly what to do
+    - Exact file paths, function names, line ranges — the finer the scope, the less the worker needs to search
+    - Tools to install and use (exact `apt-get` and run commands)
+    - Expected deliverable (file path, format)
+    - Success criteria (specific, verifiable)
+    Finer instructions compress context: a worker told "fix bounds check at src/parser.c:271" needs far less context than "investigate and resolve the problem".
+
+    ### Justification Quality
+    The `justification` object is how you transfer reasoning, methodology, and domain knowledge to children:
+    - `"objective"`: What this achieves in the context of the overall goal
+    - `"plan"`: Step-by-step methodology — specific commands, tools, analysis sequences, fallback approaches
+    - Domain-specific keys as instructed (e.g., `domain_insights`, `recommended_tools`, `context_sharing`)
+    Invest in rich justifications — they are the primary guidance for autonomous workers.
+
+    ### Peer Coordination
+    For sequential subtasks, instruct each worker what to publish via `<context-update>` and what to validate
+    from upstream siblings. Workers should scrutinize peer outcomes, not blindly trust them.
+</operation>

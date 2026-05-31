@@ -242,13 +242,14 @@ def _register_container_aware_openhands_tools() -> None:
             if tool.executor is None:
                 wrapped_tools.append(tool)
                 continue
+            # Only the executor is swapped (it maps paths at call time). The
+            # tool.description is left byte-identical across container sessions
+            # so the static tool schema stays prompt-cacheable; the container
+            # paths reach the agent via the task-description prefix instead
+            # (see _prepare_task_description -> apply_task_prefix).
             wrapped_tools.append(
                 tool.model_copy(
                     update={
-                        "description": _augment_native_tool_description(
-                            tool.description,
-                            container_session,
-                        ),
                         "executor": _PathMappingOpenHandsExecutor(
                             tool.executor,
                             container_session,
@@ -768,7 +769,15 @@ class OpenHandsAdapter(WorkerAdapterBase):
         )
 
     def _build_llm_kwargs(self) -> dict[str, Any]:
-        llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
+        # caching_prompt enables Anthropic prompt caching in the OpenHands SDK.
+        # It is the SDK default, but set explicitly here so the intent is
+        # visible; the SDK gates it by model support, so it is a safe no-op for
+        # non-Anthropic models.
+        llm_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "api_key": self.api_key,
+            "caching_prompt": True,
+        }
         if base_url := self._effective_base_url():
             llm_kwargs["base_url"] = base_url
         if self._is_ollama_model():

@@ -21,6 +21,7 @@ from core.application.services import (
     VerificationPipeline,
     build_prompt_capabilities,
 )
+from core.application.services.prompt.cache_breakpoint import strip_cache_breakpoint
 from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
 from core.domain.services import (
     AssessmentResult,
@@ -302,7 +303,9 @@ class AgentOrchestrator:
                     scope=scope,
                     prompt_capabilities=build_prompt_capabilities(tool_context),
                 )
-                agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
+                agent.emit_prompt_sent(
+                    prompt=strip_cache_breakpoint(prompt), prompt_type=op, target="llm"
+                )
 
                 # Flush the prompt envelope before the LLM call so the DB shows
                 # the agent IS doing work — without this the orchestrator looks
@@ -490,7 +493,9 @@ class AgentOrchestrator:
                     scope=scope,
                     prompt_capabilities=capabilities,
                 )
-            agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target="llm")
+            agent.emit_prompt_sent(
+                prompt=strip_cache_breakpoint(prompt), prompt_type=op, target="llm"
+            )
 
             # Flush prompt envelope before the LLM call so the event store
             # shows the boss/manager IS doing work — without this the recon
@@ -910,6 +915,8 @@ class AgentOrchestrator:
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
+            cache_read_tokens=response.usage.cache_read_tokens,
+            cache_write_tokens=response.usage.cache_write_tokens,
             cost_usd=response.cost_usd,
             operation=operation,
         )
@@ -1072,6 +1079,8 @@ class AgentOrchestrator:
             prompt_tokens=recovered.usage.prompt_tokens,
             completion_tokens=recovered.usage.completion_tokens,
             total_tokens=recovered.usage.total_tokens,
+            cache_read_tokens=recovered.usage.cache_read_tokens,
+            cache_write_tokens=recovered.usage.cache_write_tokens,
             cost_usd=recovered.cost_usd,
             operation=f"{op}_recovery",
         )
@@ -1149,6 +1158,8 @@ class AgentOrchestrator:
             prompt_tokens=recovered.usage.prompt_tokens,
             completion_tokens=recovered.usage.completion_tokens,
             total_tokens=recovered.usage.total_tokens,
+            cache_read_tokens=recovered.usage.cache_read_tokens,
+            cache_write_tokens=recovered.usage.cache_write_tokens,
             cost_usd=recovered.cost_usd,
             operation=f"{op}_recovery",
         )

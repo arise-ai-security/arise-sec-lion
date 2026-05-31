@@ -27,8 +27,11 @@ CONTAINER_ROOT_BASH = "/usr/local/bin/arise-root-bash"
 CONTAINER_SUDO_SHIM = "/usr/local/bin/sudo"
 CONTAINER_APT_GET_SHIM = "/usr/local/bin/apt-get"
 CONTAINER_USER_PREP_TIMEOUT_SECONDS = 10
+# ENABLE_PROMPT_CACHING_1H is forwarded (only when set on the host) so the
+# in-container Claude session honors the 1-hour prompt-cache TTL, matching the
+# host-side SDK path.
 CONTAINER_ENV_ALLOWLIST: frozenset[str] = frozenset(
-    {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "TZ"}
+    {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "TZ", "ENABLE_PROMPT_CACHING_1H"}
 )
 PROCESS_KILL_GRACE_SECONDS = 5
 

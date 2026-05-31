@@ -16,6 +16,10 @@ from typing import Any
 
 import litellm
 
+from core.application.services.prompt.cache_breakpoint import (
+    split_cache_breakpoint,
+    strip_cache_breakpoint,
+)
 from core.domain.exceptions import LLMError
 from core.domain.values.llm_response import (
     LLMResponse,
@@ -62,31 +66,53 @@ def _supports_anthropic_cache(model: str) -> bool:
     # passes `cache_control` through on these models and ignores/rejects it
     # elsewhere, so we gate emission defensively.
     m = model.lower()
-    return "claude" in m or m.startswith("anthropic/") or m.startswith("bedrock/anthropic.")
+    return (
+        "claude" in m
+        or m.startswith("anthropic/")
+        or m.startswith("bedrock/anthropic.")
+    )
 
 
 def _apply_anthropic_cache_to_messages(
     messages: list[dict[str, Any]], model: str
 ) -> list[dict[str, Any]]:
-    # Mark the first user message for ephemeral caching. On the multi-turn
-    # tool-calling loop and recovery turns this message stays byte-identical
-    # across calls, so subsequent calls hit cache_read instead of paying
-    # full input pricing on the static prompt prefix.
-    if not _supports_anthropic_cache(model):
-        return messages
+    # Prepare the first user message for prompt caching.
+    # - With a cache-breakpoint marker: split into a cacheable static prefix
+    #   (cache_control) + variable tail (Anthropic), or strip the marker to
+    #   plain text (non-Anthropic) so it never reaches the model.
+    # - Without a marker on an Anthropic model: cache the whole first user
+    #   message (prior behavior). Non-Anthropic + no marker: unchanged.
+    supports = _supports_anthropic_cache(model)
     out = list(messages)
     for i, msg in enumerate(out):
         if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-            out[i] = {
-                **msg,
-                "content": [
-                    {
-                        "type": "text",
-                        "text": msg["content"],
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-            }
+            content = msg["content"]
+            split = split_cache_breakpoint(content)
+            if split is not None:
+                static, variable = split
+                if supports:
+                    blocks: list[dict[str, Any]] = [
+                        {"type": "text", "text": static,
+                         "cache_control": {"type": "ephemeral"}}
+                    ]
+                    if variable:
+                        # Restore the "\n\n" seam that split_cache_breakpoint
+                        # trimmed, so the two content blocks concatenate to the
+                        # exact bytes of the non-cached path (static + "\n\n" +
+                        # variable) — Anthropic joins text blocks with no
+                        # separator. The static (cached) block stays clean.
+                        blocks.append({"type": "text", "text": f"\n\n{variable}"})
+                    out[i] = {**msg, "content": blocks}
+                else:
+                    out[i] = {**msg, "content": strip_cache_breakpoint(content)}
+            elif supports:
+                out[i] = {
+                    **msg,
+                    "content": [
+                        {"type": "text", "text": content,
+                         "cache_control": {"type": "ephemeral"}}
+                    ],
+                }
             break
     return out
 
@@ -274,6 +300,7 @@ class LiteLLMAdapter(LLMPort):
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
         total_tokens = usage.total_tokens if usage else 0
+        cache_read_tokens, cache_write_tokens = self._extract_cache_tokens(usage)
         cost_usd = self._calculate_cost(model, prompt_tokens, completion_tokens, response)
 
         return (
@@ -281,9 +308,31 @@ class LiteLLMAdapter(LLMPort):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
             ),
             cost_usd,
         )
+
+    @staticmethod
+    def _extract_cache_tokens(raw_usage: Any) -> tuple[int, int]:
+        """Extract prompt-cache read/write tokens from a LiteLLM usage object.
+
+        LiteLLM normalizes Anthropic cache stats onto the usage object as
+        cache_read_input_tokens (cache hit) and cache_creation_input_tokens
+        (cache write). OpenAI-style responses nest the read count under
+        prompt_tokens_details.cached_tokens, used here as a read fallback.
+        Defensive getattr keeps non-caching providers (no such fields) at 0.
+        """
+        if raw_usage is None:
+            return 0, 0
+        cache_read_tokens = getattr(raw_usage, "cache_read_input_tokens", 0) or 0
+        cache_write_tokens = getattr(raw_usage, "cache_creation_input_tokens", 0) or 0
+        if not cache_read_tokens:
+            details = getattr(raw_usage, "prompt_tokens_details", None)
+            if details is not None:
+                cache_read_tokens = getattr(details, "cached_tokens", 0) or 0
+        return cache_read_tokens, cache_write_tokens
 
     async def query(self, prompt: str, config_dict: dict[str, Any]) -> str:
         """Query LLM and return response content.
@@ -302,7 +351,9 @@ class LiteLLMAdapter(LLMPort):
         model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": _apply_anthropic_cache_to_messages(
+                [{"role": "user", "content": prompt}], model
+            ),
             "max_tokens": merged_config.get("max_tokens", 1000),
             "top_p": merged_config.get("top_p"),
         }
@@ -335,7 +386,9 @@ class LiteLLMAdapter(LLMPort):
         model = _require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": _apply_anthropic_cache_to_messages(
+                [{"role": "user", "content": prompt}], model
+            ),
             "max_tokens": merged_config.get("max_tokens", 1000),
             "top_p": merged_config.get("top_p"),
         }
@@ -385,7 +438,9 @@ class LiteLLMAdapter(LLMPort):
             # when no tools are defined. Strip tool content so the fallback
             # "force final answer" call after max iterations works cleanly.
             call_kwargs["messages"] = _strip_tool_content(messages)
-        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(call_kwargs["messages"], model)
+        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(
+            call_kwargs["messages"], model
+        )
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
@@ -403,7 +458,9 @@ class LiteLLMAdapter(LLMPort):
                 args = tc.function.arguments
                 if isinstance(args, str):
                     args = json.loads(args)
-                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+                tool_calls.append(
+                    ToolCall(id=tc.id, name=tc.function.name, arguments=args)
+                )
         elif tools and content:
             # Qwen-family models (e.g. qwen3.5 via Ollama) may emit tool calls
             # as plain JSON in message.content instead of populating
@@ -557,16 +614,16 @@ def _try_parse_content_tool_calls(
     if tagged_items:
         tool_name_set = {t.get("function", {}).get("name") for t in tools}
         tool_param_index = _build_tool_param_index(tools)
-        tagged_calls: list[ToolCall] = []
+        calls: list[ToolCall] = []
         for item in tagged_items:
             tc = _match_single_tool_call(item, tool_name_set, tool_param_index)
             if tc is None:
                 return None  # not a tool call — bail to subtask parser
-            tagged_calls.append(tc)
-        if tagged_calls:
-            for tc in tagged_calls:
+            calls.append(tc)
+        if calls:
+            for tc in calls:
                 logger.info("Parsed <tool_call>-tagged tool call: %s", tc.name)
-            return tagged_calls
+            return calls
 
     if not stripped.startswith(("{", "[")):
         return None
@@ -586,7 +643,10 @@ def _try_parse_content_tool_calls(
     else:
         return None
 
-    tool_name_set = {t.get("function", {}).get("name") for t in tools}
+    tool_name_set = {
+        t.get("function", {}).get("name")
+        for t in tools
+    }
     tool_param_index = _build_tool_param_index(tools)
 
     calls: list[ToolCall] = []
@@ -642,7 +702,10 @@ def _match_single_tool_call(
 
     # Shape 2: bare arguments dict — keys subset of exactly one tool
     keys = frozenset(item.keys())
-    candidates = [name for name, params in tool_param_index.items() if keys <= params]
+    candidates = [
+        name for name, params in tool_param_index.items()
+        if keys <= params
+    ]
     if len(candidates) == 1:
         return ToolCall(
             id=f"qwen-text-{uuid.uuid4().hex[:8]}",

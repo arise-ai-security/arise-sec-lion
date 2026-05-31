@@ -8,12 +8,17 @@ Tests use mocking to avoid real API calls and costs during testing.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.application.services.prompt.cache_breakpoint import CACHE_BREAKPOINT_MARKER
 from core.domain.exceptions import LLMError
-from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
+from infrastructure.adapters.litellm_adapter import (
+    LiteLLMAdapter,
+    _apply_anthropic_cache_to_messages,
+)
 
 
 @pytest.fixture
@@ -344,3 +349,161 @@ async def test_rate_limit_retry_uses_jitter(
         assert lower <= delay <= upper, (
             f"attempt {i}: delay {delay} not in [{lower}, {upper}]"
         )
+
+
+def _usage(
+    *,
+    cache_read_input_tokens: int | None = None,
+    cache_creation_input_tokens: int | None = None,
+    cached_tokens: int | None = None,
+) -> MagicMock:
+    """Build a usage stub exposing only the attributes a real response carries.
+
+    Using ``spec`` ensures absent cache fields are genuinely missing (not
+    auto-vivified MagicMocks), exercising the adapter's defensive getattr.
+    """
+    spec = ["prompt_tokens", "completion_tokens", "total_tokens"]
+    if cache_read_input_tokens is not None:
+        spec.append("cache_read_input_tokens")
+    if cache_creation_input_tokens is not None:
+        spec.append("cache_creation_input_tokens")
+    if cached_tokens is not None:
+        spec.append("prompt_tokens_details")
+    usage = MagicMock(spec=spec)
+    usage.prompt_tokens = 10
+    usage.completion_tokens = 5
+    usage.total_tokens = 15
+    if cache_read_input_tokens is not None:
+        usage.cache_read_input_tokens = cache_read_input_tokens
+    if cache_creation_input_tokens is not None:
+        usage.cache_creation_input_tokens = cache_creation_input_tokens
+    if cached_tokens is not None:
+        details = MagicMock(spec=["cached_tokens"])
+        details.cached_tokens = cached_tokens
+        usage.prompt_tokens_details = details
+    return usage
+
+
+@pytest.mark.asyncio
+async def test_query_with_usage_maps_anthropic_cache_tokens() -> None:
+    # Given: a response whose usage carries normalized Anthropic cache stats
+    adapter = LiteLLMAdapter(default_config={"model": "claude-3-5-sonnet"})
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = "ok"
+    response.usage = _usage(cache_read_input_tokens=40, cache_creation_input_tokens=12)
+
+    with patch("infrastructure.adapters.litellm_adapter.litellm.acompletion") as mock_call:
+        mock_call.return_value = response
+        # When: querying with usage extraction
+        result = await adapter.query_with_usage(prompt="hi", config_dict={})
+
+    # Then: cache read/write tokens map onto LLMUsage
+    assert result.usage.cache_read_tokens == 40
+    assert result.usage.cache_write_tokens == 12
+
+
+@pytest.mark.asyncio
+async def test_query_with_usage_falls_back_to_cached_tokens_for_read() -> None:
+    # Given: a response that only exposes the OpenAI-style cached_tokens detail
+    adapter = LiteLLMAdapter(default_config={"model": "gpt-4"})
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = "ok"
+    response.usage = _usage(cached_tokens=25)
+
+    with patch("infrastructure.adapters.litellm_adapter.litellm.acompletion") as mock_call:
+        mock_call.return_value = response
+        # When: querying with usage extraction
+        result = await adapter.query_with_usage(prompt="hi", config_dict={})
+
+    # Then: cached_tokens is used as the cache read count; write stays zero
+    assert result.usage.cache_read_tokens == 25
+    assert result.usage.cache_write_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_query_applies_cache_control_for_claude_on_no_tools_path() -> None:
+    # Given: a Claude model on the plain (no-tools) query path
+    adapter = LiteLLMAdapter(default_config={"model": "claude-3-5-sonnet"})
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = "ok"
+
+    with patch("infrastructure.adapters.litellm_adapter.litellm.acompletion") as mock_call:
+        mock_call.return_value = response
+        # When: issuing a plain query
+        await adapter.query(prompt="hi", config_dict={})
+
+    # Then: the first user message carries the ephemeral cache_control marker
+    first_user = mock_call.call_args.kwargs["messages"][0]
+    assert first_user["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_query_leaves_messages_plain_for_non_claude() -> None:
+    # Given: a non-Claude model that must not receive cache_control
+    adapter = LiteLLMAdapter(default_config={"model": "gpt-4"})
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = "ok"
+
+    with patch("infrastructure.adapters.litellm_adapter.litellm.acompletion") as mock_call:
+        mock_call.return_value = response
+        # When: issuing a plain query
+        await adapter.query(prompt="hi", config_dict={})
+
+    # Then: the message content is left as a plain string (no cache_control)
+    first_user = mock_call.call_args.kwargs["messages"][0]
+    assert first_user["content"] == "hi"
+
+
+def test_anthropic_marker_splits_into_static_and_variable_blocks() -> None:
+    # Given: a cache-optimized first user message for an Anthropic model
+    content = f"static prefix\n\n{CACHE_BREAKPOINT_MARKER}\n\nvariable tail"
+    messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+    # When: cache control is applied for an Anthropic model
+    result = _apply_anthropic_cache_to_messages(messages, "claude-3-opus")
+    # Then: the message becomes two text blocks, only the static one cached.
+    # The "\n\n" seam trimmed by the split is restored on the variable block
+    # so the blocks concatenate to the original prompt bytes (Anthropic joins
+    # text blocks with no separator).
+    blocks = result[0]["content"]
+    assert blocks == [
+        {"type": "text", "text": "static prefix", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "\n\nvariable tail"},
+    ]
+    assert blocks[0]["text"] + blocks[1]["text"] == "static prefix\n\nvariable tail"
+    # And: no block text leaks the marker
+    assert all(CACHE_BREAKPOINT_MARKER not in b["text"] for b in blocks)
+
+
+def test_non_anthropic_marker_strips_to_plain_string() -> None:
+    # Given: a cache-optimized first user message for a non-Anthropic model
+    content = f"static prefix\n\n{CACHE_BREAKPOINT_MARKER}\n\nvariable tail"
+    messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+    # When: cache control is applied for a non-Anthropic model
+    result = _apply_anthropic_cache_to_messages(messages, "gpt-4o")
+    # Then: the content stays a plain string with the marker removed
+    assert result[0]["content"] == "static prefix\n\nvariable tail"
+    assert CACHE_BREAKPOINT_MARKER not in result[0]["content"]
+
+
+def test_anthropic_no_marker_keeps_single_cached_block() -> None:
+    # Given: a first user message without a marker for an Anthropic model
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "hello"}]
+    # When: cache control is applied for an Anthropic model
+    result = _apply_anthropic_cache_to_messages(messages, "claude-3-opus")
+    # Then: prior behavior is preserved -- a single cached block
+    assert result[0]["content"] == [
+        {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_non_anthropic_no_marker_is_unchanged() -> None:
+    # Given: a first user message without a marker for a non-Anthropic model
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "hello"}]
+    # When: cache control is applied for a non-Anthropic model
+    result = _apply_anthropic_cache_to_messages(messages, "gpt-4o")
+    # Then: the message is returned unchanged
+    assert result[0]["content"] == "hello"

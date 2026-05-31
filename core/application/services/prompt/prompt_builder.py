@@ -14,6 +14,10 @@ from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
+from core.application.services.prompt.cache_breakpoint import (
+    CACHE_BREAKPOINT_MARKER,
+    remove_cache_breakpoints,
+)
 from core.application.services.prompt.prompt_strategy import (
     PromptContext,
     PromptStrategy,
@@ -230,6 +234,8 @@ class PromptBuilder:
         role_template: str,
         operation_template: str,
         extender: Callable[[TemplateChain, PromptContext], "TemplateChain | None"] | None,
+        operation_variable_template: str | None = None,
+        insert_cache_breakpoint: bool = False,
     ) -> str:
         """Compose system + role + operation + (strategy extend) + volatile suffix.
 
@@ -238,6 +244,21 @@ class PromptBuilder:
         templates to render, and which strategy extender to invoke. Everything
         else (PromptContext fields, the volatile suffix, the chain.build) lives
         here.
+
+        ``insert_cache_breakpoint`` marks the seam between the stable prefix
+        and the volatile suffix with ``CACHE_BREAKPOINT_MARKER`` so the LLM
+        adapter can place a single Anthropic ``cache_control`` breakpoint there.
+        Only the LLM-routed prompts (assess/boss/manager) set this; the worker
+        prompt goes to the worker SDK, not litellm, so it never carries the
+        marker.
+
+        ``operation_variable_template`` splits the operation across the seam:
+        ``operation_template`` (static guidance — no live counters) renders into
+        the cached prefix, while ``operation_variable_template`` (the
+        depth/agent-limit conditionals and the output-format block) renders into
+        the uncached tail. This keeps the cached prefix byte-identical even as
+        the live hierarchy counters change per step. When ``None`` (worker), the
+        single ``operation_template`` renders inline as before.
         """
         limits = self._limits_context(prompt_ctx.hierarchy_limits)
         capabilities = prompt_ctx.prompt_capabilities
@@ -263,20 +284,43 @@ class PromptBuilder:
         if extender is not None:
             extended = extender(chain, prompt_ctx)
             chain = extended if extended is not None else chain
-        chain = self._append_volatile_suffix(
-            chain,
-            user_prompt=self._maybe_user_prompt_block(
-                task_description=prompt_ctx.task_description,
-                agent_role=prompt_ctx.agent_role,
+
+        def append_volatile(target: TemplateChain) -> TemplateChain:
+            return self._append_volatile_suffix(
+                target,
+                user_prompt=self._maybe_user_prompt_block(
+                    task_description=prompt_ctx.task_description,
+                    agent_role=prompt_ctx.agent_role,
+                    briefing=prompt_ctx.briefing,
+                ),
+                scope=prompt_ctx.scope,
+                sibling_ctx=sibling_ctx,
                 briefing=prompt_ctx.briefing,
-            ),
-            scope=prompt_ctx.scope,
-            sibling_ctx=sibling_ctx,
-            briefing=prompt_ctx.briefing,
-            task_description=prompt_ctx.task_description,
-            workspace_context=prompt_ctx.workspace_context,
-        )
-        return chain.build()
+                task_description=prompt_ctx.task_description,
+                workspace_context=prompt_ctx.workspace_context,
+            )
+
+        if not insert_cache_breakpoint:
+            return append_volatile(chain).build()
+
+        # Cache-optimized path: assemble the stable prefix and the volatile tail
+        # as separate strings, then join with exactly ONE seam marker. Any stray
+        # marker that data-controlled content (CVE text, task, briefing) might
+        # contain is scrubbed from each side, so the seam is unambiguous and the
+        # cached prefix can never be truncated by an injected marker. For normal
+        # prompts (no stray markers) this is byte-identical to a single render.
+        static_text = remove_cache_breakpoints(chain.build())
+        variable_chain = self.chain()
+        if operation_variable_template is not None:
+            variable_chain = variable_chain.render(
+                operation_variable_template,
+                default_tool=prompt_ctx.default_tool,
+                **limits,
+            )
+        variable_text = remove_cache_breakpoints(append_volatile(variable_chain).build())
+        if not variable_text:
+            return static_text
+        return f"{static_text}\n\n{CACHE_BREAKPOINT_MARKER}\n\n{variable_text}"
 
     def build_assessment_prompt(
         self,
@@ -302,10 +346,12 @@ class PromptBuilder:
         return self._build_role_prompt(
             prompt_ctx,
             role_template="roles/pending.j2",
-            operation_template="operations/assess.j2",
+            operation_template="operations/assess_static.j2",
+            operation_variable_template="operations/assess_variable.j2",
             extender=(
                 self._strategy.extend_assessment_prompt if self._strategy is not None else None
             ),
+            insert_cache_breakpoint=True,
         )
 
     def build_boss_delegation_prompt(
@@ -330,8 +376,10 @@ class PromptBuilder:
         return self._build_role_prompt(
             prompt_ctx,
             role_template="roles/boss.j2",
-            operation_template="operations/decomposition.j2",
+            operation_template="operations/decomposition_static.j2",
+            operation_variable_template="operations/decomposition_variable.j2",
             extender=self._strategy.extend_boss_prompt if self._strategy is not None else None,
+            insert_cache_breakpoint=True,
         )
 
     def build_manager_decomposition_prompt(
@@ -361,8 +409,10 @@ class PromptBuilder:
         return self._build_role_prompt(
             prompt_ctx,
             role_template="roles/manager.j2",
-            operation_template="operations/decomposition.j2",
+            operation_template="operations/decomposition_static.j2",
+            operation_variable_template="operations/decomposition_variable.j2",
             extender=(self._strategy.extend_manager_prompt if self._strategy is not None else None),
+            insert_cache_breakpoint=True,
         )
 
     def build_flat_prompt(

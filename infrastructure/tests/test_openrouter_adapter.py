@@ -19,8 +19,12 @@ from openai import (
     RateLimitError,
 )
 
+from core.application.services.prompt.cache_breakpoint import CACHE_BREAKPOINT_MARKER
 from core.domain.exceptions import LLMError
-from infrastructure.adapters.openrouter_adapter import OpenRouterAdapter
+from infrastructure.adapters.openrouter_adapter import (
+    OpenRouterAdapter,
+    _apply_anthropic_cache_to_messages,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -368,3 +372,21 @@ async def test_query_with_tools_strips_tool_messages_when_no_tools() -> None:
     forwarded = mock_create.call_args.kwargs["messages"]
     assert all(m.get("role") != "tool" for m in forwarded)
     assert all("tool_calls" not in m for m in forwarded)
+
+
+def test_anthropic_marker_splits_into_static_and_variable_blocks() -> None:
+    # Given: a cache-optimized first user message routed through the OpenRouter adapter
+    content = f"static prefix\n\n{CACHE_BREAKPOINT_MARKER}\n\nvariable tail"
+    messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+    # When: cache control is applied for an Anthropic model via the shared helper
+    result = _apply_anthropic_cache_to_messages(messages, "anthropic/claude-3-5-sonnet")
+    # Then: the message becomes two text blocks, only the static one cached, no
+    # marker leak. The "\n\n" seam is restored on the variable block so the
+    # blocks concatenate to the original prompt bytes.
+    blocks = result[0]["content"]
+    assert blocks == [
+        {"type": "text", "text": "static prefix", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "\n\nvariable tail"},
+    ]
+    assert blocks[0]["text"] + blocks[1]["text"] == "static prefix\n\nvariable tail"
+    assert all(CACHE_BREAKPOINT_MARKER not in b["text"] for b in blocks)

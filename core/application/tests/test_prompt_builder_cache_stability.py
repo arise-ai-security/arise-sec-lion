@@ -33,6 +33,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from core.application.services import PromptBuilder
+from core.application.services.prompt.cache_breakpoint import CACHE_BREAKPOINT_MARKER
 from core.application.services.prompt.prompt_strategy import SubtaskScope
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy
@@ -64,14 +65,23 @@ class _NoVolatileMarkerError(AssertionError):
 
 
 def _stable_prefix(prompt: str) -> str:
-    """Return everything before the first volatile-suffix marker.
+    """Return the cacheable prefix: everything before the cache breakpoint.
 
-    Raises ``_NoVolatileMarkerError`` if no marker is found — every prompt
-    built via ``PromptBuilder.build_*_prompt`` ALWAYS contains a ``<task>``
-    block in its volatile suffix (``_append_volatile_suffix`` line 173), so
-    the absence of every marker signals a structural change that must update
-    this test in the same commit.
+    The boss/manager/assess prompts carry an explicit
+    ``CACHE_BREAKPOINT_MARKER`` that is the authoritative seam between the
+    cached prefix and the volatile tail — split on it directly. Worker prompts
+    have no marker (they are routed to the worker SDK, not litellm), so fall
+    back to the volatile-suffix heuristic for them.
+
+    Raises ``_NoVolatileMarkerError`` for a markerless prompt that also has no
+    volatile-suffix marker — every ``build_*_prompt`` result ALWAYS contains a
+    ``<task>`` block in its volatile suffix, so the absence of both signals a
+    structural change that must update this test in the same commit.
     """
+    marker_idx = prompt.find(CACHE_BREAKPOINT_MARKER)
+    if marker_idx != -1:
+        return prompt[:marker_idx]
+
     earliest = len(prompt)
     found = False
     for marker in _VOLATILE_MARKERS:
@@ -81,10 +91,11 @@ def _stable_prefix(prompt: str) -> str:
             found = True
     if not found:
         raise _NoVolatileMarkerError(
-            "No volatile-suffix marker found in rendered prompt. "
-            "Either the suffix structure changed (update _VOLATILE_MARKERS) "
-            "or the strategy stopped appending a <task> block (which would "
-            "itself be a bug in PromptBuilder._append_volatile_suffix)."
+            "No cache breakpoint marker and no volatile-suffix marker found in "
+            "rendered prompt. Either the suffix structure changed (update "
+            "_VOLATILE_MARKERS) or the strategy stopped appending a <task> "
+            "block (which would itself be a bug in "
+            "PromptBuilder._append_volatile_suffix)."
         )
     return prompt[:earliest]
 
@@ -274,6 +285,61 @@ class TestManagerPromptStableByBranch:
 
     def test_fixer_cell(self) -> None:
         self._assert_prefix_stable("[Fixer]")
+
+
+class TestManagerPreMarkerExcludesPerNodeBriefing:
+    """The pre-marker (cached) prefix MUST NOT contain any per-node briefing
+    content. That content (subtask_justification, parent_task) is carried only
+    by the volatile ``context/briefing.j2`` tail after the cache breakpoint, so
+    two manager prompts in the same {branch, CVE} cell that differ ONLY in
+    those fields must share a byte-identical pre-marker prefix.
+    """
+
+    def test_differing_briefing_does_not_leak_into_cached_prefix(self) -> None:
+        # Given: two manager prompts in the same {branch, CVE} cell with
+        # DIFFERENT subtask_justification and parent_task.
+        builder = _builder()
+        cve = _cve()
+        just_a, just_b = "JUST-ALPHA-UNIQUE", "JUST-BETA-UNIQUE"
+        parent_a, parent_b = "PARENT-ALPHA-UNIQUE", "PARENT-BETA-UNIQUE"
+
+        prompt_a = builder.build_manager_decomposition_prompt(
+            task_description="[Exploiter] decompose path A",
+            agent_id=uuid4(),
+            domain_context=cve,
+            briefing=_briefing(
+                "[Exploiter]", parent_task=parent_a, justification_text=just_a
+            ),
+        )
+        prompt_b = builder.build_manager_decomposition_prompt(
+            task_description="[Exploiter] decompose path B",
+            agent_id=uuid4(),
+            domain_context=cve,
+            briefing=_briefing(
+                "[Exploiter]", parent_task=parent_b, justification_text=just_b
+            ),
+        )
+
+        # When: extracting the pre-marker (cached) prefix of each.
+        prefix_a = _stable_prefix(prompt_a)
+        prefix_b = _stable_prefix(prompt_b)
+
+        # Then: the cached prefixes are byte-identical...
+        assert prefix_a == prefix_b, (
+            "Cached prefix drifted across differing briefing.\n"
+            f"Earliest divergence: {_first_diff(prefix_a, prefix_b)}"
+        )
+        # ...and contain NONE of the per-node briefing content (it lives only
+        # in the volatile tail after the marker).
+        for volatile in (just_a, just_b, parent_a, parent_b):
+            assert volatile not in prefix_a, (
+                f"Per-node briefing value {volatile!r} leaked into the cached "
+                "prefix — it must be confined to context/briefing.j2 in the "
+                "volatile tail."
+            )
+        # Sanity: the differing content IS present in the full prompts (so we
+        # are not vacuously passing because briefing was dropped entirely).
+        assert just_a in prompt_a and parent_a in prompt_a
 
 
 class TestManagerPrefixDiffersAcrossBranches:

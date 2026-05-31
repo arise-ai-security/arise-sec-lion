@@ -284,6 +284,8 @@ class TokensConsumed(DomainEvent):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
     cost_usd: float
     operation: str  # "complexity_evaluation", "task_decomposition", "worker_execution"
 
