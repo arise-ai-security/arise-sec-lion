@@ -651,6 +651,8 @@ class AgentSession:
         total_tokens: int,
         cost_usd: float,
         operation: str,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
         """Emit TokensConsumed event (pure domain method).
 
@@ -663,6 +665,8 @@ class AgentSession:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             cost_usd=cost_usd,
             operation=operation,
         )

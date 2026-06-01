@@ -1,0 +1,43 @@
+{#
+  Assessment prompt (static, cacheable prefix) for PENDING agents.
+
+  Design rationale: execute is the DEFAULT.  Decompose only when the task
+  genuinely spans multiple independent subsystems.
+
+  Smart recon tools are available with observation masking — older tool
+  results are automatically replaced with stubs, so context stays lean.
+  The LLM should follow the precision-first workflow: grep → identify
+  symbols → read_symbol for specifics.
+#}
+<operation>
+    Assess this task.
+    {% if has_tools and available_tools %}
+        You have tool-calling capabilities available to inspect the task context before deciding.
+
+        **Available tools:**
+        {% for tool in available_tools %}
+            - `{{ tool.signature }}` — {{ tool.description }}
+        {% endfor %}
+
+        **Tool use guidance:**
+        1. If you have scope hints (target_paths, symbols, search_hints), start there
+        2. Use the narrowest tool call that answers the next question
+        3. Gather only enough evidence to decide execute vs decompose
+
+        > After using tools, produce your FINAL decision as plain JSON (see `<output_format>`).
+        > Your final output is ordinary text, **not** a tool call.
+    {% else %}
+        Additional tool-calling capabilities are not available for this assessment. Decide based on the
+        task, inherited context, and any scope hints already provided.
+    {% endif %}
+
+    **Execute directly** (default) — unless the task clearly requires decomposition:
+    - The task is about a single concern or a small set of related changes
+    - You have a reasonable idea of what needs to happen
+    - A single focused coding session can complete it
+
+    **Decompose** — only when the task genuinely requires coordination:
+    - The task spans 3+ independent subsystems that cannot share a session
+    - The changes are completely unrelated and must be done in parallel
+    - You are confident a single worker cannot reasonably handle the full scope
+</operation>

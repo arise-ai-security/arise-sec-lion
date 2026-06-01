@@ -24,6 +24,7 @@ from core.application.run_invariants import (
     WorkerResult,
     WorkspaceSpec,
 )
+from core.domain.events.events import ThoughtCaptured
 from core.domain.exceptions import ToolNotAvailableError
 from infrastructure.workers.claude_code_worker import ClaudeCodeWorker
 
@@ -1239,3 +1240,77 @@ def test_cost_event_aliases_reasoning_to_thinking() -> None:
 
     assert event.reasoning_tokens == 3
     assert event.tokens == 18
+
+
+def test_tool_use_events_populate_structured_tool_name(tmp_path: Path, run_id: UUID) -> None:
+    """Pins audit N-6 fix: ``ThoughtCaptured`` rows from the Claude Code stream
+    expose the canonical tool name on the structured ``tool_name`` field, so
+    downstream analysis no longer has to parse the rendered content prefix.
+
+    Also pins the content rendering invariant -- ``prefixes.recover_tool_name``
+    relies on the leading ``"Running: "`` / ``"Reading: "`` prefix for historic
+    A1/A2 data, so the human-readable description must remain intact.
+    """
+
+    # Given: a Claude Code stream-json transcript containing one Bash tool_use
+    # and one Read tool_use block (the canonical claude_code shape).
+    transcript_path = tmp_path / "stdout_stderr.log"
+    transcript_lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_bash_1",
+                            "name": "Bash",
+                            "input": {"command": "ls -la", "description": "list files"},
+                        }
+                    ]
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_read_1",
+                            "name": "Read",
+                            "input": {"file_path": "/etc/hosts"},
+                        }
+                    ]
+                },
+            }
+        ),
+    ]
+    transcript_path.write_text("\n".join(transcript_lines) + "\n", encoding="utf-8")
+    worker = ClaudeCodeWorker()
+
+    # When: the worker parses the transcript into domain events.
+    events = worker._events_from_transcript(transcript_path, run_id, wall_time_seconds=1.0)
+
+    # Then: both tool_use blocks become ThoughtCaptured events with
+    # ``output_type == "tool_use"`` and the structured ``tool_name`` populated.
+    tool_use_events = [
+        e for e in events if isinstance(e, ThoughtCaptured) and e.output_type == "tool_use"
+    ]
+    assert len(tool_use_events) == 2
+
+    bash_event, read_event = tool_use_events
+    assert bash_event.tool_name == "Bash"
+    assert read_event.tool_name == "Read"
+
+    # And: the rendered content still carries the human-readable prefix so the
+    # ``prefixes.recover_tool_name`` recovery layer keeps working for the
+    # historic A1/A2 data that pre-dates this fix.
+    assert bash_event.content.startswith("Running: ")
+    assert read_event.content.startswith("Reading: ")
+
+    # And: the stream identifier still tags the row as the Claude Code CLI
+    # path so analysis can distinguish A1/A2 from B-family SDK rows.
+    assert bash_event.stream == "claude_code"
+    assert read_event.stream == "claude_code"

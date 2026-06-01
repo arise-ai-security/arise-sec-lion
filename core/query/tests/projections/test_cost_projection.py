@@ -4,13 +4,48 @@ from datetime import timedelta
 
 import pytest
 
-from core.domain.events.events import AgentCreated, WorkerCostRecorded, WorkerUsageMetrics
+from core.domain.events.events import (
+    AgentCreated,
+    TokensConsumed,
+    WorkerCostRecorded,
+    WorkerUsageMetrics,
+)
 from core.query.projections.impl.cost import CostProjection
 from core.query.tests.projections.conftest import BASE_TIME, WORKER_ID
 
 
 class TestCostProjection:
     """Tests for detailed worker cost aggregation."""
+
+    def test_sums_cache_tokens_from_tokens_consumed(self) -> None:
+        # Given: a stream with a TokensConsumed event carrying cache tokens
+        events = [
+            AgentCreated(
+                aggregate_id=WORKER_ID,
+                sequence_number=1,
+                role="WORKER",
+                occurred_at=BASE_TIME,
+            ),
+            TokensConsumed(
+                aggregate_id=WORKER_ID,
+                sequence_number=2,
+                model="claude-3-5-sonnet",
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cache_read_tokens=8,
+                cache_write_tokens=3,
+                cost_usd=0.01,
+                operation="assess",
+            ),
+        ]
+
+        # When: projecting cost
+        result = CostProjection().project(events)
+
+        # Then: cache tokens from TokensConsumed are accumulated
+        assert result.cache_read_tokens == 8
+        assert result.cache_write_tokens == 3
 
     def test_aggregates_detailed_worker_metrics(self) -> None:
         events = [

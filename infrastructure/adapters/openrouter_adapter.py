@@ -226,11 +226,32 @@ class OpenRouterAdapter(LLMPort):
         usage = getattr(response, "usage", None)
         if usage is None:
             return LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+        cache_read_tokens, cache_write_tokens = OpenRouterAdapter._extract_cache_tokens(usage)
         return LLMUsage(
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
             total_tokens=getattr(usage, "total_tokens", 0) or 0,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
+
+    @staticmethod
+    def _extract_cache_tokens(usage: Any) -> tuple[int, int]:
+        """Extract prompt-cache read/write tokens from an OpenRouter usage object.
+
+        Anthropic-backed responses expose cache_read_input_tokens (cache hit)
+        and cache_creation_input_tokens (cache write). OpenAI-style responses
+        nest the read count under prompt_tokens_details.cached_tokens, used
+        here as a read fallback. Defensive getattr keeps non-caching providers
+        (no such fields) at 0.
+        """
+        cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        if not cache_read_tokens:
+            details = getattr(usage, "prompt_tokens_details", None)
+            if details is not None:
+                cache_read_tokens = getattr(details, "cached_tokens", 0) or 0
+        return cache_read_tokens, cache_write_tokens
 
     def _extract_cost(
         self,
@@ -258,7 +279,9 @@ class OpenRouterAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = _require_model(merged_config)
         kwargs = self._build_kwargs(
-            messages=[{"role": "user", "content": prompt}],
+            messages=_apply_anthropic_cache_to_messages(
+                [{"role": "user", "content": prompt}], model
+            ),
             merged_config=merged_config,
             model=model,
             default_max_tokens=1000,
@@ -275,7 +298,9 @@ class OpenRouterAdapter(LLMPort):
         merged_config = {**self.default_config, **config_dict}
         model = _require_model(merged_config)
         kwargs = self._build_kwargs(
-            messages=[{"role": "user", "content": prompt}],
+            messages=_apply_anthropic_cache_to_messages(
+                [{"role": "user", "content": prompt}], model
+            ),
             merged_config=merged_config,
             model=model,
             default_max_tokens=1000,

@@ -58,6 +58,7 @@ type ToolUseHook = Callable[
 
 DEFAULT_MAX_THINKING_TOKENS = 63_999
 CLAUDE_CODE_CLI_PATH_ENV = "CLAUDE_CODE_CLI_PATH"
+PROMPT_CACHING_1H_ENV = "ENABLE_PROMPT_CACHING_1H"
 IN_CONTAINER_CLAUDE_EXECUTABLE = "claude"
 SDK_CONTAINER_WRAPPER_PATH = ".arise/claude-sdk-in-container"
 
@@ -233,6 +234,8 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
             kwargs["extra_args"] = {"thinking-display": self.config.thinking_display}
         if self.config.max_thinking_tokens is not None:
             kwargs["max_thinking_tokens"] = self.config.max_thinking_tokens
+        if caching_env := self._prompt_caching_env():
+            kwargs["env"] = {**kwargs.get("env", {}), **caching_env}
         if container_session is not None:
             kwargs["cli_path"] = str(self._write_in_container_cli_wrapper(container_session))
         elif cli_path := self._effective_cli_path():
@@ -240,6 +243,18 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
         if mcp_servers:
             kwargs["mcp_servers"] = mcp_servers
         return ClaudeAgentOptions(**kwargs)
+
+    @staticmethod
+    def _prompt_caching_env() -> dict[str, str]:
+        """Forward ENABLE_PROMPT_CACHING_1H into the SDK when set on the host.
+
+        Opts the Claude session into the 1-hour prompt-cache TTL. Host-only and
+        opt-in: when unset, no env override is passed and the SDK default (5-min
+        TTL) applies. The container path forwards the same var via the
+        container_exec allowlist.
+        """
+        value = os.environ.get(PROMPT_CACHING_1H_ENV)
+        return {PROMPT_CACHING_1H_ENV: value} if value else {}
 
     def _write_in_container_cli_wrapper(
         self,

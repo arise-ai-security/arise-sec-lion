@@ -1,28 +1,20 @@
-<operation>
-    ## Task Decomposition
+<guidance_precedence>
+    If domain-specific guidance earlier in this prompt prescribed an exact number of
+    subtasks or a fixed phase breakdown, follow that exact count — it overrides the
+    general subtask-count guidance and the "2-3 subtasks optimal" default below.
+</guidance_precedence>
 
-    **Analyze deeply before decomposing.** Understand the technical landscape, identify the right tool combinations,
-    and create subtasks with comprehensive, self-directed guidance.
-
-    Children operate fully autonomously — they cannot ask for clarification. Your task descriptions and
-    justifications are their primary source of guidance.
-
-    **Include structured scoping in each subtask** when you identify relevant files, symbols, or search patterns.
-    These fields (`target_paths`, `symbols`, `search_hints`) help children focus their reconnaissance precisely.
+<decomposition_constraints>
     {% if at_max_depth %}
-
-        **CONSTRAINT: Maximum depth reached.** Each subtask MUST be atomic and worker-executable.
+    **CONSTRAINT: Maximum depth reached.** Each subtask MUST be atomic and worker-executable.
     {% elif depth_remaining is not none and depth_remaining <= 2 %}
-
-        **Note**: {{ depth_remaining }} level(s) remaining — prefer simpler subtasks.
+    **Note**: {{ depth_remaining }} level(s) remaining — prefer simpler subtasks.
     {% endif %}
     {% if max_subtasks %}
-
-        **CONSTRAINT: Maximum {{ max_subtasks }} subtasks.**
+    **CONSTRAINT: Maximum {{ max_subtasks }} subtasks.**
     {% endif %}
     {% if agents_remaining is not none and agents_remaining >= 0 %}
-
-        **CONSTRAINT: {{ agents_remaining }} agents remaining ({{ current_total_agents }}/{{ max_total_agents }}).**
+    **CONSTRAINT: {{ agents_remaining }} agents remaining ({{ current_total_agents }}/{{ max_total_agents }}).**
     {% endif %}
 
     {% if depth_remaining is not none and depth_remaining <= 1 %}
@@ -32,36 +24,6 @@
     Decompose into 3-4 concrete, testable subtasks — each targeting specific files and functions.
     {% else %}
     Decompose into 2-3 concrete, testable subtasks at major phase boundaries.
-    {% endif %}
-    {% if has_tools and available_tools %}
-
-    ### Research Before Decomposition (Phase 1 — tool calls)
-
-    You have tool-calling capabilities to inspect the codebase before decomposing.
-    **Use these tools to make informed decomposition decisions** — do not decompose blindly.
-
-    **Available tools:**
-    {% for tool in available_tools %}
-        - `{{ tool.signature }}` — {{ tool.description }}
-    {% endfor %}
-
-    **Research workflow** (precision-first):
-    1. Start with scope hints (target_paths, symbols, search_hints) if provided
-    2. Use `get_file_structure` to understand the codebase layout
-    3. Use `search_codebase` to find relevant code patterns
-    4. Use `get_symbols_overview` to identify key functions and classes
-    5. Use `read_symbol` or `read_file` for targeted deep reads of critical code
-    6. Use your findings to create informed, specific subtask descriptions with:
-       - Exact file paths and function names you discovered
-       - Specific code patterns or issues you identified
-       - Tool combinations that would help workers analyze the code
-
-    > **IMPORTANT — Two separate phases:**
-    > **Phase 1** (now): Call the research tools above via the function-calling interface.
-    > The system executes each tool and returns results to you.
-    > **Phase 2** (after research): Produce your FINAL decomposition as a plain JSON array
-    > of subtask objects (see `<output_format>` below). This is ordinary text output,
-    > **NOT** a tool call. Do not wrap subtasks in tool-call syntax.
     {% endif %}
     {% if depth_remaining is not none %}
 
@@ -90,58 +52,7 @@
     - **Scope for children**: Pass precise line ranges, variable names, and exact error patterns as `search_hints`
     {% endif %}
     {% endif %}
-
-    ### Task Description Quality
-    Each subtask description must be **self-contained** — a child reading only the description and justification
-    must be able to execute autonomously. Workers use smaller models with limited context, so be **precise and compact**:
-    - Specific actions (not vague goals) — say exactly what to do
-    - Exact file paths, function names, line ranges — the finer the scope, the less the worker needs to search
-    - Tools to install and use (exact `apt-get` and run commands)
-    - Expected deliverable (file path, format)
-    - Success criteria (specific, verifiable)
-    Finer instructions compress context: a worker told "fix bounds check at src/parser.c:271" needs far less context than "investigate and resolve the problem".
-
-    ### Justification Quality
-    The `justification` object is how you transfer reasoning, methodology, and domain knowledge to children:
-    - `"objective"`: What this achieves in the context of the overall goal
-    - `"plan"`: Step-by-step methodology — specific commands, tools, analysis sequences, fallback approaches
-    - Domain-specific keys as instructed (e.g., `domain_insights`, `recommended_tools`, `context_sharing`)
-    Invest in rich justifications — they are the primary guidance for autonomous workers.
-
-    ### Peer Coordination
-    For sequential subtasks, instruct each worker what to publish via `<context-update>` and what to validate
-    from upstream siblings. Workers should scrutinize peer outcomes, not blindly trust them.
-</operation>
-{% if briefing %}
-
-    <briefing>
-        Parent: [{{ briefing.parent_role }}] {{ briefing.parent_task }}
-        {% if briefing.ancestry %}
-            Ancestry:
-            {% for ancestor in briefing.ancestry %}
-                - [{{ ancestor.role }}] {{ ancestor.task_summary }}
-            {% endfor %}
-        {% endif %}
-        {% if briefing.decisions %}
-            Inherited decisions:
-            {% for decision in briefing.decisions %}
-                - {{ decision }}
-            {% endfor %}
-        {% endif %}
-    </briefing>
-    {% if briefing.subtask_justification %}
-    <thinker_justification>
-        Your supervisor assigned this task with the following context and expectations:
-        {% for key, value in briefing.subtask_justification.items() %}
-            - **{{ key | replace('_', ' ') | title }}**: {{ value }}
-        {% endfor %}
-    </thinker_justification>
-    {% endif %}
-{% endif %}
-
-<task>
-    {{ task_description }}
-</task>
+</decomposition_constraints>
 
 <output_format>
     Return ONLY a valid JSON array:

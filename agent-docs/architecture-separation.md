@@ -64,8 +64,8 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  |  | evaluate_task()   |  | retry/escalation   |  | 4-tier templates | | |
 |  |  | execute_task()    |  | concurrency        |  | delegates to     | | |
 |  |  |                   |  | passes opaque      |  |   PromptStrategy | | |
-|  |  |                   |  |   domain_context   |  | calls plugin.    | | |
-|  |  |                   |  |                    |  |   enrich_prompt()| | |
+|  |  |                   |  |   domain_context   |  | via              | | |
+|  |  |                   |  |                    |  |   extend_*_prompt| | |
 |  |  +-------------------+  +--------------------+  +------------------+ | |
 |  |                                                                      | |
 |  |  +-------------------+  +--------------------+  +------------------+ | |
@@ -108,8 +108,8 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  |  |                           |  |                                  | | | |
 |  |  | class DomainPlugin:       |  | LLMPort                         | | | |
 |  |  |   infer_context() -> obj  |  | WorkerToolPort                  | | | |
-|  |  |   enrich_prompt()         |  | CostCalculatorPort              | | | |
-|  |  |   get_run_metadata()      |  | SharedContextPort               | | | |
+|  |  |   get_run_metadata()      |  | CostCalculatorPort              | | | |
+|  |  |   get_prompt_strategy()   |  | SharedContextPort               | | | |
 |  |  |   get_tag_mappings()      |  | SiblingViewPort                 | | | |
 |  |  |   get_provenance_patterns |  | ReconToolPort                   | | | |
 |  |  |   prepare_*()/cleanup_*() |  | RealtimeCallbackPort            | | | |
@@ -137,7 +137,7 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  | SecurityDomainPlugin  (implements DomainPlugin)                      | ||
 |  |                                                                      | ||
 |  | infer_context(task) -> CVEInstanceInferenceService -> CVEInstance ----+-+
-|  | enrich_prompt(prompt) -> appends Valgrind/KLEE tool instructions     |
+|  | get_prompt_strategy() -> SecBenchPromptStrategy(enabled_tools=...)    |
 |  | get_run_metadata()    -> {"instance_id": cve.instance_id}            |
 |  +---------------------------------------------------------------------+
 |
@@ -193,16 +193,16 @@ How the core business logic (multi-agent orchestration) is separated from the cy
 |  +-----------------------------------------------------+ |
 |  |  Tier 3: Operation Instructions                       | |  <-- Generic
 |  |           (prompts/operations/*.j2)                   | |
-|  |           + Context (sibling.j2, workspace.j2)        | |
 |  +-----------------------------------------------------+ |
 |  |  Tier 4: PromptStrategy Extension (if wired)          | |  <-- SECURITY
 |  |           SecBenchPromptStrategy detects phase         | |
-|  |           extends the base chain OR returns None       | |
+|  |           extends the base chain incl. tools.j2 +     | |
+|  |           worker/<branch>.j2 OR returns None           | |
 |  |           (None -> keeps Tiers 1-3 unchanged)          | |
 |  +-----------------------------------------------------+ |
-|  |  Post-build Enrichment                                | |  <-- SECURITY
-|  |           plugin.enrich_prompt() appends tool          | |
-|  |           instructions (Valgrind/KLEE)                | |
+|  |  Volatile suffix (per-task content)                   | |  <-- Generic
+|  |           briefing.j2, sibling.j2, scope.j2, <task>   | |
+|  |           Appended by _append_volatile_suffix         | |
 |  +-----------------------------------------------------+ |
 +-----------------------------------------------------------+
 ```
@@ -254,8 +254,8 @@ How the core business logic (multi-agent orchestration) is separated from the cy
          |            |            |
          v            v            v
     Phase-specific prompts from
-    prompts/domains/secbench/worker/{builder,exploiter,fixer}.j2
-    + enrich_prompt() appends tool instructions
+    prompts/domains/secbench/worker/{builder,exploiter,fixer,reporter}.j2
+    + tools.j2 appended within extend_worker_prompt
 ```
 
 ---

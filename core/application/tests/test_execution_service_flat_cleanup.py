@@ -102,16 +102,6 @@ class _StubDomainPlugin:
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         return None
 
-    def enrich_prompt(
-        self,
-        prompt: str,
-        *,
-        domain_context: object | None,
-        briefing: object | None = None,
-        chain_factory: Any = None,
-    ) -> str:
-        return prompt
-
     def get_run_metadata(self, domain_context: object) -> dict[str, Any]:
         return {}
 
@@ -121,7 +111,9 @@ class _StubDomainPlugin:
     def get_provenance_patterns(self) -> list[tuple[str, Any]]:
         return []
 
-    async def prepare_run(self, *, root_id: UUID, run_output_path: Path, domain_context: object | None) -> None:
+    async def prepare_run(
+        self, *, root_id: UUID, run_output_path: Path, domain_context: object | None
+    ) -> None:
         return None
 
     def get_prompt_strategy(self) -> Any:

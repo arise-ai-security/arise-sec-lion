@@ -46,9 +46,6 @@ class HierarchyLimitsRegistry:
     def get(self, agent_id: UUID) -> HierarchyLimits | None:
         return self._limits.get(agent_id)
 
-    def set(self, agent_id: UUID, limits: HierarchyLimits) -> None:
-        self._limits[agent_id] = limits
-
     def propagate_to_child(self, parent_id: UUID, child_id: UUID) -> HierarchyLimits | None:
         parent_limits = self._limits.get(parent_id)
         if parent_limits is None:
@@ -67,7 +64,9 @@ class HierarchyLimitsRegistry:
     # Cross-tree role dedup tracking
     # ------------------------------------------------------------------
 
-    def register_role(self, agent_id: UUID, role_prefix: str, parent_id: UUID | None = None) -> None:
+    def register_role(
+        self, agent_id: UUID, role_prefix: str, parent_id: UUID | None = None
+    ) -> None:
         limits = self._limits.get(agent_id)
         root_id = limits.root_id if limits else agent_id
         self._used_roles.setdefault(root_id, set()).add(role_prefix)

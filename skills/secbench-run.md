@@ -203,13 +203,13 @@ Look at AgentExecutionStarted timestamps. If a Fixer worker starts before Builde
 
 #### Duplicate build workers
 **Check**: Workers named [Builder], [Instrumented-Builder], [Build-Setup], etc. under Exploiter or Fixer trees.
-**Fix**: `prompts/domains/secbench/manager/exploiter.j2` and `fixer.j2` - strengthen role name enforcement.
+**Fix**: `prompts/domains/secbench/assess.j2` (the authoritative decomposition contract) — strengthen role-name enforcement.
 
 #### Role name non-compliance
 **Check**: Workers with names that don't match the 5 template-prescribed roles per phase.
 Expected Exploiter roles: PoC-Researcher, Data-Flow-Analyst, PoC-Tester, Repro-Creator, Exploit-Validator.
 Expected Fixer roles: Root-Cause-Analyst, Candidate-Reviewer, Patch-Creator, Patch-Validator, Fix-Aggregator.
-**Fix**: Strengthen role enforcement in manager templates.
+**Fix**: Strengthen role enforcement in `prompts/domains/secbench/assess.j2`.
 
 #### File editor path errors
 **Check**: Worker logs contain "path should be an absolute path" or "does not exist" for /src/ or /testcase/ paths.
@@ -268,10 +268,8 @@ Key secbench prompt files:
 - `prompts/domains/secbench/boss.j2` — Boss-level security decomposition (4-phase process, tool prescriptions)
 - `prompts/domains/secbench/manager.j2` — General manager security tool research guidance
 - `prompts/domains/secbench/worker.j2` — General worker security research mindset, tool iteration, artifact naming
-- `prompts/domains/secbench/manager/builder.j2` — Builder-specific manager decomposition
-- `prompts/domains/secbench/manager/exploiter.j2` — Exploiter-specific manager decomposition
-- `prompts/domains/secbench/manager/fixer.j2` — Fixer-specific manager decomposition
-- `prompts/domains/secbench/assess.j2` — Assessment prompt for complexity evaluation
+- `prompts/domains/secbench/worker/{builder,exploiter,fixer,reporter}.j2` — Phase-specific worker prompts (included in the stable prefix per branch)
+- `prompts/domains/secbench/assess.j2` — Assessment prompt for complexity evaluation (also the authoritative manager decomposition contract)
 
 ### Available CVE instances (end-of-skill reference)
 

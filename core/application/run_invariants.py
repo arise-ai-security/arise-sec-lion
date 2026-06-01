@@ -42,6 +42,7 @@ _ENV_ALLOWLIST: frozenset[str] = frozenset(
         "TMP",
         # Claude Code authentication (baselines invoke Claude directly).
         "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
     }
 )
 
@@ -125,9 +126,7 @@ def build_tool_policy(*, settings: Settings) -> ToolPolicy:
     return ToolPolicy(
         allowed=tuple(settings.worker.allowed_tools),
         disallowed=tuple(settings.worker.disallowed_tools),
-        allowed_bash_commands=(
-            tuple(settings.security.tools) if settings.security.enabled else ()
-        ),
+        allowed_bash_commands=(tuple(settings.security.tools) if settings.security.enabled else ()),
     )
 
 

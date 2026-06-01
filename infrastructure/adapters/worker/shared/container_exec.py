@@ -1,4 +1,4 @@
-"""Shared helpers for running worker engines inside SEC-bench containers."""
+"""Shared helpers for running worker engines inside domain-provided containers."""
 
 from __future__ import annotations
 
@@ -27,7 +27,12 @@ CONTAINER_ROOT_BASH = "/usr/local/bin/arise-root-bash"
 CONTAINER_SUDO_SHIM = "/usr/local/bin/sudo"
 CONTAINER_APT_GET_SHIM = "/usr/local/bin/apt-get"
 CONTAINER_USER_PREP_TIMEOUT_SECONDS = 10
-CONTAINER_ENV_ALLOWLIST: frozenset[str] = frozenset({"ANTHROPIC_API_KEY", "TZ"})
+# ENABLE_PROMPT_CACHING_1H is forwarded (only when set on the host) so the
+# in-container Claude session honors the 1-hour prompt-cache TTL, matching the
+# host-side SDK path.
+CONTAINER_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "TZ", "ENABLE_PROMPT_CACHING_1H"}
+)
 PROCESS_KILL_GRACE_SECONDS = 5
 
 
@@ -87,7 +92,7 @@ def write_docker_exec_wrapper(
     command = " ".join(shlex.quote(part) for part in argv)
     write_text(
         path,
-        f"#!/bin/sh\nset -eu\nexec {command} \"$@\"\n",
+        f'#!/bin/sh\nset -eu\nexec {command} "$@"\n',
     )
     path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
     return path
@@ -121,24 +126,24 @@ async def prepare_claude_container_user(
         "\n"
         "int main(int argc, char *argv[]) {\n"
         "    if (argc < 2) {\n"
-        "        fputs(\"usage: arise-root <command> [args...]\\n\", stderr);\n"
+        '        fputs("usage: arise-root <command> [args...]\\n", stderr);\n'
         "        return 2;\n"
         "    }\n"
         "    if (setgid(0) != 0) {\n"
-        "        perror(\"setgid\");\n"
+        '        perror("setgid");\n'
         "        return 126;\n"
         "    }\n"
         "    if (setuid(0) != 0) {\n"
-        "        perror(\"setuid\");\n"
+        '        perror("setuid");\n'
         "        return 126;\n"
         "    }\n"
         "    execvp(argv[1], &argv[1]);\n"
-        "    perror(\"execvp\");\n"
+        '    perror("execvp");\n'
         "    return errno == ENOENT ? 127 : 126;\n"
         "}\n"
         "ARISE_ROOT_C\n"
         "  compiler=$(command -v cc || command -v gcc || command -v clang || true)\n"
-        f"  if [ -n \"$compiler\" ] && \"$compiler\" -O2 -Wall -Wextra "
+        f'  if [ -n "$compiler" ] && "$compiler" -O2 -Wall -Wextra '
         f"-o {CONTAINER_ROOT_HELPER} /tmp/arise-root.c; then\n"
         f"    chown root:root {CONTAINER_ROOT_HELPER}\n"
         f"    chmod 4755 {CONTAINER_ROOT_HELPER}\n"
@@ -148,7 +153,7 @@ async def prepare_claude_container_user(
         f"    chmod 4755 {CONTAINER_ROOT_BASH}\n"
         f"    cat > {CONTAINER_ROOT_HELPER} <<'ARISE_ROOT_SH'\n"
         "#!/bin/sh\n"
-        f"exec {CONTAINER_ROOT_BASH} -p -c 'exec \"$@\"' arise-root \"$@\"\n"
+        f'exec {CONTAINER_ROOT_BASH} -p -c \'exec "$@"\' arise-root "$@"\n'
         "ARISE_ROOT_SH\n"
         f"    chmod 0755 {CONTAINER_ROOT_HELPER}\n"
         "  else\n"
@@ -159,16 +164,16 @@ async def prepare_claude_container_user(
         "fi\n"
         f"cat > {CONTAINER_SUDO_SHIM} <<'ARISE_SUDO_SH'\n"
         "#!/bin/sh\n"
-        "if [ \"$#\" -eq 0 ]; then\n"
+        'if [ "$#" -eq 0 ]; then\n'
         "  echo 'usage: sudo <command> [args...]' >&2\n"
         "  exit 2\n"
         "fi\n"
-        f"exec {CONTAINER_ROOT_HELPER} \"$@\"\n"
+        f'exec {CONTAINER_ROOT_HELPER} "$@"\n'
         "ARISE_SUDO_SH\n"
         f"chmod 0755 {CONTAINER_SUDO_SHIM}\n"
         f"cat > {CONTAINER_APT_GET_SHIM} <<'ARISE_APT_GET_SH'\n"
         "#!/bin/sh\n"
-        f"exec {CONTAINER_ROOT_HELPER} /usr/bin/apt-get \"$@\"\n"
+        f'exec {CONTAINER_ROOT_HELPER} /usr/bin/apt-get "$@"\n'
         "ARISE_APT_GET_SH\n"
         f"chmod 0755 {CONTAINER_APT_GET_SHIM}\n"
     )

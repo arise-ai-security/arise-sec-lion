@@ -179,6 +179,58 @@ class TestSummaryProjectionCosts:
         assert result.cost.prompt_tokens == 1000
         assert result.cost.completion_tokens == 500
 
+    def test_accumulates_cache_tokens_from_tokens_consumed(self) -> None:
+        """Should sum prompt-cache read/write tokens from TokensConsumed events.
+
+        Regression: the batch projection path dropped cache tokens for
+        TokensConsumed (orchestration LLM calls), zeroing the prompt-cache
+        metric in manifest snapshots, ``main.py summary``, and the summary API.
+        """
+
+        # Given: two orchestration LLM calls that hit/wrote the prompt cache
+        events = [
+            AgentCreated(
+                aggregate_id=BOSS_ID,
+                sequence_number=1,
+                role="BOSS",
+                occurred_at=BASE_TIME,
+            ),
+            TokensConsumed(
+                aggregate_id=BOSS_ID,
+                sequence_number=2,
+                model="claude-sonnet-4-5",
+                prompt_tokens=6000,
+                completion_tokens=400,
+                total_tokens=6400,
+                cache_read_tokens=0,
+                cache_write_tokens=5183,
+                cost_usd=0.08,
+                operation="task_decomposition",
+                occurred_at=BASE_TIME + timedelta(seconds=1),
+            ),
+            TokensConsumed(
+                aggregate_id=BOSS_ID,
+                sequence_number=3,
+                model="claude-sonnet-4-5",
+                prompt_tokens=6000,
+                completion_tokens=300,
+                total_tokens=6300,
+                cache_read_tokens=5183,
+                cache_write_tokens=0,
+                cost_usd=0.02,
+                operation="task_decomposition",
+                occurred_at=BASE_TIME + timedelta(seconds=2),
+            ),
+        ]
+
+        # When: the run is projected to a summary
+        result = SummaryProjection().project(events)
+
+        # Then: cache read/write tokens are summed, not dropped
+        assert result.cost is not None
+        assert result.cost.cache_write_tokens == 5183
+        assert result.cost.cache_read_tokens == 5183
+
     def test_calculates_worker_costs(self) -> None:
         """Should calculate worker costs from WorkerCostRecorded events."""
         events = [

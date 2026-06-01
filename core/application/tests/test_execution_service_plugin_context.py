@@ -68,16 +68,6 @@ class StubDomainPlugin:
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         return None
 
-    def enrich_prompt(
-        self,
-        prompt: str,
-        *,
-        domain_context: object | None,
-        briefing: object | None = None,
-        chain_factory=None,
-    ) -> str:
-        return prompt
-
     def get_run_metadata(self, domain_context: object) -> dict[str, Any]:
         return {}
 

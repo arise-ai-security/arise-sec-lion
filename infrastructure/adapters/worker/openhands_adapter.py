@@ -58,6 +58,8 @@ def _event_dedup_key(sdk_event: Any) -> Any:
     if event_id is not None:
         return ("id", event_id)
     return ("obj", id(sdk_event))
+
+
 _OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
 _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
 _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
@@ -80,9 +82,7 @@ def _container_session_from_tool_params(
     if not isinstance(container_session, dict):
         return None
     try:
-        return ContainerSessionContext.from_task_context(
-            {"container_session": container_session}
-        )
+        return ContainerSessionContext.from_task_context({"container_session": container_session})
     except (KeyError, TypeError, ValueError):
         logger.warning(
             "Ignoring invalid OpenHands container_session tool params",
@@ -166,25 +166,8 @@ def _maybe_idempotent_file_create_observation(
         old_content=current,
         new_content=current,
         content=[
-            TextContent(
-                text=f"File already exists with identical content at: {container_path}"
-            )
+            TextContent(text=f"File already exists with identical content at: {container_path}")
         ],
-    )
-
-
-def _augment_native_tool_description(
-    description: str,
-    container_session: ContainerSessionContext,
-) -> str:
-    return (
-        f"{description}\n\n"
-        "Container path compatibility: use canonical container paths "
-        f"`{container_session.container_source_dir}/...`, "
-        f"`{container_session.container_testcase_dir}/...`, and "
-        f"`{container_session.container_work_dir}/...`. This runtime maps them "
-        "to the run mirror before execution and rewrites results back to "
-        "container paths."
     )
 
 
@@ -244,13 +227,14 @@ def _register_container_aware_openhands_tools() -> None:
             if tool.executor is None:
                 wrapped_tools.append(tool)
                 continue
+            # Only the executor is swapped (it maps paths at call time). The
+            # tool.description is left byte-identical across container sessions
+            # so the static tool schema stays prompt-cacheable; the container
+            # paths reach the agent via the task-description prefix instead
+            # (see _prepare_task_description -> apply_task_prefix).
             wrapped_tools.append(
                 tool.model_copy(
                     update={
-                        "description": _augment_native_tool_description(
-                            tool.description,
-                            container_session,
-                        ),
                         "executor": _PathMappingOpenHandsExecutor(
                             tool.executor,
                             container_session,
@@ -393,9 +377,7 @@ class _OpenHandsConversationRun:
     child_pid_baseline: set[int]
     timeout_seconds: int
     max_iterations_per_run: int
-    _executor: concurrent.futures.ThreadPoolExecutor | None = field(
-        default=None, init=False
-    )
+    _executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None, init=False)
     _future: concurrent.futures.Future | None = field(default=None, init=False)
 
     def start(self) -> None:
@@ -631,9 +613,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # work without **kwargs support.
         return cast(
             "_ConversationLike",
-            self._build_conversation(
-                working_dir, mcp_servers, container_session, callbacks
-            ),
+            self._build_conversation(working_dir, mcp_servers, container_session, callbacks),
         )
 
     def _create_conversation_run(
@@ -734,9 +714,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         finish_message: str | None,
         sequencer: EventSequencer,
     ) -> DomainEvent:
-        return sequencer.completed(
-            self._extract_result(conversation, working_dir, finish_message)
-        )
+        return sequencer.completed(self._extract_result(conversation, working_dir, finish_message))
 
     def _build_conversation(
         self,
@@ -776,7 +754,15 @@ class OpenHandsAdapter(WorkerAdapterBase):
         )
 
     def _build_llm_kwargs(self) -> dict[str, Any]:
-        llm_kwargs: dict[str, Any] = {"model": self.model, "api_key": self.api_key}
+        # caching_prompt enables Anthropic prompt caching in the OpenHands SDK.
+        # It is the SDK default, but set explicitly here so the intent is
+        # visible; the SDK gates it by model support, so it is a safe no-op for
+        # non-Anthropic models.
+        llm_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "api_key": self.api_key,
+            "caching_prompt": True,
+        }
         if base_url := self._effective_base_url():
             llm_kwargs["base_url"] = base_url
         if self._is_ollama_model():
@@ -831,8 +817,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
         container_session_params: dict[str, str] | None = None
         if container_session is not None and any(
-            name in _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES
-            for name in self.allowed_tools
+            name in _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES for name in self.allowed_tools
         ):
             _ensure_container_aware_openhands_tools_registered()
             container_session_params = self._container_session_tool_params(
@@ -871,9 +856,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             "container_source_dir": container_session.container_source_dir,
             "container_testcase_dir": container_session.container_testcase_dir,
             "container_work_dir": container_session.container_work_dir,
-            "container_working_directory": (
-                container_session.container_working_directory
-            ),
+            "container_working_directory": (container_session.container_working_directory),
             "helper_script": str(container_session.helper_script),
             "container_workspace_root": container_session.container_workspace_root,
         }
@@ -881,7 +864,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
     @staticmethod
     def _openhands_native_tool_names() -> set[str]:
         # Keep host-shell access out of OpenHands native tools. Container shell
-        # commands must use the SEC-bench MCP ``shell_in_container`` tool.
+        # commands must use the domain plugin's MCP ``shell_in_container`` tool.
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.glob import GlobTool
         from openhands.tools.grep import GrepTool
@@ -1249,9 +1232,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             except ProcessLookupError:
                 pids.discard(pid)
             except OSError:
-                logger.debug(
-                    "SIGTERM to MCP child PID %d failed", pid, exc_info=True
-                )
+                logger.debug("SIGTERM to MCP child PID %d failed", pid, exc_info=True)
 
         # Step 2: poll waitpid until grace expires.
         deadline = _time.monotonic() + grace_seconds
@@ -1273,9 +1254,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             except ProcessLookupError:
                 pids.discard(pid)
             except OSError:
-                logger.debug(
-                    "SIGKILL to MCP child PID %d failed", pid, exc_info=True
-                )
+                logger.debug("SIGKILL to MCP child PID %d failed", pid, exc_info=True)
 
         # Step 4: drain waitpid one more time so SIGKILLed children don't
         # linger as zombies waiting for the parent to reap them.
@@ -1297,9 +1276,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 pids.discard(pid)
                 continue
             except OSError:
-                logger.debug(
-                    "waitpid for MCP child PID %d failed", pid, exc_info=True
-                )
+                logger.debug("waitpid for MCP child PID %d failed", pid, exc_info=True)
                 continue
             if wpid == pid:
                 pids.discard(pid)

@@ -66,6 +66,8 @@ class CostProjection(Projection):
                 total_tokens += event.total_tokens
                 prompt_tokens += event.prompt_tokens
                 completion_tokens += event.completion_tokens
+                cache_read_tokens += event.cache_read_tokens
+                cache_write_tokens += event.cache_write_tokens
                 cost_by_model[event.model] += event.cost_usd
                 cost_by_operation[event.operation] += event.cost_usd
                 cost_by_agent[str(event.aggregate_id)] += event.cost_usd
