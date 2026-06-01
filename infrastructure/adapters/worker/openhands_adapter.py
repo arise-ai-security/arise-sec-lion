@@ -171,21 +171,6 @@ def _maybe_idempotent_file_create_observation(
     )
 
 
-def _augment_native_tool_description(
-    description: str,
-    container_session: ContainerSessionContext,
-) -> str:
-    return (
-        f"{description}\n\n"
-        "Container path compatibility: use canonical container paths "
-        f"`{container_session.container_source_dir}/...`, "
-        f"`{container_session.container_testcase_dir}/...`, and "
-        f"`{container_session.container_work_dir}/...`. This runtime maps them "
-        "to the run mirror before execution and rewrites results back to "
-        "container paths."
-    )
-
-
 def _ensure_container_aware_openhands_tools_registered() -> None:
     global _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED
     if _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED:
