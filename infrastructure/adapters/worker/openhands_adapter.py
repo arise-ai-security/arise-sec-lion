@@ -450,6 +450,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         base_url: str | None = None,
         allowed_tools: list[str] | None = None,
         mcp_tools: list[str] | None = None,
+        enable_subagents: bool = False,
     ) -> None:
         super().__init__(timeout_seconds=timeout_seconds)
         if not model:
@@ -460,6 +461,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self.base_url: str | None = _normalize_base_url(base_url)
         self.allowed_tools: list[str] = allowed_tools or []
         self.mcp_tools: list[str] = mcp_tools or []
+        # When True, the agent gets OpenHands' native task-delegation tool so it
+        # can spawn a (single-level) tree of child subagents — the naive #2 (N2)
+        # baseline. Children reuse the parent's container-aware tools and lack
+        # the delegation tool, so the tree is bounded to exactly two levels.
+        self.enable_subagents: bool = enable_subagents
 
     def _detect_api_key(self) -> str | None:
         if api_key := os.getenv("LLM_API_KEY"):
@@ -740,6 +746,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # Agent creates MCP tool definitions from this config after native tools.
         mcp_config = to_openhands_mcp_config(mcp_servers) if mcp_servers else {}
 
+        if self.enable_subagents:
+            self._register_container_subagent(Tool, Agent, container_session, mcp_config)
+            tools = [*tools, Tool(name="task_tool_set")]
+
         agent = Agent(
             llm=llm,
             tools=tools,
@@ -839,6 +849,42 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 continue
             tools.append(tool_factory(name=name))
         return tools
+
+    def _register_container_subagent(
+        self,
+        tool_factory: Callable[..., Any],
+        agent_factory: Callable[..., Any],
+        container_session: ContainerSessionContext | None,
+        mcp_config: dict[str, Any],
+    ) -> None:
+        """Register a container-aware ``general-purpose`` child agent for N2.
+
+        OpenHands' native ``task_tool_set`` delegates to a registered agent
+        type (default ``general-purpose``). The SDK's built-in general-purpose
+        agent runs on the HOST, so its shell/build commands would diverge from
+        the CVE container. We instead register a child whose tools are the
+        parent's own container-aware {file_editor, glob, grep} plus the same
+        MCP ``shell_in_container`` server, so subagent work lands in the
+        container. Children get no delegation tool, bounding the tree to two
+        levels. ``register_agent_if_absent`` is idempotent; the naive runner
+        executes one job per process, so the first registration wins.
+        """
+        from openhands.sdk.subagent.registry import register_agent_if_absent
+
+        def _build_child(llm: Any) -> Any:
+            child_tools = self._build_native_tools(tool_factory, container_session)
+            return agent_factory(
+                llm=llm,
+                tools=child_tools,
+                mcp_config=mcp_config,
+                include_default_tools=_OPENHANDS_DEFAULT_CONTROL_TOOLS,
+            )
+
+        register_agent_if_absent(
+            "general-purpose",
+            _build_child,
+            "Container-aware general-purpose subagent for SEC-bench BEF tasks.",
+        )
 
     @staticmethod
     def _container_session_tool_params(

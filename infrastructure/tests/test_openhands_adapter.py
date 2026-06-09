@@ -271,6 +271,53 @@ class TestOpenHandsAdapter:
             assert params["host_testcase_dir"] == str(tmp_path / "testcase")
             assert params["host_work_root"] == str(tmp_path / "work")
 
+    def test_enable_subagents_flag_defaults_false_and_is_stored(self) -> None:
+        # Given/When: adapters built with and without the N2 subagent toggle.
+        # Then: the flag defaults off (N1) and is stored when enabled (N2).
+        assert _adapter().enable_subagents is False
+        assert _adapter(enable_subagents=True).enable_subagents is True
+
+    def test_register_container_subagent_builds_container_aware_child(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given: an N2 adapter (enable_subagents) for a container-backed run.
+        adapter = _adapter(allowed_tools=["file_editor", "glob", "grep"], enable_subagents=True)
+        container_session = _container_session(tmp_path)
+        captured: dict[str, Any] = {}
+
+        def _fake_register(name: str, factory: Any, description: str) -> bool:
+            captured["name"] = name
+            captured["factory"] = factory
+            return True
+
+        monkeypatch.setattr(
+            "openhands.sdk.subagent.registry.register_agent_if_absent",
+            _fake_register,
+        )
+
+        # When: registering the native subagent child type.
+        adapter._register_container_subagent(
+            lambda **kw: kw,  # tool_factory
+            lambda **kw: ("agent", kw),  # agent_factory
+            container_session,
+            mcp_config={"mcpServers": {"security_tools": {}}},
+        )
+
+        # Then: a 'general-purpose' child is registered whose factory builds an
+        # agent with the parent's CONTAINER-AWARE file tools (not host tools) and
+        # the shared MCP config — so subagent work executes in the CVE container.
+        assert captured["name"] == "general-purpose"
+        child = captured["factory"](llm="fake-llm")
+        assert child[0] == "agent"
+        kwargs = child[1]
+        assert kwargs["llm"] == "fake-llm"
+        assert kwargs["mcp_config"] == {"mcpServers": {"security_tools": {}}}
+        assert [tool["name"] for tool in kwargs["tools"]] == ["file_editor", "glob", "grep"]
+        for tool in kwargs["tools"]:
+            assert tool["params"]["container_session"]["container_testcase_dir"] == "/testcase"
+
     def test_container_aware_file_editor_maps_shared_container_paths(
         self,
         tmp_path: Path,
