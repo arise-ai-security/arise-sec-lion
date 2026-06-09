@@ -17,6 +17,7 @@ from core.domain.events.events import (
 )
 from core.domain.exceptions import CostInvariantViolation
 from core.query.projections.impl import SummaryProjection
+from core.query.projections.impl.summary import IncrementalSummaryProjection
 from core.query.projections.models import CostSummary, ProjectionSummary
 from core.query.projections.registry import ProjectionRegistry
 from core.query.tests.projections.conftest import (
@@ -225,6 +226,59 @@ class TestSummaryProjectionCosts:
 
         # When: the run is projected to a summary
         result = SummaryProjection().project(events)
+
+        # Then: cache read/write tokens are summed, not dropped
+        assert result.cost is not None
+        assert result.cost.cache_write_tokens == 5183
+        assert result.cost.cache_read_tokens == 5183
+
+    def test_incremental_accumulates_cache_tokens_from_tokens_consumed(self) -> None:
+        """Should sum prompt-cache read/write tokens in the incremental path too.
+
+        Regression: the incremental (streaming/live) projection used by the
+        dashboard live view dropped cache tokens for TokensConsumed, reporting
+        orchestration prompt-cache reads/writes as 0 while the batch path summed
+        them. The two paths must stay symmetric.
+        """
+
+        # Given: two orchestration LLM calls that hit/wrote the prompt cache
+        events = [
+            AgentCreated(
+                aggregate_id=BOSS_ID,
+                sequence_number=1,
+                role="BOSS",
+                occurred_at=BASE_TIME,
+            ),
+            TokensConsumed(
+                aggregate_id=BOSS_ID,
+                sequence_number=2,
+                model="claude-sonnet-4-5",
+                prompt_tokens=6000,
+                completion_tokens=400,
+                total_tokens=6400,
+                cache_read_tokens=0,
+                cache_write_tokens=5183,
+                cost_usd=0.08,
+                operation="task_decomposition",
+                occurred_at=BASE_TIME + timedelta(seconds=1),
+            ),
+            TokensConsumed(
+                aggregate_id=BOSS_ID,
+                sequence_number=3,
+                model="claude-sonnet-4-5",
+                prompt_tokens=6000,
+                completion_tokens=300,
+                total_tokens=6300,
+                cache_read_tokens=5183,
+                cache_write_tokens=0,
+                cost_usd=0.02,
+                operation="task_decomposition",
+                occurred_at=BASE_TIME + timedelta(seconds=2),
+            ),
+        ]
+
+        # When: the run is projected incrementally
+        result = IncrementalSummaryProjection().update(events)
 
         # Then: cache read/write tokens are summed, not dropped
         assert result.cost is not None

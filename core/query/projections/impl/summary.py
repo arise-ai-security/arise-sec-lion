@@ -112,6 +112,8 @@ class IncrementalSummaryProjection:
             self._total_tokens += event.total_tokens
             self._prompt_tokens += event.prompt_tokens
             self._completion_tokens += event.completion_tokens
+            self._cache_read_tokens += event.cache_read_tokens
+            self._cache_write_tokens += event.cache_write_tokens
             self._cost_by_model[event.model] += event.cost_usd
             self._cost_by_operation[event.operation] += event.cost_usd
             self._cost_by_agent[str(agent_id)] += event.cost_usd
