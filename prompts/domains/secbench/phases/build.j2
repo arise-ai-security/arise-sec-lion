@@ -1,0 +1,16 @@
+Build the repository with sanitizer instrumentation.
+Deliverables:
+- `/testcase/base_commit_hash` (the vulnerable commit hash)
+- `/src/build.sh` (improved, standalone, sanitizer flags preserved)
+- `/testcase/repo_changes.diff` (source changes vs. base commit, may be empty)
+- `/testcase/packages.txt` (apt packages installed during the build, one per line)
+{% if include_validation_gate %}
+
+Validate the build before continuing: the project MUST compile with the
+`{{ sanitizer }}` sanitizer enabled AND the instrumented binary MUST actually
+execute. Run the main binary with `--help` or `-h`; if it fails to load the
+sanitizer runtime (e.g. "cannot open shared object file: libclang_rt.asan" or
+"libasan"), the build is NOT complete — install the matching ASan runtime and
+fix `LD_LIBRARY_PATH` until the instrumented binary runs. A build that compiles
+but cannot execute is a FAIL.
+{% endif %}

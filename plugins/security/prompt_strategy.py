@@ -154,25 +154,56 @@ class SecBenchPromptStrategy:
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
 
+        # A CVE worker with no detectable branch has no phase contract: the
+        # shared phase partial (deliverables + verdict gate) is keyed on the
+        # branch, so an undetected branch would emit a worker without the very
+        # artifact contract that makes arms comparable. Fail loudly rather than
+        # silently producing an under-specified prompt.
+        if branch is None:
+            raise ValueError(
+                "SEC-bench worker prompt requested for a CVE task but no phase branch "
+                "could be detected from the task description or briefing ancestry. "
+                f"task_description={context.task_description!r}. Prefix the task with "
+                "[Builder]/[Exploiter]/[Fixer]/[Reporter] or supply an ancestry that "
+                "names the phase."
+            )
+
         chain = _with_cve_display(chain, cve_instance, phase=branch)
         chain = chain.render("domains/secbench/worker.j2", **cve_ctx)
 
-        if branch is not None:
-            chain = (
-                chain.render_if(
-                    branch == "builder", "domains/secbench/worker/builder.j2", **cve_ctx
-                )
-                .render_if(branch == "exploiter", "domains/secbench/worker/exploiter.j2", **cve_ctx)
-                .render_if(branch == "fixer", "domains/secbench/worker/fixer.j2", **cve_ctx)
-                .render_if(branch == "reporter", "domains/secbench/worker/reporter.j2", **cve_ctx)
+        chain = (
+            chain.render_if(
+                branch == "builder",
+                "domains/secbench/worker/builder.j2",
+                include_validation_gate=True,
+                **cve_ctx,
             )
-            if self._enabled_tools:
-                tools = get_tools_for_phase(branch, self._enabled_tools)
-                if tools:
-                    chain = chain.render(
-                        "domains/secbench/tools.j2",
-                        security_tools=[tool.model_dump() for tool in tools],
-                    )
+            .render_if(
+                branch == "exploiter",
+                "domains/secbench/worker/exploiter.j2",
+                include_validation_gate=True,
+                **cve_ctx,
+            )
+            .render_if(
+                branch == "fixer",
+                "domains/secbench/worker/fixer.j2",
+                include_validation_gate=True,
+                **cve_ctx,
+            )
+            .render_if(
+                branch == "reporter",
+                "domains/secbench/worker/reporter.j2",
+                include_validation_gate=True,
+                **cve_ctx,
+            )
+        )
+        if self._enabled_tools:
+            tools = get_tools_for_phase(branch, self._enabled_tools)
+            if tools:
+                chain = chain.render(
+                    "domains/secbench/tools.j2",
+                    security_tools=[tool.model_dump() for tool in tools],
+                )
 
         return chain
 
@@ -183,12 +214,15 @@ class SecBenchPromptStrategy:
     ) -> "TemplateChain | None":
         """Compose the SEC-bench flat-mode prompt.
 
-        Renders the CVE problem statement plus a minimal 4-phase task
-        structure (``flat_pipeline.j2``, a subset of ``boss.j2`` with
-        decomposition mechanics stripped). The role/operation/worker
-        templates are intentionally NOT rendered here — those encode the
-        tree topology's engineering and would contaminate the flat
-        baseline.
+        Renders the CVE problem statement plus ``flat_pipeline.j2``, a thin
+        sequential wrapper that includes the same shared phase partials
+        (``domains/secbench/phases/{_mindset,build,exploit,fix,report}.j2``)
+        the BEF workers receive, so every arm emits byte-identical
+        ``/testcase/`` artifacts. The wrapper adds only the single-agent,
+        four-phases-in-order framing — no manager, no siblings, no handoff.
+        The role/operation/worker templates are intentionally NOT rendered
+        here — those encode the tree topology's engineering and would
+        contaminate the flat baseline.
         """
         cve_instance = _as_cve_instance(context.domain_context)
         if cve_instance is None:
@@ -196,5 +230,5 @@ class SecBenchPromptStrategy:
 
         cve_ctx = cve_instance.to_template_context()
         return _with_cve_display(chain, cve_instance, phase=None).render(
-            "domains/secbench/flat_pipeline.j2", **cve_ctx
+            "domains/secbench/flat_pipeline.j2", include_validation_gate=True, **cve_ctx
         )

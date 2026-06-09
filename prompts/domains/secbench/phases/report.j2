@@ -1,0 +1,13 @@
+Synthesize the build, exploit, and fix findings into a security analysis report.
+Deliverable:
+- `/testcase/security_report.md` (non-empty; covers executive summary,
+  vulnerability details with root cause, PoC evidence, fix implementation,
+  validation results, references to specific file paths and command outputs)
+{% if include_validation_gate %}
+
+Validate the report before finishing: `/testcase/security_report.md` MUST
+exist and be non-empty, and it MUST be internally consistent — if the root
+cause analysis identifies file X as the bug origin, the fix description must
+explain why the patch targets that file (or explicitly justify targeting a
+different file). Verify the file exists and is non-empty before concluding.
+{% endif %}

@@ -3,6 +3,8 @@
 
 Refer to Task Context above for repository location, base commit hash, and vulnerability details.
 
+{% include 'domains/secbench/phases/build.j2' %}
+
 ### Setup
 
 Install analysis tools that will be useful for build validation:
@@ -39,7 +41,7 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    # If clang's runtime is at a non-standard path, add it:
    export LD_LIBRARY_PATH=$(dirname $(find /usr/local -name 'libclang_rt.asan*.so' 2>/dev/null | head -1)):$LD_LIBRARY_PATH
    ```
-   This is critical — ALL downstream workers (Exploiter, Fixer) need to run the instrumented binary. A build that compiles but can't execute is worse than a build failure.
+   This is critical — ALL downstream phases (Exploiter, Fixer) need to run the instrumented binary. A build that compiles but can't execute is worse than a build failure.
 
 6. **Fix build errors** (if any):
    - Focus on `error` messages only, ignore warnings

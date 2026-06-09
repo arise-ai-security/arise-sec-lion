@@ -17,11 +17,13 @@ varies per invocation.
   ``{role, operation, CVE}``. The strategy passes ``phase=None`` to
   ``cve.j2``, which renders ALL phase sections; branch does not affect the
   stable prefix.
-- ``manager`` / ``decomposition`` and ``worker`` / ``execution``:
-  ``{role, operation, CVE, branch}``. The strategy passes
-  ``phase=<branch>`` to ``cve.j2``, which filters sections by phase; for
-  worker prompts, ``worker/<branch>.j2`` is additionally rendered into the
-  stable prefix.
+- ``manager`` / ``decomposition``: ``{role, operation, CVE}`` only. Since
+  ``cve.j2`` no longer filters by phase (its ``<success_criteria>`` block
+  was hoisted into ``domains/secbench/phases/``) and ``manager/<phase>.j2``
+  dispatch was removed, the manager stable prefix is branch-independent.
+- ``worker`` / ``execution``: ``{role, operation, CVE, branch}``. The
+  branch-specific contract lives in ``worker/<branch>.j2``, which is
+  rendered into the worker stable prefix, so branch still varies the prefix.
 
 Two task_descriptions with the same bracket prefix (e.g. both
 ``[exploiter] ...``) select the same branch via ``_detect_branch_from_task``,
@@ -237,9 +239,10 @@ class TestWorkerPrefixDiffersAcrossBranches:
         assert len(prefix_f) > 1000
 
 
-# ===== Manager prompt: cacheable tuple is {role, op, CVE, branch} =====
-# Manager is branch-sensitive because the strategy passes phase=branch to
-# cve.j2, which filters phase sections (see prompts/domains/secbench/cve.j2).
+# ===== Manager prompt: cacheable tuple is {role, op, CVE} =====
+# Manager is branch-INDEPENDENT: cve.j2 no longer filters by phase (its
+# success_criteria moved to domains/secbench/phases/) and manager/<phase>.j2
+# dispatch was removed, so branch does not affect the manager stable prefix.
 
 
 class TestManagerPromptStableByBranch:
@@ -342,10 +345,13 @@ class TestManagerPreMarkerExcludesPerNodeBriefing:
         assert just_a in prompt_a and parent_a in prompt_a
 
 
-class TestManagerPrefixDiffersAcrossBranches:
-    """Manager: cve.j2 filters by phase, so different branches → different prefix bytes."""
+class TestManagerPrefixBranchIndependent:
+    """Manager: cve.j2 no longer filters by phase and manager/<phase>.j2 dispatch
+    was removed, so the manager stable prefix is branch-INDEPENDENT. Two manager
+    prompts that differ only in branch share a byte-identical cached prefix — a
+    cache win (cross-branch manager reuse on the same CVE)."""
 
-    def test_exploiter_vs_fixer_prefix_differs(self) -> None:
+    def test_exploiter_vs_fixer_prefix_identical(self) -> None:
         builder = _builder()
         cve = _cve()
 
@@ -365,10 +371,11 @@ class TestManagerPrefixDiffersAcrossBranches:
         prefix_e = _stable_prefix(prompt_exploiter)
         prefix_f = _stable_prefix(prompt_fixer)
 
-        assert prefix_e != prefix_f, (
-            "Manager prefix did not differ across branches — but cve.j2 "
-            "filters by phase, so it SHOULD differ. Either the strategy "
-            "stopped passing phase=branch or cve.j2 stopped filtering."
+        assert prefix_e == prefix_f, (
+            "Manager prefix differed across branches — but cve.j2 no longer "
+            "filters by phase and manager/<phase>.j2 dispatch was removed, so "
+            "the manager prefix MUST be branch-independent now.\n"
+            f"Earliest divergence: {_first_diff(prefix_e, prefix_f)}"
         )
 
 

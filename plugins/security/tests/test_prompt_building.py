@@ -211,10 +211,14 @@ class TestFlatPromptBuilding:
         )
 
         # Then: none of our tree-tier templates leak into the flat prompt.
+        # NOTE: the shared ``## Security Research Mindset`` partial (_mindset.j2)
+        # IS intentionally present in flat now — it is the phase-neutral
+        # methodology shared with the BEF workers. What must stay out is the
+        # tree-topology framing: role/operation templates, the per-phase worker
+        # step-by-step shells, and boss decomposition mechanics.
         assert "You are an agent in a recursive multi-agent hierarchy" not in prompt
         assert "You are a **WORKER** agent" not in prompt
         assert "## Task Execution" not in prompt
-        assert "## Security Research Mindset" not in prompt
         assert "## Builder Worker — Step-by-Step" not in prompt
         assert "Create exactly 4 subtasks" not in prompt  # boss.j2 decomposition leak
 

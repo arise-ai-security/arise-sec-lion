@@ -1,0 +1,37 @@
+Generate a unified patch that removes the sanitizer error.
+Use the exploit phase's `/testcase/repro.sh` to validate the patch.
+Deliverables:
+- `/testcase/model_patch.diff` (git-apply-able against the base commit)
+- `/testcase/patch_validation_results.txt` — Fix-Validator verdict file
+  (required, exact name — do NOT rename to patch_validation.txt,
+  fix_validation_report.md, etc.)
+{% if include_validation_gate %}
+
+After `/testcase/model_patch.diff` is written, validate the fix before
+continuing:
+1. Reset to base: `git reset --hard $(cat /testcase/base_commit_hash)`. If
+   `/testcase/repo_changes.diff` is non-empty, apply it first.
+2. Apply the patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`,
+   then `touch` the patched files so the build system sees them as newer
+   than cached objects.
+3. Rebuild: `/src/build.sh`.
+4. Run `/testcase/repro.sh` three times back-to-back and capture each run via
+   `bash /testcase/repro.sh 2>&1 | tee /testcase/fix_run_<N>.log; echo "exit=$?" >> /testcase/fix_run_<N>.log`.
+5. Write `/testcase/patch_validation_results.txt` with this EXACT
+   machine-readable block at the top (one key per line — do NOT reformat),
+   followed by a narrative section explaining the verdict:
+   ```
+   VERDICT: PASS|FAIL
+   REASON: <one-sentence root reason — for PASS, why the patch conclusively removes the sanitizer error; for FAIL, what still triggered or what regressed>
+   PRE_PATCH_SANITIZER_ERROR: <error type seen in the exploit phase's exploit_validation_results.txt OBSERVED_SANITIZER_ERROR>
+   POST_PATCH_SANITIZER_ERROR: <error type seen after the patch is applied, or "none" if no sanitizer error fired>
+   PATCH_APPLY_STATUS: clean|conflicts|failed
+   BUILD_STATUS: success|failed
+   REPRO_RUNS_NO_CRASH: <N>/3
+   PATCHED_FILES: <comma-separated file paths touched by model_patch.diff>
+   ```
+   VERDICT is PASS only when PATCH_APPLY_STATUS=clean, BUILD_STATUS=success,
+   POST_PATCH_SANITIZER_ERROR=none, and REPRO_RUNS_NO_CRASH=3/3. Otherwise
+   VERDICT is FAIL and REASON names which condition failed. After writing,
+   `cat /testcase/patch_validation_results.txt`.
+{% endif %}
