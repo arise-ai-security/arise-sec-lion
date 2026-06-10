@@ -7,6 +7,8 @@ Deliverables:
   fix_validation_report.md, etc.)
 {% if include_validation_gate %}
 
+{% include 'domains/secbench/phases/_detached_exec.j2' %}
+
 After `/testcase/model_patch.diff` is written, validate the fix before
 continuing:
 1. Reset to base: `git reset --hard $(cat /testcase/base_commit_hash)`. If
@@ -14,9 +16,21 @@ continuing:
 2. Apply the patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`,
    then `touch` the patched files so the build system sees them as newer
    than cached objects.
-3. Rebuild: `/src/build.sh`.
-4. Run `/testcase/repro.sh` three times back-to-back and capture each run via
-   `bash /testcase/repro.sh 2>&1 | tee /testcase/fix_run_<N>.log; echo "exit=$?" >> /testcase/fix_run_<N>.log`.
+3. Rebuild detached and poll its sentinel until it reports `exit=0`:
+   ```bash
+   nohup bash -c '/src/build.sh; echo "exit=$?" > /testcase/build.exit' > /testcase/build.log 2>&1 &
+   echo "launched rebuild (pid $!)"
+   ```
+4. Run `/testcase/repro.sh` three times back-to-back, launching the loop
+   detached and polling `/testcase/fix_loop.exit`:
+   ```bash
+   nohup bash -c 'for N in 1 2 3; do
+       bash /testcase/repro.sh > /testcase/fix_run_$N.log 2>&1
+       echo "exit=$?" >> /testcase/fix_run_$N.log
+     done; echo done > /testcase/fix_loop.exit' > /dev/null 2>&1 &
+   echo "launched fix repro loop (pid $!)"
+   ```
+   Read each `/testcase/fix_run_<N>.log` once the loop sentinel appears.
 5. Write `/testcase/patch_validation_results.txt` with this EXACT
    machine-readable block at the top (one key per line — do NOT reformat),
    followed by a narrative section explaining the verdict:

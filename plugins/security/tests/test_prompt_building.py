@@ -271,3 +271,49 @@ class TestFlatPromptBuilding:
 
         # Then: the strategy returns None, so only the task block survives.
         assert prompt == "<task>\nopenjpeg.cve-2016-7445\n</task>"
+
+    def test_detached_exec_guidance_shared_across_flat_and_workers(self) -> None:
+        """Long-command (detached-exec) guidance lives in the shared phase
+        partials, so it must render identically into the flat baseline and the
+        BEF workers. The guidance fixes the B4 ``shell_in_container`` 300 s
+        timeout churn; if it silently rendered in only one arm, the N-vs-B input
+        parity that makes the cost comparison fair would break.
+        """
+        # Given: a flat-mode PromptBuilder + the SEC-bench strategy.
+        builder = self._builder()
+        cve = make_test_cve_instance()
+
+        # When: rendering the flat baseline and each BEF worker branch.
+        flat = builder.build_flat_prompt(
+            task_description="demo.cve-2024-0001",
+            agent_id=uuid4(),
+            domain_context=cve,
+            subagent_enabled=False,
+        )
+        workers = {
+            branch: builder.build_worker_prompt(
+                task_description=f"[{branch}] run the {branch.lower()} phase",
+                domain_context=cve,
+                briefing=None,
+            )
+            for branch in ("Builder", "Exploiter", "Fixer")
+        }
+
+        marker = "Run long commands detached"
+        # Then: the flat baseline renders all three long-command phases, each
+        # carrying the principle and its concrete detached-launch sentinel.
+        assert marker in flat
+        for sentinel in (
+            "/testcase/build.exit",
+            "/testcase/repro_loop.exit",
+            "/testcase/fix_loop.exit",
+        ):
+            assert sentinel in flat, f"flat prompt missing detached sentinel {sentinel}"
+
+        # And: each BEF worker renders the same principle in its own phase
+        # partial, with the phase-specific detached command verbatim.
+        for branch, prompt in workers.items():
+            assert marker in prompt, f"{branch} worker missing detached-exec guidance"
+        assert "/testcase/build.exit" in workers["Builder"]
+        assert "/testcase/repro_loop.exit" in workers["Exploiter"]
+        assert "/testcase/fix_loop.exit" in workers["Fixer"]
