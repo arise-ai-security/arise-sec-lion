@@ -114,12 +114,73 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
     )
     assert security_tools_spec["env"]["ARISE_SECBENCH_CONTAINER_WORK_DIR"] == "/work"
 
+    # Per-worker cleanup is a no-op (one shared container per run, kept until
+    # process exit) — the container is NOT stopped here.
     await plugin.cleanup_worker_execution(
         root_id=root_id,
         agent_id=agent_id,
         domain_context=cve,
     )
-    runtime.stop_session.assert_awaited_once_with(session)
+    runtime.stop_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_workers_share_one_container_by_default(
+    tmp_path: Path,
+) -> None:
+    """A run's workers share ONE container BY DEFAULT (no flag).
+
+    The second worker's prepare REUSES the existing session (same container_id,
+    no second start_session), and per-worker cleanup does NOT stop the container
+    — it persists for the whole run so files worker 1 wrote to non-mounted
+    container paths survive for worker 2.
+    """
+    root_id = uuid4()
+    cve = _sample_cve()
+    workspace = SecBenchWorkspace(
+        root_id=root_id,
+        image="secb-tools:demo.cve-2024-0001",
+        host_root=tmp_path,
+        host_source_dir=tmp_path / "src",
+        host_testcase_dir=tmp_path / "testcase",
+        host_work_dir=tmp_path / "src" / "demo",
+        container_source_dir="/src",
+        container_testcase_dir="/testcase",
+        container_working_directory="/src/demo",
+        helper_script=tmp_path / "secb-exec",
+    )
+    session = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="shared0container",
+        container_name="secbench-worker-shared",
+        image=workspace.image,
+    )
+    runtime = AsyncMock()
+    runtime.prepare_workspace.return_value = workspace
+    runtime.start_session.return_value = session
+
+    plugin = SecurityDomainPlugin(
+        enabled_tools=["valgrind"],
+        container_runtime=runtime,
+    )
+    await plugin.prepare_run(root_id=root_id, run_output_path=tmp_path, domain_context=cve)
+
+    # Two workers, sequentially (as the scheduler dispatches them).
+    ctx1 = await plugin.prepare_worker_execution(
+        root_id=root_id, agent_id=uuid4(), run_output_path=tmp_path, domain_context=cve
+    )
+    await plugin.cleanup_worker_execution(root_id=root_id, agent_id=uuid4(), domain_context=cve)
+    ctx2 = await plugin.prepare_worker_execution(
+        root_id=root_id, agent_id=uuid4(), run_output_path=tmp_path, domain_context=cve
+    )
+
+    # One container, reused (same id); start_session called exactly once.
+    assert runtime.start_session.await_count == 1
+    assert ctx1 is not None and ctx2 is not None
+    assert ctx1.task_context["container_session"]["container_id"] == "shared0container"
+    assert ctx2.task_context["container_session"]["container_id"] == "shared0container"
+    # Per-worker cleanup did NOT stop the container in shared mode.
+    runtime.stop_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -198,14 +259,15 @@ async def test_prepare_worker_execution_serializes_concurrent_calls_per_root(
         return_exceptions=True,
     )
 
-    # Exactly one start_session call (the second coroutine sees the
-    # session already in the dict under the lock and raises).
+    # Exactly one start_session call: the second coroutine sees the session
+    # already in the dict under the lock and REUSES it (one shared container by
+    # default) — it must not race a second container into existence.
     assert start_calls == 1
     # Never more than one concurrent start_session under the lock.
     assert max_in_flight == 1
-    # One success, one RuntimeError — order is asyncio-dependent.
+    # Both succeed: one starts the container, the other reuses it.
     successes = [r for r in results if not isinstance(r, BaseException)]
-    failures = [r for r in results if isinstance(r, RuntimeError)]
-    assert len(successes) == 1
-    assert len(failures) == 1
-    assert "already active" in str(failures[0])
+    assert len(successes) == 2
+    assert all(
+        r.task_context["container_session"]["container_id"] == "abc00000001" for r in successes
+    )

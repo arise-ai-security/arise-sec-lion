@@ -48,6 +48,14 @@ class SecurityDomainPlugin(DomainPlugin):
     ) -> None:
         self._enabled_tools = enabled_tools or []
         self._container_runtime = container_runtime
+        # A run's leaf workers ALWAYS share ONE container (started on the first
+        # worker, reused for the rest, NOT stopped per-worker) — reaped at
+        # process exit by the PID-labeled cleanup (the matrix runs one run per
+        # process). This is the correct default: per-worker containers would
+        # destroy each worker's container-local state (installed tools,
+        # non-mounted scratch files), so a later worker reading an earlier
+        # worker's file would error on a torn-down container. Mounted dirs
+        # (/src, /testcase, /work) persist either way via bind mounts.
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
@@ -169,15 +177,16 @@ class SecurityDomainPlugin(DomainPlugin):
         # start_session.
         lock = self._session_locks.setdefault(root_id, asyncio.Lock())
         async with lock:
-            if root_id in self._sessions:
-                raise RuntimeError(f"SEC-bench container already active for run {root_id}")
-
-            session = await self._container_runtime.start_session(
-                cve=cve_instance,
-                workspace=workspace,
-                agent_id=agent_id,
-            )
-            self._sessions[root_id] = session
+            existing = self._sessions.get(root_id)
+            if existing is not None:
+                session = existing  # reuse the run's one shared container
+            else:
+                session = await self._container_runtime.start_session(
+                    cve=cve_instance,
+                    workspace=workspace,
+                    agent_id=agent_id,
+                )
+                self._sessions[root_id] = session
 
         return WorkerExecutionContext(
             working_directory=str(workspace.host_root),
@@ -208,16 +217,10 @@ class SecurityDomainPlugin(DomainPlugin):
         agent_id: UUID,
         domain_context: object | None,
     ) -> None:
-        _ = agent_id
-        _ = domain_context
-        session = self._sessions.pop(root_id, None)
-        if session is None or self._container_runtime is None:
-            return
-
-        try:
-            await self._container_runtime.stop_session(session)
-        except Exception:
-            logger.exception(
-                "Failed to clean up SEC-bench container",
-                extra={"root_id": str(root_id), "container_id": session.container_id},
-            )
+        # The run's one shared container is kept alive across ALL workers and
+        # reaped at process exit by the PID-labeled cleanup (matrix = one run per
+        # process). Stopping it per-worker would destroy the container-local
+        # state (installed tools, non-mounted files) the next worker needs, so
+        # per-worker cleanup is intentionally a no-op.
+        _ = (root_id, agent_id, domain_context)
+        return
