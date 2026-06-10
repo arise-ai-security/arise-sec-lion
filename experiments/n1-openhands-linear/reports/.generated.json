@@ -1,0 +1,13 @@
+{
+  "experiments/n1-openhands-linear/reports/enrollment.lock.yaml": {
+    "generated_at": "2026-06-10T20:46:34.118248Z",
+    "generated_by": "experiments/shared/scripts/collect.py",
+    "inputs": [
+      "experiments/n1-openhands-linear/manifest.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/n1-openhands-linear/manifest.yaml": "c04c1dadcdefbf309c1de51a88eea43d842c6906cee9f28f85a28aeca877db0c"
+    },
+    "output_sha256": "81c08c78d0bd7cad7a925ee27a50710a105ab3a6487fbde834df913e6bf29913"
+  }
+}

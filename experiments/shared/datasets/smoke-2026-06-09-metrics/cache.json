@@ -1,0 +1,62 @@
+[
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "boss",
+    "depth": 0,
+    "uncached_input": 109499,
+    "cache_read": 269448,
+    "cache_write": 57030,
+    "cache_hit_rate": 0.618
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "uncached_input": 926956,
+    "cache_read": 11595998,
+    "cache_write": 200820,
+    "cache_hit_rate": 0.9114
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "boss",
+    "depth": 0,
+    "uncached_input": 101629,
+    "cache_read": 251788,
+    "cache_write": 69908,
+    "cache_hit_rate": 0.5948
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "uncached_input": 925070,
+    "cache_read": 12999703,
+    "cache_write": 198252,
+    "cache_hit_rate": 0.9205
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "role": "boss",
+    "depth": 0,
+    "uncached_input": 195927,
+    "cache_read": 5840768,
+    "cache_write": 0,
+    "cache_hit_rate": 0.9675
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "role": "boss",
+    "depth": 0,
+    "uncached_input": 336253,
+    "cache_read": 8768384,
+    "cache_write": 0,
+    "cache_hit_rate": 0.9631
+  }
+]

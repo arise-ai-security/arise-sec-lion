@@ -1,0 +1,202 @@
+[
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "boss",
+    "depth": 0,
+    "tool": "recon",
+    "calls": 80
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "FileEditorAction",
+    "calls": 90
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "FinishAction",
+    "calls": 4
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "GlobAction",
+    "calls": 1
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "GrepAction",
+    "calls": 37
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "MCPToolAction",
+    "calls": 111
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "ThinkAction",
+    "calls": 1
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "recon",
+    "calls": 175
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "role": "pending",
+    "depth": 1,
+    "tool": "unknown",
+    "calls": 11
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "boss",
+    "depth": 0,
+    "tool": "recon",
+    "calls": 80
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "FileEditorAction",
+    "calls": 92
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "FinishAction",
+    "calls": 2
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "GlobAction",
+    "calls": 1
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "GrepAction",
+    "calls": 59
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "MCPToolAction",
+    "calls": 125
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "recon",
+    "calls": 167
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "role": "pending",
+    "depth": 1,
+    "tool": "unknown",
+    "calls": 9
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "role": "boss",
+    "depth": 0,
+    "tool": "FileEditorAction",
+    "calls": 17
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "role": "boss",
+    "depth": 0,
+    "tool": "FinishAction",
+    "calls": 1
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "role": "boss",
+    "depth": 0,
+    "tool": "MCPToolAction",
+    "calls": 78
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "role": "boss",
+    "depth": 0,
+    "tool": "FileEditorAction",
+    "calls": 29
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "role": "boss",
+    "depth": 0,
+    "tool": "FinishAction",
+    "calls": 2
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "role": "boss",
+    "depth": 0,
+    "tool": "GrepAction",
+    "calls": 9
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "role": "boss",
+    "depth": 0,
+    "tool": "MCPToolAction",
+    "calls": 96
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "role": "boss",
+    "depth": 0,
+    "tool": "TaskAction",
+    "calls": 2
+  }
+]

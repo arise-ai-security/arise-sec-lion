@@ -1,0 +1,198 @@
+[
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "depth": 0,
+    "operations": [
+      "task_decomposition"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "depth": 0,
+    "operations": [
+      "task_decomposition"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "depth": 0,
+    "operations": [
+      "task_decomposition"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "depth": 0,
+    "operations": [
+      "task_decomposition"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "depth": 1,
+    "operations": [
+      "task_assessment",
+      "worker_execution"
+    ]
+  }
+]

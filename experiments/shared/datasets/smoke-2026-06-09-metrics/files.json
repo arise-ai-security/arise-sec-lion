@@ -1,0 +1,154 @@
+[
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "2ec3e6cb-ffab-45e9-9c12-8eca73afafeb",
+    "files_read": 2,
+    "files_read_by_multiple_agents": 0,
+    "redundant_read_ratio": 0.0,
+    "duplicates_within_branch": 0,
+    "worst_offenders": []
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "721fc607-ad58-4ca0-8030-1898096b846c",
+    "files_read": 6,
+    "files_read_by_multiple_agents": 0,
+    "redundant_read_ratio": 0.0,
+    "duplicates_within_branch": 0,
+    "worst_offenders": []
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "93effeed-04c2-4139-9525-041225d85a62",
+    "files_read": 35,
+    "files_read_by_multiple_agents": 1,
+    "redundant_read_ratio": 0.0286,
+    "duplicates_within_branch": 1,
+    "worst_offenders": [
+      [
+        "/testcase",
+        2
+      ]
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "a8a9f702-2196-425d-8303-08dad2bb6a11",
+    "files_read": 30,
+    "files_read_by_multiple_agents": 5,
+    "redundant_read_ratio": 0.1667,
+    "duplicates_within_branch": 5,
+    "worst_offenders": [
+      [
+        "/testcase/PoC_hbo_writeTileData",
+        2
+      ],
+      [
+        "/testcase",
+        2
+      ],
+      [
+        "/src/openexr/OpenEXR/IlmImf/ImfTiledOutputFile.cpp",
+        2
+      ],
+      [
+        "/src/openexr/OpenEXR/IlmImf/ImfTiledInputFile.cpp",
+        2
+      ],
+      [
+        "/src/openexr/OpenEXR/IlmImf/ImfTileOffsets.h",
+        2
+      ]
+    ]
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "af08effe-51dd-4ad8-9126-a909f76cc6e4",
+    "files_read": 17,
+    "files_read_by_multiple_agents": 4,
+    "redundant_read_ratio": 0.2353,
+    "duplicates_within_branch": 4,
+    "worst_offenders": [
+      [
+        "/testcase",
+        3
+      ],
+      [
+        "/testcase/base_commit_hash",
+        2
+      ],
+      [
+        "/testcase/013-stack-buffer-overflow-sbr_hfadj_1287",
+        2
+      ],
+      [
+        "/testcase/cppcheck_findings.txt",
+        2
+      ]
+    ]
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "bb7e0f2e-b02d-4b91-ba62-6048d2cf6312",
+    "files_read": 10,
+    "files_read_by_multiple_agents": 5,
+    "redundant_read_ratio": 0.5,
+    "duplicates_within_branch": 5,
+    "worst_offenders": [
+      [
+        "/testcase",
+        3
+      ],
+      [
+        "/src/faad2",
+        3
+      ],
+      [
+        "/testcase/base_commit_hash",
+        2
+      ],
+      [
+        "/testcase/build_faad2_asan.log",
+        2
+      ],
+      [
+        "/src/faad2/libfaad/sbr_hfadj.c",
+        2
+      ]
+    ]
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "cbf3c172-a839-46ba-819e-568e25e4332c",
+    "files_read": 5,
+    "files_read_by_multiple_agents": 0,
+    "redundant_read_ratio": 0.0,
+    "duplicates_within_branch": 0,
+    "worst_offenders": []
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "faf28ee6-a105-4657-be39-859c63a5e280",
+    "files_read": 2,
+    "files_read_by_multiple_agents": 0,
+    "redundant_read_ratio": 0.0,
+    "duplicates_within_branch": 0,
+    "worst_offenders": []
+  }
+]
