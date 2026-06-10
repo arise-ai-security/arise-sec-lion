@@ -122,6 +122,13 @@ class OpenHandsParams(BaseModel):
     model_config = {"extra": "forbid"}
 
     mcp_tools: list[str] = Field(default_factory=list)
+    enable_subagents: bool = Field(
+        default=False,
+        description=(
+            "Expose OpenHands' native task-delegation tool so the worker can "
+            "spawn a bounded two-level tree of child agents (N2 baseline)."
+        ),
+    )
 
 
 class GoogleAdkParams(BaseModel):
@@ -370,6 +377,18 @@ class OrchestrationConfig(BaseModel):
     skip_judge: bool = Field(
         default=False,
         description="Skip the LLM judge stage of verification (stages 1-3 still run).",
+    )
+    shared_worker_session: bool = Field(
+        default=False,
+        description=(
+            "When True, source files a worker's view tool returns are captured as "
+            "SourceFile events and re-injected verbatim into later workers' prompts "
+            "(the shared code-prefix block). Workers always run their own fresh "
+            "OpenHands conversation (raw conversation reuse overflowed the worker "
+            "context window), and a run's workers always share one container "
+            "regardless of this flag. Each role keeps its own AgentSession "
+            "aggregate, so per-role events and cost attribution are preserved."
+        ),
     )
 
     topology: TopologyConfig

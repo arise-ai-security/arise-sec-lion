@@ -104,6 +104,56 @@ def test_tool_params_validation_openhands_null_raises(tmp_path: Path) -> None:
     assert "tool_params.openhands" in str(exc_info.value)
 
 
+def test_shared_worker_session_defaults_false_and_accepts_true(tmp_path: Path) -> None:
+    """``orchestration.shared_worker_session`` defaults False; YAML can enable it."""
+
+    # Given: a base config without mentioning the flag.
+    payload = _add_required_models(_load_base_config())
+    target = tmp_path / "swss_default.yaml"
+    _write_yaml(target, payload)
+
+    # When/Then: it defaults False.
+    assert Settings.from_yaml(target).orchestration.shared_worker_session is False
+
+    # Given: the same config with the flag enabled.
+    payload["orchestration"]["shared_worker_session"] = True
+    target_on = tmp_path / "swss_on.yaml"
+    _write_yaml(target_on, payload)
+
+    # When/Then: it round-trips as True.
+    assert Settings.from_yaml(target_on).orchestration.shared_worker_session is True
+
+
+def test_openhands_enable_subagents_defaults_false_and_accepts_true(tmp_path: Path) -> None:
+    """``worker.tool_params.openhands.enable_subagents`` defaults False; YAML can enable it."""
+
+    # Given: an openhands worker with an empty tool_params slot (N1-shaped).
+    payload = _add_required_models(_load_base_config())
+    payload["worker"]["tool"] = "openhands"
+    payload["worker"]["tool_params"] = {"openhands": {}}
+    target = tmp_path / "oh_default.yaml"
+    _write_yaml(target, payload)
+
+    # When: loading settings without mentioning enable_subagents.
+    settings = Settings.from_yaml(target)
+
+    # Then: the flag defaults to False.
+    assert settings.worker.tool_params.openhands is not None
+    assert settings.worker.tool_params.openhands.enable_subagents is False
+
+    # Given: the same config with the flag enabled (N2-shaped).
+    payload["worker"]["tool_params"] = {"openhands": {"enable_subagents": True}}
+    target_enabled = tmp_path / "oh_enabled.yaml"
+    _write_yaml(target_enabled, payload)
+
+    # When: loading the N2-shaped settings.
+    enabled = Settings.from_yaml(target_enabled)
+
+    # Then: the flag round-trips as True.
+    assert enabled.worker.tool_params.openhands is not None
+    assert enabled.worker.tool_params.openhands.enable_subagents is True
+
+
 def test_base_config_has_no_default_agent_model_names() -> None:
     """Agent model names must be supplied by experiment overlays."""
 

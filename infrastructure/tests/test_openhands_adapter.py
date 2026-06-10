@@ -592,6 +592,89 @@ class TestOpenHandsAdapter:
         assert "final output" in events[-1].result
 
     @pytest.mark.asyncio
+    async def test_workers_use_fresh_conversation_per_worker_with_shared_container(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """Workers never share a Conversation, even under one shared container.
+
+        Conversation reuse (which overflowed the worker context window) was
+        reverted: every worker gets its OWN fresh Conversation (one build each,
+        closed per worker) and emits its OWN full WorkerCostRecorded with no
+        delta math. The cost event carries the shared container id plus a
+        per-worker conversation id, so the invariant is checkable from the DB.
+        """
+        # Given: two workers sharing one container id.
+        adapter = _adapter(timeout_seconds=1)
+        builds: list[_FakeConversation] = []
+
+        def fake_build(*_args):
+            conversation = _FakeConversation()
+            builds.append(conversation)
+            return conversation
+
+        monkeypatch.setattr(adapter, "_build_conversation", fake_build)
+
+        cs = _container_session(tmp_path)
+        container_session_dict = {
+            "container_id": cs.container_id,
+            "container_name": cs.container_name,
+            "image": cs.image,
+            "workspace_root": str(cs.workspace_root),
+            "host_source_dir": str(cs.host_source_dir),
+            "host_testcase_dir": str(cs.host_testcase_dir),
+            "host_work_dir": str(cs.host_work_dir),
+            "container_source_dir": cs.container_source_dir,
+            "container_testcase_dir": cs.container_testcase_dir,
+            "container_working_directory": cs.container_working_directory,
+            "helper_script": str(cs.helper_script),
+        }
+
+        def task_ctx(desc: str) -> dict:
+            return {
+                "task_description": desc,
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+                "container_session": container_session_dict,
+            }
+
+        # When: two sequential workers run under the same container.
+        worker1 = [e async for e in adapter.run_session(task_ctx("role-one"))]
+        worker2 = [e async for e in adapter.run_session(task_ctx("role-two"))]
+
+        # Then: each worker built and closed its OWN fresh conversation, and the
+        # message went only to that worker's conversation (the container-path
+        # prefix is prepended, so assert containment not equality).
+        assert len(builds) == 2
+        assert builds[0] is not builds[1]
+        assert len(builds[0].messages) == 1
+        assert "role-one" in builds[0].messages[0]
+        assert len(builds[1].messages) == 1
+        assert "role-two" in builds[1].messages[0]
+        assert builds[0].closed is True
+        assert builds[1].closed is True
+        assert isinstance(worker1[-1], WorkCompleted)
+        assert isinstance(worker2[-1], WorkCompleted)
+
+        # And: each worker emits its OWN full cost (no delta) — recoverable per worker.
+        cost1 = next(e for e in worker1 if isinstance(e, WorkerCostRecorded))
+        cost2 = next(e for e in worker2 if isinstance(e, WorkerCostRecorded))
+        assert cost1.cost_usd == pytest.approx(0.12)
+        assert cost2.cost_usd == pytest.approx(0.12)
+
+        # And: the cost event carries the execution-environment identity — the
+        # SHARED container id and a DISTINCT conversation id per worker.
+        assert cost1.container_id == cs.container_id
+        assert cost2.container_id == cs.container_id
+        assert cost1.conversation_id is not None
+        assert cost2.conversation_id is not None
+        assert cost1.conversation_id != cost2.conversation_id
+
+        # And: the reuse API is gone.
+        assert not hasattr(adapter, "close_shared_sessions")
+
+    @pytest.mark.asyncio
     async def test_conversation_message_and_run_share_blocking_thread(
         self,
         monkeypatch,

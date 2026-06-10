@@ -30,6 +30,8 @@ from core.domain.events.events import (
     RunCompleted,
     RunStarted,
     SharedContextCreated,
+    SourceFileEdited,
+    SourceFileObserved,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -77,6 +79,9 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "SharedContextCreated": SharedContextCreated,
     "ArtifactStored": ArtifactStored,
     "DecisionRecorded": DecisionRecorded,
+    # Shared code-context events
+    "SourceFileObserved": SourceFileObserved,
+    "SourceFileEdited": SourceFileEdited,
     # New lifecycle events (refac/simplify-with-new-features)
     "VerificationFailed": VerificationFailed,
     "VerificationPassed": VerificationPassed,

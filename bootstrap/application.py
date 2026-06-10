@@ -196,6 +196,7 @@ def get_application(
         toolset_resolver=toolset_resolver,
         skip_judge=config.skip_judge,
         format_repairer=infrastructure.format_repairer,
+        shared_code_port=infrastructure.shared_code_context,
     )
 
     parent_notifier = ParentNotificationService(

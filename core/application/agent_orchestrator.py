@@ -183,6 +183,8 @@ def _is_prose_misinterpreted_assessment(
 
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from core.application.services import (
         ActiveToolContext,
         ChildAgentFactory,
@@ -198,6 +200,7 @@ if TYPE_CHECKING:
         RealtimeCallbackPort,
         WorkerToolPort,
     )
+    from core.ports.shared_code_context_port import SharedCodeContextPort
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +228,7 @@ class AgentOrchestrator:
         toolset_resolver: ToolsetPolicyResolver | None = None,
         skip_judge: bool = False,
         format_repairer: "FormatRepairerPort | None" = None,
+        shared_code_port: "SharedCodeContextPort | None" = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -234,6 +238,10 @@ class AgentOrchestrator:
         self._llm_query_executor = llm_query_executor or LLMQueryExecutor(llm_port)
         self._toolset_resolver = toolset_resolver or ToolsetPolicyResolver()
         self._format_repairer = format_repairer
+        # When set, the shared code-prefix block (source upstream workers already
+        # read, rebuilt from events) is injected into the worker prompt's stable
+        # prefix. None => the block is never populated (byte-identical to today).
+        self._shared_code_port = shared_code_port
         self._verification_pipeline = VerificationPipeline(
             llm_port,
             skip_judge=skip_judge,
@@ -558,6 +566,9 @@ class AgentOrchestrator:
             tool_name = agent.config.tool
             agent.start_worker_execution(tool_name)
 
+            root_id = agent.hierarchy_limits.root_id if agent.hierarchy_limits else None
+            shared_code_block = await self._resolve_shared_code_block(root_id)
+
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,
                 agent_id=agent.agent_id,
@@ -565,6 +576,7 @@ class AgentOrchestrator:
                 workspace_context=workspace_context,
                 domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
+                shared_code_block=shared_code_block,
             )
 
             # Inject verification feedback on retry so worker knows what to fix
@@ -600,10 +612,11 @@ class AgentOrchestrator:
             }
             if working_directory:
                 task_context["working_directory"] = working_directory
+            if root_id is not None:
+                # Scope for the worker's shared-code capture (root of this run).
+                task_context["root_id"] = root_id
             if task_context_overrides:
                 task_context.update(task_context_overrides)
-
-            root_id = agent.hierarchy_limits.root_id if agent.hierarchy_limits else None
 
             try:
                 async for tool_event in self._worker_port.run_session(task_context):
@@ -1170,6 +1183,17 @@ class AgentOrchestrator:
         if agent.hierarchy_limits:
             return agent.hierarchy_limits.domain_context
         return None
+
+    async def _resolve_shared_code_block(self, root_id: "UUID | None") -> str | None:
+        """The run's shared code-prefix block, or None when the feature is off.
+
+        Rebuilt from the event store by the provider; gated by the presence of the
+        port (only wired when ``orchestration.shared_worker_session`` is on) and a
+        known run scope.
+        """
+        if self._shared_code_port is None or root_id is None:
+            return None
+        return await self._shared_code_port.code_block(root_id)
 
     @staticmethod
     def _build_scope(agent: "AgentSession") -> SubtaskScope | None:

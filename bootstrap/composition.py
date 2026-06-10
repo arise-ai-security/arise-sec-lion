@@ -19,7 +19,8 @@ from core.application.run_invariants import (
     build_workspace_spec,
 )
 from core.application.services import PromptBuilder
-from infrastructure.workers import ClaudeCodeWorker
+from infrastructure.adapters.worker import OpenHandsAdapter
+from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
 from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
 from presentation.cli import CLI, CLIConfig
@@ -113,11 +114,10 @@ def get_run_domain_components(
 def _build_flat_worker(settings: Settings) -> WorkerPort:
     """Construct the ``WorkerPort`` adapter used by flat-mode dispatch.
 
-    Today only the ``claude_code`` worker is wired for flat mode at
-    composition time. Other backends (openhands, google_adk) raise
-    ``NotImplementedError`` so a misconfigured run fails loudly at
-    composition time. Add branches here when additional flat-mode workers
-    land.
+    ``claude_code`` and ``openhands`` are wired for flat mode at composition
+    time. ``google_adk`` raises ``NotImplementedError`` so a misconfigured
+    run fails loudly at composition time. Add branches here when additional
+    flat-mode workers land.
     """
     tool = settings.worker.tool
     if tool == "claude_code":
@@ -133,10 +133,43 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
             max_turns=params.max_turns,
             use_global_config=params.use_global_config,
         )
+    if tool == "openhands":
+        oh_params = settings.worker.tool_params.openhands
+        if oh_params is None:
+            raise RuntimeError(
+                "worker.tool_params.openhands must be populated when worker.tool='openhands'"
+            )
+        adapter = OpenHandsAdapter(
+            model=settings.worker.model,
+            timeout_seconds=settings.worker.timeout,
+            max_iterations_per_run=settings.worker.max_iterations_per_run,
+            base_url=settings.worker.base_url,
+            allowed_tools=settings.worker.allowed_tools,
+            mcp_tools=oh_params.mcp_tools,
+            enable_subagents=oh_params.enable_subagents,
+        )
+        return OpenHandsWorker(adapter=adapter)
     raise NotImplementedError(
-        f"flat mode currently supports only worker.tool='claude_code'; got {tool!r}. "
-        "openhands and google_adk flat-mode adapters are not yet wired."
+        f"flat mode supports worker.tool in {{'claude_code', 'openhands'}}; got {tool!r}. "
+        "The google_adk flat-mode adapter is not yet wired."
     )
+
+
+def _flat_subagent_enabled(settings: Settings) -> bool:
+    """Whether the flat worker has a subagent-delegation tool available.
+
+    ``claude_code`` exposes Claude's ``Task`` tool unless explicitly
+    disallowed (assumes ``allowed_tools: ["*"]``; an explicit allowlist
+    excluding ``Task`` would still get the note — revisit the predicate when
+    introducing such a config). ``openhands`` gates its native
+    task-delegation tool behind ``tool_params.openhands.enable_subagents``,
+    which is also what arms the tool in the adapter — note and capability
+    stay in lockstep (N1 vs N2 contrast).
+    """
+    if settings.worker.tool == "openhands":
+        params = settings.worker.tool_params.openhands
+        return params is not None and params.enable_subagents
+    return "Task" not in settings.worker.disallowed_tools
 
 
 def _make_flat_invariant_builder(
@@ -162,13 +195,9 @@ def _make_flat_invariant_builder(
 
     # ``subagent_enabled`` is derived once at factory time — settings are
     # constant for the lifetime of this closure. The flat prompt appends
-    # ``FLAT_SUBAGENT_NOTE`` only when the tool policy allows ``Task``.
-    # Assumes ``allowed_tools: ["*"]``; a future config that pins an
-    # explicit allowlist excluding ``Task`` (instead of relying on
-    # ``disallowed_tools``) would silently still get the subagent note here
-    # even though the CLI receives no ``Task`` entitlement. Revisit the
-    # predicate when introducing such a config.
-    subagent_enabled = "Task" not in settings.worker.disallowed_tools
+    # ``FLAT_SUBAGENT_NOTE`` only when the worker can actually delegate;
+    # see ``_flat_subagent_enabled`` for the per-tool predicate.
+    subagent_enabled = _flat_subagent_enabled(settings)
 
     def _builder(
         *,
@@ -304,6 +333,7 @@ def create_runtime_cli(
             worker_mcp_tools=worker_mcp_tools,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
+            worker_shared_session=settings.orchestration.shared_worker_session,
             format_repairer_enabled=settings.format_repairer.enabled,
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,

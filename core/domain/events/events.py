@@ -354,6 +354,10 @@ class WorkerCostRecorded(DomainEvent):
     usage_metrics: list[WorkerUsageMetrics] = Field(default_factory=list)
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
+    # Execution-environment identity, so run invariants (one shared container per
+    # run, one fresh conversation per worker) are checkable from the DB alone.
+    container_id: str | None = None
+    conversation_id: str | None = None
 
     @property
     def total_recorded_tokens(self) -> int:
@@ -512,3 +516,37 @@ class DecisionRecorded(DomainEvent):
     decision_value: str  # JSON-serialized value
     rationale: str
     decided_by: UUID  # Agent that made the decision
+
+
+# =============================================================================
+# Shared Code-Context Events (shared code-prefix cache)
+# =============================================================================
+
+
+class SourceFileObserved(DomainEvent):
+    """A worker's file-view tool returned source content.
+
+    Persists the verbatim bytes a ``view`` tool call surfaced so downstream
+    workers receive the same code without re-reading it. The exact bytes
+    injected into any prompt are reconstructable from these events alone;
+    ``content_sha256`` provides integrity/dedup. Emitted on the observing
+    worker's aggregate.
+    """
+
+    path: str
+    content: str
+    content_sha256: str
+    observed_by: str  # Agent that viewed the file (string form of its UUID)
+
+
+class SourceFileEdited(DomainEvent):
+    """A worker edited a source file, invalidating its recorded content.
+
+    The shared code block is append-only, so an edit appends a stale-marker
+    note after the file's last shown revision (earlier bytes never change);
+    the next ``SourceFileObserved`` of the path appends a fresh revision.
+    Emitted on the editing worker's aggregate.
+    """
+
+    path: str
+    edited_by: str  # Agent that edited the file (string form of its UUID)

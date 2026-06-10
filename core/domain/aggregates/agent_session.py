@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from functools import singledispatchmethod
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -29,6 +30,8 @@ from core.domain.events.events import (
     RetryScheduled,
     RunCompleted,
     RunStarted,
+    SourceFileEdited,
+    SourceFileObserved,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -460,6 +463,16 @@ class AgentSession:
         # Run-level timing event, just increment version for OCC
         self.version += 1
 
+    @_apply.register
+    def _(self, event: SourceFileObserved) -> None:
+        # Shared code-context capture; block rebuilt by replay, version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SourceFileEdited) -> None:
+        # Shared code-context edit marker; block rebuilt by replay, version for OCC
+        self.version += 1
+
     def _initialize_defaults(self, agent_id: UUID) -> None:
         self.agent_id = agent_id
         self.role = AgentRole.BOSS
@@ -803,6 +816,34 @@ class AgentSession:
         event_data["sequence_number"] = self._next_sequence()
         corrected_event = type(tool_event)(**event_data)
         self._emit(corrected_event)
+
+    def record_source_file_observed(
+        self, path: str, content: str, observed_by: UUID
+    ) -> None:
+        """Persist verbatim source a worker's view tool returned.
+
+        The content (and its sha256 for integrity/dedup) is recoverable from
+        this event alone, backing the shared code-prefix block.
+        """
+        event = SourceFileObserved(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            path=path,
+            content=content,
+            content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            observed_by=str(observed_by),
+        )
+        self._emit(event)
+
+    def record_source_file_edited(self, path: str, edited_by: UUID) -> None:
+        """Mark a source file edited, invalidating its recorded content."""
+        event = SourceFileEdited(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            path=path,
+            edited_by=str(edited_by),
+        )
+        self._emit(event)
 
     def mark_verification_failed(
         self,

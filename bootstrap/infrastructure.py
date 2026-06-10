@@ -25,6 +25,7 @@ from infrastructure.adapters.worker import (
     OpenHandsAdapter,
     SDKAdapterConfig,
 )
+from infrastructure.adapters.worker.shared_code_context import SharedCodeContextProvider
 
 
 type WorkerToolType = Literal["claude_code", "openhands", "google_adk"]
@@ -66,6 +67,7 @@ class InfrastructureConfig:
     worker_mcp_tools: list[str] | None = None
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
+    worker_shared_session: bool = False
     format_repairer_enabled: bool = False
     format_repairer_model: str | None = None
     format_repairer_max_tokens: int = 16000
@@ -88,12 +90,21 @@ class Infrastructure:
     shared_context: SharedContextPort
     recon_tool: ReconToolPort
     format_repairer: FormatRepairerPort | None
+    # Shared code-prefix provider; None unless the shared-context flag is on.
+    # The same instance backs worker-side capture (in the adapter) and prompt-side
+    # rebuild (injected into the orchestrator) so both see one render memo.
+    shared_code_context: SharedCodeContextProvider | None = None
 
 
-def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
+def _create_worker_adapter(
+    config: InfrastructureConfig,
+    shared_code_context: SharedCodeContextProvider | None,
+) -> WorkerToolPort:
     """Create the configured worker adapter.
 
-    Direct adapter selection based on config - no composite wrapper.
+    Direct adapter selection based on config - no composite wrapper. The shared
+    code provider is wired only into the OpenHands adapter (the worker SDK whose
+    file-editor observations carry the viewed content to capture).
     """
     if config.default_worker_tool == "claude_code":
         return ClaudeAgentSDKAdapter(
@@ -112,6 +123,7 @@ def _create_worker_adapter(config: InfrastructureConfig) -> WorkerToolPort:
             base_url=config.worker_tool_base_url,
             allowed_tools=config.worker_allowed_tools,
             mcp_tools=config.worker_mcp_tools,
+            shared_code_port=shared_code_context,
         )
     if config.default_worker_tool == "google_adk":
         return GoogleADKAdapter(
@@ -135,7 +147,12 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
         pool_max=config.pool_max,
     )
     llm_adapter = _build_llm_adapter()
-    worker_tool = _create_worker_adapter(config)
+    # Gate the shared code-prefix optimization on the umbrella flag. Off => no
+    # provider, so workers neither capture nor inject (byte-identical to today).
+    shared_code_context = (
+        SharedCodeContextProvider(event_store) if config.worker_shared_session else None
+    )
+    worker_tool = _create_worker_adapter(config, shared_code_context)
     shared_context = PostgresSharedContextAdapter(event_store)
     recon_tool = ReconToolAdapter()
 
@@ -158,4 +175,5 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
         shared_context=shared_context,
         recon_tool=recon_tool,
         format_repairer=format_repairer,
+        shared_code_context=shared_code_context,
     )

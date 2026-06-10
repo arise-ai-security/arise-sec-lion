@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
 from typing import Any, Protocol, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from core.domain.events.events import (
     DomainEvent,
@@ -23,6 +23,7 @@ from core.domain.events.events import (
     WorkerTokenUsageItem,
     WorkerUsageMetrics,
 )
+from infrastructure.adapters.worker.shared_code_context import SharedCodeContextProvider
 from infrastructure.cleanup.registry import _pid_alive
 
 from .base import WorkerAdapterBase
@@ -62,6 +63,10 @@ def _event_dedup_key(sdk_event: Any) -> Any:
 
 _OPENHANDS_DEFAULT_CONTROL_TOOLS = ["FinishTool", "ThinkTool"]
 _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
+# FileEditorObservation.command values that surface source content to capture
+# (full-file ``view``) vs. mutate a file (its recorded content is invalidated).
+_FILE_VIEW_COMMANDS = frozenset({"view"})
+_FILE_EDIT_COMMANDS = frozenset({"str_replace", "create", "insert", "undo_edit"})
 _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
 _CONTAINER_AWARE_OPENHANDS_TOOLS_LOCK = threading.Lock()
 _TRAILING_PORT_DOT_PATTERN = re.compile(r":(?P<port>\d+)\.(?=$|/)")
@@ -436,6 +441,38 @@ class _OpenHandsRunOutcome:
     shutdown_requested: bool = False
 
 
+@dataclass(slots=True)
+class _SharedCodeCapture:
+    """Per-task binding for capturing file views/edits into the shared code context.
+
+    ``port`` is the shared-code provider bound to ``queue`` as its emit sink, so
+    each ``record_view`` / ``record_edit`` enqueues the built domain event for the
+    adapter to *yield* into the worker stream (re-sequenced on the live aggregate,
+    never an out-of-band append — Invariant D).
+    """
+
+    port: SharedCodeContextProvider
+    root_id: UUID
+    agent_id: UUID
+    queue: asyncio.Queue[DomainEvent]
+
+
+def _conversation_identity(conversation: _ConversationLike) -> str:
+    """Stable identity for a built Conversation, for DB-level invariant checks.
+
+    Prefers an SDK-provided id; falls back to a fresh UUID minted once per built
+    Conversation object (distinct workers building distinct conversations get
+    distinct ids by construction).
+    """
+    for candidate in (
+        getattr(conversation, "id", None),
+        getattr(getattr(conversation, "state", None), "id", None),
+    ):
+        if candidate:
+            return str(candidate)
+    return str(uuid4())
+
+
 class OpenHandsAdapter(WorkerAdapterBase):
     """Execute tasks via the OpenHands SDK with native conversation controls."""
 
@@ -451,6 +488,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         allowed_tools: list[str] | None = None,
         mcp_tools: list[str] | None = None,
         enable_subagents: bool = False,
+        shared_code_port: SharedCodeContextProvider | None = None,
     ) -> None:
         super().__init__(timeout_seconds=timeout_seconds)
         if not model:
@@ -466,6 +504,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # baseline. Children reuse the parent's container-aware tools and lack
         # the delegation tool, so the tree is bounded to exactly two levels.
         self.enable_subagents: bool = enable_subagents
+        # When set, file-view/edit tool observations are captured into the shared
+        # code context so downstream workers receive that source verbatim (workers
+        # always run on their OWN fresh Conversation — raw Conversation reuse was
+        # reverted because it overflowed the worker context window). None =
+        # capture off (byte-identical to today). Injected at bootstrap.
+        self._shared_code_port: SharedCodeContextProvider | None = shared_code_port
 
     def _detect_api_key(self) -> str | None:
         if api_key := os.getenv("LLM_API_KEY"):
@@ -500,6 +544,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         )
         mcp_servers = self._extract_mcp_servers(task_context)
         children_before = _snapshot_child_pids()
+        capture = self._setup_shared_code_capture(agent_id, task_context)
 
         # SDK callbacks fire synchronously from the OpenHands worker thread.
         # Bridge them onto the running event loop so the async generator can
@@ -531,6 +576,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
         except Exception as error:
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
             return
+        # One identity per built Conversation; if conversation reuse ever returns,
+        # this must move with the cache so reused conversations share the id.
+        conversation_identity = _conversation_identity(conversation)
 
         conversation_run = self._create_conversation_run(
             conversation=conversation,
@@ -554,6 +602,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 seen_event_ids.add(_event_dedup_key(sdk_event))
                 if thought := self._sdk_event_to_thought(sdk_event, sequencer):
                     yield thought
+                async for captured in self._capture_file_tool(sdk_event, capture):
+                    yield captured
 
             # Drain any callbacks that landed after the last loop check.
             while not event_queue.empty():
@@ -561,6 +611,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 seen_event_ids.add(_event_dedup_key(sdk_event))
                 if thought := self._sdk_event_to_thought(sdk_event, sequencer):
                     yield thought
+                async for captured in self._capture_file_tool(sdk_event, capture):
+                    yield captured
 
             outcome = await run_task
             shutdown_requested = outcome.shutdown_requested
@@ -576,9 +628,17 @@ class OpenHandsAdapter(WorkerAdapterBase):
                     continue
                 if thought := self._sdk_event_to_thought(sdk_event, sequencer):
                     yield thought
+                async for captured in self._capture_file_tool(sdk_event, capture):
+                    yield captured
 
             finish_message = self._extract_finish_message(conversation)
-            yield self._make_cost_recorded_event(conversation, sequencer, started_at)
+            yield self._make_cost_recorded_event(
+                conversation,
+                sequencer,
+                started_at,
+                container_id=container_session.container_id if container_session else None,
+                conversation_id=conversation_identity,
+            )
             yield self._make_completed_event(
                 conversation,
                 working_dir,
@@ -690,11 +750,79 @@ class OpenHandsAdapter(WorkerAdapterBase):
         tool_name = self._extract_tool_name(sdk_event) if output_type == "tool_use" else None
         return sequencer.thought(content.strip(), output_type, tool_name=tool_name)
 
+    def _setup_shared_code_capture(
+        self,
+        agent_id: UUID,
+        task_context: dict[str, Any],
+    ) -> _SharedCodeCapture | None:
+        """Bind a per-task shared-code capture, or None when the feature is off.
+
+        Requires both an injected provider and a ``root_id`` in the task context
+        (the run scope the block is rebuilt for). The provider is bound to a queue
+        sink so captured events flow back into the worker stream.
+        """
+        if self._shared_code_port is None:
+            return None
+        root_id = task_context.get("root_id")
+        if not isinstance(root_id, UUID):
+            return None
+
+        queue: asyncio.Queue[DomainEvent] = asyncio.Queue()
+
+        async def _enqueue(_agent_id: UUID, events: list[DomainEvent]) -> None:
+            for event in events:
+                queue.put_nowait(event)
+
+        bound = self._shared_code_port.bind_capture(_enqueue)
+        return _SharedCodeCapture(port=bound, root_id=root_id, agent_id=agent_id, queue=queue)
+
+    async def _capture_file_tool(
+        self,
+        sdk_event: Any,
+        capture: _SharedCodeCapture | None,
+    ) -> AsyncIterator[DomainEvent]:
+        """Forward a file-editor observation to the shared-code port, yield its events.
+
+        A full-file ``view`` records the returned content (the byte source for the
+        shared block); a mutating command marks the file edited so its recorded
+        content is invalidated until re-viewed. Best-effort: a capture failure must
+        never break the worker run, so errors are logged and swallowed.
+        """
+        if capture is None:
+            return
+        observation = getattr(sdk_event, "observation", None)
+        if observation is None:
+            return
+        command = getattr(observation, "command", None)
+        path = getattr(observation, "path", None)
+        if not isinstance(command, str) or not isinstance(path, str) or not path:
+            return
+
+        try:
+            if command in _FILE_VIEW_COMMANDS:
+                content = self._observation_text(observation)
+                if content:
+                    await capture.port.record_view(
+                        capture.root_id, capture.agent_id, path, content
+                    )
+            elif command in _FILE_EDIT_COMMANDS:
+                await capture.port.record_edit(capture.root_id, capture.agent_id, path)
+        except Exception:
+            logger.warning(
+                "shared-code capture failed for %s on %s", command, path, exc_info=True
+            )
+
+        while not capture.queue.empty():
+            yield capture.queue.get_nowait()
+
     def _make_cost_recorded_event(
         self,
         conversation: _ConversationLike,
         sequencer: EventSequencer,
         started_at: float,
+        *,
+        container_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> DomainEvent:
         cost_data = self._extract_cost_data(conversation)
         return emit_cost(
@@ -711,6 +839,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 cost_usd=cost_data.cost_usd,
             ),
             usage_metrics=cost_data.usage_metrics,
+            container_id=container_id,
+            conversation_id=conversation_id,
         )
 
     def _make_completed_event(
