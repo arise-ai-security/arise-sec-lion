@@ -1,0 +1,33 @@
+# Cell B3 — our system, managers ablated: BOSS -> BEF workers directly.
+# `topology.max_depth: 1` forces the boss's [Builder]/[Exploiter]/[Fixer]
+# children to execute as workers (no manager layer ever spawns). Boss model
+# matches B4 so B3 vs B4 isolates the manager tier; worker tool surface
+# matches the N-cells exactly. LLM judge OFF.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: true
+  # Shared container + conversation across the run's workers (see B4 config note).
+  # Applied to both hierarchical cells so B3 vs B4 stays controlled.
+  orchestration.shared_worker_session: true
+  # B-side recon-loop caps (boss/manager tool-calling iterations). The N cells keep
+  # the base default (3) — non-binding there since flat mode runs no boss/manager
+  # loop — so this is an intentional B-only lever, not a cross-cell control.
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
+  orchestration.topology.max_depth: 1
+  orchestration.max_run_duration_seconds: 14400   # CONTROL: identical across all 4 cells (non-binding here)
+  boss.model: claude-sonnet-4-6
+  manager.model: claude-sonnet-4-6   # no manager nodes spawn at depth 1; required by schema
+  worker.tool: openhands
+  worker.model: gpt-5.4-mini
+  worker.allowed_tools: [file_editor, glob, grep]
+  # OpenHands native tools allowlisted above; terminal/browser omitted —
+  # shell reaches the CVE container only via the MCP shell_in_container tool.
+  worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
+  worker.timeout: 3600
+  worker.max_iterations_per_run: 250
+  output.directory: ./runs

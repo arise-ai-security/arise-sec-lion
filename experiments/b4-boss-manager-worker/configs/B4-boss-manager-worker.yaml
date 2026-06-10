@@ -1,0 +1,46 @@
+# Cell B4 — our system, full 3-level tree: BOSS -> BEF managers -> workers.
+# `topology.max_depth: 3` is what actually forms three levels: at depth-1 a
+# BEF manager has depth_remaining = 3-1 = 2, so the assess_variable.j2:10 soft
+# nudge ("1 level remaining — prefer executing directly") does NOT fire and the
+# manager follows assess.j2's MANDATORY-decompose guidance, spawning its full
+# role roster (Builder -> 3, Exploiter -> 6, Fixer -> 6, Reporter leaf). At
+# depth-2 a worker has depth_remaining = 1, so the nudge + assess.j2 leaf rules
+# keep it executing — the tree stops at three levels (proven by historical B1
+# runs at the default max_depth=3). max_depth=2 was wrong: it gave depth-1
+# managers depth_remaining=1 and the nudge collapsed them to executors (B4==B3).
+# Mixed models: Sonnet boss/managers decompose and coordinate; cheap
+# gpt-5.4-mini OpenHands workers execute. LLM judge OFF.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: hierarchical
+  orchestration.skip_judge: true
+  # One shared container + OpenHands conversation across the run's workers: each
+  # role inherits prior context (no re-read into a fresh LLM context) and prior
+  # container state (installed tools + non-mounted files persist). Per-role
+  # aggregates/events/cost are preserved (cost recorded as a per-worker delta).
+  orchestration.shared_worker_session: true
+  # B-side recon-loop caps (boss/manager tool-calling iterations). The N cells keep
+  # the base default (3) — non-binding there since flat mode runs no boss/manager
+  # loop — so this is an intentional B-only lever, not a cross-cell control.
+  orchestration.tool_calling.policies.domains.secbench.boss.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
+  orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
+  orchestration.topology.max_depth: 3
+  orchestration.topology.max_children_per_node: 7   # Exploiter/Fixer need 6 leaf workers each
+  orchestration.topology.max_total_agents: 40       # boss + 4 managers + ~16 leaf workers
+  # ~16-20 sequential workers (max_concurrent_workers=1) need a wide wall-clock
+  # cap; the full role roster is the point of this cell.
+  orchestration.max_run_duration_seconds: 14400
+  boss.model: claude-sonnet-4-6
+  manager.model: claude-sonnet-4-6
+  worker.tool: openhands
+  worker.model: gpt-5.4-mini
+  worker.allowed_tools: [file_editor, glob, grep]
+  # OpenHands native tools allowlisted above; terminal/browser omitted —
+  # shell reaches the CVE container only via the MCP shell_in_container tool.
+  worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
+  worker.timeout: 3600
+  worker.max_iterations_per_run: 250
+  output.directory: ./runs
