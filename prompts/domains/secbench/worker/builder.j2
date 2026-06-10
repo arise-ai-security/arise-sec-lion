@@ -62,6 +62,9 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - `/src/build.sh`
 
 10. **Run quick static analysis** (optional but recommended):
+{% if shared_code_enabled %}
+   - The relevant source is already in `<provided_source_files>` — build on it; only re-`view` a file after you edit it or one that is not provided there.
+{% endif %}
    - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
    - Note any findings in context-update for exploiter/fixer workers
 
@@ -73,7 +76,7 @@ If upstream siblings (e.g., Build-Setup) shared decisions, verify them:
 
 ### CRITICAL: Print Deliverable Files
 
-After creating each deliverable, you **MUST print its contents** via `cat` so the verification judge can see the evidence in your output log. The judge evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
+After creating each deliverable, you **MUST print its contents** via `cat` so the evaluation harness can see the evidence in your output log. The harness evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
 
 ```bash
 echo "=== base_commit_hash ===" && cat /testcase/base_commit_hash

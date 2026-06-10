@@ -82,13 +82,26 @@ def _with_cve_display(
     cve_instance: CVEInstance | None,
     *,
     phase: str | None = None,
+    include_decomposition: bool = False,
 ) -> "TemplateChain":
+    """Render the CVE context block.
+
+    ``include_decomposition`` gates cve.j2's subtask-justification guidance: it is
+    meaningful only for roles that produce subtasks (boss/manager/assessment).
+    Workers and the flat baseline must not carry decomposition vocabulary.
+    """
     if cve_instance is None:
         return chain
 
     cve_ctx = cve_instance.to_template_context()
     cve_display = {k: v for k, v in cve_ctx.items() if k in _CVE_DISPLAY_FIELDS and v}
-    return chain.render("domains/secbench/cve.j2", cve=cve_display, phase=phase, **cve_ctx)
+    return chain.render(
+        "domains/secbench/cve.j2",
+        cve=cve_display,
+        phase=phase,
+        include_decomposition_guidance=include_decomposition,
+        **cve_ctx,
+    )
 
 
 class SecBenchPromptStrategy:
@@ -106,7 +119,7 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
         cve_ctx = cve_instance.to_template_context()
-        return _with_cve_display(chain, cve_instance).render_optional(
+        return _with_cve_display(chain, cve_instance, include_decomposition=True).render_optional(
             "domains/secbench/assess.j2", **cve_ctx
         )
 
@@ -120,7 +133,9 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = cve_instance.to_template_context()
-        return _with_cve_display(chain, cve_instance).render("domains/secbench/boss.j2", **cve_ctx)
+        return _with_cve_display(chain, cve_instance, include_decomposition=True).render(
+            "domains/secbench/boss.j2", **cve_ctx
+        )
 
     def extend_manager_prompt(
         self,
@@ -136,9 +151,9 @@ class SecBenchPromptStrategy:
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
 
-        return _with_cve_display(chain, cve_instance, phase=branch).render(
-            "domains/secbench/manager.j2", **cve_ctx
-        )
+        return _with_cve_display(
+            chain, cve_instance, phase=branch, include_decomposition=True
+        ).render("domains/secbench/manager.j2", **cve_ctx)
 
     def extend_worker_prompt(
         self,
@@ -168,8 +183,23 @@ class SecBenchPromptStrategy:
                 "names the phase."
             )
 
+        # Gate the shared-code prompt guidance on the feature actually producing
+        # a block. N cells (no provider, flag off) and a run's first worker
+        # (nothing observed yet) get the ORIGINAL BEF prompt with no
+        # <provided_source_files> mention; only workers that actually receive
+        # provided files see the "already in context / don't re-view" guidance.
+        cve_ctx["shared_code_enabled"] = bool(context.shared_code_block)
         chain = _with_cve_display(chain, cve_instance, phase=branch)
         chain = chain.render("domains/secbench/worker.j2", **cve_ctx)
+
+        # Shared code-prefix block: the source files upstream workers already read,
+        # injected verbatim into the STABLE PREFIX — after the CVE context and the
+        # shared worker mindset, immediately before the BEF-role-specific section —
+        # so it stays in the identical-across-workers region OpenAI prefix-caches.
+        # Already rendered by SharedCodeContextProvider (single render site); insert
+        # the bytes as-is. Empty/None when the shared-context flag is off, keeping
+        # the prompt byte-identical to today.
+        chain = chain.text_if(bool(context.shared_code_block), context.shared_code_block)
 
         chain = (
             chain.render_if(

@@ -9,6 +9,10 @@ Base commit hash is at `/testcase/base_commit_hash`.
 
 ### Prerequisites — Reuse Peer Work (CRITICAL)
 
+{% if shared_code_enabled %}
+Any source files already read by upstream workers are in `<provided_source_files>` — build on them; only re-`view` a source file after you edit it or one not provided there.
+{% endif %}
+
 **BEFORE doing ANY analysis, leverage what siblings already produced:**
 1. Run `ls -la /testcase/` to see ALL existing artifacts from upstream siblings and peers
 2. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Reuse these directly.**
@@ -50,7 +54,7 @@ Then validate what you're building on:
      <the existing crashing line goes here, unchanged>
      ```
      Discover the actual field names by reading the struct definition (`read_file` on the relevant header or source file) — the `OBJ->INNER` / `TAG_FIELD` above are uppercase placeholders, NOT real identifiers. Every codebase uses different names (a parser might use `node->kind`, a VM might use `v->type`, an image library might use `pixel->format` — you must find the ones this project actually uses). After running, the captured tag value tells you the type of the crashing object. Then `grep -n` for that type's struct definition or any **static const** initializer of that type with NULL/uninitialized fields — that is often the data origin.
-   - **Fifth**: **Read the code at the data origin.** Use `cat` or `read_file` to read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
+   - **Fifth**: **Read the code at the data origin.** {% if shared_code_enabled %}If that file is in `<provided_source_files>`, use the copy already in context — do NOT re-`view` it; only `view` it if it is not provided or you have since edited it. {% endif %}Read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
    - **Sixth**: Use CWE-appropriate tools to confirm your analysis:
      - `gdb -batch -ex run -ex 'bt full'` to see the full crash chain
      - `cppcheck --enable=all <vulnerable_file>` for static pattern detection
@@ -132,7 +136,7 @@ more, no less. Beyond those, saving useful intermediate output under
 `/testcase/root_cause_analysis.txt`, patch-candidate notes →
 `/testcase/patch_candidates_design_notes.md`, a fix summary →
 `/testcase/fix_summary.md`). After writing any file, run
-`echo "=== <filename> ===" && cat /testcase/<filename>` so its contents reach the judge.
+`echo "=== <filename> ===" && cat /testcase/<filename>` so its contents reach the evaluation harness.
 
 ### Rules
 - ALWAYS reset to base commit before applying patch

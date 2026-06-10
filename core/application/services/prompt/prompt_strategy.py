@@ -41,6 +41,7 @@ class PromptContext:
     domain_context: object | None = None
     handoff: Any = None
     workspace_context: str | None = None
+    shared_code_block: str | None = None
     scope: SubtaskScope | None = None
     prompt_capabilities: PromptCapabilities | None = None
 

@@ -361,6 +361,103 @@ def test_flat_invariant_builder_renders_a1_prompt_with_subagent_note(tmp_path: P
     assert FLAT_SUBAGENT_NOTE in bundle.spec.rendered_prompt
 
 
+def _openhands_worker_overlay(*, enable_subagents: bool) -> dict:
+    """Worker overlay matching the N-cell OpenHands baselines."""
+    return {
+        "model": "gpt-5.3-codex",
+        "tool": "openhands",
+        "allowed_tools": ["file_editor", "glob", "grep"],
+        "disallowed_tools": [],
+        "timeout": 300,
+        "max_iterations_per_run": 20,
+        "tool_params": {
+            "openhands": {
+                "mcp_tools": ["shell_in_container"],
+                "enable_subagents": enable_subagents,
+            }
+        },
+    }
+
+
+def test_build_flat_worker_picks_openhands(tmp_path: Path) -> None:
+    """``_build_flat_worker`` returns an OpenHandsWorker when worker.tool=openhands."""
+    from bootstrap.composition import _build_flat_worker
+    from config.settings import Settings
+    from infrastructure.workers import OpenHandsWorker
+
+    settings_path = _settings_with(
+        tmp_path,
+        worker=_openhands_worker_overlay(enable_subagents=True),
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+
+    worker = _build_flat_worker(settings)
+
+    assert isinstance(worker, OpenHandsWorker)
+    # And: the wrapped adapter carries the N2 subagent flag from tool_params.
+    assert worker._adapter.enable_subagents is True  # noqa: SLF001 — wiring probe
+
+
+def test_flat_invariant_builder_openhands_n1_omits_subagent_note(tmp_path: Path) -> None:
+    """N1 (openhands, subagents off) must NOT receive ``FLAT_SUBAGENT_NOTE``.
+
+    The legacy predicate keyed off ``"Task" not in worker.disallowed_tools``;
+    an OpenHands cell never lists Claude's Task tool, so N1 would wrongly get
+    the note. The predicate must be tool-aware.
+    """
+    from bootstrap.composition import _make_flat_invariant_builder
+    from config.settings import Settings
+    from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
+
+    # Given: an N1-shaped overlay — openhands, enable_subagents=False, Task not disallowed.
+    settings_path = _settings_with(
+        tmp_path,
+        worker=_openhands_worker_overlay(enable_subagents=False),
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
+
+    # When: the closure renders for a CVE.
+    run_dir = tmp_path / "runs" / "n1"
+    run_dir.mkdir(parents=True)
+    bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
+
+    # Then: the pipeline is present but the subagent note is absent.
+    assert "## Vulnerability Reproduction — 4-Phase Process" in bundle.spec.rendered_prompt
+    assert FLAT_SUBAGENT_NOTE not in bundle.spec.rendered_prompt
+
+
+def test_flat_invariant_builder_openhands_n2_includes_subagent_note(tmp_path: Path) -> None:
+    """N2 (openhands, enable_subagents=True) receives ``FLAT_SUBAGENT_NOTE``."""
+    from bootstrap.composition import _make_flat_invariant_builder
+    from config.settings import Settings
+    from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
+
+    # Given: an N2-shaped overlay — openhands with subagent delegation enabled.
+    settings_path = _settings_with(
+        tmp_path,
+        worker=_openhands_worker_overlay(enable_subagents=True),
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+    builder = _make_flat_invariant_builder(
+        settings=settings, prompt_builder=_prompt_builder(), context_file=None
+    )
+
+    # When: the closure renders for a CVE.
+    run_dir = tmp_path / "runs" / "n2"
+    run_dir.mkdir(parents=True)
+    bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
+
+    # Then: the 4-phase pipeline AND the subagent note are present.
+    assert "## Vulnerability Reproduction — 4-Phase Process" in bundle.spec.rendered_prompt
+    assert FLAT_SUBAGENT_NOTE in bundle.spec.rendered_prompt
+
+
 def test_flat_invariant_builder_renders_a2_prompt_without_subagent_note(tmp_path: Path) -> None:
     """A2's flat prompt omits the ``FLAT_SUBAGENT_NOTE`` because Task is denied."""
     from bootstrap.composition import _make_flat_invariant_builder
@@ -401,3 +498,54 @@ def test_flat_invariant_builder_renders_a2_prompt_without_subagent_note(tmp_path
     # Then: the pipeline is present but the subagent note is absent.
     assert "## Vulnerability Reproduction — 4-Phase Process" in bundle.spec.rendered_prompt
     assert FLAT_SUBAGENT_NOTE not in bundle.spec.rendered_prompt
+
+
+def test_flat_prompt_carries_no_tree_or_judge_vocabulary(tmp_path: Path) -> None:
+    """The N baseline prompt = CVE + BEF pipeline + artifacts + task — nothing else.
+
+    Tree-topology vocabulary (decompose/subtask/sibling/manager), judge framing,
+    and the shared-code block are hierarchical-arm engineering; any of them in the
+    flat prompt contaminates the baseline (cve.j2's decomposition guidance leaked
+    into every recorded N run before it was gated on ``include_decomposition``).
+    """
+    from bootstrap.composition import _make_flat_invariant_builder
+    from config.settings import Settings
+
+    forbidden = (
+        "decompos",  # decompose/decomposition — boss/manager vocabulary
+        "subtask",
+        "sibling",
+        "peer worker",
+        "judge",
+        "provided_source_files",
+        "your manager",
+        "<context-update>",
+    )
+
+    for cell, enable_subagents in (("n1", False), ("n2", True)):
+        # Given: an N-shaped overlay (openhands; N2 additionally arms subagents).
+        settings_path = _settings_with(
+            tmp_path,
+            worker=_openhands_worker_overlay(enable_subagents=enable_subagents),
+            orchestration={"mode": "flat"},
+        )
+        settings = Settings.from_yaml(settings_path)
+        builder = _make_flat_invariant_builder(
+            settings=settings, prompt_builder=_prompt_builder(), context_file=None
+        )
+        run_dir = tmp_path / "runs" / f"vocab-{cell}"
+        run_dir.mkdir(parents=True)
+
+        # When: the closure renders for a CVE.
+        prompt = builder(
+            task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir
+        ).spec.rendered_prompt
+        lowered = prompt.lower()
+
+        # Then: the four sanctioned blocks are present and nothing forbidden is.
+        hits = [term for term in forbidden if term in lowered]
+        assert not hits, f"{cell} flat prompt contains forbidden vocabulary: {hits}"
+        assert "<cve_instance>" in prompt
+        assert "## Vulnerability Reproduction — 4-Phase Process" in prompt
+        assert "model_patch.diff" in prompt
+        assert "<task>" in prompt

@@ -33,7 +33,7 @@ from core.domain.values.prompt_capabilities import PromptCapabilities
 # also adjusted.
 FLAT_SUBAGENT_NOTE = (
     "Note: The Task subagent tool is available; use it at your discretion to "
-    "decompose complex steps."
+    "delegate complex steps."
 )
 
 
@@ -456,6 +456,7 @@ class PromptBuilder:
         workspace_context: str | None = None,
         domain_context: object | None = None,
         briefing: "Briefing | None" = None,
+        shared_code_block: str | None = None,
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -466,6 +467,7 @@ class PromptBuilder:
             briefing=briefing,
             handoff=handoff,
             workspace_context=workspace_context,
+            shared_code_block=shared_code_block,
         )
         return self._build_role_prompt(
             prompt_ctx,
