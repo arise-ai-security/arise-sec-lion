@@ -43,4 +43,28 @@ overrides:
   worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
   worker.timeout: 3600
   worker.max_iterations_per_run: 250
+  # Cost knobs (2026-06-10 cycle). One OpenAI prefix-cache shard per run (the
+  # SDK otherwise pins per-conversation: measured 0% first-call hits for 21/26
+  # workers); medium reasoning effort — the SDK default is high and reasoning
+  # was 71% of worker completion tokens; uniform rather than per-branch because
+  # manager task labels are free-form ([PoC-Researcher], [Build-Setup], ...) so
+  # branch-prefix overrides cannot match. Shared code block moves ahead of the
+  # per-phase content (cross-branch cacheable), a freshness index lands near
+  # <task>, directory snapshots stay out of the block, and the workspace
+  # listing whitelists testcase/ (an out-of-tree CMake build alone added ~650
+  # entries ≈ 13K tokens to every prompt turn).
+  worker.reasoning_effort: medium
+  worker.tool_params.openhands.run_scoped_prompt_cache_key: true
+  orchestration.shared_code_prefix_first: true
+  orchestration.shared_code_index: true
+  orchestration.shared_code_skip_dir_listings: true
+  orchestration.workspace_listing_dirs: [testcase]
+  orchestration.workspace_listing_max_entries: 200
+  # NOTE: capture_recon_reads (manager recon → run-global shared block) is left
+  # OFF. Measured 2026-06-11: it front-loads ~11-12 manager-read files (~80-140K
+  # chars) into the block that ALL workers then carry every turn, ~doubling
+  # worker prompt tokens (avg cache_read 1.08M → 2.02M) and worker cost
+  # ($0.14 → $0.25/worker). The block-bloat cost exceeds the re-read saving, so
+  # run-global propagation regresses the worker tier. Revisit only with per-
+  # module scoping + curation (pass the vulnerable symbol, not every recon read).
   output.directory: ./runs
