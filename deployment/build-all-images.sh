@@ -17,6 +17,8 @@ With no FIXTURE_GLOB, builds every plugins/security/tests/fixtures/*.json.
 
 Options:
   -j, --parallel N        Build N images concurrently (default: 1).
+  --lock FILE             Build the instances pinned in a dataset lock YAML
+                          (ids read from its selection_order list).
   --continue-on-error     Keep going after a failed build (default).
   --fail-fast             Stop launching new builds after the first failure.
   --dry-run               List target tags only; do not invoke docker.
@@ -25,6 +27,7 @@ Options:
 Examples:
   deployment/build-all-images.sh -j 4
   deployment/build-all-images.sh plugins/security/tests/fixtures/openjpeg.cve-2016-7445.json
+  deployment/build-all-images.sh -j 4 --lock experiments/shared/datasets/cve50-2026-06-09.lock.yaml
 EOF
 }
 
@@ -64,10 +67,11 @@ run_worker() {
   return 0
 }
 
-PARALLEL=1; FAIL_FAST=0; DRY_RUN=0; INPUTS=()
+PARALLEL=1; FAIL_FAST=0; DRY_RUN=0; LOCK_FILE=""; INPUTS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -j|--parallel)        PARALLEL="$2"; shift 2 ;;
+    --lock)               LOCK_FILE="$2"; shift 2 ;;
     --continue-on-error)  FAIL_FAST=0; shift ;;
     --fail-fast)          FAIL_FAST=1; shift ;;
     --dry-run)            DRY_RUN=1; shift ;;
@@ -82,6 +86,26 @@ done
 if [ ! -f "$SINGLE_BUILDER" ]; then
   printf 'Missing single-fixture builder: %s\n' "$SINGLE_BUILDER" >&2
   exit 2
+fi
+
+if [ -n "$LOCK_FILE" ]; then
+  if [ ! -f "$LOCK_FILE" ]; then
+    printf 'Lock file not found: %s\n' "$LOCK_FILE" >&2
+    exit 2
+  fi
+  # Lock files are machine-written (curate_cve50.py): zero-indent '- <id>' lines
+  # directly under selection_order:, so awk suffices and the script stays
+  # dependency-free. Stop at the first non-list line (smoke_tasks:, studies:).
+  LOCK_IDS="$(awk '/^selection_order:/ {in_list=1; next}
+                   in_list && /^- / {print $2; next}
+                   in_list {exit}' "$LOCK_FILE")"
+  if [ -z "$LOCK_IDS" ]; then
+    printf 'No selection_order entries in lock file: %s\n' "$LOCK_FILE" >&2
+    exit 2
+  fi
+  while IFS= read -r id; do
+    INPUTS+=("$FIXTURE_DIR/$id.json")
+  done <<< "$LOCK_IDS"
 fi
 
 FIXTURES=()

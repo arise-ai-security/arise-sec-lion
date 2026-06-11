@@ -52,19 +52,18 @@ The 50 instances are pinned in
 `experiments/shared/datasets/cve50-2026-06-09.lock.yaml` (all four cells run the
 identical set). Each build pulls the `hwiwonlee/secb.eval.*` base image and
 layers the tool stack (claude CLI, MCP server, valgrind), then smoke-tests it.
-Use the bulk builder (`-j` for parallelism, continue-on-error by default):
+Use the bulk builder — `--lock` reads the pinned ids straight from the lock
+file (`-j` for parallelism, continue-on-error by default):
 
 ```bash
-FIXTURES=$(uv run python -c "import yaml; \
-print(' '.join('plugins/security/tests/fixtures/'+i+'.json' for i in \
-yaml.safe_load(open('experiments/shared/datasets/cve50-2026-06-09.lock.yaml'))['selection_order']))")
-deployment/build-all-images.sh -j 4 $FIXTURES
+deployment/build-all-images.sh -j 4 --lock experiments/shared/datasets/cve50-2026-06-09.lock.yaml
 # Verify count (expect 50):
 docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^secb-tools:.*-patch'
 ```
 
 (`deployment/build-all-images.sh -j 4` with no args builds every fixture in the
-repo — overkill; pass the 50 above to build exactly the study set.)
+repo — overkill; `--lock` builds exactly the study set. Already-built images
+are skipped, so re-running after a failure is safe.)
 
 ## 5. Run each cell on all 50 instances
 
@@ -73,12 +72,13 @@ Each study's `dataset.yaml` already lists its 50 `default_cves`, so omit
 instance is recorded and the matrix keeps going).
 
 ```bash
-for STUDY in n1-openhands-linear n2-openhands-subagents b3-boss-bef-direct b4-boss-manager-worker; do
-  uv run python -m experiments.shared.scripts.run_matrix --study "$STUDY" --parallel 2
-done
+uv run python -m experiments.shared.scripts.run_matrix --study n1-openhands-linear --parallel 6
+uv run python -m experiments.shared.scripts.run_matrix --study n2-openhands-subagents --parallel 6
+uv run python -m experiments.shared.scripts.run_matrix --study b3-boss-bef-direct --parallel 4
+uv run python -m experiments.shared.scripts.run_matrix --study b4-boss-manager-worker --parallel 4
 ```
 
-- `--parallel 2` runs 2 instances at once. Raise cautiously — each run is a
+- `--parallel 6` runs 2 instances at once. Raise cautiously — each run is a
   Docker container plus heavy LLM traffic; too much parallelism causes API
   timeouts and host saturation.
 - To run one cell, or a subset of instances, use `--study X [--tasks a.cve-1,b.cve-2]`.
