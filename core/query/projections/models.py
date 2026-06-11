@@ -1,5 +1,6 @@
 """Immutable data models for the projection pipeline."""
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
@@ -100,11 +101,16 @@ class CostSummary:
         """
         from core.domain.exceptions import CostInvariantViolation
 
-        tolerance = 1e-6
+        # Cost sums accumulate float rounding across many agents/operations, so
+        # compare with a tolerance (sub-cent absolute floor plus a relative band
+        # for large aggregates) instead of exact equality. A real accounting bug
+        # is cents or more — far outside this band.
+        def _close(a: float, b: float) -> bool:
+            return math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-4)
 
         # Invariant 1: total_cost = llm_cost + worker_cost
         expected_total = self.llm_cost_usd + self.worker_cost_usd
-        if abs(self.total_cost_usd - expected_total) > tolerance:
+        if not _close(self.total_cost_usd, expected_total):
             raise CostInvariantViolation(
                 invariant="total_cost == llm_cost + worker_cost",
                 expected=expected_total,
@@ -114,7 +120,7 @@ class CostSummary:
         # Invariant 2: sum(cost_by_operation) == total_cost
         if self.cost_by_operation:
             sum_by_operation = sum(self.cost_by_operation.values())
-            if abs(sum_by_operation - self.total_cost_usd) > tolerance:
+            if not _close(sum_by_operation, self.total_cost_usd):
                 raise CostInvariantViolation(
                     invariant="sum(cost_by_operation) == total_cost",
                     expected=self.total_cost_usd,
@@ -124,7 +130,7 @@ class CostSummary:
         # Invariant 3: sum(cost_by_agent) == total_cost
         if self.cost_by_agent:
             sum_by_agent = sum(self.cost_by_agent.values())
-            if abs(sum_by_agent - self.total_cost_usd) > tolerance:
+            if not _close(sum_by_agent, self.total_cost_usd):
                 raise CostInvariantViolation(
                     invariant="sum(cost_by_agent) == total_cost",
                     expected=self.total_cost_usd,
@@ -134,7 +140,7 @@ class CostSummary:
         # Invariant 4: sum(cost_by_role) == total_cost
         if self.cost_by_role:
             sum_by_role = sum(self.cost_by_role.values())
-            if abs(sum_by_role - self.total_cost_usd) > tolerance:
+            if not _close(sum_by_role, self.total_cost_usd):
                 raise CostInvariantViolation(
                     invariant="sum(cost_by_role) == total_cost",
                     expected=self.total_cost_usd,
@@ -153,7 +159,7 @@ class CostSummary:
         # Invariant 6: budget_remaining consistency
         if self.budget_limit_usd is not None and self.budget_remaining_usd is not None:
             expected_remaining = max(0.0, self.budget_limit_usd - self.total_cost_usd)
-            if abs(self.budget_remaining_usd - expected_remaining) > tolerance:
+            if not _close(self.budget_remaining_usd, expected_remaining):
                 raise CostInvariantViolation(
                     invariant="budget_remaining == max(0, budget_limit - total_cost)",
                     expected=expected_remaining,
