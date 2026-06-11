@@ -63,6 +63,7 @@ def _build_security_components(settings: Settings | ApiSettings) -> DomainCompon
     runtime = DockerSecBenchRuntime(
         network_mode=settings.security.worker_network_mode,
         timeout_seconds=settings.security.worker_docker_timeout_seconds,
+        tools_image_registry=settings.security.tools_image_registry,
     )
     plugin = SecurityDomainPlugin(
         enabled_tools=settings.security.tools,

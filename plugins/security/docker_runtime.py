@@ -19,6 +19,10 @@ from .cve_instance import CVEInstance
 
 logger = logging.getLogger(__name__)
 
+# Image pulls move multi-GB layers; give them far more headroom than the
+# per-command default, which is sized for short docker exec/inspect calls.
+_IMAGE_PULL_TIMEOUT_SECONDS = 1800.0
+
 
 class DockerSecBenchRuntime:
     """Prepare host workspaces and run short-lived SEC-bench containers.
@@ -36,10 +40,12 @@ class DockerSecBenchRuntime:
         *,
         network_mode: str = "host",
         timeout_seconds: float = 300.0,
+        tools_image_registry: str = "",
     ) -> None:
         self._container_prefix = container_prefix
         self._network_mode = network_mode
         self._timeout_seconds = float(timeout_seconds)
+        self._tools_image_registry = tools_image_registry.rstrip("/")
         # DooD path mapping: container /app → host project root.
         # When running inside a container that mounts Docker socket, volume
         # bind paths must be expressed as host paths since the Docker daemon
@@ -209,10 +215,33 @@ class DockerSecBenchRuntime:
         exit_code, _, _ = await self._run_command(["docker", "image", "inspect", image])
         if exit_code == 0:
             return
+        if self._tools_image_registry and await self._pull_from_registry(image):
+            return
         raise RuntimeError(
             "Missing SEC-bench image "
             f"{image}. Build it first with deployment/build-secbench-tools.sh."
         )
+
+    async def _pull_from_registry(self, image: str) -> bool:
+        """Pull a prebuilt tools image from the configured registry and alias it
+        to the local tag, so a fresh machine runs without building.
+
+        Best-effort: a pull or retag failure returns False, letting the caller
+        fall back to the build-it-yourself error.
+        """
+        remote = f"{self._tools_image_registry}/{image}"
+        logger.info("Image %s not found locally; pulling %s", image, remote)
+        pull_code, _, pull_err = await self._run_command(
+            ["docker", "pull", remote], timeout=_IMAGE_PULL_TIMEOUT_SECONDS
+        )
+        if pull_code != 0:
+            logger.warning("Pull of %s failed: %s", remote, pull_err.strip())
+            return False
+        tag_code, _, tag_err = await self._run_command(["docker", "tag", remote, image])
+        if tag_code != 0:
+            logger.warning("Retag %s -> %s failed: %s", remote, image, tag_err.strip())
+            return False
+        return True
 
     async def _copy_testcase_tree(self, image: str, testcase_dir: Path) -> None:
         seed_container = (
@@ -405,7 +434,10 @@ chmod +x /usr/local/bin/secb
         if exit_code != 0 and stderr.strip():
             logger.warning("Command failed during cleanup: %s", stderr.strip())
 
-    async def _run_command(self, cmd: list[str]) -> tuple[int, str, str]:
+    async def _run_command(
+        self, cmd: list[str], *, timeout: float | None = None
+    ) -> tuple[int, str, str]:
+        effective_timeout = timeout if timeout is not None else self._timeout_seconds
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -414,7 +446,7 @@ chmod +x /usr/local/bin/secb
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self._timeout_seconds
+                process.communicate(), timeout=effective_timeout
             )
         except asyncio.TimeoutError:
             process.kill()
@@ -425,7 +457,7 @@ chmod +x /usr/local/bin/secb
                     "docker subprocess did not exit after kill: %s", cmd[:3]
                 )
             raise RuntimeError(
-                f"Docker command timed out after {self._timeout_seconds}s: {cmd[:3]}"
+                f"Docker command timed out after {effective_timeout}s: {cmd[:3]}"
             )
         return (
             process.returncode or 0,

@@ -531,6 +531,16 @@ class SecurityConfig(BaseModel):
     )
     worker_network_mode: Literal["bridge", "host"] = "host"
     worker_docker_timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    tools_image_registry: str = Field(
+        default="",
+        description=(
+            "Registry namespace hosting prebuilt secb-tools images "
+            "(e.g. 'cheshire0814' or 'ghcr.io/org'). When set, a run that cannot "
+            "find secb-tools:<tag> locally pulls <registry>/secb-tools:<tag> "
+            "and retags it, so fresh machines run without building. Empty "
+            "disables the fallback (local build only)."
+        ),
+    )
 
 
 class CorsConfig(BaseModel):

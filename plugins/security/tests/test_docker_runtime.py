@@ -497,3 +497,81 @@ async def test_start_session_rejects_sibling_run_paths(tmp_path: Path) -> None:
     assert invocations == [], (
         f"expected no docker calls when sibling-run path detected, got {invocations}"
     )
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_pulls_from_registry_on_local_miss() -> None:
+    """A configured registry turns a local miss into a pull + retag to the local
+    tag, so a fresh machine runs without building."""
+
+    # Given: the image is absent locally; pull and tag succeed
+    invocations: list[list[str]] = []
+
+    async def _fake_run_command(
+        cmd: list[str], *, timeout: float | None = None
+    ) -> tuple[int, str, str]:
+        invocations.append(list(cmd))
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return (1, "", "No such image")
+        return (0, "", "")
+
+    runtime = DockerSecBenchRuntime(tools_image_registry="cheshire0814")
+    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+
+    # When: ensuring a missing tool image exists
+    await runtime._ensure_image_exists("secb-tools:gpac.cve-2023-5586-patch")
+
+    # Then: it pulled the namespaced remote and retagged it to the local name
+    assert ["docker", "pull", "cheshire0814/secb-tools:gpac.cve-2023-5586-patch"] in invocations
+    assert [
+        "docker",
+        "tag",
+        "cheshire0814/secb-tools:gpac.cve-2023-5586-patch",
+        "secb-tools:gpac.cve-2023-5586-patch",
+    ] in invocations
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_raises_when_registry_pull_fails() -> None:
+    """A failed pull falls back to the build-it-yourself error rather than
+    masking the miss."""
+
+    # Given: the image is absent locally and the pull fails
+    async def _fake_run_command(
+        cmd: list[str], *, timeout: float | None = None
+    ) -> tuple[int, str, str]:
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return (1, "", "No such image")
+        if cmd[:2] == ["docker", "pull"]:
+            return (1, "", "manifest unknown")
+        return (0, "", "")
+
+    runtime = DockerSecBenchRuntime(tools_image_registry="cheshire0814")
+    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+
+    # When / Then: ensuring the image raises the build-it-yourself error
+    with pytest.raises(RuntimeError, match="Build it first"):
+        await runtime._ensure_image_exists("secb-tools:gpac.cve-2023-5586-patch")
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_no_registry_does_not_pull() -> None:
+    """With no registry configured, a local miss raises immediately and never
+    attempts a pull (byte-identical to the pre-fallback behavior)."""
+
+    # Given: no registry; the image is absent locally
+    invocations: list[list[str]] = []
+
+    async def _fake_run_command(
+        cmd: list[str], *, timeout: float | None = None
+    ) -> tuple[int, str, str]:
+        invocations.append(list(cmd))
+        return (1, "", "No such image")
+
+    runtime = DockerSecBenchRuntime()
+    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+
+    # When / Then: it raises without ever pulling
+    with pytest.raises(RuntimeError, match="Build it first"):
+        await runtime._ensure_image_exists("secb-tools:demo-patch")
+    assert not any(cmd[:2] == ["docker", "pull"] for cmd in invocations)

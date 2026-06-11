@@ -148,3 +148,4 @@ cors:
 security:
   enabled: true  # Uses worker.timeout for secb commands
   tools: [valgrind, klee]  # KLEE is lazy-installed on first use by security_tools_server
+  tools_image_registry: cheshire0814  # prebuilt secb-tools images auto-pull from here on a local miss
