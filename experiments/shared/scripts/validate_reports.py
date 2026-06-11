@@ -88,7 +88,9 @@ def _discover_report_files() -> list[Path]:
         if not reports_dir.is_dir():
             continue
         for entry in sorted(reports_dir.rglob("*")):
-            if entry.is_file():
+            # Skip OS metadata junk (e.g. macOS Finder's .DS_Store) — never a
+            # generated report, and it would otherwise fail the manifest check.
+            if entry.is_file() and entry.name != ".DS_Store":
                 results.append(entry)
     return results
 
