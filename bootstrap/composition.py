@@ -398,6 +398,7 @@ def create_runtime_cli(
             workspace_listing_max_entries=settings.orchestration.workspace_listing_max_entries,
             verification_max_retries=settings.orchestration.verification_max_retries,
             capture_recon_reads=settings.orchestration.capture_recon_reads,
+            share_boss_recon=settings.orchestration.share_boss_recon,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

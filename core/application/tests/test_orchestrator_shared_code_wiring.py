@@ -247,3 +247,69 @@ def test_capture_recon_source_reads_gated_off_when_flag_disabled() -> None:
 
     # Then: nothing persisted to the shared block — workers are not burdened.
     assert agg.observed == []
+
+
+class _BossAgent:
+    """Minimal boss-agent stub for boss-recon store/resolve tests."""
+
+    def __init__(self, role, root_id: UUID) -> None:
+        self.role = role
+        self.agent_id = root_id
+
+        class _Limits:
+            pass
+
+        self.hierarchy_limits = _Limits()
+        self.hierarchy_limits.root_id = root_id
+
+
+def _orch_with_boss_recon(enabled: bool) -> AgentOrchestrator:
+    orch = object.__new__(AgentOrchestrator)
+    orch._share_boss_recon = enabled
+    orch._boss_recon_blocks = {}
+    return orch
+
+
+def test_render_boss_recon_block_dedups_to_latest_per_path() -> None:
+    # Given: the boss read /x.c twice and /y.c once
+    reads = [_Read("/x.c", "X1"), _Read("/y.c", "Y"), _Read("/x.c", "X2")]
+
+    # When
+    block = AgentOrchestrator._render_boss_recon_block(reads)
+
+    # Then: one entry per path, newest content, in a provided_source_files block
+    assert block is not None
+    assert "<provided_source_files>" in block
+    assert "X2" in block and "X1" not in block and "Y" in block
+
+
+def test_boss_recon_stored_for_boss_and_resolved_by_run() -> None:
+    from core.domain.values.enums import AgentRole
+
+    # Given: boss-recon on, a boss agent that captured a read
+    root = uuid4()
+    boss = _BossAgent(AgentRole.BOSS, root)
+    orch = _orch_with_boss_recon(enabled=True)
+
+    # When: storing the boss's reads, then resolving for a child in the same run
+    orch._store_boss_recon_block(boss, [_Read("/vuln.c", "VULN-BODY")])
+    child = _BossAgent(AgentRole.MANAGER, root)  # same root_id (same run)
+
+    # Then: the manager resolves the boss's block
+    assert "VULN-BODY" in (orch._resolve_boss_recon_block(child) or "")
+
+
+def test_boss_recon_skipped_for_non_boss_and_when_disabled() -> None:
+    from core.domain.values.enums import AgentRole
+
+    root = uuid4()
+
+    # A manager's reads are NOT stored as a boss block
+    orch = _orch_with_boss_recon(enabled=True)
+    orch._store_boss_recon_block(_BossAgent(AgentRole.MANAGER, root), [_Read("/m.c", "M")])
+    assert orch._resolve_boss_recon_block(_BossAgent(AgentRole.MANAGER, root)) is None
+
+    # With the flag off, nothing is stored or resolved
+    off = _orch_with_boss_recon(enabled=False)
+    off._store_boss_recon_block(_BossAgent(AgentRole.BOSS, root), [_Read("/b.c", "B")])
+    assert off._resolve_boss_recon_block(_BossAgent(AgentRole.MANAGER, root)) is None

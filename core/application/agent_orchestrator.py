@@ -237,6 +237,7 @@ class AgentOrchestrator:
         format_repairer: "FormatRepairerPort | None" = None,
         shared_code_port: "SharedCodeContextPort | None" = None,
         capture_recon_reads: bool = False,
+        share_boss_recon: bool = False,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -255,6 +256,13 @@ class AgentOrchestrator:
         # aggregate, so the run's block carries them to downstream workers
         # (read-once → propagate). Off => recon reads are not captured.
         self._capture_recon_reads = capture_recon_reads
+        # When True, the BOSS's recon read_file results are rendered into a block
+        # injected into MANAGER decomposition prompts only (orchestration tier),
+        # so managers inherit the boss's reads instead of re-reading. Kept in an
+        # in-memory per-run store — it never reaches the shared block workers
+        # consume, so the worker tier is unaffected by construction.
+        self._share_boss_recon = share_boss_recon
+        self._boss_recon_blocks: dict[Any, str] = {}
         self._verification_pipeline = VerificationPipeline(
             llm_port,
             skip_judge=skip_judge,
@@ -513,6 +521,7 @@ class AgentOrchestrator:
                     hierarchy_limits=agent.hierarchy_limits,
                     scope=scope,
                     prompt_capabilities=capabilities,
+                    shared_code_block=self._resolve_boss_recon_block(agent),
                 )
             agent.emit_prompt_sent(
                 prompt=strip_cache_breakpoint(prompt), prompt_type=op, target="llm"
@@ -951,6 +960,7 @@ class AgentOrchestrator:
         response = result.response
         self._emit_probe_events(agent, result.tool_records)
         self._capture_recon_source_reads(agent, result.captured_reads)
+        self._store_boss_recon_block(agent, result.captured_reads)
 
         agent.emit_tokens_consumed(
             model=response.model,
@@ -1285,3 +1295,45 @@ class AgentOrchestrator:
             agent.record_source_file_observed(
                 path=path, content=read.content, observed_by=agent.agent_id
             )
+
+    def _store_boss_recon_block(self, agent: "AgentSession", captured_reads: list) -> None:
+        """Render the BOSS's recon reads into a block for the run's managers.
+
+        Manager-only propagation: the block is held in an in-memory per-run map
+        and injected into manager decomposition prompts; it never enters the
+        shared block workers consume, so worker cost is unaffected.
+        """
+        if not self._share_boss_recon or agent.role != AgentRole.BOSS or not captured_reads:
+            return
+        block = self._render_boss_recon_block(captured_reads)
+        if block:
+            self._boss_recon_blocks[self._run_scope(agent)] = block
+
+    @staticmethod
+    def _render_boss_recon_block(captured_reads: list) -> str | None:
+        """A <provided_source_files> block from the boss's reads (one per path)."""
+        latest: dict[str, str] = {}
+        for read in captured_reads:
+            path = read.arguments.get("path")
+            if isinstance(path, str) and path and read.content:
+                latest[path] = read.content
+        if not latest:
+            return None
+        parts = [
+            "<provided_source_files>",
+            "    Source files the BOSS already read while planning this task, provided IN "
+            "FULL. Build on them and do NOT re-read a file shown here unless you edit it.",
+        ]
+        for path, content in latest.items():
+            parts.append(f'<file path="{path}">\n{content}\n</file>')
+        parts.append("</provided_source_files>")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _run_scope(agent: "AgentSession") -> Any:
+        return agent.hierarchy_limits.root_id if agent.hierarchy_limits else agent.agent_id
+
+    def _resolve_boss_recon_block(self, agent: "AgentSession") -> str | None:
+        if not self._share_boss_recon:
+            return None
+        return self._boss_recon_blocks.get(self._run_scope(agent))

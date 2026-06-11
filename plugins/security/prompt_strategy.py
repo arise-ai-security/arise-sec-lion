@@ -160,9 +160,14 @@ class SecBenchPromptStrategy:
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
 
-        return _with_cve_display(
+        chain = _with_cve_display(
             chain, cve_instance, phase=branch, include_decomposition=True
         ).render("domains/secbench/manager.j2", **cve_ctx)
+        # Boss recon block (the files the boss already read), injected into the
+        # cached stable prefix. It is fixed once the boss has decomposed, so it
+        # is byte-identical across the run's managers and caches cleanly. Empty
+        # unless share_boss_recon is on. Manager-only — never reaches workers.
+        return chain.text_if(bool(context.shared_code_block), context.shared_code_block)
 
     def extend_worker_prompt(
         self,

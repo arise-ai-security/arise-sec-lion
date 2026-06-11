@@ -67,4 +67,10 @@ overrides:
   # ($0.14 → $0.25/worker). The block-bloat cost exceeds the re-read saving, so
   # run-global propagation regresses the worker tier. Revisit only with per-
   # module scoping + curation (pass the vulnerable symbol, not every recon read).
+  #
+  # Boss→manager recon propagation (orchestration tier ONLY): the boss's recon
+  # reads are injected into the managers' decomposition prompts so managers
+  # inherit them instead of re-reading. Held in memory, never reaches the
+  # worker-consumed block — worker cost is unaffected by construction.
+  orchestration.share_boss_recon: true
   output.directory: ./runs

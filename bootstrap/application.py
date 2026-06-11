@@ -94,6 +94,7 @@ class ApplicationConfig:
     workspace_listing_max_entries: int | None = None
     verification_max_retries: int = 2
     capture_recon_reads: bool = False
+    share_boss_recon: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     prompt_builder: PromptBuilder | None = None
@@ -205,6 +206,7 @@ def get_application(
         format_repairer=infrastructure.format_repairer,
         shared_code_port=infrastructure.shared_code_context,
         capture_recon_reads=config.capture_recon_reads,
+        share_boss_recon=config.share_boss_recon,
     )
 
     parent_notifier = ParentNotificationService(

@@ -492,6 +492,16 @@ class OrchestrationConfig(BaseModel):
             "Requires shared_worker_session. Off => recon reads are not captured."
         ),
     )
+    share_boss_recon: bool = Field(
+        default=False,
+        description=(
+            "Inject the boss's recon read_file results into MANAGER decomposition "
+            "prompts so managers inherit the boss's reads instead of re-reading. "
+            "Orchestration-tier only — the block is held in memory and never "
+            "reaches the worker-consumed shared block, so worker cost is "
+            "unaffected. Off => no boss→manager propagation."
+        ),
+    )
 
     topology: TopologyConfig
     concurrency: ConcurrencyConfig
