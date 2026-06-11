@@ -126,3 +126,85 @@ def test_shared_block_in_stable_prefix_identical_across_two_roles() -> None:
     exploiter_prefix = exploiter[: exploiter.index(_ROLE_SECTION_MARKER)]
     assert fixer_prefix == exploiter_prefix
     assert _SENTINEL_CONTENT in fixer_prefix
+
+
+def _builder_block_first() -> PromptBuilder:
+    return PromptBuilder(
+        template_dir=_prompts_dir(),
+        default_tool="openhands",
+        strategy=SecBenchPromptStrategy(shared_code_first=True),
+    )
+
+
+def test_shared_code_first_renders_block_before_cve_context() -> None:
+    # Given: the block-first ordering flag on
+    builder = _builder_block_first()
+
+    # When
+    prompt = builder.build_worker_prompt(
+        task_description="[fixer] Patch the heap overflow in demo parser.",
+        agent_id=uuid4(),
+        domain_context=_cve(),
+        shared_code_block=_SHARED_BLOCK,
+    )
+
+    # Then: the run-global block precedes the per-phase CVE display, so the
+    # bytes up to and including the block are shared by EVERY branch's workers.
+    assert _SENTINEL_CONTENT in prompt
+    block_idx = prompt.index(_SENTINEL_CONTENT)
+    cve_idx = prompt.index(_CVE_MARKER)
+    role_idx = prompt.index(_ROLE_SECTION_MARKER)
+    assert block_idx < cve_idx < role_idx
+
+
+def test_shared_code_first_prefix_identical_across_roles_through_block() -> None:
+    # Given: two different-phase workers with the same block, flag on
+    builder = _builder_block_first()
+
+    fixer = builder.build_worker_prompt(
+        task_description="[fixer] Patch the overflow.",
+        agent_id=uuid4(),
+        domain_context=_cve(),
+        shared_code_block=_SHARED_BLOCK,
+    )
+    exploiter = builder.build_worker_prompt(
+        task_description="[exploiter] Reproduce the overflow.",
+        agent_id=uuid4(),
+        domain_context=_cve(),
+        shared_code_block=_SHARED_BLOCK,
+    )
+
+    # Then: the prompts are byte-identical through the END of the block — even
+    # if per-phase content diverges immediately after, the heavy payload sits
+    # in the common prefix.
+    block_end = fixer.index(_SENTINEL_CONTENT) + len(_SENTINEL_CONTENT)
+    assert fixer[:block_end] == exploiter[:block_end]
+
+
+def test_shared_code_first_off_is_byte_identical_to_legacy() -> None:
+    # Given: a default-constructed strategy and an explicit flag-off strategy
+    legacy = _builder()
+    flag_off = PromptBuilder(
+        template_dir=_prompts_dir(),
+        default_tool="openhands",
+        strategy=SecBenchPromptStrategy(shared_code_first=False),
+    )
+    task = "[fixer] Patch the heap overflow."
+    agent_id = uuid4()
+
+    # When
+    a = legacy.build_worker_prompt(
+        task_description=task,
+        agent_id=agent_id,
+        domain_context=_cve(),
+        shared_code_block=_SHARED_BLOCK,
+    )
+    b = flag_off.build_worker_prompt(
+        task_description=task,
+        agent_id=agent_id,
+        domain_context=_cve(),
+        shared_code_block=_SHARED_BLOCK,
+    )
+
+    # Then: the flag default changes nothing
+    assert a == b

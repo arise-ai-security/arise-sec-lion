@@ -1,0 +1,14 @@
+{# Compact freshness index of the shared code block, rendered in the volatile
+   tail near <task>. Pure data — no imperative text: proximity to the task is
+   what raises the salience of already-provided files (the block's own header
+   instruction sits tens of thousands of tokens earlier and is routinely
+   ignored). One line per path; "current" means the full content above is the
+   live file, "stale" means it was modified after the copy shown. #}
+{% if rows %}
+<provided_files_index>
+    Already provided in full in <provided_source_files> above:
+    {% for r in rows -%}
+    - {{ r.path }} (revision {{ r.revision }}, {{ "stale — modified after the copy above" if r.stale else "current" }})
+    {% endfor -%}
+</provided_files_index>
+{% endif %}

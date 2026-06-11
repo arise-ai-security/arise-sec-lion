@@ -129,6 +129,15 @@ class OpenHandsParams(BaseModel):
             "spawn a bounded two-level tree of child agents (N2 baseline)."
         ),
     )
+    run_scoped_prompt_cache_key: bool = Field(
+        default=False,
+        description=(
+            "Pin the SDK's OpenAI prompt_cache_key to the run root id so every "
+            "worker in a run shares one prefix-cache shard. The SDK default pins "
+            "per-conversation, which puts each worker on its own shard and "
+            "defeats cross-worker prefix-cache reuse."
+        ),
+    )
 
 
 class GoogleAdkParams(BaseModel):
@@ -152,6 +161,9 @@ class WorkerToolParams(BaseModel):
     google_adk: GoogleAdkParams | None = None
 
 
+ReasoningEffort = Literal["low", "medium", "high", "xhigh", "none"]
+
+
 class WorkerConfig(BaseModel):
     """Worker tool settings."""
 
@@ -171,6 +183,22 @@ class WorkerConfig(BaseModel):
         default=None,
         description=(
             "Optional base URL for the worker LLM (e.g. https://ollama.com for Ollama Cloud)."
+        ),
+    )
+    reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        description=(
+            "Reasoning effort for worker LLM calls. None keeps the worker SDK "
+            "default (OpenHands defaults to 'high', the dominant completion-token "
+            "cost for reasoning models)."
+        ),
+    )
+    reasoning_effort_overrides: dict[str, ReasoningEffort] = Field(
+        default_factory=dict,
+        description=(
+            "Task-prefix → reasoning-effort overrides; the first key the worker's "
+            "task description starts with wins (e.g. '[Exploiter]': medium). "
+            "Falls back to reasoning_effort when nothing matches."
         ),
     )
     tool_params: WorkerToolParams = Field(default_factory=WorkerToolParams)
@@ -388,6 +416,80 @@ class OrchestrationConfig(BaseModel):
             "context window), and a run's workers always share one container "
             "regardless of this flag. Each role keeps its own AgentSession "
             "aggregate, so per-role events and cost attribution are preserved."
+        ),
+    )
+    shared_code_prefix_first: bool = Field(
+        default=False,
+        description=(
+            "Place the shared code block BEFORE the per-phase domain content in "
+            "worker prompts, so the run-global block sits in the byte region all "
+            "branches share and cross-branch prefix-cache hits become possible. "
+            "Default keeps the legacy order (per-phase CVE display and mindset "
+            "first), which forks the cache per branch."
+        ),
+    )
+    shared_code_index: bool = Field(
+        default=False,
+        description=(
+            "Render a compact <provided_files_index> (path, revision, freshness) "
+            "in the volatile prompt tail near the worker's <task>. Pure data, no "
+            "imperative text — raises the salience of already-provided files so "
+            "workers are less likely to re-read them via tools."
+        ),
+    )
+    shared_code_skip_dir_listings: bool = Field(
+        default=False,
+        description=(
+            "Skip capturing directory-listing view results into the shared code "
+            "block. Directory snapshots go stale immediately and duplicate the "
+            "workspace listing."
+        ),
+    )
+    shared_code_render_mode: Literal["append_only", "latest_only"] = Field(
+        default="append_only",
+        description=(
+            "append_only keeps every file revision in the shared block (byte-"
+            "stable prefix; stale revisions ride along at cache-read price). "
+            "latest_only renders one entry per path with its newest content — "
+            "smaller block, but a re-viewed file rewrites the block mid-run and "
+            "busts the prefix cache from that point for later-spawned workers."
+        ),
+    )
+    workspace_listing_dirs: list[str] | None = Field(
+        default=None,
+        description=(
+            "Whitelist of top-level workspace directories to include in the "
+            "<workspace> file listing of worker prompts (e.g. ['testcase']). "
+            "None keeps the legacy behavior: list everything except src/. "
+            "Build trees (work/*-build, CMakeFiles) made the legacy listing "
+            "balloon to ~50KB per prompt turn."
+        ),
+    )
+    workspace_listing_max_entries: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Cap on workspace-listing entries; overflow is summarized as "
+            "'… (+N more files)'. None = unlimited (legacy)."
+        ),
+    )
+    verification_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description=(
+            "Verification-failure retries per worker. Each retry re-runs a full "
+            "worker conversation (up to worker.max_iterations_per_run LLM calls), "
+            "so this is a direct cost multiplier on failing workers."
+        ),
+    )
+    capture_recon_reads: bool = Field(
+        default=False,
+        description=(
+            "Persist a manager's recon read_file results into the shared code "
+            "block (as SourceFileObserved on the manager's aggregate), so the "
+            "run carries them to downstream workers — read once, propagate. "
+            "Requires shared_worker_session. Off => recon reads are not captured."
         ),
     )
 

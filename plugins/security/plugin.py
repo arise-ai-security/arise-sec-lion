@@ -45,9 +45,11 @@ class SecurityDomainPlugin(DomainPlugin):
         self,
         enabled_tools: list[str] | None = None,
         container_runtime: SecurityContainerRuntime | None = None,
+        shared_code_prefix_first: bool = False,
     ) -> None:
         self._enabled_tools = enabled_tools or []
         self._container_runtime = container_runtime
+        self._shared_code_prefix_first = shared_code_prefix_first
         # A run's leaf workers ALWAYS share ONE container (started on the first
         # worker, reused for the rest, NOT stopped per-worker) — reaped at
         # process exit by the PID-labeled cleanup (the matrix runs one run per
@@ -72,7 +74,10 @@ class SecurityDomainPlugin(DomainPlugin):
         self._container_runtime = container_runtime
 
     def get_prompt_strategy(self) -> PromptStrategy | None:
-        return SecBenchPromptStrategy(enabled_tools=self._enabled_tools)
+        return SecBenchPromptStrategy(
+            enabled_tools=self._enabled_tools,
+            shared_code_first=self._shared_code_prefix_first,
+        )
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("context_file") or kwargs.get("cve_file")

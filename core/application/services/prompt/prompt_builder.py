@@ -160,6 +160,7 @@ class PromptBuilder:
         briefing: "Briefing | None" = None,
         task_description: str | None = None,
         workspace_context: str | None = None,
+        shared_code_index: str | None = None,
     ) -> TemplateChain:
         """Append the per-task volatile suffix to a stable-prefix chain.
 
@@ -169,12 +170,17 @@ class PromptBuilder:
         workspace). Keeping the stable prefix byte-identical across calls is
         what lets ``litellm_adapter`` realize prompt-cache hits on multi-turn
         loops and across agents on the same CVE.
+
+        ``shared_code_index`` (pre-rendered by the shared-code provider) lands
+        immediately before <task>: proximity is the mechanism that makes the
+        model trust the already-provided files instead of re-reading them.
         """
         return (
             chain.text_if(user_prompt, user_prompt)
             .render_if(scope and scope.has_scope, "context/scope.j2", scope=scope)
             .render_if(sibling_ctx, "context/sibling.j2", **(sibling_ctx or {}))
             .render_if(briefing, "context/briefing.j2", briefing=briefing)
+            .text_if(shared_code_index, shared_code_index)
             .text_if(
                 task_description is not None,
                 f"<task>\n    {task_description}\n</task>",
@@ -298,6 +304,7 @@ class PromptBuilder:
                 briefing=prompt_ctx.briefing,
                 task_description=prompt_ctx.task_description,
                 workspace_context=prompt_ctx.workspace_context,
+                shared_code_index=prompt_ctx.shared_code_index,
             )
 
         if not insert_cache_breakpoint:
@@ -457,6 +464,7 @@ class PromptBuilder:
         domain_context: object | None = None,
         briefing: "Briefing | None" = None,
         shared_code_block: str | None = None,
+        shared_code_index: str | None = None,
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -468,6 +476,7 @@ class PromptBuilder:
             handoff=handoff,
             workspace_context=workspace_context,
             shared_code_block=shared_code_block,
+            shared_code_index=shared_code_index,
         )
         return self._build_role_prompt(
             prompt_ctx,

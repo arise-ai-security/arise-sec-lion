@@ -24,7 +24,12 @@ from core.domain.events.events import (
     WorkCompleted,
     WorkFailed,
 )
-from core.domain.values.node_message import Handoff, PeerStatus, SharedDecision
+from core.domain.values.node_message import (
+    WORKER_CONCLUSION_MARKER,
+    Handoff,
+    PeerStatus,
+    SharedDecision,
+)
 
 
 def _head_tail(text: str, limit: int) -> str:
@@ -35,6 +40,21 @@ def _head_tail(text: str, limit: int) -> str:
     tail = limit - head
     omitted = len(text) - limit
     return f"{text[:head]}\n\n[...{omitted} chars omitted...]\n\n{text[-tail:]}"
+
+
+def _sibling_result_summary(result: str, limit: int = 2000) -> str:
+    """Sibling-facing summary of a worker result.
+
+    The full result is a judge-oriented command log; its transcript tail is
+    noise for siblings (failed tool calls, truncated output). Prefer the
+    worker's own conclusion when the adapter recorded one.
+    """
+    marker_pos = result.rfind(WORKER_CONCLUSION_MARKER)
+    if marker_pos != -1:
+        conclusion = result[marker_pos + len(WORKER_CONCLUSION_MARKER) :].strip()
+        if conclusion:
+            return _head_tail(conclusion, limit)
+    return _head_tail(result, limit)
 
 
 if TYPE_CHECKING:
@@ -628,7 +648,7 @@ class AgentQueryService:
             if summary.status == "completed":
                 agent = await self._repository.load_if_exists(agg_id)
                 if agent and agent.result:
-                    result_summary = _head_tail(agent.result, 2000)
+                    result_summary = _sibling_result_summary(agent.result)
 
             siblings.append(
                 PeerStatus(

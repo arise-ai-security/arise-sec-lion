@@ -64,7 +64,10 @@ def _build_security_components(settings: Settings | ApiSettings) -> DomainCompon
         network_mode=settings.security.worker_network_mode,
         timeout_seconds=settings.security.worker_docker_timeout_seconds,
     )
-    plugin = SecurityDomainPlugin(enabled_tools=settings.security.tools)
+    plugin = SecurityDomainPlugin(
+        enabled_tools=settings.security.tools,
+        shared_code_prefix_first=settings.orchestration.shared_code_prefix_first,
+    )
     plugin.set_container_runtime(runtime)
     return DomainComponents(
         plugin=plugin,
@@ -333,7 +336,17 @@ def create_runtime_cli(
             worker_mcp_tools=worker_mcp_tools,
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
+            worker_run_scoped_cache_key=(
+                settings.worker.tool == "openhands"
+                and openhands_params is not None
+                and openhands_params.run_scoped_prompt_cache_key
+            ),
+            worker_reasoning_effort=settings.worker.reasoning_effort,
+            worker_reasoning_effort_overrides=dict(settings.worker.reasoning_effort_overrides),
             worker_shared_session=settings.orchestration.shared_worker_session,
+            shared_code_skip_dir_listings=settings.orchestration.shared_code_skip_dir_listings,
+            shared_code_render_mode=settings.orchestration.shared_code_render_mode,
+            shared_code_index_enabled=settings.orchestration.shared_code_index,
             format_repairer_enabled=settings.format_repairer.enabled,
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,
@@ -377,6 +390,14 @@ def create_runtime_cli(
             max_run_duration_seconds=settings.orchestration.max_run_duration_seconds,
             max_redecompositions=settings.orchestration.max_redecompositions,
             skip_judge=settings.orchestration.skip_judge,
+            workspace_listing_dirs=(
+                tuple(settings.orchestration.workspace_listing_dirs)
+                if settings.orchestration.workspace_listing_dirs is not None
+                else None
+            ),
+            workspace_listing_max_entries=settings.orchestration.workspace_listing_max_entries,
+            verification_max_retries=settings.orchestration.verification_max_retries,
+            capture_recon_reads=settings.orchestration.capture_recon_reads,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

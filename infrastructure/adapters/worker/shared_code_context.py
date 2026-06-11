@@ -54,7 +54,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_NAME = "context/shared_code.j2"
+_INDEX_TEMPLATE_NAME = "context/shared_code_index.j2"
 _DEFAULT_TEMPLATE_ROOT = "prompts"
+
+RenderMode = str  # "append_only" (byte-stable log) | "latest_only" (one entry per path)
 
 # Sink: persist (or otherwise route) the events a single emit produced. Returns
 # nothing; the provider's public methods stay ``-> None`` per the port contract.
@@ -70,7 +73,9 @@ class SharedCodeContextProvider:
         *,
         template_root: str | Path = _DEFAULT_TEMPLATE_ROOT,
         emit_sink: EmitSink | None = None,
-        _shared_memo: dict[tuple[UUID, frozenset[UUID]], str | None] | None = None,
+        render_mode: RenderMode = "append_only",
+        index_enabled: bool = False,
+        _shared_memo: dict[tuple[str, UUID, frozenset[UUID]], str | None] | None = None,
         _shared_env: Environment | None = None,
     ) -> None:
         self._event_store = event_store
@@ -81,11 +86,19 @@ class SharedCodeContextProvider:
             trim_blocks=True,
             lstrip_blocks=True,
         )
-        # Render memo: (root_id, frozenset of event_ids) -> rendered block. The key
-        # is the exact set of events the block was built from, so any new
+        if render_mode not in ("append_only", "latest_only"):
+            raise ValueError(f"Unknown shared-code render_mode: {render_mode!r}")
+        # latest_only trades the byte-stable prefix for a smaller block: one
+        # entry per path with its newest content. A mid-run re-view rewrites
+        # the block, so later-spawned workers lose the prefix-cache hit from
+        # that path onward. Both modes stay pure functions of the event set.
+        self._render_mode: RenderMode = render_mode
+        self._index_enabled = index_enabled
+        # Render memo: (kind, root_id, frozenset of event_ids) -> rendered text.
+        # The key is the exact set of events the text was built from, so any new
         # view/edit busts it while a no-op rebuild is served from memory. Shared
         # with sibling capture instances (see ``bind_capture``) so cache hits carry.
-        self._memo: dict[tuple[UUID, frozenset[UUID]], str | None] = (
+        self._memo: dict[tuple[str, UUID, frozenset[UUID]], str | None] = (
             _shared_memo if _shared_memo is not None else {}
         )
 
@@ -110,17 +123,43 @@ class SharedCodeContextProvider:
         await self._emit_on_aggregate(agent_id, emit)
 
     async def code_block(self, root_id: UUID) -> str | None:
-        """Rebuild the run's canonical byte-stable block from events (or None)."""
-        grouped = await self._event_store.get_hierarchy_events_grouped(root_id)
-        relevant = self._collect_source_events(grouped)
-        memo_key = (root_id, frozenset(event.event_id for event in relevant))
+        """Rebuild the run's canonical block from events (or None)."""
+        relevant = await self._source_events(root_id)
+        memo_key = ("block", root_id, frozenset(event.event_id for event in relevant))
         if memo_key in self._memo:
             return self._memo[memo_key]
 
-        entries = self._build_entries(relevant)
+        entries = self._entries_for_mode(relevant)
         block = self._render(entries) if entries else None
         self._memo[memo_key] = block
         return block
+
+    async def code_index(self, root_id: UUID) -> str | None:
+        """Compact per-path freshness index of the block, or None when disabled."""
+        if not self._index_enabled:
+            return None
+        relevant = await self._source_events(root_id)
+        memo_key = ("index", root_id, frozenset(event.event_id for event in relevant))
+        if memo_key in self._memo:
+            return self._memo[memo_key]
+
+        entries = self._entries_for_mode(relevant)
+        index = self._render_index(self._index_rows(entries)) if entries else None
+        self._memo[memo_key] = index
+        return index
+
+    async def _source_events(
+        self, root_id: UUID
+    ) -> list[SourceFileObserved | SourceFileEdited]:
+        grouped = await self._event_store.get_hierarchy_events_grouped(root_id)
+        return self._collect_source_events(grouped)
+
+    def _entries_for_mode(
+        self, events: list[SourceFileObserved | SourceFileEdited]
+    ) -> list[dict[str, object]]:
+        if self._render_mode == "latest_only":
+            return self._compact_to_latest(self._build_entries(events))
+        return self._build_entries(events)
 
     def bind_capture(self, emit_sink: EmitSink) -> SharedCodeContextProvider:
         """Return a sibling provider that routes emission through ``emit_sink``.
@@ -137,6 +176,8 @@ class SharedCodeContextProvider:
         return SharedCodeContextProvider(
             self._event_store,
             emit_sink=emit_sink,
+            render_mode=self._render_mode,
+            index_enabled=self._index_enabled,
             _shared_memo=self._memo,
             _shared_env=self._env,
         )
@@ -227,5 +268,57 @@ class SharedCodeContextProvider:
             dirty.discard(path)
         return entries
 
+    @staticmethod
+    def _compact_to_latest(entries: list[dict[str, object]]) -> list[dict[str, object]]:
+        """One entry per path: newest content, plus a stale note when still dirty.
+
+        Paths keep their first-seen order so a re-view of an already-listed file
+        rewrites the block only from that path's position onward — the prefix
+        before it stays byte-identical for later-spawned workers.
+        """
+        order: list[str] = []
+        latest: dict[str, dict[str, object]] = {}
+        dirty: set[str] = set()
+        for entry in entries:
+            path = str(entry["path"])
+            if entry["kind"] == "note":
+                dirty.add(path)
+                continue
+            if path not in latest:
+                order.append(path)
+            latest[path] = entry
+            dirty.discard(path)
+
+        compacted: list[dict[str, object]] = []
+        for path in order:
+            compacted.append(latest[path])
+            if path in dirty:
+                compacted.append({"kind": "note", "path": path})
+        return compacted
+
+    @staticmethod
+    def _index_rows(entries: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Per-path freshness rows (first-seen order) for the volatile-tail index."""
+        order: list[str] = []
+        revision: dict[str, object] = {}
+        stale: dict[str, bool] = {}
+        for entry in entries:
+            path = str(entry["path"])
+            if entry["kind"] == "note":
+                stale[path] = True
+                continue
+            if path not in revision:
+                order.append(path)
+            revision[path] = entry["revision"]
+            stale[path] = False
+        return [
+            {"path": path, "revision": revision[path], "stale": stale[path]} for path in order
+        ]
+
     def _render(self, entries: list[dict[str, object]]) -> str:
         return self._env.get_template(_TEMPLATE_NAME).render(entries=entries)
+
+    def _render_index(self, rows: list[dict[str, object]]) -> str | None:
+        if not rows:
+            return None
+        return self._env.get_template(_INDEX_TEMPLATE_NAME).render(rows=rows)

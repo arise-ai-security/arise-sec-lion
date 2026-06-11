@@ -67,7 +67,13 @@ class InfrastructureConfig:
     worker_mcp_tools: list[str] | None = None
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
+    worker_run_scoped_cache_key: bool = False
+    worker_reasoning_effort: str | None = None
+    worker_reasoning_effort_overrides: dict[str, str] | None = None
     worker_shared_session: bool = False
+    shared_code_skip_dir_listings: bool = False
+    shared_code_render_mode: str = "append_only"
+    shared_code_index_enabled: bool = False
     format_repairer_enabled: bool = False
     format_repairer_model: str | None = None
     format_repairer_max_tokens: int = 16000
@@ -124,6 +130,10 @@ def _create_worker_adapter(
             allowed_tools=config.worker_allowed_tools,
             mcp_tools=config.worker_mcp_tools,
             shared_code_port=shared_code_context,
+            run_scoped_cache_key=config.worker_run_scoped_cache_key,
+            reasoning_effort=config.worker_reasoning_effort,
+            reasoning_effort_overrides=config.worker_reasoning_effort_overrides,
+            skip_directory_view_capture=config.shared_code_skip_dir_listings,
         )
     if config.default_worker_tool == "google_adk":
         return GoogleADKAdapter(
@@ -150,7 +160,13 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
     # Gate the shared code-prefix optimization on the umbrella flag. Off => no
     # provider, so workers neither capture nor inject (byte-identical to today).
     shared_code_context = (
-        SharedCodeContextProvider(event_store) if config.worker_shared_session else None
+        SharedCodeContextProvider(
+            event_store,
+            render_mode=config.shared_code_render_mode,
+            index_enabled=config.shared_code_index_enabled,
+        )
+        if config.worker_shared_session
+        else None
     )
     worker_tool = _create_worker_adapter(config, shared_code_context)
     shared_context = PostgresSharedContextAdapter(event_store)

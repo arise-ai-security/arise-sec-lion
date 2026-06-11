@@ -102,6 +102,14 @@ class ServiceConfig:
     boss_config: "BossConfig"
     manager_config: "ManagerConfig"
     mode: Literal["hierarchical", "flat"] = "hierarchical"
+    # Whitelist of top-level workspace dirs for the <workspace> prompt listing;
+    # None = legacy behavior (everything except _WORKSPACE_SKIP_DIRS).
+    workspace_listing_dirs: tuple[str, ...] | None = None
+    # Cap on listing entries (overflow summarized); None = unlimited.
+    workspace_listing_max_entries: int | None = None
+    # Verification-failure retries per worker; each retry re-runs a full
+    # worker conversation, so this directly multiplies failing-worker cost.
+    verification_max_retries: int = 2
 
 
 @dataclass(frozen=True)
@@ -988,11 +996,16 @@ class AgentExecutionService:
         """Return fresh file listing for workspace.
 
         Always scans fresh so workers can see files created by other workers.
-        Skips source-tree directories (``src/``) that are accessed inside
-        the container — only worker-produced artifacts matter here.
+        With ``workspace_listing_dirs`` set, only those top-level directories
+        are listed (artifact discovery without build-tree noise: an out-of-tree
+        CMake build under work/ alone is ~650 object/Makefile entries). The
+        legacy mode skips just the source tree (``src/``), which is accessed
+        inside the container — only worker-produced artifacts matter here.
         """
         if self._working_directory is None or not self._working_directory.exists():
             return None
+
+        include_dirs = self._config.workspace_listing_dirs
 
         try:
             files = []
@@ -1000,7 +1013,12 @@ class AgentExecutionService:
                 if any(part.startswith(".") for part in item.parts):
                     continue
                 rel_path = item.relative_to(self._working_directory)
-                if rel_path.parts and rel_path.parts[0] in self._WORKSPACE_SKIP_DIRS:
+                if not rel_path.parts:
+                    continue
+                if include_dirs is not None:
+                    if rel_path.parts[0] not in include_dirs:
+                        continue
+                elif rel_path.parts[0] in self._WORKSPACE_SKIP_DIRS:
                     continue
                 if item.is_file():
                     files.append(str(rel_path))
@@ -1009,6 +1027,10 @@ class AgentExecutionService:
                 return None
 
             files.sort()
+            max_entries = self._config.workspace_listing_max_entries
+            if max_entries is not None and len(files) > max_entries:
+                overflow = len(files) - max_entries
+                files = [*files[:max_entries], f"… (+{overflow} more files)"]
             return "\n".join(f"- {f}" for f in files)
         except OSError:
             return None
@@ -1105,10 +1127,8 @@ class AgentExecutionService:
 
             await self._parent_notifier.notify_if_failed(agent)
 
-    _MAX_VERIFICATION_RETRIES = 2
-
     async def _maybe_retry_verification(self, agent: AgentSession) -> bool:
-        """Retry a worker that failed verification, up to _MAX_VERIFICATION_RETRIES.
+        """Retry a worker that failed verification, up to verification_max_retries.
 
         Returns True if a retry was scheduled (caller should not notify parent).
         """
@@ -1118,7 +1138,7 @@ class AgentExecutionService:
         if not agent.verification_feedback:
             return False
 
-        if agent.retry_count >= self._MAX_VERIFICATION_RETRIES:
+        if agent.retry_count >= self._config.verification_max_retries:
             return False
 
         reason = agent.error_message or "Verification failed"
@@ -1130,7 +1150,7 @@ class AgentExecutionService:
         logger.info(
             "Verification retry %d/%d for agent %s: %s",
             agent.retry_count,
-            self._MAX_VERIFICATION_RETRIES,
+            self._config.verification_max_retries,
             agent.agent_id,
             agent.verification_feedback,
         )

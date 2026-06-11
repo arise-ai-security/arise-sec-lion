@@ -512,3 +512,50 @@ class TestSequentialWorkerOrdering:
         # Then: Both workers are returned
         assert w1_id in active
         assert w2_id in active
+
+
+class TestSiblingResultSummary:
+    """Sibling-facing result summaries prefer the worker's conclusion."""
+
+    def test_prefers_text_after_conclusion_marker(self) -> None:
+        # Given: a judge-oriented command log followed by a conclusion
+        from core.application.services.query.query_service import _sibling_result_summary
+        from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
+
+        result = (
+            "$ view (exit None)\nInvalid `path` parameter: /src/missing.c\n"
+            f"{WORKER_CONCLUSION_MARKER}\nBuilt the PoC; repro.sh reproduces the crash."
+        )
+
+        # When
+        summary = _sibling_result_summary(result)
+
+        # Then: siblings see the conclusion, not the transcript noise
+        assert summary == "Built the PoC; repro.sh reproduces the crash."
+        assert "Invalid `path`" not in summary
+
+    def test_falls_back_to_head_tail_without_marker(self) -> None:
+        # Given: a result with no conclusion recorded
+        from core.application.services.query.query_service import _sibling_result_summary
+
+        result = "$ make (exit 0)\nok\n" * 200
+
+        # When
+        summary = _sibling_result_summary(result, limit=100)
+
+        # Then: legacy head/tail truncation
+        assert "chars omitted" in summary
+        assert len(summary) < len(result)
+
+    def test_empty_conclusion_falls_back_to_full_log(self) -> None:
+        # Given: a marker with nothing after it
+        from core.application.services.query.query_service import _sibling_result_summary
+        from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
+
+        result = f"$ make (exit 0)\nok\n{WORKER_CONCLUSION_MARKER}\n   "
+
+        # When
+        summary = _sibling_result_summary(result)
+
+        # Then
+        assert "$ make (exit 0)" in summary

@@ -107,8 +107,17 @@ def _with_cve_display(
 class SecBenchPromptStrategy:
     """SEC-bench specific prompt strategy."""
 
-    def __init__(self, enabled_tools: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        enabled_tools: list[str] | None = None,
+        shared_code_first: bool = False,
+    ) -> None:
         self._enabled_tools = enabled_tools or []
+        # When True, the run-global shared code block renders BEFORE the
+        # per-phase CVE display and worker mindset, so every branch shares the
+        # byte region the block occupies and cross-branch prefix-cache hits
+        # become possible. Off keeps the legacy order (cache forks per branch).
+        self._shared_code_first = shared_code_first
 
     def extend_assessment_prompt(
         self,
@@ -189,17 +198,22 @@ class SecBenchPromptStrategy:
         # <provided_source_files> mention; only workers that actually receive
         # provided files see the "already in context / don't re-view" guidance.
         cve_ctx["shared_code_enabled"] = bool(context.shared_code_block)
+
+        # Shared code-prefix block placement (pre-rendered by
+        # SharedCodeContextProvider — single render site; bytes inserted as-is;
+        # empty/None when the shared-context flag is off):
+        # - shared_code_first: BEFORE the CVE display and worker mindset. Those
+        #   bytes vary per phase (and with shared_code_enabled), so the legacy
+        #   order forks the cacheable prefix per branch; block-first keeps the
+        #   large payload in the byte region ALL of the run's workers share.
+        # - legacy: after CVE display + mindset, before the BEF-role-specific
+        #   section — identical-across-workers only within a branch.
+        if self._shared_code_first:
+            chain = chain.text_if(bool(context.shared_code_block), context.shared_code_block)
         chain = _with_cve_display(chain, cve_instance, phase=branch)
         chain = chain.render("domains/secbench/worker.j2", **cve_ctx)
-
-        # Shared code-prefix block: the source files upstream workers already read,
-        # injected verbatim into the STABLE PREFIX — after the CVE context and the
-        # shared worker mindset, immediately before the BEF-role-specific section —
-        # so it stays in the identical-across-workers region OpenAI prefix-caches.
-        # Already rendered by SharedCodeContextProvider (single render site); insert
-        # the bytes as-is. Empty/None when the shared-context flag is off, keeping
-        # the prompt byte-identical to today.
-        chain = chain.text_if(bool(context.shared_code_block), context.shared_code_block)
+        if not self._shared_code_first:
+            chain = chain.text_if(bool(context.shared_code_block), context.shared_code_block)
 
         chain = (
             chain.render_if(

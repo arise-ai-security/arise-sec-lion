@@ -33,3 +33,11 @@ class SharedCodeContextPort(Protocol):
         Returns None when no source has been observed for the run.
         """
         ...
+
+    async def code_index(self, root_id: UUID) -> str | None:
+        """Compact index (path, revision, freshness) of the block's files.
+
+        Rendered into the volatile prompt tail near the task. Returns None when
+        indexing is disabled or no source has been observed for the run.
+        """
+        ...

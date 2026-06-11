@@ -90,6 +90,10 @@ class ApplicationConfig:
     max_run_duration_seconds: float = 1800
     max_redecompositions: int = 2
     skip_judge: bool = False
+    workspace_listing_dirs: tuple[str, ...] | None = None
+    workspace_listing_max_entries: int | None = None
+    verification_max_retries: int = 2
+    capture_recon_reads: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     prompt_builder: PromptBuilder | None = None
@@ -127,6 +131,9 @@ def get_application(
         boss_config=config.boss_config,
         manager_config=config.manager_config,
         mode=config.mode,
+        workspace_listing_dirs=config.workspace_listing_dirs,
+        workspace_listing_max_entries=config.workspace_listing_max_entries,
+        verification_max_retries=config.verification_max_retries,
     )
 
     # Create collaborators (composition root wiring). Prefer the
@@ -197,6 +204,7 @@ def get_application(
         skip_judge=config.skip_judge,
         format_repairer=infrastructure.format_repairer,
         shared_code_port=infrastructure.shared_code_context,
+        capture_recon_reads=config.capture_recon_reads,
     )
 
     parent_notifier = ParentNotificationService(

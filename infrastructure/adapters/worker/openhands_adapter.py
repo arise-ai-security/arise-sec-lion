@@ -23,6 +23,7 @@ from core.domain.events.events import (
     WorkerTokenUsageItem,
     WorkerUsageMetrics,
 )
+from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
 from infrastructure.adapters.worker.shared_code_context import SharedCodeContextProvider
 from infrastructure.cleanup.registry import _pid_alive
 
@@ -67,6 +68,11 @@ _OPENHANDS_CONTAINER_AWARE_TOOL_NAMES = {"file_editor", "glob", "grep"}
 # (full-file ``view``) vs. mutate a file (its recorded content is invalidated).
 _FILE_VIEW_COMMANDS = frozenset({"view"})
 _FILE_EDIT_COMMANDS = frozenset({"str_replace", "create", "insert", "undo_edit"})
+
+# First line of the OpenHands file-editor observation when ``view`` targets a
+# directory. Used to keep directory snapshots out of the shared code block —
+# they go stale on the next file write and duplicate the workspace listing.
+_DIRECTORY_LISTING_VIEW_PREFIX = "Here's the files and directories up to"
 _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
 _CONTAINER_AWARE_OPENHANDS_TOOLS_LOCK = threading.Lock()
 _TRAILING_PORT_DOT_PATTERN = re.compile(r":(?P<port>\d+)\.(?=$|/)")
@@ -489,6 +495,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
         mcp_tools: list[str] | None = None,
         enable_subagents: bool = False,
         shared_code_port: SharedCodeContextProvider | None = None,
+        run_scoped_cache_key: bool = False,
+        reasoning_effort: str | None = None,
+        reasoning_effort_overrides: dict[str, str] | None = None,
+        skip_directory_view_capture: bool = False,
     ) -> None:
         super().__init__(timeout_seconds=timeout_seconds)
         if not model:
@@ -499,6 +509,16 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self.base_url: str | None = _normalize_base_url(base_url)
         self.allowed_tools: list[str] = allowed_tools or []
         self.mcp_tools: list[str] = mcp_tools or []
+        # When True, every conversation in a run pre-pins the SDK's OpenAI
+        # prompt_cache_key to the run root id, so all workers share one
+        # prefix-cache shard. The SDK otherwise pins per-conversation, which
+        # defeats cross-worker prefix-cache reuse (each worker = own shard).
+        self._run_scoped_cache_key: bool = run_scoped_cache_key
+        # None keeps the SDK default ("high"). Overrides map a task-description
+        # prefix (e.g. "[Exploiter]") to an effort; first match wins.
+        self._reasoning_effort: str | None = reasoning_effort
+        self._reasoning_effort_overrides: dict[str, str] = dict(reasoning_effort_overrides or {})
+        self._skip_directory_view_capture: bool = skip_directory_view_capture
         # When True, the agent gets OpenHands' native task-delegation tool so it
         # can spawn a (single-level) tree of child subagents — the naive #2 (N2)
         # baseline. Children reuse the parent's container-aware tools and lack
@@ -566,6 +586,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 mcp_servers,
                 container_session,
                 callbacks=[sdk_event_callback],
+                prompt_cache_key=self._resolve_prompt_cache_key(task_context),
+                reasoning_effort=self._resolve_reasoning_effort(task_context),
             )
         except ImportError as error:
             yield sequencer.failed(
@@ -644,6 +666,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 working_dir,
                 finish_message,
                 sequencer,
+                container_session=container_session,
             )
         except Exception as error:
             yield sequencer.failed(f"OpenHands adapter error: {error!r}")
@@ -673,14 +696,39 @@ class OpenHandsAdapter(WorkerAdapterBase):
         mcp_servers: dict[str, dict[str, Any]] | None,
         container_session: ContainerSessionContext | None,
         callbacks: list[Callable[[Any], None]] | None = None,
+        prompt_cache_key: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> _ConversationLike:
-        # Pass ``callbacks`` positionally so existing test fakes that monkey-patch
+        # Pass everything positionally so existing test fakes that monkey-patch
         # ``_build_conversation`` with ``lambda *_args: conversation`` continue to
         # work without **kwargs support.
         return cast(
             "_ConversationLike",
-            self._build_conversation(working_dir, mcp_servers, container_session, callbacks),
+            self._build_conversation(
+                working_dir,
+                mcp_servers,
+                container_session,
+                callbacks,
+                prompt_cache_key,
+                reasoning_effort,
+            ),
         )
+
+    def _resolve_prompt_cache_key(self, task_context: dict[str, Any]) -> str | None:
+        """Run-scoped OpenAI cache-shard key, or None when the feature is off."""
+        if not self._run_scoped_cache_key:
+            return None
+        root_id = task_context.get("root_id")
+        return str(root_id) if isinstance(root_id, UUID) else None
+
+    def _resolve_reasoning_effort(self, task_context: dict[str, Any]) -> str | None:
+        """First prefix-override matching the bare task, else the configured default."""
+        task_summary = task_context.get("task_summary")
+        if isinstance(task_summary, str):
+            for prefix, effort in self._reasoning_effort_overrides.items():
+                if task_summary.startswith(prefix):
+                    return effort
+        return self._reasoning_effort
 
     def _create_conversation_run(
         self,
@@ -801,7 +849,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         try:
             if command in _FILE_VIEW_COMMANDS:
                 content = self._observation_text(observation)
-                if content:
+                if content and not self._is_skipped_directory_listing(content):
                     await capture.port.record_view(
                         capture.root_id, capture.agent_id, path, content
                     )
@@ -814,6 +862,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
         while not capture.queue.empty():
             yield capture.queue.get_nowait()
+
+    def _is_skipped_directory_listing(self, content: str) -> bool:
+        return self._skip_directory_view_capture and content.lstrip().startswith(
+            _DIRECTORY_LISTING_VIEW_PREFIX
+        )
 
     def _make_cost_recorded_event(
         self,
@@ -849,8 +902,15 @@ class OpenHandsAdapter(WorkerAdapterBase):
         working_dir: str,
         finish_message: str | None,
         sequencer: EventSequencer,
+        container_session: ContainerSessionContext | None = None,
     ) -> DomainEvent:
-        return sequencer.completed(self._extract_result(conversation, working_dir, finish_message))
+        result = self._extract_result(conversation, working_dir, finish_message)
+        if container_session is not None:
+            # Observations are sanitized at the tool layer, but transcript tails
+            # that bypass it (e.g. directory views) can still carry host paths
+            # into the result — and from there into sibling prompts.
+            result = _replace_host_paths(result, container_session)
+        return sequencer.completed(result)
 
     def _build_conversation(
         self,
@@ -858,6 +918,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
         mcp_servers: dict[str, dict[str, Any]] | None = None,
         container_session: ContainerSessionContext | None = None,
         callbacks: list[Callable[[Any], None]] | None = None,
+        prompt_cache_key: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
         import warnings
 
@@ -871,7 +933,12 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
             from openhands.sdk import LLM, Agent, Conversation, Tool
 
-        llm = LLM(**self._build_llm_kwargs())
+        llm = LLM(**self._build_llm_kwargs(reasoning_effort))
+        if prompt_cache_key is not None:
+            # Pre-pin before Conversation.__init__ runs _pin_prompt_cache_key,
+            # which only assigns when the key is still None. A run-scoped key
+            # puts all of the run's workers on one OpenAI prefix-cache shard.
+            llm._prompt_cache_key = prompt_cache_key  # noqa: SLF001 - SDK PrivateAttr, no public setter
         tools = self._build_native_tools(Tool, container_session)
         # Agent creates MCP tool definitions from this config after native tools.
         mcp_config = to_openhands_mcp_config(mcp_servers) if mcp_servers else {}
@@ -893,7 +960,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             callbacks=callbacks or [],
         )
 
-    def _build_llm_kwargs(self) -> dict[str, Any]:
+    def _build_llm_kwargs(self, reasoning_effort: str | None = None) -> dict[str, Any]:
         # caching_prompt enables Anthropic prompt caching in the OpenHands SDK.
         # It is the SDK default, but set explicitly here so the intent is
         # visible; the SDK gates it by model support, so it is a safe no-op for
@@ -903,6 +970,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
             "api_key": self.api_key,
             "caching_prompt": True,
         }
+        if reasoning_effort is not None:
+            # SDK default is "high" — the dominant completion-token cost on
+            # reasoning models (gpt-5.x routes via the Responses API, which
+            # always sends reasoning.effort).
+            llm_kwargs["reasoning_effort"] = reasoning_effort
         if base_url := self._effective_base_url():
             llm_kwargs["base_url"] = base_url
         if self._is_ollama_model():
@@ -1247,7 +1319,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         if entries:
             parts.extend(entries)
         if finish_message:
-            parts.append(f"--- Agent Conclusion ---\n{finish_message}")
+            parts.append(f"{WORKER_CONCLUSION_MARKER}\n{finish_message}")
         if parts:
             return "\n".join(parts)
         return f"Task completed in workspace: {working_dir}"

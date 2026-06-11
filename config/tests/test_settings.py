@@ -394,3 +394,68 @@ def test_secbench_recon_tool_allowlist_matches_registered_tools() -> None:
         assert sorted(names) == sorted(expected)
         assert set(resolved.executors) == set(expected)
         assert resolved.loop_policy.max_iterations == 3
+
+
+def test_worker_cost_knobs_default_to_legacy() -> None:
+    """Every cost knob defaults to legacy behavior — flags must be opted into."""
+
+    # Given: the base config with only the required models added.
+    settings = Settings._build_from_config(_add_required_models(_load_base_config()))
+
+    # Then: worker LLM knobs keep the SDK defaults.
+    assert settings.worker.reasoning_effort is None
+    assert settings.worker.reasoning_effort_overrides == {}
+
+    # Then: orchestration knobs keep byte-identical prompts and today's retry budget.
+    orch = settings.orchestration
+    assert orch.shared_code_prefix_first is False
+    assert orch.shared_code_index is False
+    assert orch.shared_code_skip_dir_listings is False
+    assert orch.shared_code_render_mode == "append_only"
+    assert orch.workspace_listing_dirs is None
+    assert orch.workspace_listing_max_entries is None
+    assert orch.verification_max_retries == 2
+    assert orch.capture_recon_reads is False
+
+
+def test_worker_cost_knobs_round_trip_from_yaml(tmp_path: Path) -> None:
+    """The opted-in shapes load: per-branch efforts, cache key, listing whitelist."""
+
+    # Given: a config enabling every knob the way a new study overlay would.
+    payload = _add_required_models(_load_base_config())
+    payload["worker"]["tool"] = "openhands"
+    payload["worker"]["reasoning_effort"] = "low"
+    payload["worker"]["reasoning_effort_overrides"] = {
+        "[Exploiter]": "medium",
+        "[Fixer]": "medium",
+    }
+    payload["worker"]["tool_params"] = {"openhands": {"run_scoped_prompt_cache_key": True}}
+    payload["orchestration"]["shared_worker_session"] = True
+    payload["orchestration"]["shared_code_prefix_first"] = True
+    payload["orchestration"]["shared_code_index"] = True
+    payload["orchestration"]["shared_code_skip_dir_listings"] = True
+    payload["orchestration"]["shared_code_render_mode"] = "latest_only"
+    payload["orchestration"]["workspace_listing_dirs"] = ["testcase"]
+    payload["orchestration"]["workspace_listing_max_entries"] = 200
+    payload["orchestration"]["verification_max_retries"] = 1
+    payload["orchestration"]["capture_recon_reads"] = True
+    target = tmp_path / "cost_knobs_on.yaml"
+    _write_yaml(target, payload)
+
+    # When
+    settings = Settings.from_yaml(target)
+
+    # Then
+    assert settings.worker.reasoning_effort == "low"
+    assert settings.worker.reasoning_effort_overrides["[Exploiter]"] == "medium"
+    assert settings.worker.tool_params.openhands is not None
+    assert settings.worker.tool_params.openhands.run_scoped_prompt_cache_key is True
+    orch = settings.orchestration
+    assert orch.shared_code_prefix_first is True
+    assert orch.shared_code_index is True
+    assert orch.shared_code_skip_dir_listings is True
+    assert orch.shared_code_render_mode == "latest_only"
+    assert orch.workspace_listing_dirs == ["testcase"]
+    assert orch.workspace_listing_max_entries == 200
+    assert orch.verification_max_retries == 1
+    assert orch.capture_recon_reads is True
