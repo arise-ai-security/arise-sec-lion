@@ -4,6 +4,10 @@ fixture_pool_size: 311
 method: random.Random(seed).sample over sorted fixture stems; smoke pair = first two
   selected instances with local secb-tools images, second preferring a different project
   than the first
+replaced:
+  reason: songtli-sourced (non-hwiwonlee) bases excluded; replaced to keep count=50
+  removed: [ollama.cve-2026-5757, protobuf.issue-26857, tensorflow.issue-112757]
+  added: [imagemagick.cve-2019-13298, gpac.cve-2023-46001, libxml2.ossfuzz-42496802]
 selection_order:
 - libxml2.ossfuzz-424627221
 - imagemagick.cve-2019-13302
@@ -33,9 +37,7 @@ selection_order:
 - gpac.cve-2023-0866
 - faad2.cve-2018-20362
 - mruby.ossfuzz-42497373
-- ollama.cve-2026-5757
 - mruby.ossfuzz-42503243
-- protobuf.issue-26857
 - yara.cve-2023-40857
 - gpac.cve-2024-0322
 - libxml2.ossfuzz-42531092
@@ -43,7 +45,6 @@ selection_order:
 - mruby.ossfuzz-42511322
 - upx.ossfuzz-42531653
 - md4c.cve-2021-30027
-- tensorflow.issue-112757
 - libxml2.ossfuzz-42527008
 - libxml2.ossfuzz-42537493
 - php.ossfuzz-42485988
@@ -55,10 +56,14 @@ selection_order:
 - njs.cve-2020-24348
 - gpac.cve-2023-46927
 - upx.ossfuzz-42531672
+- imagemagick.cve-2019-13298
+- gpac.cve-2023-46001
+- libxml2.ossfuzz-42496802
 default_cves:
 - faad2.cve-2018-20196
 - faad2.cve-2018-20362
 - gpac.cve-2023-0866
+- gpac.cve-2023-46001
 - gpac.cve-2023-46927
 - gpac.cve-2023-46928
 - gpac.cve-2023-5586
@@ -66,6 +71,7 @@ default_cves:
 - imagemagick.cve-2017-12641
 - imagemagick.cve-2018-5248
 - imagemagick.cve-2018-6405
+- imagemagick.cve-2019-13298
 - imagemagick.cve-2019-13302
 - imagemagick.cve-2019-13305
 - libarchive.cve-2020-21674
@@ -73,6 +79,7 @@ default_cves:
 - libredwg.cve-2020-21819
 - libxml2.ossfuzz-424627219
 - libxml2.ossfuzz-424627221
+- libxml2.ossfuzz-42496802
 - libxml2.ossfuzz-42522440
 - libxml2.ossfuzz-42522712
 - libxml2.ossfuzz-42525197
@@ -89,7 +96,6 @@ default_cves:
 - mupdf.ossfuzz-42520029
 - njs.cve-2020-24348
 - njs.cve-2022-32414
-- ollama.cve-2026-5757
 - openexr.cve-2020-16589
 - openexr.ossfuzz-42524709
 - openjpeg.cve-2017-14041
@@ -98,9 +104,7 @@ default_cves:
 - php.ossfuzz-42485988
 - php.ossfuzz-42491690
 - php.ossfuzz-42527736
-- protobuf.issue-26857
 - readstat.cve-2018-5698
-- tensorflow.issue-112757
 - upx.ossfuzz-402200343
 - upx.ossfuzz-42531653
 - upx.ossfuzz-42531672
