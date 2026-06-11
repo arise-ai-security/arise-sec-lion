@@ -117,6 +117,39 @@ def _apply_anthropic_cache_to_messages(
     return out
 
 
+def _apply_anthropic_cache_to_tail(
+    messages: list[dict[str, Any]], model: str
+) -> list[dict[str, Any]]:
+    # Roll an ephemeral cache breakpoint onto the LAST message so the growing
+    # tool-loop tail (assistant tool_calls + tool results that accumulate each
+    # recon round) is served as cache_read on the next round instead of full
+    # price. This is a SEPARATE pass from _apply_anthropic_cache_to_messages,
+    # which only marks the first user message and returns early — it never
+    # reaches the tail. Breakpoint budget: tools(1) + first-user(1) + tail(1) =
+    # 3 of Anthropic's 4. The tail only pays off because the loop now keeps the
+    # prefix byte-stable (elide-once + read dedup), so the cached region is
+    # actually re-read rather than re-seeded.
+    if not _supports_anthropic_cache(model) or len(messages) <= 1:
+        return messages
+    out = list(messages)
+    last = dict(out[-1])
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content:
+            return messages
+        last["content"] = [
+            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+        ]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        blocks = [dict(b) for b in content]
+        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+        last["content"] = blocks
+    else:
+        return messages
+    out[-1] = last
+    return out
+
+
 def _apply_anthropic_cache_to_tools(
     tools: list[dict[str, Any]] | None, model: str
 ) -> list[dict[str, Any]] | None:
@@ -202,11 +235,14 @@ class LiteLLMAdapter(LLMPort):
             "num_ctx": 65536,
         }
 
-    _LLM_TIMEOUT_SECONDS = 120  # Hard timeout for a single LLM call
-    # Cap retries low because 3 retries x 180s x 5 tool-iterations could
-    # compound to ~25 min of DB-silent retry. One retry with a longer cooldown
-    # propagates a 429 storm as an LLMError quickly enough that the per-step
-    # timeout (default 600s) can recycle the agent.
+    # Per-attempt hard timeout. Sized above the ~120s that a large cache-WRITE
+    # seeding request (the rolling tool-loop tail on Sonnet) can take under
+    # parallel load; the 900s agent-step watchdog still bounds the whole step.
+    _LLM_TIMEOUT_SECONDS = 240
+    # Cap retries low because retries x timeout x tool-iterations could compound
+    # into minutes of DB-silent retry. One retry with a cooldown clears a
+    # transient timeout / 429 spike (a fresh request usually routes around the
+    # congestion) without long compounding; the agent-step watchdog backstops.
     _RATE_LIMIT_RETRIES = 1
     _RATE_LIMIT_BASE_DELAY = 15  # seconds; doubles each retry
 
@@ -236,13 +272,18 @@ class LiteLLMAdapter(LLMPort):
             retryable=(
                 litellm.exceptions.RateLimitError,
                 litellm.exceptions.ServiceUnavailableError,
+                # A per-attempt timeout is usually a transient latency spike
+                # (busy endpoint); a fresh retry routes around it. robust_call
+                # retries asyncio.wait_for's TimeoutError only when listed here.
+                asyncio.TimeoutError,
             ),
         )
 
         def _log_retry(attempt: int, exc: BaseException, delay: float) -> None:
             logger.warning(
-                "Rate limited by %s (attempt %d/%d), retrying in %.1fs",
+                "Transient LLM error from %s (%s, attempt %d/%d), retrying in %.1fs",
                 model,
+                type(exc).__name__,
                 attempt + 1,
                 self._RATE_LIMIT_RETRIES + 1,
                 delay,
@@ -439,6 +480,9 @@ class LiteLLMAdapter(LLMPort):
             # "force final answer" call after max iterations works cleanly.
             call_kwargs["messages"] = _strip_tool_content(messages)
         call_kwargs["messages"] = _apply_anthropic_cache_to_messages(
+            call_kwargs["messages"], model
+        )
+        call_kwargs["messages"] = _apply_anthropic_cache_to_tail(
             call_kwargs["messages"], model
         )
         if not self._is_o_series(model):

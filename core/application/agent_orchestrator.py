@@ -12,6 +12,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from core.application.services import (
@@ -206,6 +207,12 @@ logger = logging.getLogger(__name__)
 
 _ASSESSMENT_PARSE_RETRIES = 2
 
+# Recon tools whose full result is a verbatim source file worth persisting into
+# the shared code-prefix block. ``read_file`` returns a whole file; ``read_symbol``
+# returns only a fragment, so it is intentionally excluded to keep block entries
+# at file granularity (matching the worker view-tool capture).
+_RECON_SOURCE_READ_TOOLS = frozenset({"read_file"})
+
 
 class AgentOrchestrator:
     """Orchestrates agent interactions with LLM and worker tools.
@@ -229,6 +236,7 @@ class AgentOrchestrator:
         skip_judge: bool = False,
         format_repairer: "FormatRepairerPort | None" = None,
         shared_code_port: "SharedCodeContextPort | None" = None,
+        capture_recon_reads: bool = False,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -242,6 +250,11 @@ class AgentOrchestrator:
         # read, rebuilt from events) is injected into the worker prompt's stable
         # prefix. None => the block is never populated (byte-identical to today).
         self._shared_code_port = shared_code_port
+        # When True (and a shared-code port is present), a manager's recon
+        # read_file results are persisted as SourceFileObserved on its own
+        # aggregate, so the run's block carries them to downstream workers
+        # (read-once → propagate). Off => recon reads are not captured.
+        self._capture_recon_reads = capture_recon_reads
         self._verification_pipeline = VerificationPipeline(
             llm_port,
             skip_judge=skip_judge,
@@ -568,6 +581,7 @@ class AgentOrchestrator:
 
             root_id = agent.hierarchy_limits.root_id if agent.hierarchy_limits else None
             shared_code_block = await self._resolve_shared_code_block(root_id)
+            shared_code_index = await self._resolve_shared_code_index(root_id)
 
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,
@@ -577,6 +591,7 @@ class AgentOrchestrator:
                 domain_context=self._get_domain_context(agent),
                 briefing=agent.briefing,
                 shared_code_block=shared_code_block,
+                shared_code_index=shared_code_index,
             )
 
             # Inject verification feedback on retry so worker knows what to fix
@@ -607,6 +622,9 @@ class AgentOrchestrator:
             task_context: dict[str, Any] = {
                 "agent_id": agent.agent_id,
                 "task_description": prompt,
+                # Bare task (no prompt wrapping) so adapters can key per-task
+                # behavior (e.g. reasoning-effort overrides) off its prefix.
+                "task_summary": agent.task_description,
                 "tool_name": tool_name,
                 "config": agent.config,
             }
@@ -915,6 +933,16 @@ class AgentOrchestrator:
         """
         llm_config = ConfigResolver.resolve(agent.config, operation=operation)
         config_dict = llm_config.model_dump()
+        if tool_context is not None and tool_context.has_tools:
+            # ALWAYS keep recon read_file verbatim + dedup in the tool loop.
+            # This is a manager-side cache optimization (source stays in the
+            # cached prefix, no re-reads) with zero worker impact — only
+            # boss/managers use this tool-calling path. It is independent of
+            # whether reads are also persisted into the shared block (below),
+            # which is the worker-affecting half.
+            tool_context = replace(
+                tool_context, source_read_tools=_RECON_SOURCE_READ_TOOLS
+            )
         result = await self._llm_query_executor.query(
             prompt,
             config_dict,
@@ -922,6 +950,7 @@ class AgentOrchestrator:
         )
         response = result.response
         self._emit_probe_events(agent, result.tool_records)
+        self._capture_recon_source_reads(agent, result.captured_reads)
 
         agent.emit_tokens_consumed(
             model=response.model,
@@ -1195,6 +1224,16 @@ class AgentOrchestrator:
             return None
         return await self._shared_code_port.code_block(root_id)
 
+    async def _resolve_shared_code_index(self, root_id: "UUID | None") -> str | None:
+        """Compact index of the shared block's files, or None when disabled.
+
+        Rendered near the <task> block (volatile tail) so the model sees what is
+        already provided in full right where it decides which files to read.
+        """
+        if self._shared_code_port is None or root_id is None:
+            return None
+        return await self._shared_code_port.code_index(root_id)
+
     @staticmethod
     def _build_scope(agent: "AgentSession") -> SubtaskScope | None:
         if not (agent.target_paths or agent.symbols or agent.search_hints):
@@ -1215,4 +1254,34 @@ class AgentOrchestrator:
             agent.emit_probe_completed(
                 probe_type=record.tool_name,
                 result_summary=record.result_summary,
+            )
+
+    def _capture_recon_source_reads(
+        self, agent: "AgentSession", captured_reads: list
+    ) -> None:
+        """Persist a manager's recon read_file results as SourceFileObserved.
+
+        Gated on ``capture_recon_reads``: the in-loop verbatim/dedup of source
+        reads is always on (manager-side, worker-neutral), but PERSISTING them
+        into the run's shared block carries them to every downstream worker and
+        inflates worker prompts — measured net-negative for the worker tier, so
+        it is off by default and decoupled from the cache optimization.
+
+        The events land on the manager's own in-hand aggregate (sequenced with
+        the decomposition operation — no out-of-band append). One event per
+        distinct path: a recon loop re-reading a file returns identical content,
+        so the first capture is sufficient and avoids aggregate bloat.
+        """
+        if not self._capture_recon_reads or not captured_reads or self._shared_code_port is None:
+            return
+        seen: set[str] = set()
+        for read in captured_reads:
+            path = read.arguments.get("path")
+            if not isinstance(path, str) or not path or path in seen:
+                continue
+            if not read.content:
+                continue
+            seen.add(path)
+            agent.record_source_file_observed(
+                path=path, content=read.content, observed_by=agent.agent_id
             )

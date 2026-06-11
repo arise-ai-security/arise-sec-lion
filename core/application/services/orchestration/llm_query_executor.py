@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from core.application.services.toolset.tool_calling_service import ToolCallingService, ToolRecord
+from core.application.services.toolset.tool_calling_service import (
+    CapturedRead,
+    ToolCallingService,
+    ToolRecord,
+)
 from core.domain.values.llm_response import LLMResponse
 
 
@@ -20,6 +24,7 @@ class LLMQueryResult:
 
     response: LLMResponse
     tool_records: list[ToolRecord] = field(default_factory=list)
+    captured_reads: list[CapturedRead] = field(default_factory=list)
 
 
 class LLMQueryExecutor:
@@ -52,4 +57,5 @@ class LLMQueryExecutor:
         return LLMQueryResult(
             response=result.response,
             tool_records=result.tool_records,
+            captured_reads=result.captured_reads,
         )
