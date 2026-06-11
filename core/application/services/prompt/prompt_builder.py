@@ -338,6 +338,7 @@ class PromptBuilder:
         domain_context: object | None = None,
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
+        shared_code_block: str | None = None,
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -349,6 +350,7 @@ class PromptBuilder:
             domain_context=domain_context,
             scope=scope,
             prompt_capabilities=prompt_capabilities,
+            shared_code_block=shared_code_block,
         )
         return self._build_role_prompt(
             prompt_ctx,

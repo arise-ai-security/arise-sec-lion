@@ -128,9 +128,14 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
         cve_ctx = cve_instance.to_template_context()
-        return _with_cve_display(chain, cve_instance, include_decomposition=True).render_optional(
+        chain = _with_cve_display(chain, cve_instance, include_decomposition=True).render_optional(
             "domains/secbench/assess.j2", **cve_ctx
         )
+        # Boss recon block in the cached prefix — a PENDING manager does its recon
+        # in this assessment phase, so this is where the boss's reads must land to
+        # spare re-reads. Empty unless share_boss_recon is on. Manager/leaf-assess
+        # only (sonnet); the worker EXECUTION prompt never carries it.
+        return chain.text_if(bool(context.shared_code_block), context.shared_code_block)
 
     def extend_boss_prompt(
         self,

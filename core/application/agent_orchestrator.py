@@ -331,6 +331,7 @@ class AgentOrchestrator:
                     domain_context=domain_context,
                     scope=scope,
                     prompt_capabilities=build_prompt_capabilities(tool_context),
+                    shared_code_block=self._resolve_boss_recon_block(agent),
                 )
                 agent.emit_prompt_sent(
                     prompt=strip_cache_breakpoint(prompt), prompt_type=op, target="llm"
