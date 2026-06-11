@@ -30,11 +30,5 @@
     - **CWE-476/758**: `cppcheck --enable=all --xml` (grep `nullPointer`); ASan (catches NULL deref as SEGV); gdb `run; bt full; info locals`; `addr2line -e <bin> -a <addr>`.
 
     After each tool run, write a parsed summary to `/testcase/` (e.g. `cppcheck ... --xml 2>raw.xml; grep -A2 'error id=' raw.xml > /testcase/cppcheck_findings.txt`). Install tools with `apt-get install -y <tool>` as needed.
-
-    {% if include_decomposition_guidance %}
-    **Decomposition**: When producing subtasks, include in each subtask's `justification`:
-    - `"security_insights"`: relevant CVE details, sanitizer type, vulnerable component, and root cause analysis
-    - `"security_tools"`: specific analysis tools to install and use — prescribe exact commands, not just tool names. Recommend complementary tool combinations for cross-validation
-    {% endif %}
 </domain>
 {% endif %}
