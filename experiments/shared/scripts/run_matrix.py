@@ -2,17 +2,14 @@
 
 Iterates the cartesian product of (cells x tasks x replicates) declared
 in the study's manifest, dispatches each via the appropriate runner, and
-on completion runs the existing collect → render → validate pipeline.
-Writes a ``matrix-summary.md`` detailing per-cell success/failure and the
-list of failed jobs with their error messages.
+on completion regenerates the study's enrollment roster from the runs pool.
 
 Usage::
 
     uv run python -m experiments.shared.scripts.run_matrix \\
         --study <study-id> \\
         [--cells A1,B2] [--tasks gpac.cve-2021-40575] \\
-        [--replicates 3] [--parallel 1] [--continue-on-error] \\
-        [--no-render]
+        [--replicates 3] [--parallel 1] [--continue-on-error]
 
 Defaults: every declared cell and task, ``replicates`` from the manifest
 (falling back to 1), ``--parallel 1`` (sequential), and
@@ -26,11 +23,9 @@ import asyncio
 import logging
 import shutil
 import subprocess
-import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -41,15 +36,10 @@ from experiments.shared import harness, runners
 from experiments.shared.scripts import collect
 from experiments.shared.scripts._paths import get_repo_root
 from experiments.shared.scripts.validate_manifest import validate_manifest
-from experiments.shared.scripts.write_report import write_md
 from infrastructure.cleanup.registry import _pid_alive
 
 
 logger = logging.getLogger(__name__)
-
-
-_MATRIX_TEMPLATE_REL = "experiments/shared/templates/matrix-summary.md.j2"
-_MATRIX_OUTPUT_NAME = "matrix-summary.md"
 
 
 @dataclass(frozen=True)
@@ -122,20 +112,9 @@ def main(argv: list[str] | None = None) -> int:
         continue_on_error=args.continue_on_error,
     )
 
-    # Post-execution pipeline: collect → render → validate. ``--no-render``
-    # skips the per-study render/validate step (useful for partial reruns
-    # where the study scripts haven't been wired up yet).
+    # Post-execution: regenerate the study's enrollment roster (the derived
+    # lockfile) from the per-run manifests in the runs pool.
     collect.collect_study(args.study)
-    if not args.no_render:
-        _render_and_validate(args.study, repo_root=repo_root)
-    _write_matrix_summary(
-        args.study,
-        results=results,
-        replicates=replicates,
-        cells_filter=cells_filter,
-        tasks_filter=tasks_filter,
-        repo_root=repo_root,
-    )
 
     failed = [r for r in results if r.status == "failed"]
     if failed:
@@ -248,8 +227,8 @@ async def _dispatch_jobs_async(
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
 
-    # Restore deterministic order so the matrix-summary table matches
-    # the enumeration order rather than completion order.
+    # Restore deterministic order so results match the enumeration order
+    # rather than completion order.
     results.sort(key=lambda r: (r.cell, r.task, r.replicate))
     return results
 
@@ -374,122 +353,6 @@ def _read_run_status(
 
 
 # =============================================================================
-# Post-execution pipeline
-# =============================================================================
-
-
-def _render_and_validate(study_id: str, *, repo_root: Path) -> None:
-    """Run the study-local render/validate scripts as subprocesses.
-
-    Per-study scripts (``scripts/collect.py``, ``scripts/plot_success.py``,
-    ``scripts/render_report.py``) use module-level path constants tied to
-    their on-disk location. Importing them dynamically would activate them
-    in the wrong context, so we shell out via ``python -m`` and let each
-    script enforce its own preconditions.
-    """
-    study_dir = repo_root / "experiments" / study_id
-    scripts_dir = study_dir / "scripts"
-
-    # Order matters: collect produces tables/summary.csv, plot_success draws
-    # the figure that render_report references, render_report writes report.md
-    # and finally we re-validate everything.
-    scripts: list[tuple[str, list[str]]] = []
-    for filename in ("collect.py", "plot_success.py", "render_report.py"):
-        candidate = scripts_dir / filename
-        if candidate.is_file():
-            scripts.append((filename, [sys.executable, str(candidate)]))
-
-    for filename, cmd in scripts:
-        logger.info("[%s] running %s", study_id, filename)
-        completed = subprocess.run(cmd, check=False, cwd=repo_root)  # noqa: S603
-        if completed.returncode != 0:
-            raise RuntimeError(f"study script {filename} exited {completed.returncode}")
-
-    validate_cmd = [
-        sys.executable,
-        "-m",
-        "experiments.shared.scripts.validate_reports",
-        "--study",
-        study_id,
-    ]
-    logger.info("[%s] validating reports", study_id)
-    completed = subprocess.run(validate_cmd, check=False, cwd=repo_root)  # noqa: S603
-    if completed.returncode != 0:
-        raise RuntimeError(f"validate_reports exited {completed.returncode}")
-
-
-def _write_matrix_summary(
-    study_id: str,
-    *,
-    results: list[JobResult],
-    replicates: int,
-    cells_filter: set[str] | None,
-    tasks_filter: set[str] | None,
-    repo_root: Path,
-) -> Path:
-    succeeded = [r for r in results if r.status == "succeeded"]
-    failed = [r for r in results if r.status == "failed"]
-
-    per_cell_index: dict[str, dict[str, int]] = {}
-    for result in results:
-        bucket = per_cell_index.setdefault(result.cell, {"succeeded": 0, "failed": 0})
-        bucket[result.status] += 1
-    per_cell = [
-        {"cell": cell, "succeeded": counts["succeeded"], "failed": counts["failed"]}
-        for cell, counts in sorted(per_cell_index.items())
-    ]
-
-    failed_jobs_view = [
-        {
-            "cell": r.cell,
-            "task": r.task,
-            "replicate": r.replicate,
-            "error": (r.error or "").replace("|", "\\|").replace("\n", " "),
-        }
-        for r in failed
-    ]
-
-    template_abs = repo_root / _MATRIX_TEMPLATE_REL
-    if not template_abs.is_file():
-        raise FileNotFoundError(f"matrix-summary template missing: {_MATRIX_TEMPLATE_REL}")
-
-    # Lazy import: jinja2 isn't a stdlib module and would otherwise penalize
-    # the --help path that doesn't render anything.
-    import jinja2
-
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader(str(template_abs.parent)),
-        autoescape=False,  # noqa: S701 - markdown output, not HTML
-        trim_blocks=True,
-        lstrip_blocks=True,
-    )
-    template = env.get_template(template_abs.name)
-    body = template.render(
-        study_id=study_id,
-        rendered_at=_utcnow_iso(),
-        total_jobs=len(results),
-        succeeded_count=len(succeeded),
-        failed_count=len(failed),
-        replicates=replicates,
-        cells_filter=", ".join(sorted(cells_filter)) if cells_filter else "all",
-        tasks_filter=", ".join(sorted(tasks_filter)) if tasks_filter else "all",
-        per_cell=per_cell,
-        failed_jobs=failed_jobs_view,
-    )
-
-    output_rel = f"experiments/{study_id}/reports/{_MATRIX_OUTPUT_NAME}"
-    script_rel = "experiments/shared/scripts/run_matrix.py"
-
-    return write_md(
-        path=output_rel,
-        content=body,
-        script=script_rel,
-        template=_MATRIX_TEMPLATE_REL,
-        inputs=[],
-    )
-
-
-# =============================================================================
 # Helpers
 # =============================================================================
 
@@ -522,10 +385,6 @@ def _parse_csv(value: str | None) -> set[str] | None:
         return None
     parts = {item.strip() for item in value.split(",") if item.strip()}
     return parts or None
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 # =============================================================================
@@ -709,11 +568,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="continue_on_error",
         action="store_false",
         help="Abort on the first failure (raises).",
-    )
-    parser.add_argument(
-        "--no-render",
-        action="store_true",
-        help="Skip the per-study render/validate step after dispatch.",
     )
     parser.add_argument(
         "--dry-run",

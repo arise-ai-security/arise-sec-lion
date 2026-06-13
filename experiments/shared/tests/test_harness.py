@@ -112,19 +112,7 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         )
         return 0
 
-    async def _fake_project_events(
-        *,
-        run_id,  # noqa: ARG001
-        output_path,
-        settings=None,  # noqa: ARG001
-        config_path=None,  # noqa: ARG001
-    ):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("")  # empty events.jsonl is fine for the test
-        return 0
-
     monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke)
-    monkeypatch.setattr(harness, "project_events_to_jsonl", _fake_project_events)
     return state
 
 
@@ -166,9 +154,6 @@ def test_run_arise_enrolls_run_into_study(
         (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
     )
     assert "runs" not in study_manifest
-
-    # And: events.jsonl was produced (by the fake projector).
-    assert (repo_root / "runs" / str(run_id) / "events.jsonl").exists()
 
 
 def test_run_arise_rejects_subprocess_that_never_wrote_result(
@@ -419,13 +404,6 @@ def test_run_arise_builds_main_py_argv_in_exact_order(
         return 0
 
     monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke)
-
-    async def _fake_project_events(*, run_id, output_path, config_path=None):  # noqa: ARG001
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("")
-        return 0
-
-    monkeypatch.setattr(harness, "project_events_to_jsonl", _fake_project_events)
 
     config_path = repo_root / "fake-config.yaml"
 

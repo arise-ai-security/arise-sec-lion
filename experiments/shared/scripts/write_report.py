@@ -3,7 +3,7 @@
 Every file under any `experiments/<study_id>/reports/` directory must prove it
 was produced by a committed script from recorded inputs. These writers emit
 that proof alongside the content, atomically, so hand-writes can't sneak past
-the validator (see `validate_reports.py`).
+downstream provenance checks.
 
 Requires POSIX (``fcntl``). Windows is not supported in v1.
 
