@@ -37,7 +37,7 @@ Design decisions baked into the configs:
 
 `experiments/shared/datasets/cve50-2026-06-09.lock.yaml` records the seed (`20260609`), the
 50 selected instance ids (identical across all four `dataset.yaml`), and the 2-instance smoke
-pair. Regenerate with `uv run python -m experiments.shared.scripts.curate_cve50`.
+pair.
 
 Smoke pair: `openexr.cve-2020-16589`, `faad2.cve-2018-20196` (chosen as the first two seeded
 instances with local `secb-tools` images, second from a different project).
@@ -49,7 +49,7 @@ instances with local `secb-tools` images, second from a different project).
 experiments/<study>/smoke.sh
 
 # all four studies CONCURRENTLY (one matrix process each, --parallel 2 → 8 runs in flight)
-experiments/smoke-all-2026-06-09.sh        # logs: temp/smoke-2026-06-09/<study>.log
+experiments/run-cycle.sh <cycle-label>     # logs: temp/<cycle-label>/<study>.log
 
 # full 50-instance run for one study
 set -a; source deployment/.env; set +a; export POSTGRES_HOST=localhost
@@ -78,5 +78,3 @@ uv run python -m experiments.shared.scripts.study_sql check --studies $ALL   # r
 preserved — this is the cross-provider-fair number for the hypothesis), and `reported_usd`
 (provider-billed, as a cross-check). `check` validates the recomputation: drift is 0.0 for
 all three models on the smoke data.
-
-See `SMOKE_FINDINGS_2026-06-09.md` for the smoke results and the improvement plan.
