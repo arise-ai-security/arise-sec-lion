@@ -16,6 +16,7 @@ from uuid import UUID
 from config.settings import ApiSettings
 from core.domain.events.events import ChildSpawned
 from experiments.shared.evaluation.models import RunData
+from experiments.shared.evaluation.oracle import build_oracle_for_manifest
 
 
 logger = logging.getLogger(__name__)
@@ -53,16 +54,28 @@ def _flatten_grouped(grouped: dict[UUID, list]) -> list:
     return flat
 
 
-async def load_run(run_id: str | UUID, *, runs_dir: Path = RUNS_DIR) -> RunData:
+async def load_run(
+    run_id: str | UUID,
+    *,
+    runs_dir: Path = RUNS_DIR,
+    with_oracle: bool = False,
+    include_gold_patch: bool = False,
+) -> RunData:
     """Load all events (from Postgres) and artifacts metadata for a run.
 
     Args:
         run_id: The run/root (BOSS) aggregate id; also the ``runs/<run_id>/`` dir.
         runs_dir: Override the runs directory (for tests).
+        with_oracle: Resolve and attach the host-side :class:`CveOracle` from the
+            manifest's ``task`` slug. ``None`` if the dataset JSON cannot be found
+            (judges then degrade to mechanical-only). Off by default so the wired
+            metric paths and DB-free tests are unaffected.
+        include_gold_patch: When resolving the oracle, also carry the host-side
+            secret gold ``patch`` (patch-correctness judge only; never a prompt).
 
     Returns:
-        A :class:`RunData` bundling the flat event stream, run directory, and
-        parsed manifest.
+        A :class:`RunData` bundling the flat event stream, run directory,
+        parsed manifest, and (optionally) the CVE oracle.
     """
     root_id = _coerce_run_id(run_id)
     settings = ApiSettings.load()
@@ -79,11 +92,18 @@ async def load_run(run_id: str | UUID, *, runs_dir: Path = RUNS_DIR) -> RunData:
         await store.disconnect()
 
     run_dir = runs_dir / str(root_id)
+    manifest = _read_manifest(run_dir)
+    oracle = (
+        build_oracle_for_manifest(manifest, include_gold_patch=include_gold_patch)
+        if with_oracle
+        else None
+    )
     return RunData(
         run_id=root_id,
         events=_flatten_grouped(grouped),
         run_dir=run_dir,
-        manifest=_read_manifest(run_dir),
+        manifest=manifest,
+        cve=oracle,
     )
 
 

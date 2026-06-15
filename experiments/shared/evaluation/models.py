@@ -62,19 +62,48 @@ class ToolCategory(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class CveOracle:
+    """Host-side CVE ground truth for offline judging, projected for the eval layer.
+
+    A raw (plugin-free) projection of the host dataset JSON — the *same* file the
+    harness resolved to launch the run. Carries only the judging fields verbatim:
+    the expected-failure oracle (``sanitizer`` / ``sanitizer_report`` /
+    ``bug_report`` / ``bug_description``) that is already rendered to the agent,
+    plus the optional host-side secret ``gold_patch`` consumed *only* by the
+    patch-correctness judge. ``gold_patch`` must NEVER feed a prompt (mirrors the
+    plugin's ``_PROMPT_FORBIDDEN_FIELDS``).
+
+    Every field is a verbatim copy of the dataset JSON — no semantic derivation
+    (no expected-error class, no crash-frame extraction). All semantic judgement
+    is deferred to the LLM judges, which are fed these raw bytes.
+    """
+
+    instance_id: str
+    sanitizer: str
+    sanitizer_report: str
+    bug_report: str
+    bug_description: str
+    base_commit: str = ""
+    gold_patch: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RunData:
     """Everything an evaluation function needs for one run.
 
     ``events`` is the flat, time-ordered event stream for the whole agent
     hierarchy (boss + all descendants). ``run_dir`` is ``runs/<run_id>/`` on
     disk. ``manifest`` is the parsed ``run_manifest.json`` (may be empty if
-    absent).
+    absent). ``cve`` is the optional host-side ground-truth oracle threaded in at
+    the loader/harness layer (``None`` when unavailable — judges degrade to
+    mechanical-only).
     """
 
     run_id: UUID
     events: list[DomainEvent]
     run_dir: Path
     manifest: dict[str, Any]
+    cve: CveOracle | None = None
 
 
 class CostByRole(BaseModel):
