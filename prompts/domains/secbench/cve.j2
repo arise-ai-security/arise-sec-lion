@@ -8,10 +8,10 @@
     </cve_instance>
 
     <environment>
-        - Build script: `/src/build.sh` (outside code repository)
-        - Testcase output: `/testcase`
+        - Build recipe consumed by `secb build`: `{{ artifact_paths.build_script }}` (outside code repository)
+        - Testcase output: `{{ artifact_dirs.testcase }}`
         {% if has_dockerfile %}- Dockerfile available for reproducible setup{% endif %}
-        {% if has_build_script %}- Build script provided for compiling with sanitizers{% endif %}
+        {% if has_build_script %}- Build script provided as the editable recipe for `secb build`{% endif %}
     </environment>
 
     **Rules**: DO NOT disable sanitizer options.
@@ -23,12 +23,12 @@
     - ASan heap-use-after-free → **CWE-416**: object lifecycle, dangling pointers after free
     - UBSan → **CWE-758**: integer overflow, null deref, shift amounts
 
-    **Tool prescriptions by CWE** (parse structured output into findings; don't dump raw terminal). Baseline for all memory-safety CWEs: reuse any existing AFL++/libFuzzer/honggfuzz corpus in `/src/` before crafting a PoC.
+    **Tool prescriptions by CWE** (parse structured output into findings; don't dump raw terminal). Baseline for all memory-safety CWEs: reuse any existing AFL++/libFuzzer/honggfuzz corpus in `{{ artifact_dirs.source }}/` before crafting a PoC.
     - **CWE-401**: `valgrind --leak-check=full --show-leak-kinds=all --error-exitcode=1`; `cppcheck --enable=all --xml` (grep `error id="memleak"`); `cflow -r <fn>`; gdb breakpoints at malloc/free.
     - **CWE-122/121**: `ASAN_OPTIONS=detect_stack_use_after_return=1`; `cppcheck --enable=all --xml` (grep `bufferAccessOutOfBounds`); `valgrind --tool=memcheck`; gdb `x/Nx addr`.
     - **CWE-416**: `ASAN_OPTIONS=detect_stack_use_after_return=1:detect_container_overflow=1`; `cppcheck --enable=all --xml`; gdb `watch` on the pointer; `cflow <fn>`; NULL freed pointers after fix.
     - **CWE-476/758**: `cppcheck --enable=all --xml` (grep `nullPointer`); ASan (catches NULL deref as SEGV); gdb `run; bt full; info locals`; `addr2line -e <bin> -a <addr>`.
 
-    After each tool run, write a parsed summary to `/testcase/` (e.g. `cppcheck ... --xml 2>raw.xml; grep -A2 'error id=' raw.xml > /testcase/cppcheck_findings.txt`). Install tools with `apt-get install -y <tool>` as needed.
+    After each tool run, write a parsed summary to `{{ artifact_dirs.testcase }}/` (e.g. `cppcheck ... --xml 2>raw.xml; grep -A2 'error id=' raw.xml > {{ artifact_dirs.testcase }}/cppcheck_findings.txt`). Install tools with `apt-get install -y <tool>` as needed.
 </domain>
 {% endif %}

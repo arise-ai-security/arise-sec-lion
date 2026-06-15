@@ -1,0 +1,32 @@
+{% macro secb_build_validation(artifact_paths, phase_commands) -%}
+```bash
+nohup bash -c 'secb build; echo "exit=$?" > {{ phase_commands.build.exit }}' > {{ phase_commands.build.log }} 2>&1 &
+echo "launched secb build (pid $!)"
+[ -f {{ phase_commands.build.exit }} ] && cat {{ phase_commands.build.exit }} && tail -n 40 {{ phase_commands.build.log }} || tail -n 20 {{ phase_commands.build.log }}
+```
+{%- endmacro %}
+
+{% macro secb_repro_loop(phase_commands) -%}
+```bash
+nohup bash -c 'for N in 1 2 3; do
+    secb repro > {{ phase_commands.repro_loop.run_log }} 2>&1
+    echo "exit=$?" >> {{ phase_commands.repro_loop.run_log }}
+  done; echo done > {{ phase_commands.repro_loop.exit }}' > /dev/null 2>&1 &
+echo "launched secb repro loop (pid $!)"
+```
+{%- endmacro %}
+
+{% macro secb_fix_validation(phase_commands) -%}
+```bash
+nohup bash -c 'secb patch; patch_rc=$?; echo "patch_exit=$patch_rc"
+  if [ "$patch_rc" -ne 0 ]; then echo "secb patch failed; skipping build/repro"; echo done > {{ phase_commands.fix_loop.exit }}; exit 0; fi
+  secb build; build_rc=$?; echo "build_exit=$build_rc"
+  if [ "$build_rc" -ne 0 ]; then echo "secb build failed; skipping repro"; echo done > {{ phase_commands.fix_loop.exit }}; exit 0; fi
+  for N in 1 2 3; do
+    secb repro > {{ phase_commands.fix_loop.run_log }} 2>&1
+    echo "exit=$?" >> {{ phase_commands.fix_loop.run_log }}
+  done
+  echo done > {{ phase_commands.fix_loop.exit }}' > {{ phase_commands.fix_loop.log }} 2>&1 &
+echo "launched secb patch/build/repro validation (pid $!)"
+```
+{%- endmacro %}

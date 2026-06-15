@@ -1,12 +1,29 @@
 Synthesize the build, exploit, and fix findings into a security analysis report.
-Deliverable:
-- `/testcase/security_report.md` (non-empty; covers executive summary,
-  vulnerability details with root cause, PoC evidence, fix implementation,
-  validation results, references to specific file paths and command outputs)
+
+### Goal
+
+1. Synthesize Builder, Exploiter, and Fixer evidence into a factual security analysis report.
+2. Write `{{ artifact_paths.security_report }}` and ensure it is non-empty.
+3. Keep the report internally consistent: if root-cause analysis identifies file X as the bug origin, explain why the patch targets that file or justify any different target.
+
+### Mandatory Requirements
+
+- `{{ artifact_paths.security_report }}` exists and is non-empty.
+- Every substantive claim is backed by available context, artifact contents, command output, or code evidence.
+- If phases conflict, trust concrete tool output over summaries.
+- Missing or failed phases are reported as missing or failed; do not fabricate evidence.
+
+### Deliverables
+{% for item in required_files_with_purpose["Reporter"] %}
+- {{ item.path }} ({{ item.purpose }})
+{%- endfor %}
+
 {% if include_validation_gate %}
 
-Validate the report before finishing: `/testcase/security_report.md` MUST
-exist and be non-empty, and it MUST be internally consistent — if the root
+### Validation Checks
+
+Validate the report before finishing: `{{ artifact_paths.security_report }}`
+exists and is non-empty, and it is internally consistent — if the root
 cause analysis identifies file X as the bug origin, the fix description must
 explain why the patch targets that file (or explicitly justify targeting a
 different file). Verify the file exists and is non-empty before concluding.

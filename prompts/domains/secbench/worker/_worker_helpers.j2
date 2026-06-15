@@ -1,0 +1,49 @@
+{# Shared worker prompt macros for BEF phase shells. #}
+
+{% macro peer_context_reuse_critical() %}
+### Peer Context Reuse (CRITICAL)
+{% if shared_code_enabled %}
+Any source files already read by upstream workers are in `<provided_source_files>` — build on them; only re-`view` a source file after you edit it or one not provided there.
+{% endif %}
+**BEFORE doing any analysis, check what siblings already produced:**
+1. Run `ls -la {{ artifact_dirs.testcase }}/` to see existing artifacts from upstream siblings
+2. Read sibling context updates for key findings (PoC paths, binary locations, sanitizer errors)
+3. If a sibling already found a PoC file or repro command — validate it, then reuse it when it matches the runtime contract
+4. On retry: check if OTHER siblings completed while you were retrying — their results may solve your problem
+
+If upstream siblings (e.g., PoC-Researcher) shared findings, **validate and build on their work**:
+- Check that referenced files actually exist
+- Verify reported function names match the source code
+- Sibling binary-path findings are advisory only. Any executable path you use must be listed in `{{ artifact_paths.binary_paths }}`; never accept a sibling-discovered alternative.
+- **Peer findings come from real tool runs** (gdb backtraces, sanitizer output, cflow traces). If a peer's experimental results point to a different file or function than what the manager described, follow the peer's findings — they have empirical evidence.
+- If peer findings are wrong or incomplete, investigate independently rather than failing
+- **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself. Do not skip your task because a dependency failed.
+{% endmacro %}
+
+{% macro evidence_files_section(phase_key, extra_note='') %}
+### Evidence files
+
+The REQUIRED {{ phase_key|lower }} deliverables are exactly those in the phase contract above
+(`{{ required_files[phase_key]|join('`, `') }}`{% if validation_required.get(phase_key) %}, `{{ validation_required[phase_key]|join('`, `') }}`{% endif %})
+— no more, no less.{{ extra_note }}
+
+Beyond those, saving useful intermediate output under
+`{{ artifact_dirs.testcase }}/` is ENCOURAGED but NOT required (e.g. static-analysis findings →
+`{{ artifact_dirs.testcase }}/static_findings.txt`, a sanitizer trace → `{{ artifact_dirs.testcase }}/leak_trace.txt`
+or `{{ artifact_dirs.testcase }}/asan_crash.txt`). After writing any file, run
+`echo "=== <filename> ===" && cat {{ artifact_dirs.testcase }}/<filename>` so its contents reach the evaluation harness.
+{% endmacro %}
+
+{#
+Handoff preamble helper (the text that appears in the worker shell *before* the
+include of the phase contract). Parameterized so builder/exploiter/fixer can
+supply the phase-specific "is already complete" sentence and the MUST instruction
+for repro/patch/etc.
+#}
+{% macro handoff_preamble(upstream_phase, upstream_complete_sentence, must_instruction) %}
+**{{ upstream_phase }} phase is already complete** — {{ upstream_complete_sentence }}
+
+**Handoff contract (tied to the phase and role labels you were given)**: {{ must_instruction }}
+
+Do not invent a different binary path that bypasses the upstream contract. If context or an upstream artifact tells you to use a specific executable location "AAA", then "AAA" must have been produced by the responsible upstream phase. Verifying upstream success at that exact location is part of fulfilling this phase.
+{% endmacro %}

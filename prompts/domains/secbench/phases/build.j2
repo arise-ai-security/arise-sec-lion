@@ -1,25 +1,59 @@
 Build the repository with sanitizer instrumentation.
-Deliverables:
-- `/testcase/base_commit_hash` (the vulnerable commit hash)
-- `/src/build.sh` (improved, standalone, sanitizer flags preserved)
-- `/testcase/repo_changes.diff` (source changes vs. base commit, may be empty)
-- `/testcase/packages.txt` (apt packages installed during the build, one per line)
+{% from 'domains/secbench/_artifact_contract.j2' import deliverables_for_phase %}
+{% from 'domains/secbench/_validation_macros.j2' import secb_build_validation %}
+
+### Goal
+
+1. Run `secb build` from the CVE work directory to build the selected base commit with `{{ sanitizer }}` sanitizer enabled.
+2. Repair `{{ artifact_paths.build_script }}` or source setup only when `secb build` fails or produces no usable downstream executable.
+3. Write `{{ artifact_paths.binary_paths }}` with the exact Builder-produced executable path(s), one per line.
+4. Record `{{ artifact_paths.base_commit_hash }}` and `{{ artifact_paths.repo_changes_diff }}`; the diff may be empty when no Builder source edits were needed.
+5. Prove the build actually executes with the sanitizer: the detached `secb build` sentinel reports `exit=0`, and each declared binary exists, is executable, and runs without missing sanitizer runtime errors.
+
+### Mandatory Requirements
+
+- `secb build` is the primary build/validation command.
+- `{{ artifact_paths.build_script }}` remains the editable project build recipe, but direct execution of it is only troubleshooting.
+- Sanitizer flags from the SEC-bench compile environment stay enabled throughout configure, compile, link, and runtime checks.
+- Downstream phases can run the produced executable without guessing paths or rebuilding.
+- `{{ artifact_paths.binary_paths }}` lists only paths produced by this Builder phase.
+- The produced executable starts successfully with the sanitizer runtime available.
+
+### Deliverables
+{{ deliverables_for_phase("Builder", required_files_with_purpose, validation_required, artifact_paths) }}
+
+### Builder Baseline
+
+After writing `{{ artifact_paths.repo_changes_diff }}`, make Builder source/setup edits into
+a local baseline before any fix work starts:
+```bash
+cd {{ work_dir }}
+git diff --no-color "$(cat {{ artifact_paths.base_commit_hash }})" > {{ artifact_paths.repo_changes_diff }}
+if [ -s {{ artifact_paths.repo_changes_diff }} ]; then
+  git reset --hard "$(cat {{ artifact_paths.base_commit_hash }})"
+  git apply --index {{ artifact_paths.repo_changes_diff }}
+  git diff --cached --no-color > {{ artifact_paths.repo_changes_diff }}.staged
+  cmp {{ artifact_paths.repo_changes_diff }} {{ artifact_paths.repo_changes_diff }}.staged
+  git -c user.name=arise-builder -c user.email=arise-builder@example.invalid commit -m arise-builder-baseline
+  rm -f {{ artifact_paths.repo_changes_diff }}.staged
+fi
+```
+- This commit is local runtime state, not a deliverable. It establishes the Builder-adjusted baseline so `{{ artifact_paths.model_patch }}` can contain only Fixer edits.
+- Do not use `git add -A`; it can commit untracked build outputs or generated files that `{{ artifact_paths.repo_changes_diff }}` cannot replay.
 {% if include_validation_gate %}
+
+### Validation Steps
 
 {% include 'domains/secbench/phases/_detached_exec.j2' %}
 
-Validate the build before continuing: the project MUST compile with the
-`{{ sanitizer }}` sanitizer enabled AND the instrumented binary MUST actually
-execute. Run the sanitizer build detached and poll its sentinel rather than
+Validate the build before continuing: the project compiles with the
+`{{ sanitizer }}` sanitizer enabled and the instrumented binary actually
+executes. Run `secb build` detached and poll its sentinel rather than
 blocking one shell call on it:
-```bash
-nohup bash -c '/src/build.sh; echo "exit=$?" > /testcase/build.exit' > /testcase/build.log 2>&1 &
-echo "launched build (pid $!)"
-# poll from short calls until /testcase/build.exit appears:
-[ -f /testcase/build.exit ] && cat /testcase/build.exit && tail -n 40 /testcase/build.log || tail -n 20 /testcase/build.log
-```
-Once the build reports `exit=0`, run the main binary with `--help` or `-h` (a
-short call — no need to detach it); if it fails to load the sanitizer runtime
+{{ secb_build_validation(artifact_paths, phase_commands) }}
+Once the build reports `exit=0`, read `{{ artifact_paths.binary_paths }}` and run
+each declared binary with `--help` or `-h` when supported (short calls; no need
+to detach them); if a binary fails to load the sanitizer runtime
 (e.g. "cannot open shared object file: libclang_rt.asan" or "libasan"), the
 build is NOT complete — install the matching ASan runtime and fix
 `LD_LIBRARY_PATH` until the instrumented binary runs. A build that compiles but

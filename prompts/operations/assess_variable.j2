@@ -1,17 +1,19 @@
 <guidance_precedence>
     If domain-specific guidance earlier in this prompt prescribed how to decide
     execute vs decompose (or a required subtask breakdown), follow that guidance —
-    it overrides the general execute/decompose criteria and counts below.
+    it overrides the general execute/decompose criteria and counts below unless
+    live system constraints make that impossible; then return
+    `constraints_unsatisfiable`.
 </guidance_precedence>
 
 <assessment_constraints>
     {% if at_max_depth %}
-    **CONSTRAINT: Maximum depth reached.** You MUST execute directly.
+    **CONSTRAINT: Maximum depth reached.** If domain-specific guidance requires decomposition, return `constraints_unsatisfiable`; otherwise execute directly.
     {% elif depth_remaining is not none and depth_remaining <= 1 %}
     **Note**: {{ depth_remaining }} level(s) remaining — prefer executing directly.
     {% endif %}
     {% if agents_remaining is not none and agents_remaining <= 0 %}
-    **CONSTRAINT: No agents remaining.** You MUST execute directly.
+    **CONSTRAINT: No agents remaining.** If domain-specific guidance requires decomposition, return `constraints_unsatisfiable`; otherwise execute directly.
     {% endif %}
 </assessment_constraints>
 
@@ -52,7 +54,7 @@
     1. Pure JSON only (no markdown, no commentary)
     2. `action`: exactly `"execute"` or `"decompose"`
     {% if at_max_depth or (agents_remaining is not none and agents_remaining <= 0) %}
-        3. **FORCED**: You MUST choose `"execute"` (constraint reached)
+        3. If domain-specific guidance requires decomposition but these constraints prevent it, return `constraints_unsatisfiable`; otherwise choose `"execute"`.
     {% else %}
         3. If decomposing: 2-3 subtasks optimal{% if max_subtasks %} (max {{ max_subtasks }}){% endif %}
 

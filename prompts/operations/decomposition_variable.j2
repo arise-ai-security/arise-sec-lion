@@ -1,7 +1,9 @@
 <guidance_precedence>
     If domain-specific guidance earlier in this prompt prescribed an exact number of
     subtasks or a fixed phase breakdown, follow that exact count — it overrides the
-    general subtask-count guidance and the "2-3 subtasks optimal" default below.
+    general subtask-count guidance and the "2-3 subtasks optimal" default below
+    unless live system constraints make that impossible; then return
+    `constraints_unsatisfiable`.
 </guidance_precedence>
 
 <decomposition_constraints>
@@ -11,7 +13,7 @@
     **Note**: {{ depth_remaining }} level(s) remaining — prefer simpler subtasks.
     {% endif %}
     {% if max_subtasks %}
-    **CONSTRAINT: Maximum {{ max_subtasks }} subtasks.**
+    **CONSTRAINT: Maximum {{ max_subtasks }} subtasks unless domain-specific guidance earlier requires a larger exact breakdown. If that exact breakdown cannot fit live system constraints, return `constraints_unsatisfiable`.**
     {% endif %}
     {% if agents_remaining is not none and agents_remaining >= 0 %}
     **CONSTRAINT: {{ agents_remaining }} agents remaining ({{ current_total_agents }}/{{ max_total_agents }}).**
@@ -86,7 +88,7 @@
     1. Pure JSON array only (no markdown, no commentary, no tool-call wrappers)
     2. 2-3 subtasks optimal
     {% if max_subtasks %}
-        3. **HARD LIMIT**: Maximum {{ max_subtasks }} subtasks
+        3. **LIVE LIMIT**: Maximum {{ max_subtasks }} subtasks unless domain-specific guidance requires an exact larger breakdown; if so, return `constraints_unsatisfiable` rather than silently merging or dropping required subtasks.
     {% endif %}
     {% if agents_remaining is not none and agents_remaining >= 0 %}
         4. **AGENT LIMIT**: Maximum {{ agents_remaining }} subtasks (remaining capacity)
@@ -99,7 +101,7 @@
     6. Required fields: `description`, `justification`, `config`
     7. Optional fields: `depends_on`, `estimated_complexity`, `success_criteria`, `task_type`, `target_paths`,
     `symbols`, `search_hints`
-    8. `success_criteria` MUST describe observable, verifiable outcomes (file exists, command exits 0, output contains pattern). Do NOT specify project-specific build tools, internal library names, or implementation details the worker cannot control.
+    8. `success_criteria` MUST describe observable, verifiable outcomes (file exists, command exits 0, output contains pattern). Do NOT specify project-specific build tools, internal library names, or implementation details the worker cannot control. If domain guidance explicitly names required runtime wrapper commands, those wrapper commands are allowed because they define the observable validation interface.
     9. Temperature: 0.0-2.0 | max_tokens: 1-100000
     {% if at_max_depth or max_subtasks or (agents_remaining is not none and agents_remaining >= 0) %}
 

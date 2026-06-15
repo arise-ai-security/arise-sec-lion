@@ -3,6 +3,12 @@
 
 You are the final worker in the pipeline. Your job is to synthesize ALL findings from Builder, Exploiter, and Fixer into a comprehensive security report.
 
+{# Reporter is the synthesis outlier (no "upstream phase complete" handoff preamble).
+   Common peer/evidence patterns are in worker/_worker_helpers.j2 for the BEF shells.
+   The shared phase partial (report.j2) is included below; its Goal + consistent
+   text across all Reporter workers helps the final synthesis prefix cache.
+#}
+
 {% include 'domains/secbench/phases/report.j2' %}
 
 ### Step-by-step procedure (follow this EXACTLY)
@@ -11,15 +17,15 @@ You are the final worker in the pipeline. Your job is to synthesize ALL findings
 
 Run these shell commands to collect all available artifacts:
 ```bash
-ls -la /testcase/
-cat /testcase/base_commit_hash
-head -50 /testcase/repo_changes.diff 2>/dev/null || echo "no repo_changes.diff"
-cat /testcase/repro.sh 2>/dev/null || echo "no repro.sh"
-head -50 /testcase/model_patch.diff 2>/dev/null || echo "no model_patch.diff"
-cat /testcase/static_analysis.md 2>/dev/null || echo "no static_analysis.md"
-cat /testcase/asan_output.txt 2>/dev/null; cat /testcase/asan_full.log 2>/dev/null; cat /testcase/asan_leak.log 2>/dev/null
-cat /testcase/valgrind_convert.txt 2>/dev/null; cat /testcase/valgrind_run.txt 2>/dev/null
-cat /testcase/cppcheck*.txt 2>/dev/null || echo "no cppcheck output"
+ls -la {{ artifact_dirs.testcase }}/
+cat {{ artifact_paths.base_commit_hash }}
+head -50 {{ artifact_paths.repo_changes_diff }} 2>/dev/null || echo "no repo_changes.diff"
+cat {{ artifact_paths.repro_script }} 2>/dev/null || echo "no repro.sh"
+head -50 {{ artifact_paths.model_patch }} 2>/dev/null || echo "no model_patch.diff"
+cat {{ artifact_dirs.testcase }}/static_analysis.md 2>/dev/null || echo "no static_analysis.md"
+cat {{ artifact_dirs.testcase }}/asan_output.txt 2>/dev/null; cat {{ artifact_dirs.testcase }}/asan_full.log 2>/dev/null; cat {{ artifact_dirs.testcase }}/asan_leak.log 2>/dev/null
+cat {{ artifact_dirs.testcase }}/valgrind_convert.txt 2>/dev/null; cat {{ artifact_dirs.testcase }}/valgrind_run.txt 2>/dev/null
+cat {{ artifact_dirs.testcase }}/cppcheck*.txt 2>/dev/null || echo "no cppcheck output"
 ```
 
 Also read the vulnerable source code referenced in sibling context (the affected file paths from the CVE):
@@ -38,9 +44,9 @@ Your briefing above contains shared decisions and result summaries from Builder,
 **Step 3: Write the report using the FILE EDITOR TOOL**
 
 Use the **file editor** (create/write tool) to create:
-`/testcase/security_report.md`
+`{{ artifact_paths.security_report }}`
 
-`/testcase` is the canonical shared artifact path. Native file tools may use it
+`{{ artifact_dirs.testcase }}` is the canonical shared artifact path. Native file tools may use it
 as a run-scoped alias for the host testcase mirror; shell commands still read it
 inside the container via `shell_in_container`.
 
@@ -84,12 +90,12 @@ Write the report with this structure:
 
 **Step 4: Verify the file was created**
 
-After writing, verify the file exists using the file editor's read function on `/testcase/security_report.md`. Confirm it is non-empty.
+After writing, verify the file exists using the file editor's read function on `{{ artifact_paths.security_report }}`. Confirm it is non-empty.
 
 ### Rules
 - Be factual — only include findings evidenced by actual tool output or code
 - Reference specific file paths, line numbers, and command outputs
 - If a phase failed or was incomplete, note what is missing
 - Do NOT fabricate results — if evidence is unavailable, state that clearly
-- The report MUST be written using the file editor tool to `/testcase/security_report.md`, not via shell redirection
+- The report MUST be written using the file editor tool to `{{ artifact_paths.security_report }}`, not via shell redirection
 </domain_instructions>

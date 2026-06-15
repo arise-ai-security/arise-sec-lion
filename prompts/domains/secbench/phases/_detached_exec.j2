@@ -6,10 +6,10 @@ is killed mid-run and the work is wasted. Launch anything you expect to exceed
 when it finishes — then poll that sentinel from SEPARATE short calls:
 
 ```bash
-nohup bash -c '<cmd>; echo "exit=$?" > /testcase/<name>.exit' > /testcase/<name>.log 2>&1 &
+nohup bash -c '<cmd>; echo "exit=$?" > {{ artifact_dirs.testcase }}/<name>.exit' > {{ artifact_dirs.testcase }}/<name>.log 2>&1 &
 echo "launched <name> (pid $!)"
-# then, in separate short tool calls, until /testcase/<name>.exit appears:
-[ -f /testcase/<name>.exit ] && cat /testcase/<name>.exit && tail -n 40 /testcase/<name>.log || tail -n 20 /testcase/<name>.log
+# then, in separate short tool calls, until {{ artifact_dirs.testcase }}/<name>.exit appears:
+[ -f {{ artifact_dirs.testcase }}/<name>.exit ] && cat {{ artifact_dirs.testcase }}/<name>.exit && tail -n 40 {{ artifact_dirs.testcase }}/<name>.log || tail -n 20 {{ artifact_dirs.testcase }}/<name>.log
 ```
 
 Poll only with short, cheap commands (`tail`, `ls`, the `[ -f … ]` check above).
