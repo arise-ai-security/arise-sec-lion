@@ -28,6 +28,7 @@ overrides:
   # OpenHands native tools allowlisted above; terminal/browser omitted —
   # shell reaches the CVE container only via the MCP shell_in_container tool.
   worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
+  worker.tool_params.openhands.mcp_tool_timeout_seconds: 600
   worker.timeout: 3600
   worker.max_iterations_per_run: 250
   output.directory: ./runs
