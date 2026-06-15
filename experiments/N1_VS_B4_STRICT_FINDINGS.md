@@ -8,11 +8,11 @@ After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause
 
 | Goal | Expected | **Measured (honest, strict)** | Holds? |
 |---|---|---|---|
-| 3 — success rate | N1 < B4 | **N1 6/9 (0.67) vs B4 2/9 (0.22)** | ❌ inverted |
+| 3 — success rate | N1 < B4 | **N1 6/9 (0.67) vs B4 3/9 (0.33)** (clean, contamination-corrected) | ❌ inverted |
 | 2 — cost | N1 > B4 | **N1 avg $1.35 vs B4 avg $1.52** | ❌ inverted (avg) |
 | 1 — B4 cache | B4 highest | **N1 ~0.97 vs B4 ~0.94** (B4 worker 0.95 ✓, boss ~0.5, **manager ~0.0**) | ❌ inverted |
 
-**As configured, N1 beats B4 instance-by-instance:** every instance B4 passes (libarchive, php), N1 also passes; N1 passes 4 more that B4 fails; 3 fail for both. This is "N1-as-configured beats B4-as-configured," **not** a topology claim — see the confound under Root Causes and the Limitations section.
+**As configured, N1 beats B4 instance-by-instance:** every instance B4 passes (libarchive, php, imagemagick), N1 also passes; N1 passes 3 more that B4 fails (libxml2, openexr, readstat); 3 fail for both (gpac, matio, md4c). This is "N1-as-configured beats B4-as-configured," **not** a topology claim — see the confound under Root Causes and the Limitations section.
 
 ## Per-instance strict verdicts
 
@@ -21,8 +21,8 @@ After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause
 | matio (easy) | ❌ | ❌ | both fail at **repro** (`cve_reproduced=F`) — golden bug hard to reproduce for both |
 | md4c (easy) | ❌ | ❌ | both fail at repro (`cve_reproduced=F`) |
 | readstat (easy) | ✅ | ❌ | B4 Builder declared **wrong binary_paths** (build ok, paths don't resolve) |
-| imagemagick (mid) | ✅ | ❌* | B4 `patch_root_cause=F` + a worker 900s timeout (*re-run pending) |
-| libxml2 (mid) | ✅ | ❌* | B4 `cve_reproduced=F`+`patch=F`; **B4 worker CHEATED** (`git show` of fix commits) and still failed (*re-run pending) |
+| imagemagick (mid) | ✅ | ✅ | B4 originally failed on a crisis-induced 900s worker timeout; **clean re-run PASSES** — contamination, now corrected |
+| libxml2 (mid) | ✅ | ❌ | B4 `cve_reproduced=F`+`patch=F`, **confirmed genuine on clean re-run**; B4 worker also git-recovered fix commits (`git show`) and still failed |
 | libarchive (mid) | ✅ | ✅ | both genuine; N1 git use = base-commit archaeology (not fix-recovery) |
 | gpac (hard) | ❌ | ❌ | both fail **provenance** — N1's `patch_validation` claims PASS/3-3 but `fix_loop.log` shows `patch does not apply` |
 | openexr (hard) | ✅ | ❌ | B4 Builder **`build.exit=2`** (gpt-5.4-mini produced a broken build); N1 built fine |
@@ -56,7 +56,7 @@ The three goals **cannot be met honestly** as the experiment is configured — B
 - **Strict success** = anti-leak seal ∧ 4 mechanical phase gates ∧ `cve_reproduced` ∧ `patch_root_cause` ∧ `execution_provenance` (all `gpt-5.5`, oracle-fed). Provenance judge revised to be architecture-fair (secb runs detached → judges the launch in the un-forgeable transcript + the real log files, not a transcript crash read-back) and hardened with a mechanical secb-launch precheck.
 - **Anti-leak verified:** worker prompts render the full secb contract with zero golden `secb_sh`/patch leakage (N1 + B4 sampled).
 - **`binary_genuine` is ADVISORY by design** (excluded from strict success, symmetric across arms): it false-positives on **libtool wrapper** build products — e.g. N1 readstat's declared binary `/src/readstat/readstat` is a legitimate `#!/bin/sh` libtool wrapper (6282 B, not ELF) that execs the real binary under `.libs/`. Making it blocking would unfairly fail legitimate libtool builds.
-- **Contamination controlled:** the host hit swap exhaustion under 6 concurrent compiles; N1 had **0** worker timeouts (clean), B4 had timeouts in imagemagick+libxml2 (being re-run cleanly — even if both flip, B4 = 4/9 < 6/9).
+- **Contamination controlled + resolved:** the host hit swap exhaustion under 6 concurrent compiles; N1 had **0** worker timeouts (clean). B4 had crisis timeouts in imagemagick+libxml2; clean re-runs show **imagemagick was contaminated (flips to PASS)** and **libxml2 is a genuine failure (still fails clean)**. Final: **B4 = 3/9**.
 
 ## Limitations (do not over-read)
 
@@ -65,4 +65,4 @@ The three goals **cannot be met honestly** as the experiment is configured — B
 - **Judge single-sample + same-family:** each judge is one `gpt-5.5` call (no multi-sample majority vote), and an OpenAI judge scores OpenAI-model outputs — a cross-family (e.g. Claude) audit + majority voting would harden confidence.
 - **Run selection = latest *successful* manifest per instance** (excludes killed/non-success exits): a curated snapshot, not randomized intention-to-treat.
 - **Provenance is a mitigation, not proof** — no authoritative `SecbCommandExecuted` event exists (SYSTEM_REFERENCE §V.7); the mechanical `_has_secb_launch` precheck accepts any `secb build|repro|patch` launch, not specifically repro+patch — the LLM judge backstops the rest.
-- **2 B4 reruns pending** (imagemagick, libxml2 contamination-suspects); even if both flip to success, B4 = 4/9 < N1 6/9.
+- **Contamination re-runs resolved:** imagemagick was contaminated (clean re-run PASSES → counted as success); libxml2 is a genuine failure (clean re-run still fails). Final **B4 = 3/9 < N1 6/9**.
