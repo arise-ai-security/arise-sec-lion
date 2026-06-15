@@ -35,14 +35,15 @@ After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause
 3. **Cost.** N1 avg $1.35 < B4 avg $1.52. B4 pays for boss+manager coordination (~$0.35/run) on top of worker cost. (N1 is higher-variance and can exceed B4 on context-heavy instances, e.g. imagemagick $2.49 — but on average N1 is cheaper.)
 4. **Cache.** B4 worker tier already excellent (~0.95, run-scoped `prompt_cache_key`). **Manager tier ≈ 0.0%** and boss ~0.5 → drag B4's overall below N1's flat ~0.97.
 
-## Goal 1 — the one legitimate lever (cache), with fix design
+## Goal 1 — cache lever EXHAUSTED (both mechanisms implemented, measured negative, reverted)
 
-**Evidence:** each B4 manager makes exactly **one** `task_assessment` call (~10.7K tokens) with `cache_read=0`; the 3–4 managers share a large prefix but all miss. Root cause: manager assessments fire **concurrently** (`max_concurrent_llm_calls=8`), so none populates the OpenAI prefix cache before the others read it — and the boss/manager LiteLLM path has **no `prompt_cache_key`** (that mechanism exists only for workers, `openhands_adapter.py:499-517,617,745`).
+**Evidence:** each B4 manager makes exactly **one** `task_assessment` call (~10.7K tokens) with `cache_read=0`; the boss/manager LiteLLM path had no `prompt_cache_key` (that mechanism existed only for workers).
 
-**Fix design (Codex-reviewable; not yet implemented — needs a B4 re-run to validate):**
-- Add `prompt_cache_key` pass-through to `LiteLLMAdapter.query*` → `litellm.completion(..., prompt_cache_key=...)`.
-- Plumb a **run-scoped** key for boss/manager calls (mirror the worker `run_scoped_prompt_cache_key`), so concurrent same-prefix assessments route to one cache shard.
-- Because concurrent first-calls still miss until one populates the cache, additionally **serialize the manager assessment burst** (or issue one warm-up call first). Expected manager cache 0% → ~0.6; overall B4 cache gains are modest (boss+manager are a small token share vs the worker tier).
+**Implemented → measured → reverted (the honest "re-run to confirm the metric moved" half):**
+1. **Run-scoped `prompt_cache_key` on boss/manager calls** (Codex-reviewed; added an OpenAI-only guard after Codex caught that it would crash Claude configs) → re-ran 3 B4 instances → **manager cache stayed 0.0%** (readstat even dropped 0.63→0.0). A key alone does not beat a cold concurrent burst.
+2. **Serialize the assessment burst** (`max_concurrent_llm_calls=1`) + key → re-ran matio B4 (19 min vs ~5) → **manager cache STILL 0.0%**; boss cache rose 0.47→0.85, but cost rose $1.58→$1.72 and the run was ~4× slower — net-negative.
+
+**Root cause, proven by the serialized-still-0% result:** the per-phase manager assessment prompts are **prefix-disjoint** (each manager assesses a different phase, so prompts diverge early) — manager N+1 *cannot* hit manager N's cache regardless of ordering or key. Fixing it needs **prompt-template restructuring** (move phase-specific content after a shared cacheable prefix), which would alter the experiment's shared-prompt control. Both changes were **reverted** (no measured benefit; serialization raised cost). **Goal 1 is not achievable** without a prompt-template change — and even then B4's worker-dominated overall (~0.95) stays below N1's flat ~0.97.
 
 ## Honest verdict on Task 4
 
