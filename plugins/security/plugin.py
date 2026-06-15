@@ -147,6 +147,7 @@ class SecurityDomainPlugin(DomainPlugin):
         return PreparedRunWorkspace(
             working_directory=str(existing.host_root),
             path_aliases=existing.path_aliases(),
+            sealed_surface=existing.sealed_surface,
         )
 
     async def prepare_worker_execution(

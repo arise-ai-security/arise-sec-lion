@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
-from core.ports.domain_plugin_port import WorkspacePathAlias
+from core.ports.domain_plugin_port import SealedRuntimeSurface, WorkspacePathAlias
 from plugins.security.cve_instance import CVEInstance
 
 
@@ -31,6 +31,7 @@ class SecBenchWorkspace:
     helper_script: Path
     container_work_dir: str = "/work"
     container_workspace_root: str = "/arise-run"
+    sealed_surface: SealedRuntimeSurface | None = None
 
     @property
     def host_work_root(self) -> Path:

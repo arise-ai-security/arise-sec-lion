@@ -13,7 +13,10 @@ from plugins.security.container_runtime import (
     SecBenchWorkspace,
 )
 from plugins.security.cve_instance import CVEInstance
-from plugins.security.docker_runtime import DockerSecBenchRuntime
+from plugins.security.docker_runtime import (
+    DockerSecBenchRuntime,
+    _FORBIDDEN_TESTCASE_ARTIFACTS,
+)
 
 
 def test_exec_helper_falls_back_to_root_when_project_dirs_disappear(
@@ -47,16 +50,44 @@ def test_exec_helper_falls_back_to_root_when_project_dirs_disappear(
     assert 'docker exec -i -w / "$CONTAINER" bash -lc "$CMD"' in script
 
 
+def test_seed_runtime_scripts_replaces_symlinks_without_following(
+    tmp_path: Path,
+) -> None:
+    """Sealed runtime scripts must become regular files, not symlink targets."""
+    testcase_dir = tmp_path / "testcase"
+    testcase_dir.mkdir()
+    outside_repro = tmp_path / "outside-repro"
+    outside_patch = tmp_path / "outside-patch"
+    outside_repro.write_text("keep repro target", encoding="utf-8")
+    outside_patch.write_text("keep patch target", encoding="utf-8")
+    (testcase_dir / "repro.sh").symlink_to(outside_repro)
+    (testcase_dir / "patch.sh").symlink_to(outside_patch)
+
+    runtime = DockerSecBenchRuntime()
+    runtime._seed_runtime_scripts(testcase_dir)
+
+    assert outside_repro.read_text(encoding="utf-8") == "keep repro target"
+    assert outside_patch.read_text(encoding="utf-8") == "keep patch target"
+    assert not (testcase_dir / "repro.sh").is_symlink()
+    assert not (testcase_dir / "patch.sh").is_symlink()
+    assert "Arise seeded an empty" in (testcase_dir / "repro.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "apply_if_needed /testcase/model_patch.diff" in (
+        testcase_dir / "patch.sh"
+    ).read_text(encoding="utf-8")
+
+
 @pytest.mark.asyncio
-async def test_start_session_force_removes_container_when_secb_install_fails(
+async def test_start_session_force_removes_container_when_post_run_setup_fails(
     tmp_path: Path,
 ) -> None:
     """Audit BUG-B: ``docker run`` succeeds and yields a container_id; if a
-    post-run setup step (``_install_secb``, ``_add_git_safe_directory``,
-    chmod) raises, the container is already detached and the caller never
-    sees it (the session object is never returned). Pre-fix this leaked a
-    running container per failed run. Verify the runtime force-removes the
-    container before re-raising.
+    post-run setup step (git safe.directory, build.sh chmod, or the exec-helper
+    write) raises, the container is already detached and the caller never sees
+    it (the session object is never returned). Pre-fix this leaked a running
+    container per failed run. Verify the runtime force-removes the container
+    before re-raising.
     """
     workspace = SecBenchWorkspace(
         root_id=uuid4(),
@@ -91,15 +122,17 @@ async def test_start_session_force_removes_container_when_secb_install_fails(
         if len(invocations) == 1:
             assert cmd[:3] == ["docker", "run", "-d"]
             return (0, "abc1234567890\n", "")
-        # Second call is _install_secb's docker exec ... bash -lc ...
-        if cmd[:2] == ["docker", "exec"] and "bash" in cmd:
-            return (1, "", "secb install boom")
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
     runtime._run_command = _fake_run_command  # type: ignore[method-assign]
 
-    with pytest.raises(RuntimeError, match="secb install boom"):
+    def _boom(_session: object) -> None:
+        raise RuntimeError("post-run setup boom")
+
+    runtime._write_exec_helper = _boom  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="post-run setup boom"):
         await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
 
     # Then: a cleanup docker rm -f was issued against the leaked container.
@@ -159,6 +192,21 @@ async def test_start_session_skips_cleanup_when_post_run_setup_succeeds(
         cmd for cmd in invocations if cmd[:4] == ["docker", "rm", "-f", "abc123456789"]
     ]
     assert rm_invocations == []
+
+
+def test_sealed_dir_is_outside_the_bind_mounted_run_workspace(tmp_path: Path) -> None:
+    # Given: a run workspace root (bind-mounted wholesale at /arise-run).
+    run_output = tmp_path / "run-root"
+    run_output.mkdir()
+
+    # When: deriving the sealed directory for runtime files (secb-exec, secb).
+    sealed = DockerSecBenchRuntime._sealed_dir(run_output)
+
+    # Then: it is a sibling outside the run workspace, so no container bind mount
+    # or worker path alias reaches it — a root worker cannot tamper sealed files.
+    assert sealed != run_output
+    assert run_output.resolve() not in sealed.resolve().parents
+    assert sealed.parent == run_output.parent
 
 
 def _make_workspace(tmp_path: Path, root_id: UUID) -> SecBenchWorkspace:
@@ -575,3 +623,200 @@ async def test_ensure_image_no_registry_does_not_pull() -> None:
     with pytest.raises(RuntimeError, match="Build it first"):
         await runtime._ensure_image_exists("secb-tools:demo-patch")
     assert not any(cmd[:2] == ["docker", "pull"] for cmd in invocations)
+
+
+@pytest.mark.asyncio
+async def test_start_session_seals_delegating_secb_read_only(
+    tmp_path: Path,
+) -> None:
+    """secb is overlaid read-only from a sealed source outside every bind mount,
+    not written into the container where a root worker shell could rewrite it."""
+    # Given: a CVE with no dataset secb_sh and a prepared workspace.
+    workspace = _make_workspace(tmp_path, uuid4())
+    cve = _make_cve()
+    invocations: list[list[str]] = []
+
+    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+        invocations.append(list(cmd))
+        if cmd[:3] == ["docker", "run", "-d"]:
+            return (0, "abc1234567890\n", "")
+        return (0, "", "")
+
+    runtime = DockerSecBenchRuntime()
+    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+
+    # When: starting the worker session.
+    await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
+
+    # Then: secb is overlaid read-only over /usr/local/bin/secb, with no
+    # in-container `cat > /usr/local/bin/secb` install a root worker could repeat.
+    run_argv = next(cmd for cmd in invocations if cmd[:3] == ["docker", "run", "-d"])
+    volume_specs = [run_argv[i + 1] for i, token in enumerate(run_argv) if token == "-v"]
+    secb_spec = next(s for s in volume_specs if s.endswith(":/usr/local/bin/secb:ro"))
+    assert not any(
+        cmd[:2] == ["docker", "exec"] and "cat > /usr/local/bin/secb" in cmd[-1]
+        for cmd in invocations
+    )
+
+    # And: the sealed wrapper source is outside the agent-reachable run workspace
+    # and carries the non-golden delegating body.
+    secb_src = Path(secb_spec.rsplit(":/usr/local/bin/secb:ro", 1)[0])
+    assert workspace.host_root.resolve() not in secb_src.resolve().parents
+    body = secb_src.read_text(encoding="utf-8")
+    # `secb build` must strip REPLAY_ENABLED so compile cannot be diverted to a
+    # baked golden replay_build.sh instead of the agent-editable /src/build.sh.
+    assert "exec env -u REPLAY_ENABLED /usr/local/bin/compile" in body
+    assert "exec /testcase/repro.sh" in body
+    assert "exec /testcase/patch.sh" in body
+
+
+@pytest.mark.asyncio
+async def test_start_session_does_not_copy_golden_cve_secb_sh(tmp_path: Path) -> None:
+    """Golden secb_sh content must not be installed or exposed to worker containers."""
+    # Given: a CVE carrying a golden SEC-bench helper body.
+    workspace = _make_workspace(tmp_path, uuid4())
+    cve = CVEInstance(
+        instance_id="demo.cve-2024-0001",
+        repo="acme/demo",
+        project_name="demo",
+        lang="c",
+        work_dir="/src/demo",
+        sanitizer="address",
+        bug_description="demo bug",
+        base_commit="abc123",
+        secb_sh="#!/bin/bash\necho GOLDEN-REPRO-SECRET\n",
+    )
+    invocations: list[list[str]] = []
+
+    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+        invocations.append(list(cmd))
+        if cmd[:3] == ["docker", "run", "-d"]:
+            return (0, "abc1234567890\n", "")
+        return (0, "", "")
+
+    runtime = DockerSecBenchRuntime()
+    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+
+    # When: starting the worker session.
+    await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
+
+    # Then: no Docker command receives the golden helper body.
+    serialized_invocations = "\n".join(" ".join(cmd) for cmd in invocations)
+    assert "GOLDEN-REPRO-SECRET" not in serialized_invocations
+
+    # And: the sealed wrapper is Arise-owned (delegating body), never the golden.
+    run_argv = next(cmd for cmd in invocations if cmd[:3] == ["docker", "run", "-d"])
+    volume_specs = [run_argv[i + 1] for i, token in enumerate(run_argv) if token == "-v"]
+    secb_spec = next(s for s in volume_specs if s.endswith(":/usr/local/bin/secb:ro"))
+    secb_src = Path(secb_spec.rsplit(":/usr/local/bin/secb:ro", 1)[0])
+    body = secb_src.read_text(encoding="utf-8")
+    assert "GOLDEN-REPRO-SECRET" not in body
+    assert "/usr/local/bin/compile" in body
+
+
+@pytest.mark.asyncio
+async def test_start_session_mounts_patch_script_read_only(tmp_path: Path) -> None:
+    """The runtime-owned patch helper has no writable container alias."""
+    # Given: a prepared workspace with the runtime-owned patch helper.
+    workspace = _make_workspace(tmp_path, uuid4())
+    (workspace.host_testcase_dir / "patch.sh").write_text(
+        "#!/bin/bash\nexit 0\n", encoding="utf-8"
+    )
+    cve = _make_cve()
+    invocations: list[list[str]] = []
+
+    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+        invocations.append(list(cmd))
+        if cmd[:3] == ["docker", "run", "-d"]:
+            return (0, "abc1234567890\n", "")
+        return (0, "", "")
+
+    runtime = DockerSecBenchRuntime()
+    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+
+    # When: starting the worker session.
+    await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
+
+    # Then: patch.sh is overlaid as a read-only bind after the writable testcase mount.
+    run_argv = next(cmd for cmd in invocations if cmd[:3] == ["docker", "run", "-d"])
+    volume_specs = [run_argv[i + 1] for i, token in enumerate(run_argv) if token == "-v"]
+    assert any(spec.endswith(":/testcase") for spec in volume_specs)
+    assert any(spec.endswith(":/testcase/patch.sh:ro") for spec in volume_specs)
+    assert any(spec.endswith(":/arise-run/testcase/patch.sh:ro") for spec in volume_specs)
+    testcase_mount_index = next(
+        i for i, spec in enumerate(volume_specs) if spec.endswith(":/testcase")
+    )
+    patch_mount_index = next(
+        i for i, spec in enumerate(volume_specs) if spec.endswith(":/testcase/patch.sh:ro")
+    )
+    workspace_mount_index = next(
+        i for i, spec in enumerate(volume_specs) if spec.endswith(":/arise-run")
+    )
+    patch_alias_mount_index = next(
+        i
+        for i, spec in enumerate(volume_specs)
+        if spec.endswith(":/arise-run/testcase/patch.sh:ro")
+    )
+    assert patch_mount_index > testcase_mount_index
+    assert patch_alias_mount_index > workspace_mount_index
+
+
+@pytest.mark.asyncio
+async def test_prepare_workspace_seeds_non_golden_runtime_scripts(
+    tmp_path: Path,
+) -> None:
+    """Host-mounted /testcase gets safe repro/patch scripts without deleting PoCs."""
+    # Given: copied testcase contents already include a PoC and a golden repro script.
+    cve = _make_cve()
+    run_dir = tmp_path / "run"
+    source_dir = run_dir / "src"
+    testcase_dir = run_dir / "testcase"
+    work_dir = run_dir / "work"
+    source_dir.mkdir(parents=True)
+    testcase_dir.mkdir(parents=True)
+    work_dir.mkdir(parents=True)
+    (source_dir / "demo").mkdir()
+    (work_dir / ".keep").write_text("seeded", encoding="utf-8")
+    (testcase_dir / "sample.input").write_text("poc bytes", encoding="utf-8")
+    (testcase_dir / "repro.sh").write_text(
+        "#!/bin/bash\necho GOLDEN-REPRO-SECRET\n", encoding="utf-8"
+    )
+    for artifact_name in _FORBIDDEN_TESTCASE_ARTIFACTS:
+        (testcase_dir / artifact_name).write_text(
+            f"forbidden fix artifact: {artifact_name}\n", encoding="utf-8"
+        )
+
+    runtime = DockerSecBenchRuntime()
+    runtime._ensure_image_exists = AsyncMock()  # type: ignore[method-assign]
+
+    # When: preparing the workspace.
+    workspace = await runtime.prepare_workspace(
+        cve=cve,
+        run_output_path=run_dir,
+        image="secb-tools:demo-patch",
+        root_id=uuid4(),
+    )
+
+    # Then: existing PoC-like files remain, but golden repro content is removed.
+    assert workspace.host_testcase_dir == testcase_dir
+    assert (testcase_dir / "sample.input").read_text(encoding="utf-8") == "poc bytes"
+    for artifact_name in _FORBIDDEN_TESTCASE_ARTIFACTS:
+        assert not (testcase_dir / artifact_name).exists()
+    repro = (testcase_dir / "repro.sh").read_text(encoding="utf-8")
+    patch = (testcase_dir / "patch.sh").read_text(encoding="utf-8")
+    assert "GOLDEN-REPRO-SECRET" not in repro
+    assert "TODO" not in repro
+    assert "repo_changes.diff" in patch
+    assert "model_patch.diff" in patch
+    assert "apply_if_needed /testcase/model_patch.diff" in patch
+
+    # And: the runtime reports the sealed agent-visible surface for event-sourcing.
+    sealed = workspace.sealed_surface
+    assert sealed is not None
+    assert sealed.surface == "secbench"
+    by_kind = {a.kind: a for a in sealed.artifacts}
+    assert set(by_kind) == {"repro_skeleton", "patch_script", "secb_wrapper"}
+    assert by_kind["repro_skeleton"].container_path == "/testcase/repro.sh"
+    assert by_kind["patch_script"].container_path == "/testcase/patch.sh"
+    assert by_kind["secb_wrapper"].container_path == "/usr/local/bin/secb"
+    assert all(a.non_golden and len(a.content_sha256) == 64 for a in sealed.artifacts)
