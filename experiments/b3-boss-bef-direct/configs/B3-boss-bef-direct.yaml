@@ -20,8 +20,8 @@ overrides:
   orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
   orchestration.topology.max_depth: 1
   orchestration.max_run_duration_seconds: 14400   # CONTROL: identical across all 4 cells (non-binding here)
-  boss.model: claude-sonnet-4-6
-  manager.model: claude-sonnet-4-6   # no manager nodes spawn at depth 1; required by schema
+  boss.model: gpt-5.4
+  manager.model: gpt-5.4   # no manager nodes spawn at depth 1; required by schema
   worker.tool: openhands
   worker.model: gpt-5.4-mini
   worker.allowed_tools: [file_editor, glob, grep]
