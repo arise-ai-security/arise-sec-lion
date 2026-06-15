@@ -29,6 +29,7 @@ from core.domain.events.events import (
     RetryScheduled,
     RunCompleted,
     RunStarted,
+    RuntimeSurfaceSealed,
     SharedContextCreated,
     SourceFileEdited,
     SourceFileObserved,
@@ -70,6 +71,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "OperationFinished": OperationFinished,
     "RunStarted": RunStarted,
     "RunCompleted": RunCompleted,
+    # Runtime-surface events (anti-leak)
+    "RuntimeSurfaceSealed": RuntimeSurfaceSealed,
     # Cost tracking events
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,

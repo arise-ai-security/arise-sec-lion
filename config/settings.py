@@ -122,6 +122,16 @@ class OpenHandsParams(BaseModel):
     model_config = {"extra": "forbid"}
 
     mcp_tools: list[str] = Field(default_factory=list)
+    mcp_tool_timeout_seconds: int = Field(
+        default=600,
+        ge=1,
+        le=3600,
+        description=(
+            "Per-call timeout (seconds) for OpenHands MCP tools (e.g. "
+            "shell_in_container). Applied to the SDK so every cell shares one "
+            "shell timeout — keep it identical across cells for a fair comparison."
+        ),
+    )
     enable_subagents: bool = Field(
         default=False,
         description=(

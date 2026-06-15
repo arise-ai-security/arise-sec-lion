@@ -550,3 +550,36 @@ class SourceFileEdited(DomainEvent):
 
     path: str
     edited_by: str  # Agent that edited the file (string form of its UUID)
+
+
+# =============================================================================
+# Runtime-surface events (anti-leak: Arise sealing agent-visible surfaces)
+# =============================================================================
+
+
+class SealedArtifact(BaseModel):
+    """One Arise-sealed runtime artifact (nested in RuntimeSurfaceSealed)."""
+
+    model_config = {"frozen": True}
+
+    container_path: str  # e.g. "/testcase/repro.sh", "/usr/local/bin/secb"
+    kind: str  # "repro_skeleton" | "patch_script" | "secb_wrapper"
+    non_golden: bool = True  # explicit anti-leak marker
+    content_sha256: str = ""  # integrity of the Arise-owned content written
+
+
+class RuntimeSurfaceSealed(DomainEvent):
+    """Arise sealed the agent-visible runtime surface (anti-leak enforcement).
+
+    Records that the orchestrator overwrote agent-facing runtime artifacts
+    (the seeded non-golden repro skeleton, the immutable patch script, and the
+    delegating secb wrapper) with Arise-owned versions, so the agent cannot
+    read a baked golden solution. Reconstructable from the DB alone for
+    post-hoc anti-leak audit. Observability event -- does not change agent
+    state. The secb wrapper's content/path are deterministic constants
+    installed unconditionally per worker container, so it is recorded here at
+    workspace-prep time alongside the repro/patch scripts.
+    """
+
+    surface: str  # which runtime surface was sealed, e.g. "secbench"
+    sealed_artifacts: list[SealedArtifact]

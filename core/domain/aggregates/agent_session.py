@@ -30,6 +30,8 @@ from core.domain.events.events import (
     RetryScheduled,
     RunCompleted,
     RunStarted,
+    RuntimeSurfaceSealed,
+    SealedArtifact,
     SourceFileEdited,
     SourceFileObserved,
     StatusChanged,
@@ -456,6 +458,11 @@ class AgentSession:
     @_apply.register
     def _(self, event: RunStarted) -> None:
         # Run-level timing event, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: RuntimeSurfaceSealed) -> None:
+        # Anti-leak audit event; no state change, version for OCC.
         self.version += 1
 
     @_apply.register
@@ -957,6 +964,23 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             task_description=task_description,
             domain_metadata=domain_metadata,
+        )
+        self._emit(event)
+
+    def emit_runtime_surface_sealed(
+        self,
+        surface: str,
+        sealed_artifacts: list[SealedArtifact],
+    ) -> None:
+        """Emit RuntimeSurfaceSealed when Arise seals the agent-visible runtime surface.
+
+        Should only be called on the BOSS agent (root of hierarchy).
+        """
+        event = RuntimeSurfaceSealed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            surface=surface,
+            sealed_artifacts=sealed_artifacts,
         )
         self._emit(event)
 

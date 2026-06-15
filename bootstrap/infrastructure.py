@@ -65,6 +65,7 @@ class InfrastructureConfig:
     worker_allowed_tools: list[str] | None = None
     worker_disallowed_tools: list[str] | None = None
     worker_mcp_tools: list[str] | None = None
+    worker_mcp_tool_timeout_seconds: int = 600
     worker_tool_max_iterations: int = 20
     worker_tool_base_url: str | None = None
     worker_run_scoped_cache_key: bool = False
@@ -129,6 +130,7 @@ def _create_worker_adapter(
             base_url=config.worker_tool_base_url,
             allowed_tools=config.worker_allowed_tools,
             mcp_tools=config.worker_mcp_tools,
+            mcp_tool_timeout_seconds=config.worker_mcp_tool_timeout_seconds,
             shared_code_port=shared_code_context,
             run_scoped_cache_key=config.worker_run_scoped_cache_key,
             reasoning_effort=config.worker_reasoning_effort,

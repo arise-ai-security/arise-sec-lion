@@ -493,6 +493,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         base_url: str | None = None,
         allowed_tools: list[str] | None = None,
         mcp_tools: list[str] | None = None,
+        mcp_tool_timeout_seconds: int = 600,
         enable_subagents: bool = False,
         shared_code_port: SharedCodeContextProvider | None = None,
         run_scoped_cache_key: bool = False,
@@ -524,6 +525,33 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # baseline. Children reuse the parent's container-aware tools and lack
         # the delegation tool, so the tree is bounded to exactly two levels.
         self.enable_subagents: bool = enable_subagents
+        # OpenHands binds its MCP tool-call timeout (shell_in_container etc.) as a
+        # default arg at import and creates executors without passing one, so set
+        # both the module constant and the already-bound default. Keeps the shell
+        # timeout config-driven and identical across cells.
+        self._mcp_tool_timeout_seconds: int = mcp_tool_timeout_seconds
+        try:
+            import inspect
+
+            from openhands.sdk.mcp import tool as _oh_mcp_tool
+
+            _oh_mcp_tool.MCP_TOOL_TIMEOUT_SECONDS = mcp_tool_timeout_seconds
+            _init = _oh_mcp_tool.MCPToolExecutor.__init__
+            if _init.__defaults__:
+                _defaulted = [
+                    p.name
+                    for p in inspect.signature(_init).parameters.values()
+                    if p.default is not inspect.Parameter.empty
+                ]
+                if "timeout" in _defaulted:
+                    _vals = list(_init.__defaults__)
+                    _vals[_defaulted.index("timeout")] = float(mcp_tool_timeout_seconds)
+                    _init.__defaults__ = tuple(_vals)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "could not apply MCP tool timeout %ss; OpenHands SDK default will apply",
+                mcp_tool_timeout_seconds,
+            )
         # When set, file-view/edit tool observations are captured into the shared
         # code context so downstream workers receive that source verbatim (workers
         # always run on their OWN fresh Conversation — raw Conversation reuse was

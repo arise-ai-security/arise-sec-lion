@@ -743,16 +743,17 @@ class AgentOrchestrator:
         MANAGER evaluations cannot oversubscribe ``max_total_agents``.
         On reservation failure emits ``LimitEnforced`` and aborts.
         """
-        failure = await self._check_limit_violations(agent, subtasks)
-        if failure:
-            return failure
-
         # --- Cross-tree role dedup -------------------------------------------
         # Prevent managers from re-decomposing into roles that already exist
         # as their own siblings (uncle duplication).  Prescribed top-level
         # roles (Builder, Exploiter, Fixer, Reporter) are always allowed;
         # additional / generated roles must be unique across branches.
         subtasks = self._dedup_subtasks_against_siblings(agent, subtasks)
+        # Limit check runs on the final list after dedup shrink, so the count
+        # matches the later try_reserve(len(subtasks)).
+        failure = await self._check_limit_violations(agent, subtasks)
+        if failure:
+            return failure
         if not subtasks:
             # Every proposed subtask was a duplicate → force direct execution
             logger.warning(
@@ -922,7 +923,8 @@ class AgentOrchestrator:
             agent.fail_with_reason("Assessment requested decomposition without subtasks")
             return
 
-        failure_msg = await self._spawn_children(agent, result.subtasks)
+        subtasks = result.subtasks
+        failure_msg = await self._spawn_children(agent, subtasks)
         if failure_msg:
             agent.fail_with_reason(failure_msg)
 

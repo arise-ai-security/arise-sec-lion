@@ -24,11 +24,30 @@ class WorkspacePathAlias:
 
 
 @dataclass(frozen=True)
+class SealedRuntimeArtifact:
+    """One agent-visible runtime artifact Arise overwrote with a non-golden version."""
+
+    container_path: str
+    kind: str
+    non_golden: bool = True
+    content_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class SealedRuntimeSurface:
+    """The runtime artifacts a domain plugin sealed during run preparation (anti-leak)."""
+
+    surface: str
+    artifacts: tuple[SealedRuntimeArtifact, ...] = ()
+
+
+@dataclass(frozen=True)
 class PreparedRunWorkspace:
     """Optional workspace override returned by a domain plugin."""
 
     working_directory: str
     path_aliases: tuple[WorkspacePathAlias, ...] = ()
+    sealed_surface: SealedRuntimeSurface | None = None
 
 
 @dataclass(frozen=True)

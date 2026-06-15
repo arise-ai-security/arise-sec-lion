@@ -150,6 +150,7 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
             base_url=settings.worker.base_url,
             allowed_tools=settings.worker.allowed_tools,
             mcp_tools=oh_params.mcp_tools,
+            mcp_tool_timeout_seconds=oh_params.mcp_tool_timeout_seconds,
             enable_subagents=oh_params.enable_subagents,
         )
         return OpenHandsWorker(adapter=adapter)
@@ -335,6 +336,11 @@ def create_runtime_cli(
             worker_allowed_tools=list(settings.worker.allowed_tools),
             worker_disallowed_tools=list(settings.worker.disallowed_tools),
             worker_mcp_tools=worker_mcp_tools,
+            worker_mcp_tool_timeout_seconds=(
+                openhands_params.mcp_tool_timeout_seconds
+                if settings.worker.tool == "openhands" and openhands_params is not None
+                else 600
+            ),
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
             worker_run_scoped_cache_key=(

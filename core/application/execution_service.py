@@ -32,7 +32,13 @@ from core.application.services import (
 )
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.events.events import ChildSpawned, DomainEvent, WorkCompleted, WorkFailed
+from core.domain.events.events import (
+    ChildSpawned,
+    DomainEvent,
+    SealedArtifact,
+    WorkCompleted,
+    WorkFailed,
+)
 from core.domain.exceptions import ConcurrencyError
 from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
@@ -245,7 +251,7 @@ class AgentExecutionService:
             user_prompt=task_description,
             domain_context=domain_context,
         )
-        await self._setup_working_directory(root_id, domain_context)
+        prepared = await self._setup_working_directory(root_id, domain_context)
         await self._create_shared_context(root_id)
 
         boss_agent = self._create_boss_session(root_id, task_description)
@@ -254,6 +260,19 @@ class AgentExecutionService:
             task_description=task_description,
             domain_metadata=domain_metadata,
         )
+        if prepared is not None and prepared.sealed_surface is not None:
+            boss_agent.emit_runtime_surface_sealed(
+                surface=prepared.sealed_surface.surface,
+                sealed_artifacts=[
+                    SealedArtifact(
+                        container_path=a.container_path,
+                        kind=a.kind,
+                        non_golden=a.non_golden,
+                        content_sha256=a.content_sha256,
+                    )
+                    for a in prepared.sealed_surface.artifacts
+                ],
+            )
         await self._repository.save_new_agent(boss_agent)
 
         return root_id
@@ -943,10 +962,10 @@ class AgentExecutionService:
             self,
             root_id: UUID,
             domain_context: object | None = None,
-    ) -> None:
+    ) -> "PreparedRunWorkspace | None":
         """Setup working directory for the run."""
         if not self._config.output_directory:
-            return
+            return None
 
         base_output = Path(self._config.output_directory).resolve()
         base_output.mkdir(parents=True, exist_ok=True)
@@ -956,7 +975,7 @@ class AgentExecutionService:
 
         self._working_directory = run_output_path
         if self._domain_plugin is None:
-            return
+            return None
 
         prepared = await self._domain_plugin.prepare_run(
             root_id=root_id,
@@ -967,6 +986,7 @@ class AgentExecutionService:
             self._working_directory = Path(prepared.working_directory)
 
         self._configure_recon_workspace(prepared)
+        return prepared
 
     def _configure_recon_workspace(
         self,
