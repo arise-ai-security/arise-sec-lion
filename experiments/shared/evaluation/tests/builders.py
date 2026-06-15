@@ -114,6 +114,8 @@ class RunBuilder:
         *,
         agent_id: UUID | None = None,
         success_criteria: str = "",
+        depends_on: list[int] | None = None,
+        sibling_index: int = 0,
     ) -> UUID:
         """Create a non-root agent with an AgentCreated + TaskAssigned + ChildSpawned."""
         agent_id = agent_id or uuid4()
@@ -130,8 +132,9 @@ class RunBuilder:
             ChildSpawned,
             child_id=agent_id,
             child_role=role,
-            subtask=Subtask(description=task, config={}),
+            subtask=Subtask(description=task, config={}, depends_on=depends_on or []),
             child_config={},
+            sibling_index=sibling_index,
         )
         return agent_id
 

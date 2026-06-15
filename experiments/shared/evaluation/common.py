@@ -59,35 +59,26 @@ _SEGMENT_SPLIT = re.compile(r"&&|\|\||\$\(|[;\n|()`]")
 # A leading ``NAME=value`` environment-variable assignment prefix.
 _ENV_PREFIX = re.compile(r"\w+=\S*\s+")
 
-# Finer BEF leaf-role names → their phase. Source: prompts/domains/secbench/assess.j2.
+# Finer BEF leaf-role names → their phase. Keep local to evaluation so this
+# generic analysis package does not import the security plugin.
 _PHASE_BY_LEAF_ROLE: dict[str, BefPhase] = {
-    role.lower(): phase
-    for phase, roles in {
-        BefPhase.BUILDER: (
-            "Build-Setup",
-            "Build-Compiler",
-            "Build-Verifier",
-            "Instrumented-Builder",
-        ),
-        BefPhase.EXPLOITER: (
-            "PoC-Researcher",
-            "Data-Flow-Analyst",
-            "PoC-Tester",
-            "Forward-Instrumentator",
-            "Repro-Creator",
-            "Exploit-Validator",
-        ),
-        BefPhase.FIXER: (
-            "Root-Cause-Analyst",
-            "Candidate-Reviewer",
-            "Regression-Tester",
-            "Patch-Creator",
-            "Patch-Validator",
-            "Fix-Aggregator",
-        ),
-        BefPhase.REPORTER: ("Reporter",),
-    }.items()
-    for role in roles
+    "instrumented-builder": BefPhase.BUILDER,  # legacy label
+    "build-setup": BefPhase.BUILDER,
+    "build-compiler": BefPhase.BUILDER,
+    "build-verifier": BefPhase.BUILDER,
+    "poc-researcher": BefPhase.EXPLOITER,
+    "data-flow-analyst": BefPhase.EXPLOITER,
+    "poc-tester": BefPhase.EXPLOITER,
+    "forward-instrumentator": BefPhase.EXPLOITER,
+    "repro-creator": BefPhase.EXPLOITER,
+    "exploit-validator": BefPhase.EXPLOITER,
+    "root-cause-analyst": BefPhase.FIXER,
+    "candidate-reviewer": BefPhase.FIXER,
+    "regression-tester": BefPhase.FIXER,
+    "patch-creator": BefPhase.FIXER,
+    "patch-validator": BefPhase.FIXER,
+    "fix-aggregator": BefPhase.FIXER,
+    "reporter": BefPhase.REPORTER,
 }
 
 
