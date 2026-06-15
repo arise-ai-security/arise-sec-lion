@@ -2,6 +2,11 @@
 
 A comprehensive design specification for building an AI-powered recursive multi-agent tree system. Grounded in the architecture and implementation of the **arise-sec-lion** platform.
 
+> **As-built source of truth:** this is a design/research document. For the verified
+> as-built system (event catalog, aggregates, runtime, criteria, with `file:line`
+> citations) see [`SYSTEM_REFERENCE.md`](../SYSTEM_REFERENCE.md). Where this document and
+> the code disagree, the code (and `SYSTEM_REFERENCE.md`) win.
+
 ---
 
 ## Table of Contents
@@ -354,15 +359,19 @@ Healing Levels:
 
 ### 6.2 Worker-Level Retry (Model Escalation + Circuit Breaker)
 
-When a WORKER fails, the system attempts recovery through a **model escalation chain**:
+When a WORKER fails, the system *can* escalate through a **model escalation chain**.
+The chain below is **illustrative** — the live default `model_escalation_chain` is an
+**empty list** (`config/settings.py:372`, `default_factory=list`), so by default no model
+escalation occurs and the worker retry budget collapses to the verification-retry cap (see
+[`SYSTEM_REFERENCE.md`](../SYSTEM_REFERENCE.md) §II.6). A chain only takes effect if a
+config explicitly sets one:
 
 ```yaml
 retry:
-  model_escalation_chain:
-    - "gpt-4o-mini"        # cheap, fast
-    - "gpt-4o"             # moderate
-    - "claude-sonnet-4-6"  # capable
-    - "claude-opus-4-6"    # most capable
+  model_escalation_chain: []   # live default: empty (no escalation)
+  # Example only — a deployment MAY configure something like:
+  #   - "gpt-5.4-mini"
+  #   - "gpt-5.4"
   circuit_breaker_threshold: 3
   circuit_breaker_reset_seconds: 300
 ```
@@ -576,20 +585,26 @@ orchestration:
 
 ### 8.2 Model Configuration (Per-Role)
 
+The per-role `model` field is **required** in the Settings schema (no default —
+`config/settings.py:81,97,182`) and is supplied per deployment / experiment cell.
+Current experiment cells run the **gpt-5.4 family** (e.g. B3/B4: boss/manager `gpt-5.4`,
+worker `gpt-5.4-mini` — `experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml:36-39`).
+Example shape:
+
 ```yaml
 boss:
-  model: "claude-sonnet-4-6"
+  model: "gpt-5.4"          # required; gpt-5.4 family in current cells
   temperature: 0.3
-  max_tokens: 16384
+  max_tokens: 16000
 
 manager:
-  model: "claude-sonnet-4-6"
+  model: "gpt-5.4"          # required
   temperature: 0.3
-  max_tokens: 16384
+  max_tokens: 16000
 
 worker:
-  model: "claude-sonnet-4-6"
-  tool: "claude_code"       # or "openhands", "google_adk"
+  model: "gpt-5.4-mini"     # required
+  tool: "openhands"         # or "claude_code", "google_adk"
   timeout: 600
   max_iterations_per_run: 20
 ```
@@ -602,11 +617,8 @@ orchestration:
   max_run_duration_seconds: 1800    # 30-minute hard stop for entire run
   max_redecompositions: 2           # Per-parent re-planning budget
   retry:
-    model_escalation_chain:
-      - "gpt-4o-mini"
-      - "gpt-4o"
-      - "claude-sonnet-4-6"
-      - "claude-opus-4-6"
+    model_escalation_chain: []      # live default: empty (illustrative chain below)
+    # e.g. ["gpt-5.4-mini", "gpt-5.4"] if a deployment opts into escalation
     circuit_breaker_threshold: 3
     circuit_breaker_reset_seconds: 300
 ```
@@ -657,17 +669,21 @@ Every node's decision, tool call, and state transition must be logged. Event sou
 3. **Projections** — Build arbitrary read models from the same event stream (CQRS).
 4. **Conflict resolution** — Optimistic Concurrency Control via sequence numbers.
 
-### 9.2 Event Categories (~31 event types)
+### 9.2 Event Categories (35 event types)
+
+35 types are registered in `EVENT_TYPE_REGISTRY` (`infrastructure/adapters/postgres_event_store.py:51-96`). They populate **two** event-sourced aggregates: `AgentSession` (primary) and `SharedStore` (the three Shared Context events below).
 
 | Category | Events |
 |----------|--------|
 | **Lifecycle** | `AgentCreated`, `TaskAssigned`, `StatusChanged`, `ComplexityEvaluated` |
 | **Decomposition** | `SubtasksDefined`, `ChildSpawned`, `ChildCompleted`, `ChildFailed` |
 | **Execution** | `CodeGenerationStarted`, `ThoughtCaptured`, `WorkCompleted`, `WorkFailed` |
-| **Verification/Retry** | `VerificationFailed`, `DecisionInfeasible`, `RedecompositionTriggered`, `RetryScheduled` |
+| **Verification/Retry** | `VerificationPassed`, `VerificationFailed`, `DecisionInfeasible`, `RedecompositionTriggered`, `RetryScheduled` |
+| **Anti-leak** | `RuntimeSurfaceSealed` |
 | **Observability** | `ProbeStarted/Completed`, `PromptSent`, `AgentExecutionStarted/Finished`, `OperationStarted/Finished`, `RunStarted/Completed` |
 | **Cost** | `TokensConsumed`, `WorkerCostRecorded`, `LimitEnforced` |
-| **Shared Context** | `SharedContextCreated`, `ArtifactStored`, `DecisionRecorded` |
+| **Code-prefix cache** | `SourceFileObserved`, `SourceFileEdited` |
+| **Shared Context** (`SharedStore`) | `SharedContextCreated`, `ArtifactStored`, `DecisionRecorded` |
 
 ### 9.3 Write Path
 
@@ -792,11 +808,11 @@ The system has multiple fallback layers:
    retry_budget(node) = max(1, base_budget - depth)
    ```
 
-2. **Cost-aware escalation**: Don't escalate to `claude-opus-4-6` for a trivial subtask. Use estimated complexity:
+2. **Cost-aware escalation**: Don't escalate to the most capable model for a trivial subtask. Use estimated complexity:
 
    ```
    if subtask.estimated_complexity == "simple":
-       cap_escalation_at("gpt-4o")
+       cap_escalation_at("gpt-5.4-mini")
    ```
 
 3. **Time-budget redistribution**: If worker B completes quickly, redistribute its remaining time budget to worker D.
@@ -920,7 +936,7 @@ ExecutionService.run_system_loop(root_id):
 | Component | File |
 |-----------|------|
 | Aggregate (state machine) | `core/domain/aggregates/agent_session.py` |
-| Domain events (~31 types) | `core/domain/events/events.py` |
+| Domain events (35 types) | `core/domain/events/events.py` (registry: `infrastructure/adapters/postgres_event_store.py:51-96`) |
 | NodeMessage union | `core/domain/values/node_message.py` |
 | Subtask model | `core/domain/values/subtask.py` |
 | Enums (Role, Status) | `core/domain/values/enums.py` |
@@ -944,12 +960,12 @@ ExecutionService.run_system_loop(root_id):
 
 | Term | Definition |
 |------|-----------|
-| **Aggregate** | DDD concept — a cluster of domain objects treated as a single unit for state changes. `AgentSession` is the sole aggregate. |
+| **Aggregate** | DDD concept — a cluster of domain objects treated as a single unit for state changes. There are **two** event-sourced aggregates: `AgentSession` (primary) and `SharedStore`. |
 | **Assess** | The single LLM call that decides whether a PENDING node should execute (WORKER) or decompose (MANAGER). |
 | **Briefing** | Downward context message from parent to child at spawn time. |
 | **Circuit Breaker** | A model is temporarily blocked after N consecutive failures to prevent wasted compute. |
 | **DAG** | Directed Acyclic Graph — the dependency structure between sibling workers. |
-| **Domain Event** | An immutable fact about something that happened. ~31 types cover the entire system's state transitions. |
+| **Domain Event** | An immutable fact about something that happened. 35 types cover the entire system's state transitions. |
 | **Handoff** | Lateral context message carrying sibling statuses and shared decisions. |
 | **Hierarchy** | The complete tree of agents spawned from a single BOSS root. |
 | **Infeasible** | A node's declaration that its assigned task cannot be completed under current constraints. |
