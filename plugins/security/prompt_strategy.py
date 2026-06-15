@@ -1,9 +1,23 @@
 """SEC-bench prompt strategy implementation."""
 
+import re
 from typing import TYPE_CHECKING
 
 from core.application.services import PromptContext
 from plugins.security.cve_instance import CVEInstance
+from plugins.security.deliverables import (
+    ARTIFACT_DIRS,
+    ARTIFACT_PATHS,
+    EXPLOIT_VALIDATION_FIELDS,
+    HIERARCHICAL_ONLY,
+    PATCH_VALIDATION_FIELDS,
+    PHASE_COMMANDS,
+    REQUIRED_FILES,
+    REQUIRED_FILES_WITH_PURPOSE,
+    ROOT_CAUSE_BLOCK_FIELDS,
+    VALIDATION_REQUIRED,
+)
+from plugins.security.roles import PHASE_ROLES
 from plugins.security.security_tool import get_tools_for_phase
 
 
@@ -22,7 +36,36 @@ _CVE_DISPLAY_FIELDS = (
     "base_commit",
     "work_dir",
     "bug_description",
+    "sanitizer_report",
+    "bug_report",
 )
+
+_BRACKET_PREFIX_RE = re.compile(r"^\s*\[([^\]]+)\]")
+_PHASE_TO_BRANCH = {
+    "builder": "builder",
+    "exploiter": "exploiter",
+    "fixer": "fixer",
+    "reporter": "reporter",
+}
+_ROLE_TO_BRANCH = {
+    role.name.lower(): _PHASE_TO_BRANCH[role.phase.lower()]
+    for roles in PHASE_ROLES.values()
+    for role in roles
+}
+
+
+def _branch_from_brackets(text: str) -> str | None:
+    """Map an explicit ``[Phase]`` or ``[Role]`` prefix to its branch, or None.
+
+    The boss/manager stamps tasks with bracket labels from the role catalog, so
+    the prefix is the authoritative phase signal. Loose keyword matching trips
+    on tasks that legitimately mention another phase's artifacts.
+    """
+    match = _BRACKET_PREFIX_RE.match(text)
+    if match is None:
+        return None
+    label = match.group(1).strip().lower()
+    return _PHASE_TO_BRANCH.get(label) or _ROLE_TO_BRANCH.get(label)
 
 
 def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
@@ -33,6 +76,15 @@ def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
     """
     if briefing is None:
         return None
+
+    # Authoritative first: the nearest ancestor stamped with an explicit
+    # [Phase] bracket. A Fixer subtask legitimately references the exploit/repro
+    # it validates against, so the loose keyword pass below (exploiter before
+    # fixer) would otherwise misroute a Fixer leaf to the Exploiter prompt.
+    for ancestor in reversed(briefing.ancestry):
+        bracket = _branch_from_brackets(ancestor.task_summary)
+        if bracket is not None:
+            return bracket
 
     for ancestor in reversed(briefing.ancestry):
         task_lower = ancestor.task_summary.lower()
@@ -49,19 +101,14 @@ def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
 
 
 def _detect_branch_from_task(task_description: str) -> str | None:
-    task_lower = task_description.lower()
     # Explicit bracket prefixes are authoritative — check these first to
     # avoid false positives from generic words like "poc" or "fix" that
     # can appear in any branch's task description.
-    if "[builder]" in task_lower:
-        return "builder"
-    if "[exploiter]" in task_lower:
-        return "exploiter"
-    if "[fixer]" in task_lower:
-        return "fixer"
-    if "[reporter]" in task_lower:
-        return "reporter"
+    bracket = _branch_from_brackets(task_description)
+    if bracket is not None:
+        return bracket
     # Fall back to loose keyword matching.
+    task_lower = task_description.lower()
     if any(kw in task_lower for kw in ("builder", "environment", "setup")):
         return "builder"
     if any(kw in task_lower for kw in ("exploiter", "exploit")):
@@ -75,6 +122,20 @@ def _detect_branch_from_task(task_description: str) -> str | None:
 
 def _as_cve_instance(domain_context: object | None) -> CVEInstance | None:
     return domain_context if isinstance(domain_context, CVEInstance) else None
+
+
+def _with_contract_context(cve_ctx: dict[str, object]) -> dict[str, object]:
+    cve_ctx["artifact_dirs"] = ARTIFACT_DIRS
+    cve_ctx["artifact_paths"] = ARTIFACT_PATHS
+    cve_ctx["phase_commands"] = PHASE_COMMANDS
+    cve_ctx["required_files"] = REQUIRED_FILES
+    cve_ctx["required_files_with_purpose"] = REQUIRED_FILES_WITH_PURPOSE
+    cve_ctx["validation_required"] = VALIDATION_REQUIRED
+    cve_ctx["hierarchical_only"] = HIERARCHICAL_ONLY
+    cve_ctx["root_cause_block_fields"] = ROOT_CAUSE_BLOCK_FIELDS
+    cve_ctx["exploit_validation_fields"] = EXPLOIT_VALIDATION_FIELDS
+    cve_ctx["patch_validation_fields"] = PATCH_VALIDATION_FIELDS
+    return cve_ctx
 
 
 def _with_cve_display(
@@ -93,7 +154,7 @@ def _with_cve_display(
     if cve_instance is None:
         return chain
 
-    cve_ctx = cve_instance.to_template_context()
+    cve_ctx = _with_contract_context(cve_instance.to_template_context())
     cve_display = {k: v for k, v in cve_ctx.items() if k in _CVE_DISPLAY_FIELDS and v}
     return chain.render(
         "domains/secbench/cve.j2",
@@ -127,7 +188,15 @@ class SecBenchPromptStrategy:
         cve_instance = _as_cve_instance(context.domain_context)
         if cve_instance is None:
             return None
-        cve_ctx = cve_instance.to_template_context()
+        cve_ctx = _with_contract_context(cve_instance.to_template_context())
+        # Inject the role catalog (single source of truth) so assess.j2 renders the
+        # decomposition role menu from plugins/security/roles.py instead of hardcoding.
+        cve_ctx["phase_roles"] = PHASE_ROLES
+        cve_ctx["all_roles"] = [role for roles in PHASE_ROLES.values() for role in roles]
+        # Gate the "read source before decomposing" recon block: when the boss already
+        # shared its recon (the block injected below), tell the manager to build on it
+        # instead of re-reading — mirrors the worker prompts' shared_code_enabled flag.
+        cve_ctx["shared_code_enabled"] = bool(context.shared_code_block)
         chain = _with_cve_display(chain, cve_instance, include_decomposition=True).render_optional(
             "domains/secbench/assess.j2", **cve_ctx
         )
@@ -146,7 +215,8 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
-        cve_ctx = cve_instance.to_template_context()
+        cve_ctx = _with_contract_context(cve_instance.to_template_context())
+        cve_ctx["phase_roles"] = PHASE_ROLES
         return _with_cve_display(chain, cve_instance, include_decomposition=True).render(
             "domains/secbench/boss.j2", **cve_ctx
         )
@@ -160,7 +230,7 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
-        cve_ctx = cve_instance.to_template_context()
+        cve_ctx = _with_contract_context(cve_instance.to_template_context())
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
@@ -183,7 +253,7 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
-        cve_ctx = cve_instance.to_template_context()
+        cve_ctx = _with_contract_context(cve_instance.to_template_context())
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
             branch = detect_benchmark_branch(context.briefing)
@@ -218,6 +288,9 @@ class SecBenchPromptStrategy:
         #   large payload in the byte region ALL of the run's workers share.
         # - legacy: after CVE display + mindset, before the BEF-role-specific
         #   section — identical-across-workers only within a branch.
+        # Static runtime contract first — cross-CVE/cross-run identical, so it
+        # sits in the shared cache prefix ahead of the per-CVE cve.j2 block.
+        chain = chain.render("domains/secbench/_secb_runtime_contract.j2", **cve_ctx)
         if self._shared_code_first:
             chain = chain.text_if(bool(context.shared_code_block), context.shared_code_block)
         chain = _with_cve_display(chain, cve_instance, phase=branch)
@@ -282,7 +355,10 @@ class SecBenchPromptStrategy:
         if cve_instance is None:
             return None
 
-        cve_ctx = cve_instance.to_template_context()
+        cve_ctx = _with_contract_context(cve_instance.to_template_context())
+
+        # Static runtime contract first (see extend_worker_prompt) for cache prefix.
+        chain = chain.render("domains/secbench/_secb_runtime_contract.j2", **cve_ctx)
         return _with_cve_display(chain, cve_instance, phase=None).render(
             "domains/secbench/flat_pipeline.j2", include_validation_gate=True, **cve_ctx
         )

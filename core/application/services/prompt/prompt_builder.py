@@ -40,6 +40,7 @@ FLAT_SUBAGENT_NOTE = (
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
+    from core.domain.values.subtask import Subtask
 
 
 class TemplateChain:
