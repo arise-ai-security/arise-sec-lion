@@ -1,8 +1,10 @@
 # CLAUDE.md
 
+> Lightweight gateway. The authoritative as-built description of this system is **/SYSTEM_REFERENCE.md** — read it first for anything about architecture, events, aggregates, the container runtime, roles, or success criteria. This file holds only the quick reference, the non-negotiable rules, and the routing table.
+
 ## Quick Reference
 
-<!-- Recursive, self-healing multi-agent orchestration platform. Event-sourced hexagonal architecture with BOSS -> MANAGER -> WORKER hierarchy. -->
+<!-- Recursive, self-healing multi-agent orchestration platform. Event-sourced hexagonal architecture with BOSS -> MANAGER -> WORKER hierarchy over SEC-bench CVE-repair tasks. -->
 
 - **Language**: Python 3.12
 - **Frameworks**: FastAPI (API), Pydantic (models/config), Jinja2 (prompts), Click (CLI)
@@ -13,7 +15,7 @@
 | Install (Python) | `uv sync --frozen` |
 | Install (frontend) | `cd query/web && npm install` |
 | Run | `python main.py run <task>` -> `bootstrap.bootstrap.main()` |
-| Test | `uv run pytest` |
+| Test | `uv run pytest` (single: `uv run pytest -k <name>`) |
 | Lint | `ruff check .` / `ruff format .` (config: `ruff.toml`, 100-char lines) |
 | Type check | `pyright` |
 | Dev server | `docker compose --profile local up` (Postgres + API + app) |
@@ -28,119 +30,74 @@
 
 ## Pre-Flight Protocol
 
-> **STOP. Before writing ANY code, complete this checklist.**
-> Do NOT skip steps. Do NOT paraphrase from memory. Open each file and read it.
+> **STOP. Before writing ANY code, complete this checklist.** Do NOT paraphrase from memory -- open each file and read it.
 
-### Step 1 -- ALWAYS read (every task, no exceptions):
+**Step 1 -- ALWAYS read (every task, no exceptions):** `.claude/docs/conventions.md` -- naming, import ordering, error handling, and logging rules for ALL code in this repo.
 
-```
-cat .claude/docs/conventions.md
-```
+**Step 2 -- Read by task (the Deep-Dive Map below).** Pick every row that matches what you're changing.
 
-This file contains naming rules, import ordering, error handling patterns, and logging conventions that apply to ALL code in this repo. If you skip it, your code will be wrong.
+**Step 3 -- Confirm.** State which files you read and one concrete rule from each that applies to your task, then implement.
 
-### Step 2 -- Read based on what you're changing:
+## Deep-Dive Map
 
-| If your task involves... | Then ALSO run |
+| Your need | Read |
 |---|---|
-| Adding/moving modules or directories | `cat .claude/docs/architecture.md` |
-| Concurrency, parallel execution, race conditions, OCC, atomic file writes, Docker cleanup | `cat agent-docs/concurrency-invariants.md` |
-| Implementing features, adding events/adapters | `cat .claude/docs/patterns.md` |
-| Adding or modifying dependencies | `cat .claude/docs/dependencies.md` |
-| Writing or modifying tests | `cat .claude/docs/testing.md` |
-| Debugging a failure | `cat .claude/docs/common-errors.md` |
-| Build, deploy, or CI changes | `cat .claude/docs/workflows.md` |
-| Unfamiliar domain terms | `cat .claude/docs/domain-glossary.md` |
-| Working on aggregates, events, or values | `cat .claude/docs/core-domain.md` |
-| Working on the security plugin | `cat .claude/docs/plugins-security.md` |
+| **What the system IS** -- architecture, events, aggregates, container runtime, roles, success/fail criteria. **START HERE.** | **`/SYSTEM_REFERENCE.md`** |
+| Naming / imports / errors / logging (Step 1, always) | `.claude/docs/conventions.md` |
+| Where new code goes / annotated directory tree | `.claude/docs/architecture.md` |
+| Aggregates, events, value objects, domain services | `.claude/docs/core-domain.md` |
+| Recipes: add an event / adapter / port / endpoint / config | `.claude/docs/patterns.md` |
+| Writing or modifying tests | `.claude/docs/testing.md` |
+| Build, deploy, CI | `.claude/docs/workflows.md` |
+| Adding or modifying dependencies | `.claude/docs/dependencies.md` |
+| Debugging a failure | `.claude/docs/common-errors.md` |
+| Unfamiliar domain terms | `.claude/docs/domain-glossary.md` |
+| Security plugin internals | `.claude/docs/plugins-security.md` |
+| Concurrency / OCC / atomic writes / Docker cleanup | `agent-docs/concurrency-invariants.md` |
+| REST API surface | `agent-docs/api-reference.md` |
+| Experiment design / the B3/B4/N1/N2 matrix | `.claude/docs/experiments-rearchitecture.md` (paper intent: `research/`) |
+| Running the system / experiments (CLI) | `/USER_MANUAL.md`, `/EXPERIMENT_MANUAL.md` |
+| Upstream SEC-bench / SecVerifier build pipeline | `agent-docs/secbench-pipeline-tech-doc.md` |
 
-### Step 3 -- Confirm you read them:
+## Architectural Invariants (stable; details in the deep dives)
 
-After reading, state which files you read and one concrete rule from each that applies to your current task. Then proceed with implementation.
+- **Strict hexagonal boundary** -- `core/` depends only on stdlib and its own `core/ports/` Protocols. All infrastructure is injected at bootstrap. Pre-commit enforced.
+- **Two event-sourced aggregates** -- `AgentSession` (primary, 32 of the 35 registered event types) and `SharedStore` (3 event types; a `uuid5`-derived `aggregate_id` sharing the same events table). All state is replayed from **35 frozen Pydantic events** (`EVENT_TYPE_REGISTRY`). OCC via unique `(aggregate_id, sequence_number)`. No mutable state tables. Postgres events are the sole source of truth (no events.jsonl projection).
+- **Three direct orchestrator methods** -- `assess_task`, `evaluate_task`, `execute_task` are plain methods on `AgentOrchestrator`. Do NOT wrap them in pipeline/strategy/chain-of-responsibility abstractions. Intentional.
+- **Domain context is an opaque slot** -- `HierarchyLimits.domain_context: object | None` carries plugin data (e.g. `CVEInstance`) through the tree; only the plugin downcasts. Core stays domain-ignorant.
+- **`bootstrap/composition.py` is the sole cross-boundary import** -- it is the only file that imports from `plugins/`. Every other layer references protocols only.
 
-Additional deep-dive docs in `agent-docs/`: `domain-model.md`, `development.md`, `configuration.md`, `api-reference.md`, `project-structure.md`, `architecture-concepts.md`, `architecture-separation.md`, `execution-flow.md`. Also see `MENTAL_MODEL.md` and `USER_MANUAL.md`.
+## Layer Rules
 
-## Project Structure
-
-> **Do NOT trust a hardcoded directory tree.** Run `tree -L 2 -I '__pycache__|node_modules|.git|*.pyc|.venv|.ruff_cache|.pytest_cache|.hypothesis|.idea|build|output'`
-> to see the current structure. For the full annotated tree, see `.claude/docs/architecture.md`.
-
-**Layer rules** (stable architectural invariants):
-
-- `core/` -- Domain logic. NEVER imports from `infrastructure/`. Only stdlib + own ports. Enforced by pre-commit hook.
-- `infrastructure/` -- Adapters implementing protocols from `core/ports/`. Imports `core/` only.
-- `plugins/` -- STRICTLY cybersecurity code only. No topology, orchestration, or scheduling logic.
-- `bootstrap/` -- Composition root. Sole cross-boundary import point (imports `plugins/`, `infrastructure/`, `core/`).
+- `core/` -- Domain logic. NEVER imports `infrastructure/`. stdlib + own ports only. Pre-commit enforced.
+- `infrastructure/` -- Adapters implementing `core/ports/` protocols. Imports `core/` only.
+- `plugins/` -- STRICTLY cybersecurity code. No topology, orchestration, or scheduling.
+- `bootstrap/` -- Composition root. Sole cross-boundary import point.
 - `presentation/` -- CLI, renderers, formatters. Depends on `core/application/`.
-- `prompts/` -- Jinja2 templates (4-tier: system.j2 -> roles/ -> operations/ -> domains/). No Python imports.
+- `prompts/` -- Jinja2 4-tier templates (`system.j2` -> `roles/` -> `operations/` -> `domains/`). No Python imports.
 - `query/` -- FastAPI REST API + React SPA dashboard. Read-side of CQRS.
-- `config/` -- Pydantic Settings + YAML hierarchy (`config.yaml` + `config.{env}.yaml`).
+- `config/` -- Pydantic Settings + YAML hierarchy.
 
-## Key Architectural Decisions
+> Do NOT trust a hardcoded directory tree. Run `tree -L 2 -I '__pycache__|node_modules|.git|*.pyc|.venv|.ruff_cache|.pytest_cache|.hypothesis|.idea|build|output'`, or see `.claude/docs/architecture.md` for the annotated tree.
 
-- **Strict hexagonal boundary** -- `core/` depends only on stdlib and its own ports. All infrastructure is injected at bootstrap. Enforced by pre-commit, not just convention.
-- **Event sourcing with single aggregate** -- `AgentSession` is the only aggregate. All state from replaying ~31 frozen Pydantic events. OCC via unique constraint on `(aggregate_id, sequence_number)`. No mutable state tables.
-- **Three direct orchestrator methods** -- `assess_task`, `evaluate_task`, `execute_task` are plain methods on `AgentOrchestrator`. No pipeline, strategy, or chain-of-responsibility abstraction. This is intentional.
-- **Domain context as opaque slot** -- `HierarchyLimits.domain_context: object | None` carries plugin-specific data (e.g., `CVEInstance`) through the tree. Only the plugin downcasts. Core is fully domain-ignorant.
-- **Bootstrap is the sole cross-boundary import** -- `bootstrap/composition.py` is the only file that imports from `plugins/`. All other layers reference only protocols.
+## Do / Don't (essentials; full conventions in `.claude/docs/conventions.md`)
 
-## Critical Do's and Don'ts
+**Do:** use `Protocol` ports in `core/ports/`; wrap external exceptions into domain exceptions with `from e`; mark value objects and events `frozen`; emit state changes through `AgentSession`/`SharedStore` domain methods, never mutate directly; use `logger = logging.getLogger(__name__)`.
 
-### Do
-- Use `Protocol` classes for all ports in `core/ports/`
-- Wrap external exceptions into domain exceptions (e.g., `LLMError`) with `from e` chaining
-- Use `model_config = {"frozen": True}` on all Pydantic value objects and events
-- Use `TYPE_CHECKING` blocks for imports only needed at type-check time
-- Follow Given-When-Then structure in all tests with `# Given:` / `# When:` / `# Then:` comments
-- Use `logger = logging.getLogger(__name__)` for all logging
-- Emit events through domain methods on `AgentSession`, never mutate state directly
-- Read relevant `.claude/docs/` files before making changes
-
-### Don't
-- Import from `infrastructure/` in any file under `core/` (pre-commit will reject)
-- Put non-cybersecurity code in `plugins/` (topology, scheduling, orchestration go in `core/`)
-- Use mutable Pydantic models for value objects or events
-- Create pipeline/strategy abstractions around the 3 orchestrator operations
-- Use `print()` for output -- use `logging` or presentation layer renderers
-- Use bare `except:` -- always catch specific exception types
-- Run `git commit` or `ruff check/format` (forbidden per critical rules)
-- Skip the pre-implementation gate (rule 4) -- always confirm target layer and change category
+**Don't:** import `infrastructure/` from `core/`; put non-security code in `plugins/`; wrap the 3 orchestrator operations in a pipeline/strategy; use mutable Pydantic for values/events; use `print()` or bare `except:`; run `git commit` or `ruff check/format`; skip the pre-implementation gate (Critical Rule 3).
 
 ## Environment & Config
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `ARISE_ENV` | No | Optional local overlay name (`config/config.<value>.yaml`, if present) | `development` |
+| `ARISE_ENV` | No | Optional local overlay name (`config/config.<value>.yaml`) | `development` |
 | `POSTGRES_PASSWORD` | Yes | Database password (env var only, not in YAML) | -- |
 | `POSTGRES_HOST` | No | Database host | `localhost` |
 | `POSTGRES_PORT` | No | Database port | `5432` |
 | `OPENAI_API_KEY` | Yes | OpenAI API key for LLM calls | -- |
-| `ANTHROPIC_API_KEY` | No | Anthropic API key (for Claude worker) | -- |
+| `ANTHROPIC_API_KEY` | No | Anthropic API key (Claude worker) | -- |
 | `HOST_PROJECT_ROOT` | No | Host path for Docker-out-of-Docker volume mapping | -- |
 
-Config loads: `config/config.yaml` (base) <- `config/config.{ARISE_ENV}.yaml` (overlay) <- env vars (highest priority).
+Config loads: `config/config.yaml` (base) <- `config/config.{ARISE_ENV}.yaml` (overlay) <- env vars (highest priority). Setup: `cp deployment/.env.example deployment/.env` and fill in values.
 
-Setup: `cp deployment/.env.example deployment/.env` and fill in values.
-
-## Common Tasks
-
-### Start the system
-```bash
-docker compose --profile local up -d
-```
-
-### Run tests
-```bash
-uv run pytest                              # Full suite
-uv run pytest -k test_boss_initialization  # Single test
-```
-
-### Check code quality
-```bash
-ruff check .          # Lint
-ruff format --check . # Format check
-pyright               # Type check
-```
-
-> For step-by-step workflow recipes (adding events, endpoints, ports/adapters, plugins, etc.),
-> see `.claude/docs/patterns.md`.
+> Step-by-step recipes (events, endpoints, ports/adapters, plugins, config) live in `.claude/docs/patterns.md`.
