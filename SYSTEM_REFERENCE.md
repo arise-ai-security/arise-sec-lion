@@ -232,7 +232,7 @@ All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 > makes — including each `secb …` bash command and its output observation — is streamed by
 > the worker adapter as a `ThoughtCaptured` event (`content` + `output_type` ∈
 > tool_use/tool_result, `tool_name`) and persisted to Postgres
-> (`openhands_adapter.py:816-827`; `execution_service._persist_agent_events`). This is the
+> (`openhands_adapter.py:816-827`; `execution_service._persist_agent_events :1111-1116`). This is the
 > event-sourced record of *what the agent actually executed* — see §IV.5 for how (and how
 > weakly) it lets us prove `secb` really ran.
 
@@ -262,7 +262,7 @@ legitimately mentions "exploit"/"repro" — from rendering the Exploiter prompt)
 
 `DockerSecBenchRuntime` prepares one host workspace per run; `SecurityDomainPlugin` starts
 one **long-lived** container for the first worker and **reuses** it (`_sessions[root_id]`,
-`plugin.py:54,165-174`) for the rest of that run's Builder/Exploiter/Fixer/Reporter
+`plugin.py:53-63,180-195`) for the rest of that run's Builder/Exploiter/Fixer/Reporter
 workers — one container **per run**, not per worker. So Builder outputs persist for
 downstream phases — a missing binary at the Exploiter step means the Builder genuinely
 failed, not a handoff copy problem.
@@ -419,8 +419,11 @@ failure with judge feedback, capped at `verification_max_retries` (default **2**
 still-failed worker, with budget = length of `orchestration.retry.model_escalation_chain`
 plus model escalation + circuit breaker (`retry_policy.py:44,68-76`). With an empty
 escalation chain (the common default) path (2) is a no-op and the 3-attempt verification
-cap governs; configure the chain and additional model-escalating retries can be scheduled
-beyond it. The diagram below shows path (1); path (2) is omitted for clarity.
+cap governs; with a configured chain, generic retries fire only while the existing
+`agent.retry_count` is still below `len(model_escalation_chain)` — both paths share
+`agent.retry_count` (`agent_session.py:371,627-633`), so it is **not** an extra budget
+stacked on top of the 3-attempt cap. The diagram below shows path (1); path (2) is omitted
+for clarity.
 
 ```mermaid
 stateDiagram-v2
@@ -441,7 +444,7 @@ stateDiagram-v2
 |---|---|---|
 | Config key / default / bounds | `verification_max_retries` / `2` / `ge=0,le=10` | `config/settings.py:486-489` |
 | Attempt cap (verification path) | ≤ 3 (1 initial + 2 retries; `retry_count` 0→1→2) | `execution_service.py:1161` |
-| Second path (generic) | `RetryPolicy` model-escalation, budget = `len(model_escalation_chain)`; runs after the verification cap for any failed worker | `execution_service.py:1144`, `retry_policy.py:44,68-76` |
+| Second path (generic) | `RetryPolicy` model-escalation, budget = `len(model_escalation_chain)`; runs after the verification-specific path declines; shares `agent.retry_count` (not an extra budget) | `execution_service.py:1144`, `retry_policy.py:44,68-76` |
 | Trigger | a structural stage failing **or** the LLM judge failing on a COMPLETED worker | `verification_pipeline.py:138-172` |
 | Enforcement site | `ExecutionService._maybe_retry_verification` | `execution_service.py:1150-1177` |
 
@@ -725,14 +728,14 @@ secb build|repro|patch  ← agent runs it DETACHED:  nohup bash -c 'secb repro >
    │
    └─▶ the bash TOOL CALL  ─▶ ThoughtCaptured event (output_type tool_use / tool_result),
         (worker SDK callback)   persisted to Postgres, replayed into AgentSession
-                                (openhands_adapter.py:816-827; execution_service._persist_agent_events)
+                                (openhands_adapter.py:816-827; execution_service._persist_agent_events :1111-1116)
 ```
 
 | Question | Answer | Evidence |
 |---|---|---|
 | Did the agent *issue* `secb …`? | **Yes — in events**, as a generic `ThoughtCaptured` tool_use (command text in `content`). | `ThoughtCaptured` `events.py:219-231` |
 | What did `secb` *output / exit*? | **Only weakly.** Launched detached → crash/exit go to `/testcase` files; the launcher's `tool_result` shows just "launched … pid N". The real output enters events **only if the agent reads the file back**. | `_validation_macros.j2:3-30`; `CmdRunObservation → tool_result` `openhands_adapter.py:356-364` |
-| Is there an authoritative `secb` *result* event? | **No.** No `SecbExecuted`/exit-code event exists; the verdicts + `DETERMINISM_RUNS` live in agent-authored **files**, not events. | `events.py` (none); `criteria.py` reads files |
+| Is there an authoritative `secb` *result* event? | **No.** No `SecbCommandExecuted` / dedicated exit-code event exists; the verdicts + `DETERMINISM_RUNS` live in agent-authored **files**, not events. | `events.py` (none); `criteria.py` reads files |
 
 **The fabrication gap (the hallucination observed in practice).** Because the verdict is an
 agent-writable file and the result is *not* authoritatively event-sourced, an agent can
