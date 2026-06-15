@@ -68,21 +68,33 @@ def cheating_scan(run_data: RunData) -> dict[str, int]:
     return dict(hits)
 
 
+_OK_STATUS = ("success", "completed", "succeeded")
+
+
 def _discover_run_ids(cells: set[str], since_epoch: float | None, runs_dir: Path) -> list[str]:
-    """Find run ids whose manifest cell is in ``cells`` (and mtime >= cutoff)."""
-    found: list[tuple[float, str]] = []
+    """Latest SUCCESSFUL run id per (cell, task).
+
+    Dedups replicates and excludes killed/partial runs (no manifest or a non-success
+    ``exit_status``), so the analysis uses exactly one canonical run per instance.
+    """
+    best: dict[tuple[str, str], tuple[float, str]] = {}
     for manifest_path in runs_dir.glob("*/run_manifest.json"):
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if str(manifest.get("cell", "")).upper() not in cells:
+        cell = str(manifest.get("cell", "")).upper()
+        if cell not in cells:
             continue
         mtime = manifest_path.stat().st_mtime
         if since_epoch is not None and mtime < since_epoch:
             continue
-        found.append((mtime, manifest_path.parent.name))
-    return [run_id for _, run_id in sorted(found)]
+        if str(manifest.get("exit_status", "")).lower() not in _OK_STATUS:
+            continue
+        key = (cell, str(manifest.get("task", "")))
+        if key not in best or mtime > best[key][0]:
+            best[key] = (mtime, manifest_path.parent.name)
+    return [run_id for _, run_id in sorted(best.values())]
 
 
 async def analyze_run(run_id: str, *, judge: LLMJudge | None, strict: bool) -> dict[str, Any]:
