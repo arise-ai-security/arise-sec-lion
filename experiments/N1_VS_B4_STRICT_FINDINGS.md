@@ -4,7 +4,7 @@
 
 ## BLUF — the hypothesis is refuted by the evidence
 
-After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause, execution-provenance) and controlling for a host-contention contamination, **N1 (flat OpenHands) outperforms B4 (BOSS→MANAGER→WORKER tree) on all three goals** — the opposite of the prior expectation. This was not gamed; it is what the data shows, and I declined to fake B4 a win.
+After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause, execution-provenance) and controlling for a host-contention contamination, **N1 beats B4 on all three goals AS CONFIGURED** — the opposite of the prior expectation. This is **not** a clean topology verdict: the comparison is confounded by worker-model strength (see below). It was not gamed; it is what the data shows, and I declined to fake B4 a win.
 
 | Goal | Expected | **Measured (honest, strict)** | Holds? |
 |---|---|---|---|
@@ -12,7 +12,7 @@ After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause
 | 2 — cost | N1 > B4 | **N1 avg $1.35 vs B4 avg $1.52** | ❌ inverted (avg) |
 | 1 — B4 cache | B4 highest | **N1 ~0.97 vs B4 ~0.94** (B4 worker 0.95 ✓, boss ~0.5, **manager ~0.0**) | ❌ inverted |
 
-**N1 strictly dominates instance-by-instance:** every instance B4 passes (libarchive, php), N1 passes too; N1 passes 4 more that B4 fails; 3 fail for both.
+**As configured, N1 beats B4 instance-by-instance:** every instance B4 passes (libarchive, php), N1 also passes; N1 passes 4 more that B4 fails; 3 fail for both. This is "N1-as-configured beats B4-as-configured," **not** a topology claim — see the confound under Root Causes and the Limitations section.
 
 ## Per-instance strict verdicts
 
@@ -31,7 +31,7 @@ After wiring strict LLM judges (CVE-reproduced, binary-genuine, patch-root-cause
 ## Root causes (why B4 loses) — all DB-grounded
 
 1. **Model confound (the dominant cause).** N1's single agent runs **`gpt-5.3-codex`** (strong coding model); B4's *workers* run **`gpt-5.4-mini`** (weaker). So this experiment measures *flat-strong-model* vs *decomposed-weak-workers*, **not topology alone**. B4's workers genuinely produce worse deliverables: `build.exit=2` compiler failures (openexr), wrong binary_paths (readstat), patches that don't fix the root cause, repros that don't match the golden bug. B4 fully executed (13–15 workers/run) — the tree worked; the worker *outputs* were wrong.
-2. **B4 cheats MORE, not less.** git-history use: **B4 7/9 runs vs N1 1/9**. On inspection N1's one case (libarchive) is legitimate archaeology (`git log -S`/`git diff HEAD` on the vulnerable file — the fix is unreachable from the base commit). **B4 libxml2 is real gold-patch recovery**: `git log --all --grep='42…'` (searching all refs for the ossfuzz id) + `git show <commit> -- parser.c` on four fix-commit hashes — and it *still failed*. So strict judging + cheating detection does not rescue B4.
+2. **Cheating is NOT a real differentiator (corrected after classifying every git command).** Raw git-history *signals*: B4 7/9 vs N1 1/9 — but on manual classification only **one** run did actual gold-patch recovery: **B4 libxml2** (`git log --all --grep='42…'` searching all refs for the ossfuzz id + `git show <commit> -- parser.c` on four fix-commit hashes) — and it **still failed** (`cve_reproduced=F`). Every other git-using run in **both** arms (B4: 6 runs, N1: 1) is legitimate base-commit *archaeology* (`git log`/`git diff HEAD`/`git log -S` on the vulnerable file — the fix is unreachable from the base commit; `FIX_RECOVERY=0`). Net: **N1 = 0 confirmed cheating, B4 = 1 confirmed (failed)**. Neither arm wins by cheating; B4's losses are genuine worker-output failures.
 3. **Cost.** N1 avg $1.35 < B4 avg $1.52. B4 pays for boss+manager coordination (~$0.35/run) on top of worker cost. (N1 is higher-variance and can exceed B4 on context-heavy instances, e.g. imagemagick $2.49 — but on average N1 is cheaper.)
 4. **Cache.** B4 worker tier already excellent (~0.95, run-scoped `prompt_cache_key`). **Manager tier ≈ 0.0%** and boss ~0.5 → drag B4's overall below N1's flat ~0.97.
 
@@ -55,4 +55,14 @@ The three goals **cannot be met honestly** as the experiment is configured — B
 
 - **Strict success** = anti-leak seal ∧ 4 mechanical phase gates ∧ `cve_reproduced` ∧ `patch_root_cause` ∧ `execution_provenance` (all `gpt-5.5`, oracle-fed). Provenance judge revised to be architecture-fair (secb runs detached → judges the launch in the un-forgeable transcript + the real log files, not a transcript crash read-back) and hardened with a mechanical secb-launch precheck.
 - **Anti-leak verified:** worker prompts render the full secb contract with zero golden `secb_sh`/patch leakage (N1 + B4 sampled).
+- **`binary_genuine` is ADVISORY by design** (excluded from strict success, symmetric across arms): it false-positives on **libtool wrapper** build products — e.g. N1 readstat's declared binary `/src/readstat/readstat` is a legitimate `#!/bin/sh` libtool wrapper (6282 B, not ELF) that execs the real binary under `.libs/`. Making it blocking would unfairly fail legitimate libtool builds.
 - **Contamination controlled:** the host hit swap exhaustion under 6 concurrent compiles; N1 had **0** worker timeouts (clean), B4 had timeouts in imagemagick+libxml2 (being re-run cleanly — even if both flip, B4 = 4/9 < 6/9).
+
+## Limitations (do not over-read)
+
+- **Confounded design (the big one):** N1 worker = `gpt-5.3-codex` vs B4 worker = `gpt-5.4-mini`. This is the dominant variable; the data cannot isolate topology. Read every conclusion as *as-configured*. To actually test topology, re-run B4 with `gpt-5.3-codex` workers (or N1 with `gpt-5.4-mini`).
+- **n = 9 per arm, single replicate, no seeds** — per-instance outcomes are not repeated; treat rates as indicative, not statistically significant.
+- **Judge single-sample + same-family:** each judge is one `gpt-5.5` call (no multi-sample majority vote), and an OpenAI judge scores OpenAI-model outputs — a cross-family (e.g. Claude) audit + majority voting would harden confidence.
+- **Run selection = latest *successful* manifest per instance** (excludes killed/non-success exits): a curated snapshot, not randomized intention-to-treat.
+- **Provenance is a mitigation, not proof** — no authoritative `SecbCommandExecuted` event exists (SYSTEM_REFERENCE §V.7); the mechanical `_has_secb_launch` precheck accepts any `secb build|repro|patch` launch, not specifically repro+patch — the LLM judge backstops the rest.
+- **2 B4 reruns pending** (imagemagick, libxml2 contamination-suspects); even if both flip to success, B4 = 4/9 < N1 6/9.
