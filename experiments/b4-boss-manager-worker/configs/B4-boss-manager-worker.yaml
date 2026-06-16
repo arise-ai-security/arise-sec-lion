@@ -54,13 +54,18 @@ overrides:
   # <task>, directory snapshots stay out of the block, and the workspace
   # listing whitelists testcase/ (an out-of-tree CMake build alone added ~650
   # entries ≈ 13K tokens to every prompt turn).
-  worker.reasoning_effort: medium
+  # worker.reasoning_effort REVERTED to default 'high' (2026-06-15, H1b) — left
+  # unset to match N1 exactly. 'medium' was a cost knob that handicapped the weak
+  # gpt-5.4-mini worker's reasoning below N1's gpt-5.3-codex (SDK default high).
   worker.tool_params.openhands.run_scoped_prompt_cache_key: true
   orchestration.shared_code_prefix_first: true
   orchestration.shared_code_index: true
   orchestration.shared_code_skip_dir_listings: true
-  orchestration.workspace_listing_dirs: [testcase]
-  orchestration.workspace_listing_max_entries: 200
+  # workspace_listing narrowed to [testcase, work] (2026-06-15, H1b): the worker must
+  # SEE /work/bin binaries for the Exploiter self-recovery fallback, but listing ALL
+  # dirs (None) re-bloats the prompt (~13K tok/turn on out-of-tree CMake builds).
+  orchestration.workspace_listing_dirs: [testcase, work]
+  orchestration.workspace_listing_max_entries: 500
   # NOTE: capture_recon_reads (manager recon → run-global shared block) is left
   # OFF. Measured 2026-06-11: it front-loads ~11-12 manager-read files (~80-140K
   # chars) into the block that ALL workers then carry every turn, ~doubling

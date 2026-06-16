@@ -31,4 +31,20 @@ overrides:
   worker.tool_params.openhands.mcp_tool_timeout_seconds: 600
   worker.timeout: 3600
   worker.max_iterations_per_run: 250
+  # Behavior/cost knobs ALIGNED to B4 (2026-06-15) so B3 vs B4 isolates ONLY the
+  # manager tier (max_depth 1 vs 3). Added to B4 in the 2026-06-10 cost cycle but
+  # never back-ported to B3; running B3 without them would confound the manager-tier
+  # comparison — reasoning_effort, the run-scoped cache key, shared-code prefix
+  # ordering, and workspace listing all affect worker BEHAVIOR and cost (not just
+  # cost). Pre-registered before B3's first run and frozen for it. B4-only knobs
+  # deliberately EXCLUDED: share_boss_recon (no managers exist in B3) and the
+  # depth-3 fan-out caps (B3 already inherits the identical base
+  # max_children_per_node=7 / max_total_agents=40).
+  worker.reasoning_effort: medium
+  worker.tool_params.openhands.run_scoped_prompt_cache_key: true
+  orchestration.shared_code_prefix_first: true
+  orchestration.shared_code_index: true
+  orchestration.shared_code_skip_dir_listings: true
+  orchestration.workspace_listing_dirs: [testcase]
+  orchestration.workspace_listing_max_entries: 200
   output.directory: ./runs
