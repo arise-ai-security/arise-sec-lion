@@ -195,6 +195,7 @@ if TYPE_CHECKING:
     from core.domain.values.llm_response import LLMResponse
     from core.domain.values.node_message import Handoff
     from core.domain.values.subtask import Subtask
+    from core.ports.decomposition_validator_port import DecompositionValidator
     from core.ports.runtime_ports import (
         FormatRepairerPort,
         LLMPort,
@@ -238,6 +239,7 @@ class AgentOrchestrator:
         shared_code_port: "SharedCodeContextPort | None" = None,
         capture_recon_reads: bool = False,
         share_boss_recon: bool = False,
+        decomposition_validator: "DecompositionValidator | None" = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -262,6 +264,10 @@ class AgentOrchestrator:
         # in-memory per-run store — it never reaches the shared block workers
         # consume, so the worker tier is unaffected by construction.
         self._share_boss_recon = share_boss_recon
+        # Optional domain role-contract gate: enforces that a phase decomposition
+        # spawns every required role as its own leaf before children are spawned.
+        # None => no enforcement (byte-identical to today for non-domain runs).
+        self._decomposition_validator = decomposition_validator
         self._boss_recon_blocks: dict[Any, str] = {}
         self._verification_pipeline = VerificationPipeline(
             llm_port,
@@ -556,10 +562,9 @@ class AgentOrchestrator:
                 # Already failed/marked-infeasible by helper.
                 return
 
-            failure = await self._spawn_children(agent, subtasks)
-            if failure:
-                agent.fail_with_reason(failure)
-                return
+            # Enforce the domain role contract before spawning (shared with the
+            # assess-time decompose path so the gate cannot be bypassed).
+            await self._enforce_and_spawn(agent, subtasks)
 
     async def execute_task(
         self,
@@ -683,6 +688,152 @@ class AgentOrchestrator:
                 duration_seconds=duration,
             )
 
+    async def _enforce_and_spawn(self, agent: "AgentSession", subtasks: list["Subtask"]) -> None:
+        """Enforce the decomposition contract, then spawn children.
+
+        Shared by BOTH decomposition paths — ``evaluate_task`` (explicit BOSS/MANAGER
+        decomposition) and ``_apply_assessment_result`` (the combined assess+decompose
+        single call) — so the role-contract gate cannot be bypassed by either path. The
+        agent is failed on contract-unsatisfiable (inside enforcement) or spawn failure.
+        """
+        # Dedup FIRST so the contract gate has the final word on completeness: a gate that
+        # ran before dedup could be undone by dedup dropping a re-injected required role
+        # (e.g. on re-decomposition, where the cross-tree role registry still lists the
+        # prior attempt's roles). Pass the dedup index shift so authored deps stay valid.
+        pre_dedup_index = {id(st): index for index, st in enumerate(subtasks)}
+        subtasks = self._dedup_subtasks_against_siblings(agent, subtasks)
+        dedup_map = {
+            pre_dedup_index[id(st)]: new_index
+            for new_index, st in enumerate(subtasks)
+            if id(st) in pre_dedup_index
+        }
+        corrected = await self._enforce_decomposition_contract(agent, subtasks, dedup_map)
+        if corrected is None:
+            return  # enforcement already failed the agent before any spawn
+        failure = await self._spawn_children(agent, corrected)
+        if failure:
+            agent.fail_with_reason(failure)
+
+    async def _enforce_decomposition_contract(
+        self,
+        agent: "AgentSession",
+        subtasks: list["Subtask"],
+        dedup_map: "dict[int, int] | None" = None,
+    ) -> "list[Subtask] | None":
+        """Apply the domain role contract to a (already-deduped) decomposition before spawning.
+
+        ``dedup_map`` (original→post-dedup index) lets authored non-catalog ``depends_on``
+        be remapped through an earlier dedup shift so they are not stale.
+
+        The domain validator classifies contract breaches (missing required roles,
+        merged-role leaves); core owns the action: drop the flagged leaves, inject the
+        suggested ones (inheriting sibling worker config), and re-check hierarchy limits.
+        Returns the corrected subtasks, or None if the repair cannot fit the limits (the
+        agent is failed before any child is spawned). A no-op when no validator is wired
+        or the verdict is clean.
+        """
+        if self._decomposition_validator is None:
+            return subtasks
+        verdict = self._decomposition_validator.classify(
+            parent_task_description=agent.task_description,
+            subtask_descriptions=tuple(st.description for st in subtasks),
+            domain_context=self._get_domain_context(agent),
+        )
+        if verdict.ok:
+            # Even a role-complete decomposition can carry missing/wrong depends_on;
+            # enforce the authoritative catalog DAG on the manager's own leaves.
+            return self._resolve_catalog_dependencies(subtasks, dedup_map)
+
+        from core.domain.values.subtask import Subtask
+
+        removals = set(verdict.removals)
+        base_config = dict(subtasks[0].config) if subtasks else {}
+        old_to_new: dict[int, int] = {}
+        corrected: list[Subtask] = []
+        for old_index, subtask in enumerate(subtasks):
+            if old_index in removals:
+                continue
+            old_to_new[old_index] = len(corrected)
+            corrected.append(subtask)
+        corrected.extend(
+            Subtask(
+                description=add.description,
+                config=dict(base_config),
+                estimated_complexity=add.estimated_complexity,
+                task_type=add.task_type,
+            )
+            for add in verdict.additions
+        )
+        # Enforce the authoritative catalog DAG on EVERY leaf (authored + injected). Remap
+        # non-catalog authored deps through the full original→corrected shift: compose the
+        # earlier dedup shift (original→deduped) with this removal shift (deduped→corrected).
+        if dedup_map is not None:
+            index_shift = {
+                orig: old_to_new[deduped]
+                for orig, deduped in dedup_map.items()
+                if deduped in old_to_new
+            }
+        else:
+            index_shift = old_to_new
+        corrected = self._resolve_catalog_dependencies(corrected, index_shift)
+        logger.warning(
+            "Agent %s: decomposition-contract repair %s — dropped %d, injected %d "
+            "(%d -> %d children)",
+            agent.agent_id,
+            [v.kind for v in verdict.violations],
+            len(removals),
+            len(verdict.additions),
+            len(subtasks),
+            len(corrected),
+        )
+
+        # Core owns the limit action: a repair that would exceed the caps is a hard
+        # failure surfaced before spawning, not a silently-incomplete decomposition.
+        failure = await self._check_limit_violations(agent, corrected)
+        if failure:
+            agent.fail_with_reason(
+                f"decomposition contract unsatisfiable within hierarchy limits: {failure}"
+            )
+            return None
+        return corrected
+
+    def _resolve_catalog_dependencies(
+        self, subtasks: list["Subtask"], old_to_new: "dict[int, int] | None" = None
+    ) -> list["Subtask"]:
+        """Set each leaf's depends_on to its catalog HARD producers (resolved to sibling
+        indices), enforcing the authoritative DAG on every catalog-role leaf — authored OR
+        injected — regardless of what the manager emitted. A leaf whose role has no catalog
+        hard dep keeps its own depends_on, remapped via ``old_to_new`` when removals shifted
+        sibling indices. Only producers that exist in the set are referenced.
+        """
+        validator = self._decomposition_validator
+        if validator is None:
+            return subtasks
+        role_to_index: dict[str, int] = {}
+        for index, subtask in enumerate(subtasks):
+            prefix = self._extract_role_prefix(subtask.description)
+            if prefix:
+                role_to_index.setdefault(prefix.lower(), index)
+        resolved: list[Subtask] = []
+        for subtask in subtasks:
+            prefix = self._extract_role_prefix(subtask.description)
+            catalog_deps = validator.hard_dependencies(prefix) if prefix else ()
+            if catalog_deps:
+                new_deps = [
+                    role_to_index[dep.lower()]
+                    for dep in catalog_deps
+                    if dep.lower() in role_to_index
+                ]
+            elif old_to_new is not None and subtask.depends_on:
+                new_deps = [old_to_new[d] for d in subtask.depends_on if d in old_to_new]
+            else:
+                new_deps = list(subtask.depends_on)
+            if new_deps != list(subtask.depends_on):
+                resolved.append(subtask.model_copy(update={"depends_on": new_deps}))
+            else:
+                resolved.append(subtask)
+        return resolved
+
     async def _check_limit_violations(self, agent: "AgentSession", subtasks: list) -> str | None:
         """Check hard limits. Returns failure reason or None.
 
@@ -743,14 +894,9 @@ class AgentOrchestrator:
         MANAGER evaluations cannot oversubscribe ``max_total_agents``.
         On reservation failure emits ``LimitEnforced`` and aborts.
         """
-        # --- Cross-tree role dedup -------------------------------------------
-        # Prevent managers from re-decomposing into roles that already exist
-        # as their own siblings (uncle duplication).  Prescribed top-level
-        # roles (Builder, Exploiter, Fixer, Reporter) are always allowed;
-        # additional / generated roles must be unique across branches.
-        subtasks = self._dedup_subtasks_against_siblings(agent, subtasks)
-        # Limit check runs on the final list after dedup shrink, so the count
-        # matches the later try_reserve(len(subtasks)).
+        # subtasks arrive already deduped, contract-enforced, and dep-resolved from
+        # _enforce_and_spawn (dedup runs there, before the gate, so the gate has the final
+        # word on completeness). Here: cap-check the final count, then reserve and spawn.
         failure = await self._check_limit_violations(agent, subtasks)
         if failure:
             return failure
@@ -766,7 +912,6 @@ class AgentOrchestrator:
                 determined_role=AgentRole.WORKER,
             )
             return None
-        # ---------------------------------------------------------------------
 
         # Atomic reservation: protects against concurrent MANAGER spawn
         # races where both callers passed the stale-count cap check.
@@ -806,7 +951,7 @@ class AgentOrchestrator:
         )
         return None
 
-    # Role-prefix pattern: "[Build-Setup]" → "Build-Setup"
+    # Role-prefix pattern: "[Some-Role]" → "Some-Role"
     _BRACKET_PREFIX = re.compile(r"^\[([^\]]+)\]")
 
     @classmethod
@@ -845,7 +990,7 @@ class AgentOrchestrator:
         own_role = self._extract_role_prefix(agent.task_description or "")
         forbidden = uncle_roles | tree_roles | ({own_role} if own_role else set())
 
-        kept: list["Subtask"] = []
+        kept: list[Subtask] = []
         for st in subtasks:
             prefix = self._extract_role_prefix(st.description)
             if prefix and prefix in forbidden:
@@ -923,10 +1068,9 @@ class AgentOrchestrator:
             agent.fail_with_reason("Assessment requested decomposition without subtasks")
             return
 
-        subtasks = result.subtasks
-        failure_msg = await self._spawn_children(agent, subtasks)
-        if failure_msg:
-            agent.fail_with_reason(failure_msg)
+        # Route the assess-time decompose path through the SAME contract gate as
+        # evaluate_task — an LLM that assesses+decomposes in one call must not bypass it.
+        await self._enforce_and_spawn(agent, result.subtasks)
 
     async def _query_llm(
         self,

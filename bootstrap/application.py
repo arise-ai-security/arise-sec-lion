@@ -207,6 +207,11 @@ def get_application(
         shared_code_port=infrastructure.shared_code_context,
         capture_recon_reads=config.capture_recon_reads,
         share_boss_recon=config.share_boss_recon,
+        decomposition_validator=(
+            config.domain_plugin.get_decomposition_validator()
+            if config.domain_plugin is not None
+            else None
+        ),
     )
 
     parent_notifier = ParentNotificationService(

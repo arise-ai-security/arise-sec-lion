@@ -13,6 +13,7 @@ from core.domain.values.prompt_trace import SectionProvenance
 
 if TYPE_CHECKING:
     from core.application.services import PromptStrategy
+    from core.ports.decomposition_validator_port import DecompositionValidator
 
 
 @dataclass(frozen=True)
@@ -95,3 +96,5 @@ class DomainPlugin(Protocol):
     ) -> None: ...
 
     def get_prompt_strategy(self) -> PromptStrategy | None: ...
+
+    def get_decomposition_validator(self) -> DecompositionValidator | None: ...

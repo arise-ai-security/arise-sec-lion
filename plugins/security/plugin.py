@@ -15,6 +15,7 @@ from core.ports.domain_plugin_port import (
 )
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
+from plugins.security.decomposition_validator import SecBenchDecompositionValidator
 from plugins.security.image_resolver import resolve_secbench_image
 from plugins.security.prompt_strategy import SecBenchPromptStrategy
 
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
     from core.application.services import PromptStrategy
     from core.domain.values.json_types import JsonObject
+    from core.ports.decomposition_validator_port import DecompositionValidator
     from plugins.security.container_runtime import (
         SecBenchContainerSession,
         SecBenchWorkspace,
@@ -78,6 +80,9 @@ class SecurityDomainPlugin(DomainPlugin):
             enabled_tools=self._enabled_tools,
             shared_code_first=self._shared_code_prefix_first,
         )
+
+    def get_decomposition_validator(self) -> DecompositionValidator | None:
+        return SecBenchDecompositionValidator()
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("context_file") or kwargs.get("cve_file")
@@ -229,4 +234,3 @@ class SecurityDomainPlugin(DomainPlugin):
         # state (installed tools, non-mounted files) the next worker needs, so
         # per-worker cleanup is intentionally a no-op.
         _ = (root_id, agent_id, domain_context)
-        return

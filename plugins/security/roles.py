@@ -45,6 +45,10 @@ class Role:
                         (selected only when the CVE needs it).
     ``insight``       — the empirical question seed for security_insights; the full
                         CWE-conditional guidance stays in assess.j2.
+    ``evidence_file`` — the canonical artifact path a non-deliverable (research) role
+                        writes its findings to (e.g. poc_operation_map.txt). Used by the
+                        worker template and the decomposition injector so an injected
+                        leaf names the same file downstream roles read, not a generic one.
     """
 
     name: str
@@ -55,6 +59,7 @@ class Role:
     depends_on: tuple[str, ...] = ()
     soft_depends_on: tuple[str, ...] = ()
     insight: str = ""
+    evidence_file: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -97,24 +102,25 @@ ROLES: Final[tuple[Role, ...]] = (
     Role(
         name="PoC-Researcher",
         phase="Exploiter",
-        required=False,
+        required=True,
         summary="Map each PoC operation to its implementing C/C++ source function.",
         insight=(
             "Map each PoC operation to its implementing source function via search_codebase; "
             "save the ordered mapping (required input for the Forward-Instrumentator)."
         ),
+        evidence_file=ARTIFACT_PATHS["poc_operation_map"],
     ),
     Role(
         name="Data-Flow-Analyst",
         phase="Exploiter",
-        required=False,
+        required=True,
         summary="Trace the call graph / data flow to the vulnerable path (cflow, xrefs).",
         insight="Which call chain carries attacker-controlled data to the crash site?",
     ),
     Role(
         name="PoC-Tester",
         phase="Exploiter",
-        required=False,
+        required=True,
         summary="Confirm the PoC empirically triggers the reported sanitizer error.",
         soft_depends_on=("PoC-Researcher",),
         insight="Does running the PoC reproduce the exact sanitizer error type and top frame?",
@@ -122,7 +128,7 @@ ROLES: Final[tuple[Role, ...]] = (
     Role(
         name="Forward-Instrumentator",
         phase="Exploiter",
-        required=False,
+        required=True,
         summary="Forward-trace PoC operations to find where bad internal state is first produced.",
         depends_on=("PoC-Researcher",),
         insight=(
@@ -130,6 +136,7 @@ ROLES: Final[tuple[Role, ...]] = (
             "function to dump struct fields; the first internally-inconsistent one is the origin. "
             "This is FORWARD tracing, not crash-site forensics."
         ),
+        evidence_file=ARTIFACT_PATHS["forward_instrumentation"],
     ),
     Role(
         name="Repro-Creator",
@@ -165,7 +172,7 @@ ROLES: Final[tuple[Role, ...]] = (
     Role(
         name="Candidate-Reviewer",
         phase="Fixer",
-        required=False,
+        required=True,
         summary="Evaluate >=2 candidate fix layers against contract/coverage/false-positive risk.",
         depends_on=("Root-Cause-Analyst",),
         insight="Which fix layer extends an existing contract without firing on valid inputs?",
@@ -173,7 +180,7 @@ ROLES: Final[tuple[Role, ...]] = (
     Role(
         name="Regression-Tester",
         phase="Fixer",
-        required=False,
+        required=True,
         summary="Regression-test fix candidates against the repro and the existing suite.",
         soft_depends_on=("Candidate-Reviewer",),
         insight="Does the candidate fix the crash without breaking unrelated behavior?",
@@ -228,6 +235,35 @@ PHASE_ROLES: Final[dict[str, tuple[Role, ...]]] = {
 def role_by_name(name: str) -> Role | None:
     """The role for a bracket label (without brackets), or None if unknown."""
     return _BY_NAME.get(name)
+
+
+_BY_NAME_CI: Final[dict[str, Role]] = {name.lower(): role for name, role in _BY_NAME.items()}
+
+
+def role_by_name_ci(name: str) -> Role | None:
+    """Case-insensitive :func:`role_by_name`.
+
+    Manager bracket labels are meant to be exact, but tolerate case drift so a
+    ``[poc-researcher]`` label still resolves to its role-scoped worker body
+    instead of silently falling back to the whole-phase runbook (the bleed).
+    """
+    return _BY_NAME_CI.get(name.strip().lower())
+
+
+def deliverables_owned_by_others(role: Role) -> tuple[str, ...]:
+    """Deliverable paths owned by the OTHER roles in this role's phase.
+
+    The worker prompt uses this to tell a leaf role which `/testcase` files belong
+    to its siblings, so it hands findings off via `<context-update>` instead of
+    producing another role's deliverable (the role-ownership gate that stops the
+    owner-abdication bleed). Excludes anything this role itself produces.
+    """
+    out: list[str] = []
+    for other in PHASE_ROLES.get(role.phase, ()):
+        if other.name == role.name:
+            continue
+        out.extend(p for p in other.produces if p not in out and p not in role.produces)
+    return tuple(out)
 
 
 def decomposition_only_deliverables(phase: str) -> tuple[str, ...]:
