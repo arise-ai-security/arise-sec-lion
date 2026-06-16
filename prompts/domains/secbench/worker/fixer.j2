@@ -4,6 +4,12 @@
 Refer to Task Context above for repository location and vulnerability details.
 Base commit hash is at `{{ artifact_paths.base_commit_hash }}`.
 {% from 'domains/secbench/worker/_worker_helpers.j2' import handoff_preamble %}
+{% from 'domains/secbench/worker/_worker_helpers.j2' import evidence_files_section with context %}
+{% from 'domains/secbench/_validation_macros.j2' import secb_fix_validation, secb_poll_result %}
+{% set wr = worker_role %}
+{% set owns_patch = wr and artifact_paths.model_patch in wr.produces %}
+{% set owns_patch_validation = wr and artifact_paths.patch_validation in wr.produces %}
+{% set owns_rca = wr and artifact_paths.root_cause_analysis in wr.produces %}
 
 {% set fixer_must_instruction -%}
 you **MUST**
@@ -17,6 +23,10 @@ with `secb build`, and validate with `secb repro`.
    ) }}
 
 {% include 'domains/secbench/phases/fix.j2' %}
+
+{% if wr is none %}
+{# ===================== WHOLE-PHASE FALLBACK ===================== #}
+{# [Fixer] phase task / out-of-catalog label, and the flat-baseline shape. #}
 
 ### Prerequisites — Reuse Peer Work (CRITICAL)
 
@@ -136,8 +146,6 @@ Publish your validation results via `<context-update>` for parent/sibling visibi
 </context-update>
 ```
 
-{% from 'domains/secbench/worker/_worker_helpers.j2' import evidence_files_section with context %}
-
 {% set fixer_evidence_note -%}
 
 When your task description starts with the [Root-Cause-Analyst] role label
@@ -155,4 +163,81 @@ mandated deliverable for the role, not merely encouraged.
 - DO NOT change `{{ artifact_paths.base_commit_hash }}`
 - Verify `{{ artifact_paths.model_patch }}` exists and is correct before concluding
 - Do NOT search for or use external fix commits — develop patches from root cause analysis only
+
+{% else %}
+{# ===================== ROLE-SCOPED BODY ===================== #}
+{# A catalog role was detected. Give this worker ONLY its slice of the Fixer phase so the role #}
+{# layer is not erased — critically, the patch AUTHOR must not also grade the patch. #}
+### Your role: [{{ wr.name }}]
+
+{{ wr.summary }} {{ wr.insight }}
+
+{% if wr.produces %}
+**You OWN these deliverables — you alone create them, and they are your definition of done:**
+{% for p in wr.produces %}- `{{ p }}`
+{% endfor %}
+{%- else %}
+**You produce ANALYSIS ONLY — you create NO `{{ artifact_dirs.testcase }}` contract deliverable.** Your output is findings: save evidence under `{{ artifact_dirs.testcase }}/` and publish the key facts via `<context-update>` so the deliverable-owning roles can use them.
+{% endif %}
+{% if foreign_deliverables %}
+**Do NOT create or edit these files — other Fixer roles own them:**
+{% for p in foreign_deliverables %}- `{{ p }}`
+{% endfor %}
+Hand any finding about them off via `<context-update>`; never write the file yourself. Finishing another role's deliverable is a FAILURE of this task, not extra credit.
+{% endif %}
+
+### Reuse peer work first
+1. `ls -la {{ artifact_dirs.testcase }}/` and read sibling `<context-update>` findings (PoC path, sanitizer error, binary location, root cause).
+2. Confirm the Builder baseline is committed: `cd {{ work_dir }} && git status --short`. If Builder source hunks are uncommitted, self-heal (commit exactly those as `arise-builder-baseline`, never `git add -A`) so any later diff is Fixer-only.
+3. `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
+
+{% if owns_rca %}
+### Your steps (root-cause analysis)
+1. From `{{ artifact_paths.poc_path }}` + `{{ artifact_paths.repro_script }}`, classify the CWE and identify the **crash site** vs the **caller-side bug** (trace backward from the crash to the data origin).
+2. For Pointer/Type-confusion bugs, do **one-shot live instrumentation**: add an `fprintf` before the suspected deref printing the object's tag/type field, `secb build`, `secb repro`, capture to `{{ artifact_paths.instrumentation_output }}`, then **revert** (`git checkout -- <file>`; confirm `git diff` empty).
+3. Read 50+ lines at the data origin; pick the minimal fix site using the contract/coverage/failure-mode rubric in the phase contract.
+4. Write `{{ artifact_paths.root_cause_analysis }}` with the structured block ({{ root_cause_block_fields[0][0] }} etc.) naming the data-origin bug + chosen fix site; publish via `<context-update>`.
+
+You are DONE when `{{ artifact_paths.root_cause_analysis }}` records the root cause + fix site. Do NOT write `{{ artifact_paths.model_patch }}` or `{{ artifact_paths.patch_validation }}` — Patch-Creator and Patch-Validator own those.
+{% elif owns_patch %}
+### Your steps (patch authoring)
+1. Reuse Root-Cause-Analyst's `{{ artifact_paths.root_cause_analysis }}` (read it; do not redo the analysis).
+2. Edit the source at the **caller-side bug**, not the crash site — minimal, no scope creep, follow the project's error-handling idiom. THE PATCH MUST NOT HARM FUNCTIONALITY.
+3. Generate `{{ artifact_paths.model_patch }}` with `git diff` against the Builder baseline (never hand-write — `'\0'` corrupts). Verify it is valid printable text and minimal (`wc -l {{ artifact_paths.model_patch }}`; a single-function fix is usually <30 lines) and contains ONLY your fix hunks.
+
+You are DONE when `{{ artifact_paths.model_patch }}` is a valid, minimal, Fixer-only diff. **Do NOT run the patch/build/repro validation loop or write `{{ artifact_paths.patch_validation }}`** — grading your own patch is forbidden; Patch-Validator owns the verdict. Publish `patch_file` via `<context-update>`.
+{% elif owns_patch_validation %}
+### Your steps (independent validation — you did NOT write the patch)
+1. **Confirm inputs**: `cat {{ artifact_paths.model_patch }}` (Patch-Creator's diff) and the PoC/`{{ artifact_paths.repro_script }}`. If `{{ artifact_paths.model_patch }}` is missing or empty, write `VERDICT: FAIL` naming it and stop.
+2. **Write the verdict file FIRST (completion contract)**: immediately create `{{ artifact_paths.patch_validation }}` with a provisional block (`VERDICT: FAIL`, `REASON: validation not yet complete`). This guarantees the deliverable EXISTS even if you later run low on iterations — you will overwrite it with the final verdict. The mechanical gate requires this file to contain `VERDICT: PASS`, so never finish without it.
+3. **Validate via the runtime contract** — launch the detached patch→build→repro loop, then poll it back into your transcript (provenance must be in your own output, not just files):
+{{ secb_fix_validation(phase_commands) }}
+{{ secb_poll_result(phase_commands.fix_loop.exit, phase_commands.fix_loop.read_log) }}
+   Each `fix_run_$N.log` must end with `exit=` and show NO sanitizer error for a PASS. If the poll prints NOT FINISHED, re-run only the poll.
+4. **Finalize the verdict (overwrite)**: rewrite `{{ artifact_paths.patch_validation }}` with this EXACT machine-readable block at the top (one key per line; no YAML/JSON; no prose before it), then a short narrative:
+   ```
+{% for key, value in patch_validation_fields -%}
+   {{ key }}: {{ value }}
+{% endfor -%}
+   ```
+   `VERDICT: PASS` ONLY if the patch applied cleanly, rebuilt, AND all 3 repro runs show no sanitizer crash; otherwise `VERDICT: FAIL` naming the failing condition. `cat {{ artifact_paths.patch_validation }}` as your LAST action.
+
+You are DONE only when `{{ artifact_paths.patch_validation }}` contains a final `VERDICT:` line. **Do NOT edit `{{ artifact_paths.model_patch }}`** — Patch-Creator owns the fix; you validate it, you do not author or amend it.
+{% else %}
+### Your steps (analysis / objective)
+1. Reuse siblings: read `{{ artifact_paths.root_cause_analysis }}`, `{{ artifact_paths.model_patch }}`, and peer `<context-update>` findings.
+2. Carry out your objective ({{ wr.summary|trim }}): use `gdb`/`cppcheck`/Valgrind as your objective needs (e.g. review the candidate fix's correctness + scope against the root cause, or run regression checks that the patch does not break existing behavior).
+3. Record findings to {% if wr.produces %}`{{ wr.produces[0] }}`{% else %}an evidence file under `{{ artifact_dirs.testcase }}/` (e.g. `{{ artifact_dirs.testcase }}/{{ wr.name|lower }}_findings.txt`){% endif %} and publish the key facts via `<context-update>`.
+
+You are DONE when your analysis is recorded and handed off. Do NOT author `{{ artifact_paths.model_patch }}` or write `{{ artifact_paths.patch_validation }}` — those belong to Patch-Creator / Patch-Validator.
+{% endif %}
+
+{{ evidence_files_section('Fixer') }}
+
+### Rules
+- Stay within your role: produce only your own deliverable(s) and hand the rest off via `<context-update>`.
+- Generate `{{ artifact_paths.model_patch }}` from source edits on the Builder-adjusted baseline; it must contain only Fixer edits.
+- Validate via `secb patch` → `secb build` → `secb repro` (never manually reset/apply while authoring).
+- DO NOT change `{{ artifact_paths.base_commit_hash }}`; do NOT search for or use external fix commits.
+{% endif %}
 </domain_instructions>
