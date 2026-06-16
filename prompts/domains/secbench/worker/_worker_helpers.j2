@@ -14,7 +14,7 @@ Any source files already read by upstream workers are in `<provided_source_files
 If upstream siblings (e.g., PoC-Researcher) shared findings, **validate and build on their work**:
 - Check that referenced files actually exist
 - Verify reported function names match the source code
-- Sibling binary-path findings are advisory only. Any executable path you use must be listed in `{{ artifact_paths.binary_paths }}`; never accept a sibling-discovered alternative.
+- Sibling binary-path findings are advisory: PREFER the path in `{{ artifact_paths.binary_paths }}`, but if a sibling found a working instrumented binary that `{{ artifact_paths.binary_paths }}` omits, verify it exists, is non-vacuous, and runs the sanitizer, then **rewrite `{{ artifact_paths.binary_paths }}` so the recovered absolute path is the declared line** (the handoff check and evaluator read ONLY that file) before you write `{{ artifact_paths.repro_script }}`, and use it rather than failing.
 - **Peer findings come from real tool runs** (gdb backtraces, sanitizer output, cflow traces). If a peer's experimental results point to a different file or function than what the manager described, follow the peer's findings — they have empirical evidence.
 - If peer findings are wrong or incomplete, investigate independently rather than failing
 - **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself. Do not skip your task because a dependency failed.

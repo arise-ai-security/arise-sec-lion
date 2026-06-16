@@ -24,11 +24,11 @@ This is a security vulnerability reproduction task.
 
 ### MANDATORY: Phase-level tasks MUST decompose
 
-If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose `"action": "decompose"`**. Choosing `"execute"` for these tasks is FORBIDDEN — a single worker CANNOT complete an entire phase and will fail. Decompose into the catalog roles below — **REQUIRED** roles always, **optional** roles only when the CVE needs them. Use the exact bracket names below; an out-of-catalog name still spawns but is not recognized as one of these roles:
+If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose `"action": "decompose"`**. Choosing `"execute"` for these tasks is FORBIDDEN — a single worker CANNOT complete an entire phase and will fail. Decompose into the catalog roles below — spawn **EVERY role shown as REQUIRED** as a separate sibling subtask using its exact bracket name; do NOT collapse, merge, or omit any REQUIRED role (the deep code-analysis roles are what let weaker workers collectively succeed). Add **optional** roles only when the CVE needs them. Use the exact bracket names below; an out-of-catalog name still spawns but is not recognized as one of these roles:
 
 ### Dependency contract
 
-The system will not auto-add missing producer roles, rewrite `depends_on`, or repair ordering. If you select a role with hard dependencies, you MUST also include each listed producer role as a sibling subtask, place the producer before the consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling position. Missing producer roles, missing `depends_on` edges, or `depends_on` edges pointing at the wrong sibling are run failures.
+Do NOT rely on any repair gate — you are responsible for emitting correct roles and dependencies. If you select a role with hard dependencies, you MUST also include each listed producer role as a sibling subtask, place the producer before the consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling position. Missing producer roles, missing `depends_on` edges, or `depends_on` edges pointing at the wrong sibling are run failures.
 
 Hard dependencies are only artifact dependencies: role B hard-depends on role A when B consumes an artifact A is responsible for producing. Soft inputs are useful evidence if present; they are fallback guidance only. Do not put soft inputs in JSON `depends_on`.
 

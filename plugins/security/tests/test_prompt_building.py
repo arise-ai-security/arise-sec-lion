@@ -162,8 +162,8 @@ class TestSecurityPromptBuilding:
             domain_context=make_test_cve_instance(),
         )
 
-        # Then: hard dependencies are an explicit prompt contract, not runtime repair.
-        assert "The system will not auto-add missing producer roles" in prompt
+        # Then: managers are told to emit correct deps and not lean on the repair gate.
+        assert "Do NOT rely on any repair gate" in prompt
         assert (
             "`[Forward-Instrumentator]` hard depends_on: `[PoC-Researcher]`"
             in prompt
@@ -429,14 +429,217 @@ class TestSecurityPromptBuilding:
             briefing=None,
         )
 
-        # Then: Exploiter must validate only the Builder-declared binary paths.
-        assert "/testcase/binary_paths.txt` is the sole authority" in prompt
-        assert "Do not scan `/src/demo`, `/work/bin`, `/src`, or PATH" in prompt
-        assert "Sibling binary-path findings are advisory only" in prompt
-        assert "must be listed in `/testcase/binary_paths.txt`" in prompt
-        assert "also check `/src/demo` and `/work/bin/`" not in prompt
-        assert "If a valid binary is present, continue to step 3" not in prompt
-        assert "ASan binary path, PoC file, or repro command — **reuse it directly**" not in prompt
+        # Then: Exploiter PREFERS the Builder-declared binary but can self-recover
+        # (scan fallback + one rebuild) rather than hard-failing the handoff (H1b).
+        assert "is the PREFERRED source for executable paths" in prompt
+        assert "fall back to scanning" in prompt
+        assert "run `secb build` ONCE to recover" in prompt
+        assert "is the sole authority" not in prompt
+
+    def test_secbench_exploiter_research_role_scoped_to_analysis(self) -> None:
+        # Given: an Exploiter worker stamped with a research role (owns NO
+        # /testcase deliverable).
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt for [PoC-Researcher].
+        prompt = builder.build_worker_prompt(
+            task_description="[PoC-Researcher] Map PoC operations to source functions",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the body is scoped to the role's analysis objective, NOT the
+        # whole-phase runbook. The role-bleed fix: a non-owner role must not be
+        # told to create the repro script or write the validation verdict (those
+        # belong to Repro-Creator / Exploit-Validator).
+        assert "### Your role: [PoC-Researcher]" in prompt
+        assert "You produce ANALYSIS ONLY" in prompt
+        assert "Create `/testcase/repro.sh`" not in prompt
+        assert "Write `/testcase/exploit_validation_results.txt`" not in prompt
+        # And: the deliverables owned by other roles are explicitly off-limits.
+        assert "Do NOT create or edit these files" in prompt
+        assert "/testcase/repro.sh" in prompt
+        assert "/testcase/exploit_validation_results.txt" in prompt
+        # And: the role's empirical objective is present.
+        assert "Map each PoC operation" in prompt
+
+    def test_secbench_research_role_uses_canonical_evidence_file(self) -> None:
+        # Research roles must name the catalog's canonical evidence file (downstream
+        # roles / eval read those exact names), not a generic per-role file.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        poc = builder.build_worker_prompt(
+            task_description="[PoC-Researcher] map PoC operations",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        assert "/testcase/poc_operation_map.txt" in poc
+        fwd = builder.build_worker_prompt(
+            task_description="[Forward-Instrumentator] probe operations",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        assert "/testcase/forward_instrumentation.log" in fwd
+
+    def test_secbench_exploiter_repro_creator_owns_repro_not_verdict(self) -> None:
+        # Given: an Exploiter worker stamped with the deliverable-owner role.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt for [Repro-Creator].
+        prompt = builder.build_worker_prompt(
+            task_description="[Repro-Creator] Write the secb repro script",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Repro-Creator OWNS repro.sh + poc_path and is told to create them.
+        assert "### Your role: [Repro-Creator]" in prompt
+        assert "Create `/testcase/repro.sh`" in prompt
+        assert "/testcase/poc_path.txt" in prompt
+        # But the verdict file belongs to Exploit-Validator — it must not write it.
+        assert "Write `/testcase/exploit_validation_results.txt`" not in prompt
+        assert "Do NOT create or edit these files" in prompt
+
+    def test_secbench_exploiter_validator_owns_verdict_not_repro(self) -> None:
+        # Given: an Exploiter worker stamped with the validation-owner role.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt for [Exploit-Validator].
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploit-Validator] Validate the reproducer and write the verdict",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Exploit-Validator OWNS the verdict and writes the machine-readable block.
+        assert "### Your role: [Exploit-Validator]" in prompt
+        assert "Write `/testcase/exploit_validation_results.txt`" in prompt
+        assert "VERDICT" in prompt
+        # But it does NOT (re)create the repro script — Repro-Creator owns it.
+        assert "Create `/testcase/repro.sh`" not in prompt
+
+    def test_secbench_exploiter_whole_phase_keeps_full_runbook(self) -> None:
+        # Given: a phase-level [Exploiter] task (no specific catalog role).
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploiter] Reproduce the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: with no role to scope to, the worker still gets the full
+        # whole-phase runbook (backward-compatible; mirrors the flat baseline).
+        assert "### Your role:" not in prompt
+        assert "Create `/testcase/repro.sh`" in prompt
+
+    def test_secbench_exploiter_role_gating_is_case_insensitive(self) -> None:
+        # Given: a worker stamped with a lowercase role-bracket variant. Branch
+        # routing already lowercases, so role resolution must too — otherwise the
+        # worker silently falls back to the whole-phase body and the bleed returns.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering with a case-variant bracket.
+        prompt = builder.build_worker_prompt(
+            task_description="[poc-researcher] map PoC operations",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: it still resolves to the role-scoped (analysis-only) body.
+        assert "### Your role:" in prompt
+        assert "You produce ANALYSIS ONLY" in prompt
+        assert "Create `/testcase/repro.sh`" not in prompt
+
+    def test_secbench_exploiter_handoff_example_uses_parseable_decision_shape(self) -> None:
+        # Given: a Repro-Creator worker prompt whose body shows a <context-update>
+        # hand-off example. The role-separation fix relies on this channel, so the
+        # example MUST show the <decision><value> shape the runtime parser requires
+        # (core/domain/values/parsed_context.py:27 returns None for a bare
+        # <decision> — silently dropping the hand-off, the diagnosis's "channel
+        # under-used" finding).
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Repro-Creator] write repro",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the example nests <value> inside <decision> (parser-required)...
+        assert '<decision key="poc_path"><value>/testcase/poc_path.txt</value></decision>' in prompt
+        assert '<decision key="exploit_command"><value>secb repro</value></decision>' in prompt
+        # ...and has not regressed to the bare (unparseable) shape.
+        assert '<decision key="poc_path">/testcase/poc_path.txt</decision>' not in prompt
+
+    def test_secbench_exploit_validator_enforces_evidence_contract(self) -> None:
+        # Tier 2+3 flip fixes: the Exploit-Validator must validate the CLEAN binary,
+        # write full canonical logs, and judge against the golden oracle (not its own
+        # observed crash). These close openexr (probe/log) and matio (self-PASS) gaps.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploit-Validator] validate the reproducer",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        # Clean-binary guard (probe contamination).
+        assert "git status --short" in prompt
+        assert "rebuild clean and re-run" in prompt
+        # Canonical-log contract (full report + exit=, no abort-truncation).
+        assert "end with an `exit=<code>` line" in prompt
+        assert "abort_on_error=1" in prompt
+        # Golden-oracle gate (no restating the observed crash as expected).
+        assert "from the CVE bug description / sanitizer report" in prompt
+        assert "do NOT restate your observed crash as the expected one" in prompt
+
+    def test_secbench_fixer_fix_run_requires_exit_marker(self) -> None:
+        # Tier 2 flip fix (libarchive): each fix_run log must carry the exit= marker
+        # INSIDE the file, not echoed to the worker's stdout.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Patch the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        assert 'echo "exit=$?" >> /testcase/fix_run_$N.log' in prompt
+        assert "without a trailing `exit=` line is invalid evidence" in prompt
 
     def test_secbench_fixer_rebuild_guidance_separates_setup_from_validation(self) -> None:
         # Given: a SEC-bench worker prompt for the fixer phase.
@@ -503,12 +706,11 @@ class TestSecurityPromptBuilding:
             briefing=None,
         )
 
-        # Then: Fixer checks that Builder hunks are already out of the working
-        # tree before producing model_patch.diff.
+        # Then: Fixer self-heals the Builder-baseline state instead of aborting (H1b).
         assert "Confirm Builder baseline first" in prompt
         assert "git status --short" in prompt
-        assert "model_patch.diff must contain only Fixer edits" in prompt
-        assert "do not generate `/testcase/model_patch.diff`" in prompt
+        assert "SELF-HEAL rather than failing" in prompt
+        assert "fix the baseline state, do not abort" in prompt
 
     def test_secbench_fixer_diff_targets_builder_baseline_not_original_base(self) -> None:
         # Given: a SEC-bench Fixer worker prompt.

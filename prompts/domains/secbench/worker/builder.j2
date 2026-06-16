@@ -59,7 +59,7 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - Define suppression flags before `./configure` or `cmake`
    - Make MINIMAL source changes if needed
 
-7. **Declare executable paths**: Write `{{ artifact_paths.binary_paths }}` with one absolute Builder-produced executable path per line
+7. **Declare executable paths — ONLY after a clean build**: Confirm `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`. If it does not, the current build did NOT succeed — read `build.log`, fix the compile error, and re-run `secb build` until `build.exit` reports `exit=0`. Do NOT declare a pre-existing or stale binary from an earlier failed attempt. Then write `{{ artifact_paths.binary_paths }}` with one absolute Builder-produced executable path per line, each produced by THIS successful build. To survive any later baseline reset, also copy each declared executable (resolving libtool wrapper scripts to the real ELF under `.libs/`) into `{{ artifact_dirs.testcase }}/bin/` and declare that durable copy: `mkdir -p {{ artifact_dirs.testcase }}/bin && cp <real-binary> {{ artifact_dirs.testcase }}/bin/<name>`
 
 8. **Save source changes and establish the Builder baseline**: Follow the
    Builder Baseline procedure in the phase contract above. It records

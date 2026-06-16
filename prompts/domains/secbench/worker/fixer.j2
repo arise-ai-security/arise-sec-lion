@@ -37,7 +37,7 @@ Then validate what you're building on:
 - If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
 5. **Verify `{{ artifact_paths.repro_script }}` exists** — this is the script behind `secb repro`. If missing, check sibling context for the exploit command and create repro.sh yourself.
 6. **Verify binaries exist** at paths listed in `{{ artifact_paths.binary_paths }}`. Before patch development, do not rebuild unless binaries are missing. After applying the patch, `secb build` is mandatory for validation.
-7. **Confirm Builder baseline first**: before editing source, run `cd {{ work_dir }} && git status --short`. Builder source/setup hunks should already be in the local `arise-builder-baseline` commit, not left as working-tree changes. If Builder source hunks are still unstaged or uncommitted, do not generate `{{ artifact_paths.model_patch }}`; record FAIL because model_patch.diff must contain only Fixer edits.
+7. **Confirm Builder baseline first**: before editing source, run `cd {{ work_dir }} && git status --short`. Builder source/setup hunks should already be in the local `arise-builder-baseline` commit. If Builder source hunks are still unstaged or uncommitted, SELF-HEAL rather than failing: stage and commit exactly those Builder hunks as `arise-builder-baseline` (do NOT use `git add -A`), or generate `{{ artifact_paths.model_patch }}` naming only the files YOUR fix edits. The goal is that model_patch.diff contains only Fixer edits — fix the baseline state, do not abort.
 8. **Install analysis tools**: `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
 9. **Read the PoC file** to understand what input triggers the vulnerability — this informs your root cause analysis.
 
@@ -101,10 +101,12 @@ Then validate what you're building on:
 
 4. **Review patch**: The diff MUST contain only your security fix. Confirm every hunk is an intended fix edit — if you see Builder/build-system hunks or leftover instrumentation, the Builder baseline was not committed or an instrumentation revert was missed; correct that and regenerate. A diff well over ~30 lines usually signals scope creep, not Builder changes — trim to the minimal fix.
 
-5. **Validate**:
+5. **Validate** (logs MUST use the canonical names the evaluator reads):
+   - First clear stale logs from earlier attempts: `rm -f {{ artifact_dirs.testcase }}/fix_run_*.log`
    - Apply through the runtime contract: `secb patch`
    - Rebuild through the runtime contract: `secb build`
-   - Re-run the selected reproducer through the runtime contract: `secb repro`
+   - Re-run the reproducer 3× through the runtime contract, writing each to `{{ artifact_dirs.testcase }}/fix_run_$N.log` (N=1,2,3), OVERWRITING those exact names. Do NOT create alternate generations (`fix_run2_*`, `fix3_run_*`): the evaluator reads ONLY `fix_run_*.log`, so a leftover pre-fix crash log there fails provenance even when the patch works.
+   - Each `fix_run_$N.log` MUST end with an `exit=<code>` line written INTO the file — run the loop exactly: `for N in 1 2 3; do secb repro > {{ artifact_dirs.testcase }}/fix_run_$N.log 2>&1; echo "exit=$?" >> {{ artifact_dirs.testcase }}/fix_run_$N.log; done`. Do NOT echo the exit code to your own stdout (the evaluator reads the FILE, not the transcript). A `fix_run` log without a trailing `exit=` line is invalid evidence of a clean run, so a working patch still fails provenance.
 
 6. **Test fix with CWE-appropriate validation** (use ALL tools, but prioritize based on CWE):
    - Run `secb repro` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
@@ -128,9 +130,9 @@ Then validate what you're building on:
 Publish your validation results via `<context-update>` for parent/sibling visibility:
 ```
 <context-update>
-<decision key="patch_status">pass</decision>
-<decision key="patch_file">{{ artifact_paths.model_patch }}</decision>
-<decision key="valgrind_result">No memory errors detected after patching</decision>
+<decision key="patch_status"><value>pass</value></decision>
+<decision key="patch_file"><value>{{ artifact_paths.model_patch }}</value></decision>
+<decision key="valgrind_result"><value>No memory errors detected after patching</value></decision>
 </context-update>
 ```
 

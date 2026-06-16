@@ -17,7 +17,12 @@ from plugins.security.deliverables import (
     ROOT_CAUSE_BLOCK_FIELDS,
     VALIDATION_REQUIRED,
 )
-from plugins.security.roles import PHASE_ROLES
+from plugins.security.roles import (
+    PHASE_ROLES,
+    Role,
+    deliverables_owned_by_others,
+    role_by_name_ci,
+)
 from plugins.security.security_tool import get_tools_for_phase
 
 
@@ -118,6 +123,20 @@ def _detect_branch_from_task(task_description: str) -> str | None:
     if any(kw in task_lower for kw in ("reporter", "security report")):
         return "reporter"
     return None
+
+
+def _role_from_task(task_description: str) -> Role | None:
+    """Resolve a worker task's explicit ``[Role]`` bracket to its catalog role.
+
+    A leaf worker carries its own role label, so the role is read from the task
+    description directly. Phase brackets (``[Exploiter]``) and out-of-catalog
+    labels resolve to None — the worker template then renders the whole-phase
+    body instead of a role-scoped one.
+    """
+    match = _BRACKET_PREFIX_RE.match(task_description)
+    if match is None:
+        return None
+    return role_by_name_ci(match.group(1).strip())
 
 
 def _as_cve_instance(domain_context: object | None) -> CVEInstance | None:
@@ -271,6 +290,18 @@ class SecBenchPromptStrategy:
                 "[Builder]/[Exploiter]/[Fixer]/[Reporter] or supply an ancestry that "
                 "names the phase."
             )
+
+        # Role-ownership gate: a leaf worker stamped with a catalog role (e.g.
+        # [Repro-Creator]) gets a body scoped to ITS deliverable; the whole-phase
+        # body (and the sibling roles' deliverable instructions) are gated out so
+        # the role layer the manager created is not erased at the worker tier. A
+        # phase-level task ([Exploiter]) resolves to no role and keeps the full
+        # whole-phase runbook.
+        worker_role = _role_from_task(context.task_description)
+        cve_ctx["worker_role"] = worker_role
+        cve_ctx["foreign_deliverables"] = (
+            deliverables_owned_by_others(worker_role) if worker_role is not None else ()
+        )
 
         # Gate the shared-code prompt guidance on the feature actually producing
         # a block. N cells (no provider, flag off) and a run's first worker
