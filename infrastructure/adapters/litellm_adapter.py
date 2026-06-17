@@ -235,6 +235,19 @@ class LiteLLMAdapter(LLMPort):
             "num_ctx": 65536,
         }
 
+    @staticmethod
+    def _maybe_prompt_cache_key(merged_config: dict[str, Any], model: str) -> dict[str, Any]:
+        """OpenAI prompt-cache routing key (manager-cache fix).
+
+        Emits ``prompt_cache_key`` (a shared per-run key injected by the orchestrator) for
+        OpenAI models only, so serialized sibling boss/manager calls route to one cache and
+        reuse their large shared prefix. Anthropic uses ``cache_control``; Ollama ignores it.
+        """
+        key = merged_config.get("prompt_cache_key")
+        base = model.split("/")[-1].lower()
+        is_openai = base.startswith(("gpt-", "o1", "o3", "o4")) and "claude" not in model.lower()
+        return {"prompt_cache_key": key} if key and is_openai else {}
+
     # Per-attempt hard timeout. Sized above the ~120s that a large cache-WRITE
     # seeding request (the rolling tool-loop tail on Sonnet) can take under
     # parallel load; the 900s agent-step watchdog still bounds the whole step.
@@ -401,6 +414,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._maybe_prompt_cache_key(merged_config, model))
         call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
@@ -436,6 +450,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._maybe_prompt_cache_key(merged_config, model))
         call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)
@@ -488,6 +503,7 @@ class LiteLLMAdapter(LLMPort):
         if not self._is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
+        call_kwargs.update(self._maybe_prompt_cache_key(merged_config, model))
         call_kwargs.update(self._ollama_overrides(model))
 
         response = await self._call_litellm(model=model, **call_kwargs)

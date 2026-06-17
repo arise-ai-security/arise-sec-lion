@@ -197,6 +197,15 @@ class AgentExecutionService:
             else 10000
         )
         self._llm_semaphore = asyncio.Semaphore(llm_limit)
+
+        # Manager-cache prime (env-gated): before the depth-1 phase managers run their
+        # assessments in parallel, issue one cheap request warming their longest common
+        # (prompt-prefix, tool defs) so each manager's real call reads it from OpenAI's
+        # cache. Off by default => no behavior change and no extra LLM call.
+        self._prime_manager_cache = (
+            os.environ.get("ARISE_PRIME_MANAGER_CACHE", "").lower()
+            not in ("", "0", "false", "no")
+        )
         self._llm_jitter_max_ms = system_limits.llm_jitter_max_ms
         self._max_agent_step_seconds = float(system_limits.max_agent_step_seconds)
 
@@ -375,6 +384,7 @@ class AgentExecutionService:
         agent_event_count: dict[UUID, int] = {}
         agent_last_progress_at: dict[UUID, float] = {}
         run_status_override: str | None = None
+        manager_cache_primed = False
         debug_poll = bool(os.environ.get("ARISE_DEBUG_POLL"))
         debug_last_log = 0.0
         debug_interval = float(os.environ.get("ARISE_DEBUG_POLL_INTERVAL_S", "10"))
@@ -400,6 +410,9 @@ class AgentExecutionService:
                 root_id=root_agent_id, sequential_workers=True
             )
             new_agents = [aid for aid in active_agents if aid not in in_progress]
+
+            if self._prime_manager_cache and not manager_cache_primed and new_agents:
+                manager_cache_primed = await self._maybe_prime_manager_cache(new_agents)
 
             for agent_id in new_agents:
                 in_progress.add(agent_id)
@@ -614,6 +627,37 @@ class AgentExecutionService:
         if exit_status == "timeout":
             return "timed_out"
         return "failed"
+
+    async def _maybe_prime_manager_cache(self, new_agents: list[UUID]) -> bool:
+        """Warm OpenAI's prompt cache for a newly-active batch of depth-1 managers.
+
+        Depth/root come from the in-process ``_limits_registry`` (same source the step
+        path uses). Returns True once a prime has been attempted (caller stops checking);
+        False while fewer than two managers are present, so the caller re-checks on later
+        polls. Best-effort: any failure is swallowed so a prime problem never breaks a run.
+        """
+        manager_ids = [
+            aid
+            for aid in new_agents
+            if (limits := self._limits_registry.get(aid)) is not None
+            and limits.current_depth == 1
+        ]
+        if len(manager_ids) < 2:
+            return False
+        try:
+            managers = [await self._load_agent_with_context(aid) for aid in manager_ids]
+            primed_chars = await self._orchestrator.prime_manager_cache(managers)
+            if primed_chars:
+                logger.info(
+                    "manager-cache primed: %d managers, %d-char shared prefix",
+                    len(managers),
+                    primed_chars,
+                )
+            else:
+                logger.info("manager-cache prime skipped (shared prefix below floor)")
+        except Exception:
+            logger.warning("manager-cache prime failed; managers run cold", exc_info=True)
+        return True
 
     async def _run_agent_step_safe(
         self,

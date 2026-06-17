@@ -8,6 +8,7 @@ Handles the three orchestration operations as direct method calls:
 
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -183,6 +184,26 @@ def _is_prose_misinterpreted_assessment(
     return _reasoning_contradicts_execute(result.reasoning)
 
 
+# manager-cache prime: OpenAI serves a cached entry only when it is a complete prefix
+# (messages + tool defs) of the new request, in >=1024-token / ~4 KB increments. Sibling
+# managers share a long head but diverge mid-prompt, so we pre-warm their longest common
+# prefix once. Below this floor the prime cannot pay for itself, so skip it.
+_MIN_PRIME_PREFIX_CHARS = 4096
+_PRIME_MAX_TOKENS = 16
+
+
+def _longest_common_prefix(strings: list[str]) -> str:
+    """Longest byte-identical leading substring shared by every string ("" if none)."""
+    if not strings:
+        return ""
+    lo = min(strings)
+    hi = max(strings)
+    for i, ch in enumerate(lo):
+        if ch != hi[i]:
+            return lo[:i]
+    return lo
+
+
 if TYPE_CHECKING:
     from uuid import UUID
 
@@ -325,20 +346,8 @@ class AgentOrchestrator:
                     )
                     return
 
-                domain_context = self._get_domain_context(agent)
                 tool_context = self._toolset_resolver.resolve(agent.role)
-
-                scope = self._build_scope(agent)
-                prompt = self._prompt_builder.build_assessment_prompt(
-                    task_description=agent.task_description,
-                    agent_id=agent.agent_id,
-                    briefing=agent.briefing,
-                    hierarchy_limits=agent.hierarchy_limits,
-                    domain_context=domain_context,
-                    scope=scope,
-                    prompt_capabilities=build_prompt_capabilities(tool_context),
-                    shared_code_block=self._resolve_boss_recon_block(agent),
-                )
+                prompt = self._build_assessment_prompt_text(agent)
                 agent.emit_prompt_sent(
                     prompt=strip_cache_breakpoint(prompt), prompt_type=op, target="llm"
                 )
@@ -483,6 +492,53 @@ class AgentOrchestrator:
                 await self._apply_assessment_result(agent, result)
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 agent.fail_with_reason(f"Assessment failed: {e}")
+
+    def _build_assessment_prompt_text(self, agent: "AgentSession") -> str:
+        """Assemble the task-assessment prompt. Shared by ``assess_task`` and
+        ``prime_manager_cache`` so both emit byte-identical text for the same agent."""
+        tool_context = self._toolset_resolver.resolve(agent.role)
+        return self._prompt_builder.build_assessment_prompt(
+            task_description=agent.task_description,
+            agent_id=agent.agent_id,
+            briefing=agent.briefing,
+            hierarchy_limits=agent.hierarchy_limits,
+            domain_context=self._get_domain_context(agent),
+            scope=self._build_scope(agent),
+            prompt_capabilities=build_prompt_capabilities(tool_context),
+            shared_code_block=self._resolve_boss_recon_block(agent),
+        )
+
+    async def prime_manager_cache(self, agents: "list[AgentSession]") -> int:
+        """Pre-warm OpenAI's prompt cache for a batch of depth-1 phase managers.
+
+        Their assessment prompts share a long head (system + persona + operation +
+        CVE block) but diverge at per-manager scope, so no manager's request is a
+        prefix of another's and none warms the cache for its siblings. This issues
+        ONE cheap request carrying their longest common (prompt-prefix, tool defs)
+        so each manager's real assessment call reads it back. Returns the primed
+        prefix length in chars (0 = skipped: <2 managers or prefix below the floor).
+        """
+        if len(agents) < 2:
+            return 0
+        prefix = _longest_common_prefix(
+            [self._build_assessment_prompt_text(a) for a in agents]
+        )
+        if len(prefix) < _MIN_PRIME_PREFIX_CHARS:
+            return 0
+        anchor = agents[0]
+        tool_context = self._toolset_resolver.resolve(anchor.role)
+        config = ConfigResolver.resolve(
+            anchor.config, operation="task_assessment"
+        ).model_dump()
+        config["max_tokens"] = _PRIME_MAX_TOKENS
+        if anchor.hierarchy_limits is not None:
+            config["prompt_cache_key"] = str(anchor.hierarchy_limits.root_id)
+        await self._llm_port.query_with_tools(
+            messages=[{"role": "user", "content": prefix}],
+            config_dict=config,
+            tools=list(tool_context.tool_definitions),
+        )
+        return len(prefix)
 
     async def evaluate_task(
         self,
@@ -1089,6 +1145,10 @@ class AgentOrchestrator:
         """
         llm_config = ConfigResolver.resolve(agent.config, operation=operation)
         config_dict = llm_config.model_dump()
+        if os.environ.get("ARISE_PRIME_MANAGER_CACHE") and agent.hierarchy_limits is not None:
+            # manager-cache fix (env-gated): shared per-run OpenAI prompt-cache key so the
+            # parallel phase managers route to one cache node that prime_manager_cache pre-warms.
+            config_dict["prompt_cache_key"] = str(agent.hierarchy_limits.root_id)
         if tool_context is not None and tool_context.has_tools:
             # ALWAYS keep recon read_file verbatim + dedup in the tool loop.
             # This is a manager-side cache optimization (source stays in the
@@ -1253,6 +1313,10 @@ class AgentOrchestrator:
         ]
         llm_config = ConfigResolver.resolve(agent.config, operation=op)
         config_dict = llm_config.model_dump()
+        if os.environ.get("ARISE_PRIME_MANAGER_CACHE") and agent.hierarchy_limits is not None:
+            # manager-cache fix (env-gated): shared per-run OpenAI prompt-cache key so the
+            # parallel phase managers route to one cache node that prime_manager_cache pre-warms.
+            config_dict["prompt_cache_key"] = str(agent.hierarchy_limits.root_id)
         try:
             recovered = await self._llm_port.query_with_tools(
                 messages=messages,
@@ -1332,6 +1396,10 @@ class AgentOrchestrator:
         ]
         llm_config = ConfigResolver.resolve(agent.config, operation=op)
         config_dict = llm_config.model_dump()
+        if os.environ.get("ARISE_PRIME_MANAGER_CACHE") and agent.hierarchy_limits is not None:
+            # manager-cache fix (env-gated): shared per-run OpenAI prompt-cache key so the
+            # parallel phase managers route to one cache node that prime_manager_cache pre-warms.
+            config_dict["prompt_cache_key"] = str(agent.hierarchy_limits.root_id)
         try:
             recovered = await self._llm_port.query_with_tools(
                 messages=messages,
