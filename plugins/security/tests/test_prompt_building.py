@@ -578,65 +578,24 @@ class TestSecurityPromptBuilding:
         assert "You produce ANALYSIS ONLY" in prompt
         assert "Create `/testcase/repro.sh`" not in prompt
 
-    def _worker_prompt(self, task_description: str) -> str:
+    def test_secbench_fixer_uses_verifiable_async_validation(self) -> None:
+        # Reverted Builder/Fixer role-gating (it regressed the weak worker), but KEPT the
+        # verifiable-async provenance in the whole-phase fixer: the validation step launches
+        # the detached secb loop AND polls the result back into the transcript.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
             strategy=SecBenchPromptStrategy(),
         )
-        return builder.build_worker_prompt(
-            task_description=task_description,
+        prompt = builder.build_worker_prompt(
+            task_description="[Patch-Validator] Validate the patch",
             domain_context=make_test_cve_instance(),
             briefing=None,
         )
-
-    def test_secbench_builder_compiler_owns_binaries_not_setup(self) -> None:
-        # Build-Compiler owns binary_paths; base_commit_hash is Build-Setup's (foreign).
-        prompt = self._worker_prompt("[Build-Compiler] Build the project")
-        assert "### Your role: [Build-Compiler]" in prompt
-        assert "/testcase/binary_paths.txt" in prompt
-        assert "Do NOT create or edit these files" in prompt
-        assert "/testcase/base_commit_hash" in prompt  # listed as foreign
-        # Not the whole-phase fallback runbook step.
-        assert "Determine base commit** from vulnerability description" not in prompt
-
-    def test_secbench_builder_verifier_is_analysis_only(self) -> None:
-        # Build-Verifier owns no deliverable — verification only, no compile/declare.
-        prompt = self._worker_prompt("[Build-Verifier] Verify the binary")
-        assert "### Your role: [Build-Verifier]" in prompt
-        assert "VERIFICATION/ANALYSIS ONLY" in prompt
-        assert "Determine base commit** from vulnerability description" not in prompt
-
-    def test_secbench_builder_whole_phase_keeps_full_runbook(self) -> None:
-        # Phase-level [Builder] (no catalog role) keeps the whole-phase runbook (flat-compatible).
-        prompt = self._worker_prompt("[Builder] Build and instrument the project")
+        # Whole-phase body (no role-scoping) + the poll-into-transcript provenance step.
         assert "### Your role:" not in prompt
-        assert "Determine base commit" in prompt
-
-    def test_secbench_fixer_patch_creator_must_not_self_validate(self) -> None:
-        # The role-bleed/abdication fix: Patch-Creator owns model_patch.diff but is
-        # explicitly barred from writing its own patch_validation verdict.
-        prompt = self._worker_prompt("[Patch-Creator] Develop and write the fix")
-        assert "### Your role: [Patch-Creator]" in prompt
-        assert "/testcase/model_patch.diff" in prompt
-        assert "grading your own patch is forbidden" in prompt
-        assert "/testcase/patch_validation_results.txt" in prompt  # listed as foreign
-        # It must not run the validation loop or render the verdict block.
-        assert "Finalize the verdict (overwrite)" not in prompt
-
-    def test_secbench_fixer_patch_validator_owns_verdict_write_first(self) -> None:
-        # Patch-Validator owns the verdict, writes it FIRST (budget-robust), and does
-        # not author the patch.
-        prompt = self._worker_prompt("[Patch-Validator] Validate the patch")
-        assert "### Your role: [Patch-Validator]" in prompt
-        assert "/testcase/patch_validation_results.txt" in prompt
-        assert "verdict file FIRST" in prompt
-        assert "Do NOT edit `/testcase/model_patch.diff`" in prompt
-
-    def test_secbench_fixer_whole_phase_keeps_full_runbook(self) -> None:
-        prompt = self._worker_prompt("[Fixer] Root-cause and fix the vulnerability")
-        assert "### Your role:" not in prompt
-        assert "Understand root cause" in prompt
+        assert "poll the result INTO your transcript" in prompt
+        assert "launched secb patch/build/repro validation" in prompt
 
     def test_secbench_exploiter_handoff_example_uses_parseable_decision_shape(self) -> None:
         # Given: a Repro-Creator worker prompt whose body shows a <context-update>

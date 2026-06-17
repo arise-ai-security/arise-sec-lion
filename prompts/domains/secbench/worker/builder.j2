@@ -3,19 +3,14 @@
 
 Refer to Task Context above for repository location, base commit hash, and vulnerability details.
 
-{% set wr = worker_role %}
-{% set owns_base = wr and artifact_paths.base_commit_hash in wr.produces %}
-{% set owns_compile = wr and artifact_paths.binary_paths in wr.produces %}
 {# The included phase partial (phases/build.j2) is the shared "phase contract":
    its Goal + deliverables render identically for every Builder worker and the
-   flat arm, so it sits in the common cacheable prefix. Keep it above the role
-   branch so the prefix stays stable across workers.
+   flat arm, so it sits in the common cacheable prefix (run-scoped shard for
+   OpenHands; cache_control for Anthropic via LiteLLM). Keep text above this
+   include stable across workers to preserve that prefix.
 #}
-{% include 'domains/secbench/phases/build.j2' %}
 
-{% if wr is none %}
-{# ===================== WHOLE-PHASE FALLBACK ===================== #}
-{# [Builder] phase task / out-of-catalog label, and the flat-baseline shape. #}
+{% include 'domains/secbench/phases/build.j2' %}
 
 ### Setup
 
@@ -93,71 +88,19 @@ If upstream siblings (e.g., Build-Setup) shared decisions, verify them:
 - Verify the repo is at the correct commit: `git log -1 --format=%H`
 - If findings are inconsistent, investigate and correct
 
-{% else %}
-{# ===================== ROLE-SCOPED BODY ===================== #}
-{# A catalog role was detected. Give this worker ONLY its slice of the phase so the role #}
-{# layer the manager created is not erased — each role produces its own deliverable and #}
-{# hands the rest off, instead of every Builder leaf doing the whole build. #}
-### Your role: [{{ wr.name }}]
-
-{{ wr.summary }} {{ wr.insight }}
-
-{% if wr.produces %}
-**You OWN these deliverables — you alone create them, and they are your definition of done:**
-{% for p in wr.produces %}- `{{ p }}`
-{% endfor %}
-{%- else %}
-**You produce VERIFICATION/ANALYSIS ONLY — you create NO `{{ artifact_dirs.testcase }}` contract deliverable.** Your output is findings: save evidence under `{{ artifact_dirs.testcase }}/` and publish the key facts via `<context-update>` so the deliverable-owning roles can use them.
-{% endif %}
-{% if foreign_deliverables %}
-**Do NOT create or edit these files — other Builder roles own them:**
-{% for p in foreign_deliverables %}- `{{ p }}`
-{% endfor %}
-Hand any finding about them off via `<context-update>`; never write the file yourself. Finishing another role's deliverable is a FAILURE of this task, not extra credit.
-{% endif %}
-
-### Setup
-```bash
-apt-get install -y cppcheck gdb 2>/dev/null || true
-```
-
-{% if owns_base %}
-### Your steps
-1. **Determine the base commit** from the vulnerability description (Task Context). If a more suitable commit exists, use it; otherwise use the provided base commit.
-2. **Pin the repo**: `cd {{ work_dir }} && git reset --hard <hash>` (only if you changed the commit), then write the hash to `{{ artifact_paths.base_commit_hash }}` (one line, the 40-char hash).
-3. **Verify**: `git log -1 --format=%H` matches what you wrote; `cat {{ artifact_paths.base_commit_hash }}`.
-
-You are DONE when `{{ artifact_paths.base_commit_hash }}` holds the correct commit. Do NOT run the full build, edit `{{ artifact_paths.build_script }}`, or declare `{{ artifact_paths.binary_paths }}` — Build-Compiler owns those. Publish the chosen commit via `<context-update>`.
-{% elif owns_compile %}
-### Your steps
-1. **Reuse Build-Setup's work**: read `{{ artifact_paths.base_commit_hash }}` (and sibling `<context-update>`); do NOT re-pick the commit.
-2. **Build**: `cd {{ work_dir }} && secb build`. Improve `{{ artifact_paths.build_script }}` only when needed (standalone; drop fuzzer steps; `-j$(nproc)`; keep `make install`; preserve `-fsanitize=address`; define exports before `./configure`/`cmake`). Rebuild.
-3. **Fix build errors** (errors only, not warnings): C++17 → `-std=c++14` in CXXFLAGS only; implicit int → explicit types; overloads → `-D_GNU_SOURCE`; MINIMAL source changes.
-4. **Verify sanitizer runtime**: run the main binary with `--help`; if `libclang_rt.asan`/`libasan` is missing, install the matching runtime / fix `LD_LIBRARY_PATH`. A build that compiles but cannot execute under ASan is worse than a build failure.
-5. **Declare binaries — ONLY after `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`**: write `{{ artifact_paths.binary_paths }}` (one absolute Builder-produced path per line). Also copy each real ELF (resolving libtool wrappers to `.libs/`) into `{{ artifact_dirs.testcase }}/bin/` and declare that durable copy.
-6. **Baseline**: follow the Builder Baseline procedure in the phase contract — record `{{ artifact_paths.repo_changes_diff }}` and commit exactly that diff as `arise-builder-baseline` (never `git add -A`).
-
-You are DONE when the build is clean (`exit=0`), `{{ artifact_paths.binary_paths }}` lists real runnable instrumented binaries, and the baseline is recorded. Do NOT pick the base commit (Build-Setup owns it). Publish the binary paths via `<context-update>`.
-{% else %}
-### Your steps (verification only)
-1. **Reuse siblings' work first**: `ls -la {{ artifact_dirs.testcase }}/`; read `{{ artifact_paths.binary_paths }}` and sibling `<context-update>` findings.
-2. **Verify the build is real and non-vacuous**: confirm `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`; for each path in `{{ artifact_paths.binary_paths }}`, confirm the file exists, is non-vacuous, is executable, and **actually runs under the sanitizer** (e.g. `--help`, or run it on a trivial input and confirm the ASan runtime loads).
-3. **Report**: write your verification findings to an evidence file under `{{ artifact_dirs.testcase }}/` (e.g. `{{ artifact_dirs.testcase }}/build_verifier_summary.txt`) and publish PASS/FAIL + any missing-binary detail via `<context-update>`.
-
-You are DONE when you have confirmed (or refuted) that the declared binaries are genuine and ASan-capable. Do NOT pick the commit, run the full build, edit `{{ artifact_paths.build_script }}`, or (re)declare `{{ artifact_paths.binary_paths }}` — those belong to Build-Setup / Build-Compiler.
-{% endif %}
-
-{% endif %}
-
 ### CRITICAL: Print Deliverable Files
 
-After creating each deliverable, you **MUST print its contents** via `cat` so the evaluation harness can see the evidence in your output log (it evaluates from a truncated command log — file-editor writes are invisible unless printed):
+After creating each deliverable, you **MUST print its contents** via `cat` so the evaluation harness can see the evidence in your output log. The harness evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
 
 ```bash
-echo "=== <filename> ===" && cat {{ artifact_dirs.testcase }}/<filename>
+echo "=== base_commit_hash ===" && cat {{ artifact_paths.base_commit_hash }}
+echo "=== build.sh ===" && cat {{ artifact_paths.build_script }}
+echo "=== repo_changes.diff ===" && cat {{ artifact_paths.repo_changes_diff }}
+echo "=== binary_paths.txt ===" && cat {{ artifact_paths.binary_paths }}
 ```
+
+After creating or editing each file, run: `echo "=== <filename> ===" && cat /path/to/<filename>` to make the contents visible.
 
 ### Rules
 - DO NOT disable sanitizer options — they are essential for bug detection
-{% if wr is not none %}- Stay within your role: produce only your own deliverable(s) and hand the rest off via `<context-update>`.
-{% endif %}</domain_instructions>
+</domain_instructions>
