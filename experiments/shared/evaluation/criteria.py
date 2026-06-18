@@ -727,6 +727,114 @@ def _judge_passed(result: dict[str, Any] | None) -> bool:
     return bool(result and result.get("verdict") is True)
 
 
+# ---------------------------------------------------------------------------
+# Deterministic floors (symmetric; correct stochastic LLM false-negatives)
+# ---------------------------------------------------------------------------
+# The cve_reproduced / execution_provenance LLM judges are stochastic and were observed
+# to FAIL repros byte-identical to ones they PASSED on the other arm. These floors never
+# override a judge PASS and never fail a run; they only upgrade a FAIL→PASS when artifact
+# evidence is unambiguous. They key on the CVE *crash* oracle (sanitizer_report), never
+# the gold patch, so they cannot leak the fix.
+
+_ASAN_CLASS_RX = re.compile(r"ERROR:\s*AddressSanitizer:\s*([A-Za-z0-9_-]+)")
+_ASAN_ACCESS_RX = re.compile(r"\b(READ|WRITE)\s+of\s+size\s+\d+", re.IGNORECASE)
+_ASAN_ACCESS_CAUSE_RX = re.compile(r"caused by a\s+(READ|WRITE)\s+memory access", re.IGNORECASE)
+_ASAN_FRAME_RX = re.compile(r"#\d+\s+0x[0-9a-fA-F]+\s+in\s+(.+)$")
+_FRAME_PATH_RX = re.compile(r"\s+(/\S+|\([^)]*\))\s*$")
+_NONAPP_FUNC_RX = re.compile(
+    r"^(?:__asan|__lsan|__interceptor|__sanitizer|__isoc99_|asan_|scanf_common"
+    r"|printf_common|v?[fs]?scanf|v?[fs]?printf|mem(?:cpy|move|set|cmp)"
+    r"|str(?:n?cpy|n?cat|len|n?cmp|dup)|malloc|calloc|realloc|free"
+    r"|operator new|operator delete|_start|__libc_start_main)",
+    re.IGNORECASE,
+)
+_NONAPP_PATH_RX = re.compile(
+    r"compiler-rt|sanitizer_common|/asan/|libc-start|/glibc|llvm-project|/sysdeps/|interception",
+    re.IGNORECASE,
+)
+
+
+def _crash_signature(text: str) -> tuple[str | None, str | None, str | None]:
+    """Extract ``(sanitizer_class, access_kind, top_application_frame)`` from ASan output.
+
+    The top application frame skips sanitizer / interceptor / libc frames (memcpy,
+    scanf_common, __asan_*, glibc, compiler-rt) so the key is the project's own crash
+    site, not the shim it aborted inside.
+    """
+    if not text:
+        return None, None, None
+    cls_m = _ASAN_CLASS_RX.search(text)
+    cls = cls_m.group(1).lower() if cls_m else None
+    acc_m = _ASAN_ACCESS_RX.search(text) or _ASAN_ACCESS_CAUSE_RX.search(text)
+    acc = acc_m.group(1).lower() if acc_m else None
+    top: str | None = None
+    for line in text.splitlines():
+        fm = _ASAN_FRAME_RX.search(line)
+        if not fm:
+            continue
+        rest = fm.group(1).strip()
+        pm = _FRAME_PATH_RX.search(rest)
+        func = (rest[: pm.start()] if pm else rest).strip()
+        path = pm.group(1) if pm else ""
+        base = re.split(r"[(<]", func)[0].strip()
+        if not base or _NONAPP_FUNC_RX.match(base) or _NONAPP_PATH_RX.search(path):
+            continue
+        top = base
+        break
+    return cls, acc, top
+
+
+def _crash_signature_matches(run_data: RunData, oracle: CveOracle | None) -> bool:
+    """True iff the observed repro crash signature equals the golden oracle's.
+
+    An identical ``(class, access, top-app-frame)`` is the same defect regardless of LLM
+    variance. Requires class + top frame on both sides and (when the golden states one)
+    the access kind. Symmetric across arms; only ever upgrades a FAIL to PASS.
+    """
+    if oracle is None:
+        return False
+    g_cls, g_acc, g_top = _crash_signature(oracle.sanitizer_report)
+    if not (g_cls and g_top):
+        return False
+    tc = run_data.run_dir / "testcase"
+    observed = "\n".join(_read_text_safe(p) for p in sorted(tc.glob("repro_run_*.log"))[:3])
+    o_cls, o_acc, o_top = _crash_signature(observed)
+    if not (o_cls and o_top):
+        return False
+    return o_cls == g_cls and o_top == g_top and (g_acc is None or o_acc == g_acc)
+
+
+def _execution_genuine(run_data: RunData) -> bool:
+    """Deterministic floor under the ``execution_provenance`` judge.
+
+    Genuine repro execution = the anti-leak runtime seal is present AND a real
+    ``AddressSanitizer`` abort appears in the HARNESS-captured event stream
+    (``ThoughtCaptured`` worker tool output), not merely in the agent-writable
+    ``repro_run_*.log``. Binding to the captured stream raises the bar from "echoed
+    text in a file" (which a worker could fabricate) to "the harness recorded a crash
+    from an actual tool run". Symmetric; only ever upgrades a FAIL to PASS.
+
+    Residual (CO review): the harness does not record the full stack in the event
+    stream, so the crash *site* used by :func:`_crash_signature_matches` is still read
+    from the repro log. A fully adversarial harness must additionally bind that log to
+    the captured execution; until then this floor corrects honest stochastic
+    false-negatives but is not fraud-proof against a worker that pairs a real (but
+    different) crash with a fabricated log.
+    """
+    seal_ok, _ = runtime_seal_ok(run_data.events)
+    if not seal_ok:
+        return False
+    return any(
+        "AddressSanitizer" in (ev.content or "")
+        for ev in events_of_type(run_data.events, ThoughtCaptured)
+    )
+
+
+def _floor_pass(reason: str) -> dict[str, Any]:
+    """A synthetic judge verdict marking a deterministic-floor override."""
+    return {"verdict": True, "reasoning": reason, "source": "deterministic_floor"}
+
+
 def evaluate_run(
     run_data: RunData,
     *,
@@ -781,6 +889,19 @@ def evaluate_run(
             "patch_root_cause": judge(build_patch_root_cause_prompt(run_data, resolved_oracle)),
             "execution_provenance": judge(build_execution_provenance_prompt(run_data)),
         }
+        # Deterministic floors: a stochastic LLM false-negative must not override
+        # unambiguous artifact evidence. Symmetric across arms; only ever upgrade a
+        # FAIL to PASS (see helpers above).
+        if not _judge_passed(judges["cve_reproduced"]) and _crash_signature_matches(
+            run_data, resolved_oracle
+        ):
+            judges["cve_reproduced"] = _floor_pass(
+                "deterministic: observed crash signature (class+access+top-app-frame) == golden"
+            )
+        if not _judge_passed(judges["execution_provenance"]) and _execution_genuine(run_data):
+            judges["execution_provenance"] = _floor_pass(
+                "deterministic: runtime seal present + real ASan abort in repro logs"
+            )
 
     judged = judge is not None
     builder_judges = {"binary_genuine": judges.get("binary_genuine")} if judged else {}
