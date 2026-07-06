@@ -206,10 +206,10 @@ flowchart LR
   (commit `2d669d0`); the harness no longer writes it and evaluators read DB events only.
   — `experiments/shared/harness.py:495-499`, `experiments/shared/evaluation/criteria.py:375-377`
 
-> ⚠️ **Stale `CLAUDE.md`.** `CLAUDE.md` states "AgentSession is the only aggregate" and
-> "All state from replaying ~31 frozen Pydantic events." Both are out of date: there are
-> **38** registered event types (`postgres_event_store.py:51-99`) and **two** aggregates.
-> Treat `AgentSession` as the *primary/central* aggregate. (See §V.6.)
+> **Aggregate & event counts.** There are **38** registered event types
+> (`postgres_event_store.py:54-102`) and **two** aggregates: `AgentSession` is the
+> *primary/central* aggregate (35 of the 38 event types), `SharedStore` the second (3).
+> `CLAUDE.md` and `.claude/docs/` are aligned with this (drift resolved — see §V.6).
 
 ### Event catalog (38 types)
 
@@ -836,13 +836,13 @@ rely on the CVE-aware LLM judge over the transcripts. See §IV.5 (the fabricatio
 golden file shipped under any other name in the agent-writable `/testcase` survives.
 Consider seeding by allowlist (delete everything not explicitly permitted).
 
-## V.6 — Documentation drift to fix
+## V.6 — Documentation drift (resolved)
 
-`CLAUDE.md` → "Key Architectural Decisions" should be updated: "AgentSession is the only
-aggregate" → *primary* aggregate (a second `SharedStore` aggregate exists); "~31 frozen
-events" → **36**. — verified `postgres_event_store.py:51-97`, `shared_context.py`.
+`CLAUDE.md` and `.claude/docs/` now describe **two** aggregates (`AgentSession` *primary* +
+`SharedStore`) and **38** registered event types, matching `postgres_event_store.py:54-102`
+and `shared_context.py`. The earlier "sole aggregate / ~31 events" drift is fixed.
 
-## V.7 — Event-source the `secb` results (anti-fabrication by construction)
+## V.7 — Event-source the `secb` results (anti-fabrication by construction) — IMPLEMENTED (flag-gated) for validators
 
 **Gap.** `secb build|repro|patch` runs as the agent's own **detached** bash; its exit code
 and sanitizer output land in agent-writable `/testcase` files, and only a *generic* tool
@@ -850,14 +850,20 @@ transcript (`ThoughtCaptured`) is event-sourced (§IV.5). So `VERDICT: PASS` /
 `DETERMINISM_RUNS: 3/3` are agent-authored and forgeable — the hallucination observed in
 practice (a PASS written without `secb repro` ever running).
 
-**Fix.** Route `secb` through an Arise-mediated execution channel that emits a dedicated
-`SecbCommandExecuted` event — verb, exit code, output sha256 + bounded excerpt — captured
-**outside the agent's control**, so determinism (3/3) and the Built/Exploited/Fixed verdicts
-become verifiable from the DB and agent-unforgeable. This upgrades the §IV.3 anti-fabrication
-judge from "infer from the transcript" to "read the authoritative event." Note the current
-in-container `secb` wrapper has **no** agent-unreachable write channel (the sealed dir is
-not mounted), so this needs a host-mediated `secb` path (e.g. via `secb-exec` / the
-security-tools MCP server) rather than an in-container append.
+**Fix (landed, behind `settings.orchestration.procedural_dispatch`).** The deterministic
+**procedure tier** routes the two **validator** roles through an Arise-mediated host-side
+channel. `SecBenchProcedureExecutor` (`plugins/security/procedures.py`), bound via
+`DomainPlugin.get_procedure_executor()`, drives `secb repro` ×3 / `secb patch` / `secb build`
+on the run's container and emits `ProcedureExecutionStarted` / `ProcedureExecutionFinished`
+carrying per-command `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, bounded
+`excerpt`) captured **outside the agent's control**. The exploit/patch verdict is
+host-computed from crash signatures (`plugins/security/crash_signature.py`) matched against
+the CVE oracle, so determinism (3/3) and the Exploited/Fixed verdicts are verifiable from the
+DB and agent-unforgeable — closing this gap for validator verdicts when the flag is on. (The
+landed events are `ProcedureExecution{Started,Finished}` + `ProcedureEvidence`, not the
+originally-sketched `SecbCommandExecuted`.) Default off ⇒ `NullProcedureExecutor` ⇒
+in-container agentic `secb`, and the §IV.3 anti-fabrication judge remains the mitigation for
+the agentic path; Builder/Reporter roles are still agentic (no validator procedure).
 
 ---
 

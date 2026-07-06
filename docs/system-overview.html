@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Arise × SEC-bench — System Overview</title>
+<style>
+  :root {
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    --bg:#fafaf9; --panel:#f4f4f2; --card:#fff;
+    --ink:#1b1b1d; --ink-2:#56565d; --ink-3:#8c8c93;
+    --line:#e6e6e3; --line-2:#d6d6d2;
+    --green:#15803d; --green-bg:#e9f4ed; --green-tx:#136632;
+    --blue:#2563a8;  --blue-bg:#e8f0f9;  --blue-tx:#1f5793;
+    --amber:#b45309; --amber-bg:#fbf0de; --amber-tx:#8a4308;
+    --red:#bb2d1f;   --red-bg:#fbeae7;   --red-tx:#9e261a;
+    --maxw:1120px;
+  }
+  *,*::before,*::after { box-sizing:border-box; }
+  html { scroll-behavior:smooth; -webkit-text-size-adjust:100%; }
+  body { margin:0; font-family:var(--sans); font-size:16px; line-height:1.6; color:var(--ink-2); background:var(--bg); -webkit-font-smoothing:antialiased; }
+  a { color:var(--blue-tx); text-decoration:none; }
+  code { font-family:var(--mono); font-size:0.86em; }
+  p code, li code, dd code, td code { background:var(--panel); border:1px solid var(--line); padding:0.5px 5px; border-radius:4px; color:var(--ink); font-size:0.82em; }
+
+  nav.top { position:sticky; top:0; z-index:50; background:rgba(250,250,249,0.86); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
+  nav.top .inner { max-width:var(--maxw); margin:0 auto; padding:0 28px; height:50px; display:flex; align-items:center; justify-content:space-between; }
+  nav.top .brand { font-family:var(--mono); font-size:13px; font-weight:600; color:var(--ink); }
+  nav.top .brand .dot { color:var(--green); }
+  nav.top .links { display:flex; gap:18px; }
+  nav.top .links a { font-family:var(--mono); font-size:12px; color:var(--ink-3); }
+  nav.top .links a:hover { color:var(--ink); }
+  @media (max-width:860px){ nav.top .links{ display:none; } }
+
+  .wrap { max-width:var(--maxw); margin:0 auto; padding:0 28px; }
+  header.hero { padding:60px 0 38px; border-bottom:1px solid var(--line); }
+  .eyebrow { font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase; color:var(--green); margin-bottom:16px; }
+  h1 { font-family:var(--sans); font-weight:600; font-size:clamp(32px,5vw,50px); line-height:1.05; letter-spacing:-0.025em; color:var(--ink); margin:0; }
+  .sub { font-size:clamp(17px,2vw,20px); color:var(--ink-2); margin:16px 0 0; max-width:70ch; }
+  .props { display:flex; flex-wrap:wrap; gap:10px; margin-top:26px; }
+  .props .p { display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12.5px; color:var(--ink-2); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:7px 12px; }
+  .props .p b { width:6px; height:6px; border-radius:50%; background:var(--green); flex:none; }
+  .props .p.b b{background:var(--blue);} .props .p.a b{background:var(--amber);} .props .p.r b{background:var(--red);}
+  .meta-row { margin-top:22px; font-family:var(--mono); font-size:12.5px; color:var(--ink-3); }
+
+  section { padding:52px 0; border-bottom:1px solid var(--line); }
+  .kick { font-family:var(--mono); font-size:12px; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink-3); margin-bottom:10px; }
+  .kick b { color:var(--green); font-weight:600; }
+  h2 { font-family:var(--sans); font-weight:600; font-size:clamp(23px,3vw,30px); letter-spacing:-0.02em; color:var(--ink); margin:0 0 12px; }
+  .intro { font-size:17px; color:var(--ink-2); max-width:76ch; margin:0 0 26px; }
+  .intro strong { color:var(--ink); font-weight:600; }
+  p { max-width:76ch; }
+
+  figure { margin:0 0 8px; }
+  .frame { border:1px solid var(--line-2); border-radius:8px; padding:22px 20px; background-color:#fcfcfb;
+    background-image:radial-gradient(var(--line-2) 0.8px, transparent 0.9px); background-size:22px 22px; background-position:-1px -1px; overflow-x:auto; }
+  .frame svg { display:block; width:100%; height:auto; }
+  .frame.s svg{min-width:680px;} .frame.m svg{min-width:860px;} .frame.l svg{min-width:980px;}
+  figcaption { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:12px; line-height:1.55; max-width:80ch; }
+  figcaption b { color:var(--ink-2); font-weight:600; }
+  .legend { display:flex; flex-wrap:wrap; gap:16px; margin-top:16px; }
+  .legend span { display:inline-flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11.5px; color:var(--ink-2); }
+  .legend i { width:12px; height:12px; border-radius:3px; border:1.5px solid; flex:none; }
+  .li-green{border-color:var(--green);background:var(--green-bg);} .li-blue{border-color:var(--blue);background:var(--blue-bg);}
+  .li-amber{border-color:var(--amber);background:var(--amber-bg);} .li-red{border-color:var(--red);background:var(--red-bg);}
+  .li-ink{border-color:var(--ink);background:var(--panel);}
+
+  /* SVG diagram primitives */
+  .d-card { fill:var(--card); stroke:var(--line-2); stroke-width:1.5; }
+  .d-card.green{stroke:var(--green);} .d-card.blue{stroke:var(--blue);} .d-card.amber{stroke:var(--amber);} .d-card.red{stroke:var(--red);} .d-card.ink{stroke:var(--ink);}
+  .d-card.fill-green{fill:var(--green-bg);stroke:var(--green);} .d-card.fill-blue{fill:var(--blue-bg);stroke:var(--blue);}
+  .d-card.fill-amber{fill:var(--amber-bg);stroke:var(--amber);} .d-card.fill-red{fill:var(--red-bg);stroke:var(--red);}
+  .d-card.fill-panel{fill:var(--panel);stroke:var(--line-2);}
+  .d-title { font-family:var(--sans); font-weight:600; font-size:16px; fill:var(--ink); }
+  .d-title.sm { font-size:14px; } .d-title.xs { font-size:12.5px; }
+  .d-sub { font-family:var(--mono); font-size:11px; fill:var(--ink-3); }
+  .d-sub.xs { font-size:10px; }
+  .d-role { font-family:var(--mono); font-size:11.5px; font-weight:600; letter-spacing:0.06em; }
+  .d-role.green{fill:var(--green-tx);} .d-role.blue{fill:var(--blue-tx);} .d-role.red{fill:var(--red-tx);} .d-role.amber{fill:var(--amber-tx);}
+  .d-edge { fill:none; stroke:#9a9aa1; stroke-width:1.5; }
+  .d-edge.green{stroke:var(--green);} .d-edge.blue{stroke:var(--blue);} .d-edge.red{stroke:var(--red);} .d-edge.amber{stroke:var(--amber);}
+  .d-edge.dashed { stroke-dasharray:6 5; }
+  .d-anno { font-family:var(--mono); font-size:11.5px; fill:var(--ink-2); }
+  .d-anno.sm { font-size:10.5px; }
+  .d-anno.green{fill:var(--green-tx);} .d-anno.red{fill:var(--red-tx);} .d-anno.blue{fill:var(--blue-tx);} .d-anno.amber{fill:var(--amber-tx);}
+  .d-cap { font-family:var(--mono); font-size:10.5px; fill:var(--ink-3); }
+  .d-layer { font-family:var(--mono); font-size:12px; font-weight:600; letter-spacing:0.04em; }
+
+  /* reference table */
+  .gtab { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--card); margin-top:24px; }
+  .gtab > h4 { margin:0; padding:11px 16px; font-family:var(--mono); font-size:12px; letter-spacing:0.06em; text-transform:uppercase; border-bottom:1px solid var(--line); color:var(--green-tx); background:var(--green-bg); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .gtab .when { font-weight:400; color:var(--ink-3); letter-spacing:0; text-transform:none; }
+  .gtab dl { margin:0; padding:4px 16px 12px; }
+  .gtab .row { display:flex; gap:12px; padding:8px 0; border-top:1px solid var(--line); font-size:13.5px; color:var(--ink-2); }
+  .gtab .row:first-child { border-top:none; }
+  .gtab .row .id { font-family:var(--mono); font-weight:600; font-size:12.5px; color:var(--ink); flex:none; width:112px; }
+  .gtab .row .id.w70 { width:70px; }
+
+  table.grid { width:100%; border-collapse:collapse; margin-top:24px; font-size:13.5px; background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  table.grid th, table.grid td { text-align:left; padding:10px 14px; border-top:1px solid var(--line); vertical-align:top; }
+  table.grid thead th { background:var(--panel); color:var(--ink); font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase; border-top:none; }
+  table.grid td.cell { font-family:var(--mono); font-size:12px; color:var(--ink); white-space:nowrap; }
+  table.grid tbody tr:hover { background:var(--panel); }
+  .tag { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 7px; border-radius:4px; }
+  .tag.b{background:var(--amber-bg);color:var(--amber-tx);} .tag.n{background:var(--blue-bg);color:var(--blue-tx);}
+
+  /* module map tree */
+  .tree { font-family:var(--mono); font-size:12.5px; line-height:1.85; color:var(--ink-2); margin:0; white-space:pre; overflow-x:auto; }
+  .tree .dir { color:var(--ink); font-weight:600; }
+  .tree .cm { color:var(--ink-3); }
+  .tree .t-green{color:var(--green-tx);} .tree .t-blue{color:var(--blue-tx);} .tree .t-amber{color:var(--amber-tx);} .tree .t-red{color:var(--red-tx);}
+
+  /* glossary */
+  .lex { display:grid; grid-template-columns:1fr 1fr; gap:0 36px; margin-top:8px; }
+  .term { padding:13px 0; border-top:1px solid var(--line); }
+  .term dt { font-family:var(--mono); font-size:13.5px; font-weight:600; color:var(--ink); margin-bottom:3px; }
+  .term dd { margin:0; font-size:14px; line-height:1.5; color:var(--ink-2); }
+
+  footer { padding:40px 0 60px; }
+  footer .colo { font-family:var(--mono); font-size:12px; color:var(--ink-3); max-width:80ch; }
+
+  [data-reveal] { opacity:0; transform:translateY(10px); transition:opacity .55s ease, transform .55s ease; }
+  [data-reveal].in { opacity:1; transform:none; }
+  @media (max-width:900px){ .lex{grid-template-columns:1fr;} }
+  @media (prefers-reduced-motion:reduce){ [data-reveal]{opacity:1;transform:none;transition:none;} html{scroll-behavior:auto;} }
+  @media print { nav.top{display:none;} section{page-break-inside:avoid;} [data-reveal]{opacity:1;transform:none;} *{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
+
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#131315; --panel:#1d1d20; --card:#1a1a1d;
+      --ink:#ececef; --ink-2:#b3b3ba; --ink-3:#84848c;
+      --line:#2b2b30; --line-2:#3a3a41;
+      --green:#4ea774; --green-bg:#16241c; --green-tx:#7fca9c;
+      --blue:#5b9bd8;  --blue-bg:#15212f;  --blue-tx:#8bbbe6;
+      --amber:#d08a3e; --amber-bg:#2a1f10; --amber-tx:#e0aa66;
+      --red:#d66052;   --red-bg:#2a1512;   --red-tx:#e79184;
+    }
+    .frame{background-color:#161618;}
+    .d-edge{stroke:#7a7a82;}
+  }
+  :root[data-theme="dark"]{
+    --bg:#131315; --panel:#1d1d20; --card:#1a1a1d;
+    --ink:#ececef; --ink-2:#b3b3ba; --ink-3:#84848c;
+    --line:#2b2b30; --line-2:#3a3a41;
+    --green:#4ea774; --green-bg:#16241c; --green-tx:#7fca9c;
+    --blue:#5b9bd8;  --blue-bg:#15212f;  --blue-tx:#8bbbe6;
+    --amber:#d08a3e; --amber-bg:#2a1f10; --amber-tx:#e0aa66;
+    --red:#d66052;   --red-bg:#2a1512;   --red-tx:#e79184;
+  }
+  :root[data-theme="dark"] .frame{background-color:#161618;}
+  :root[data-theme="dark"] .d-edge{stroke:#7a7a82;}
+  :root[data-theme="light"]{
+    --bg:#fafaf9; --panel:#f4f4f2; --card:#fff;
+    --ink:#1b1b1d; --ink-2:#56565d; --ink-3:#8c8c93;
+    --line:#e6e6e3; --line-2:#d6d6d2;
+    --green:#15803d; --green-bg:#e9f4ed; --green-tx:#136632;
+    --blue:#2563a8;  --blue-bg:#e8f0f9;  --blue-tx:#1f5793;
+    --amber:#b45309; --amber-bg:#fbf0de; --amber-tx:#8a4308;
+    --red:#bb2d1f;   --red-bg:#fbeae7;   --red-tx:#9e261a;
+  }
+</style>
+</head>
+<body>
+
+<nav class="top"><div class="inner">
+  <span class="brand"><span class="dot">▸</span> arise × sec-bench</span>
+  <span class="links">
+    <a href="#story">what</a><a href="#matrix">experiments</a><a href="#arch">architecture</a>
+    <a href="#code">code</a><a href="#hierarchy">hierarchy</a><a href="#heal">self-healing</a><a href="#proc">procedures</a><a href="#ref">reference</a>
+  </span>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">System Overview</div>
+  <h1>A self-healing multi-agent platform for reproducing &amp; fixing real CVEs</h1>
+  <p class="sub">Arise runs a recursive <b>BOSS → MANAGER → WORKER</b> agent tree against SEC-bench vulnerability tasks — building the project, triggering the bug, patching it, and reporting — so researchers can measure whether hierarchical agent topologies beat flat ones. Every state change is an event; failures become context and heal themselves.</p>
+  <div class="props">
+    <span class="p"><b></b> event-sourced · 38 event types</span>
+    <span class="p b"><b></b> hexagonal / ports-and-adapters</span>
+    <span class="p a"><b></b> Docker-out-of-Docker CVE runtime</span>
+    <span class="p r"><b></b> deterministic procedure tier</span>
+  </div>
+  <div class="meta-row">Python 3.12 · FastAPI · Pydantic · Jinja2 · Postgres event store · React 19 dashboard</div>
+</div></header>
+
+<main class="wrap">
+
+  <!-- ============ 01 — BUSINESS STORY / CONTEXT ============ -->
+  <section id="story">
+    <div class="kick" data-reveal><b>01</b> &nbsp;/&nbsp; What it is</div>
+    <h2 data-reveal>A benchmark harness for agent topologies on security tasks</h2>
+    <p class="intro" data-reveal><strong>SEC-bench</strong> ships hundreds of real CVEs, each as a Docker image with the vulnerable source, a build script, and a known sanitizer crash. Arise points a configurable team of LLM agents at each CVE and asks them to <strong>Build → Exploit → Fix → Report</strong> inside the container. Because everything the agents do is recorded as an immutable event stream, the same run can be replayed, cost-accounted, and independently judged — the platform's job is to make agent behavior <strong>trustworthy and comparable</strong>, not just to pass the benchmark.</p>
+    <figure data-reveal>
+      <div class="frame m">
+        <svg viewBox="0 0 1080 240" role="img" aria-label="Context: who talks to what">
+          <defs>
+            <marker id="c-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+            <marker id="c-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+            <marker id="c-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
+          </defs>
+          <!-- row of 5 boxes, cy=80, W=182 H=58 -->
+          <rect class="d-card ink" x="14" y="51" width="182" height="58" rx="6"/>
+          <text class="d-title sm" x="105" y="76" text-anchor="middle">Researcher</text>
+          <text class="d-sub" x="105" y="94" text-anchor="middle">python main.py run</text>
+
+          <rect class="d-card blue" x="238" y="51" width="182" height="58" rx="6"/>
+          <text class="d-title sm" x="329" y="76" text-anchor="middle">AgentOrchestrator</text>
+          <text class="d-sub" x="329" y="94" text-anchor="middle">assess / decompose / execute</text>
+
+          <rect class="d-card amber" x="462" y="51" width="182" height="58" rx="6"/>
+          <text class="d-title sm" x="553" y="76" text-anchor="middle">CVE container</text>
+          <text class="d-sub" x="553" y="94" text-anchor="middle">SEC-bench · Docker (DooD)</text>
+
+          <rect class="d-card green" x="686" y="51" width="182" height="58" rx="6"/>
+          <text class="d-title sm" x="777" y="76" text-anchor="middle">Postgres events</text>
+          <text class="d-sub" x="777" y="94" text-anchor="middle">sole source of truth</text>
+
+          <rect class="d-card fill-green" x="910" y="51" width="156" height="58" rx="6"/>
+          <text class="d-title sm" x="988" y="76" text-anchor="middle">Dashboard</text>
+          <text class="d-sub" x="988" y="94" text-anchor="middle">+ eval verdicts</text>
+
+          <!-- straight H arrows in the gaps -->
+          <path class="d-edge" d="M196,80 H236" marker-end="url(#c-a)"/>
+          <path class="d-edge blue" d="M420,80 H460" marker-end="url(#c-b)"/>
+          <text class="d-anno sm blue" x="440" y="42" text-anchor="middle">runs workers</text>
+          <path class="d-edge green" d="M644,80 H684" marker-end="url(#c-g)"/>
+          <text class="d-anno sm green" x="664" y="42" text-anchor="middle">events</text>
+          <path class="d-edge green" d="M868,80 H908" marker-end="url(#c-g)"/>
+          <text class="d-anno sm green" x="888" y="42" text-anchor="middle">CQRS reads</text>
+
+          <!-- perimeter feedback: events replay back into the orchestrator -->
+          <path class="d-edge blue dashed" d="M777,109 V176 H329 V111" marker-end="url(#c-b)"/>
+          <text class="d-anno sm blue" x="553" y="196" text-anchor="middle">replay aggregate state · OCC on every write</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="li-ink"></i> operator</span>
+        <span><i class="li-blue"></i> orchestrator</span>
+        <span><i class="li-amber"></i> CVE runtime</span>
+        <span><i class="li-green"></i> event store / reads</span>
+      </div>
+      <figcaption><b>Fig 1.</b> The orchestrator never stores mutable state: it emits events to Postgres and rebuilds every agent by replaying them. The dashboard and the experiment evaluators are pure read-side consumers of that same stream.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 02 — EXPERIMENT MATRIX ============ -->
+  <section id="matrix">
+    <div class="kick" data-reveal><b>02</b> &nbsp;/&nbsp; The experiments</div>
+    <h2 data-reveal>Four topologies, one controlled comparison</h2>
+    <p class="intro" data-reveal>Each CVE is attempted by four <strong>cells</strong> that hold the task, tools, and CVE context fixed and vary only the <strong>agent topology</strong>. The <span class="tag b">B</span> cells are Arise's own hierarchical orchestrator; the <span class="tag n">N</span> cells are a naive OpenHands baseline. Reading the pairs isolates one variable at a time: <code>B3 vs B4</code> is the value of the manager tier, <code>N1 vs N2</code> is the value of ad-hoc subagents.</p>
+    <figure data-reveal>
+      <div class="frame m">
+        <svg viewBox="0 0 1080 300" role="img" aria-label="Four experiment topologies compared">
+          <defs>
+            <marker id="m-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+          </defs>
+          <!-- band separators -->
+          <path class="d-edge dashed" d="M270,44 V286" style="stroke:var(--line-2);stroke-width:1"/>
+          <path class="d-edge dashed" d="M540,44 V286" style="stroke:var(--line-2);stroke-width:1"/>
+          <path class="d-edge dashed" d="M810,44 V286" style="stroke:var(--line-2);stroke-width:1"/>
+          <!-- column titles -->
+          <text class="d-role blue"  x="135" y="34" text-anchor="middle">N1 · linear</text>
+          <text class="d-role blue"  x="405" y="34" text-anchor="middle">N2 · subagents</text>
+          <text class="d-role amber" x="675" y="34" text-anchor="middle">B3 · managers ablated</text>
+          <text class="d-role amber" x="945" y="34" text-anchor="middle">B4 · full tree</text>
+
+          <!-- N1: single flat agent -->
+          <rect class="d-card blue" x="75" y="130" width="120" height="46" rx="6"/>
+          <text class="d-title xs" x="135" y="151" text-anchor="middle">OpenHands</text>
+          <text class="d-sub xs" x="135" y="166" text-anchor="middle">flat · 1 session</text>
+
+          <!-- N2: agent + 2 subagents -->
+          <rect class="d-card blue" x="345" y="70" width="120" height="44" rx="6"/>
+          <text class="d-title xs" x="405" y="97" text-anchor="middle">OpenHands</text>
+          <rect class="d-card fill-blue" x="318" y="176" width="80" height="40" rx="6"/>
+          <text class="d-sub xs" x="358" y="200" text-anchor="middle">subagent</text>
+          <rect class="d-card fill-blue" x="412" y="176" width="80" height="40" rx="6"/>
+          <text class="d-sub xs" x="452" y="200" text-anchor="middle">subagent</text>
+          <path class="d-edge" d="M405,114 V150 H358 V174" marker-end="url(#m-a)"/>
+          <path class="d-edge" d="M405,150 H452 V174" marker-end="url(#m-a)"/>
+
+          <!-- B3: BOSS -> 3 workers (BEF) -->
+          <rect class="d-card ink" x="620" y="70" width="110" height="44" rx="6"/>
+          <text class="d-title xs" x="675" y="97" text-anchor="middle">BOSS</text>
+          <rect class="d-card fill-green" x="592" y="176" width="52" height="40" rx="6"/>
+          <text class="d-sub xs" x="618" y="200" text-anchor="middle">[B]</text>
+          <rect class="d-card fill-green" x="649" y="176" width="52" height="40" rx="6"/>
+          <text class="d-sub xs" x="675" y="200" text-anchor="middle">[E]</text>
+          <rect class="d-card fill-green" x="706" y="176" width="52" height="40" rx="6"/>
+          <text class="d-sub xs" x="732" y="200" text-anchor="middle">[F]</text>
+          <path class="d-edge" d="M675,114 V150 H618 V174" marker-end="url(#m-a)"/>
+          <path class="d-edge" d="M675,150 V174" marker-end="url(#m-a)"/>
+          <path class="d-edge" d="M675,150 H732 V174" marker-end="url(#m-a)"/>
+          <text class="d-sub xs" x="675" y="238" text-anchor="middle">max_depth = 1</text>
+
+          <!-- B4: BOSS -> MANAGER -> workers -->
+          <rect class="d-card ink" x="890" y="62" width="110" height="40" rx="6"/>
+          <text class="d-title xs" x="945" y="87" text-anchor="middle">BOSS</text>
+          <rect class="d-card amber" x="890" y="132" width="110" height="40" rx="6"/>
+          <text class="d-title xs" x="945" y="157" text-anchor="middle">MANAGER ×BEF</text>
+          <rect class="d-card fill-green" x="892" y="202" width="50" height="36" rx="6"/>
+          <text class="d-sub xs" x="917" y="224" text-anchor="middle">wkr</text>
+          <rect class="d-card fill-green" x="948" y="202" width="50" height="36" rx="6"/>
+          <text class="d-sub xs" x="973" y="224" text-anchor="middle">wkr</text>
+          <path class="d-edge" d="M945,102 V130" marker-end="url(#m-a)"/>
+          <path class="d-edge" d="M945,172 V186 H917 V200" marker-end="url(#m-a)"/>
+          <path class="d-edge" d="M945,186 H973 V200" marker-end="url(#m-a)"/>
+          <text class="d-sub xs" x="945" y="260" text-anchor="middle">max_depth = 3</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="li-blue"></i> OpenHands baseline (flat)</span>
+        <span><i class="li-ink"></i> BOSS (Arise)</span>
+        <span><i class="li-amber"></i> MANAGER</span>
+        <span><i class="li-green"></i> WORKER · [B]uild [E]xploit [F]ix</span>
+      </div>
+      <figcaption><b>Fig 2.</b> All four share the same worker tool surface and the same <code>Build → Exploit → Fix → Report</code> contract; only the shape of the team changes. Evaluated strictly from Postgres events plus <code>runs/&lt;id&gt;/</code> artifacts by blocking LLM judges (CVE-reproduced, binary-genuine, patch-root-cause, execution-provenance).</figcaption>
+    </figure>
+    <table class="grid" data-reveal>
+      <thead><tr><th>Cell</th><th>Family</th><th>Topology</th><th>Isolates</th></tr></thead>
+      <tbody>
+        <tr><td class="cell">N1</td><td>OpenHands, flat</td><td>single linear session (<code>mode: flat</code>)</td><td>the baseline</td></tr>
+        <tr><td class="cell">N2</td><td>OpenHands, flat</td><td>agent + native subagents (2 levels)</td><td>ad-hoc subagent value (vs N1)</td></tr>
+        <tr><td class="cell">B3</td><td>Arise, hierarchical</td><td>BOSS → BEF workers (<code>max_depth 1</code>)</td><td>manager tier removed</td></tr>
+        <tr><td class="cell">B4</td><td>Arise, hierarchical</td><td>BOSS → managers → workers (<code>max_depth 3</code>)</td><td>the manager tier (vs B3)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 03 — SYSTEM ARCHITECTURE ============ -->
+  <section id="arch">
+    <div class="kick" data-reveal><b>03</b> &nbsp;/&nbsp; System architecture</div>
+    <h2 data-reveal>Hexagonal: a pure core, adapters at the edge</h2>
+    <p class="intro" data-reveal>The <strong>domain core</strong> depends only on the standard library and its own <code>Protocol</code> ports — it never imports infrastructure (a pre-commit hook enforces this). Everything concrete (Postgres, LLM providers, the OpenHands worker, the SEC-bench container runtime) is an <strong>adapter</strong> injected at startup. <code>bootstrap/composition.py</code> is the <em>only</em> file allowed to reach across the boundary into <code>plugins/</code>.</p>
+    <figure data-reveal>
+      <div class="frame l">
+        <svg viewBox="0 0 1080 500" role="img" aria-label="Hexagonal layered architecture">
+          <defs>
+            <marker id="h-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+            <marker id="h-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+          </defs>
+
+          <!-- composition root bar -->
+          <rect class="d-card ink fill-panel" x="70" y="24" width="640" height="44" rx="6"/>
+          <text class="d-title sm" x="390" y="46" text-anchor="middle">bootstrap/</text>
+          <text class="d-sub" x="390" y="60" text-anchor="middle">composition root — the only cross-boundary import point</text>
+
+          <!-- outer ring: infrastructure -->
+          <rect class="d-card" x="70" y="92" width="640" height="384" rx="8"/>
+          <text class="d-layer" x="90" y="116" fill="var(--ink-2)">infrastructure/ · adapters</text>
+          <text class="d-sub" x="90" y="133">Postgres event store · LiteLLM · OpenHands worker · SSE</text>
+
+          <!-- middle ring: application -->
+          <rect class="d-card blue" x="118" y="150" width="544" height="300" rx="8"/>
+          <text class="d-layer" x="138" y="174" fill="var(--blue-tx)">core/application/ · services</text>
+          <text class="d-sub" x="138" y="191">AgentOrchestrator · execution loop · verification · retry</text>
+
+          <!-- inner: domain + ports -->
+          <rect class="d-card green" x="166" y="210" width="448" height="222" rx="8"/>
+          <text class="d-layer" x="186" y="234" fill="var(--green-tx)">core/domain/ + core/ports/ · pure</text>
+          <text class="d-sub" x="186" y="251">AgentSession &amp; SharedStore aggregates · 38 frozen events</text>
+          <text class="d-sub" x="186" y="267">value objects · domain services · Protocol ports (14+)</text>
+          <rect class="d-card fill-green" x="186" y="292" width="188" height="52" rx="6"/>
+          <text class="d-title xs" x="280" y="315" text-anchor="middle">AgentSession</text>
+          <text class="d-sub xs" x="280" y="331" text-anchor="middle">primary · 35/38 events</text>
+          <rect class="d-card fill-green" x="406" y="292" width="188" height="52" rx="6"/>
+          <text class="d-title xs" x="500" y="315" text-anchor="middle">SharedStore</text>
+          <text class="d-sub xs" x="500" y="331" text-anchor="middle">artifacts + decisions · 3</text>
+          <text class="d-sub xs" x="280" y="372" text-anchor="middle">event-sourced replay</text>
+          <text class="d-sub xs" x="500" y="372" text-anchor="middle">uuid5 aggregate_id</text>
+
+          <!-- inward dependency caption + arrows on left margin -->
+          <text class="d-anno" x="44" y="284" transform="rotate(-90 44 284)" text-anchor="middle">imports point inward →</text>
+
+          <!-- right column: wired / reader boxes -->
+          <rect class="d-card amber" x="762" y="96" width="296" height="64" rx="6"/>
+          <text class="d-title sm" x="910" y="122" text-anchor="middle">plugins/security/</text>
+          <text class="d-sub" x="910" y="140" text-anchor="middle">CVE · container runtime · procedures</text>
+
+          <rect class="d-card blue" x="762" y="180" width="296" height="60" rx="6"/>
+          <text class="d-title sm" x="910" y="205" text-anchor="middle">prompts/</text>
+          <text class="d-sub" x="910" y="222" text-anchor="middle">4-tier Jinja2 templates (no Python)</text>
+
+          <rect class="d-card green" x="762" y="300" width="296" height="60" rx="6"/>
+          <text class="d-title sm" x="910" y="325" text-anchor="middle">query/</text>
+          <text class="d-sub" x="910" y="342" text-anchor="middle">FastAPI + React dashboard</text>
+
+          <rect class="d-card ink" x="762" y="392" width="296" height="60" rx="6"/>
+          <text class="d-title sm" x="910" y="417" text-anchor="middle">experiments/</text>
+          <text class="d-sub" x="910" y="434" text-anchor="middle">B3/B4/N1/N2 eval harness</text>
+
+          <!-- composition wires plugins (down the right side) -->
+          <path class="d-edge" d="M710,46 H910 V94" marker-end="url(#h-a)"/>
+          <text class="d-anno sm" x="930" y="80" text-anchor="start">injects</text>
+          <!-- prompts used by application -->
+          <path class="d-edge" d="M762,210 H662" marker-end="url(#h-a)"/>
+          <!-- events feed query + experiments (read side) -->
+          <path class="d-edge green" d="M710,330 H760" marker-end="url(#h-g)"/>
+          <path class="d-edge green" d="M710,422 H760" marker-end="url(#h-g)"/>
+          <text class="d-anno sm green" x="734" y="322" text-anchor="middle">events ▸</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="li-green"></i> pure domain + ports</span>
+        <span><i class="li-blue"></i> application / prompts</span>
+        <span><i class="li-ink"></i> infrastructure / bootstrap</span>
+        <span><i class="li-amber"></i> security plugin</span>
+      </div>
+      <figcaption><b>Fig 3.</b> Dependencies point inward only. The read side (dashboard, evaluators) consumes the event stream through CQRS projections and never touches the write model — so analysis can never corrupt a run.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 04 — CODE STRUCTURE ============ -->
+  <section id="code">
+    <div class="kick" data-reveal><b>04</b> &nbsp;/&nbsp; Code structure</div>
+    <h2 data-reveal>How the architecture maps to directories</h2>
+    <p class="intro" data-reveal>Each architectural layer is one top-level directory with a strict import rule. The extension points are narrow: a new capability is an <strong>adapter</strong> in <code>infrastructure/</code>, a new domain is a <strong>plugin</strong>, and a new prompt is a Jinja2 <strong>template</strong> — the core rarely changes.</p>
+    <figure data-reveal>
+      <div class="frame m">
+<pre class="tree">arise-sec-lion/
+├── <span class="dir">main.py</span>                 <span class="cm"># CLI entry → bootstrap.bootstrap.main()</span>
+├── <span class="dir t-green">core/</span>                   <span class="cm t-green"># pure domain — never imports infrastructure</span>
+│   ├── <span class="dir">domain/</span>             <span class="cm"># aggregates, 38 frozen events, value objects, services</span>
+│   ├── <span class="dir">ports/</span>              <span class="cm"># Protocol interfaces (event store, LLM, worker, procedure)</span>
+│   ├── <span class="dir">application/</span>        <span class="cm"># AgentOrchestrator, execution loop, verification, retry</span>
+│   └── <span class="dir">query/</span>              <span class="cm"># CQRS read-side projections</span>
+├── <span class="dir t-blue">infrastructure/</span>         <span class="cm t-blue"># adapters implementing core/ports/ (Postgres, LiteLLM, OpenHands)</span>
+├── <span class="dir t-amber">plugins/security/</span>       <span class="cm t-amber"># STRICTLY cybersecurity: CVE, container runtime, procedures, crash signature</span>
+├── <span class="dir">bootstrap/</span>              <span class="cm"># composition root — sole cross-boundary import (composition.py)</span>
+├── <span class="dir">prompts/</span>                <span class="cm"># 4-tier Jinja2: system → roles → operations → domains</span>
+├── <span class="dir">presentation/</span>           <span class="cm"># CLI, renderers, formatters</span>
+├── <span class="dir">query/</span>                  <span class="cm"># FastAPI REST API + React 19 dashboard SPA (web/)</span>
+├── <span class="dir">config/</span>                 <span class="cm"># Pydantic Settings + YAML overlay hierarchy</span>
+└── <span class="dir">experiments/</span>            <span class="cm"># B3/B4/N1/N2 cells, shared eval harness &amp; criteria</span></pre>
+      </div>
+      <div class="legend">
+        <span><i class="li-green"></i> core (stdlib + own ports only)</span>
+        <span><i class="li-blue"></i> adapters</span>
+        <span><i class="li-amber"></i> security plugin only</span>
+        <span><i class="li-ink"></i> composition · prompts · read side</span>
+      </div>
+      <figcaption><b>Fig 4.</b> The two hard rules an agent must never break: <code>core/</code> cannot import <code>infrastructure/</code>, and non-security logic can never land in <code>plugins/</code>. Both are checked in CI.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 05 — HIERARCHY & ROLES ============ -->
+  <section id="hierarchy">
+    <div class="kick" data-reveal><b>05</b> &nbsp;/&nbsp; Key flow · decomposition</div>
+    <h2 data-reveal>BOSS → MANAGER → WORKER, by recursive assessment</h2>
+    <p class="intro" data-reveal>Every non-root agent starts as <code>PENDING</code> and runs one <code>assess_task</code> call that decides its fate: simple work becomes a <strong>WORKER</strong> that executes directly; complex work becomes a <strong>MANAGER</strong> that decomposes into children and recurses. A leading <code>[Role]</code> bracket routes each worker to the right phase prompt.</p>
+    <figure data-reveal>
+      <div class="frame m">
+        <svg viewBox="0 0 1080 420" role="img" aria-label="BOSS MANAGER WORKER hierarchy">
+          <defs>
+            <marker id="t-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+            <marker id="t-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+            <marker id="t-am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b45309"/></marker>
+          </defs>
+          <!-- BOSS -->
+          <rect class="d-card ink" x="450" y="20" width="180" height="52" rx="6"/>
+          <text class="d-title sm" x="540" y="44" text-anchor="middle">BOSS</text>
+          <text class="d-sub" x="540" y="61" text-anchor="middle">root · evaluate_task</text>
+
+          <!-- split junction at y=104 to 4 phase managers -->
+          <path class="d-edge" d="M540,72 V104 H160 V148" marker-end="url(#t-am)"/>
+          <path class="d-edge" d="M540,104 H440 V148" marker-end="url(#t-am)"/>
+          <path class="d-edge" d="M540,104 H700 V148" marker-end="url(#t-am)"/>
+          <path class="d-edge" d="M540,104 H930 V148" marker-end="url(#t-g)"/>
+
+          <!-- 4 phase managers/roles -->
+          <rect class="d-card amber" x="70" y="150" width="180" height="52" rx="6"/>
+          <text class="d-title sm" x="160" y="174" text-anchor="middle">Builder</text>
+          <text class="d-sub" x="160" y="191" text-anchor="middle">[Builder] · MANAGER</text>
+
+          <rect class="d-card amber" x="350" y="150" width="180" height="52" rx="6"/>
+          <text class="d-title sm" x="440" y="174" text-anchor="middle">Exploiter</text>
+          <text class="d-sub" x="440" y="191" text-anchor="middle">[Exploiter] · MANAGER</text>
+
+          <rect class="d-card amber" x="610" y="150" width="180" height="52" rx="6"/>
+          <text class="d-title sm" x="700" y="174" text-anchor="middle">Fixer</text>
+          <text class="d-sub" x="700" y="191" text-anchor="middle">[Fixer] · MANAGER</text>
+
+          <rect class="d-card green" x="840" y="150" width="180" height="52" rx="6"/>
+          <text class="d-title sm" x="930" y="174" text-anchor="middle">Reporter</text>
+          <text class="d-sub" x="930" y="191" text-anchor="middle">[Reporter] · WORKER leaf</text>
+
+          <!-- Exploiter expands into workers -->
+          <path class="d-edge" d="M440,202 V236 H330 V276" marker-end="url(#t-g)"/>
+          <path class="d-edge" d="M440,236 V276" marker-end="url(#t-g)"/>
+          <path class="d-edge" d="M440,236 H556 V276" marker-end="url(#t-g)"/>
+
+          <rect class="d-card fill-green" x="252" y="278" width="156" height="50" rx="6"/>
+          <text class="d-title xs" x="330" y="300" text-anchor="middle">PoC author</text>
+          <text class="d-sub xs" x="330" y="316" text-anchor="middle">[Exploit-Builder]</text>
+          <rect class="d-card fill-green" x="418" y="278" width="156" height="50" rx="6"/>
+          <text class="d-title xs" x="496" y="300" text-anchor="middle">validator</text>
+          <text class="d-sub xs" x="496" y="316" text-anchor="middle">[Exploit-Validator]</text>
+          <rect class="d-card fill-green" x="150" y="278" width="90" height="50" rx="6"/>
+          <text class="d-sub xs" x="195" y="306" text-anchor="middle">…workers</text>
+
+          <!-- assess recursion note in the clear band under Fixer / Reporter -->
+          <text class="d-anno sm amber" x="612" y="240" text-anchor="start">assess_task decides each PENDING agent —</text>
+          <text class="d-anno sm amber" x="612" y="256" text-anchor="start">execute → WORKER · decompose → MANAGER (recurse)</text>
+
+          <!-- report note (children -> parent) -->
+          <text class="d-cap" x="540" y="392" text-anchor="middle">children return structured Reports up the tree; a parent completes when all children report (partial success if any succeed)</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="li-ink"></i> BOSS (one per run)</span>
+        <span><i class="li-amber"></i> MANAGER · decomposes</span>
+        <span><i class="li-green"></i> WORKER · executes a phase</span>
+      </div>
+      <figcaption><b>Fig 5.</b> The three orchestrator operations — <code>assess_task</code>, <code>evaluate_task</code>, <code>execute_task</code> — are plain methods, deliberately <em>not</em> wrapped in a pipeline abstraction. Bracket-first detection stops a Fixer leaf (which legitimately mentions "exploit") from rendering the Exploiter prompt.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 06 — SELF-HEALING FAILURE LOOP ============ -->
+  <section id="heal">
+    <div class="kick" data-reveal><b>06</b> &nbsp;/&nbsp; Key flow · resilience</div>
+    <h2 data-reveal>Self-healing: a crash becomes context, not a dead end</h2>
+    <p class="intro" data-reveal>When a worker crashes it usually carries <em>no</em> retry context. Arise fixes that deterministically — <strong>no LLM involved</strong>. The failure is distilled into a bounded digest and injected into the next attempt; if every sibling worker still fails, the parent doesn't give up — it <strong>re-decomposes, informed by exactly why the last attempt failed</strong>.</p>
+    <figure data-reveal>
+      <div class="frame m">
+        <svg viewBox="0 0 1080 560" role="img" aria-label="Self-healing failure loop">
+          <defs>
+            <marker id="s-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+            <marker id="s-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
+            <marker id="s-r" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#bb2d1f"/></marker>
+            <marker id="s-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+          </defs>
+          <!-- vertical stack, centered column cx=360, W=340 -->
+          <rect class="d-card red" x="190" y="20" width="340" height="52" rx="6"/>
+          <text class="d-title sm" x="360" y="44" text-anchor="middle">WORKER crash / failure</text>
+          <text class="d-sub" x="360" y="61" text-anchor="middle">unexpected exception in run_session</text>
+          <path class="d-edge" d="M360,72 V96" marker-end="url(#s-a)"/>
+
+          <rect class="d-card ink" x="190" y="98" width="340" height="52" rx="6"/>
+          <text class="d-title sm" x="360" y="122" text-anchor="middle">describe_error</text>
+          <text class="d-sub" x="360" y="139" text-anchor="middle">bounded traceback (~1.5 KB) on the reason</text>
+          <path class="d-edge" d="M360,150 V174" marker-end="url(#s-a)"/>
+
+          <rect class="d-card blue" x="190" y="176" width="340" height="60" rx="6"/>
+          <text class="d-title sm" x="360" y="200" text-anchor="middle">build_failure_digest — LLM-free</text>
+          <text class="d-sub" x="360" y="218" text-anchor="middle">FAILURE / LAST TOOL CALLS / ATTEMPT · cap 4000</text>
+          <path class="d-edge blue" d="M360,236 V260" marker-end="url(#s-b)"/>
+
+          <rect class="d-card blue" x="190" y="262" width="340" height="52" rx="6"/>
+          <text class="d-title sm" x="360" y="286" text-anchor="middle">FailureDigestRecorded</text>
+          <text class="d-sub" x="360" y="303" text-anchor="middle">retained across RetryScheduled</text>
+          <path class="d-edge amber" d="M360,314 V338" marker-end="url(#s-a)"/>
+
+          <rect class="d-card amber" x="190" y="340" width="340" height="52" rx="6"/>
+          <text class="d-title sm" x="360" y="364" text-anchor="middle">retry gate</text>
+          <text class="d-sub" x="360" y="381" text-anchor="middle">feedback OR digest? · ≤ verification_max_retries (2)</text>
+
+          <!-- retry self/perimeter feedback: wraps LEFT margin up to WORKER -->
+          <path class="d-edge red dashed" d="M190,366 H96 V46 H188" marker-end="url(#s-r)"/>
+          <text class="d-anno sm red" x="80" y="210" transform="rotate(-90 80 210)" text-anchor="middle">retry — digest injected into prompt</text>
+
+          <!-- all children fail -> redecomposition (down) -->
+          <path class="d-edge green" d="M360,392 V430" marker-end="url(#s-g)"/>
+          <text class="d-anno sm green" x="378" y="416" text-anchor="start">all sibling workers failed, budget left</text>
+
+          <rect class="d-card fill-green" x="190" y="432" width="340" height="58" rx="6"/>
+          <text class="d-title sm" x="360" y="456" text-anchor="middle">RedecompositionTriggered</text>
+          <text class="d-sub" x="360" y="474" text-anchor="middle">failure_history → parent re-plans (informed)</text>
+
+          <!-- right side: informed decomposition target -->
+          <rect class="d-card green" x="700" y="432" width="320" height="58" rx="6"/>
+          <text class="d-title sm" x="860" y="453" text-anchor="middle">&lt;previous_attempt_failures&gt;</text>
+          <text class="d-sub" x="860" y="471" text-anchor="middle">volatile tail · cached prefix stays identical</text>
+          <path class="d-edge green" d="M530,461 H698" marker-end="url(#s-g)"/>
+
+          <!-- parent notes on the right of retry gate -->
+          <rect class="d-card fill-panel" x="700" y="176" width="320" height="138" rx="6"/>
+          <text class="d-title xs" x="720" y="202" text-anchor="start">Deterministic by design</text>
+          <text class="d-sub" x="720" y="224" text-anchor="start">· same aggregate state → same digest</text>
+          <text class="d-sub" x="720" y="242" text-anchor="start">· no LLM, no filesystem, no logging</text>
+          <text class="d-sub" x="720" y="260" text-anchor="start">· safe to event-source &amp; replay</text>
+          <text class="d-sub" x="720" y="278" text-anchor="start">· enriched ChildFailed carries the</text>
+          <text class="d-sub" x="720" y="296" text-anchor="start">&nbsp;&nbsp;child_task + digest to the parent</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="li-red"></i> failure / retry feedback</span>
+        <span><i class="li-blue"></i> deterministic digest</span>
+        <span><i class="li-amber"></i> retry gate</span>
+        <span><i class="li-green"></i> informed re-decomposition</span>
+      </div>
+      <figcaption><b>Fig 6.</b> The retry edge wraps the outside margin back to the worker (bounded by <code>verification_max_retries</code>); only when every sibling fails does the parent escalate to <code>RedecompositionTriggered</code>, seeding the new decomposition prompt with the prior failures while keeping the cached prompt prefix byte-identical.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 07 — PROCEDURE TIER ============ -->
+  <section id="proc">
+    <div class="kick" data-reveal><b>07</b> &nbsp;/&nbsp; Key flow · determinism</div>
+    <h2 data-reveal>A deterministic tier for tasks that don't need an LLM</h2>
+    <p class="intro" data-reveal>Some subtasks are <em>fixed procedures</em> — a validator that just re-runs a benchmark harness and checks the result. Behind a flag (<code>procedural_dispatch</code>), those run <strong>host-side with zero LLM turns</strong>: no prompt, no worker session, no cost. The verdict is computed by Arise and event-sourced as <strong>agent-unforgeable evidence</strong>, closing a fabrication gap where an agent could write <code>VERDICT: PASS</code> without ever running the exploit.</p>
+    <figure data-reveal>
+      <div class="frame m">
+        <svg viewBox="0 0 1080 520" role="img" aria-label="Procedural dispatch ladder and escalation">
+          <defs>
+            <marker id="p-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+            <marker id="p-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
+            <marker id="p-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+            <marker id="p-r" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#bb2d1f"/></marker>
+          </defs>
+
+          <!-- top: execute_task -->
+          <rect class="d-card ink" x="80" y="20" width="260" height="52" rx="6"/>
+          <text class="d-title sm" x="210" y="44" text-anchor="middle">execute_task (WORKER)</text>
+          <text class="d-sub" x="210" y="61" text-anchor="middle">_resolve_procedure_ref</text>
+          <path class="d-edge" d="M210,72 V96" marker-end="url(#p-a)"/>
+
+          <!-- decision ladder — left column of 4 rungs -->
+          <rect class="d-card amber" x="80" y="98" width="260" height="46" rx="6"/>
+          <text class="d-title xs" x="210" y="119" text-anchor="middle">execution_mode = "agentic"</text>
+          <text class="d-sub xs" x="210" y="134" text-anchor="middle">bypass — always agentic</text>
+
+          <rect class="d-card amber" x="80" y="158" width="260" height="46" rx="6"/>
+          <text class="d-title xs" x="210" y="179" text-anchor="middle">"procedural" + resolve(ref)</text>
+          <text class="d-sub xs" x="210" y="194" text-anchor="middle">explicit registered procedure</text>
+
+          <rect class="d-card amber" x="80" y="218" width="260" height="46" rx="6"/>
+          <text class="d-title xs" x="210" y="239" text-anchor="middle">"procedural" + unknown ref</text>
+          <text class="d-sub xs" x="210" y="254" text-anchor="middle">warn → fail open → auto</text>
+
+          <rect class="d-card amber" x="80" y="278" width="260" height="46" rx="6"/>
+          <text class="d-title xs" x="210" y="299" text-anchor="middle">"auto" → executor.match()</text>
+          <text class="d-sub xs" x="210" y="314" text-anchor="middle">registry decides (may be None)</text>
+
+          <!-- rung to rung -->
+          <path class="d-edge" d="M210,144 V158" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M210,204 V218" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M210,264 V278" marker-end="url(#p-a)"/>
+
+          <!-- AGENTIC lane (right-top) -->
+          <rect class="d-card blue" x="470" y="98" width="250" height="52" rx="6"/>
+          <text class="d-title sm" x="595" y="122" text-anchor="middle">Agentic worker</text>
+          <text class="d-sub" x="595" y="139" text-anchor="middle">WorkerToolPort · LLM · verify</text>
+          <!-- rung1 (explicit agentic) -> agentic worker -->
+          <path class="d-edge blue" d="M340,121 H468" marker-end="url(#p-b)"/>
+          <text class="d-anno sm blue" x="404" y="112" text-anchor="middle">ref = None</text>
+
+          <!-- PROCEDURAL lane -->
+          <rect class="d-card fill-blue" x="470" y="278" width="250" height="46" rx="6"/>
+          <text class="d-title xs" x="595" y="299" text-anchor="middle">start_procedure(ref)</text>
+          <text class="d-sub xs" x="595" y="314" text-anchor="middle">ProcedureExecutionStarted</text>
+          <!-- fan-in bus: rung2 (resolve) + rung4 (auto match) both yield a ref -->
+          <path class="d-edge" d="M340,181 H430"/>
+          <path class="d-edge" d="M340,301 H430"/>
+          <path class="d-edge" d="M430,181 V301"/>
+          <path class="d-edge" d="M430,301 H468" marker-end="url(#p-a)"/>
+          <text class="d-anno sm" x="452" y="252" text-anchor="middle">ref</text>
+          <text class="d-cap" x="210" y="344" text-anchor="middle">rung 3 falls through to auto · no match → agentic</text>
+
+          <path class="d-edge blue" d="M595,324 V352" marker-end="url(#p-b)"/>
+          <rect class="d-card blue" x="470" y="354" width="250" height="60" rx="6"/>
+          <text class="d-title xs" x="595" y="377" text-anchor="middle">executor.execute — host-side</text>
+          <text class="d-sub xs" x="595" y="395" text-anchor="middle">secb repro×3 / patch / build · 0 LLM</text>
+          <path class="d-edge blue" d="M595,414 V442" marker-end="url(#p-b)"/>
+
+          <rect class="d-card blue" x="470" y="444" width="250" height="52" rx="6"/>
+          <text class="d-title xs" x="595" y="465" text-anchor="middle">finish_procedure(evidence)</text>
+          <text class="d-sub xs" x="595" y="482" text-anchor="middle">ProcedureEvidence per command</text>
+
+          <!-- outcomes on far right -->
+          <rect class="d-card fill-green" x="800" y="354" width="220" height="52" rx="6"/>
+          <text class="d-title xs" x="910" y="375" text-anchor="middle">success → WorkCompleted</text>
+          <text class="d-sub xs" x="910" y="392" text-anchor="middle">normal verification pipeline</text>
+          <path class="d-edge green" d="M720,376 H798" marker-end="url(#p-g)"/>
+
+          <rect class="d-card fill-red" x="800" y="444" width="220" height="52" rx="6"/>
+          <text class="d-title xs" x="910" y="465" text-anchor="middle">fail → digest + WorkFailed</text>
+          <text class="d-sub xs" x="910" y="482" text-anchor="middle">source = procedure_failure</text>
+          <path class="d-edge red" d="M720,470 H798" marker-end="url(#p-r)"/>
+
+          <!-- escalation: procedure fail -> exactly one agentic retry (perimeter up to agentic lane) -->
+          <path class="d-edge red dashed" d="M1020,470 H1052 V124 H722" marker-end="url(#p-r)"/>
+          <text class="d-anno sm red" x="1066" y="300" transform="rotate(-90 1066 300)" text-anchor="middle">1 guaranteed agentic retry (carries digest)</text>
+
+          <!-- flag note -->
+          <rect class="d-card fill-panel" x="80" y="360" width="330" height="120" rx="6"/>
+          <text class="d-title xs" x="98" y="384" text-anchor="start">settings.orchestration.procedural_dispatch</text>
+          <text class="d-sub" x="98" y="406" text-anchor="start">default OFF → NullProcedureExecutor</text>
+          <text class="d-sub" x="98" y="424" text-anchor="start">→ match/resolve return None/False</text>
+          <text class="d-sub" x="98" y="442" text-anchor="start">→ ladder always yields agentic</text>
+          <text class="d-sub" x="98" y="460" text-anchor="start">→ behavior byte-identical to before</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="li-amber"></i> dispatch resolution</span>
+        <span><i class="li-blue"></i> procedural path (0 LLM)</span>
+        <span><i class="li-green"></i> success</span>
+        <span><i class="li-red"></i> failure → 1 agentic retry</span>
+      </div>
+      <figcaption><b>Fig 7.</b> A procedure is dispatched at most once — a failed procedural attempt escalates to exactly one agentic retry carrying the procedure's digest. For SEC-bench, <code>[Exploit-Validator]</code> → <code>secb_exploit_validation</code> and <code>[Patch-Validator]</code> → <code>secb_patch_validation</code>; the verdict is decided by matching the observed crash signature against the CVE oracle across 3/3 runs.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 08 — REFERENCE ============ -->
+  <section id="ref" style="border-bottom:none;">
+    <div class="kick" data-reveal><b>08</b> &nbsp;/&nbsp; Reference</div>
+    <h2 data-reveal>Event families &amp; glossary</h2>
+    <div class="gtab" data-reveal>
+      <h4>Event stream <span class="when">38 frozen types · EVENT_TYPE_REGISTRY · two aggregates</span></h4>
+      <dl>
+        <div class="row"><span class="id">lifecycle</span><span><code>AgentCreated</code>, <code>TaskAssigned</code>, <code>ChildSpawned</code>, <code>ChildCompleted</code>, <code>ChildFailed</code>, <code>WorkCompleted</code>, <code>WorkFailed</code> — the agent tree.</span></div>
+        <div class="row"><span class="id">resilience</span><span><code>RetryScheduled</code>, <code>FailureDigestRecorded</code>, <code>RedecompositionTriggered</code> — the self-healing loop.</span></div>
+        <div class="row"><span class="id">procedure</span><span><code>ProcedureExecutionStarted</code>, <code>ProcedureExecutionFinished</code> (host <code>ProcedureEvidence</code>) — the deterministic tier.</span></div>
+        <div class="row"><span class="id">verify</span><span><code>VerificationPassed</code>, <code>VerificationFailed</code> (<code>structural / deterministic / execution / judge</code>).</span></div>
+        <div class="row"><span class="id">shared</span><span><code>SharedContextCreated</code>, <code>ArtifactStored</code>, <code>DecisionRecorded</code> — the 3 <code>SharedStore</code> events.</span></div>
+      </dl>
+    </div>
+    <div class="lex" data-reveal style="margin-top:24px;">
+      <dl>
+        <div class="term"><dt>AgentSession</dt><dd>Primary event-sourced aggregate; 35 of 38 events replay into it. Never mutated directly.</dd></div>
+        <div class="term"><dt>SharedStore</dt><dd>Second aggregate (artifacts + decisions), sharing the events table via a <code>uuid5</code> id.</dd></div>
+        <div class="term"><dt>failure_digest</dt><dd>Deterministic, LLM-free summary of a failed attempt, injected into the retry prompt.</dd></div>
+        <div class="term"><dt>Re-decomposition</dt><dd>A parent re-plans (bounded by <code>max_redecompositions</code>) informed by <code>failure_history</code>.</dd></div>
+      </dl>
+      <dl>
+        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier running registry-matched tasks host-side with zero LLM turns.</dd></div>
+        <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — captured by the host, unforgeable.</dd></div>
+        <div class="term"><dt>DooD</dt><dd>Docker-out-of-Docker: the orchestrator launches each CVE container on the host's Docker daemon.</dd></div>
+        <div class="term"><dt>Crash signature</dt><dd><code>(sanitizer_class, access_type, top_frame)</code> — matched against the CVE oracle to decide a verdict.</dd></div>
+      </dl>
+    </div>
+    <p style="margin-top:26px; font-size:14px; color:var(--ink-3);">Deeper detail for engineers lives in <code>/SYSTEM_REFERENCE.md</code> (as-built spec) and <code>.claude/docs/</code> (architecture, core-domain, plugins-security, patterns).</p>
+  </section>
+
+</main>
+
+<footer class="wrap"><div class="colo">Arise × SEC-bench — system overview · diagrams are hand-built inline SVG · grounded in the working tree (core/, infrastructure/, plugins/security/, config/, experiments/).</div></footer>
+
+<script>
+  (function () {
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var nodes = document.querySelectorAll("[data-reveal]");
+    if (reduce || !("IntersectionObserver" in window)) { nodes.forEach(function (n){ n.classList.add("in"); }); return; }
+    var io = new IntersectionObserver(function (es){ es.forEach(function (e){
+      if (!e.isIntersecting) return;
+      var el=e.target, i=el.parentElement?Array.prototype.indexOf.call(el.parentElement.children,el):0;
+      el.style.transitionDelay=Math.min(i,5)*55+"ms"; el.classList.add("in"); io.unobserve(el);
+    }); }, { threshold:0.08, rootMargin:"0px 0px -5% 0px" });
+    nodes.forEach(function (n){ io.observe(n); });
+  })();
+</script>
+</body>
+</html>
