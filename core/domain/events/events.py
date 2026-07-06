@@ -83,6 +83,11 @@ class AgentCreated(DomainEvent):
     symbols: list[str] = Field(default_factory=list)
     search_hints: list[str] = Field(default_factory=list)
 
+    # Deterministic execution tier — from Subtask, persisted for replay
+    execution_mode: str = "auto"
+    procedure_ref: str = ""
+    procedure_params: dict[str, Any] = Field(default_factory=dict)
+
 
 class TaskAssigned(DomainEvent):
     """Task assigned to agent."""
@@ -220,6 +225,25 @@ class FailureDigestRecorded(DomainEvent):
 
     digest: str
     source: str  # "worker_crash" | "procedure_failure"
+
+
+class ProcedureExecutionStarted(DomainEvent):
+    """WORKER started a deterministic procedure (no prompt, no LLM turns)."""
+
+    procedure_ref: str
+
+
+class ProcedureExecutionFinished(DomainEvent):
+    """Deterministic procedure finished; evidence is host-captured (unforgeable).
+
+    Terminal status comes from the WorkCompleted/WorkFailed that follows,
+    preserving the one-terminal-event worker lifecycle invariant.
+    """
+
+    procedure_ref: str
+    success: bool
+    summary: str
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CodeGenerationStarted(DomainEvent):

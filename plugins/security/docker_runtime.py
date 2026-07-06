@@ -20,6 +20,7 @@ from .container_runtime import (
     SecBenchWorkspace,
 )
 from .cve_instance import CVEInstance
+from .procedures import CommandOutcome
 
 
 logger = logging.getLogger(__name__)
@@ -654,4 +655,54 @@ class DockerSecBenchRuntime:
             process.returncode or 0,
             stdout.decode("utf-8", errors="replace"),
             stderr.decode("utf-8", errors="replace"),
+        )
+
+
+class DockerProcedureSession:
+    """ProcedureSession over the run's shared worker container.
+
+    Drives ``docker exec`` synchronously for the deterministic procedure tier.
+    A timeout is a task-level outcome (``CommandOutcome(timed_out=True)``),
+    never an exception — the procedure turns it into a FAIL verdict digest.
+    """
+
+    def __init__(self, session: SecBenchContainerSession) -> None:
+        self._session = session
+        self.testcase_dir = session.workspace.host_testcase_dir
+
+    async def run(self, command: str, *, timeout: float) -> CommandOutcome:
+        argv = [
+            "docker",
+            "exec",
+            "-i",
+            "-w",
+            self._session.workspace.container_working_directory,
+            self._session.container_id,
+            "bash",
+            "-lc",
+            command,
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=os.environ.copy(),
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            process.kill()
+            try:
+                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
+            except asyncio.TimeoutError:
+                stdout = b""
+                logger.warning("docker exec did not exit after kill: %s", command[:80])
+            return CommandOutcome(
+                exit_code=124,
+                output=stdout.decode("utf-8", errors="replace"),
+                timed_out=True,
+            )
+        return CommandOutcome(
+            exit_code=process.returncode or 0,
+            output=stdout.decode("utf-8", errors="replace"),
         )

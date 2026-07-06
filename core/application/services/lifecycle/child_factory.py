@@ -237,6 +237,9 @@ class ChildAgentFactory:
             symbols=list(event.subtask.symbols),
             search_hints=list(event.subtask.search_hints),
             estimated_complexity=event.subtask.estimated_complexity,
+            execution_mode=event.subtask.execution_mode,
+            procedure_ref=event.subtask.procedure_ref,
+            procedure_params=dict(event.subtask.procedure_params),
         )
         child.assign_task(event.subtask.description)
 

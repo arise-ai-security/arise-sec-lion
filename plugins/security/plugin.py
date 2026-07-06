@@ -16,7 +16,9 @@ from core.ports.domain_plugin_port import (
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.decomposition_validator import SecBenchDecompositionValidator
+from plugins.security.docker_runtime import DockerProcedureSession
 from plugins.security.image_resolver import resolve_secbench_image
+from plugins.security.procedures import SecBenchProcedureExecutor
 from plugins.security.prompt_strategy import SecBenchPromptStrategy
 
 
@@ -26,11 +28,13 @@ if TYPE_CHECKING:
     from core.application.services import PromptStrategy
     from core.domain.values.json_types import JsonObject
     from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.procedure_ports import ProcedureExecutorPort
     from plugins.security.container_runtime import (
         SecBenchContainerSession,
         SecBenchWorkspace,
         SecurityContainerRuntime,
     )
+    from plugins.security.procedures import ProcedureSession
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +87,16 @@ class SecurityDomainPlugin(DomainPlugin):
 
     def get_decomposition_validator(self) -> DecompositionValidator | None:
         return SecBenchDecompositionValidator()
+
+    def get_procedure_executor(self) -> ProcedureExecutorPort | None:
+        return SecBenchProcedureExecutor(session_resolver=self._resolve_procedure_session)
+
+    def _resolve_procedure_session(self, root_id: UUID) -> ProcedureSession | None:
+        """Adapt the run's shared container session for the procedure tier."""
+        session = self._sessions.get(root_id)
+        if session is None:
+            return None
+        return DockerProcedureSession(session)
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("context_file") or kwargs.get("cve_file")

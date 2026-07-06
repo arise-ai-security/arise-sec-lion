@@ -27,6 +27,8 @@ from core.domain.events.events import (
     OperationStarted,
     ProbeCompleted,
     ProbeStarted,
+    ProcedureExecutionFinished,
+    ProcedureExecutionStarted,
     PromptSent,
     RedecompositionTriggered,
     RetryScheduled,
@@ -92,6 +94,10 @@ class AgentSession:
     symbols: tuple[str, ...]
     search_hints: tuple[str, ...]
     estimated_complexity: str
+    execution_mode: str
+    procedure_ref: str
+    procedure_params: dict[str, Any]
+    last_attempt_procedural: bool
     retry_count: int
     redecomposition_count: int
     verification_feedback: str | None
@@ -127,6 +133,9 @@ class AgentSession:
         symbols: list[str] | None = None,
         search_hints: list[str] | None = None,
         estimated_complexity: str = "unknown",
+        execution_mode: str = "auto",
+        procedure_ref: str = "",
+        procedure_params: dict[str, Any] | None = None,
     ) -> AgentSession:
         instance = cls(agent_id)
         event = AgentCreated(
@@ -143,6 +152,9 @@ class AgentSession:
             symbols=symbols or [],
             search_hints=search_hints or [],
             estimated_complexity=estimated_complexity,
+            execution_mode=execution_mode,
+            procedure_ref=procedure_ref,
+            procedure_params=procedure_params or {},
         )
         instance._emit(event)
         return instance
@@ -337,6 +349,9 @@ class AgentSession:
         self.symbols = tuple(event.symbols)
         self.search_hints = tuple(event.search_hints)
         self.estimated_complexity = event.estimated_complexity
+        self.execution_mode = event.execution_mode
+        self.procedure_ref = event.procedure_ref
+        self.procedure_params = dict(event.procedure_params)
         if event.briefing is not None:
             self.briefing = Briefing.model_validate(event.briefing)
         self.version += 1
@@ -426,6 +441,17 @@ class AgentSession:
     @_apply.register
     def _(self, event: CodeGenerationStarted) -> None:
         self.status = AgentStatus.IN_PROGRESS
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProcedureExecutionStarted) -> None:
+        # Once-only guard: a later failed attempt must dispatch agentic.
+        self.last_attempt_procedural = True
+        self.status = AgentStatus.IN_PROGRESS
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProcedureExecutionFinished) -> None:
         self.version += 1
 
     @_apply.register
@@ -569,6 +595,12 @@ class AgentSession:
         # orchestrator skip the assessment LLM and execute directly.
         # ``"unknown"`` (default) preserves prior behaviour.
         self.estimated_complexity = "unknown"
+        # Deterministic execution tier: parent's marking from the Subtask,
+        # plus the once-only guard so a failed procedure escalates agentic.
+        self.execution_mode = "auto"
+        self.procedure_ref = ""
+        self.procedure_params = {}
+        self.last_attempt_procedural = False
         # Retry tracking
         self.retry_count = 0
         self.redecomposition_count = 0
@@ -712,6 +744,33 @@ class AgentSession:
         )
         self._emit(event)
 
+    def start_procedure(self, procedure_ref: str) -> None:
+        """WORKER begins a deterministic procedure (no prompt, no LLM)."""
+        event = ProcedureExecutionStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            procedure_ref=procedure_ref,
+        )
+        self._emit(event)
+
+    def finish_procedure(
+        self,
+        procedure_ref: str,
+        success: bool,
+        summary: str,
+        evidence: list[dict[str, Any]],
+    ) -> None:
+        """Record the host-captured procedure outcome; terminal event follows."""
+        event = ProcedureExecutionFinished(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            procedure_ref=procedure_ref,
+            success=success,
+            summary=summary,
+            evidence=evidence,
+        )
+        self._emit(event)
+
     def fail_with_reason(self, reason: str) -> None:
         failed_event = WorkFailed(
             aggregate_id=self.agent_id,
@@ -719,6 +778,15 @@ class AgentSession:
             reason=reason,
         )
         self._emit(failed_event)
+
+    def complete_with_result(self, result: str) -> None:
+        """Complete directly with a host-computed result (procedural tier)."""
+        completed_event = WorkCompleted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            result=result,
+        )
+        self._emit(completed_event)
 
 
     def apply_complexity_result(

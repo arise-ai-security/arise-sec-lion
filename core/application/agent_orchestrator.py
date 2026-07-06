@@ -32,6 +32,8 @@ from core.domain.services import (
 )
 from core.domain.services.config_resolver import ConfigResolver, OperationType
 from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.values.procedure import ProcedureResult
+from core.ports.procedure_ports import NullProcedureExecutor
 
 
 _REAL_CONSTRAINT_FAILURE_KEYWORDS: tuple[str, ...] = (
@@ -217,6 +219,7 @@ if TYPE_CHECKING:
     from core.domain.values.node_message import Handoff
     from core.domain.values.subtask import Subtask
     from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.procedure_ports import ProcedureExecutorPort
     from core.ports.runtime_ports import (
         FormatRepairerPort,
         LLMPort,
@@ -261,6 +264,7 @@ class AgentOrchestrator:
         capture_recon_reads: bool = False,
         share_boss_recon: bool = False,
         decomposition_validator: "DecompositionValidator | None" = None,
+        procedure_executor: "ProcedureExecutorPort | None" = None,
     ) -> None:
         self._llm_port = llm_port
         self._worker_port = worker_port
@@ -289,6 +293,9 @@ class AgentOrchestrator:
         # spawns every required role as its own leaf before children are spawned.
         # None => no enforcement (byte-identical to today for non-domain runs).
         self._decomposition_validator = decomposition_validator
+        # Deterministic procedure tier. The null default matches nothing, so
+        # dispatch is a no-op unless bootstrap binds a domain executor.
+        self._procedure_executor = procedure_executor or NullProcedureExecutor()
         self._boss_recon_blocks: dict[Any, str] = {}
         self._verification_pipeline = VerificationPipeline(
             llm_port,
@@ -646,6 +653,14 @@ class AgentOrchestrator:
             agent.fail_with_reason(f"Expected WORKER role, got {agent.role}")
             return
 
+        # Deterministic tier: registry-matched tasks run host-side with zero
+        # LLM turns. A previously failed procedural attempt dispatches agentic
+        # (the escalation ladder), never procedural twice.
+        procedure_ref = self._resolve_procedure_ref(agent)
+        if procedure_ref is not None and not agent.last_attempt_procedural:
+            await self._execute_procedure(agent, procedure_ref, persist_checkpoint)
+            return
+
         op = "worker_execution"
         with self._timed_operation(agent, op):
             # Start worker execution (CodeGenerationStarted event, -> IN_PROGRESS)
@@ -711,6 +726,91 @@ class AgentOrchestrator:
             # Verify worker output if completed successfully
             if agent.status == AgentStatus.COMPLETED:
                 await self._verification_pipeline.verify(agent)
+
+    def _resolve_procedure_ref(self, agent: "AgentSession") -> str | None:
+        """Dispatch ladder: explicit marking → static registry match.
+
+        Unknown explicit refs downgrade to auto with a warning (fail open —
+        a bad LLM marking must never dead-end a task).
+        """
+        if agent.execution_mode == "agentic":
+            return None
+        if agent.execution_mode == "procedural":
+            if agent.procedure_ref and self._procedure_executor.resolve(agent.procedure_ref):
+                return agent.procedure_ref
+            logger.warning(
+                "Unknown procedure_ref %r on agent %s; downgrading to auto",
+                agent.procedure_ref,
+                agent.agent_id,
+            )
+        matched = self._procedure_executor.match(
+            agent.task_description, self._get_domain_context(agent)
+        )
+        if matched is not None and self._procedure_executor.resolve(matched):
+            return matched
+        return None
+
+    async def _execute_procedure(
+        self,
+        agent: "AgentSession",
+        procedure_ref: str,
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None",
+    ) -> None:
+        """Run a registered procedure host-side: no prompt, no LLM, no cost.
+
+        Success completes the worker through the normal verification pipeline;
+        failure records the procedure's own digest and fails the worker, which
+        the post-step escalation retries agentically.
+        """
+        op = "procedure_execution"
+        with self._timed_operation(agent, op):
+            agent.start_procedure(procedure_ref)
+            if persist_checkpoint is not None:
+                await persist_checkpoint(agent)
+
+            # The run's root_id rides in params so a domain executor can
+            # resolve the run's shared container session (core stays
+            # topology-only; params remain an opaque dict).
+            params: dict[str, Any] = dict(agent.procedure_params)
+            if agent.hierarchy_limits is not None:
+                params.setdefault("root_id", agent.hierarchy_limits.root_id)
+
+            try:
+                result = await self._procedure_executor.execute(
+                    procedure_ref,
+                    agent.task_description,
+                    self._get_domain_context(agent),
+                    params,
+                )
+            except Exception as e:
+                # Infrastructure fault (container gone, exec error): fail open
+                # into the agentic escalation with the fault as digest.
+                logger.warning(
+                    "Procedure %s infrastructure fault for agent %s",
+                    procedure_ref,
+                    agent.agent_id,
+                    exc_info=True,
+                )
+                result = ProcedureResult(
+                    success=False,
+                    summary=f"Procedure {procedure_ref} infrastructure fault: {e}",
+                    digest=f"FAILURE: {e!r}",
+                )
+
+            agent.finish_procedure(
+                procedure_ref,
+                success=result.success,
+                summary=result.summary,
+                evidence=[item.model_dump() for item in result.evidence],
+            )
+            if result.success:
+                agent.complete_with_result(result.summary)
+                await self._verification_pipeline.verify(agent)
+            else:
+                agent.record_failure_digest(
+                    result.digest or result.summary, source="procedure_failure"
+                )
+                agent.fail_with_reason(result.summary)
 
     # -------------------------------------------------------------------------
     # Helpers

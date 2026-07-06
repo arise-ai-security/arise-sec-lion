@@ -95,6 +95,7 @@ class ApplicationConfig:
     verification_max_retries: int = 2
     capture_recon_reads: bool = False
     share_boss_recon: bool = False
+    procedural_dispatch: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     prompt_builder: PromptBuilder | None = None
@@ -210,6 +211,11 @@ def get_application(
         decomposition_validator=(
             config.domain_plugin.get_decomposition_validator()
             if config.domain_plugin is not None
+            else None
+        ),
+        procedure_executor=(
+            config.domain_plugin.get_procedure_executor()
+            if config.procedural_dispatch and config.domain_plugin is not None
             else None
         ),
     )

@@ -406,6 +406,7 @@ def create_runtime_cli(
             verification_max_retries=settings.orchestration.verification_max_retries,
             capture_recon_reads=settings.orchestration.capture_recon_reads,
             share_boss_recon=settings.orchestration.share_boss_recon,
+            procedural_dispatch=settings.orchestration.procedural_dispatch,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

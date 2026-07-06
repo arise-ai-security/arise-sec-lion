@@ -416,6 +416,14 @@ class OrchestrationConfig(BaseModel):
         default=False,
         description="Skip the LLM judge stage of verification (stages 1-3 still run).",
     )
+    procedural_dispatch: bool = Field(
+        default=False,
+        description=(
+            "Bind the domain plugin's procedure executor so registry-matched worker "
+            "tasks run host-side with zero LLM turns (failed procedures escalate to "
+            "an agentic retry). Off => the null executor; behavior byte-identical."
+        ),
+    )
     shared_worker_session: bool = Field(
         default=False,
         description=(

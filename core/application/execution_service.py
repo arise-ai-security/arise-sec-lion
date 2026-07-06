@@ -1203,6 +1203,20 @@ class AgentExecutionService:
                     agent.record_failure_digest(digest, source="worker_crash")
                     await self._repository.persist_events(agent, self._progress_callback)
 
+            # Escalation ladder: a failed procedural attempt gets exactly one
+            # guaranteed agentic retry (dispatch routes it agentic via
+            # last_attempt_procedural), carrying the procedure's digest.
+            if (
+                agent.role == AgentRole.WORKER
+                and agent.last_attempt_procedural
+                and agent.retry_count == 0
+            ):
+                agent.schedule_retry(
+                    reason=f"Procedural attempt failed: {agent.error_message}"
+                )
+                await self._repository.persist_events(agent, self._progress_callback)
+                return
+
             # Worker retry: up to verification_max_retries with judge feedback or
             # crash digest as the injected context.
             if await self._maybe_retry_worker(agent):

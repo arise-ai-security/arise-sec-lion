@@ -25,6 +25,8 @@ from core.domain.events.events import (
     OperationStarted,
     ProbeCompleted,
     ProbeStarted,
+    ProcedureExecutionFinished,
+    ProcedureExecutionStarted,
     PromptSent,
     RedecompositionTriggered,
     RetryScheduled,
@@ -95,6 +97,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "RedecompositionTriggered": RedecompositionTriggered,
     "ProbeStarted": ProbeStarted,
     "ProbeCompleted": ProbeCompleted,
+    "ProcedureExecutionStarted": ProcedureExecutionStarted,
+    "ProcedureExecutionFinished": ProcedureExecutionFinished,
 }
 
 

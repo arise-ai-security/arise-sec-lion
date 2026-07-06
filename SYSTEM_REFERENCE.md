@@ -182,13 +182,13 @@ flowchart LR
     EM -->|append-only| ES[("Postgres events table<br/>UNIQUE(aggregate_id, sequence_number)")]
     ES -->|load_from_history| RP["replay: fold events through @_apply<br/>version += 1 per event"]
     RP --> AGG["in-memory aggregate state"]
-    ES -->|EVENT_TYPE_REGISTRY<br/>36 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
+    ES -->|EVENT_TYPE_REGISTRY<br/>38 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
     classDef store fill:#cde,stroke:#226;
     class ES store
 ```
 
 - **Two event-sourced aggregates** (not one):
-  - `AgentSession` — the **primary** aggregate; 33 of the 36 event types mutate it.
+  - `AgentSession` — the **primary** aggregate; 35 of the 38 event types mutate it.
     — `core/domain/aggregates/agent_session.py`
   - `SharedStore` (= `ArtifactStore` + `DecisionLog`) — cross-agent shared state, with a
     `uuid5`-derived `aggregate_id` so it shares the same `events` table without colliding
@@ -208,10 +208,10 @@ flowchart LR
 
 > ⚠️ **Stale `CLAUDE.md`.** `CLAUDE.md` states "AgentSession is the only aggregate" and
 > "All state from replaying ~31 frozen Pydantic events." Both are out of date: there are
-> **36** registered event types (`postgres_event_store.py:51-97`) and **two** aggregates.
+> **38** registered event types (`postgres_event_store.py:51-99`) and **two** aggregates.
 > Treat `AgentSession` as the *primary/central* aggregate. (See §V.6.)
 
-### Event catalog (36 types)
+### Event catalog (38 types)
 
 All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 `core/domain/events/events.py:27`); all are registered in `EVENT_TYPE_REGISTRY`.
@@ -220,7 +220,7 @@ All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 |---|---|
 | Session lifecycle / hierarchy | `AgentCreated`, `TaskAssigned`, `StatusChanged`, `SubtasksDefined`, `ChildSpawned`, `ChildCompleted`, `ChildFailed`, `ComplexityEvaluated`, `RedecompositionTriggered`, `RetryScheduled`, `FailureDigestRecorded`, `LimitEnforced` |
 | Assessment / decision | `ProbeStarted`, `ProbeCompleted`, `DecisionInfeasible`, `PromptSent` |
-| Execution | `CodeGenerationStarted`, `ThoughtCaptured` |
+| Execution | `CodeGenerationStarted`, `ThoughtCaptured`, `ProcedureExecutionStarted`, `ProcedureExecutionFinished` |
 | **Verification** | `VerificationPassed`, `VerificationFailed` (`failed_stage` ∈ structural/deterministic/execution/judge) |
 | **Runtime-surface (anti-leak)** | `RuntimeSurfaceSealed` (carries `sealed_artifacts: list[SealedArtifact]`) |
 | Completion / run-level / timing | `WorkCompleted`, `WorkFailed`, `RunStarted`, `RunCompleted`, `AgentExecutionStarted`, `AgentExecutionFinished`, `OperationStarted`, `OperationFinished` |
