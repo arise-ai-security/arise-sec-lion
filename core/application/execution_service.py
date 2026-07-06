@@ -30,6 +30,7 @@ from core.application.services import (
     RetryPolicy,
     build_role_handlers,
 )
+from core.application.services.orchestration.failure_digest import build_failure_digest
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 from core.domain.events.events import (
@@ -1181,8 +1182,30 @@ class AgentExecutionService:
             return
 
         if agent.status == AgentStatus.FAILED:
-            # Verification-specific retry: up to 2 retries with judge feedback
-            if await self._maybe_retry_verification(agent):
+            # A crashed worker (no verification feedback) otherwise carries no
+            # retry context. Capture a deterministic digest of the failed attempt
+            # so the retry — and, on propagation, the parent — sees why it failed.
+            # Best-effort: a digest-build error must never block the failure path.
+            if (
+                agent.role == AgentRole.WORKER
+                and not agent.verification_feedback
+                and agent.failure_digest is None
+            ):
+                try:
+                    digest = build_failure_digest(agent)
+                except Exception:
+                    logger.warning(
+                        "Failed to build failure digest for agent %s",
+                        agent.agent_id,
+                        exc_info=True,
+                    )
+                else:
+                    agent.record_failure_digest(digest, source="worker_crash")
+                    await self._repository.persist_events(agent, self._progress_callback)
+
+            # Worker retry: up to verification_max_retries with judge feedback or
+            # crash digest as the injected context.
+            if await self._maybe_retry_worker(agent):
                 return
 
             retried = await self._retry_policy.maybe_schedule_retry(agent)
@@ -1191,15 +1214,15 @@ class AgentExecutionService:
 
             await self._parent_notifier.notify_if_failed(agent)
 
-    async def _maybe_retry_verification(self, agent: AgentSession) -> bool:
-        """Retry a worker that failed verification, up to verification_max_retries.
+    async def _maybe_retry_worker(self, agent: AgentSession) -> bool:
+        """Retry a worker that failed verification or crashed, with feedback/digest context.
 
         Returns True if a retry was scheduled (caller should not notify parent).
         """
         if agent.role != AgentRole.WORKER:
             return False
 
-        if not agent.verification_feedback:
+        if not (agent.verification_feedback or agent.failure_digest):
             return False
 
         if agent.retry_count >= self._config.verification_max_retries:
@@ -1212,11 +1235,11 @@ class AgentExecutionService:
             agent, self._progress_callback
         )
         logger.info(
-            "Verification retry %d/%d for agent %s: %s",
+            "Worker retry %d/%d for agent %s: %s",
             agent.retry_count,
             self._config.verification_max_retries,
             agent.agent_id,
-            agent.verification_feedback,
+            agent.verification_feedback or agent.failure_digest,
         )
         return True
 

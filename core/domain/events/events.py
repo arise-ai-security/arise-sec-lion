@@ -210,6 +210,18 @@ class RetryScheduled(DomainEvent):
     escalated_model: str | None = None  # New model if escalated, None if same
 
 
+class FailureDigestRecorded(DomainEvent):
+    """Deterministic digest of a failed attempt, for retry/parent prompts.
+
+    Built without LLM involvement from the aggregate's error message and
+    recent tool-output excerpts. Retained across RetryScheduled, mirroring
+    ``verification_feedback``.
+    """
+
+    digest: str
+    source: str  # "worker_crash" | "procedure_failure"
+
+
 class CodeGenerationStarted(DomainEvent):
     """WORKER started execution with tool."""
 
@@ -253,11 +265,15 @@ class ChildCompleted(DomainEvent):
 class ChildFailed(DomainEvent):
     """Child agent failed, parent notified with error details.
 
-    Triggers failure propagation up the hierarchy.
+    Triggers failure propagation up the hierarchy. ``child_task`` and
+    ``digest`` enrich the parent's failure record for informed re-planning;
+    defaults keep pre-enrichment rows replay-compatible.
     """
 
     child_id: UUID
     reason: str  # Error message from child
+    child_task: str = ""
+    digest: str | None = None  # Child's failure digest, when one was recorded
 
 
 class ComplexityEvaluated(DomainEvent):

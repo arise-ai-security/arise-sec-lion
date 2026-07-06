@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from core.application.services.orchestration.truncation import head_tail
 from core.domain.services import strip_markdown_code_block
 from core.domain.services.config_resolver import ConfigResolver
 from core.domain.services.context_update_parser import parse_context_update
@@ -52,16 +53,6 @@ verbatim — do not re-interpret or rescale."""
 
 
 JUDGE_SCHEMA_HINT: str = build_judge_schema_hint()
-
-
-def _head_tail(text: str, limit: int) -> str:
-    """Keep first 2/3 + last 1/3 of text, showing omission count."""
-    if len(text) <= limit:
-        return text
-    head = limit * 2 // 3
-    tail = limit - head
-    omitted = len(text) - limit
-    return f"{text[:head]}\n\n[...{omitted} chars omitted...]\n\n{text[-tail:]}"
 
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9]*[hlm]")
@@ -271,7 +262,7 @@ class VerificationPipeline:
             f"## Success Criteria\n{success_criteria}\n\n"
             f"{report_section}"
             f"## Work Output (command log, may be truncated)\n"
-            f"{_head_tail(_strip_ansi(result), 30000)}\n\n"
+            f"{head_tail(_strip_ansi(result), 30000)}\n\n"
             "YOUR RESPONSE MUST BE EXACTLY ONE LINE OF VALID JSON, nothing else. "
             "No markdown, no explanation before or after, just the JSON object:\n"
             '{"score": 75, "feedback": "explanation of what was accomplished and any gaps"}\n'

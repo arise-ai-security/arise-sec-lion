@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 from functools import singledispatchmethod
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from core.domain.events.events import (
     ComplexityEvaluated,
     DecisionInfeasible,
     DomainEvent,
+    FailureDigestRecorded,
     LimitEnforced,
     OperationFinished,
     OperationStarted,
@@ -48,12 +50,22 @@ from core.domain.events.events import (
 from core.domain.exceptions import DomainInvariantError, InvalidEventHistoryError
 from core.domain.values.agent_config import AgentConfig
 from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.values.failure import ChildFailureRecord, ThoughtExcerpt
 from core.domain.values.node_message import Briefing, Report, build_briefing
 
 
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.subtask import Subtask
+
+
+# Bounds for failure-context retention: the thought tail feeds the retry
+# digest (~10 KB ceiling); note/reason caps keep parent aggregation notes
+# and redecomposition reasons prompt-sized.
+_RECENT_THOUGHTS_MAXLEN = 20
+_THOUGHT_EXCERPT_CHARS = 500
+_NOTE_TASK_CHARS = 80
+_NOTE_REASON_CHARS = 200
 
 
 class AgentSession:
@@ -84,7 +96,10 @@ class AgentSession:
     redecomposition_count: int
     verification_feedback: str | None
     verification_score: int | None
-    failed_children: set[UUID]
+    failure_digest: str | None
+    recent_thoughts: deque[ThoughtExcerpt]
+    failed_children: dict[UUID, ChildFailureRecord]
+    failure_history: list[ChildFailureRecord]
     # Per-coroutine reservation bookkeeping for child-spawn OCC (D.2).
     # NOT event-sourced — lives only on the in-memory aggregate for the
     # duration of one run_agent_step attempt; reset on every fresh load
@@ -185,13 +200,7 @@ class AgentSession:
         if reported == len(self.child_ids):
             aggregated_result = self._aggregate_child_results()
             if self.failed_children:
-                failed_summary = ", ".join(
-                    str(cid)[:8] for cid in self.failed_children
-                )
-                aggregated_result += (
-                    f"\n\nNote: {len(self.failed_children)} child(ren) failed "
-                    f"({failed_summary}). Results are partial."
-                )
+                aggregated_result += f"\n\n{self._failed_children_note()}"
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
@@ -214,17 +223,45 @@ class AgentSession:
                 lines.append(f"  Decisions: {', '.join(report.decisions)}")
         return "\n".join(lines)
 
-    def handle_child_failure(self, child_id: UUID, reason: str) -> None:
+    def _child_failure_lines(self) -> list[str]:
+        lines = []
+        for record in self.failed_children.values():
+            label = record.child_task[:_NOTE_TASK_CHARS] or str(record.child_id)[:8]
+            first_line = record.reason.splitlines()[0] if record.reason else ""
+            lines.append(f"- {label}: {first_line[:_NOTE_REASON_CHARS]}")
+        return lines
+
+    def _failed_children_note(self) -> str:
+        header = f"Note: {len(self.failed_children)} child(ren) failed. Results are partial."
+        return "\n".join([header, *self._child_failure_lines()])
+
+    def _all_children_failed_reason(self) -> str:
+        header = f"All {len(self.failed_children)} children failed:"
+        return "\n".join([header, *self._child_failure_lines()])
+
+    def handle_child_failure(
+        self,
+        child_id: UUID,
+        reason: str,
+        *,
+        child_task: str = "",
+        digest: str | None = None,
+        max_redecompositions: int = 0,
+    ) -> None:
         """For BOSS/MANAGER: record child failure, defer parent decision.
 
         Records the failure but waits until all children have reported
         (completed or failed) before deciding the parent's fate. If at least
         one child succeeded, the parent aggregates partial results. If ALL
-        children failed, the parent fails.
+        children failed, the parent re-decomposes informed by the recorded
+        failures while redecomposition budget remains, otherwise fails.
 
         Args:
             child_id: ID of failed child
             reason: Error message from child
+            child_task: The failed child's task description
+            digest: The child's failure digest, when one was recorded
+            max_redecompositions: Re-plan budget for the all-children-failed case
         """
         # Idempotence: a child is reported terminally at most once. Under
         # OCC retry the same failure notification can arrive twice; the
@@ -240,6 +277,8 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             child_id=child_id,
             reason=reason,
+            child_task=child_task,
+            digest=digest,
         )
         self._emit(child_failed_event)
 
@@ -251,27 +290,26 @@ class AgentSession:
         # All children reported — decide parent outcome
         if self.child_reports:
             # At least one child succeeded — aggregate partial results
-            aggregated = self._aggregate_child_results()
-            failed_summary = ", ".join(
-                str(cid)[:8] for cid in self.failed_children
-            )
-            result = (
-                f"{aggregated}\n\n"
-                f"Note: {len(self.failed_children)} child(ren) failed "
-                f"({failed_summary}). Results are partial."
-            )
+            result = f"{self._aggregate_child_results()}\n\n{self._failed_children_note()}"
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
                 result=result,
             )
             self._emit(work_completed_event)
+        elif self.redecomposition_count < max_redecompositions:
+            # ALL children failed with re-plan budget left — re-decompose
+            # informed by the recorded failures instead of failing upward.
+            self.trigger_redecomposition(
+                trigger_child_id=child_id,
+                reason=self._all_children_failed_reason(),
+            )
         else:
             # ALL children failed — parent fails
             work_failed_event = WorkFailed(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
-                reason=f"All children failed. Last: {reason}",
+                reason=self._all_children_failed_reason(),
             )
             self._emit(work_failed_event)
 
@@ -354,6 +392,9 @@ class AgentSession:
     def _(self, event: RedecompositionTriggered) -> None:
         self.status = AgentStatus.ANALYZING
         self.redecomposition_count += 1
+        # Snapshot before clearing so the next decomposition prompt can
+        # render every prior attempt's failures.
+        self.failure_history.extend(self.failed_children.values())
         self.child_ids.clear()
         self.child_reports.clear()
         self.failed_children.clear()
@@ -389,6 +430,18 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ThoughtCaptured) -> None:
+        self.recent_thoughts.append(
+            ThoughtExcerpt(
+                tool_name=event.tool_name,
+                output_type=event.output_type,
+                content=event.content[:_THOUGHT_EXCERPT_CHARS],
+            )
+        )
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: FailureDigestRecorded) -> None:
+        self.failure_digest = event.digest
         self.version += 1
 
     @_apply.register
@@ -407,7 +460,12 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ChildFailed) -> None:
-        self.failed_children.add(event.child_id)
+        self.failed_children[event.child_id] = ChildFailureRecord(
+            child_id=event.child_id,
+            child_task=event.child_task,
+            reason=event.reason,
+            digest=event.digest,
+        )
         self.version += 1
 
     @_apply.register
@@ -517,8 +575,17 @@ class AgentSession:
         # Verification feedback for retry (populated on VerificationFailed)
         self.verification_feedback = None
         self.verification_score = None
-        # Track failed children for partial-success aggregation
-        self.failed_children = set()
+        # Digest of the last failed attempt (populated on FailureDigestRecorded,
+        # retained across retries like verification_feedback)
+        self.failure_digest = None
+        # Bounded tail of worker tool output, replayed from ThoughtCaptured,
+        # feeding the deterministic failure digest
+        self.recent_thoughts = deque(maxlen=_RECENT_THOUGHTS_MAXLEN)
+        # Track failed children for partial-success aggregation and re-planning
+        self.failed_children = {}
+        # Failures accumulated across redecompositions, rendered into the
+        # next decomposition prompt
+        self.failure_history = []
         # Per-coroutine reservation count (see D.2). Reset on every fresh
         # load, every replay, and after commit/release in the orchestrator.
         self.pending_reservation = 0
@@ -632,6 +699,16 @@ class AgentSession:
             attempt=self.retry_count + 1,
             reason=reason,
             escalated_model=escalated_model,
+        )
+        self._emit(event)
+
+    def record_failure_digest(self, digest: str, source: str) -> None:
+        """Record a deterministic digest of the failed attempt for retry prompts."""
+        event = FailureDigestRecorded(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            digest=digest,
+            source=source,
         )
         self._emit(event)
 

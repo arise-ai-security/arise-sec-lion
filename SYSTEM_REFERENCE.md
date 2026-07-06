@@ -182,13 +182,13 @@ flowchart LR
     EM -->|append-only| ES[("Postgres events table<br/>UNIQUE(aggregate_id, sequence_number)")]
     ES -->|load_from_history| RP["replay: fold events through @_apply<br/>version += 1 per event"]
     RP --> AGG["in-memory aggregate state"]
-    ES -->|EVENT_TYPE_REGISTRY<br/>35 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
+    ES -->|EVENT_TYPE_REGISTRY<br/>36 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
     classDef store fill:#cde,stroke:#226;
     class ES store
 ```
 
 - **Two event-sourced aggregates** (not one):
-  - `AgentSession` — the **primary** aggregate; 32 of the 35 event types mutate it.
+  - `AgentSession` — the **primary** aggregate; 33 of the 36 event types mutate it.
     — `core/domain/aggregates/agent_session.py`
   - `SharedStore` (= `ArtifactStore` + `DecisionLog`) — cross-agent shared state, with a
     `uuid5`-derived `aggregate_id` so it shares the same `events` table without colliding
@@ -208,17 +208,17 @@ flowchart LR
 
 > ⚠️ **Stale `CLAUDE.md`.** `CLAUDE.md` states "AgentSession is the only aggregate" and
 > "All state from replaying ~31 frozen Pydantic events." Both are out of date: there are
-> **35** registered event types (`postgres_event_store.py:51-96`) and **two** aggregates.
+> **36** registered event types (`postgres_event_store.py:51-97`) and **two** aggregates.
 > Treat `AgentSession` as the *primary/central* aggregate. (See §V.6.)
 
-### Event catalog (35 types)
+### Event catalog (36 types)
 
 All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 `core/domain/events/events.py:27`); all are registered in `EVENT_TYPE_REGISTRY`.
 
 | Group | Events |
 |---|---|
-| Session lifecycle / hierarchy | `AgentCreated`, `TaskAssigned`, `StatusChanged`, `SubtasksDefined`, `ChildSpawned`, `ChildCompleted`, `ChildFailed`, `ComplexityEvaluated`, `RedecompositionTriggered`, `RetryScheduled`, `LimitEnforced` |
+| Session lifecycle / hierarchy | `AgentCreated`, `TaskAssigned`, `StatusChanged`, `SubtasksDefined`, `ChildSpawned`, `ChildCompleted`, `ChildFailed`, `ComplexityEvaluated`, `RedecompositionTriggered`, `RetryScheduled`, `FailureDigestRecorded`, `LimitEnforced` |
 | Assessment / decision | `ProbeStarted`, `ProbeCompleted`, `DecisionInfeasible`, `PromptSent` |
 | Execution | `CodeGenerationStarted`, `ThoughtCaptured` |
 | **Verification** | `VerificationPassed`, `VerificationFailed` (`failed_stage` ∈ structural/deterministic/execution/judge) |
@@ -840,7 +840,7 @@ Consider seeding by allowlist (delete everything not explicitly permitted).
 
 `CLAUDE.md` → "Key Architectural Decisions" should be updated: "AgentSession is the only
 aggregate" → *primary* aggregate (a second `SharedStore` aggregate exists); "~31 frozen
-events" → **35**. — verified `postgres_event_store.py:51-96`, `shared_context.py`.
+events" → **36**. — verified `postgres_event_store.py:51-97`, `shared_context.py`.
 
 ## V.7 — Event-source the `secb` results (anti-fabrication by construction)
 

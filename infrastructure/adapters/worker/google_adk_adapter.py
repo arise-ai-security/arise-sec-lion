@@ -20,6 +20,7 @@ from .shared import (
     format_tool_event,
     get_model_pricing,
 )
+from .shared.errors import describe_error
 
 
 logger = logging.getLogger(__name__)
@@ -299,7 +300,7 @@ class GoogleADKAdapter(WorkerAdapterBase):
 
         except Exception as e:
             logger.error(f"ADK execution error: {e}")
-            yield sequencer.failed(f"Google ADK adapter error: {e!r}")
+            yield sequencer.failed(f"Google ADK adapter error: {describe_error(e)}")
 
     def _build_instruction(self) -> str:
         return """You are a task execution agent.

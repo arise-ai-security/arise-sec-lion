@@ -432,7 +432,7 @@ def _make_system_limits() -> ExecutionLimitsBridge:
     )
 
 
-def _make_service_config() -> ServiceConfig:
+def _make_service_config(verification_max_retries: int = 2) -> ServiceConfig:
     return ServiceConfig(
         max_retries=3,
         poll_interval=0.1,
@@ -440,6 +440,7 @@ def _make_service_config() -> ServiceConfig:
         default_worker_tool="claude_code",
         boss_config=BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
         manager_config=ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
+        verification_max_retries=verification_max_retries,
     )
 
 
@@ -450,9 +451,11 @@ def _wire_execution_service(
     shared_context: FakeSharedContextPort | None = None,
     sibling_view: FakeSiblingViewPort | None = None,
     realtime_callback: FakeRealtimeCallback | None = None,
+    verification_max_retries: int = 2,
+    max_redecompositions: int = 2,
 ) -> AgentExecutionService:
     """Wire up a fully functional ExecutionService with fakes."""
-    config = _make_service_config()
+    config = _make_service_config(verification_max_retries)
     system_limits = _make_system_limits()
 
     prompt_builder = PromptBuilder("prompts", "claude_code")
@@ -474,7 +477,9 @@ def _wire_execution_service(
         realtime_callback=realtime_callback,
     )
 
-    parent_notifier = ParentNotificationService(repository=repository)
+    parent_notifier = ParentNotificationService(
+        repository=repository, max_redecompositions=max_redecompositions
+    )
 
     dependencies = ExecutionServiceDependencies(
         repository=repository,
@@ -752,7 +757,13 @@ class TestMultiLevelRun:
 
 
 class TestChildFailurePropagation:
-    """WORKER fails → parent FAILED → BOSS FAILED."""
+    """WORKER fails → parent FAILED → BOSS FAILED.
+
+    Digest retries and informed redecomposition are disabled here (budgets 0)
+    so the tests pin the bare propagation path; the self-healing loop is
+    covered by core/application retry tests and core/domain redecomposition
+    tests.
+    """
 
     @pytest.mark.asyncio
     async def test_worker_failure_propagates_to_boss(self) -> None:
@@ -761,7 +772,9 @@ class TestChildFailurePropagation:
         worker = FakeWorkerTool()
         worker.set_failure("Out of memory")
 
-        svc = _wire_execution_service(event_store, llm, worker)
+        svc = _wire_execution_service(
+            event_store, llm, worker, verification_max_retries=0, max_redecompositions=0
+        )
 
         # Boss decomposes → 1 child
         boss_id = await svc.create_boss_agent("Failing task")
@@ -802,7 +815,9 @@ class TestChildFailurePropagation:
             return _subtasks_json(["Sub"])
 
         llm._determine_response = smart_response
-        svc = _wire_execution_service(event_store, llm, worker)
+        svc = _wire_execution_service(
+            event_store, llm, worker, verification_max_retries=0, max_redecompositions=0
+        )
 
         boss_id = await svc.create_boss_agent("Complex failing task")
         await svc.run_agent_step(boss_id)
@@ -819,6 +834,36 @@ class TestChildFailurePropagation:
         assert _get_agent_status(event_store, worker_id) == "failed"
         assert _get_agent_status(event_store, manager_id) == "failed"
         assert _get_agent_status(event_store, boss_id) == "failed"
+
+    @pytest.mark.asyncio
+    async def test_redecomposition_prompt_carries_failure_history(self) -> None:
+        """All children failed → boss re-decomposes and its next decomposition
+        prompt renders the recorded failure (task label + reason)."""
+        event_store = InMemoryEventStore()
+        llm = FakeLLM()
+        worker = FakeWorkerTool()
+        worker.set_failure("Out of memory")
+
+        svc = _wire_execution_service(
+            event_store, llm, worker, verification_max_retries=0, max_redecompositions=1
+        )
+
+        boss_id = await svc.create_boss_agent("Failing task")
+        await svc.run_agent_step(boss_id)
+
+        child_id = _find_child_ids(event_store, boss_id)[0]
+        await svc.run_agent_step(child_id)  # assess → WORKER
+        await svc.run_agent_step(child_id)  # execute → FAILED → boss re-decomposes
+
+        assert _get_agent_status(event_store, child_id) == "failed"
+        assert _get_agent_status(event_store, boss_id) == "analyzing"
+
+        # Boss re-decomposes: the new decomposition prompt carries the failure
+        await svc.run_agent_step(boss_id)
+
+        redecomposition_prompt = llm.calls[-1][0]
+        assert "<previous_attempt_failures>" in redecomposition_prompt
+        assert "Out of memory" in redecomposition_prompt
 
 
 # =============================================================================

@@ -13,6 +13,7 @@ from core.domain.events.events import DomainEvent, WorkCompleted, WorkFailed
 from core.ports.runtime_ports import WorkerToolPort
 
 from .shared import EventSequencer, validate_task_context
+from .shared.errors import describe_error
 
 
 class WorkerAdapterBase(ABC, WorkerToolPort):
@@ -117,7 +118,7 @@ class WorkerAdapterBase(ABC, WorkerToolPort):
         ...
 
     def _format_unexpected_error(self, error: Exception) -> str:
-        return f"{self._get_tool_name()} adapter error: {error!r}"
+        return f"{self._get_tool_name()} adapter error: {describe_error(error)}"
 
     def _create_sequencer(self, agent_id: UUID) -> EventSequencer:
         return EventSequencer(agent_id, stream=self.STREAM_NAME)

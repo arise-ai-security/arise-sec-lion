@@ -62,7 +62,7 @@
 ## Architectural Invariants (stable; details in the deep dives)
 
 - **Strict hexagonal boundary** -- `core/` depends only on stdlib and its own `core/ports/` Protocols. All infrastructure is injected at bootstrap. Pre-commit enforced.
-- **Two event-sourced aggregates** -- `AgentSession` (primary, 32 of the 35 registered event types) and `SharedStore` (3 event types; a `uuid5`-derived `aggregate_id` sharing the same events table). All state is replayed from **35 frozen Pydantic events** (`EVENT_TYPE_REGISTRY`). OCC via unique `(aggregate_id, sequence_number)`. No mutable state tables. Postgres events are the sole source of truth (no events.jsonl projection).
+- **Two event-sourced aggregates** -- `AgentSession` (primary, 33 of the 36 registered event types) and `SharedStore` (3 event types; a `uuid5`-derived `aggregate_id` sharing the same events table). All state is replayed from **36 frozen Pydantic events** (`EVENT_TYPE_REGISTRY`). OCC via unique `(aggregate_id, sequence_number)`. No mutable state tables. Postgres events are the sole source of truth (no events.jsonl projection).
 - **Three direct orchestrator methods** -- `assess_task`, `evaluate_task`, `execute_task` are plain methods on `AgentOrchestrator`. Do NOT wrap them in pipeline/strategy/chain-of-responsibility abstractions. Intentional.
 - **Domain context is an opaque slot** -- `HierarchyLimits.domain_context: object | None` carries plugin data (e.g. `CVEInstance`) through the tree; only the plugin downcasts. Core stays domain-ignorant.
 - **`bootstrap/composition.py` is the sole cross-boundary import** -- it is the only file that imports from `plugins/`. Every other layer references protocols only.

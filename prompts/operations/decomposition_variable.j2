@@ -1,3 +1,15 @@
+{% if failure_history %}
+<previous_attempt_failures>
+    Your previous decomposition attempt failed — EVERY child failed. Re-plan differently: do not repeat the failed breakdown, and address each cause below.
+    {% for f in failure_history %}
+    - Subtask: {{ f.task }}
+      Failure: {{ f.reason }}
+      {% if f.digest %}Digest:
+{{ f.digest }}
+      {% endif %}
+    {% endfor %}
+</previous_attempt_failures>
+{% endif %}
 <guidance_precedence>
     If domain-specific guidance earlier in this prompt prescribed an exact number of
     subtasks or a fixed phase breakdown, follow that exact count — it overrides the

@@ -37,6 +37,7 @@ from uuid import uuid4
 from core.application.services import PromptBuilder
 from core.application.services.prompt.cache_breakpoint import CACHE_BREAKPOINT_MARKER
 from core.application.services.prompt.prompt_strategy import SubtaskScope
+from core.domain.values.failure import ChildFailureRecord
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy
 
@@ -377,6 +378,80 @@ class TestManagerPrefixBranchIndependent:
             "the manager prefix MUST be branch-independent now.\n"
             f"Earliest divergence: {_first_diff(prefix_e, prefix_f)}"
         )
+
+
+class TestFailureHistoryConfinedToVolatileTail:
+    """failure_history renders only in the uncached tail (decomposition_variable.j2),
+    so the cached prefix stays byte-identical whether or not it is present, for both
+    the manager and boss decomposition prompts."""
+
+    def _history(self) -> tuple[ChildFailureRecord, ...]:
+        return (
+            ChildFailureRecord(
+                child_id=uuid4(),
+                child_task="[Exploiter] reproduce the crash",
+                reason="worker crashed: segmentation fault",
+                digest="FAILURE: segfault\nLAST TOOL CALLS: run pov\nATTEMPT: 2",
+            ),
+        )
+
+    def test_manager_prefix_identical_with_and_without_failure_history(self) -> None:
+        # Given: two manager prompts in the same {branch, CVE} cell differing ONLY
+        # in whether failure_history is supplied.
+        builder = _builder()
+        cve = _cve()
+        prompt_empty = builder.build_manager_decomposition_prompt(
+            task_description="[Exploiter] decompose",
+            agent_id=uuid4(),
+            domain_context=cve,
+            briefing=_briefing("[Exploiter]"),
+        )
+        prompt_history = builder.build_manager_decomposition_prompt(
+            task_description="[Exploiter] decompose",
+            agent_id=uuid4(),
+            domain_context=cve,
+            briefing=_briefing("[Exploiter]"),
+            failure_history=self._history(),
+        )
+
+        # When: extracting the cached prefix of each.
+        prefix_empty = _stable_prefix(prompt_empty)
+        prefix_history = _stable_prefix(prompt_history)
+
+        # Then: the cached prefixes are byte-identical...
+        assert prefix_empty == prefix_history, (
+            "failure_history drifted the manager cached prefix.\n"
+            f"Earliest divergence: {_first_diff(prefix_empty, prefix_history)}"
+        )
+        # ...and the failure block lives ONLY in the volatile tail.
+        assert "<previous_attempt_failures>" not in prefix_history
+        assert "<previous_attempt_failures>" in prompt_history
+        assert "<previous_attempt_failures>" not in prompt_empty
+
+    def test_boss_prefix_identical_with_and_without_failure_history(self) -> None:
+        builder = _builder()
+        cve = _cve()
+        prompt_empty = builder.build_boss_delegation_prompt(
+            task_description="Root SEC-bench task",
+            agent_id=uuid4(),
+            domain_context=cve,
+        )
+        prompt_history = builder.build_boss_delegation_prompt(
+            task_description="Root SEC-bench task",
+            agent_id=uuid4(),
+            domain_context=cve,
+            failure_history=self._history(),
+        )
+
+        prefix_empty = _stable_prefix(prompt_empty)
+        prefix_history = _stable_prefix(prompt_history)
+
+        assert prefix_empty == prefix_history, (
+            "failure_history drifted the boss cached prefix.\n"
+            f"Earliest divergence: {_first_diff(prefix_empty, prefix_history)}"
+        )
+        assert "<previous_attempt_failures>" not in prefix_history
+        assert "<previous_attempt_failures>" in prompt_history
 
 
 # ===== Assessment prompt: cacheable tuple is {role, op, CVE} only =====

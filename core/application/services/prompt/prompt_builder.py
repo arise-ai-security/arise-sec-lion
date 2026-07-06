@@ -38,9 +38,24 @@ FLAT_SUBAGENT_NOTE = (
 
 
 if TYPE_CHECKING:
+    from core.domain.values.failure import ChildFailureRecord
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
     from core.domain.values.subtask import Subtask
+
+
+def _bounded_digest(digest: str | None) -> str | None:
+    """Bound an oversized failure digest to head + tail for prompt rendering.
+
+    Keeps the first 800 and last 400 chars — the crash site and the final
+    state are the load-bearing ends — with an elision marker between them.
+    Digests within 1200 chars are returned verbatim.
+    """
+    if digest is None:
+        return None
+    if len(digest) <= 1200:
+        return digest
+    return f"{digest[:800]}\n[...omitted...]\n{digest[-400:]}"
 
 
 class TemplateChain:
@@ -323,6 +338,14 @@ class PromptBuilder:
             variable_chain = variable_chain.render(
                 operation_variable_template,
                 default_tool=prompt_ctx.default_tool,
+                failure_history=[
+                    {
+                        "task": record.child_task[:200],
+                        "reason": record.reason[:500],
+                        "digest": _bounded_digest(record.digest),
+                    }
+                    for record in prompt_ctx.failure_history
+                ],
                 **limits,
             )
         variable_text = remove_cache_breakpoints(append_volatile(variable_chain).build())
@@ -372,6 +395,7 @@ class PromptBuilder:
         domain_context: object | None = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
         prompt_capabilities: PromptCapabilities | None = None,
+        failure_history: "tuple[ChildFailureRecord, ...]" = (),
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -382,6 +406,7 @@ class PromptBuilder:
             domain_context=domain_context,
             hierarchy_limits=hierarchy_limits,
             prompt_capabilities=prompt_capabilities,
+            failure_history=failure_history,
         )
         return self._build_role_prompt(
             prompt_ctx,
@@ -404,6 +429,7 @@ class PromptBuilder:
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
         shared_code_block: str | None = None,
+        failure_history: "tuple[ChildFailureRecord, ...]" = (),
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -417,6 +443,7 @@ class PromptBuilder:
             scope=scope,
             prompt_capabilities=prompt_capabilities,
             shared_code_block=shared_code_block,
+            failure_history=failure_history,
         )
         return self._build_role_prompt(
             prompt_ctx,

@@ -45,6 +45,7 @@ from .shared import (
     to_sdk_mcp_servers,
     write_docker_exec_wrapper,
 )
+from .shared.errors import describe_error
 
 
 type PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
@@ -450,7 +451,7 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                 "The CLI is bundled with the SDK - try reinstalling: "
                 "pip install --force-reinstall claude-agent-sdk"
             )
-        return f"Claude SDK adapter error: {error!r}"
+        return f"Claude SDK adapter error: {describe_error(error)}"
 
     def _format_unexpected_error(self, error: Exception) -> str:
         return self._format_error(error)

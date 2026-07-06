@@ -35,6 +35,7 @@ from .shared import (
     emit_cost,
     to_openhands_mcp_config,
 )
+from .shared.errors import describe_error
 
 
 # Suppress verbose OpenHands logging
@@ -624,7 +625,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
             return
         except Exception as error:
-            yield sequencer.failed(f"OpenHands adapter error: {error!r}")
+            yield sequencer.failed(f"OpenHands adapter error: {describe_error(error)}")
             return
         # One identity per built Conversation; if conversation reuse ever returns,
         # this must move with the cache so reused conversations share the id.
@@ -697,7 +698,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 container_session=container_session,
             )
         except Exception as error:
-            yield sequencer.failed(f"OpenHands adapter error: {error!r}")
+            yield sequencer.failed(f"OpenHands adapter error: {describe_error(error)}")
         finally:
             if run_task is not None and not run_task.done():
                 run_task.cancel()

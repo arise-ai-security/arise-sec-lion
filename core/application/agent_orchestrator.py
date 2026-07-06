@@ -573,6 +573,7 @@ class AgentOrchestrator:
                     domain_context=domain_context,
                     hierarchy_limits=agent.hierarchy_limits,
                     prompt_capabilities=capabilities,
+                    failure_history=tuple(agent.failure_history),
                 )
             else:
                 scope = self._build_scope(agent)
@@ -585,6 +586,7 @@ class AgentOrchestrator:
                     scope=scope,
                     prompt_capabilities=capabilities,
                     shared_code_block=self._resolve_boss_recon_block(agent),
+                    failure_history=tuple(agent.failure_history),
                 )
             agent.emit_prompt_sent(
                 prompt=strip_cache_breakpoint(prompt), prompt_type=op, target="llm"
@@ -665,21 +667,9 @@ class AgentOrchestrator:
                 shared_code_index=shared_code_index,
             )
 
-            # Inject verification feedback on retry so worker knows what to fix
-            if agent.verification_feedback and agent.retry_count > 0:
-                criteria_block = ""
-                if agent.success_criteria:
-                    criteria_block = (
-                        f"\n\n**Success criteria you MUST satisfy:**\n{agent.success_criteria}\n"
-                    )
-                prompt += (
-                    "\n\n## Previous Attempt Feedback (Retry)\n"
-                    "Your previous attempt was rejected by the verifier:\n"
-                    f"> {agent.verification_feedback}\n"
-                    f"{criteria_block}\n"
-                    "You MUST address this feedback in your current attempt. "
-                    "Produce all required artifacts and evidence explicitly."
-                )
+            # Inject failure context on retry so the worker knows what to fix
+            if agent.retry_count > 0:
+                prompt += self._build_retry_context_block(agent)
 
             agent.emit_prompt_sent(prompt=prompt, prompt_type=op, target=tool_name)
 
@@ -1431,6 +1421,39 @@ class AgentOrchestrator:
             operation=f"{op}_recovery",
         )
         return recovered.content or None
+
+    @staticmethod
+    def _build_retry_context_block(agent: "AgentSession") -> str:
+        """Assemble the retry failure-context appended to a worker prompt.
+
+        Verification feedback (verifier rejection) and the failure digest (a
+        crash/timeout of the prior attempt) are independent signals; each
+        renders as its own block only when present, feedback first. Returns
+        an empty string when neither is set.
+        """
+        blocks: list[str] = []
+        if agent.verification_feedback:
+            criteria_block = ""
+            if agent.success_criteria:
+                criteria_block = (
+                    f"\n\n**Success criteria you MUST satisfy:**\n{agent.success_criteria}\n"
+                )
+            blocks.append(
+                "\n\n## Previous Attempt Feedback (Retry)\n"
+                "Your previous attempt was rejected by the verifier:\n"
+                f"> {agent.verification_feedback}\n"
+                f"{criteria_block}\n"
+                "You MUST address this feedback in your current attempt. "
+                "Produce all required artifacts and evidence explicitly."
+            )
+        if agent.failure_digest:
+            blocks.append(
+                "\n\n## Previous Attempt Failure (Retry)\n"
+                "Your previous attempt failed. Diagnostic digest of that attempt:\n"
+                f"{agent.failure_digest}\n"
+                "Address the cause above. Produce all required artifacts and evidence explicitly."
+            )
+        return "".join(blocks)
 
     @staticmethod
     def _get_domain_context(agent: "AgentSession") -> object | None:
