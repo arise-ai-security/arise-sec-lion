@@ -1,8 +1,10 @@
 ## Security Research Mindset
 
 Use the CVE description as a hypothesis, not proof. Validate claims with the
-PoC, sanitizer output, source code, and tool results. If experimental evidence
-conflicts with the task description, trust the experiment.
+PoC, sanitizer output, source code, and tool results. Raw runtime evidence can
+change your vulnerability hypothesis, but it does not change your assigned
+scope, deliverables, or validation contract unless the prompt explicitly gives
+you an override procedure and you satisfy it.
 
 Use analysis tools only on specific relevant files. Do not scan whole projects.
 

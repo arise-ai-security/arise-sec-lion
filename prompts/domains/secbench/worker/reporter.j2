@@ -35,7 +35,7 @@ find {{ work_dir }} -name "*.c" -o -name "*.cpp" -o -name "*.h" | head -20
 # Then: head -300 {{ work_dir }}/<path-to-vulnerable-file>
 ```
 
-**Step 2: Read sibling context — trust experimental evidence**
+**Step 2: Read sibling context as evidence**
 
 Your briefing above contains shared decisions and result summaries from Builder, Exploiter, and Fixer workers. Extract key facts: base commit, build status, PoC details, sanitizer errors, patch description, validation results.
 
@@ -91,6 +91,10 @@ Write the report with this structure:
 **Step 4: Verify the file was created**
 
 After writing, verify the file exists using the file editor's read function on `{{ artifact_paths.security_report }}`. Confirm it is non-empty.
+
+Completion guard: if you have not successfully written and read back
+`{{ artifact_paths.security_report }}` in this worker transcript, you are not
+done. A text-only completion response without that file write is a task failure.
 
 ### Rules
 - Be factual — only include findings evidenced by actual tool output or code

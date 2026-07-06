@@ -27,8 +27,16 @@ Any source files already read by upstream workers are in `<provided_source_files
 
 **BEFORE doing ANY analysis, leverage what siblings already produced:**
 1. Run `ls -la {{ artifact_dirs.testcase }}/` to see ALL existing artifacts from upstream siblings and peers
-2. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Reuse these directly.**
-3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis. **Peer workers' findings come from real experiments (gdb, code tracing, crash reproduction) and take priority over the manager's initial task framing when they conflict.** If the analyst discovered the root cause is in a different file than what the manager suggested, follow the analyst. **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself.
+2. **Check sibling context** (above) for exploiter's shared decisions: PoC path,
+   exploit command, sanitizer error output. Validate these against raw artifacts/logs,
+   then reuse them.
+3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed
+   and shared findings via `<context-update>`, **validate and build on their work** —
+   don't redo confirmed analysis. Treat peer findings as evidence inputs, not
+   authority. If an analyst claims the root cause is in a different file than the
+   manager assigned, follow that claim only after verifying raw logs/code evidence
+   and writing a `MANAGER_OVERRIDE` block. **If a peer worker failed**, their work is
+   unavailable — fall back to the manager's guidance and run the experiments yourself.
 4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
 
 Then validate what you're building on:

@@ -1,6 +1,6 @@
 {
   "experiments/n2-openhands-subagents/reports/enrollment.lock.yaml": {
-    "generated_at": "2026-06-10T21:07:36.757018Z",
+    "generated_at": "2026-06-13T13:54:28.453957Z",
     "generated_by": "experiments/shared/scripts/collect.py",
     "inputs": [
       "experiments/n2-openhands-subagents/manifest.yaml"
@@ -8,6 +8,6 @@
     "inputs_sha256": {
       "experiments/n2-openhands-subagents/manifest.yaml": "996b52b5ada2358c90dad727d977b6acfb6232954eb12f26521817fb3a483546"
     },
-    "output_sha256": "8d232b9f5ca4ae0857316e11c5d55b21b830f90f5d1f6b36e73e3ce5d09c0263"
+    "output_sha256": "f24e8dadd24718a3b269dd74c897462248fc3550d4d5e40e3d088878c71e3848"
   }
 }

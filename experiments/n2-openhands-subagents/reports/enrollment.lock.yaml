@@ -1,40 +1,304 @@
 study_id: n2-openhands-subagents
-rendered_at: '2026-06-10T21:07:36.745774Z'
+rendered_at: '2026-06-13T13:54:28.443485Z'
 design_sha: b0998e2b91b3317d9407363d7716f5e51a9a08c5
 enrollment:
-- run_id: 77d97d47-04d0-4e5a-9cac-276ac30c4225
+- run_id: d4dd3f94-7b86-41fc-b365-4b2234add137
   cell: N2
   task: faad2.cve-2018-20196
   replicate: 0
   uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
   effective_config_path: effective_config.yaml
-- run_id: 88120fb0-7483-4e72-9e4a-28dce1b1ab2f
+- run_id: 7dc4257e-10c3-4787-bb7e-f00e02f0698c
   cell: N2
-  task: faad2.cve-2018-20196
+  task: faad2.cve-2018-20362
   replicate: 0
   uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
   effective_config_path: effective_config.yaml
-- run_id: cbf3c172-a839-46ba-819e-568e25e4332c
+- run_id: c53ffa74-67e6-4019-bbfc-da8e932fdf80
   cell: N2
-  task: faad2.cve-2018-20196
+  task: gpac.cve-2023-0866
   replicate: 0
   uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
   effective_config_path: effective_config.yaml
-- run_id: 2ec3e6cb-ffab-45e9-9c12-8eca73afafeb
+- run_id: f6f3992f-71c3-4d34-8133-d9ab523a39b3
+  cell: N2
+  task: gpac.cve-2023-46001
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 7d0c031c-fcda-4e9c-90f0-53caa2340c47
+  cell: N2
+  task: gpac.cve-2023-46927
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: ec353d68-6951-481b-bb58-84257986008f
+  cell: N2
+  task: gpac.cve-2023-46928
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 1a24d027-a15e-4cb2-b2f5-f2eceff71fd4
+  cell: N2
+  task: gpac.cve-2023-5586
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 968e59ac-a67b-4374-9039-95f8e98280f6
+  cell: N2
+  task: gpac.cve-2024-0322
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 9b2eec1e-1317-4af4-8473-dd85fc85056b
+  cell: N2
+  task: imagemagick.cve-2017-12641
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 74491e7d-7653-44ce-84f8-be896c532835
+  cell: N2
+  task: imagemagick.cve-2018-5248
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 945706a7-e7fd-4051-a84e-3839c1b9ca20
+  cell: N2
+  task: imagemagick.cve-2018-6405
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: fcbac708-2eff-4c25-92b5-a8bc65094eaa
+  cell: N2
+  task: imagemagick.cve-2019-13298
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: b2011c37-4957-45ea-90a1-d11026227bc4
+  cell: N2
+  task: imagemagick.cve-2019-13302
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: f794175f-1464-4396-a9a8-1452276636a9
+  cell: N2
+  task: imagemagick.cve-2019-13305
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: ddfbb9bd-af90-44d8-a408-23603a0391fd
+  cell: N2
+  task: libarchive.cve-2020-21674
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 6c8ffea3-4698-480d-8fc6-8de88dbba8ff
+  cell: N2
+  task: libredwg.cve-2020-21818
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 066a0875-2b38-4b93-bdb7-183b6ddc2597
+  cell: N2
+  task: libredwg.cve-2020-21819
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: ec160cae-ef8a-48b9-8168-2b57aa546ec2
+  cell: N2
+  task: libxml2.ossfuzz-424627219
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 44f54ee2-74e0-40a8-998c-f12473dedb2a
+  cell: N2
+  task: libxml2.ossfuzz-424627221
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 26984271-189b-4b58-bff1-56965ddccc79
+  cell: N2
+  task: libxml2.ossfuzz-42496802
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 8973a358-ffce-4300-aebd-de3656d0a23a
+  cell: N2
+  task: libxml2.ossfuzz-42522440
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 6500d1b8-35fb-4605-9c30-854ec4f4d138
+  cell: N2
+  task: libxml2.ossfuzz-42522712
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 6afbf410-d1b6-4ab3-baa1-392e09672065
+  cell: N2
+  task: libxml2.ossfuzz-42525197
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: ab65e785-ec8d-4d9e-bca2-205d1f0b38ec
+  cell: N2
+  task: libxml2.ossfuzz-42527008
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: e9632463-d953-4c21-8639-619bd4778ff3
+  cell: N2
+  task: libxml2.ossfuzz-42531092
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 0ac683f3-9f6a-4287-b496-ddad5cdb1ce7
+  cell: N2
+  task: libxml2.ossfuzz-42537493
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 1c636cc2-8c50-4ef5-bee9-ec1ff6b54df9
+  cell: N2
+  task: matio.cve-2019-9037
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 66cae8b3-9b29-4a32-8617-18c8559cca69
+  cell: N2
+  task: md4c.cve-2021-30027
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: cf15d768-730b-49b2-bf13-f6fce4dee2ef
+  cell: N2
+  task: mruby.ossfuzz-42497373
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 0359b618-fedb-4efe-a3ae-f8cf81678381
+  cell: N2
+  task: mruby.ossfuzz-42501420
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 04dc2776-ffef-44aa-9816-157526600be0
+  cell: N2
+  task: mruby.ossfuzz-42503243
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 66ab11f2-1bec-4325-a01b-46659a36080a
+  cell: N2
+  task: mruby.ossfuzz-42511322
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 408ca370-fe03-4560-9597-6de51e0897f3
+  cell: N2
+  task: mruby.ossfuzz-42532420
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 5b21a381-8bea-4a39-b813-7dac00e9c16c
+  cell: N2
+  task: mupdf.ossfuzz-42520029
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 58f624ab-13c7-4879-a89a-a9ea89898660
+  cell: N2
+  task: njs.cve-2020-24348
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: fcf2ab6c-625a-48cc-bc37-4d0450012f09
+  cell: N2
+  task: njs.cve-2022-32414
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: ea791725-a323-4a54-92ea-fd53711cf2f1
   cell: N2
   task: openexr.cve-2020-16589
   replicate: 0
   uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
   effective_config_path: effective_config.yaml
-- run_id: 40eb73be-e315-4da7-b3a7-2db7cc42a3ea
+- run_id: 59ff1fda-44d8-4e04-912e-d87c14d29b8c
   cell: N2
-  task: openexr.cve-2020-16589
+  task: openexr.ossfuzz-42524709
   replicate: 0
   uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
   effective_config_path: effective_config.yaml
-- run_id: b8b1a084-3701-4c52-aac3-46c75412e6dd
+- run_id: 0d845bd9-a085-409c-99ed-e3e8c16df7d7
   cell: N2
-  task: openexr.cve-2020-16589
+  task: openjpeg.cve-2017-14041
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 791336e4-75b8-419f-b62c-1ec125c1d85a
+  cell: N2
+  task: openjpeg.cve-2024-56827
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: f3450e44-2e90-4790-9db6-0b0f789c4af0
+  cell: N2
+  task: php.cve-2017-12933
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 6250c7a2-283f-45e7-808a-3e395e84363e
+  cell: N2
+  task: php.ossfuzz-42485988
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: f63c1cfe-e903-4ec6-a2c0-36bbead1a486
+  cell: N2
+  task: php.ossfuzz-42491690
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 9c4797bd-f4bf-4ded-8517-ac1a9f936330
+  cell: N2
+  task: php.ossfuzz-42527736
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 80abece9-fb5a-4a28-80ec-9b468b394767
+  cell: N2
+  task: readstat.cve-2018-5698
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 5755da79-73c1-494e-b7c1-f7ec31f0545f
+  cell: N2
+  task: upx.ossfuzz-402200343
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: ee4c08ad-2daf-401a-a651-54990a28bca9
+  cell: N2
+  task: upx.ossfuzz-42531653
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 03abaa35-9c26-4c14-bb86-3aa3ff67a53a
+  cell: N2
+  task: upx.ossfuzz-42531672
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 5f0d42c8-bdff-4622-b0d1-97b6c5949273
+  cell: N2
+  task: wasm3.ossfuzz-42495624
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: a3cd35e2-cb75-4cbc-87a7-deab96a13da9
+  cell: N2
+  task: yara.cve-2023-40857
   replicate: 0
   uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
   effective_config_path: effective_config.yaml
