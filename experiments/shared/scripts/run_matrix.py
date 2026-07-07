@@ -21,8 +21,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import shutil
-import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -33,10 +31,10 @@ from uuid import UUID
 import yaml
 
 from experiments.shared import harness, runners
+from experiments.shared.container_cleanup import _sweep_stale_containers
 from experiments.shared.scripts import collect
 from experiments.shared.scripts._paths import get_repo_root
 from experiments.shared.scripts.validate_manifest import validate_manifest
-from infrastructure.cleanup.registry import _pid_alive
 
 
 logger = logging.getLogger(__name__)
@@ -449,69 +447,6 @@ def _sweep_stale_state(pools: set[Path]) -> None:
     _sweep_stale_containers()
     for pool in pools:
         _sweep_orphan_result_files(pool)
-
-
-def _sweep_stale_containers() -> None:
-    """Remove worker/seed containers whose owning session PID is gone.
-
-    Filters on the ``arise.session_pid`` label set by
-    ``plugins/security/docker_runtime.py``. PID-reuse is an accepted
-    trade-off: an unlikely PID collision means we leave the container
-    alone, which is the safe failure mode.
-    """
-    docker = shutil.which("docker")
-    if docker is None:
-        logger.warning("startup sweep: docker executable not found; skipping")
-        return
-
-    try:
-        result = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
-            [
-                docker,
-                "ps",
-                "-a",
-                "--filter",
-                "label=arise.session_pid",
-                "--format",
-                '{{.ID}}\t{{.Label "arise.session_pid"}}',
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-    ) as exc:
-        logger.warning("startup sweep: docker ps failed (%s); skipping", exc)
-        return
-
-    stale_ids: list[str] = []
-    for line in result.stdout.splitlines():
-        if not line.strip():
-            continue
-        cid, _, pid_str = line.partition("\t")
-        try:
-            pid = int(pid_str)
-        except ValueError:
-            continue
-        if _pid_alive(pid):
-            continue
-        stale_ids.append(cid)
-
-    if not stale_ids:
-        return
-    logger.info(
-        "startup sweep: removing %d stale worker container(s)", len(stale_ids)
-    )
-    subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
-        [docker, "rm", "-f", *stale_ids],
-        check=False,
-        capture_output=True,
-        timeout=60,
-    )
 
 
 def _sweep_orphan_result_files(pool: Path) -> None:

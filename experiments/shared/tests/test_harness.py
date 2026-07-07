@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from experiments.shared import harness
+from experiments.shared import container_cleanup, harness, subprocess_runner
 
 
 if TYPE_CHECKING:
@@ -241,7 +241,7 @@ def test_terminate_process_tree_kills_child_process() -> None:
             "import time; time.sleep(30)",
             start_new_session=True,
         )
-        await harness._terminate_process_tree(
+        await container_cleanup._terminate_process_tree(
             process,
             reason="test",
             grace_seconds=0.01,
@@ -377,7 +377,7 @@ def test_run_arise_builds_main_py_argv_in_exact_order(
     captured: dict[str, object] = {}
 
     def _fake_invoke(*, config, task, context_file, result_path, python_bin=None) -> int:
-        invocation = harness._build_main_py_invocation(
+        invocation = subprocess_runner._build_main_py_invocation(
             config=config,
             task=task,
             context_file=context_file,
@@ -435,7 +435,7 @@ def test_run_arise_builds_main_py_argv_in_exact_order(
     assert captured["cwd"] == repo_root
     env = captured["env"]
     assert isinstance(env, dict)
-    assert harness.RUN_RESULT_ENV_VAR in env
+    assert subprocess_runner.RUN_RESULT_ENV_VAR in env
 
 
 def test_run_arise_aborts_when_subset_references_unknown_cve(
