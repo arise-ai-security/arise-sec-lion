@@ -81,8 +81,8 @@ import cycles/boundary violations · no non-leave-alone file re-flagged by a re-
 
 ## Out-of-scope findings (behavior-changing — separate passes, NOT this refactor)
 
-- **Swallowed exceptions (5 actionable):** `subtask_parser.py:300`, `event_broadcaster.py:103`, `openhands_adapter.py:608, :707`, `docker_runtime.py:479`. (`judge.py:198` reviewed: documented best-effort cost telemetry, intentional.)
+- **Swallowed exceptions (5 actionable):** `subtask_parser.py:300`, `event_broadcaster.py:103`, `openhands_adapter.py:355, :456` (post-split lines; were `:608, :707`), `plugins/security/runtime/workspace_mirror.py:129` (moved from `docker_runtime.py:479` by the #6 split). (`judge.py:198` reviewed: documented best-effort cost telemetry, intentional.)
 - **Private cross-module imports to publicize:** `procedures.py:38` imports `prompt_strategy._role_from_task`; `openhands_adapter.py:28` + `run_matrix.py:39` import `cleanup.registry._pid_alive`.
-- **Dead-code suspects:** `stop_session` (docker_runtime `:340` + protocol) has no production caller (containers reaped via PID-labeled cleanup); `plugins/security/benchmark_result.py` has no non-test importer.
+- **Dead-code suspects:** `stop_session` (docker_runtime `:235` post-split + protocol `container_runtime.py:100`) has no production caller (containers reaped via PID-labeled cleanup); `plugins/security/benchmark_result.py` has no non-test importer.
 - **Boundary drift (design review):** `core/application/run_invariants.py:118-130` reads `settings.security.*` inside core — config-key coupling to a domain name, invisible to the pre-commit hook.
 - **Missing files behind the 3 pre-existing test failures:** `experiments/shared/scripts/analysis/` module; `experiments/shared/templates/study/configs/{C1,C2}-*.yaml`.

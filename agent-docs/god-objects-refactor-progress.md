@@ -6,7 +6,7 @@
 > must read this file FIRST, trust the ✅ rows, and resume at the first ⬜.
 > **Update after every committed target and at each phase boundary.**
 
-## ✅ SWEEP COMPLETE (2026-07-07) — all 13 ranked targets + E1–E4 decomposed, reviewed, committed
+## ✅ SWEEP COMPLETE & CONVERGED (2026-07-07) — 12 of 13 ranked targets + E1–E4 decomposed, reviewed, committed; #13 closed leave-as-is; convergence re-audit passed twice
 
 Branch `refactor/god-objects`, 22 commits off `c1e2b0f`. Full suite baseline-exact at every
 commit (**1215 passed / 3 pre-existing failures / 13 skipped**), pyright **0 errors**, architecture
@@ -88,7 +88,8 @@ Plus the `software-quality:python-call-sites` audit after any move/rename.
 
 Worklist details (clusters, recipes, justifications): `agent-docs/god-objects-refactor-plan.md`.
 Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-in map at `c1e2b0f`.
-**Phases 1–4 are NOT started — awaiting user sign-off on the plan (pre-implementation gate).**
+Phases 1–4 executed and committed same day under the user's "everything on your call" override;
+convergence verified by two consecutive clean passes (see Convergence record below).
 
 | # | Target | Recipe | Phase | Status | Commit |
 |---|---|---|---|---|---|
@@ -108,7 +109,7 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | 1 | `agent_orchestrator.py` → AssessmentRecovery/DecompositionContract/ReconPropagation; 1677→944; 3 methods stay direct, `__init__` unchanged | B | 4 | ✅ committed — CO REJECT overruled (1 finding: an inlined `domain_context` ternary verified byte-equivalent to `_get_domain_context`; identical truthiness test); 3-method-direct + dedup-monkeypatch + recon-map-ownership all CO-confirmed | ecfe5e4 |
 | 11 | `agent_session.py` → child-result rendering slice ONLY | B | 4 | ✅ committed; CO review in batch-3 | 59ef79b |
 | 12 | `composition.py` → `_docker_pid_cleanup` slice → infrastructure/cleanup/ | B | 4 | ✅ committed; CO review in batch-3 | 45262f5 |
-| 13 | `bootstrap/application.py` → private sub-factories (OPTIONAL) | B | 4 | ⬜ (optional) | — |
+| 13 | `bootstrap/application.py` → private sub-factories (OPTIONAL) | B | 4 | ⏭️ closed leave-as-is (2026-07-07): single-pass linear factory, no conflation — nearly every local feeds the one `ExecutionServiceDependencies` bundle, so sub-factories would thread the same locals through params (indirection, not decomposition); 280 LOC, well under threshold; YAGNI | — |
 | E1 | `experiments/shared/evaluation/criteria.py` → `criteria/` package (metrics/verdict/judge_prompts/_shared + shim; 9 privates re-exported) | A | 3 | ✅ committed — CO REJECT overruled (transitive-reexport non-issue); verified 3 ways: AST-identical evaluate_run/metrics, 115+57 tests green, every real consumer resolves | 4568e66 |
 | E2 | `experiments/shared/harness.py` → `subprocess_runner.py` | B | 3 | ✅ committed (with E3/E4 plumbing) | 428ee5c |
 | E3 | `experiments/shared/scripts/run_matrix.py` → shared `container_cleanup.py` (dedups harness+run_matrix docker sweep) | B | 3 | ✅ committed | 428ee5c |
@@ -116,6 +117,26 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | — | events.py, postgres_event_store, subtask_parser, prompt_builder, tool_calling_service, verification_pipeline, procedures.py, prompt_strategy.py, plugin.py, schemas.py, shared_context.py, presentation/*, bootstrap.py, recon/openrouter adapters, worker/shared/* | — | — | 🚫 leave-alone (reasons in plan) | — |
 
 Legend: ✅ done (+SHA) · ⬜ todo · 🔶 in-progress (+what's left) · ⏭️ deferred (+why) · 🚫 leave-alone
+
+## Convergence record (two consecutive clean passes — criterion met 2026-07-07)
+
+- **Pass 1** = sweep-end verification (banner above): per-target gates baseline-exact, smell
+  counts held or fell, remaining >600-LOC files all documented.
+- **Pass 2** = fresh-session re-audit at `a2829ff` (HEAD): (a) gate baseline-exact
+  (1215 passed / 3 pre-existing failed / 13 skipped; pyright 0 errors; boundary hook green);
+  (b) production LOC scan — every >600-LOC file maps to the documented leave-alone set or a
+  decomposed cohesive core; one new entrant `experiments/shared/evaluation/criteria/verdict.py`
+  (642) verified cohesive-by-design (single concern: the four-phase contract verdict cluster the
+  E1 cut isolated) — NOT a re-flag; (c) AST smell scan, production scope: isinstance-chain 9
+  (exact match to sweep-end), long-if-chain 2 (exact match), long-function 31 (≤ recorded 36;
+  the recorded figure's scan scope wasn't pinned, but no reading yields a regression);
+  (d) runtime import-cycle diff HEAD vs base `c1e2b0f`: **none on either tree** (TYPE_CHECKING /
+  function-local edges excluded — they cannot cycle at import time and are repo-idiomatic).
+- **Out-of-scope inventory line drift** (moves carried the pre-existing sites verbatim, as
+  behavior preservation requires): openhands swallowed exceptions now at
+  `openhands_adapter.py:355, :456` (were `:608, :707`); the docker_runtime `:479` site now lives
+  in `plugins/security/runtime/workspace_mirror.py:129`. Scanner error inventory unchanged at 6
+  (5 actionable + `judge.py:198` intentional) — no new correctness findings introduced by the sweep.
 
 ## Review log (CO = Codex adversarial reviewer)
 
