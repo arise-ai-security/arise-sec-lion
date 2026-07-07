@@ -6,6 +6,35 @@
 > must read this file FIRST, trust the ✅ rows, and resume at the first ⬜.
 > **Update after every committed target and at each phase boundary.**
 
+## ✅ SWEEP COMPLETE (2026-07-07) — all 13 ranked targets + E1–E4 decomposed, reviewed, committed
+
+Branch `refactor/god-objects`, 22 commits off `c1e2b0f`. Full suite baseline-exact at every
+commit (**1215 passed / 3 pre-existing failures / 13 skipped**), pyright **0 errors**, architecture
+boundary hook green throughout. God-object LOC reductions (production files):
+
+| Target | Before → After | Target | Before → After |
+|---|---|---|---|
+| `criteria.py` | 1383 → package | `docker_runtime.py` | 708 → 343 |
+| `openhands_adapter.py` | 1622 → 1012 | `harness.py` | 696 → 459 |
+| `agent_orchestrator.py` | 1677 → 944 | `query_service.py` | 686 → 131 |
+| `execution_service.py` | 1310 → 924 | `claude_code_worker.py` | 733 → 560 |
+| `settings.py` | 734 → package | `events.py` (routes) | 482 → 328 |
+| `litellm_adapter.py` | 790 → 452 | `summary.py` | 461 → 303 |
+
+Every extraction preserved public surfaces (re-export shims / thin delegators). 8 CO adversarial
+reviews: 5 clean APPROVE; 3 REJECT all overruled with evidence (settings + criteria = transitive-
+re-export non-issues with zero real consumers; orchestrator = a verified byte-equivalent inline).
+Structural smells held or fell (long-function 38→36, isinstance-chain 11→9, long-if-chain 4→2);
+no regressions. Remaining >600-LOC files are the documented leave-alone set (cohesive-by-design:
+`events.py`, `postgres_event_store.py`, `subtask_parser.py`, `procedures.py`) plus the cohesive
+cores of decomposed linchpins (`agent_session.py`, the 4 above) — none is a conflation.
+
+**Not done (intentional, needs user sign-off — behavior-CHANGING, out of scope for this sweep):**
+the plan's "out-of-scope findings" — 5 swallowed-exception bugs, 2 private cross-module imports to
+publicize, 2 dead-code suspects (`stop_session`, `benchmark_result.py`), and the `run_invariants.py`
+`settings.security` boundary drift. And the DEFERRED-deeper `agent_session` sub-state split (replay/OCC
+risk). See `god-objects-refactor-plan.md` §out-of-scope + Deferred decisions below.
+
 ## Resume steps (cold start)
 
 1. `git checkout <branch below>` — do NOT work directly on `experiment/2026-06-09`.
@@ -76,7 +105,7 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | 3 | `openhands_adapter.py` → `openhands_events`/`openhands_cost`/`openhands_container_tools`; 1622→1012; reaper untouched | B | 3 | ✅ committed; CO review in batch-3 | d1f7322 |
 | 7 | `claude_code_worker.py` → `claude_transcript.py` (pure parser; delegators kept); 733→560 | B | 2 | ✅ committed; CO review in batch-3 | 799bcf0 |
 | 2 | `execution_service.py` → FlatModeRunner/PostStepHandler/WorkspaceContextProvider; 1310→924; loop stays on service | B | 4 | ✅ committed (3 stalls; I ran the final gate — baseline-exact); CO review in batch-3 | cea9bb8 |
-| 1 | `agent_orchestrator.py` → AssessmentRecovery/DecompositionContract/ReconPropagation (3 public methods stay direct) | B | 4 | 🔶 subagent applying (resumed after API disconnect during exploration; file was untouched) | — |
+| 1 | `agent_orchestrator.py` → AssessmentRecovery/DecompositionContract/ReconPropagation; 1677→944; 3 methods stay direct, `__init__` unchanged | B | 4 | ✅ committed — CO REJECT overruled (1 finding: an inlined `domain_context` ternary verified byte-equivalent to `_get_domain_context`; identical truthiness test); 3-method-direct + dedup-monkeypatch + recon-map-ownership all CO-confirmed | ecfe5e4 |
 | 11 | `agent_session.py` → child-result rendering slice ONLY | B | 4 | ✅ committed; CO review in batch-3 | 59ef79b |
 | 12 | `composition.py` → `_docker_pid_cleanup` slice → infrastructure/cleanup/ | B | 4 | ✅ committed; CO review in batch-3 | 45262f5 |
 | 13 | `bootstrap/application.py` → private sub-factories (OPTIONAL) | B | 4 | ⬜ (optional) | — |
