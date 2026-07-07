@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from uuid import UUID  # noqa: TC003 — runtime-required by Pydantic field resolution
+from uuid import UUID
 
 from pydantic import BaseModel
 

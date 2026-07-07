@@ -10,7 +10,7 @@ from __future__ import annotations
 import itertools
 import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path  # noqa: TC003 — used as a runtime fixture parameter type
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from core.domain.events.events import (

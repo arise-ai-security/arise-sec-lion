@@ -9,14 +9,14 @@ task framing, tool policy, timeouts, and workspace.
 
 from __future__ import annotations
 
-from collections.abc import Mapping  # noqa: TC003 — Pydantic resolves field types at runtime.
-from pathlib import Path  # noqa: TC003 — Pydantic resolves field types at runtime.
+from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-from uuid import UUID  # noqa: TC003 — Pydantic resolves field types at runtime.
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from core.domain.events.events import DomainEvent  # noqa: TC001 - Pydantic resolves at runtime.
+from core.domain.events.events import DomainEvent
 
 
 if TYPE_CHECKING:

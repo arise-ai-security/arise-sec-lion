@@ -20,7 +20,7 @@ from core.application.run_invariants import (
     WorkerResult,
     build_env_policy,
 )
-from core.domain.events.events import DomainEvent  # noqa: TC001
+from core.domain.events.events import DomainEvent
 from core.domain.exceptions import ToolNotAvailableError
 from infrastructure.adapters.worker.shared import (
     ContainerSessionContext,

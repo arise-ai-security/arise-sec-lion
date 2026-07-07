@@ -88,6 +88,15 @@ unfixable = []
     "F401",  # Unused imports
 ]
 
+[lint.flake8-type-checking]
+# Pydantic resolves field annotations at class-creation time, so imports of
+# model types used in annotations must stay runtime imports (TC001/TC002/TC003
+# would otherwise suggest moves that break schema building).
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+]
+
 [lint.isort]
 # Configure import sorting (replaces isort)
 known-first-party = ["core", "infrastructure", "config"]
