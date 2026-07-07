@@ -9,7 +9,6 @@ Handles the three orchestration operations as direct method calls:
 import json
 import logging
 import os
-import re
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -23,167 +22,23 @@ from core.application.services import (
     VerificationPipeline,
     build_prompt_capabilities,
 )
-from core.application.services.prompt.cache_breakpoint import strip_cache_breakpoint
-from core.domain.exceptions import InfeasibleError, ToolNotAvailableError
-from core.domain.services import (
-    AssessmentResult,
-    parse_assessment_response_async,
-    parse_subtasks_from_llm_async,
+from core.application.services.orchestration.assessment_recovery import (
+    AssessmentRecoveryService,
+    _is_prose_misinterpreted_assessment,
+    _looks_like_glm_prose_preamble,
+    build_retry_context_block,
 )
+from core.application.services.orchestration.decomposition_contract import (
+    DecompositionContractService,
+)
+from core.application.services.orchestration.recon_propagation import ReconPropagationService
+from core.application.services.prompt.cache_breakpoint import strip_cache_breakpoint
+from core.domain.exceptions import ToolNotAvailableError
+from core.domain.services import AssessmentResult, parse_assessment_response_async
 from core.domain.services.config_resolver import ConfigResolver, OperationType
 from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.values.procedure import ProcedureResult
 from core.ports.procedure_ports import NullProcedureExecutor
-
-
-_REAL_CONSTRAINT_FAILURE_KEYWORDS: tuple[str, ...] = (
-    "constraints_unsatisfiable",
-    "minimum_required",
-    "constraint failure",
-    "cannot satisfy",
-    "cannot be satisfied",
-)
-
-
-def _looks_like_real_constraint_failure(content: str) -> bool:
-    """Heuristic: did the LLM's *original* response declare a constraint failure?
-
-    Used to distinguish a genuine ``constraints_unsatisfiable`` decision from
-    a constraint failure synthesised by the format repairer when the actual
-    response was unrelated prose. False negatives (real refusal worded
-    creatively) are tolerable — they trigger one extra recovery turn that
-    will simply re-surface the failure.
-    """
-    if not content:
-        return False
-    lowered = content.lower()
-    return any(keyword in lowered for keyword in _REAL_CONSTRAINT_FAILURE_KEYWORDS)
-
-
-# Conversational openings observed from glm-5.1:cloud when given a
-# tools-enabled assessment/decomposition prompt. The model sometimes
-# narrates its plan ("I'll start by…") instead of either issuing a tool
-# call or emitting the required JSON. GPT, Claude, Qwen and DeepSeek do
-# not exhibit this opening style, so detection here is a glm-specific
-# guard — false positives on a well-behaved model would only trigger
-# one extra LLM turn, never produce wrong decisions.
-_GLM_PROSE_PREAMBLE_OPENERS: tuple[str, ...] = (
-    "i'll ",
-    "i will ",
-    "let me ",
-    "let's ",
-    "first, i ",
-    "first i ",
-    "i need to ",
-    "i'm going to ",
-    "i am going to ",
-    "to start, ",
-    "to begin, ",
-    "before decomposing",
-    "before i decompose",
-    "before producing",
-    "sure, i'll ",
-    "sure! i'll ",
-    "i should ",
-)
-
-
-def _looks_like_glm_prose_preamble(content: str) -> bool:
-    """Heuristic: does the response open with conversational planning prose?
-
-    Detects the glm-5.1 failure mode where the model says "I'll start by
-    researching…" instead of producing the required JSON or a structured
-    tool call. Only fires when the trimmed content (a) opens with a known
-    conversational phrase and (b) contains no JSON object/array delimiters
-    in its first 200 characters — both must hold to avoid false positives
-    on Qwen-style ``<think>I'll …</think>{...}`` outputs where the JSON is
-    actually present.
-    """
-    if not content:
-        return False
-    trimmed = content.lstrip().lower()
-    if not trimmed:
-        return False
-    # Strip leading <think>…</think> blocks that some Ollama models leak even
-    # with think=False, since the JSON we care about lives after them.
-    if trimmed.startswith("<think>"):
-        end = trimmed.find("</think>")
-        if end != -1:
-            trimmed = trimmed[end + len("</think>") :].lstrip()
-    if not trimmed.startswith(_GLM_PROSE_PREAMBLE_OPENERS):
-        return False
-    head = trimmed[:200]
-    return "{" not in head and "[" not in head
-
-
-# Phrases that betray decomposition intent inside an "execute" assessment's
-# ``reasoning`` field. When the format repairer wraps glm prose in
-# ``{"action": "execute", "reasoning": "<prose>"}`` the parse looks valid
-# but the prose itself ("before decomposing", "let me read") contradicts
-# the chosen action — the model meant to keep researching, not to execute
-# as a single worker. Other models (GPT/Claude/Qwen/DeepSeek) phrase
-# genuine ``execute`` decisions concretely ("single tool call sufficient",
-# "task is atomic") and do not include these decomp-intent phrases.
-_DECOMP_INTENT_REASONING_PHRASES: tuple[str, ...] = (
-    "before decomposing",
-    "before i decompose",
-    "before decomposition",
-    "i need to understand",
-    "i need to investigate",
-    "let me read",
-    "let me research",
-    "let me explore",
-    "let me check",
-    "let me first",
-    "let me start by researching",
-    "i'll start by researching",
-    "i should research",
-    "i should investigate",
-    "i should first explore",
-)
-
-
-def _reasoning_contradicts_execute(reasoning: str) -> bool:
-    """Detect glm prose surviving inside an assessment's ``reasoning`` field.
-
-    glm-specific: only fires on phrases that imply the model intended to
-    keep researching. GPT/Claude/Qwen/DeepSeek do not phrase ``execute``
-    decisions this way, so this branch is functionally inert for them.
-    """
-    if not reasoning:
-        return False
-    lowered = reasoning.lower()
-    return any(phrase in lowered for phrase in _DECOMP_INTENT_REASONING_PHRASES)
-
-
-def _is_prose_misinterpreted_assessment(
-    result: AssessmentResult,
-    original_content: str,
-) -> bool:
-    """Detect a glm-style prose response silently parsed as ``execute``.
-
-    Catches two variants of the same glm failure:
-
-    1. **Raw prose**: the model emitted "I'll start by researching…" with
-       no JSON; the format repairer fell back to ``{}`` which the parser
-       defaulted to ``action="execute"``. Caught by
-       :func:`_looks_like_glm_prose_preamble` against the raw content.
-    2. **JSON-wrapped prose**: the model (or repairer) wrapped the prose
-       in ``{"action": "execute", "reasoning": "I need to understand…
-       before decomposing"}``. The parse looks structurally valid but
-       the reasoning betrays decomposition intent. Caught by
-       :func:`_reasoning_contradicts_execute` against the parsed reasoning.
-
-    Either signal turns a misclassified WORKER decision back into a
-    recovery turn. False positives only cost one extra LLM call.
-    """
-    if result.action != "execute":
-        return False
-    if result.subtasks:
-        return False
-    if _looks_like_glm_prose_preamble(original_content):
-        return True
-    return _reasoning_contradicts_execute(result.reasoning)
 
 
 # manager-cache prime: OpenAI serves a cached entry only when it is a complete prefix
@@ -274,33 +129,21 @@ class AgentOrchestrator:
         self._llm_query_executor = llm_query_executor or LLMQueryExecutor(llm_port)
         self._toolset_resolver = toolset_resolver or ToolsetPolicyResolver()
         self._format_repairer = format_repairer
-        # When set, the shared code-prefix block (source upstream workers already
-        # read, rebuilt from events) is injected into the worker prompt's stable
-        # prefix. None => the block is never populated (byte-identical to today).
-        self._shared_code_port = shared_code_port
-        # When True (and a shared-code port is present), a manager's recon
-        # read_file results are persisted as SourceFileObserved on its own
-        # aggregate, so the run's block carries them to downstream workers
-        # (read-once → propagate). Off => recon reads are not captured.
-        self._capture_recon_reads = capture_recon_reads
-        # When True, the BOSS's recon read_file results are rendered into a block
-        # injected into MANAGER decomposition prompts only (orchestration tier),
-        # so managers inherit the boss's reads instead of re-reading. Kept in an
-        # in-memory per-run store — it never reaches the shared block workers
-        # consume, so the worker tier is unaffected by construction.
-        self._share_boss_recon = share_boss_recon
-        # Optional domain role-contract gate: enforces that a phase decomposition
-        # spawns every required role as its own leaf before children are spawned.
-        # None => no enforcement (byte-identical to today for non-domain runs).
-        self._decomposition_validator = decomposition_validator
         # Deterministic procedure tier. The null default matches nothing, so
         # dispatch is a no-op unless bootstrap binds a domain executor.
         self._procedure_executor = procedure_executor or NullProcedureExecutor()
-        self._boss_recon_blocks: dict[Any, str] = {}
         self._verification_pipeline = VerificationPipeline(
             llm_port,
             skip_judge=skip_judge,
             format_repairer=format_repairer,
+        )
+        # Collaborators: malformed-output recovery, decomposition-contract
+        # enforcement, and recon/shared-source propagation. Each owns the state
+        # and rationale for its concern; the orchestrator only coordinates them.
+        self._assessment_recovery = AssessmentRecoveryService(llm_port, format_repairer)
+        self._contract = DecompositionContractService(child_factory, decomposition_validator)
+        self._recon = ReconPropagationService(
+            shared_code_port, capture_recon_reads, share_boss_recon
         )
 
     async def assess_task(
@@ -444,12 +287,14 @@ class AgentOrchestrator:
                     break
 
                 if result is None:
-                    recovered_content = await self._recover_assessment_via_reprompt(
-                        agent=agent,
-                        original_prompt=prompt,
-                        narrative=last_response_content,
-                        op=op,
-                        parse_error=last_parse_error,
+                    recovered_content = (
+                        await self._assessment_recovery.recover_assessment_via_reprompt(
+                            agent=agent,
+                            original_prompt=prompt,
+                            narrative=last_response_content,
+                            op=op,
+                            parse_error=last_parse_error,
+                        )
                     )
                     if recovered_content is not None:
                         try:
@@ -617,7 +462,7 @@ class AgentOrchestrator:
             # against the same model: some models (e.g. glm-5.1 on a long
             # tools-enabled prompt) emit prose ("I'll start by researching…")
             # instead of a structured tool call or the final JSON array.
-            subtasks = await self._parse_decomposition_with_recovery(
+            subtasks = await self._assessment_recovery.parse_decomposition_with_recovery(
                 agent=agent,
                 response_content=response.content,
                 original_prompt=prompt,
@@ -866,167 +711,12 @@ class AgentOrchestrator:
         subtasks: list["Subtask"],
         dedup_map: "dict[int, int] | None" = None,
     ) -> "list[Subtask] | None":
-        """Apply the domain role contract to a (already-deduped) decomposition before spawning.
-
-        ``dedup_map`` (original→post-dedup index) lets authored non-catalog ``depends_on``
-        be remapped through an earlier dedup shift so they are not stale.
-
-        The domain validator classifies contract breaches (missing required roles,
-        merged-role leaves); core owns the action: drop the flagged leaves, inject the
-        suggested ones (inheriting sibling worker config), and re-check hierarchy limits.
-        Returns the corrected subtasks, or None if the repair cannot fit the limits (the
-        agent is failed before any child is spawned). A no-op when no validator is wired
-        or the verdict is clean.
-        """
-        if self._decomposition_validator is None:
-            return subtasks
-        verdict = self._decomposition_validator.classify(
-            parent_task_description=agent.task_description,
-            subtask_descriptions=tuple(st.description for st in subtasks),
-            domain_context=self._get_domain_context(agent),
-        )
-        if verdict.ok:
-            # Even a role-complete decomposition can carry missing/wrong depends_on;
-            # enforce the authoritative catalog DAG on the manager's own leaves.
-            return self._resolve_catalog_dependencies(subtasks, dedup_map)
-
-        from core.domain.values.subtask import Subtask
-
-        removals = set(verdict.removals)
-        base_config = dict(subtasks[0].config) if subtasks else {}
-        old_to_new: dict[int, int] = {}
-        corrected: list[Subtask] = []
-        for old_index, subtask in enumerate(subtasks):
-            if old_index in removals:
-                continue
-            old_to_new[old_index] = len(corrected)
-            corrected.append(subtask)
-        corrected.extend(
-            Subtask(
-                description=add.description,
-                config=dict(base_config),
-                estimated_complexity=add.estimated_complexity,
-                task_type=add.task_type,
-            )
-            for add in verdict.additions
-        )
-        # Enforce the authoritative catalog DAG on EVERY leaf (authored + injected). Remap
-        # non-catalog authored deps through the full original→corrected shift: compose the
-        # earlier dedup shift (original→deduped) with this removal shift (deduped→corrected).
-        if dedup_map is not None:
-            index_shift = {
-                orig: old_to_new[deduped]
-                for orig, deduped in dedup_map.items()
-                if deduped in old_to_new
-            }
-        else:
-            index_shift = old_to_new
-        corrected = self._resolve_catalog_dependencies(corrected, index_shift)
-        logger.warning(
-            "Agent %s: decomposition-contract repair %s — dropped %d, injected %d "
-            "(%d -> %d children)",
-            agent.agent_id,
-            [v.kind for v in verdict.violations],
-            len(removals),
-            len(verdict.additions),
-            len(subtasks),
-            len(corrected),
-        )
-
-        # Core owns the limit action: a repair that would exceed the caps is a hard
-        # failure surfaced before spawning, not a silently-incomplete decomposition.
-        failure = await self._check_limit_violations(agent, corrected)
-        if failure:
-            agent.fail_with_reason(
-                f"decomposition contract unsatisfiable within hierarchy limits: {failure}"
-            )
-            return None
-        return corrected
+        return await self._contract.enforce_decomposition_contract(agent, subtasks, dedup_map)
 
     def _resolve_catalog_dependencies(
         self, subtasks: list["Subtask"], old_to_new: "dict[int, int] | None" = None
     ) -> list["Subtask"]:
-        """Set each leaf's depends_on to its catalog HARD producers (resolved to sibling
-        indices), enforcing the authoritative DAG on every catalog-role leaf — authored OR
-        injected — regardless of what the manager emitted. A leaf whose role has no catalog
-        hard dep keeps its own depends_on, remapped via ``old_to_new`` when removals shifted
-        sibling indices. Only producers that exist in the set are referenced.
-        """
-        validator = self._decomposition_validator
-        if validator is None:
-            return subtasks
-        role_to_index: dict[str, int] = {}
-        for index, subtask in enumerate(subtasks):
-            prefix = self._extract_role_prefix(subtask.description)
-            if prefix:
-                role_to_index.setdefault(prefix.lower(), index)
-        resolved: list[Subtask] = []
-        for subtask in subtasks:
-            prefix = self._extract_role_prefix(subtask.description)
-            catalog_deps = validator.hard_dependencies(prefix) if prefix else ()
-            if catalog_deps:
-                new_deps = [
-                    role_to_index[dep.lower()]
-                    for dep in catalog_deps
-                    if dep.lower() in role_to_index
-                ]
-            elif old_to_new is not None and subtask.depends_on:
-                new_deps = [old_to_new[d] for d in subtask.depends_on if d in old_to_new]
-            else:
-                new_deps = list(subtask.depends_on)
-            if new_deps != list(subtask.depends_on):
-                resolved.append(subtask.model_copy(update={"depends_on": new_deps}))
-            else:
-                resolved.append(subtask)
-        return resolved
-
-    async def _check_limit_violations(self, agent: "AgentSession", subtasks: list) -> str | None:
-        """Check hard limits. Returns failure reason or None.
-
-        Async to compose with the atomic reservation path in
-        ``_spawn_children``; the cap check itself is sync but the
-        cascade keeps the call chain awaitable end-to-end (D.2).
-        """
-        limits = agent.hierarchy_limits
-        violations: list[dict[str, Any]] = []
-
-        # Hard limit: children per node
-        if (
-            limits is not None
-            and limits.is_children_limited()
-            and len(subtasks) > limits.max_children_per_node
-        ):
-            violations.append(
-                {
-                    "limit_type": "children",
-                    "limit_value": limits.max_children_per_node,
-                    "attempted_value": len(subtasks),
-                    "action_taken": "agent_failed",
-                }
-            )
-
-        # Hard limit: total agents
-        max_total = self._child_factory.max_total_agents
-        if max_total > 0:
-            current_total = self._child_factory.total_created
-            remaining = max_total - current_total
-            if len(subtasks) > remaining:
-                violations.append(
-                    {
-                        "limit_type": "total_agents",
-                        "limit_value": max_total,
-                        "attempted_value": current_total + len(subtasks),
-                        "action_taken": "agent_failed",
-                    }
-                )
-
-        if violations:
-            for v in violations:
-                agent.emit_limit_enforced(**v)
-            types = [v["limit_type"] for v in violations]
-            return f"LLM violated limits: {types}"
-
-        return None
+        return self._contract.resolve_catalog_dependencies(subtasks, old_to_new)
 
     async def _spawn_children(
         self,
@@ -1043,7 +733,7 @@ class AgentOrchestrator:
         # subtasks arrive already deduped, contract-enforced, and dep-resolved from
         # _enforce_and_spawn (dedup runs there, before the gate, so the gate has the final
         # word on completeness). Here: cap-check the final count, then reserve and spawn.
-        failure = await self._check_limit_violations(agent, subtasks)
+        failure = await self._contract.check_limit_violations(agent, subtasks)
         if failure:
             return failure
         if not subtasks:
@@ -1097,82 +787,12 @@ class AgentOrchestrator:
         )
         return None
 
-    # Role-prefix pattern: "[Some-Role]" → "Some-Role"
-    _BRACKET_PREFIX = re.compile(r"^\[([^\]]+)\]")
-
-    @classmethod
-    def _extract_role_prefix(cls, description: str) -> str | None:
-        """Extract [Bracketed-Role-Name] from a task description."""
-        m = cls._BRACKET_PREFIX.match(description.strip())
-        return m.group(1) if m else None
-
     def _dedup_subtasks_against_siblings(
         self,
         agent: "AgentSession",
         subtasks: list["Subtask"],
     ) -> list["Subtask"]:
-        """Remove subtasks whose role names duplicate the agent's own siblings.
-
-        When a manager re-decomposes into the exact same roles as its
-        siblings, all those workers are redundant — the siblings already
-        cover them.  This is a common Qwen failure mode.
-
-        Returns:
-            Filtered subtask list (may be empty).
-        """
-        if agent.parent_id is None:
-            return subtasks  # Boss-level decomposition — no siblings to clash with
-
-        # Collect uncle role names (siblings of the current agent)
-        uncle_roles = self._get_sibling_role_prefixes(agent)
-
-        # Collect tree-wide role names to catch cross-subtree duplication
-        tree_roles = self._get_tree_role_prefixes(agent)
-
-        if not uncle_roles and not tree_roles:
-            return subtasks  # No siblings or role info — skip check
-
-        # Also include the agent's own role as off-limits for children
-        own_role = self._extract_role_prefix(agent.task_description or "")
-        forbidden = uncle_roles | tree_roles | ({own_role} if own_role else set())
-
-        kept: list[Subtask] = []
-        for st in subtasks:
-            prefix = self._extract_role_prefix(st.description)
-            if prefix and prefix in forbidden:
-                logger.info(
-                    "Agent %s: stripping duplicate subtask [%s] (already covered by sibling/self)",
-                    agent.agent_id,
-                    prefix,
-                )
-                continue
-            kept.append(st)
-
-        if kept and len(kept) < len(subtasks):
-            logger.info(
-                "Agent %s: kept %d/%d subtasks after dedup",
-                agent.agent_id,
-                len(kept),
-                len(subtasks),
-            )
-
-        return kept
-
-    def _get_sibling_role_prefixes(self, agent: "AgentSession") -> set[str]:
-        """Get [Role-Name] prefixes of the agent's siblings (same parent)."""
-        if agent.parent_id is None:
-            return set()
-        registry = getattr(self._child_factory, "_limits_registry", None)
-        if registry is None:
-            return set()
-        return registry.get_sibling_role_prefixes(agent.agent_id, agent.parent_id)
-
-    def _get_tree_role_prefixes(self, agent: "AgentSession") -> set[str]:
-        """Get ALL [Role-Name] prefixes used anywhere in the execution tree."""
-        registry = getattr(self._child_factory, "_limits_registry", None)
-        if registry is None:
-            return set()
-        return registry.get_tree_role_prefixes(agent.agent_id)
+        return self._contract.dedup_subtasks_against_siblings(agent, subtasks)
 
     async def _apply_assessment_result(
         self,
@@ -1272,288 +892,9 @@ class AgentOrchestrator:
 
         return response
 
-    async def _parse_decomposition_with_recovery(
-        self,
-        *,
-        agent: "AgentSession",
-        response_content: str,
-        original_prompt: str,
-        op: OperationType,
-    ) -> "list[Subtask] | None":
-        """Parse decomposition, with one corrective re-prompt on failure.
-
-        Returns the parsed subtasks on success. Returns ``None`` when the
-        agent has already been marked failed or infeasible — caller must
-        not call ``fail_with_reason`` again. The recovery turn fires when:
-
-        * the parser raised :class:`ValueError` (clearly malformed JSON), or
-        * it raised :class:`InfeasibleError` but the *original* response
-          contained no constraint-failure semantics — i.e. the format
-          repairer mis-classified narrative prose as a refusal.
-
-        A genuine ``constraints_unsatisfiable`` declaration from the model
-        is honoured directly without recovery, since that is a deliberate
-        semantic decision the orchestrator must respect.
-        """
-        try:
-            return await parse_subtasks_from_llm_async(
-                response_content,
-                repairer=self._format_repairer,
-            )
-        except InfeasibleError as e:
-            if _looks_like_real_constraint_failure(response_content):
-                logger.warning(
-                    "Agent %s reported unsatisfiable constraints: %s",
-                    agent.agent_id,
-                    e.failure.format_message(),
-                )
-                agent.mark_infeasible(
-                    reason=e.failure.reason,
-                    minimum_subtasks=e.failure.minimum_subtasks,
-                    minimum_depth=e.failure.minimum_depth,
-                )
-                return None
-            # Repairer synthesised a constraint failure from non-refusal
-            # prose — same recovery path as a plain ValueError.
-            parse_error: Exception = e
-        except ValueError as e:
-            parse_error = e
-
-        recovered = await self._recover_decomposition_via_reprompt(
-            agent=agent,
-            original_prompt=original_prompt,
-            narrative=response_content,
-            op=op,
-            parse_error=parse_error,
-        )
-        if recovered is None:
-            agent.fail_with_reason(f"Failed to parse subtasks: {parse_error}")
-            return None
-        try:
-            return await parse_subtasks_from_llm_async(
-                recovered,
-                repairer=self._format_repairer,
-            )
-        except InfeasibleError as e2:
-            logger.warning(
-                "Agent %s reported unsatisfiable constraints (after recovery turn): %s",
-                agent.agent_id,
-                e2.failure.format_message(),
-            )
-            agent.mark_infeasible(
-                reason=e2.failure.reason,
-                minimum_subtasks=e2.failure.minimum_subtasks,
-                minimum_depth=e2.failure.minimum_depth,
-            )
-            return None
-        except ValueError as e2:
-            logger.warning(
-                "Failed to parse subtasks for agent=%s after recovery turn: %s",
-                agent.agent_id,
-                e2,
-            )
-            agent.fail_with_reason(f"Failed to parse subtasks (after recovery): {e2}")
-            return None
-
-    async def _recover_assessment_via_reprompt(
-        self,
-        *,
-        agent: "AgentSession",
-        original_prompt: str,
-        narrative: str,
-        op: OperationType,
-        parse_error: Exception | None,
-    ) -> str | None:
-        """One corrective LLM turn for a prose-style assessment response.
-
-        Mirrors :meth:`_recover_decomposition_via_reprompt` but targets the
-        assessment schema (``action`` ∈ {execute, decompose}). Triggered
-        from :meth:`assess_task` when the format-repaired output silently
-        defaults to ``execute`` because the original response was a glm-
-        style "I'll start by researching…" preamble. The corrective turn
-        re-engages the same model with the original prompt as user, the
-        prose as the assistant turn, and an explicit instruction to emit
-        the assessment JSON object. Returns the new content on success,
-        ``None`` if the recovery call itself failed.
-        """
-        if not narrative or not narrative.strip():
-            return None
-
-        logger.warning(
-            "Assessment parse for agent=%s yielded prose / unparseable output "
-            "(%s); attempting one corrective re-prompt against the same model",
-            agent.agent_id,
-            parse_error,
-        )
-
-        corrective = (
-            "Your previous response was prose, not the required output. "
-            "The output_format section of the original prompt requires a "
-            "single JSON object with an ``action`` field set to either "
-            '``"execute"`` (single worker) or ``"decompose"`` (with a '
-            "``subtasks`` array), or a ``constraints_unsatisfiable`` object "
-            "if and only if the limits truly cannot be met. No preamble, "
-            "no commentary, no tool calls in this turn. Begin your "
-            "response with `{` and end with `}`. Do not narrate."
-        )
-        messages = [
-            {"role": "user", "content": original_prompt},
-            {"role": "assistant", "content": narrative},
-            {"role": "user", "content": corrective},
-        ]
-        llm_config = ConfigResolver.resolve(agent.config, operation=op)
-        config_dict = llm_config.model_dump()
-        if os.environ.get("ARISE_PRIME_MANAGER_CACHE") and agent.hierarchy_limits is not None:
-            # manager-cache fix (env-gated): shared per-run OpenAI prompt-cache key so the
-            # parallel phase managers route to one cache node that prime_manager_cache pre-warms.
-            config_dict["prompt_cache_key"] = str(agent.hierarchy_limits.root_id)
-        try:
-            recovered = await self._llm_port.query_with_tools(
-                messages=messages,
-                config_dict=config_dict,
-                tools=[],
-            )
-        except Exception as call_exc:
-            logger.warning(
-                "Assessment recovery call failed for agent=%s: %s",
-                agent.agent_id,
-                call_exc,
-            )
-            return None
-        if recovered is None:
-            logger.warning(
-                "Assessment recovery call returned no response for agent=%s",
-                agent.agent_id,
-            )
-            return None
-
-        agent.emit_tokens_consumed(
-            model=recovered.model,
-            prompt_tokens=recovered.usage.prompt_tokens,
-            completion_tokens=recovered.usage.completion_tokens,
-            total_tokens=recovered.usage.total_tokens,
-            cache_read_tokens=recovered.usage.cache_read_tokens,
-            cache_write_tokens=recovered.usage.cache_write_tokens,
-            cost_usd=recovered.cost_usd,
-            operation=f"{op}_recovery",
-        )
-        return recovered.content or None
-
-    async def _recover_decomposition_via_reprompt(
-        self,
-        *,
-        agent: "AgentSession",
-        original_prompt: str,
-        narrative: str,
-        op: OperationType,
-        parse_error: Exception,
-    ) -> str | None:
-        """One corrective LLM turn after a narrative-instead-of-JSON response.
-
-        Some models (notably glm-5.1 on a long tools-enabled prompt) reply with
-        prose like "I'll start by researching the codebase…" instead of either
-        a structured ``tool_call`` or the final JSON decomposition. The
-        deterministic repairer + LLM format-repairer chain in
-        :func:`parse_subtasks_from_llm_async` cannot rescue this, because the
-        content is grammatical English with no JSON to repair. Instead we
-        re-engage the same model in a second turn, quoting its prose and
-        demanding JSON. Returns the new content on success, ``None`` if the
-        recovery call itself failed.
-        """
-        if not narrative or not narrative.strip():
-            return None
-
-        logger.warning(
-            "Decomposition parse failed for agent=%s (%s); attempting one "
-            "corrective re-prompt against the same model",
-            agent.agent_id,
-            parse_error,
-        )
-
-        corrective = (
-            "Your previous response was prose rather than the required output. "
-            "The output_format section of the original prompt requires either "
-            "(a) a JSON array of subtask objects, or (b) a "
-            "``constraints_unsatisfiable`` JSON object — nothing else. No "
-            "preamble, no commentary, no tool calls in this turn. Begin your "
-            "response with `[` (subtasks) or `{` (constraint failure) and end "
-            "with the matching closing bracket. Do not narrate."
-        )
-        messages = [
-            {"role": "user", "content": original_prompt},
-            {"role": "assistant", "content": narrative},
-            {"role": "user", "content": corrective},
-        ]
-        llm_config = ConfigResolver.resolve(agent.config, operation=op)
-        config_dict = llm_config.model_dump()
-        if os.environ.get("ARISE_PRIME_MANAGER_CACHE") and agent.hierarchy_limits is not None:
-            # manager-cache fix (env-gated): shared per-run OpenAI prompt-cache key so the
-            # parallel phase managers route to one cache node that prime_manager_cache pre-warms.
-            config_dict["prompt_cache_key"] = str(agent.hierarchy_limits.root_id)
-        try:
-            recovered = await self._llm_port.query_with_tools(
-                messages=messages,
-                config_dict=config_dict,
-                tools=[],
-            )
-        except Exception as call_exc:
-            logger.warning(
-                "Decomposition recovery call failed for agent=%s: %s",
-                agent.agent_id,
-                call_exc,
-            )
-            return None
-        if recovered is None:
-            logger.warning(
-                "Decomposition recovery call returned no response for agent=%s",
-                agent.agent_id,
-            )
-            return None
-
-        agent.emit_tokens_consumed(
-            model=recovered.model,
-            prompt_tokens=recovered.usage.prompt_tokens,
-            completion_tokens=recovered.usage.completion_tokens,
-            total_tokens=recovered.usage.total_tokens,
-            cache_read_tokens=recovered.usage.cache_read_tokens,
-            cache_write_tokens=recovered.usage.cache_write_tokens,
-            cost_usd=recovered.cost_usd,
-            operation=f"{op}_recovery",
-        )
-        return recovered.content or None
-
     @staticmethod
     def _build_retry_context_block(agent: "AgentSession") -> str:
-        """Assemble the retry failure-context appended to a worker prompt.
-
-        Verification feedback (verifier rejection) and the failure digest (a
-        crash/timeout of the prior attempt) are independent signals; each
-        renders as its own block only when present, feedback first. Returns
-        an empty string when neither is set.
-        """
-        blocks: list[str] = []
-        if agent.verification_feedback:
-            criteria_block = ""
-            if agent.success_criteria:
-                criteria_block = (
-                    f"\n\n**Success criteria you MUST satisfy:**\n{agent.success_criteria}\n"
-                )
-            blocks.append(
-                "\n\n## Previous Attempt Feedback (Retry)\n"
-                "Your previous attempt was rejected by the verifier:\n"
-                f"> {agent.verification_feedback}\n"
-                f"{criteria_block}\n"
-                "You MUST address this feedback in your current attempt. "
-                "Produce all required artifacts and evidence explicitly."
-            )
-        if agent.failure_digest:
-            blocks.append(
-                "\n\n## Previous Attempt Failure (Retry)\n"
-                "Your previous attempt failed. Diagnostic digest of that attempt:\n"
-                f"{agent.failure_digest}\n"
-                "Address the cause above. Produce all required artifacts and evidence explicitly."
-            )
-        return "".join(blocks)
+        return build_retry_context_block(agent)
 
     @staticmethod
     def _get_domain_context(agent: "AgentSession") -> object | None:
@@ -1562,25 +903,10 @@ class AgentOrchestrator:
         return None
 
     async def _resolve_shared_code_block(self, root_id: "UUID | None") -> str | None:
-        """The run's shared code-prefix block, or None when the feature is off.
-
-        Rebuilt from the event store by the provider; gated by the presence of the
-        port (only wired when ``orchestration.shared_worker_session`` is on) and a
-        known run scope.
-        """
-        if self._shared_code_port is None or root_id is None:
-            return None
-        return await self._shared_code_port.code_block(root_id)
+        return await self._recon.resolve_shared_code_block(root_id)
 
     async def _resolve_shared_code_index(self, root_id: "UUID | None") -> str | None:
-        """Compact index of the shared block's files, or None when disabled.
-
-        Rendered near the <task> block (volatile tail) so the model sees what is
-        already provided in full right where it decides which files to read.
-        """
-        if self._shared_code_port is None or root_id is None:
-            return None
-        return await self._shared_code_port.code_index(root_id)
+        return await self._recon.resolve_shared_code_index(root_id)
 
     @staticmethod
     def _build_scope(agent: "AgentSession") -> SubtaskScope | None:
@@ -1604,74 +930,15 @@ class AgentOrchestrator:
                 result_summary=record.result_summary,
             )
 
-    def _capture_recon_source_reads(
-        self, agent: "AgentSession", captured_reads: list
-    ) -> None:
-        """Persist a manager's recon read_file results as SourceFileObserved.
-
-        Gated on ``capture_recon_reads``: the in-loop verbatim/dedup of source
-        reads is always on (manager-side, worker-neutral), but PERSISTING them
-        into the run's shared block carries them to every downstream worker and
-        inflates worker prompts — measured net-negative for the worker tier, so
-        it is off by default and decoupled from the cache optimization.
-
-        The events land on the manager's own in-hand aggregate (sequenced with
-        the decomposition operation — no out-of-band append). One event per
-        distinct path: a recon loop re-reading a file returns identical content,
-        so the first capture is sufficient and avoids aggregate bloat.
-        """
-        if not self._capture_recon_reads or not captured_reads or self._shared_code_port is None:
-            return
-        seen: set[str] = set()
-        for read in captured_reads:
-            path = read.arguments.get("path")
-            if not isinstance(path, str) or not path or path in seen:
-                continue
-            if not read.content:
-                continue
-            seen.add(path)
-            agent.record_source_file_observed(
-                path=path, content=read.content, observed_by=agent.agent_id
-            )
+    def _capture_recon_source_reads(self, agent: "AgentSession", captured_reads: list) -> None:
+        self._recon.capture_source_reads(agent, captured_reads)
 
     def _store_boss_recon_block(self, agent: "AgentSession", captured_reads: list) -> None:
-        """Render the BOSS's recon reads into a block for the run's managers.
-
-        Manager-only propagation: the block is held in an in-memory per-run map
-        and injected into manager decomposition prompts; it never enters the
-        shared block workers consume, so worker cost is unaffected.
-        """
-        if not self._share_boss_recon or agent.role != AgentRole.BOSS or not captured_reads:
-            return
-        block = self._render_boss_recon_block(captured_reads)
-        if block:
-            self._boss_recon_blocks[self._run_scope(agent)] = block
+        self._recon.store_boss_recon_block(agent, captured_reads)
 
     @staticmethod
     def _render_boss_recon_block(captured_reads: list) -> str | None:
-        """A <provided_source_files> block from the boss's reads (one per path)."""
-        latest: dict[str, str] = {}
-        for read in captured_reads:
-            path = read.arguments.get("path")
-            if isinstance(path, str) and path and read.content:
-                latest[path] = read.content
-        if not latest:
-            return None
-        parts = [
-            "<provided_source_files>",
-            "    Source files the BOSS already read while planning this task, provided IN "
-            "FULL. Build on them and do NOT re-read a file shown here unless you edit it.",
-        ]
-        for path, content in latest.items():
-            parts.append(f'<file path="{path}">\n{content}\n</file>')
-        parts.append("</provided_source_files>")
-        return "\n".join(parts)
-
-    @staticmethod
-    def _run_scope(agent: "AgentSession") -> Any:
-        return agent.hierarchy_limits.root_id if agent.hierarchy_limits else agent.agent_id
+        return ReconPropagationService.render_boss_recon_block(captured_reads)
 
     def _resolve_boss_recon_block(self, agent: "AgentSession") -> str | None:
-        if not self._share_boss_recon:
-            return None
-        return self._boss_recon_blocks.get(self._run_scope(agent))
+        return self._recon.resolve_boss_recon_block(agent)

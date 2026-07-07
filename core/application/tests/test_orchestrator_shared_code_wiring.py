@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from core.application.agent_orchestrator import AgentOrchestrator
+from core.application.services.orchestration.recon_propagation import ReconPropagationService
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 from core.domain.events.events import DomainEvent
 from core.domain.values.limits import HierarchyLimits
@@ -182,8 +183,9 @@ class _CapturingAggregate:
 
 def _make_orchestrator(*, capture: bool, port: object) -> AgentOrchestrator:
     orch = object.__new__(AgentOrchestrator)
-    orch._capture_recon_reads = capture
-    orch._shared_code_port = port
+    orch._recon = ReconPropagationService(
+        shared_code_port=port, capture_recon_reads=capture, share_boss_recon=False
+    )
     return orch
 
 
@@ -265,8 +267,9 @@ class _BossAgent:
 
 def _orch_with_boss_recon(enabled: bool) -> AgentOrchestrator:
     orch = object.__new__(AgentOrchestrator)
-    orch._share_boss_recon = enabled
-    orch._boss_recon_blocks = {}
+    orch._recon = ReconPropagationService(
+        shared_code_port=None, capture_recon_reads=False, share_boss_recon=enabled
+    )
     return orch
 
 
