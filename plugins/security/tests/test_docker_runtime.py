@@ -17,6 +17,7 @@ from plugins.security.docker_runtime import (
     DockerSecBenchRuntime,
     _FORBIDDEN_TESTCASE_ARTIFACTS,
 )
+from plugins.security.runtime import docker_cli, image_ensurer, sealer, workspace_mirror
 
 
 def test_exec_helper_falls_back_to_root_when_project_dirs_disappear(
@@ -63,8 +64,7 @@ def test_seed_runtime_scripts_replaces_symlinks_without_following(
     (testcase_dir / "repro.sh").symlink_to(outside_repro)
     (testcase_dir / "patch.sh").symlink_to(outside_patch)
 
-    runtime = DockerSecBenchRuntime()
-    runtime._seed_runtime_scripts(testcase_dir)
+    sealer.seed_runtime_scripts(testcase_dir)
 
     assert outside_repro.read_text(encoding="utf-8") == "keep repro target"
     assert outside_patch.read_text(encoding="utf-8") == "keep patch target"
@@ -81,6 +81,7 @@ def test_seed_runtime_scripts_replaces_symlinks_without_following(
 @pytest.mark.asyncio
 async def test_start_session_force_removes_container_when_post_run_setup_fails(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Audit BUG-B: ``docker run`` succeeds and yields a container_id; if a
     post-run setup step (git safe.directory, build.sh chmod, or the exec-helper
@@ -116,7 +117,7 @@ async def test_start_session_force_removes_container_when_post_run_setup_fails(
 
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         # First call is docker run -d ...  → returns a container id.
         if len(invocations) == 1:
@@ -125,7 +126,7 @@ async def test_start_session_force_removes_container_when_post_run_setup_fails(
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     def _boom(_session: object) -> None:
         raise RuntimeError("post-run setup boom")
@@ -147,6 +148,7 @@ async def test_start_session_force_removes_container_when_post_run_setup_fails(
 @pytest.mark.asyncio
 async def test_start_session_skips_cleanup_when_post_run_setup_succeeds(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Happy path: no rm -f when the setup completes."""
     workspace = SecBenchWorkspace(
@@ -174,14 +176,14 @@ async def test_start_session_skips_cleanup_when_post_run_setup_succeeds(
 
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         if len(invocations) == 1:
             return (0, "abc1234567890\n", "")
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     session = await runtime.start_session(
         cve=cve, workspace=workspace, agent_id=uuid4()
@@ -200,7 +202,7 @@ def test_sealed_dir_is_outside_the_bind_mounted_run_workspace(tmp_path: Path) ->
     run_output.mkdir()
 
     # When: deriving the sealed directory for runtime files (secb-exec, secb).
-    sealed = DockerSecBenchRuntime._sealed_dir(run_output)
+    sealed = sealer.sealed_dir(run_output)
 
     # Then: it is a sibling outside the run workspace, so no container bind mount
     # or worker path alias reaches it — a root worker cannot tamper sealed files.
@@ -244,7 +246,9 @@ def _make_cve() -> CVEInstance:
 
 
 @pytest.mark.asyncio
-async def test_worker_container_name_uses_full_uuid(tmp_path: Path) -> None:
+async def test_worker_container_name_uses_full_uuid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """E.3 — worker container name embeds full 32-hex root + agent UUIDs and
     `arise.session_pid` + `arise.created_at` labels appear in the argv."""
     root_id = uuid4()
@@ -254,14 +258,14 @@ async def test_worker_container_name_uses_full_uuid(tmp_path: Path) -> None:
 
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         if cmd[:3] == ["docker", "run", "-d"]:
             return (0, "abc1234567890\n", "")
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     await runtime.start_session(cve=cve, workspace=workspace, agent_id=agent_id)
 
@@ -283,7 +287,9 @@ async def test_worker_container_name_uses_full_uuid(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_seed_containers_carry_session_pid_label(tmp_path: Path) -> None:
+async def test_seed_containers_carry_session_pid_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """E.3 — seed invocations (source + testcase + work) carry
     the `arise.session_pid` and `arise.role=seed` labels so the F.2 PID-label
     sweep can collect them on SIGKILL."""
@@ -291,7 +297,7 @@ async def test_seed_containers_carry_session_pid_label(tmp_path: Path) -> None:
 
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         if cmd[:3] == ["docker", "image", "inspect"]:
             return (0, "[]", "")
@@ -300,7 +306,7 @@ async def test_seed_containers_carry_session_pid_label(tmp_path: Path) -> None:
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     await runtime.prepare_workspace(
         cve=cve,
@@ -318,14 +324,16 @@ async def test_seed_containers_carry_session_pid_label(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_network_mode_config_default_host(tmp_path: Path) -> None:
+async def test_worker_network_mode_config_default_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """E.7 — default `--network host` preserved; `network_mode="bridge"`
     threads through the docker run argv."""
     cve = _make_cve()
 
     captured: list[list[str]] = []
 
-    async def _capture(cmd: list[str]) -> tuple[int, str, str]:
+    async def _capture(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         captured.append(list(cmd))
         if cmd[:3] == ["docker", "run", "-d"]:
             return (0, "abc1234567890\n", "")
@@ -334,7 +342,7 @@ async def test_worker_network_mode_config_default_host(tmp_path: Path) -> None:
     # Default → host.
     workspace = _make_workspace(tmp_path / "run-host", uuid4())
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _capture  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _capture)
     await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
     run_argv = next(cmd for cmd in captured if cmd[:3] == ["docker", "run", "-d"])
     net_idx = run_argv.index("--network")
@@ -344,7 +352,7 @@ async def test_worker_network_mode_config_default_host(tmp_path: Path) -> None:
     captured.clear()
     workspace = _make_workspace(tmp_path / "run-bridge", uuid4())
     runtime = DockerSecBenchRuntime(network_mode="bridge")
-    runtime._run_command = _capture  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _capture)
     await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
     run_argv = next(cmd for cmd in captured if cmd[:3] == ["docker", "run", "-d"])
     net_idx = run_argv.index("--network")
@@ -402,11 +410,9 @@ async def test_run_command_times_out_on_hang(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
 
-    runtime = DockerSecBenchRuntime(timeout_seconds=0.5)
-
     started = asyncio.get_event_loop().time()
     with pytest.raises(RuntimeError, match="timed out"):
-        await runtime._run_command(["docker", "sleep", "60"])
+        await docker_cli.run_command(["docker", "sleep", "60"], timeout=0.5)
     elapsed = asyncio.get_event_loop().time() - started
 
     assert elapsed < 1.5, f"timeout took {elapsed:.2f}s, expected < 1.5s"
@@ -446,8 +452,7 @@ async def test_run_command_respects_configured_timeout(
 
     monkeypatch.setattr(asyncio, "wait_for", _wait_for_spy)
 
-    runtime = DockerSecBenchRuntime(timeout_seconds=2.0)
-    await runtime._run_command(["docker", "ps"])
+    await docker_cli.run_command(["docker", "ps"], timeout=2.0)
 
     assert 2.0 in captured_timeouts
 
@@ -455,19 +460,20 @@ async def test_run_command_respects_configured_timeout(
 def test_map_host_work_dir_rejects_traversal(tmp_path: Path) -> None:
     """G.5 — `_map_host_work_dir` normalizes the candidate path and rejects a
     traversal `cve.work_dir` like `/src/../../etc` before any `mkdir`."""
-    runtime = DockerSecBenchRuntime()
     source_dir = tmp_path / "src"
     source_dir.mkdir()
 
     with pytest.raises(RuntimeError, match="Refusing work_dir escape"):
-        runtime._map_host_work_dir(source_dir, "/src/../../etc")
+        workspace_mirror.map_host_work_dir(source_dir, "/src/../../etc")
 
     # Sanity: no escape directory landed on the host.
     assert not (tmp_path.parent / "etc").exists()
 
 
 @pytest.mark.asyncio
-async def test_start_session_rejects_paths_outside_host_root(tmp_path: Path) -> None:
+async def test_start_session_rejects_paths_outside_host_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """G.5 — `start_session` refuses to mount any workspace path that lives
     outside this run's `host_root`, before any subprocess is invoked."""
     workspace = SecBenchWorkspace(
@@ -486,12 +492,12 @@ async def test_start_session_rejects_paths_outside_host_root(tmp_path: Path) -> 
 
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     with pytest.raises(RuntimeError, match="escapes this run's host_root"):
         await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
@@ -502,7 +508,9 @@ async def test_start_session_rejects_paths_outside_host_root(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_start_session_rejects_sibling_run_paths(tmp_path: Path) -> None:
+async def test_start_session_rejects_sibling_run_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """G.5 — sibling-run paths (same pool root, different run_id) are
     rejected. Scope is the run's own `host_root`, not the pool root."""
     pool = tmp_path / "runs"
@@ -532,12 +540,12 @@ async def test_start_session_rejects_sibling_run_paths(tmp_path: Path) -> None:
 
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     with pytest.raises(RuntimeError, match="escapes this run's host_root"):
         await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
@@ -548,7 +556,9 @@ async def test_start_session_rejects_sibling_run_paths(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ensure_image_pulls_from_registry_on_local_miss() -> None:
+async def test_ensure_image_pulls_from_registry_on_local_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A configured registry turns a local miss into a pull + retag to the local
     tag, so a fresh machine runs without building."""
 
@@ -563,11 +573,12 @@ async def test_ensure_image_pulls_from_registry_on_local_miss() -> None:
             return (1, "", "No such image")
         return (0, "", "")
 
-    runtime = DockerSecBenchRuntime(tools_image_registry="cheshire0814")
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     # When: ensuring a missing tool image exists
-    await runtime._ensure_image_exists("secb-tools:gpac.cve-2023-5586-patch")
+    await image_ensurer.ensure_image_exists(
+        "secb-tools:gpac.cve-2023-5586-patch", registry="cheshire0814", timeout=300.0
+    )
 
     # Then: it pulled the namespaced remote and retagged it to the local name
     assert ["docker", "pull", "cheshire0814/secb-tools:gpac.cve-2023-5586-patch"] in invocations
@@ -580,7 +591,9 @@ async def test_ensure_image_pulls_from_registry_on_local_miss() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ensure_image_raises_when_registry_pull_fails() -> None:
+async def test_ensure_image_raises_when_registry_pull_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A failed pull falls back to the build-it-yourself error rather than
     masking the miss."""
 
@@ -594,16 +607,19 @@ async def test_ensure_image_raises_when_registry_pull_fails() -> None:
             return (1, "", "manifest unknown")
         return (0, "", "")
 
-    runtime = DockerSecBenchRuntime(tools_image_registry="cheshire0814")
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     # When / Then: ensuring the image raises the build-it-yourself error
     with pytest.raises(RuntimeError, match="Build it first"):
-        await runtime._ensure_image_exists("secb-tools:gpac.cve-2023-5586-patch")
+        await image_ensurer.ensure_image_exists(
+            "secb-tools:gpac.cve-2023-5586-patch", registry="cheshire0814", timeout=300.0
+        )
 
 
 @pytest.mark.asyncio
-async def test_ensure_image_no_registry_does_not_pull() -> None:
+async def test_ensure_image_no_registry_does_not_pull(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """With no registry configured, a local miss raises immediately and never
     attempts a pull (byte-identical to the pre-fallback behavior)."""
 
@@ -616,18 +632,20 @@ async def test_ensure_image_no_registry_does_not_pull() -> None:
         invocations.append(list(cmd))
         return (1, "", "No such image")
 
-    runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     # When / Then: it raises without ever pulling
     with pytest.raises(RuntimeError, match="Build it first"):
-        await runtime._ensure_image_exists("secb-tools:demo-patch")
+        await image_ensurer.ensure_image_exists(
+            "secb-tools:demo-patch", registry="", timeout=300.0
+        )
     assert not any(cmd[:2] == ["docker", "pull"] for cmd in invocations)
 
 
 @pytest.mark.asyncio
 async def test_start_session_seals_delegating_secb_read_only(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """secb is overlaid read-only from a sealed source outside every bind mount,
     not written into the container where a root worker shell could rewrite it."""
@@ -636,14 +654,14 @@ async def test_start_session_seals_delegating_secb_read_only(
     cve = _make_cve()
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         if cmd[:3] == ["docker", "run", "-d"]:
             return (0, "abc1234567890\n", "")
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     # When: starting the worker session.
     await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
@@ -671,7 +689,9 @@ async def test_start_session_seals_delegating_secb_read_only(
 
 
 @pytest.mark.asyncio
-async def test_start_session_does_not_copy_golden_cve_secb_sh(tmp_path: Path) -> None:
+async def test_start_session_does_not_copy_golden_cve_secb_sh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Golden secb_sh content must not be installed or exposed to worker containers."""
     # Given: a CVE carrying a golden SEC-bench helper body.
     workspace = _make_workspace(tmp_path, uuid4())
@@ -688,14 +708,14 @@ async def test_start_session_does_not_copy_golden_cve_secb_sh(tmp_path: Path) ->
     )
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         if cmd[:3] == ["docker", "run", "-d"]:
             return (0, "abc1234567890\n", "")
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     # When: starting the worker session.
     await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
@@ -715,7 +735,9 @@ async def test_start_session_does_not_copy_golden_cve_secb_sh(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_start_session_mounts_patch_script_read_only(tmp_path: Path) -> None:
+async def test_start_session_mounts_patch_script_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The runtime-owned patch helper has no writable container alias."""
     # Given: a prepared workspace with the runtime-owned patch helper.
     workspace = _make_workspace(tmp_path, uuid4())
@@ -725,14 +747,14 @@ async def test_start_session_mounts_patch_script_read_only(tmp_path: Path) -> No
     cve = _make_cve()
     invocations: list[list[str]] = []
 
-    async def _fake_run_command(cmd: list[str]) -> tuple[int, str, str]:
+    async def _fake_run_command(cmd: list[str], **_kwargs) -> tuple[int, str, str]:
         invocations.append(list(cmd))
         if cmd[:3] == ["docker", "run", "-d"]:
             return (0, "abc1234567890\n", "")
         return (0, "", "")
 
     runtime = DockerSecBenchRuntime()
-    runtime._run_command = _fake_run_command  # type: ignore[method-assign]
+    monkeypatch.setattr(docker_cli, "run_command", _fake_run_command)
 
     # When: starting the worker session.
     await runtime.start_session(cve=cve, workspace=workspace, agent_id=uuid4())
@@ -764,6 +786,7 @@ async def test_start_session_mounts_patch_script_read_only(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_prepare_workspace_seeds_non_golden_runtime_scripts(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Host-mounted /testcase gets safe repro/patch scripts without deleting PoCs."""
     # Given: copied testcase contents already include a PoC and a golden repro script.
@@ -787,7 +810,7 @@ async def test_prepare_workspace_seeds_non_golden_runtime_scripts(
         )
 
     runtime = DockerSecBenchRuntime()
-    runtime._ensure_image_exists = AsyncMock()  # type: ignore[method-assign]
+    monkeypatch.setattr(image_ensurer, "ensure_image_exists", AsyncMock())
 
     # When: preparing the workspace.
     workspace = await runtime.prepare_workspace(
