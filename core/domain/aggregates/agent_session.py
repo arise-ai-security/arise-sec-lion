@@ -50,6 +50,11 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from core.domain.exceptions import DomainInvariantError, InvalidEventHistoryError
+from core.domain.services.child_result_report import (
+    aggregate_child_results,
+    all_children_failed_reason,
+    failed_children_note,
+)
 from core.domain.values.agent_config import AgentConfig
 from core.domain.values.enums import AgentRole, AgentStatus
 from core.domain.values.failure import ChildFailureRecord, ThoughtExcerpt
@@ -62,12 +67,10 @@ if TYPE_CHECKING:
 
 
 # Bounds for failure-context retention: the thought tail feeds the retry
-# digest (~10 KB ceiling); note/reason caps keep parent aggregation notes
-# and redecomposition reasons prompt-sized.
+# digest (~10 KB ceiling). Note/reason caps for parent aggregation notes
+# live in core/domain/services/child_result_report.py.
 _RECENT_THOUGHTS_MAXLEN = 20
 _THOUGHT_EXCERPT_CHARS = 500
-_NOTE_TASK_CHARS = 80
-_NOTE_REASON_CHARS = 200
 
 
 class AgentSession:
@@ -210,46 +213,15 @@ class AgentSession:
 
         reported = len(self.child_reports) + len(self.failed_children)
         if reported == len(self.child_ids):
-            aggregated_result = self._aggregate_child_results()
+            aggregated_result = aggregate_child_results(self.child_ids, self.child_reports)
             if self.failed_children:
-                aggregated_result += f"\n\n{self._failed_children_note()}"
+                aggregated_result += f"\n\n{failed_children_note(self.failed_children)}"
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
                 result=aggregated_result,
             )
             self._emit(work_completed_event)
-
-    def _aggregate_child_results(self) -> str:
-        lines = ["Subtask results:", ""]
-        for child_id in self.child_ids:
-            report = self.child_reports.get(child_id)
-            if report is None:
-                lines.append("- No result")
-                continue
-            header = f"[{report.task}]" if report.task else "[subtask]"
-            lines.append(f"- {header}: {report.result}")
-            if report.artifacts:
-                lines.append(f"  Artifacts: {', '.join(report.artifacts)}")
-            if report.decisions:
-                lines.append(f"  Decisions: {', '.join(report.decisions)}")
-        return "\n".join(lines)
-
-    def _child_failure_lines(self) -> list[str]:
-        lines = []
-        for record in self.failed_children.values():
-            label = record.child_task[:_NOTE_TASK_CHARS] or str(record.child_id)[:8]
-            first_line = record.reason.splitlines()[0] if record.reason else ""
-            lines.append(f"- {label}: {first_line[:_NOTE_REASON_CHARS]}")
-        return lines
-
-    def _failed_children_note(self) -> str:
-        header = f"Note: {len(self.failed_children)} child(ren) failed. Results are partial."
-        return "\n".join([header, *self._child_failure_lines()])
-
-    def _all_children_failed_reason(self) -> str:
-        header = f"All {len(self.failed_children)} children failed:"
-        return "\n".join([header, *self._child_failure_lines()])
 
     def handle_child_failure(
         self,
@@ -302,7 +274,10 @@ class AgentSession:
         # All children reported — decide parent outcome
         if self.child_reports:
             # At least one child succeeded — aggregate partial results
-            result = f"{self._aggregate_child_results()}\n\n{self._failed_children_note()}"
+            result = (
+                f"{aggregate_child_results(self.child_ids, self.child_reports)}"
+                f"\n\n{failed_children_note(self.failed_children)}"
+            )
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
@@ -314,14 +289,14 @@ class AgentSession:
             # informed by the recorded failures instead of failing upward.
             self.trigger_redecomposition(
                 trigger_child_id=child_id,
-                reason=self._all_children_failed_reason(),
+                reason=all_children_failed_reason(self.failed_children),
             )
         else:
             # ALL children failed — parent fails
             work_failed_event = WorkFailed(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
-                reason=self._all_children_failed_reason(),
+                reason=all_children_failed_reason(self.failed_children),
             )
             self._emit(work_failed_event)
 
