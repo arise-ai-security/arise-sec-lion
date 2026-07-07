@@ -15,10 +15,8 @@ import pytest
 
 from core.application.services.prompt.cache_breakpoint import CACHE_BREAKPOINT_MARKER
 from core.domain.exceptions import LLMError
-from infrastructure.adapters.litellm_adapter import (
-    LiteLLMAdapter,
-    _apply_anthropic_cache_to_messages,
-)
+from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_messages
+from infrastructure.adapters.litellm_adapter import LiteLLMAdapter
 
 
 @pytest.fixture
@@ -463,7 +461,7 @@ def test_anthropic_marker_splits_into_static_and_variable_blocks() -> None:
     content = f"static prefix\n\n{CACHE_BREAKPOINT_MARKER}\n\nvariable tail"
     messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
     # When: cache control is applied for an Anthropic model
-    result = _apply_anthropic_cache_to_messages(messages, "claude-3-opus")
+    result = apply_anthropic_cache_to_messages(messages, "claude-3-opus")
     # Then: the message becomes two text blocks, only the static one cached.
     # The "\n\n" seam trimmed by the split is restored on the variable block
     # so the blocks concatenate to the original prompt bytes (Anthropic joins
@@ -483,7 +481,7 @@ def test_non_anthropic_marker_strips_to_plain_string() -> None:
     content = f"static prefix\n\n{CACHE_BREAKPOINT_MARKER}\n\nvariable tail"
     messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
     # When: cache control is applied for a non-Anthropic model
-    result = _apply_anthropic_cache_to_messages(messages, "gpt-4o")
+    result = apply_anthropic_cache_to_messages(messages, "gpt-4o")
     # Then: the content stays a plain string with the marker removed
     assert result[0]["content"] == "static prefix\n\nvariable tail"
     assert CACHE_BREAKPOINT_MARKER not in result[0]["content"]
@@ -493,7 +491,7 @@ def test_anthropic_no_marker_keeps_single_cached_block() -> None:
     # Given: a first user message without a marker for an Anthropic model
     messages: list[dict[str, Any]] = [{"role": "user", "content": "hello"}]
     # When: cache control is applied for an Anthropic model
-    result = _apply_anthropic_cache_to_messages(messages, "claude-3-opus")
+    result = apply_anthropic_cache_to_messages(messages, "claude-3-opus")
     # Then: prior behavior is preserved -- a single cached block
     assert result[0]["content"] == [
         {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}
@@ -504,6 +502,6 @@ def test_non_anthropic_no_marker_is_unchanged() -> None:
     # Given: a first user message without a marker for a non-Anthropic model
     messages: list[dict[str, Any]] = [{"role": "user", "content": "hello"}]
     # When: cache control is applied for a non-Anthropic model
-    result = _apply_anthropic_cache_to_messages(messages, "gpt-4o")
+    result = apply_anthropic_cache_to_messages(messages, "gpt-4o")
     # Then: the message is returned unchanged
     assert result[0]["content"] == "hello"

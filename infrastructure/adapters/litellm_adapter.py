@@ -10,16 +10,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
-import uuid
 from typing import Any
 
 import litellm
 
-from core.application.services.prompt.cache_breakpoint import (
-    split_cache_breakpoint,
-    strip_cache_breakpoint,
-)
 from core.domain.exceptions import LLMError
 from core.domain.values.llm_response import (
     LLMResponse,
@@ -28,142 +22,24 @@ from core.domain.values.llm_response import (
     ToolCall,
 )
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
+from infrastructure.adapters.anthropic_cache import (
+    apply_anthropic_cache_to_messages,
+    apply_anthropic_cache_to_tail,
+    apply_anthropic_cache_to_tools,
+    strip_tool_content,
+)
+from infrastructure.adapters.content_tool_calls import try_parse_content_tool_calls
 from infrastructure.io import robust_call
 
 
 logger = logging.getLogger(__name__)
 
 
-def _require_model(merged_config: dict[str, Any]) -> str:
+def require_model(merged_config: dict[str, Any]) -> str:
     model = merged_config.get("model")
     if not isinstance(model, str) or not model.strip():
         raise LLMError("LLM model must be configured explicitly")
     return model
-
-
-def _strip_tool_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove tool_calls and tool-result messages from a conversation history.
-
-    Anthropic rejects messages that reference tools (assistant tool_calls or
-    role=tool results) when no ``tools`` parameter is provided. This is used
-    by the fallback "force final answer" path after max tool iterations.
-    """
-    cleaned: list[dict[str, Any]] = []
-    for msg in messages:
-        if msg.get("role") == "tool":
-            continue
-        if msg.get("tool_calls"):
-            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
-            if not msg.get("content"):
-                msg["content"] = ""
-        cleaned.append(msg)
-    return cleaned
-
-
-def _supports_anthropic_cache(model: str) -> bool:
-    # Anthropic prompt caching (5-min ephemeral TTL, ~90% read discount)
-    # only applies when the request reaches an Anthropic model. LiteLLM
-    # passes `cache_control` through on these models and ignores/rejects it
-    # elsewhere, so we gate emission defensively.
-    m = model.lower()
-    return (
-        "claude" in m
-        or m.startswith("anthropic/")
-        or m.startswith("bedrock/anthropic.")
-    )
-
-
-def _apply_anthropic_cache_to_messages(
-    messages: list[dict[str, Any]], model: str
-) -> list[dict[str, Any]]:
-    # Prepare the first user message for prompt caching.
-    # - With a cache-breakpoint marker: split into a cacheable static prefix
-    #   (cache_control) + variable tail (Anthropic), or strip the marker to
-    #   plain text (non-Anthropic) so it never reaches the model.
-    # - Without a marker on an Anthropic model: cache the whole first user
-    #   message (prior behavior). Non-Anthropic + no marker: unchanged.
-    supports = _supports_anthropic_cache(model)
-    out = list(messages)
-    for i, msg in enumerate(out):
-        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-            content = msg["content"]
-            split = split_cache_breakpoint(content)
-            if split is not None:
-                static, variable = split
-                if supports:
-                    blocks: list[dict[str, Any]] = [
-                        {"type": "text", "text": static,
-                         "cache_control": {"type": "ephemeral"}}
-                    ]
-                    if variable:
-                        # Restore the "\n\n" seam that split_cache_breakpoint
-                        # trimmed, so the two content blocks concatenate to the
-                        # exact bytes of the non-cached path (static + "\n\n" +
-                        # variable) — Anthropic joins text blocks with no
-                        # separator. The static (cached) block stays clean.
-                        blocks.append({"type": "text", "text": f"\n\n{variable}"})
-                    out[i] = {**msg, "content": blocks}
-                else:
-                    out[i] = {**msg, "content": strip_cache_breakpoint(content)}
-            elif supports:
-                out[i] = {
-                    **msg,
-                    "content": [
-                        {"type": "text", "text": content,
-                         "cache_control": {"type": "ephemeral"}}
-                    ],
-                }
-            break
-    return out
-
-
-def _apply_anthropic_cache_to_tail(
-    messages: list[dict[str, Any]], model: str
-) -> list[dict[str, Any]]:
-    # Roll an ephemeral cache breakpoint onto the LAST message so the growing
-    # tool-loop tail (assistant tool_calls + tool results that accumulate each
-    # recon round) is served as cache_read on the next round instead of full
-    # price. This is a SEPARATE pass from _apply_anthropic_cache_to_messages,
-    # which only marks the first user message and returns early — it never
-    # reaches the tail. Breakpoint budget: tools(1) + first-user(1) + tail(1) =
-    # 3 of Anthropic's 4. The tail only pays off because the loop now keeps the
-    # prefix byte-stable (elide-once + read dedup), so the cached region is
-    # actually re-read rather than re-seeded.
-    if not _supports_anthropic_cache(model) or len(messages) <= 1:
-        return messages
-    out = list(messages)
-    last = dict(out[-1])
-    content = last.get("content")
-    if isinstance(content, str):
-        if not content:
-            return messages
-        last["content"] = [
-            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
-        ]
-    elif isinstance(content, list) and content and isinstance(content[-1], dict):
-        blocks = [dict(b) for b in content]
-        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
-        last["content"] = blocks
-    else:
-        return messages
-    out[-1] = last
-    return out
-
-
-def _apply_anthropic_cache_to_tools(
-    tools: list[dict[str, Any]] | None, model: str
-) -> list[dict[str, Any]] | None:
-    # A single marker on the last tool entry tells Anthropic to cache the
-    # entire tools array. The tool-calling loop re-sends the full array on
-    # every turn; without this, every turn pays full input on identical
-    # tool schemas.
-    if not tools or not _supports_anthropic_cache(model):
-        return tools
-    out = list(tools)
-    last = dict(out[-1])
-    last["cache_control"] = {"type": "ephemeral"}
-    out[-1] = last
-    return out
 
 
 class LiteLLMAdapter(LLMPort):
@@ -402,10 +278,10 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On API failure or empty response.
         """
         merged_config = {**self.default_config, **config_dict}
-        model = _require_model(merged_config)
+        model = require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
-            "messages": _apply_anthropic_cache_to_messages(
+            "messages": apply_anthropic_cache_to_messages(
                 [{"role": "user", "content": prompt}], model
             ),
             "max_tokens": merged_config.get("max_tokens", 1000),
@@ -438,10 +314,10 @@ class LiteLLMAdapter(LLMPort):
             LLMError: On API failure or empty response.
         """
         merged_config = {**self.default_config, **config_dict}
-        model = _require_model(merged_config)
+        model = require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
-            "messages": _apply_anthropic_cache_to_messages(
+            "messages": apply_anthropic_cache_to_messages(
                 [{"role": "user", "content": prompt}], model
             ),
             "max_tokens": merged_config.get("max_tokens", 1000),
@@ -480,7 +356,7 @@ class LiteLLMAdapter(LLMPort):
         text content (final answer) or tool_calls (requesting tool execution).
         """
         merged_config = {**self.default_config, **config_dict}
-        model = _require_model(merged_config)
+        model = require_model(merged_config)
 
         call_kwargs: dict[str, Any] = {
             "messages": messages,
@@ -488,16 +364,16 @@ class LiteLLMAdapter(LLMPort):
             "top_p": merged_config.get("top_p"),
         }
         if tools:
-            call_kwargs["tools"] = _apply_anthropic_cache_to_tools(tools, model)
+            call_kwargs["tools"] = apply_anthropic_cache_to_tools(tools, model)
         else:
             # Anthropic rejects messages containing tool_calls/tool results
             # when no tools are defined. Strip tool content so the fallback
             # "force final answer" call after max iterations works cleanly.
-            call_kwargs["messages"] = _strip_tool_content(messages)
-        call_kwargs["messages"] = _apply_anthropic_cache_to_messages(
+            call_kwargs["messages"] = strip_tool_content(messages)
+        call_kwargs["messages"] = apply_anthropic_cache_to_messages(
             call_kwargs["messages"], model
         )
-        call_kwargs["messages"] = _apply_anthropic_cache_to_tail(
+        call_kwargs["messages"] = apply_anthropic_cache_to_tail(
             call_kwargs["messages"], model
         )
         if not self._is_o_series(model):
@@ -530,7 +406,7 @@ class LiteLLMAdapter(LLMPort):
             # and (3) content parses as tool-call-shaped JSON.  GPT/Claude
             # models always populate message.tool_calls, so this path is
             # never reached for them.
-            parsed_tcs = _try_parse_content_tool_calls(content, tools)
+            parsed_tcs = try_parse_content_tool_calls(content, tools)
             if parsed_tcs:
                 tool_calls.extend(parsed_tcs)
                 content = None  # consumed as tool call, not text
@@ -574,217 +450,3 @@ class LiteLLMAdapter(LLMPort):
         except Exception:
             # If LiteLLM cost calculation fails, return 0
             return 0.0
-
-
-_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
-_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL | re.IGNORECASE)
-_TOOL_CALL_TAG = "<tool_call>"
-
-
-def _strip_llm_wrappers(text: str) -> str:
-    """Strip Qwen think tags and markdown code fences from LLM output.
-
-    Same pre-processing as the subtask parser, applied here so that
-    tool-call-shaped JSON wrapped in think tags or code fences is
-    detected before it reaches downstream parsers.
-    """
-    cleaned = _THINK_TAG_RE.sub("", text).strip()
-    match = _CODE_FENCE_RE.search(cleaned)
-    if match:
-        cleaned = match.group(1).strip()
-    return cleaned
-
-
-def _extract_tool_call_tags(content: str) -> list[dict[str, Any]]:
-    """Extract parsed JSON objects from ``<tool_call>`` XML tags.
-
-    DeepSeek-v4-pro (and some other Ollama-served models) emit tool calls
-    as ``<tool_call>{"name": "…", "arguments": {…}}</tool_call>`` tags
-    embedded in conversational prose, rather than populating the API's
-    structured ``tool_calls`` field.  Uses ``json.JSONDecoder.raw_decode``
-    to find each JSON object robustly (handles nested braces).
-    """
-    if _TOOL_CALL_TAG not in content.lower():
-        return []
-    results: list[dict[str, Any]] = []
-    decoder = json.JSONDecoder()
-    lower = content.lower()
-    pos = 0
-    while True:
-        idx = lower.find(_TOOL_CALL_TAG, pos)
-        if idx == -1:
-            break
-        json_start = idx + len(_TOOL_CALL_TAG)
-        # Skip whitespace between tag and JSON
-        while json_start < len(content) and content[json_start] in " \t\n\r":
-            json_start += 1
-        if json_start >= len(content) or content[json_start] != "{":
-            pos = json_start
-            continue
-        try:
-            obj, end = decoder.raw_decode(content, json_start)
-            if isinstance(obj, dict):
-                results.append(obj)
-            pos = json_start + end
-        except json.JSONDecodeError:
-            pos = json_start + 1
-    return results
-
-
-def _try_parse_content_tool_calls(
-    content: str,
-    tools: list[dict[str, Any]],
-) -> list[ToolCall] | None:
-    """Detect tool calls emitted as plain JSON in message.content.
-
-    Qwen-family models (e.g. qwen3.5 via Ollama Cloud) sometimes return
-    tool invocations as raw JSON text instead of populating the API's
-    ``tool_calls`` field.  Four known shapes:
-
-    1.  ``{"name": "<tool>", "arguments": {...}}``  — OpenAI-style wrapper
-    1b. ``{"name": "<tool>", ...}``                 — name matches a tool,
-        remaining fields become arguments (no ``description`` key —
-        that would indicate a subtask, not a tool call)
-    2.  ``{"<param>": <value>, ...}``               — bare arguments dict
-    3.  ``[<item>, ...]``                           — array of any of the
-        above; all items must resolve to tool calls (if any item looks
-        like a subtask — has a ``description`` field — we bail and let
-        the subtask parser handle the whole array)
-    4.  ``<tool_call>{"name": "…", …}</tool_call>`` — DeepSeek-style XML
-        tag wrapping, often preceded by conversational prose.
-
-    For shape (2) we match against the registered tool definitions: if the
-    dict keys are a subset of exactly one tool's parameters, treat it as a
-    call to that tool.
-
-    Returns ``None`` when the content is not recognisable as tool calls,
-    so callers treat the response as a normal text answer (no behaviour
-    change for models that already use structured tool_calls).
-    """
-    # Strip Qwen <think>…</think> tags and markdown code fences before
-    # checking for JSON.  The subtask parser does this too, but we need
-    # it here so tool-call-shaped content wrapped in think tags is
-    # intercepted before it reaches the subtask parser.
-    stripped = _strip_llm_wrappers(content)
-
-    # Shape 4: DeepSeek-v4-pro emits <tool_call>JSON</tool_call> tags
-    # embedded in prose. Extract these before the JSON-start check,
-    # since conversational preamble precedes the tag.
-    tagged_items = _extract_tool_call_tags(stripped)
-    if tagged_items:
-        tool_name_set = {t.get("function", {}).get("name") for t in tools}
-        tool_param_index = _build_tool_param_index(tools)
-        calls: list[ToolCall] = []
-        for item in tagged_items:
-            tc = _match_single_tool_call(item, tool_name_set, tool_param_index)
-            if tc is None:
-                return None  # not a tool call — bail to subtask parser
-            calls.append(tc)
-        if calls:
-            for tc in calls:
-                logger.info("Parsed <tool_call>-tagged tool call: %s", tc.name)
-            return calls
-
-    if not stripped.startswith(("{", "[")):
-        return None
-
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-
-    # Normalize to a list of items to inspect
-    if isinstance(data, dict):
-        items = [data]
-    elif isinstance(data, list) and data:
-        items = [x for x in data if isinstance(x, dict)]
-        if not items:
-            return None
-    else:
-        return None
-
-    tool_name_set = {
-        t.get("function", {}).get("name")
-        for t in tools
-    }
-    tool_param_index = _build_tool_param_index(tools)
-
-    calls: list[ToolCall] = []
-    for item in items:
-        tc = _match_single_tool_call(item, tool_name_set, tool_param_index)
-        if tc is None:
-            # If any item is not a tool call, the whole blob might be
-            # subtask JSON — bail and let the subtask parser handle it.
-            return None
-        calls.append(tc)
-
-    if calls:
-        for tc in calls:
-            logger.info("Parsed Qwen-style text tool call: %s", tc.name)
-    return calls or None
-
-
-def _match_single_tool_call(
-    item: dict[str, Any],
-    tool_name_set: set[str | None],
-    tool_param_index: dict[str, frozenset[str]],
-) -> ToolCall | None:
-    """Try to match a single dict as a tool call against known tool defs.
-
-    Returns a ToolCall on match, None otherwise.
-    """
-    # Shape 1: {"name": "<tool>", "arguments": {...}}
-    if "name" in item and "arguments" in item and isinstance(item["arguments"], dict):
-        name = item["name"]
-        if isinstance(name, str) and name in tool_name_set:
-            return ToolCall(
-                id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-                name=name,
-                arguments=item["arguments"],
-            )
-
-    # Shape 1b: {"name": "<tool>", ...} — name matches a tool, no
-    # "arguments" wrapper, and no "description" (which would indicate
-    # a subtask rather than a tool call).
-    name = item.get("name")
-    if (
-        isinstance(name, str)
-        and name in tool_name_set
-        and "description" not in item
-        and "arguments" not in item
-    ):
-        args = {k: v for k, v in item.items() if k != "name"}
-        return ToolCall(
-            id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-            name=name,
-            arguments=args,
-        )
-
-    # Shape 2: bare arguments dict — keys subset of exactly one tool
-    keys = frozenset(item.keys())
-    candidates = [
-        name for name, params in tool_param_index.items()
-        if keys <= params
-    ]
-    if len(candidates) == 1:
-        return ToolCall(
-            id=f"qwen-text-{uuid.uuid4().hex[:8]}",
-            name=candidates[0],
-            arguments=item,
-        )
-
-    return None
-
-
-def _build_tool_param_index(
-    tools: list[dict[str, Any]],
-) -> dict[str, frozenset[str]]:
-    index: dict[str, frozenset[str]] = {}
-    for t in tools:
-        func = t.get("function", {})
-        name = func.get("name")
-        if not name:
-            continue
-        params = func.get("parameters", {}).get("properties", {})
-        index[name] = frozenset(params.keys())
-    return index

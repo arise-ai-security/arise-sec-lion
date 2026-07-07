@@ -21,10 +21,8 @@ from openai import (
 
 from core.application.services.prompt.cache_breakpoint import CACHE_BREAKPOINT_MARKER
 from core.domain.exceptions import LLMError
-from infrastructure.adapters.openrouter_adapter import (
-    OpenRouterAdapter,
-    _apply_anthropic_cache_to_messages,
-)
+from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_messages
+from infrastructure.adapters.openrouter_adapter import OpenRouterAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +377,7 @@ def test_anthropic_marker_splits_into_static_and_variable_blocks() -> None:
     content = f"static prefix\n\n{CACHE_BREAKPOINT_MARKER}\n\nvariable tail"
     messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
     # When: cache control is applied for an Anthropic model via the shared helper
-    result = _apply_anthropic_cache_to_messages(messages, "anthropic/claude-3-5-sonnet")
+    result = apply_anthropic_cache_to_messages(messages, "anthropic/claude-3-5-sonnet")
     # Then: the message becomes two text blocks, only the static one cached, no
     # marker leak. The "\n\n" seam is restored on the variable block so the
     # blocks concatenate to the original prompt bytes.

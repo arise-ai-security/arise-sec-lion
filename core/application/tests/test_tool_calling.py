@@ -640,11 +640,11 @@ class TestRollingTailCacheBreakpoint:
     """The last message gets an ephemeral breakpoint on Anthropic, no-op elsewhere."""
 
     def test_anthropic_tail_gets_cache_control(self):
-        from infrastructure.adapters.litellm_adapter import _apply_anthropic_cache_to_tail
+        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
 
         msgs = [{"role": "user", "content": "p"},
                 {"role": "tool", "tool_call_id": "c1", "content": "tool result"}]
-        out = _apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6")
+        out = apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6")
 
         last = out[-1]["content"]
         assert isinstance(last, list)
@@ -654,14 +654,14 @@ class TestRollingTailCacheBreakpoint:
         assert msgs[-1]["content"] == "tool result"
 
     def test_non_anthropic_is_noop(self):
-        from infrastructure.adapters.litellm_adapter import _apply_anthropic_cache_to_tail
+        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
 
         msgs = [{"role": "user", "content": "p"},
                 {"role": "tool", "tool_call_id": "c1", "content": "r"}]
-        assert _apply_anthropic_cache_to_tail(msgs, "gpt-5.4-mini") == msgs
+        assert apply_anthropic_cache_to_tail(msgs, "gpt-5.4-mini") == msgs
 
     def test_single_message_is_noop(self):
-        from infrastructure.adapters.litellm_adapter import _apply_anthropic_cache_to_tail
+        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
 
         msgs = [{"role": "user", "content": "p"}]
-        assert _apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6") == msgs
+        assert apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6") == msgs

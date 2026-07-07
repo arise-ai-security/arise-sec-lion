@@ -11,8 +11,9 @@ Model identifiers follow OpenRouter conventions, e.g.
 ``google/gemini-2.5-flash``, ``meta-llama/llama-3.3-70b``.
 
 The shared Qwen-style content-tool-call parsing and Anthropic "no tools"
-message-cleanup helpers are reused from :mod:`litellm_adapter`; they apply
-regardless of which gateway routes the request.
+message-cleanup helpers are reused from :mod:`content_tool_calls` and
+:mod:`anthropic_cache`; they apply regardless of which gateway routes the
+request.
 """
 
 from __future__ import annotations
@@ -40,13 +41,13 @@ from core.domain.values.llm_response import (
     ToolCall,
 )
 from core.ports.runtime_ports import CostCalculatorPort, LLMPort
-from infrastructure.adapters.litellm_adapter import (
-    _apply_anthropic_cache_to_messages,
-    _apply_anthropic_cache_to_tools,
-    _require_model,
-    _strip_tool_content,
-    _try_parse_content_tool_calls,
+from infrastructure.adapters.anthropic_cache import (
+    apply_anthropic_cache_to_messages,
+    apply_anthropic_cache_to_tools,
+    strip_tool_content,
 )
+from infrastructure.adapters.content_tool_calls import try_parse_content_tool_calls
+from infrastructure.adapters.litellm_adapter import require_model
 from infrastructure.io import robust_call
 
 
@@ -277,9 +278,9 @@ class OpenRouterAdapter(LLMPort):
 
     async def query(self, prompt: str, config_dict: dict[str, Any]) -> str:
         merged_config = {**self.default_config, **config_dict}
-        model = _require_model(merged_config)
+        model = require_model(merged_config)
         kwargs = self._build_kwargs(
-            messages=_apply_anthropic_cache_to_messages(
+            messages=apply_anthropic_cache_to_messages(
                 [{"role": "user", "content": prompt}], model
             ),
             merged_config=merged_config,
@@ -296,9 +297,9 @@ class OpenRouterAdapter(LLMPort):
         self, prompt: str, config_dict: dict[str, Any]
     ) -> LLMResponse:
         merged_config = {**self.default_config, **config_dict}
-        model = _require_model(merged_config)
+        model = require_model(merged_config)
         kwargs = self._build_kwargs(
-            messages=_apply_anthropic_cache_to_messages(
+            messages=apply_anthropic_cache_to_messages(
                 [{"role": "user", "content": prompt}], model
             ),
             merged_config=merged_config,
@@ -322,18 +323,18 @@ class OpenRouterAdapter(LLMPort):
         tools: list[dict[str, Any]],
     ) -> LLMToolResponse:
         merged_config = {**self.default_config, **config_dict}
-        model = _require_model(merged_config)
+        model = require_model(merged_config)
         # Anthropic rejects messages referencing tool_calls when no tools are
         # defined. Strip tool turns so the post-iteration "force final answer"
         # call works for both Anthropic-via-OpenRouter and OpenAI-via-OpenRouter.
-        outbound_messages = messages if tools else _strip_tool_content(messages)
-        outbound_messages = _apply_anthropic_cache_to_messages(outbound_messages, model)
+        outbound_messages = messages if tools else strip_tool_content(messages)
+        outbound_messages = apply_anthropic_cache_to_messages(outbound_messages, model)
         kwargs = self._build_kwargs(
             messages=outbound_messages,
             merged_config=merged_config,
             model=model,
             default_max_tokens=4000,
-            tools=_apply_anthropic_cache_to_tools(tools or None, model),
+            tools=apply_anthropic_cache_to_tools(tools or None, model),
         )
         response = await self._call(model=model, **kwargs)
         message = response.choices[0].message
@@ -350,7 +351,7 @@ class OpenRouterAdapter(LLMPort):
         elif tools and content:
             # Qwen-family models (routable via OpenRouter) sometimes emit tool
             # invocations as plain JSON in message.content. Detect and parse.
-            parsed = _try_parse_content_tool_calls(content, tools)
+            parsed = try_parse_content_tool_calls(content, tools)
             if parsed:
                 tool_calls.extend(parsed)
                 content = None
