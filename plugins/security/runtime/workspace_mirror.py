@@ -117,6 +117,10 @@ async def copy_work_tree(image: str, work_root: Path, *, timeout: float) -> None
 def make_host_tree_writable(path: Path) -> None:
     # docker cp preserves root ownership from the image. Make mirrored
     # files writable by the host-side agent while leaving symlinks alone.
+    # On hosts where the files come out root-owned (native Linux docker),
+    # every chmod fails with EPERM — summarize instead of failing the run,
+    # but never silently: unwritable files surface later as agent failures.
+    failures = 0
     for item in path.rglob("*"):
         if item.is_symlink():
             continue
@@ -127,7 +131,14 @@ def make_host_tree_writable(path: Path) -> None:
             else:
                 item.chmod(mode | 0o666)
         except OSError:
-            pass
+            failures += 1
+    if failures:
+        logger.warning(
+            "Could not adjust permissions on %d mirrored entries under %s; "
+            "host-side edits to those files may fail",
+            failures,
+            path,
+        )
 
 
 def map_host_work_dir(source_dir: Path, container_work_dir: str) -> Path:

@@ -353,8 +353,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
             try:
                 loop.call_soon_threadsafe(event_queue.put_nowait, sdk_event)
             except RuntimeError:
-                # Loop closed during shutdown; drop the event quietly.
-                pass
+                # Loop closed during shutdown; the event can no longer be
+                # delivered. Debug level: fires per-event during normal teardown.
+                logger.debug("Dropping OpenHands SDK event after loop shutdown")
 
         try:
             conversation = self._build_conversation_for_task(
@@ -453,8 +454,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 run_task.cancel()
                 try:
                     await run_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+                except asyncio.CancelledError:
+                    pass  # The cancellation we just requested.
+                except Exception:
+                    logger.exception("OpenHands run task failed while being cancelled")
             if not shutdown_requested:
                 await self._shutdown_conversation_run(conversation, conversation_run)
             conversation_run.shutdown_executor()

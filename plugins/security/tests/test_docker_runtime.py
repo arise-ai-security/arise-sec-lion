@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -468,6 +469,26 @@ def test_map_host_work_dir_rejects_traversal(tmp_path: Path) -> None:
 
     # Sanity: no escape directory landed on the host.
     assert not (tmp_path.parent / "etc").exists()
+
+
+def test_make_host_tree_writable_summarizes_chmod_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """chmod failures (e.g. EPERM on root-owned files from native-Linux
+    `docker cp`) must not abort the walk, but must surface as ONE warning
+    instead of vanishing silently."""
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / "b.txt").write_text("y")
+
+    def _deny_chmod(*_args: object) -> None:
+        raise PermissionError("operation not permitted")
+
+    monkeypatch.setattr(Path, "chmod", _deny_chmod)
+
+    with caplog.at_level(logging.WARNING):
+        workspace_mirror.make_host_tree_writable(tmp_path)
+
+    assert "Could not adjust permissions on 2 mirrored entries" in caplog.text
 
 
 @pytest.mark.asyncio
