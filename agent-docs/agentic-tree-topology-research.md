@@ -936,7 +936,7 @@ ExecutionService.run_system_loop(root_id):
 | Component | File |
 |-----------|------|
 | Aggregate (state machine) | `core/domain/aggregates/agent_session.py` |
-| Domain events (35 types) | `core/domain/events/events.py` (registry: `infrastructure/adapters/postgres_event_store.py:51-96`) |
+| Domain events (38 types) | `core/domain/events/events.py` (registry: `infrastructure/adapters/postgres_event_store.py:54-102`) |
 | NodeMessage union | `core/domain/values/node_message.py` |
 | Subtask model | `core/domain/values/subtask.py` |
 | Enums (Role, Status) | `core/domain/values/enums.py` |

@@ -605,12 +605,15 @@ Arise judges a run in two planes a non-LLM reader can both reach:
    = present AND `size>0`.
 2. **The Postgres event stream** — the single source of truth (`events.jsonl` retired).
 
-> ⚠️ **Read this before trusting any verdict.** `criteria.py:3-16` self-labels
-> **OBSOLETE / KNOWN-WRONG — DO NOT TRUST THESE SUCCESS VERDICTS.** Only the file-presence
-> /non-vacuity subset (`key_file_exists`, `artifacts_by_bef`, `success_criteria_by_bef`)
-> is production-wired. Every Built/Exploited/Fixed *success* judge is currently UNWIRED
-> (see the honesty table §IV.6). The gates below describe what a script *can*
-> deterministically check; §IV.6 says what actually runs today.
+> ⚠️ **Correction (verified against source 2026-07-07).** An earlier revision of this section
+> said `criteria.py` self-labels OBSOLETE with all success judges UNWIRED. That is **stale**:
+> the banner was removed when the eval path was rewired (commits `fa51676`, `2ed422a`).
+> Today `evaluate_run` is the wired per-run verdict (consumed by `scripts/evaluate_run.py`,
+> `scripts/analyze_runs.py`), the `build_*_prompt` judge builders are invoked inside it, and
+> the file-presence/non-vacuity subset (`key_file_exists`, `artifacts_by_bef`,
+> `success_criteria_by_bef`) is consumed by `bef.py`/`linear.py`. Where §IV.6's honesty table
+> still labels judges UNWIRED/DEFERRED, treat it as predating this rewiring — re-verify
+> against `criteria.py` before relying on it.
 
 ## IV.1 — Pass/fail decision flow (target/advisory — not live enforcement)
 
