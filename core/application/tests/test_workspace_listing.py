@@ -10,23 +10,21 @@ Defaults preserve legacy bytes.
 
 from pathlib import Path
 
-from config import BossConfig, ManagerConfig
-from core.application.execution_service import AgentExecutionService, ServiceConfig
+from core.application.services.orchestration.workspace_context import (
+    WorkspaceContextProvider,
+)
 
 
-def _service(tmp_path: Path, **config_overrides: object) -> AgentExecutionService:
-    service = object.__new__(AgentExecutionService)
-    service._config = ServiceConfig(
-        max_retries=3,
-        poll_interval=0.5,
+def _service(tmp_path: Path, **config_overrides: object) -> WorkspaceContextProvider:
+    provider = WorkspaceContextProvider(
         output_directory=str(tmp_path),
-        default_worker_tool="openhands",
-        boss_config=BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-        manager_config=ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-        **config_overrides,  # type: ignore[arg-type]
+        workspace_listing_dirs=config_overrides.get("workspace_listing_dirs"),
+        workspace_listing_max_entries=config_overrides.get("workspace_listing_max_entries"),
+        domain_plugin=None,
+        recon_tool=None,
     )
-    service._working_directory = tmp_path
-    return service
+    provider.working_directory = tmp_path
+    return provider
 
 
 def _populate_workspace(tmp_path: Path) -> None:
@@ -46,7 +44,7 @@ def test_legacy_listing_skips_only_src(tmp_path: Path) -> None:
     service = _service(tmp_path)
 
     # When
-    listing = service._get_workspace_context()
+    listing = service.get_workspace_context()
 
     # Then: everything except src/ is listed (build noise included — legacy)
     assert listing is not None
@@ -62,7 +60,7 @@ def test_whitelist_lists_only_included_dirs(tmp_path: Path) -> None:
     service = _service(tmp_path, workspace_listing_dirs=("testcase",))
 
     # When
-    listing = service._get_workspace_context()
+    listing = service.get_workspace_context()
 
     # Then: artifact discovery without build-tree or helper noise
     assert listing is not None
@@ -84,7 +82,7 @@ def test_entry_cap_summarizes_overflow(tmp_path: Path) -> None:
     )
 
     # When
-    listing = service._get_workspace_context()
+    listing = service.get_workspace_context()
 
     # Then: one entry plus an overflow summary, never a silent truncation
     assert listing is not None
@@ -100,4 +98,4 @@ def test_whitelist_with_no_matching_files_returns_none(tmp_path: Path) -> None:
     service = _service(tmp_path, workspace_listing_dirs=("testcase",))
 
     # When / Then: no block at all (text_if drops it), not an empty listing
-    assert service._get_workspace_context() is None
+    assert service.get_workspace_context() is None

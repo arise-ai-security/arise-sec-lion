@@ -14,12 +14,11 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 from core.application.agent_orchestrator import AgentOrchestrator
 from core.application.dtos import AgentResultDTO, SystemStatisticsDTO
-from core.application.run_invariants import WorkerResult
 from core.application.services import (
     AgentQueryService,
     AgentRepository,
@@ -30,18 +29,19 @@ from core.application.services import (
     RetryPolicy,
     build_role_handlers,
 )
-from core.application.services.orchestration.failure_digest import build_failure_digest
+from core.application.services.orchestration.flat_mode_runner import (
+    FlatInvariantBuilder,
+    FlatModeBundle,
+    FlatModeRunner,
+)
+from core.application.services.orchestration.post_step import PostStepHandler
+from core.application.services.orchestration.workspace_context import (
+    WorkspaceContextProvider,
+)
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.events.events import (
-    ChildSpawned,
-    DomainEvent,
-    SealedArtifact,
-    WorkCompleted,
-    WorkFailed,
-)
+from core.domain.events.events import DomainEvent, SealedArtifact
 from core.domain.exceptions import ConcurrencyError
-from core.domain.services.context_update_parser import parse_context_update
 from core.domain.values.json_types import JsonObject
 
 
@@ -49,53 +49,27 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from config import BossConfig, ManagerConfig
-    from core.application.run_invariants import (
-        TaskPromptSpec,
-        TimeoutBudget,
-        ToolPolicy,
-        WorkspaceSpec,
-    )
     from core.application.services import PromptBuilder
     from core.ports.domain_plugin_port import DomainPlugin, PreparedRunWorkspace
     from core.ports.event_store_port import EventStorePort
     from core.ports.runtime_ports import (
+        ReconToolPort,
         SharedContextPort,
         SiblingViewPort,
         SystemLimitsPort,
-        ReconToolPort,
     )
     from core.ports.worker_port import WorkerPort
 
 
-@dataclass(frozen=True)
-class FlatModeBundle:
-    """Invariants assembled by bootstrap for a flat-mode run.
-
-    Bundles the four ``run_invariants`` value objects so the dispatcher can
-    pass them to ``WorkerPort.run_task`` without re-deriving them.
-    """
-
-    spec: "TaskPromptSpec"
-    tool_policy: "ToolPolicy"
-    timeouts: "TimeoutBudget"
-    workspace: "WorkspaceSpec"
-
-
-class FlatInvariantBuilder(Protocol):
-    """Callable that produces a ``FlatModeBundle`` for a single flat-mode run.
-
-    Bootstrap registers a closure that captures ``Settings`` and the active
-    domain plugin. The dispatcher invokes it once per run with the run-scoped
-    inputs (``task``, ``domain_context``, ``run_dir``).
-    """
-
-    def __call__(
-        self,
-        *,
-        task: str,
-        domain_context: object | None,
-        run_dir: Path,
-    ) -> FlatModeBundle: ...
+__all__ = [
+    "AgentExecutionService",
+    "ExecutionServiceDependencies",
+    "FlatInvariantBuilder",
+    "FlatModeBundle",
+    "HierarchyLimitsRegistry",
+    "ProgressCallback",
+    "ServiceConfig",
+]
 
 
 @dataclass(frozen=True)
@@ -172,12 +146,11 @@ class AgentExecutionService:
         self._parent_notifier = dependencies.parent_notifier
         self._prompt_builder = dependencies.prompt_builder
         self._domain_plugin = dependencies.domain_plugin
-        self._recon_tool = dependencies.recon_tool
+        # Exposed on the service so bootstrap wiring can be asserted; the
+        # FlatModeRunner performs the actual flat-mode dispatch.
         self._flat_worker = dependencies.flat_worker
         self._flat_invariant_builder = dependencies.flat_invariant_builder
 
-        # Workspace state (inlined from WorkspaceContextProvider)
-        self._working_directory: Path | None = None
         # Flat-mode bookkeeping: captured at boss-creation so run_system_loop
         # can dispatch directly to ``WorkerPort`` without re-resolving them.
         self._current_task: str | None = None
@@ -218,6 +191,34 @@ class AgentExecutionService:
         self._retry_policy = RetryPolicy(
             repository=self._repository,
             retry_config=self._retry_config,
+            progress_callback=self._progress_callback,
+        )
+
+        # Extracted collaborators: the service coordinates the loop and dispatch;
+        # these own workspace setup, post-step handling, and the flat-mode path.
+        self._workspace = WorkspaceContextProvider(
+            output_directory=config.output_directory,
+            workspace_listing_dirs=config.workspace_listing_dirs,
+            workspace_listing_max_entries=config.workspace_listing_max_entries,
+            domain_plugin=self._domain_plugin,
+            recon_tool=dependencies.recon_tool,
+        )
+        self._post_step = PostStepHandler(
+            repository=self._repository,
+            child_factory=self._child_factory,
+            parent_notifier=self._parent_notifier,
+            retry_policy=self._retry_policy,
+            shared_context_port=self._shared_context_port,
+            limits_registry=self._limits_registry,
+            verification_max_retries=config.verification_max_retries,
+            progress_callback=self._progress_callback,
+        )
+        self._flat_mode_runner = FlatModeRunner(
+            repository=self._repository,
+            flat_worker=self._flat_worker,
+            flat_invariant_builder=self._flat_invariant_builder,
+            domain_plugin=self._domain_plugin,
+            default_worker_tool=config.default_worker_tool,
             progress_callback=self._progress_callback,
         )
         self._role_handlers = build_role_handlers(
@@ -339,7 +340,7 @@ class AgentExecutionService:
                 # leaks slots and the next caller's ``try_reserve`` fails
                 # spuriously with ``reservation_failed:total_agents``.
                 await self._release_pending_reservation(last_agent)
-                await self._handle_step_failure(agent_id, e)
+                await self._post_step.handle_step_failure(agent_id, e)
                 raise
 
     async def _release_pending_reservation(
@@ -458,176 +459,13 @@ class AgentExecutionService:
         )
 
     async def _run_flat_mode(self, root_agent_id: UUID) -> None:
-        """Dispatch the task directly to ``WorkerPort.run_task`` and finalize.
-
-        Skips BOSS/MANAGER decomposition entirely. The BOSS aggregate created
-        by ``create_boss_agent`` is treated as the worker: it transitions
-        ANALYZING -> IN_PROGRESS -> COMPLETED via synthetic worker events
-        carrying the ``WorkerResult`` outcome.
-        """
-        if self._flat_worker is None or self._flat_invariant_builder is None:
-            raise RuntimeError(
-                "orchestration.mode='flat' requires a WorkerPort and a "
-                "FlatInvariantBuilder to be wired by bootstrap"
-            )
-        if self._current_task is None:
-            raise RuntimeError(
-                "_run_flat_mode invoked before create_boss_agent populated the run state"
-            )
-        if self._working_directory is None:
-            raise RuntimeError(
-                "_run_flat_mode requires output_directory to be configured so a "
-                "run-scoped workspace can be materialized"
-            )
-
-        start_time = time.monotonic()
-        worker_context = None
-        if self._domain_plugin is not None:
-            worker_context = await self._domain_plugin.prepare_worker_execution(
-                root_id=root_agent_id,
-                agent_id=root_agent_id,
-                run_output_path=self._working_directory,
-                domain_context=self._current_domain_context,
-            )
-
-        try:
-            bundle = self._flat_invariant_builder(
-                task=self._current_task,
-                domain_context=self._current_domain_context,
-                run_dir=(
-                    Path(worker_context.working_directory)
-                    if worker_context is not None and worker_context.working_directory
-                    else self._working_directory
-                ),
-            )
-            if worker_context is not None and worker_context.task_context:
-                bundle = FlatModeBundle(
-                    spec=bundle.spec,
-                    tool_policy=bundle.tool_policy,
-                    timeouts=bundle.timeouts,
-                    workspace=bundle.workspace.model_copy(
-                        update={
-                            "extras": {
-                                **dict(bundle.workspace.extras),
-                                **dict(worker_context.task_context),
-                            }
-                        }
-                    ),
-                )
-
-            boss = await self._repository.load(root_agent_id)
-            tool_name = self._config.default_worker_tool
-
-            # Mirror the hierarchical worker's telemetry envelope and ordering so
-            # flat-mode runs are comparable to hierarchical worker runs in
-            # metrics scripts.
-            execution_started_at = time.monotonic()
-            operation_started_at = execution_started_at
-            boss.emit_execution_started(role=AgentRole.WORKER.value, depth=0)
-            boss.emit_operation_started(operation_type="worker_execution")
-            boss.start_worker_execution(tool_name)
-            boss.emit_prompt_sent(
-                prompt=bundle.spec.rendered_prompt,
-                prompt_type="worker_execution",
-                target=tool_name,
-            )
-            await self._repository.persist_events(boss, self._progress_callback)
-
-            try:
-                result = await self._flat_worker.run_task(
-                    run_id=root_agent_id,
-                    spec=bundle.spec,
-                    tool_policy=bundle.tool_policy,
-                    timeouts=bundle.timeouts,
-                    workspace=bundle.workspace,
-                )
-            except Exception as error:
-                logger.exception("flat-mode worker raised; failing run")
-                reloaded = await self._repository.load(root_agent_id)
-                reloaded.fail_with_reason(f"flat-mode worker error: {error!r}")
-                now = time.monotonic()
-                reloaded.emit_operation_finished(
-                    operation_type="worker_execution",
-                    duration_seconds=now - operation_started_at,
-                )
-                reloaded.emit_execution_finished(
-                    role=AgentRole.WORKER.value,
-                    status=reloaded.status.value,
-                    duration_seconds=now - execution_started_at,
-                )
-                await self._repository.persist_events(
-                    reloaded, self._progress_callback
-                )
-                await self._emit_run_completed(
-                    root_agent_id,
-                    start_time,
-                    status_override="failed",
-                )
-                return
-
-            reloaded = await self._repository.load(root_agent_id)
-            for event in result.events:
-                reloaded.apply_worker_event(event)
-            terminal_event = self._build_terminal_event(reloaded.agent_id, result)
-            reloaded.apply_worker_event(terminal_event)
-            now = time.monotonic()
-            reloaded.emit_operation_finished(
-                operation_type="worker_execution",
-                duration_seconds=now - operation_started_at,
-            )
-            reloaded.emit_execution_finished(
-                role=AgentRole.WORKER.value,
-                status=reloaded.status.value,
-                duration_seconds=now - execution_started_at,
-            )
-            await self._repository.persist_events(reloaded, self._progress_callback)
-
-            await self._emit_run_completed(
-                root_agent_id,
-                start_time,
-                status_override=self._classify_flat_run(result.exit_status),
-            )
-        finally:
-            if self._domain_plugin is not None:
-                await self._domain_plugin.cleanup_worker_execution(
-                    root_id=root_agent_id,
-                    agent_id=root_agent_id,
-                    domain_context=self._current_domain_context,
-                )
-
-    @staticmethod
-    def _build_terminal_event(
-        agent_id: UUID,
-        result: WorkerResult,
-    ) -> DomainEvent:
-        """Translate a ``WorkerResult`` into a ``WorkCompleted``/``WorkFailed`` event.
-
-        Sequence number is 0 — ``apply_worker_event`` rewrites it with the
-        aggregate's actual next sequence at apply time.
-        """
-        if result.exit_status == "completed":
-            payload = result.output_summary or "Flat-mode worker completed."
-            return WorkCompleted(
-                aggregate_id=agent_id,
-                sequence_number=0,
-                result=payload,
-            )
-
-        reason = result.output_summary or f"Flat-mode worker exit_status={result.exit_status}"
-        return WorkFailed(
-            aggregate_id=agent_id,
-            sequence_number=0,
-            reason=reason,
+        await self._flat_mode_runner.run(
+            root_agent_id=root_agent_id,
+            task=self._current_task,
+            domain_context=self._current_domain_context,
+            working_directory=self._working_directory,
+            emit_run_completed=self._emit_run_completed,
         )
-
-    @staticmethod
-    def _classify_flat_run(exit_status: str) -> str:
-        """Translate ``WorkerResult.exit_status`` into the ``RunCompleted.status`` value."""
-        if exit_status == "completed":
-            return "completed"
-        if exit_status == "timeout":
-            return "timed_out"
-        return "failed"
 
     async def _maybe_prime_manager_cache(self, new_agents: list[UUID]) -> bool:
         """Warm OpenAI's prompt cache for a newly-active batch of depth-1 managers.
@@ -996,112 +834,32 @@ class AgentExecutionService:
             domain_context=domain_context,
         )
 
-    def _get_run_metadata(self, domain_context: object | None) -> JsonObject | None:
-        if self._domain_plugin is None or domain_context is None:
-            return None
+    @property
+    def _working_directory(self) -> Path | None:
+        # Compatibility seam: run-scoped workspace state now lives in
+        # WorkspaceContextProvider; internal wiring and tests still read/write
+        # it through this attribute.
+        return self._workspace.working_directory
 
-        metadata = self._domain_plugin.get_run_metadata(domain_context)
-        return metadata or None
+    @_working_directory.setter
+    def _working_directory(self, value: Path | None) -> None:
+        self._workspace.working_directory = value
+
+    def _get_run_metadata(self, domain_context: object | None) -> JsonObject | None:
+        return self._workspace.get_run_metadata(domain_context)
 
     async def _setup_working_directory(
             self,
             root_id: UUID,
             domain_context: object | None = None,
     ) -> "PreparedRunWorkspace | None":
-        """Setup working directory for the run."""
-        if not self._config.output_directory:
-            return None
-
-        base_output = Path(self._config.output_directory).resolve()
-        base_output.mkdir(parents=True, exist_ok=True)
-
-        run_output_path = base_output / str(root_id)
-        run_output_path.mkdir(parents=True, exist_ok=True)
-
-        self._working_directory = run_output_path
-        if self._domain_plugin is None:
-            return None
-
-        prepared = await self._domain_plugin.prepare_run(
-            root_id=root_id,
-            run_output_path=run_output_path,
-            domain_context=domain_context,
-        )
-        if prepared is not None and prepared.working_directory:
-            self._working_directory = Path(prepared.working_directory)
-
-        self._configure_recon_workspace(prepared)
-        return prepared
-
-    def _configure_recon_workspace(
-        self,
-        prepared: "PreparedRunWorkspace | None",
-    ) -> None:
-        if self._recon_tool is None or self._working_directory is None:
-            return
-
-        set_wd = getattr(self._recon_tool, "set_working_directory", None)
-        if callable(set_wd):
-            set_wd(str(self._working_directory))
-
-        set_aliases = getattr(self._recon_tool, "set_path_aliases", None)
-        if callable(set_aliases):
-            aliases = prepared.path_aliases if prepared is not None else ()
-            set_aliases(aliases)
-
-        logger.info("Recon tools targeting: %s", self._working_directory)
-
-    # Top-level directories that contain the target project source tree.
-    # Workers access source code inside their container, not via the
-    # workspace listing, so including these would bloat the prompt with
-    # tens of thousands of irrelevant paths.
-    _WORKSPACE_SKIP_DIRS: frozenset[str] = frozenset({"src"})
+        return await self._workspace.setup_working_directory(root_id, domain_context)
 
     def _get_workspace_context(self) -> str | None:
-        """Return fresh file listing for workspace.
-
-        Always scans fresh so workers can see files created by other workers.
-        With ``workspace_listing_dirs`` set, only those top-level directories
-        are listed (artifact discovery without build-tree noise: an out-of-tree
-        CMake build under work/ alone is ~650 object/Makefile entries). The
-        legacy mode skips just the source tree (``src/``), which is accessed
-        inside the container — only worker-produced artifacts matter here.
-        """
-        if self._working_directory is None or not self._working_directory.exists():
-            return None
-
-        include_dirs = self._config.workspace_listing_dirs
-
-        try:
-            files = []
-            for item in self._working_directory.rglob("*"):
-                if any(part.startswith(".") for part in item.parts):
-                    continue
-                rel_path = item.relative_to(self._working_directory)
-                if not rel_path.parts:
-                    continue
-                if include_dirs is not None:
-                    if rel_path.parts[0] not in include_dirs:
-                        continue
-                elif rel_path.parts[0] in self._WORKSPACE_SKIP_DIRS:
-                    continue
-                if item.is_file():
-                    files.append(str(rel_path))
-
-            if not files:
-                return None
-
-            files.sort()
-            max_entries = self._config.workspace_listing_max_entries
-            if max_entries is not None and len(files) > max_entries:
-                overflow = len(files) - max_entries
-                files = [*files[:max_entries], f"… (+{overflow} more files)"]
-            return "\n".join(f"- {f}" for f in files)
-        except OSError:
-            return None
+        return self._workspace.get_workspace_context()
 
     def _get_working_directory_str(self) -> str | None:
-        return str(self._working_directory) if self._working_directory else None
+        return self._workspace.get_working_directory_str()
 
     def _create_boss_session(self, root_id: UUID, task_description: str) -> AgentSession:
         boss_cfg = self._config.boss_config
@@ -1163,148 +921,4 @@ class AgentExecutionService:
     async def _handle_post_step(
             self, agent: AgentSession, events: list[DomainEvent]
     ) -> None:
-        child_events = [e for e in events if isinstance(e, ChildSpawned)]
-        if child_events:
-            await self._child_factory.create_children_from_events(
-                child_events, agent.agent_id
-            )
-            # The factory's ``commit_reservation`` has now moved the
-            # reserved slots into ``_total_created`` for these children;
-            # clear the in-memory marker so a later failure path on the
-            # same aggregate cannot double-release the slot count.
-            agent.pending_reservation = 0
-
-        if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
-            await self._process_worker_context_updates(agent)
-
-        if agent.status == AgentStatus.COMPLETED:
-            await self._parent_notifier.notify_if_complete(agent)
-            return
-
-        if agent.status == AgentStatus.FAILED:
-            # A crashed worker (no verification feedback) otherwise carries no
-            # retry context. Capture a deterministic digest of the failed attempt
-            # so the retry — and, on propagation, the parent — sees why it failed.
-            # Best-effort: a digest-build error must never block the failure path.
-            if (
-                agent.role == AgentRole.WORKER
-                and not agent.verification_feedback
-                and agent.failure_digest is None
-            ):
-                try:
-                    digest = build_failure_digest(agent)
-                except Exception:
-                    logger.warning(
-                        "Failed to build failure digest for agent %s",
-                        agent.agent_id,
-                        exc_info=True,
-                    )
-                else:
-                    agent.record_failure_digest(digest, source="worker_crash")
-                    await self._repository.persist_events(agent, self._progress_callback)
-
-            # Escalation ladder: a failed procedural attempt gets exactly one
-            # guaranteed agentic retry (dispatch routes it agentic via
-            # last_attempt_procedural), carrying the procedure's digest.
-            if (
-                agent.role == AgentRole.WORKER
-                and agent.last_attempt_procedural
-                and agent.retry_count == 0
-            ):
-                agent.schedule_retry(
-                    reason=f"Procedural attempt failed: {agent.error_message}"
-                )
-                await self._repository.persist_events(agent, self._progress_callback)
-                return
-
-            # Worker retry: up to verification_max_retries with judge feedback or
-            # crash digest as the injected context.
-            if await self._maybe_retry_worker(agent):
-                return
-
-            retried = await self._retry_policy.maybe_schedule_retry(agent)
-            if retried:
-                return  # Agent re-queued for execution, don't notify parent
-
-            await self._parent_notifier.notify_if_failed(agent)
-
-    async def _maybe_retry_worker(self, agent: AgentSession) -> bool:
-        """Retry a worker that failed verification or crashed, with feedback/digest context.
-
-        Returns True if a retry was scheduled (caller should not notify parent).
-        """
-        if agent.role != AgentRole.WORKER:
-            return False
-
-        if not (agent.verification_feedback or agent.failure_digest):
-            return False
-
-        if agent.retry_count >= self._config.verification_max_retries:
-            return False
-
-        reason = agent.error_message or "Verification failed"
-        agent.schedule_retry(reason=reason, escalated_model=None)
-
-        await self._repository.persist_events(
-            agent, self._progress_callback
-        )
-        logger.info(
-            "Worker retry %d/%d for agent %s: %s",
-            agent.retry_count,
-            self._config.verification_max_retries,
-            agent.agent_id,
-            agent.verification_feedback or agent.failure_digest,
-        )
-        return True
-
-    async def _process_worker_context_updates(self, agent: AgentSession) -> None:
-        if agent.result is None:
-            return
-
-        parsed = parse_context_update(agent.result)
-        if parsed is None:
-            return
-
-        root_id = self._limits_registry.get_root_id(agent.agent_id)
-        context = await self._shared_context_port.get(root_id)
-        if context is None:
-            return
-
-        current_version = context.version
-
-        for decision in parsed.decisions:
-            context.record_decision(
-                decision_key=decision.key,
-                decision_value=decision.value,
-                rationale=decision.rationale,
-                decided_by=agent.agent_id,
-            )
-
-        for output in parsed.artifacts:
-            context.store_artifact(
-                key=output.key,
-                content_type="text/plain",
-                stored_by=agent.agent_id,
-                content=output.description,
-            )
-
-        if context.events:
-            await self._shared_context_port.save(context, expected_version=current_version)
-            context.mark_changes_as_committed()
-
-    async def _handle_step_failure(self, agent_id: UUID, error: Exception) -> None:
-        try:
-            agent = await self._repository.load_if_exists(agent_id)
-            if agent is None:
-                return
-
-            agent.fail_with_reason(f"Execution error: {error!r}")
-            await self._repository.persist_events(
-                agent, self._progress_callback
-            )
-
-            await self._parent_notifier.notify_if_failed(agent)
-        except Exception as persist_error:
-            raise RuntimeError(
-                f"Failed to persist error state for agent {agent_id}: {persist_error!r}"
-            ) from error
+        await self._post_step.handle_post_step(agent, events)

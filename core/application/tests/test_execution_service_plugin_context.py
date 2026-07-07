@@ -21,6 +21,9 @@ from core.application.services import (
     ParentNotificationService,
     PromptBuilder,
 )
+from core.application.services.orchestration.workspace_context import (
+    WorkspaceContextProvider,
+)
 from core.domain.aggregates.agent_session import AgentRole, AgentSession
 from core.domain.events.events import (
     AgentCreated,
@@ -154,24 +157,19 @@ async def test_setup_working_directory_configures_recon_path_aliases(
         path_aliases=aliases,
     )
     recon_tool = CapturingReconTool()
-    service = object.__new__(AgentExecutionService)
-    service._config = ServiceConfig(
-        max_retries=3,
-        poll_interval=0.5,
+    provider = WorkspaceContextProvider(
         output_directory=str(tmp_path),
-        default_worker_tool="claude_code",
-        boss_config=BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-        manager_config=ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
+        workspace_listing_dirs=None,
+        workspace_listing_max_entries=None,
+        domain_plugin=domain_plugin,
+        recon_tool=recon_tool,
     )
-    service._domain_plugin = domain_plugin
-    service._recon_tool = recon_tool
-    service._working_directory = None
 
     # When:
-    await service._setup_working_directory(root_id, domain_context=None)
+    await provider.setup_working_directory(root_id, domain_context=None)
 
     # Then:
-    assert service._working_directory == run_root
+    assert provider.working_directory == run_root
     assert recon_tool.working_directory == str(run_root)
     assert recon_tool.path_aliases == aliases
     domain_plugin.prepare_run.assert_awaited_once()
