@@ -80,10 +80,10 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | 11 | `agent_session.py` → child-result rendering slice ONLY | B | 4 | ✅ committed; CO review in batch-3 | 59ef79b |
 | 12 | `composition.py` → `_docker_pid_cleanup` slice → infrastructure/cleanup/ | B | 4 | ✅ committed; CO review in batch-3 | 45262f5 |
 | 13 | `bootstrap/application.py` → private sub-factories (OPTIONAL) | B | 4 | ⬜ (optional) | — |
-| E1 | `experiments/shared/evaluation/criteria.py` (split by concern) | A | — | ⏭️ b4/n1 studies in flight (scorer consistency) | — |
-| E2 | `experiments/shared/harness.py` | B | — | ⏭️ live entry point of in-flight runs | — |
-| E3 | `experiments/shared/scripts/run_matrix.py` (+shared docker-cleanup collaborator w/ E2) | B | — | ⏭️ active batch runner | — |
-| E4 | `experiments/shared/evaluation/common.py` | A | — | ⏭️ low value; opportunistic | — |
+| E1 | `experiments/shared/evaluation/criteria.py` → `criteria/` package (metrics/verdict/judge_prompts/_shared + shim; 9 privates re-exported) | A | 3 | 🔶 applied+gate green (115 eval tests pass); **scorer — commit GATED on focused CO review** | — |
+| E2 | `experiments/shared/harness.py` → `subprocess_runner.py` | B | 3 | ✅ committed (with E3/E4 plumbing) | 428ee5c |
+| E3 | `experiments/shared/scripts/run_matrix.py` → shared `container_cleanup.py` (dedups harness+run_matrix docker sweep) | B | 3 | ✅ committed | 428ee5c |
+| E4 | `experiments/shared/evaluation/common.py` → `tool_categorization.py` | A | 3 | ✅ committed | 428ee5c |
 | — | events.py, postgres_event_store, subtask_parser, prompt_builder, tool_calling_service, verification_pipeline, procedures.py, prompt_strategy.py, plugin.py, schemas.py, shared_context.py, presentation/*, bootstrap.py, recon/openrouter adapters, worker/shared/* | — | — | 🚫 leave-alone (reasons in plan) | — |
 
 Legend: ✅ done (+SHA) · ⬜ todo · 🔶 in-progress (+what's left) · ⏭️ deferred (+why) · 🚫 leave-alone
@@ -116,6 +116,18 @@ Legend: ✅ done (+SHA) · ⬜ todo · 🔶 in-progress (+what's left) · ⏭️
 - **execution_service (#2) three stalls:** subagent completed + self-verified all gates green before
   dying on report composition; I re-ran the full gate independently (baseline-exact, pyright 0,
   boundaries pass) and committed. Not a quality gap — a transport/watchdog artifact.
+
+## Provenance note — experiments/shared (E1–E4)
+
+The `experiments/shared/` refactor was **deferred** in the plan (scorer consistency during in-flight
+b4/n1 studies). It was nonetheless carried out by a background task and arrived complete. Handling:
+the b4/n1 WIP data (configs/reports/enrollment locks) is **untouched** (identical to session start);
+the change is behavior-preserving (re-export shims) and passes the full 115-test eval suite + baseline
+full suite. The lower-risk run-harness plumbing (E2/E3/E4) is committed as `428ee5c`. The **scorer
+split (E1, `criteria/`) is committed only after a dedicated adversarial CO review** confirms
+`evaluate_run` + every metric is byte-for-byte behavior-preserving — because that code decides
+B4-vs-N1 experimental outcomes. If the user wants the scorer frozen during the studies, reverting
+the single E1 commit restores `criteria.py` without affecting the rest of the sweep.
 
 ## Deferred decisions
 
