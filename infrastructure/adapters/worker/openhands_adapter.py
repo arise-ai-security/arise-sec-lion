@@ -7,32 +7,33 @@ import os
 import re
 import signal
 import subprocess
-import threading
 import time as _time
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from time import time
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
-from core.domain.events.events import (
-    DomainEvent,
-    WorkerCostItem,
-    WorkerResponseLatencyItem,
-    WorkerTokenUsageItem,
-    WorkerUsageMetrics,
-)
-from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
+from core.domain.events.events import DomainEvent
 from infrastructure.adapters.worker.shared_code_context import SharedCodeContextProvider
 from infrastructure.cleanup.registry import _pid_alive
 
 from .base import WorkerAdapterBase
+from .openhands_container_tools import _ensure_container_aware_openhands_tools_registered
+from .openhands_cost import make_cost_recorded_event
+from .openhands_events import (
+    classify_event,
+    extract_event_content,
+    extract_finish_message,
+    extract_result,
+    iter_conversation_events,
+    make_completed_event,
+    observation_text,
+    sdk_event_to_thought,
+)
 from .shared import (
     ContainerSessionContext,
     EventSequencer,
-    UsageBreakdown,
-    emit_cost,
     to_openhands_mcp_config,
 )
 from .shared.errors import describe_error
@@ -74,8 +75,6 @@ _FILE_EDIT_COMMANDS = frozenset({"str_replace", "create", "insert", "undo_edit"}
 # directory. Used to keep directory snapshots out of the shared code block —
 # they go stale on the next file write and duplicate the workspace listing.
 _DIRECTORY_LISTING_VIEW_PREFIX = "Here's the files and directories up to"
-_CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = False
-_CONTAINER_AWARE_OPENHANDS_TOOLS_LOCK = threading.Lock()
 _TRAILING_PORT_DOT_PATTERN = re.compile(r":(?P<port>\d+)\.(?=$|/)")
 
 
@@ -86,231 +85,6 @@ def _normalize_base_url(base_url: str | None) -> str | None:
     if not stripped:
         return None
     return _TRAILING_PORT_DOT_PATTERN.sub(r":\g<port>", stripped)
-
-
-def _container_session_from_tool_params(
-    container_session: object,
-) -> ContainerSessionContext | None:
-    if not isinstance(container_session, dict):
-        return None
-    try:
-        return ContainerSessionContext.from_task_context({"container_session": container_session})
-    except (KeyError, TypeError, ValueError):
-        logger.warning(
-            "Ignoring invalid OpenHands container_session tool params",
-            exc_info=True,
-        )
-        return None
-
-
-def _map_openhands_action_paths(
-    action: Any,
-    container_session: ContainerSessionContext,
-) -> Any:
-    updates: dict[str, str] = {}
-    path = getattr(action, "path", None)
-    if isinstance(path, str):
-        mapped_path = container_session.map_container_path(path)
-        if mapped_path != path:
-            updates["path"] = mapped_path
-
-    if action.__class__.__name__ == "GlobAction":
-        pattern = getattr(action, "pattern", None)
-        if isinstance(pattern, str):
-            mapped_pattern = container_session.map_container_path(pattern)
-            if mapped_pattern != pattern:
-                updates["pattern"] = mapped_pattern
-
-    if not updates:
-        return action
-
-    model_copy = getattr(action, "model_copy", None)
-    if callable(model_copy):
-        return model_copy(update=updates)
-    for key, value in updates.items():
-        setattr(action, key, value)
-    return action
-
-
-def _replace_host_paths(
-    text: str,
-    container_session: ContainerSessionContext,
-) -> str:
-    return container_session.path_mapper.replace_host_paths(text)
-
-
-def _sanitize_openhands_observation_paths(
-    value: Any,
-    container_session: ContainerSessionContext,
-) -> Any:
-    return container_session.path_mapper.sanitize_host_paths(value)
-
-
-def _maybe_idempotent_file_create_observation(
-    action: Any,
-    container_session: ContainerSessionContext,
-) -> Any | None:
-    if getattr(action, "command", None) != "create":
-        return None
-    path = getattr(action, "path", None)
-    file_text = getattr(action, "file_text", None)
-    if not isinstance(path, str) or not isinstance(file_text, str):
-        return None
-
-    file_path = Path(path)
-    if not file_path.is_file():
-        return None
-    try:
-        current = file_path.read_text()
-    except UnicodeDecodeError:
-        return None
-    if current != file_text:
-        return None
-
-    from openhands.sdk.llm.message import TextContent
-    from openhands.tools.file_editor.definition import FileEditorObservation
-
-    container_path = _replace_host_paths(path, container_session)
-    return FileEditorObservation(
-        command="create",
-        path=container_path,
-        prev_exist=True,
-        old_content=current,
-        new_content=current,
-        content=[
-            TextContent(text=f"File already exists with identical content at: {container_path}")
-        ],
-    )
-
-
-def _ensure_container_aware_openhands_tools_registered() -> None:
-    global _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED
-    if _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED:
-        return
-    with _CONTAINER_AWARE_OPENHANDS_TOOLS_LOCK:
-        if _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED:
-            return
-        _register_container_aware_openhands_tools()
-        _CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED = True
-
-
-def _register_container_aware_openhands_tools() -> None:
-    from openhands.sdk.tool import register_tool
-    from openhands.sdk.tool.tool import ToolExecutor
-    from openhands.tools.file_editor import FileEditorTool
-    from openhands.tools.glob import GlobTool
-    from openhands.tools.grep import GrepTool
-
-    class _PathMappingOpenHandsExecutor(ToolExecutor[Any, Any]):
-        def __init__(
-            self,
-            delegate: ToolExecutor[Any, Any],
-            container_session: ContainerSessionContext,
-        ) -> None:
-            self._delegate = delegate
-            self._container_session = container_session
-
-        def __call__(self, action: Any, conversation: Any | None = None) -> Any:
-            mapped_action = _map_openhands_action_paths(
-                action,
-                self._container_session,
-            )
-            idempotent_observation = _maybe_idempotent_file_create_observation(
-                mapped_action,
-                self._container_session,
-            )
-            if idempotent_observation is not None:
-                return idempotent_observation
-            observation = self._delegate(mapped_action, conversation)
-            return _sanitize_openhands_observation_paths(
-                observation,
-                self._container_session,
-            )
-
-        def close(self) -> None:
-            self._delegate.close()
-
-    def _wrap_native_tools(
-        tools: Any,
-        container_session: ContainerSessionContext,
-    ) -> list[Any]:
-        wrapped_tools: list[Any] = []
-        for tool in tools:
-            if tool.executor is None:
-                wrapped_tools.append(tool)
-                continue
-            # Only the executor is swapped (it maps paths at call time). The
-            # tool.description is left byte-identical across container sessions
-            # so the static tool schema stays prompt-cacheable; the container
-            # paths reach the agent via the task-description prefix instead
-            # (see _prepare_task_description -> apply_task_prefix).
-            wrapped_tools.append(
-                tool.model_copy(
-                    update={
-                        "executor": _PathMappingOpenHandsExecutor(
-                            tool.executor,
-                            container_session,
-                        ),
-                    }
-                )
-            )
-        return wrapped_tools
-
-    class _ContainerAwareFileEditorTool(FileEditorTool):
-        name = FileEditorTool.name
-
-        @classmethod
-        def create(
-            cls,
-            conv_state: Any,
-            container_session: object = None,
-        ) -> list[Any]:
-            parsed_session = _container_session_from_tool_params(container_session)
-            tools = FileEditorTool.create(conv_state)
-            if parsed_session is None:
-                return list(tools)
-            return _wrap_native_tools(tools, parsed_session)
-
-    class _ContainerAwareGlobTool(GlobTool):
-        name = GlobTool.name
-
-        @classmethod
-        def create(
-            cls,
-            conv_state: Any,
-            container_session: object = None,
-        ) -> list[Any]:
-            parsed_session = _container_session_from_tool_params(container_session)
-            tools = GlobTool.create(conv_state)
-            if parsed_session is None:
-                return list(tools)
-            return _wrap_native_tools(tools, parsed_session)
-
-    class _ContainerAwareGrepTool(GrepTool):
-        name = GrepTool.name
-
-        @classmethod
-        def create(
-            cls,
-            conv_state: Any,
-            container_session: object = None,
-        ) -> list[Any]:
-            parsed_session = _container_session_from_tool_params(container_session)
-            tools = GrepTool.create(conv_state)
-            if parsed_session is None:
-                return list(tools)
-            return _wrap_native_tools(tools, parsed_session)
-
-    # OpenHands pre-registers these native names; replacing them here is intentional.
-    registry_logger = logging.getLogger("openhands.sdk.tool.registry")
-    previous_level = registry_logger.level
-    registry_logger.setLevel(max(previous_level, logging.ERROR))
-    try:
-        register_tool(FileEditorTool.name, _ContainerAwareFileEditorTool)
-        register_tool(GlobTool.name, _ContainerAwareGlobTool)
-        register_tool(GrepTool.name, _ContainerAwareGrepTool)
-    finally:
-        registry_logger.setLevel(previous_level)
 
 
 def _snapshot_child_pids() -> set[int]:
@@ -351,33 +125,6 @@ class _ConversationLike(Protocol):
     def send_message(self, message: str) -> None: ...
 
     def run(self) -> object: ...
-
-
-SDK_EVENT_TYPE_MAP: dict[str, str] = {
-    "ActionEvent": "tool_use",
-    "AgentThinkAction": "thinking",
-    "MessageEvent": "output",
-    "ObservationEvent": "tool_result",
-    "CmdRunObservation": "tool_result",
-    "AgentErrorEvent": "output",
-    "FileReadAction": "tool_use",
-    "FileWriteAction": "tool_use",
-    "FileEditAction": "tool_use",
-}
-
-
-@dataclass(slots=True)
-class OpenHandsCostData:
-    """Normalized OpenHands cost data used to build WorkerCostRecorded events."""
-
-    cost_usd: float = 0.0
-    tokens: int | None = None
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    cache_read_tokens: int | None = None
-    cache_write_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    usage_metrics: list[WorkerUsageMetrics] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -651,7 +398,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 except asyncio.TimeoutError:
                     continue
                 seen_event_ids.add(_event_dedup_key(sdk_event))
-                if thought := self._sdk_event_to_thought(sdk_event, sequencer):
+                if thought := sdk_event_to_thought(sdk_event, sequencer):
                     yield thought
                 async for captured in self._capture_file_tool(sdk_event, capture):
                     yield captured
@@ -660,7 +407,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             while not event_queue.empty():
                 sdk_event = event_queue.get_nowait()
                 seen_event_ids.add(_event_dedup_key(sdk_event))
-                if thought := self._sdk_event_to_thought(sdk_event, sequencer):
+                if thought := sdk_event_to_thought(sdk_event, sequencer):
                     yield thought
                 async for captured in self._capture_file_tool(sdk_event, capture):
                     yield captured
@@ -674,23 +421,25 @@ class OpenHandsAdapter(WorkerAdapterBase):
             # Fallback: yield any events that landed in ``state.events`` but never
             # came through the callback path (test fakes, SDK quirks, terminal
             # events emitted post-callback). Dedup by object identity.
-            for sdk_event in self._iter_conversation_events(conversation):
+            for sdk_event in iter_conversation_events(conversation):
                 if _event_dedup_key(sdk_event) in seen_event_ids:
                     continue
-                if thought := self._sdk_event_to_thought(sdk_event, sequencer):
+                if thought := sdk_event_to_thought(sdk_event, sequencer):
                     yield thought
                 async for captured in self._capture_file_tool(sdk_event, capture):
                     yield captured
 
-            finish_message = self._extract_finish_message(conversation)
-            yield self._make_cost_recorded_event(
+            finish_message = extract_finish_message(conversation)
+            yield make_cost_recorded_event(
                 conversation,
                 sequencer,
-                started_at,
+                tool_name=self._get_tool_name(),
+                model=self.model,
+                duration_seconds=time() - started_at,
                 container_id=container_session.container_id if container_session else None,
                 conversation_id=conversation_identity,
             )
-            yield self._make_completed_event(
+            yield make_completed_event(
                 conversation,
                 working_dir,
                 finish_message,
@@ -798,35 +547,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
             mcp_child_pids=conversation_run.current_child_pids(),
         )
 
-    def _iter_conversation_domain_events(
-        self,
-        conversation: _ConversationLike,
-        sequencer: EventSequencer,
-    ) -> Iterator[DomainEvent]:
-        for sdk_event in self._iter_conversation_events(conversation):
-            if thought_event := self._sdk_event_to_thought(sdk_event, sequencer):
-                yield thought_event
-
-    def _extract_finish_message(self, conversation: _ConversationLike) -> str | None:
-        for sdk_event in self._iter_conversation_events(conversation):
-            finish_message = self._try_extract_finish(sdk_event)
-            if finish_message is not None:
-                return finish_message
-        return None
-
-    def _sdk_event_to_thought(
-        self,
-        sdk_event: Any,
-        sequencer: EventSequencer,
-    ) -> DomainEvent | None:
-        content = self._extract_event_content(sdk_event)
-        if not content or not content.strip():
-            return None
-
-        output_type = self._classify_event(sdk_event)
-        tool_name = self._extract_tool_name(sdk_event) if output_type == "tool_use" else None
-        return sequencer.thought(content.strip(), output_type, tool_name=tool_name)
-
     def _setup_shared_code_capture(
         self,
         agent_id: UUID,
@@ -877,7 +597,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
         try:
             if command in _FILE_VIEW_COMMANDS:
-                content = self._observation_text(observation)
+                content = observation_text(observation)
                 if content and not self._is_skipped_directory_listing(content):
                     await capture.port.record_view(
                         capture.root_id, capture.agent_id, path, content
@@ -897,34 +617,6 @@ class OpenHandsAdapter(WorkerAdapterBase):
             _DIRECTORY_LISTING_VIEW_PREFIX
         )
 
-    def _make_cost_recorded_event(
-        self,
-        conversation: _ConversationLike,
-        sequencer: EventSequencer,
-        started_at: float,
-        *,
-        container_id: str | None = None,
-        conversation_id: str | None = None,
-    ) -> DomainEvent:
-        cost_data = self._extract_cost_data(conversation)
-        return emit_cost(
-            sequencer,
-            tool_name=self._get_tool_name(),
-            duration_seconds=time() - started_at,
-            model=self._resolve_cost_model(cost_data),
-            breakdown=UsageBreakdown(
-                prompt_tokens=cost_data.prompt_tokens,
-                completion_tokens=cost_data.completion_tokens,
-                cache_read_tokens=cost_data.cache_read_tokens,
-                cache_write_tokens=cost_data.cache_write_tokens,
-                reasoning_tokens=cost_data.reasoning_tokens,
-                cost_usd=cost_data.cost_usd,
-            ),
-            usage_metrics=cost_data.usage_metrics,
-            container_id=container_id,
-            conversation_id=conversation_id,
-        )
-
     def _make_completed_event(
         self,
         conversation: _ConversationLike,
@@ -933,13 +625,9 @@ class OpenHandsAdapter(WorkerAdapterBase):
         sequencer: EventSequencer,
         container_session: ContainerSessionContext | None = None,
     ) -> DomainEvent:
-        result = self._extract_result(conversation, working_dir, finish_message)
-        if container_session is not None:
-            # Observations are sanitized at the tool layer, but transcript tails
-            # that bypass it (e.g. directory views) can still carry host paths
-            # into the result — and from there into sibling prompts.
-            result = _replace_host_paths(result, container_session)
-        return sequencer.completed(result)
+        return make_completed_event(
+            conversation, working_dir, finish_message, sequencer, container_session
+        )
 
     def _build_conversation(
         self,
@@ -1157,256 +845,13 @@ class OpenHandsAdapter(WorkerAdapterBase):
             return None
         return dict(servers)
 
-    def _iter_conversation_events(self, conversation: Any) -> list[Any]:
-        state = getattr(conversation, "state", None)
-        if state is None or not hasattr(state, "events"):
-            return []
-        return list(state.events)
-
-    def _extract_cost_data(self, conversation: Any) -> OpenHandsCostData:
-        stats = getattr(conversation, "conversation_stats", None)
-        if stats is None:
-            return OpenHandsCostData()
-
-        usage_to_metrics = self._get_stat(stats, "usage_to_metrics")
-        return (
-            self._extract_usage_metrics(usage_to_metrics)
-            if usage_to_metrics
-            else OpenHandsCostData()
-        )
-
-    def _extract_usage_metrics(self, usage_to_metrics: Any) -> OpenHandsCostData:
-        items = usage_to_metrics.items() if isinstance(usage_to_metrics, dict) else []
-        usage_metrics: list[WorkerUsageMetrics] = []
-        total_cost = 0.0
-        prompt_tokens = 0
-        completion_tokens = 0
-        cache_read_tokens = 0
-        cache_write_tokens = 0
-        reasoning_tokens = 0
-
-        for usage_id, metrics in items:
-            usage_metric = self._build_usage_metrics(str(usage_id), metrics)
-            usage_metrics.append(usage_metric)
-            total_cost += usage_metric.accumulated_cost_usd
-            prompt_tokens += usage_metric.prompt_tokens
-            completion_tokens += usage_metric.completion_tokens
-            cache_read_tokens += usage_metric.cache_read_tokens
-            cache_write_tokens += usage_metric.cache_write_tokens
-            reasoning_tokens += usage_metric.reasoning_tokens
-
-        if not usage_metrics:
-            return OpenHandsCostData()
-
-        return OpenHandsCostData(
-            cost_usd=total_cost,
-            tokens=UsageBreakdown(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                cache_read_tokens=cache_read_tokens,
-                cache_write_tokens=cache_write_tokens,
-                reasoning_tokens=reasoning_tokens,
-            ).tokens,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-            reasoning_tokens=reasoning_tokens,
-            usage_metrics=usage_metrics,
-        )
-
-    def _build_usage_metrics(self, usage_id: str, metrics: Any) -> WorkerUsageMetrics:
-        """Normalize one Metrics or MetricsSnapshot record into event payload data."""
-        model = self._get_stat(metrics, "model_name")
-        accumulated_cost = float(self._get_stat(metrics, "accumulated_cost", 0.0) or 0.0)
-        (
-            prompt_tokens,
-            completion_tokens,
-            cache_read_tokens,
-            cache_write_tokens,
-            reasoning_tokens,
-        ) = self._extract_accumulated_token_usage(metrics)
-
-        return WorkerUsageMetrics(
-            usage_id=usage_id,
-            model=model,
-            accumulated_cost_usd=accumulated_cost,
-            prompt_tokens=prompt_tokens or 0,
-            completion_tokens=completion_tokens or 0,
-            cache_read_tokens=cache_read_tokens or 0,
-            cache_write_tokens=cache_write_tokens or 0,
-            reasoning_tokens=reasoning_tokens or 0,
-            cost_items=[
-                WorkerCostItem(
-                    model=self._get_stat(cost, "model", "") or model or "",
-                    cost_usd=float(
-                        self._get_stat(cost, "cost_usd", self._get_stat(cost, "cost", 0.0)) or 0.0
-                    ),
-                    timestamp=self._maybe_float(self._get_stat(cost, "timestamp")),
-                )
-                for cost in self._get_stat(metrics, "costs", []) or []
-            ],
-            response_latencies=[
-                WorkerResponseLatencyItem(
-                    model=self._get_stat(latency, "model", "") or model or "",
-                    latency_seconds=float(self._get_stat(latency, "latency", 0.0) or 0.0),
-                    response_id=str(self._get_stat(latency, "response_id", "") or ""),
-                )
-                for latency in self._get_stat(metrics, "response_latencies", []) or []
-            ],
-            token_usages=[
-                WorkerTokenUsageItem(
-                    model=self._get_stat(token_usage, "model", "") or model or "",
-                    prompt_tokens=int(self._get_stat(token_usage, "prompt_tokens", 0) or 0),
-                    completion_tokens=int(self._get_stat(token_usage, "completion_tokens", 0) or 0),
-                    cache_read_tokens=int(self._get_stat(token_usage, "cache_read_tokens", 0) or 0),
-                    cache_write_tokens=int(
-                        self._get_stat(token_usage, "cache_write_tokens", 0) or 0
-                    ),
-                    reasoning_tokens=int(self._get_stat(token_usage, "reasoning_tokens", 0) or 0),
-                    context_window=int(self._get_stat(token_usage, "context_window", 0) or 0),
-                    per_turn_token=int(self._get_stat(token_usage, "per_turn_token", 0) or 0),
-                    response_id=str(self._get_stat(token_usage, "response_id", "") or ""),
-                )
-                for token_usage in self._get_stat(metrics, "token_usages", []) or []
-            ],
-        )
-
-    def _extract_accumulated_token_usage(
-        self,
-        stats: Any,
-    ) -> tuple[int | None, int | None, int | None, int | None, int | None]:
-        accumulated = self._get_stat(stats, "accumulated_token_usage")
-        if accumulated is not None:
-            return (
-                self._maybe_int(self._get_stat(accumulated, "prompt_tokens")),
-                self._maybe_int(self._get_stat(accumulated, "completion_tokens")),
-                self._maybe_int(self._get_stat(accumulated, "cache_read_tokens")),
-                self._maybe_int(self._get_stat(accumulated, "cache_write_tokens")),
-                self._maybe_int(self._get_stat(accumulated, "reasoning_tokens")),
-            )
-
-        return (
-            self._maybe_int(self._get_stat(stats, "prompt_tokens")),
-            self._maybe_int(self._get_stat(stats, "completion_tokens")),
-            self._maybe_int(self._get_stat(stats, "cache_read_tokens")),
-            self._maybe_int(self._get_stat(stats, "cache_write_tokens")),
-            self._maybe_int(self._get_stat(stats, "reasoning_tokens")),
-        )
-
-    def _resolve_cost_model(self, cost_data: OpenHandsCostData) -> str | None:
-        usage_models = {usage.model for usage in cost_data.usage_metrics if usage.model}
-        if len(usage_models) == 1:
-            return next(iter(usage_models))
-        return self.model
-
-    @staticmethod
-    def _get_stat(obj: Any, name: str, default: Any = None) -> Any:
-        """Read an attribute or dict key without assuming an SDK object shape."""
-        if isinstance(obj, dict):
-            return obj.get(name, default)
-        return getattr(obj, name, default)
-
-    @staticmethod
-    def _maybe_int(value: Any) -> int | None:
-        """Normalize optional numeric values to integers."""
-        if value is None:
-            return None
-        return int(value)
-
-    @staticmethod
-    def _maybe_float(value: Any) -> float | None:
-        """Normalize optional numeric values to floats."""
-        if value is None:
-            return None
-        return float(value)
-
-    _EVENT_TEXT_LIMIT = 600
-
     def _extract_result(
         self,
         conversation: Any,
         working_dir: str,
         finish_message: str | None = None,
     ) -> str:
-        """Build a compact command log from ALL conversation events.
-
-        Instead of dumping raw SDK repr for a few events, this creates a
-        structured ``$ command (exit N)`` + truncated output summary for
-        every output event. The verification judge can then see the full
-        execution timeline at a glance.
-        """
-        entries: list[str] = []
-        for event in self._iter_conversation_events(conversation):
-            if self._classify_event(event) not in {"output", "tool_result"}:
-                continue
-            summary = self._compact_observation(event)
-            if summary:
-                entries.append(summary)
-
-        parts: list[str] = []
-        if entries:
-            parts.extend(entries)
-        if finish_message:
-            parts.append(f"{WORKER_CONCLUSION_MARKER}\n{finish_message}")
-        if parts:
-            return "\n".join(parts)
-        return f"Task completed in workspace: {working_dir}"
-
-    @classmethod
-    def _compact_observation(cls, event: Any) -> str | None:
-        """Extract command, exit code, and truncated text from an SDK event."""
-        obs = getattr(event, "observation", None)
-        if obs is None:
-            raw = cls._extract_event_content(event)
-            if not raw:
-                return None
-            return cls._truncate_text(raw, cls._EVENT_TEXT_LIMIT)
-
-        cmd = getattr(obs, "command", "") or ""
-        metadata = getattr(obs, "metadata", None)
-        exit_code = getattr(metadata, "exit_code", None) if metadata else None
-        text = cls._observation_text(obs)
-
-        header = f"$ {cmd} (exit {exit_code})" if cmd else ""
-        if text:
-            text = cls._truncate_text(text, cls._EVENT_TEXT_LIMIT)
-
-        if header and text:
-            return f"{header}\n{text}"
-        return header or text or None
-
-    @staticmethod
-    def _observation_text(obs: Any) -> str:
-        content = getattr(obs, "content", None)
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            for item in content:
-                text = getattr(item, "text", None)
-                if text:
-                    return str(text)
-        return str(content)
-
-    @staticmethod
-    def _truncate_text(text: str, limit: int) -> str:
-        """Head+tail truncation of a single text block."""
-        if len(text) <= limit:
-            return text
-        half = limit // 2
-        return f"{text[:half]}\n[...{len(text) - limit} chars truncated...]\n{text[-half:]}"
-
-    @staticmethod
-    def _try_extract_finish(event: Any) -> str | None:
-        action = getattr(event, "action", None)
-        if action is None:
-            return None
-        if type(action).__name__ != "FinishAction":
-            return None
-        msg = getattr(action, "message", None)
-        return str(msg).strip() if msg and str(msg).strip() else None
+        return extract_result(conversation, working_dir, finish_message)
 
     async def _request_shutdown_async(
         self,
@@ -1560,63 +1005,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
     @staticmethod
     def _classify_event(event: Any) -> str:
-        if getattr(event, "action", None) is not None:
-            return "tool_use"
-        if getattr(event, "observation", None) is not None:
-            return "tool_result"
-        event_class_name = type(event).__name__
-        return SDK_EVENT_TYPE_MAP.get(event_class_name, "output")
-
-    @classmethod
-    def _extract_event_content(cls, event: Any) -> str | None:
-        if hasattr(event, "action") and event.action:
-            return cls._format_action_event(event.action)
-        if hasattr(event, "observation") and event.observation:
-            return cls._format_observation_event(event.observation)
-        if hasattr(event, "message") and event.message:
-            return str(event.message)
-        if hasattr(event, "content") and event.content:
-            return str(event.content)
-        if hasattr(event, "thought") and event.thought:
-            return f"Thought: {event.thought}"
-        return None
+        return classify_event(event)
 
     @staticmethod
-    def _extract_tool_name(event: Any) -> str | None:
-        action = getattr(event, "action", None)
-        if action is None:
-            return None
-        return type(action).__name__ or "OpenHandsAction"
-
-    @classmethod
-    def _format_action_event(cls, action: Any) -> str:
-        tool_name = type(action).__name__ or "OpenHandsAction"
-        payload: dict[str, Any] = {}
-        for attr_name in ("command", "path", "file_path", "thought", "content"):
-            value = getattr(action, attr_name, None)
-            if value:
-                payload[attr_name] = str(value)
-        detail = (
-            payload if payload else {"repr": cls._truncate_text(str(action), cls._EVENT_TEXT_LIMIT)}
-        )
-        return f"Tool: {tool_name}\nInput: {json_dumps_for_event(detail)}"
-
-    @classmethod
-    def _format_observation_event(cls, observation: Any) -> str:
-        command = getattr(observation, "command", "") or ""
-        metadata = getattr(observation, "metadata", None)
-        exit_code = getattr(metadata, "exit_code", None) if metadata else None
-        text = cls._truncate_text(cls._observation_text(observation), cls._EVENT_TEXT_LIMIT)
-        parts = []
-        if command:
-            parts.append(f"command={command}")
-        if exit_code is not None:
-            parts.append(f"exit_code={exit_code}")
-        header = "; ".join(parts) or type(observation).__name__
-        return f"Tool result: {header}\n{text}".rstrip()
-
-
-def json_dumps_for_event(payload: dict[str, Any]) -> str:
-    import json
-
-    return json.dumps(payload, sort_keys=True, default=str)
+    def _extract_event_content(event: Any) -> str | None:
+        return extract_event_content(event)

@@ -15,6 +15,8 @@ import pytest
 from openhands.sdk.conversation.conversation_stats import ConversationStats
 from openhands.sdk.llm.utils.metrics import Metrics, ResponseLatency, TokenUsage
 
+import infrastructure.adapters.worker.openhands_adapter as openhands_adapter_module
+import infrastructure.adapters.worker.openhands_container_tools as openhands_container_tools_module
 from core.domain.events.events import (
     DomainEvent,
     ThoughtCaptured,
@@ -22,7 +24,6 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
-import infrastructure.adapters.worker.openhands_adapter as openhands_adapter_module
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.worker.shared import ContainerSessionContext
 
@@ -53,7 +54,7 @@ def _resolve_container_aware_openhands_tool(
     conv_state: SimpleNamespace,
     name: str,
 ) -> Any:
-    openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+    openhands_container_tools_module._ensure_container_aware_openhands_tools_registered()
     from openhands.sdk import Tool
     from openhands.sdk.tool.registry import resolve_tool
 
@@ -460,12 +461,12 @@ class TestOpenHandsAdapter:
             calls += 1
 
         monkeypatch.setattr(
-            openhands_adapter_module,
+            openhands_container_tools_module,
             "_CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED",
             False,
         )
         monkeypatch.setattr(
-            openhands_adapter_module,
+            openhands_container_tools_module,
             "_register_container_aware_openhands_tools",
             fake_register,
         )
@@ -473,7 +474,7 @@ class TestOpenHandsAdapter:
         def target() -> None:
             try:
                 barrier.wait()
-                openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+                openhands_container_tools_module._ensure_container_aware_openhands_tools_registered()
             except BaseException as exc:
                 errors.append(exc)
 
@@ -495,14 +496,14 @@ class TestOpenHandsAdapter:
     ) -> None:
         # Given: OpenHands has already registered its default native tools.
         monkeypatch.setattr(
-            openhands_adapter_module,
+            openhands_container_tools_module,
             "_CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED",
             False,
         )
         caplog.set_level(logging.WARNING, logger="openhands.sdk.tool.registry")
 
         # When: the adapter intentionally replaces them with container-aware tools.
-        openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+        openhands_container_tools_module._ensure_container_aware_openhands_tools_registered()
 
         # Then: expected SDK duplicate-name warnings do not pollute experiment logs.
         assert "Duplicate tool name registerd" not in caplog.text
