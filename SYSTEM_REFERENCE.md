@@ -282,7 +282,7 @@ start_session(cve, workspace, agent_id)                          docker_runtime.
   │  docker run -d  <mounts below>  <image>  tail -f /dev/null
   │  git config safe.directory; chmod +x /src/build.sh; WRITE <run>.sealed/secb-exec (_write_exec_helper, :332)
   ▼
-(B/E/F/R run via secb-exec → docker exec)                stop_session → docker rm -f
+(B/E/F/R run via secb-exec → docker exec)   container reaped at process exit (PID cleanup → docker rm -f)
 ```
 
 ### Bind mounts (`start_session`, `docker_runtime.py:266-310`)

@@ -96,7 +96,3 @@ class SecurityContainerRuntime(Protocol):
     ) -> SecBenchContainerSession:
         """Start a container bound to the prepared workspace."""
         ...
-
-    async def stop_session(self, session: SecBenchContainerSession) -> None:
-        """Stop and remove the active worker container."""
-        ...

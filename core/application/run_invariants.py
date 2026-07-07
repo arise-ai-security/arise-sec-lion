@@ -115,21 +115,6 @@ class WorkerResult(BaseModel):
     events: tuple[DomainEvent, ...] = ()
 
 
-def build_tool_policy(*, settings: Settings) -> ToolPolicy:
-    """Extract allowed/disallowed tool names from settings.
-
-    Reads the global ``settings.worker.allowed_tools`` / ``disallowed_tools``
-    policy so experiments apply the same allow/block list to every backend.
-    ``allowed_bash_commands`` is derived from ``settings.security.tools``
-    when security is enabled, else empty.
-    """
-    return ToolPolicy(
-        allowed=tuple(settings.worker.allowed_tools),
-        disallowed=tuple(settings.worker.disallowed_tools),
-        allowed_bash_commands=(tuple(settings.security.tools) if settings.security.enabled else ()),
-    )
-
-
 def build_timeouts(settings: Settings) -> TimeoutBudget:
     """Extract worker and run timeouts from settings.
 

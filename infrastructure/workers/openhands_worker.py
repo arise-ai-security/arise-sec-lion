@@ -50,7 +50,7 @@ class OpenHandsWorker:
         timeouts: TimeoutBudget,
         workspace: WorkspaceSpec,
     ) -> WorkerResult:
-        del tool_policy  # OpenHands' allowlist is implicit; see build_tool_policy.
+        del tool_policy  # OpenHands' allowlist is implicit; ToolPolicy only drives the Claude CLI path.
         del timeouts  # OpenHandsAdapter has its own timeout configured at construction time.
 
         # Forward flat-mode plugin context (container session, MCP servers,

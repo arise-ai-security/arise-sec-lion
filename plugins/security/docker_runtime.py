@@ -232,12 +232,6 @@ class DockerSecBenchRuntime:
 
         return session
 
-    async def stop_session(self, session: SecBenchContainerSession) -> None:
-        """Stop and remove a worker container."""
-        await docker_cli.run_best_effort(
-            ["docker", "rm", "-f", session.container_id], timeout=self._timeout_seconds
-        )
-
     async def _add_git_safe_directory(self, container_id: str, work_dir: str) -> None:
         await docker_cli.run_best_effort(
             [

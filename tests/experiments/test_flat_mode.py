@@ -189,6 +189,8 @@ def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> Non
     assert bundle.timeouts.per_run_total == 7200
     assert bundle.tool_policy.allowed == ("Bash",)
     assert bundle.tool_policy.disallowed == ("WebFetch",)
+    # And: the bash-command allowlist derives from security.tools (enabled in base config).
+    assert bundle.tool_policy.allowed_bash_commands == ("valgrind", "klee")
     assert bundle.workspace.root == run_dir
     assert "demo.cve-9999-0001" in bundle.spec.rendered_prompt
 

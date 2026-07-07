@@ -24,7 +24,6 @@ from core.application.run_invariants import (
     WorkspaceSpec,
     build_env_policy,
     build_timeouts,
-    build_tool_policy,
     build_workspace_spec,
 )
 
@@ -60,57 +59,6 @@ def _settings_with(tmp_path: Path, **overrides: dict) -> Settings:
     target = tmp_path / "settings.yaml"
     target.write_text(yaml.safe_dump(payload), encoding="utf-8")
     return Settings.from_yaml(target)
-
-
-def test_tool_policy_for_claude_code(tmp_path: Path) -> None:
-    """worker.tool=claude_code yields ToolPolicy reflecting top-level lists.
-
-    Post-BUG-A1 (2026-05-12), ``build_tool_policy`` reads tool policy from
-    top-level ``worker.allowed_tools`` / ``disallowed_tools`` rather than the
-    nested ``tool_params.claude_code.*`` slot. The cell yamls follow the same
-    contract; this test pins it for the value object.
-    """
-    settings = _settings_with(
-        tmp_path,
-        worker={
-            "model": "gpt-4o",
-            "tool": "claude_code",
-            "timeout": 300,
-            "max_iterations_per_run": 20,
-            "allowed_tools": ["Bash", "Read", "Edit"],
-            "disallowed_tools": ["WebFetch"],
-            "tool_params": {
-                "claude_code": {
-                    "output_format": "stream-json",
-                    "include_partial_messages": True,
-                    "max_turns": 40,
-                }
-            },
-        },
-    )
-    policy = build_tool_policy(settings=settings)
-    assert policy.allowed == ("Bash", "Read", "Edit")
-    assert policy.disallowed == ("WebFetch",)
-    assert isinstance(policy.allowed_bash_commands, tuple)
-
-
-def test_tool_policy_for_openhands(tmp_path: Path) -> None:
-    """worker.tool=openhands defaults to the native non-terminal tool allowlist."""
-    settings = _settings_with(
-        tmp_path,
-        worker={
-            "model": "gpt-4o",
-            "tool": "openhands",
-            "timeout": 300,
-            "max_iterations_per_run": 20,
-            "tool_params": {
-                "openhands": {}
-            },
-        },
-    )
-    policy = build_tool_policy(settings=settings)
-    assert policy.allowed == ("file_editor", "glob", "grep")
-    assert policy.disallowed == ()
 
 
 def test_timeout_budget_canonical_source(tmp_path: Path) -> None:

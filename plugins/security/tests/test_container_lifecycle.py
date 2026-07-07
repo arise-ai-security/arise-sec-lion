@@ -121,7 +121,6 @@ async def test_security_plugin_prepares_workspace_and_session(tmp_path: Path) ->
         agent_id=agent_id,
         domain_context=cve,
     )
-    runtime.stop_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -179,8 +178,6 @@ async def test_run_workers_share_one_container_by_default(
     assert ctx1 is not None and ctx2 is not None
     assert ctx1.task_context["container_session"]["container_id"] == "shared0container"
     assert ctx2.task_context["container_session"]["container_id"] == "shared0container"
-    # Per-worker cleanup did NOT stop the container in shared mode.
-    runtime.stop_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
