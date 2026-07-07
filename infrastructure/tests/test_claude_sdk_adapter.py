@@ -981,10 +981,12 @@ class TestToolUseInputPayload:
             captured.update(kwargs)
             return MagicMock()
 
-        from experiments.shared.scripts.analysis.text.cheating_detector import (
-            _extract_bash_command,
-            _is_cheating_command,
+        detector = pytest.importorskip(
+            "experiments.shared.scripts.analysis.text.cheating_detector",
+            reason="cheating detector lives on the analysis/* branches",
         )
+        _extract_bash_command = detector._extract_bash_command
+        _is_cheating_command = detector._is_cheating_command
 
         tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
         with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):

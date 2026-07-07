@@ -14,7 +14,6 @@ from config.settings import ApiSettings, Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_CONFIG = REPO_ROOT / "config" / "config.yaml"
-STUDY_CONFIG_DIR = REPO_ROOT / "experiments" / "shared" / "templates" / "study" / "configs"
 
 
 @pytest.fixture(autouse=True)
@@ -312,20 +311,35 @@ def test_overlay_yaml_is_resolved_by_from_yaml(tmp_path: Path) -> None:
     assert settings.worker.tool == "openhands"
 
 
-@pytest.mark.parametrize(
-    "config_name",
-    ["C1-qwen-noverifier.yaml", "C2-qwen-verifier.yaml"],
-)
-def test_study_openhands_tool_policy_overrides_base_defaults(config_name: str) -> None:
-    """Study C-cells must replace base worker tool defaults."""
+def test_overlay_openhands_tool_policy_overrides_base_defaults(tmp_path: Path) -> None:
+    """An overlay pinning the openhands tool surface replaces base worker defaults."""
 
-    # Given: C-cell overlays pin the SEC-bench MCP tool surface explicitly.
-    path = STUDY_CONFIG_DIR / config_name
+    # Given: an overlay pinning the SEC-bench MCP tool surface explicitly
+    # (the shape the removed C-cell study overlays used).
+    overlay = tmp_path / "openhands_policy.yaml"
+    _write_yaml(
+        overlay,
+        {
+            "extends": str(BASE_CONFIG.relative_to(REPO_ROOT)),
+            "overrides": {
+                "boss.model": "test-boss-model",
+                "manager.model": "test-manager-model",
+                "worker.model": "test-worker-model",
+                "worker.tool": "openhands",
+                "worker.allowed_tools": ["file_editor", "glob", "grep"],
+                "worker.tool_params.openhands.mcp_tools": [
+                    "shell_in_container",
+                    "valgrind_run",
+                    "klee_run",
+                ],
+            },
+        },
+    )
 
-    # When: Settings loads the real study overlay.
-    settings = Settings.from_yaml(path)
+    # When: Settings loads the overlay.
+    settings = Settings.from_yaml(overlay)
 
-    # Then: the study policy takes precedence over the base/default policy.
+    # Then: the overlay policy takes precedence over the base/default policy.
     assert settings.worker.tool == "openhands"
     assert settings.worker.allowed_tools == [
         "file_editor",
@@ -339,17 +353,6 @@ def test_study_openhands_tool_policy_overrides_base_defaults(config_name: str) -
         "valgrind_run",
         "klee_run",
     ]
-
-
-@pytest.mark.parametrize("config_name", sorted(p.name for p in STUDY_CONFIG_DIR.glob("*.yaml")))
-def test_all_study_template_configs_load(config_name: str) -> None:
-    """Every committed study template must be a valid Settings overlay."""
-
-    settings = Settings.from_yaml(STUDY_CONFIG_DIR / config_name)
-
-    assert settings.boss.model
-    assert settings.manager.model
-    assert settings.worker.model
 
 
 def test_secbench_recon_tool_allowlist_matches_registered_tools() -> None:
