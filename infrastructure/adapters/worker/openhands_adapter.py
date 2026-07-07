@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from core.domain.events.events import DomainEvent
 from infrastructure.adapters.worker.shared_code_context import SharedCodeContextProvider
-from infrastructure.cleanup.registry import _pid_alive
+from infrastructure.cleanup.registry import pid_alive
 
 from .base import WorkerAdapterBase
 from .openhands_container_tools import _ensure_container_aware_openhands_tools_registered
@@ -897,7 +897,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         After the SDK-native ``pause()`` / ``close()`` path runs, SIGTERM any
         MCP stdio subprocesses that survived. ``Conversation.close()`` is
         best-effort with respect to MCP children, so the reaper is wired
-        unconditionally. ``_pid_alive`` short-circuits the kill when the SDK
+        unconditionally. ``pid_alive`` short-circuits the kill when the SDK
         already terminated the child, so the reaper is a true no-op in the
         happy path.
         """
@@ -932,7 +932,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         accumulate across long matrix runs.
 
         Steps:
-          1. SIGTERM every still-alive PID (uses ``_pid_alive`` to skip
+          1. SIGTERM every still-alive PID (uses ``pid_alive`` to skip
              ones the SDK already cleaned up).
           2. Poll ``os.waitpid(pid, WNOHANG)`` every ``poll_interval``
              seconds until either every PID is reaped or
@@ -949,7 +949,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
         # Step 1: SIGTERM.
         for pid in list(pids):
-            if not _pid_alive(pid):
+            if not pid_alive(pid):
                 pids.discard(pid)
                 continue
             try:
@@ -971,7 +971,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
         # Step 3: SIGKILL survivors.
         for pid in list(pids):
-            if not _pid_alive(pid):
+            if not pid_alive(pid):
                 pids.discard(pid)
                 continue
             try:

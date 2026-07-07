@@ -125,7 +125,7 @@ def _detect_branch_from_task(task_description: str) -> str | None:
     return None
 
 
-def _role_from_task(task_description: str) -> Role | None:
+def role_from_task(task_description: str) -> Role | None:
     """Resolve a worker task's explicit ``[Role]`` bracket to its catalog role.
 
     A leaf worker carries its own role label, so the role is read from the task
@@ -297,7 +297,7 @@ class SecBenchPromptStrategy:
         # the role layer the manager created is not erased at the worker tier. A
         # phase-level task ([Exploiter]) resolves to no role and keeps the full
         # whole-phase runbook.
-        worker_role = _role_from_task(context.task_description)
+        worker_role = role_from_task(context.task_description)
         cve_ctx["worker_role"] = worker_role
         cve_ctx["foreign_deliverables"] = (
             deliverables_owned_by_others(worker_role) if worker_role is not None else ()

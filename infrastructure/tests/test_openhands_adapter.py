@@ -1489,7 +1489,7 @@ class TestMcpChildProcessLifecycle:
                 side_effect=ChildProcessError(),
             ),
             patch(
-                "infrastructure.adapters.worker.openhands_adapter._pid_alive",
+                "infrastructure.adapters.worker.openhands_adapter.pid_alive",
                 return_value=True,
             ),
         ):

@@ -25,7 +25,7 @@ import signal
 import subprocess
 from contextlib import suppress
 
-from infrastructure.cleanup.registry import _pid_alive
+from infrastructure.cleanup.registry import pid_alive
 
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,7 @@ def _sweep_stale_containers() -> None:
             pid = int(pid_str)
         except ValueError:
             continue
-        if _pid_alive(pid):
+        if pid_alive(pid):
             continue
         stale_ids.append(cid)
 

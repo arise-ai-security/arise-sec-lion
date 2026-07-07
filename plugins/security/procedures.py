@@ -35,7 +35,7 @@ from plugins.security.deliverables import (
     PATCH_VALIDATION_FIELDS,
     PHASE_COMMANDS,
 )
-from plugins.security.prompt_strategy import _role_from_task
+from plugins.security.prompt_strategy import role_from_task
 
 
 if TYPE_CHECKING:
@@ -139,7 +139,7 @@ class SecBenchProcedureExecutor:
     def match(self, task_description: str, domain_context: object | None) -> str | None:
         """Return the procedure_ref for a task's leading ``[Role]`` bracket, or None."""
         _ = domain_context
-        role = _role_from_task(task_description)
+        role = role_from_task(task_description)
         if role is None:
             return None
         return _REGISTRY.get(role.name)

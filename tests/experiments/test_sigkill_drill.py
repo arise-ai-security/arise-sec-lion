@@ -140,5 +140,5 @@ def test_sigkill_drill_recovers_container() -> None:
 
     # Sanity: this test process must NOT have been killed alongside the
     # container; if `os.getpid()` no longer works, the placeholder PID
-    # collided with a real process and `_pid_alive` would have kept it.
+    # collided with a real process and `pid_alive` would have kept it.
     assert os.getpid() > 0
