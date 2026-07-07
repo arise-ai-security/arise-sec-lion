@@ -16,180 +16,26 @@ from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
 from core.application.services import EventBroadcaster
-
-
-logger = logging.getLogger(__name__)
-
-from core.domain.events.events import (
-    AgentCreated,
-    ChildCompleted,
-    ChildFailed,
-    ChildSpawned,
-    CodeGenerationStarted,
-    ComplexityEvaluated,
-    DecisionInfeasible,
-    DomainEvent,
-    ProbeCompleted,
-    ProbeStarted,
-    PromptSent,
-    RedecompositionTriggered,
-    RetryScheduled,
-    StatusChanged,
-    SubtasksDefined,
-    TaskAssigned,
-    ThoughtCaptured,
-    VerificationFailed,
-    VerificationPassed,
-    WorkCompleted,
-    WorkFailed,
-)
-from core.ports.event_store_port import EventStoreReadPort
+from core.domain.events.events import PromptSent
 from core.query.projections.hierarchy_collector import HierarchyCollector
 from core.query.projections.impl.summary import IncrementalSummaryProjection
 from query.api.dependencies import EventStoreDep
+from query.api.event_mapping import categorize_event, event_to_schema
 from query.api.routes.agents import _projection_summary_to_schema
 from query.api.schemas import (
     AgentPromptSchema,
     AgentPromptsSchema,
     CategorizedEventsSchema,
-    EventSchema,
     PaginatedEventsSchema,
     PaginationMetaSchema,
 )
+from query.api.streaming import IncrementalHierarchyTracker
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
-
-# Event categorization mapping
-RECEIVED_EVENTS = {TaskAssigned}
-PRODUCED_EVENTS = {
-    AgentCreated,
-    StatusChanged,
-    ComplexityEvaluated,
-    SubtasksDefined,
-    CodeGenerationStarted,
-    WorkCompleted,
-    WorkFailed,
-    VerificationFailed,
-    VerificationPassed,
-    DecisionInfeasible,
-    RetryScheduled,
-    RedecompositionTriggered,
-    ProbeStarted,
-    ProbeCompleted,
-}
-PASSED_EVENTS = {ChildSpawned, ChildCompleted, ChildFailed}
-THINKING_EVENTS = {ThoughtCaptured}
-
-
-def event_to_schema(event: DomainEvent) -> EventSchema:
-    # Get event-specific data (exclude base fields)
-    data = event.model_dump(exclude={"aggregate_id", "sequence_number", "occurred_at"})
-
-    return EventSchema(
-        event_type=type(event).__name__,
-        aggregate_id=str(event.aggregate_id),
-        sequence_number=event.sequence_number,
-        occurred_at=event.occurred_at,
-        data=data,
-    )
-
-
-def categorize_event(event: DomainEvent) -> str:
-    """Determine the category of an event."""
-    event_type = type(event)
-    if event_type in RECEIVED_EVENTS:
-        return "received"
-    if event_type in PRODUCED_EVENTS:
-        return "produced"
-    if event_type in PASSED_EVENTS:
-        return "passed"
-    if event_type in THINKING_EVENTS:
-        return "thinking"
-    return "produced"  # Default to produced
-
-
-class IncrementalHierarchyTracker:
-    """Tracks hierarchy state for incremental event fetching.
-
-    Uses optimized batch fetching on first load, then batch incremental updates.
-    This reduces database load from O(total_events) to O(new_events) per poll.
-
-    Optimized: Uses single batch query for incremental updates instead of N queries.
-    """
-
-    def __init__(self, event_store: EventStoreReadPort, root_id: UUID) -> None:
-        self._event_store = event_store
-        self._root_id = root_id
-        # Track last seen sequence per agent
-        self._last_sequence: dict[UUID, int] = {}
-        # Agents we know about
-        self._known_agents: set[UUID] = set()
-        # All events accumulated (for summary projection)
-        self._all_events: list[DomainEvent] = []
-        # Whether initial load has been done
-        self._initialized = False
-        # New children discovered that need initial fetch
-        self._pending_children: set[UUID] = set()
-
-    async def fetch_new_events(self) -> list[DomainEvent]:
-        """Fetch only new events since last poll.
-
-        First call uses optimized single-query approach for entire hierarchy.
-        Subsequent calls use batch incremental fetch (1 query instead of N).
-        """
-        new_events: list[DomainEvent] = []
-
-        # First call: use optimized single-query approach
-        if not self._initialized:
-            self._initialized = True
-            grouped = await self._event_store.get_hierarchy_events_grouped(self._root_id)
-
-            for agent_id, events in grouped.items():
-                self._known_agents.add(agent_id)
-                if events:
-                    self._last_sequence[agent_id] = events[-1].sequence_number
-                    new_events.extend(events)
-
-            self._all_events.extend(new_events)
-            return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
-
-        # Subsequent calls: batch incremental fetch (1 query instead of N)
-        # Build dict of agent_id -> last_sequence for batch query
-        agent_sequences: dict[UUID, int | None] = {}
-        for agent_id in self._known_agents:
-            agent_sequences[agent_id] = self._last_sequence.get(agent_id)
-
-        # Include pending children (new agents discovered via ChildSpawned)
-        for child_id in self._pending_children:
-            agent_sequences[child_id] = None  # Fetch all events for new agents
-        self._pending_children.clear()
-
-        # Single batch query for all agents
-        if agent_sequences:
-            grouped = await self._event_store.get_events_batch_incremental(agent_sequences)
-
-            for agent_id, events in grouped.items():
-                if events:
-                    self._last_sequence[agent_id] = events[-1].sequence_number
-                    new_events.extend(events)
-
-                    # Discover new children
-                    for event in events:
-                        if isinstance(event, ChildSpawned):
-                            child_id = event.child_id
-                            if child_id not in self._known_agents:
-                                self._known_agents.add(child_id)
-                                self._pending_children.add(child_id)
-
-        self._all_events.extend(new_events)
-        return sorted(new_events, key=lambda e: (e.occurred_at, e.sequence_number))
-
-    def get_all_events(self) -> list[DomainEvent]:
-        return sorted(self._all_events, key=lambda e: (e.occurred_at, e.sequence_number))
-
-    def has_pending_children(self) -> bool:
-        return len(self._pending_children) > 0
 
 
 @router.get("/{agent_id}", response_model=CategorizedEventsSchema)
