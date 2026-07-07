@@ -55,11 +55,11 @@ def test_docker_pid_cleanup_runs_docker_rm_for_each_listed_id() -> None:
     """The handler issues ``docker rm -f`` for every container ID listed."""
 
     # Given: docker ps returns two container IDs for this process's PID.
-    from bootstrap.composition import _docker_pid_cleanup
+    from infrastructure.cleanup.docker_pid import docker_pid_cleanup
 
     captured_calls: list[list[str]] = []
 
-    def _fake_run(argv, **kwargs):  # noqa: ANN001, ANN003 - test stub
+    def _fake_run(argv, **kwargs):
         captured_calls.append(list(argv))
         if argv[:2] == ["docker", "ps"]:
             return MagicMock(stdout="abc123\ndef456\n", stderr="", returncode=0)
@@ -67,10 +67,10 @@ def test_docker_pid_cleanup_runs_docker_rm_for_each_listed_id() -> None:
 
     # When: the handler runs.
     with (
-        patch("bootstrap.composition.shutil.which", return_value="docker"),
-        patch("bootstrap.composition.subprocess.run", side_effect=_fake_run),
+        patch("infrastructure.cleanup.docker_pid.shutil.which", return_value="docker"),
+        patch("infrastructure.cleanup.docker_pid.subprocess.run", side_effect=_fake_run),
     ):
-        _docker_pid_cleanup()
+        docker_pid_cleanup()
 
     # Then: exactly two subprocess invocations — a listing then a removal.
     assert len(captured_calls) == 2
@@ -93,20 +93,20 @@ def test_docker_pid_cleanup_noop_when_no_containers_match() -> None:
     """The handler does NOT invoke ``docker rm`` when no IDs are listed."""
 
     # Given: docker ps returns an empty body.
-    from bootstrap.composition import _docker_pid_cleanup
+    from infrastructure.cleanup.docker_pid import docker_pid_cleanup
 
     captured_calls: list[list[str]] = []
 
-    def _fake_run(argv, **kwargs):  # noqa: ANN001, ANN003 - test stub
+    def _fake_run(argv, **kwargs):
         captured_calls.append(list(argv))
         return MagicMock(stdout="", stderr="", returncode=0)
 
     # When: the handler runs.
     with (
-        patch("bootstrap.composition.shutil.which", return_value="docker"),
-        patch("bootstrap.composition.subprocess.run", side_effect=_fake_run),
+        patch("infrastructure.cleanup.docker_pid.shutil.which", return_value="docker"),
+        patch("infrastructure.cleanup.docker_pid.subprocess.run", side_effect=_fake_run),
     ):
-        _docker_pid_cleanup()
+        docker_pid_cleanup()
 
     # Then: only the listing call was made; no removal call.
     assert len(captured_calls) == 1
@@ -117,15 +117,15 @@ def test_docker_pid_cleanup_swallows_subprocess_errors() -> None:
     """The handler logs and swallows any subprocess failure."""
 
     # Given: subprocess.run raises a generic error on the listing call.
-    from bootstrap.composition import _docker_pid_cleanup
+    from infrastructure.cleanup.docker_pid import docker_pid_cleanup
 
-    def _boom(argv, **kwargs):  # noqa: ANN001, ANN003 - test stub
+    def _boom(argv, **kwargs):
         del argv, kwargs
         raise RuntimeError("docker daemon unreachable")
 
     # When/Then: the handler does NOT propagate the exception.
-    with patch("bootstrap.composition.subprocess.run", side_effect=_boom):
-        _docker_pid_cleanup()  # must not raise
+    with patch("infrastructure.cleanup.docker_pid.subprocess.run", side_effect=_boom):
+        docker_pid_cleanup()  # must not raise
 
 
 def test_docker_pid_cleanup_swallows_check_failures_on_listing() -> None:
@@ -134,15 +134,15 @@ def test_docker_pid_cleanup_swallows_check_failures_on_listing() -> None:
     # Given: subprocess.run raises CalledProcessError on the listing call.
     import subprocess
 
-    from bootstrap.composition import _docker_pid_cleanup
+    from infrastructure.cleanup.docker_pid import docker_pid_cleanup
 
-    def _fail(argv, **kwargs):  # noqa: ANN001, ANN003 - test stub
+    def _fail(argv, **kwargs):
         del kwargs
         raise subprocess.CalledProcessError(returncode=1, cmd=argv)
 
     # When/Then: handler completes silently — best-effort contract.
-    with patch("bootstrap.composition.subprocess.run", side_effect=_fail):
-        _docker_pid_cleanup()
+    with patch("infrastructure.cleanup.docker_pid.subprocess.run", side_effect=_fail):
+        docker_pid_cleanup()
 
 
 # --- registration via create_runtime_cli ---------------------------------
@@ -252,7 +252,7 @@ def test_registered_handler_invokes_docker_rm_via_registry(tmp_path: Path) -> No
 
     captured_calls: list[list[str]] = []
 
-    def _fake_run(argv, **kwargs):  # noqa: ANN001, ANN003 - test stub
+    def _fake_run(argv, **kwargs):
         captured_calls.append(list(argv))
         if argv[:2] == ["docker", "ps"]:
             return MagicMock(stdout="container-pid-leak\n", stderr="", returncode=0)
@@ -260,8 +260,8 @@ def test_registered_handler_invokes_docker_rm_via_registry(tmp_path: Path) -> No
 
     # When: the registry sweep fires.
     with (
-        patch("bootstrap.composition.shutil.which", return_value="docker"),
-        patch("bootstrap.composition.subprocess.run", side_effect=_fake_run),
+        patch("infrastructure.cleanup.docker_pid.shutil.which", return_value="docker"),
+        patch("infrastructure.cleanup.docker_pid.subprocess.run", side_effect=_fake_run),
     ):
         registry.run_all()
 

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import shutil
-import subprocess
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -20,6 +17,7 @@ from core.application.run_invariants import (
 )
 from core.application.services import PromptBuilder
 from infrastructure.adapters.worker import OpenHandsAdapter
+from infrastructure.cleanup.docker_pid import docker_pid_cleanup
 from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
 from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
@@ -252,53 +250,6 @@ def _make_flat_invariant_builder(
     return _builder
 
 
-def _docker_pid_cleanup() -> None:
-    """Remove every container labeled with this process's PID.
-
-    Second line of defense against leaked worker/seed containers. The
-    happy-path try/finally in flat-mode + the hierarchical role dispatch
-    already call ``cleanup_worker_execution``. This handler covers the
-    SIGKILL / SIGTERM / SIGINT / atexit paths where in-process cleanup
-    cannot run — it fires from the :class:`CleanupRegistry` once.
-
-    Best-effort: every failure is logged and swallowed because the handler
-    runs during process teardown when other state may already be torn
-    down. A raise here would block the registry's remaining handlers.
-    """
-    pid = os.getpid()
-    docker = shutil.which("docker")
-    if docker is None:
-        logger.warning("docker executable not found; skipping PID-label cleanup")
-        return
-    try:
-        listing = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
-            [
-                docker,
-                "ps",
-                "-a",
-                "--filter",
-                f"label=arise.session_pid={pid}",
-                "--format",
-                "{{.ID}}",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        ids = [line.strip() for line in listing.stdout.splitlines() if line.strip()]
-        if not ids:
-            return
-        subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
-            [docker, "rm", "-f", *ids],
-            check=False,
-            capture_output=True,
-            timeout=60,
-        )
-    except Exception:
-        logger.warning("docker PID-label cleanup failed", exc_info=True)
-
-
 def create_runtime_cli(
     settings: Settings,
     *,
@@ -317,7 +268,7 @@ def create_runtime_cli(
     if cleanup_registry is not None and isinstance(
         active_domain_components.plugin, SecurityDomainPlugin
     ):
-        cleanup_registry.register("docker-by-pid", _docker_pid_cleanup)
+        cleanup_registry.register("docker-by-pid", docker_pid_cleanup)
 
     openhands_params = settings.worker.tool_params.openhands
     worker_mcp_tools = (
