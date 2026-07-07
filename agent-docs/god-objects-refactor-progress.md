@@ -72,12 +72,13 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | 8 | `query/api/routes/events.py` → `streaming.py` + `event_mapping.py`; 482→328 | B | 2 | ✅ CO clear (only "untracked files" staging note) | 319fe5c |
 | 7 | `claude_code_worker.py` → extract `claude_transcript.py` (parser only; watchdog deliberately kept); 733→560, zero test edits | B | 2 | 🔶 applied+gate green; CO review rides with Phase-3 batch | — |
 | 5 | `query_service.py` → `read_models.py` + `agent_readiness.py` + `sibling_view.py`; bootstrap binds SiblingViewService as sibling_view_port; 686→130 coordinator | B | 2 | ✅ CO clear (only "untracked files" staging note; differential + call-site checks passed) | 4fb54ff |
-| 6 | `docker_runtime.py` → ImageEnsurer/WorkspaceMirror/RuntimeSealer/DockerCli (ALL inside plugins/security/) | B | 3 | ⬜ | — |
-| 3 | `openhands_adapter.py` STAGED: event converter → cost extractor → tool registrar; reaper LAST/optional | B | 3 | ⬜ | — |
-| 2 | `execution_service.py` → FlatModeRunner/PostStepHandler/WorkspaceContextProvider | B | 4 | ⬜ | — |
-| 1 | `agent_orchestrator.py` → AssessmentRecovery/DecompositionContractEnforcer/ReconPropagation (3 public methods stay direct) | B | 4 | ⬜ | — |
-| 11 | `agent_session.py` → child-result rendering slice ONLY | B | 4 | ⬜ | — |
-| 12 | `composition.py` → `_docker_pid_cleanup` slice → infrastructure/cleanup/ | B | 4 | ⬜ | — |
+| 6 | `docker_runtime.py` → `plugins/security/runtime/` (docker_cli/image_ensurer/workspace_mirror/sealer); 708→343; sealed surface byte-identical (SHA test) | B | 3 | ✅ committed; CO review rides next batch | 29805fe |
+| 3 | `openhands_adapter.py` → `openhands_events`/`openhands_cost`/`openhands_container_tools`; 1622→1012; reaper untouched | B | 3 | ✅ committed; CO review in batch-3 | d1f7322 |
+| 7 | `claude_code_worker.py` → `claude_transcript.py` (pure parser; delegators kept); 733→560 | B | 2 | ✅ committed; CO review in batch-3 | 799bcf0 |
+| 2 | `execution_service.py` → FlatModeRunner/PostStepHandler/WorkspaceContextProvider; 1310→924; loop stays on service | B | 4 | ✅ committed (3 stalls; I ran the final gate — baseline-exact); CO review in batch-3 | cea9bb8 |
+| 1 | `agent_orchestrator.py` → AssessmentRecovery/DecompositionContract/ReconPropagation (3 public methods stay direct) | B | 4 | 🔶 subagent applying (resumed after API disconnect during exploration; file was untouched) | — |
+| 11 | `agent_session.py` → child-result rendering slice ONLY | B | 4 | ✅ committed; CO review in batch-3 | 59ef79b |
+| 12 | `composition.py` → `_docker_pid_cleanup` slice → infrastructure/cleanup/ | B | 4 | ✅ committed; CO review in batch-3 | 45262f5 |
 | 13 | `bootstrap/application.py` → private sub-factories (OPTIONAL) | B | 4 | ⬜ (optional) | — |
 | E1 | `experiments/shared/evaluation/criteria.py` (split by concern) | A | — | ⏭️ b4/n1 studies in flight (scorer consistency) | — |
 | E2 | `experiments/shared/harness.py` | B | — | ⏭️ live entry point of in-flight runs | — |
@@ -101,6 +102,20 @@ Legend: ✅ done (+SHA) · ⬜ todo · 🔶 in-progress (+what's left) · ⏭️
 - **#10 litellm split — CO APPROVE.** One note worth keeping: log records from the moved parser
   now carry logger name `infrastructure.adapters.content_tool_calls` (was `…litellm_adapter`);
   no in-repo log filter keys on logger names.
+- **#9 summary accumulator — CO APPROVE**, no findings.
+- **#8 events routes / #5 query split — CO cleared** (only staging-order "untracked files" note, since
+  reviewed pre-commit); differential + call-site audits passed.
+- **Batch-3 (six commits 59ef79b/45262f5/29805fe/d1f7322/cea9bb8/799bcf0) — all APPROVE, INFO-only.**
+  Load-bearing confirmations: docker sealing constants (`_SECB_WRAPPER`/`_REPRO_SKELETON`/
+  `_PATCH_SCRIPT`/`_FORBIDDEN_TESTCASE_ARTIFACTS`) hash-identical to parent; sealed `secb` source
+  stays outside all bind mounts; patch.sh RO-overlaid twice; openhands cost event reads wall-time
+  once and forwards identical values; `events → container_tools` edge acyclic; post-step failed-worker
+  ladder preserves digest→procedural-retry→verification-retry→generic-RetryPolicy order; orchestrator
+  ops remain direct (no pipeline/strategy wrapper). Reviewer ran read-only (no `uv`), so runtime
+  verification is mine: every commit was full-suite baseline-exact (1215/3/13) before commit.
+- **execution_service (#2) three stalls:** subagent completed + self-verified all gates green before
+  dying on report composition; I re-ran the full gate independently (baseline-exact, pyright 0,
+  boundaries pass) and committed. Not a quality gap — a transport/watchdog artifact.
 
 ## Deferred decisions
 
