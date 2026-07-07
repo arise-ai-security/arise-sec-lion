@@ -24,6 +24,7 @@ from core.application.services import (
     LoopPolicy,
     ParentNotificationService,
     PromptBuilder,
+    SiblingViewService,
     ToolCallingService,
     ToolsetPolicyResolver,
 )
@@ -158,6 +159,10 @@ def get_application(
         repository=repository,
         shared_context_port=infrastructure.shared_context,
     )
+    sibling_view = SiblingViewService(
+        repository=repository,
+        shared_context_port=infrastructure.shared_context,
+    )
     child_factory = ChildAgentFactory(
         repository=repository,
         limits_registry=limits_registry,
@@ -233,7 +238,7 @@ def get_application(
         child_factory=child_factory,
         query_service=query_service,
         shared_context_port=infrastructure.shared_context,
-        sibling_view_port=query_service,  # AgentQueryService implements SiblingViewPort
+        sibling_view_port=sibling_view,
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
         domain_plugin=config.domain_plugin,

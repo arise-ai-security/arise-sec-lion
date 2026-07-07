@@ -50,11 +50,11 @@ from core.application.services.prompt.prompt_strategy import (
 from core.application.services.prompt.prompt_trace_service import PromptTraceService
 
 # --- query ---
+from core.application.services.query.agent_readiness import AgentReadinessService
 from core.application.services.query.event_broadcaster import EventBroadcaster
-from core.application.services.query.query_service import (
-    AgentQueryService,
-    AgentSummaryReadModel,
-)
+from core.application.services.query.query_service import AgentQueryService
+from core.application.services.query.read_models import AgentSummaryReadModel
+from core.application.services.query.sibling_view import SiblingViewService
 
 # --- toolset ---
 from core.application.services.toolset.tool_calling_service import (
@@ -76,6 +76,7 @@ __all__ = [
     "ActiveToolContext",
     "AgentNotFoundError",
     "AgentQueryService",
+    "AgentReadinessService",
     "AgentRepository",
     "AgentSummaryReadModel",
     "ChildAgentFactory",
@@ -96,6 +97,7 @@ __all__ = [
     "PromptTraceService",
     "RetryPolicy",
     "RoleHandler",
+    "SiblingViewService",
     "SubtaskScope",
     "TemplateChain",
     "ToolCallingService",
