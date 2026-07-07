@@ -63,14 +63,15 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 
 | # | Target | Recipe | Phase | Status | Commit |
 |---|---|---|---|---|---|
-| P0 | Detect + plan + this ledger | — | 0 | ✅ (docs uncommitted — user commits) | — |
-| D1 | docs-drift fix batch (architecture.md, patterns.md, SYSTEM_REFERENCE §IV, cli.py docstring) | docs | 1 | ⬜ | — |
-| 4 | `config/settings.py` → `config/models/` package + loader, re-export shims | A | 1 | ⬜ | — |
-| 10 | `litellm_adapter.py` → extract content-tool-call parser + anthropic cache modules | A | 1 | ⬜ | — |
-| 9 | `summary.py` → per-metric accumulator collaborators (kills batch/incremental dup) | B | 2 | ⬜ | — |
-| 8 | `query/api/routes/events.py` → extract IncrementalHierarchyTracker + event mapper | B | 2 | ⬜ | — |
-| 7 | `claude_code_worker.py` → extract ClaudeTranscriptParser (+optional watchdog) | B | 2 | ⬜ | — |
-| 5 | `query_service.py` → reads / DAG-readiness / SiblingViewService | B | 2 | ⬜ | — |
+| P0 | Detect + plan + this ledger | — | 0 | ✅ | d405783 |
+| D1 | docs-drift fixes (SYSTEM_REFERENCE §IV, cli.py docstring, event count) — NOTE: `.claude/docs/` is gitignored (`.gitignore:680`), so the architecture.md/patterns.md fixes are local-only | docs | 1 | ✅ | fac93e4 |
+| L0 | ruff: pydantic runtime-evaluated bases + dead-noqa cleanup (unplanned, surfaced by #4) | lint | 1 | ✅ | a1e6cc0 |
+| 4 | `config/settings.py` → `config/settings/` package (11 files), zero-churn shim | A | 1 | ✅ CO-reviewed (2 findings overruled, see Review log) | 6735d4d |
+| 10 | `litellm_adapter.py` → `anthropic_cache.py` + `content_tool_calls.py`, importers migrated | A | 1 | ✅ CO APPROVE | 92ca902 |
+| 9 | `summary.py` → `_SummaryAccumulator` (singledispatch) composed by both projections; 461→300, duplication gone | B | 2 | ✅ CO APPROVE (no findings) | 3a73b47 |
+| 8 | `query/api/routes/events.py` → `streaming.py` + `event_mapping.py`; 482→328 | B | 2 | ✅ CO clear (only "untracked files" staging note) | 319fe5c |
+| 7 | `claude_code_worker.py` → extract `claude_transcript.py` (parser only; watchdog deliberately kept); 733→560, zero test edits | B | 2 | 🔶 applied+gate green; CO review rides with Phase-3 batch | — |
+| 5 | `query_service.py` → `read_models.py` + `agent_readiness.py` + `sibling_view.py`; bootstrap binds SiblingViewService as sibling_view_port; 686→130 coordinator | B | 2 | ✅ CO clear (only "untracked files" staging note; differential + call-site checks passed) | 4fb54ff |
 | 6 | `docker_runtime.py` → ImageEnsurer/WorkspaceMirror/RuntimeSealer/DockerCli (ALL inside plugins/security/) | B | 3 | ⬜ | — |
 | 3 | `openhands_adapter.py` STAGED: event converter → cost extractor → tool registrar; reaper LAST/optional | B | 3 | ⬜ | — |
 | 2 | `execution_service.py` → FlatModeRunner/PostStepHandler/WorkspaceContextProvider | B | 4 | ⬜ | — |
@@ -85,6 +86,21 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | — | events.py, postgres_event_store, subtask_parser, prompt_builder, tool_calling_service, verification_pipeline, procedures.py, prompt_strategy.py, plugin.py, schemas.py, shared_context.py, presentation/*, bootstrap.py, recon/openrouter adapters, worker/shared/* | — | — | 🚫 leave-alone (reasons in plan) | — |
 
 Legend: ✅ done (+SHA) · ⬜ todo · 🔶 in-progress (+what's left) · ⏭️ deferred (+why) · 🚫 leave-alone
+
+## Review log (CO = Codex adversarial reviewer)
+
+- **#4 settings split — CO said REJECT; overruled, committed.** Both "blocking" findings fail on
+  their own evidence: (1) "public surface loss" = accidental transitive re-exports (`BaseModel`,
+  `yaml`, `os`, `Path`…) that CO itself verified have ZERO in-repo consumers — re-exporting
+  third-party names from `config.settings` would be namespace pollution, not preservation;
+  (2) "SecurityConfig in config/ is a layering violation" — CO itself notes it is pre-existing
+  in the old monolith; already tracked in the plan's out-of-scope findings (`settings.security`
+  coupling). CO's substantive checks all PASSED: AST move-diff clean, pydantic schema/field
+  order identical, tagged-union validator behavior identical, CONFIG_DIR resolves to config/,
+  no pickling path depends on `__module__`.
+- **#10 litellm split — CO APPROVE.** One note worth keeping: log records from the moved parser
+  now carry logger name `infrastructure.adapters.content_tool_calls` (was `…litellm_adapter`);
+  no in-repo log filter keys on logger names.
 
 ## Deferred decisions
 
