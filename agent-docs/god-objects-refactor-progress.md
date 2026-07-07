@@ -80,7 +80,7 @@ Phase 0 (detect) completed 2026-07-07: 6 read-only area audits + AST scan + fan-
 | 11 | `agent_session.py` → child-result rendering slice ONLY | B | 4 | ✅ committed; CO review in batch-3 | 59ef79b |
 | 12 | `composition.py` → `_docker_pid_cleanup` slice → infrastructure/cleanup/ | B | 4 | ✅ committed; CO review in batch-3 | 45262f5 |
 | 13 | `bootstrap/application.py` → private sub-factories (OPTIONAL) | B | 4 | ⬜ (optional) | — |
-| E1 | `experiments/shared/evaluation/criteria.py` → `criteria/` package (metrics/verdict/judge_prompts/_shared + shim; 9 privates re-exported) | A | 3 | 🔶 applied+gate green (115 eval tests pass); **scorer — commit GATED on focused CO review** | — |
+| E1 | `experiments/shared/evaluation/criteria.py` → `criteria/` package (metrics/verdict/judge_prompts/_shared + shim; 9 privates re-exported) | A | 3 | ✅ committed — CO REJECT overruled (transitive-reexport non-issue); verified 3 ways: AST-identical evaluate_run/metrics, 115+57 tests green, every real consumer resolves | 4568e66 |
 | E2 | `experiments/shared/harness.py` → `subprocess_runner.py` | B | 3 | ✅ committed (with E3/E4 plumbing) | 428ee5c |
 | E3 | `experiments/shared/scripts/run_matrix.py` → shared `container_cleanup.py` (dedups harness+run_matrix docker sweep) | B | 3 | ✅ committed | 428ee5c |
 | E4 | `experiments/shared/evaluation/common.py` → `tool_categorization.py` | A | 3 | ✅ committed | 428ee5c |
