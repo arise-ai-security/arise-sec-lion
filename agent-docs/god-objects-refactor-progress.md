@@ -189,5 +189,48 @@ the single E1 commit restores `criteria.py` without affecting the rest of the sw
 - **openrouter_adapter ↔ litellm_adapter DRY consolidation**: both cohesive individually;
   a shared LLM-adapter base is a `python-boilerplate` pass, not a god-object fix. Not scheduled.
 - **experiments/shared targets (E1–E4)**: blocked until the b4/n1 studies land; re-audit then.
-- **Swallowed-exception bug fixes + dead-code removal** (plan §out-of-scope): behavior-changing;
-  needs its own pass with user approval — NOT part of the behavior-preserving sweep.
+- **Swallowed-exception bug fixes + dead-code removal** (plan §out-of-scope): ✅ executed
+  2026-07-07 as the user-approved follow-up pass — see §Follow-up pass below.
+
+## Follow-up pass — out-of-scope bugs & enhancements (2026-07-07, user-approved)
+
+Executes the plan's §Out-of-scope findings as a deliberately behavior-CHANGING pass
+(user re-ran /software-quality:full-refactor to approve it). Five commits:
+
+- **8980668 fix: surface swallowed exceptions (5 sites).** subtask_parser chains the JSON decode
+  cause into the tiered-parse ValueError; EventBroadcaster unsubscribe stops resurrecting a
+  vanished defaultdict key (empty-list leak) and warns; openhands closed-loop SDK-event drops log
+  at debug; real exceptions from the cancelled run_task log via logger.exception (CancelledError
+  still swallowed — no coverage change, it is BaseException in 3.12); workspace_mirror chmod
+  failures summarize in ONE warning (native-Linux root-owned mirrors previously failed fully
+  silently). +4 regression tests (cause-chain, broadcaster round-trip + non-resurrection, chmod
+  summary).
+- **d6ad62c chore: remove dead code.** `build_tool_policy` (zero production callers; the live
+  path is composition.py's inline ToolPolicy — the BUG-A1 pin moved onto the live path in
+  test_flat_mode with a new allowed_bash_commands assertion). Deleting it also CURES the plan's
+  boundary-drift finding (core reading `settings.security.*`). `stop_session` (impl + protocol;
+  containers are reaped by PID-labeled cleanup at process exit) and `benchmark_result.py` (no
+  importer beyond the package re-export) deleted; describing docs truthed up.
+- **3144f09 + 97b3a1d fix: .gitignore / track `.claude/docs`.** Found during the pass: the bare
+  `.claude` exclusion defeated the pre-existing `!.claude/docs/` negations (git cannot re-include
+  children of an excluded dir) — the canonical doc set, including this sweep's own drift fixes,
+  had NEVER been tracked. Fixed to `.claude/*`; 12 docs (5,873 lines) now versioned. CO caught
+  that the first fix left non-md/nested files trackable → `.claude/docs/*` re-ignore (97b3a1d).
+- **1d969bc refactor: publicize `pid_alive`, `role_from_task`** (plan §private cross-module
+  imports; `_pid_alive`'s second importer had moved to `experiments/shared/container_cleanup.py`
+  during the E2–E4 extraction).
+- **Gate:** full suite 1218/13/0 (= the 1216/13/0 post-`5078f7a` baseline + 4 new − 2 dead-path
+  tests; `5078f7a` had retired the old 1215/3/13 baseline's 3 failures by decoupling two test
+  modules from branch-absent files), pyright 0, boundaries clean, call-site AST audit clean for
+  every renamed/deleted name (its 17 `[imports]` hits are PEP 695 `type`-alias false positives;
+  `runs/` vendored noise excluded).
+- **CO review: REJECT → fixed → APPROVE.** Initial REJECT on exactly one BLOCKING finding (the
+  gitignore non-md hole above); the claims on exception semantics, dead-code liveness (incl.
+  dynamic-dispatch/template/config attack), rename completeness, and layering all PASSED first
+  try. INFO kept as-is: `experiments-implementation-plan.md:580` still names build_tool_policy
+  (historical plan doc, intentional).
+- **Observed drift, NOT fixed (out of scope):** `plugins-security.md:233` claims
+  prepare_worker_execution raises on an existing session (tests pin reuse);
+  SYSTEM_REFERENCE §container-lifecycle line refs (:233/:265/:332) stale since the
+  docker_runtime split; `test_run_invariants.py` module docstring points at the renamed
+  test_prompt_unification_invariants.py.

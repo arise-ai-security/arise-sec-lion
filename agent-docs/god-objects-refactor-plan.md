@@ -81,6 +81,9 @@ import cycles/boundary violations · no non-leave-alone file re-flagged by a re-
 
 ## Out-of-scope findings (behavior-changing — separate passes, NOT this refactor)
 
+> ✅ Executed 2026-07-07 (follow-up pass: 8980668 / d6ad62c / 3144f09+97b3a1d / 1d969bc; the
+> missing-files bullet was resolved earlier by 5078f7a). Details: progress ledger §Follow-up pass.
+
 - **Swallowed exceptions (5 actionable):** `subtask_parser.py:300`, `event_broadcaster.py:103`, `openhands_adapter.py:355, :456` (post-split lines; were `:608, :707`), `plugins/security/runtime/workspace_mirror.py:129` (moved from `docker_runtime.py:479` by the #6 split). (`judge.py:198` reviewed: documented best-effort cost telemetry, intentional.)
 - **Private cross-module imports to publicize:** `procedures.py:38` imports `prompt_strategy._role_from_task`; `openhands_adapter.py:28` + `run_matrix.py:39` import `cleanup.registry._pid_alive`.
 - **Dead-code suspects:** `stop_session` (docker_runtime `:235` post-split + protocol `container_runtime.py:100`) has no production caller (containers reaped via PID-labeled cleanup); `plugins/security/benchmark_result.py` has no non-test importer.
