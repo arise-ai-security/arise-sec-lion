@@ -105,7 +105,7 @@ LiteLLM updates frequently and occasionally changes provider-specific behavior (
 
 ### O-series model detection may need updates
 
-`LiteLLMAdapter._is_o_series()` in `infrastructure/adapters/litellm_adapter.py` detects OpenAI O-series reasoning models (`o1`, `o3`, `o4`) that reject the `temperature` parameter and require special message formatting. If OpenAI releases new model prefixes (e.g., `o5`), this method needs updating or calls will fail with provider errors.
+`is_o_series()` in `infrastructure/adapters/llm_common.py` (shared by the LiteLLM and OpenRouter adapters) detects OpenAI O-series reasoning models (`o1`, `o3`, `o4`) that reject the `temperature` parameter and require special message formatting. If OpenAI releases new model prefixes (e.g., `o5`), this function needs updating or calls will fail with provider errors.
 
 ### Jinja2 template loading
 

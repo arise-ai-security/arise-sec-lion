@@ -299,16 +299,16 @@ start_session(cve, workspace, agent_id)                          docker_runtime.
 
 The sealed dir `<host_root>.sealed/` is a **sibling** of the run root with **no** bind
 mount, so a root shell in the container has no filesystem route to the `secb` wrapper
-source or the host-executed `secb-exec`. — `docker_runtime.py:546-566`
+source or the host-executed `secb-exec`. — `runtime/sealer.py:172` (`sealed_dir`)
 
-### The injected scripts (constants in `docker_runtime.py`)
+### The injected scripts (constants in `runtime/sealer.py`)
 
-- **`_SECB_WRAPPER`** (`:43-68`): `build` → `env -u REPLAY_ENABLED /usr/local/bin/compile`
+- **`_SECB_WRAPPER`** (`:39`): `build` → `env -u REPLAY_ENABLED /usr/local/bin/compile`
   (stripping `REPLAY_ENABLED` so `compile` runs the agent-editable `$SRC/build.sh`, never
   a baked `replay_build.sh`); `repro` → `/testcase/repro.sh`; `patch` → `/testcase/patch.sh`.
-- **`_REPRO_SKELETON`** (`:70-74`): prints "Arise seeded an empty /testcase/repro.sh;
+- **`_REPRO_SKELETON`** (`:66`): prints "Arise seeded an empty /testcase/repro.sh;
   Exploiter must replace it" and `exit 2`. Non-golden by construction.
-- **`_PATCH_SCRIPT`** (`:76-103`): applies `repo_changes.diff` idempotently (`git apply
+- **`_PATCH_SCRIPT`** (`:72`): applies `repo_changes.diff` idempotently (`git apply
   --check` → apply; reverse-check → "already applied"), then **requires** a non-empty
   `model_patch.diff` (`exit 1` otherwise) and applies it.
 
