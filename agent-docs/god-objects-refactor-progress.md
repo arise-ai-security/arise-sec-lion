@@ -183,12 +183,15 @@ the single E1 commit restores `criteria.py` without affecting the rest of the sw
 
 - **agent_session deep sub-state split** (RetryState/FailureHistory/VerificationState/ProcedureState
   via SharedStore-style delegation): feasible, in-repo precedent exists, but touches the replay
-  path + OCC invariants → deferred beyond this sweep unless the user opts in.
-- **openhands_adapter process-reaper extraction**: OS/waitpid/timing-sensitive; do LAST within
-  target #3 or skip — decide at target design time.
-- **openrouter_adapter ↔ litellm_adapter DRY consolidation**: both cohesive individually;
-  a shared LLM-adapter base is a `python-boilerplate` pass, not a god-object fix. Not scheduled.
-- **experiments/shared targets (E1–E4)**: blocked until the b4/n1 studies land; re-audit then.
+  path + OCC invariants → still deferred (offered 2026-07-07 alongside the other deferrals;
+  user picked the other three, not this one).
+- **openhands_adapter process-reaper extraction**: ✅ executed 2026-07-07 (`db40bca`) — see
+  §Deferred-items batch below.
+- **openrouter_adapter ↔ litellm_adapter DRY consolidation**: ✅ executed 2026-07-07
+  (`96d648b`) as shared helpers, not a base class — see §Deferred-items batch below.
+- **experiments/shared targets (E1–E4)**: ✅ re-audited 2026-07-07 — all four splits confirmed
+  landed; no god object remains. Residual small items stay blocked until the b4/n1 studies
+  land — see §Deferred-items batch below.
 - **Swallowed-exception bug fixes + dead-code removal** (plan §out-of-scope): ✅ executed
   2026-07-07 as the user-approved follow-up pass — see §Follow-up pass below.
 
@@ -233,4 +236,41 @@ Executes the plan's §Out-of-scope findings as a deliberately behavior-CHANGING 
   prepare_worker_execution raises on an existing session (tests pin reuse);
   SYSTEM_REFERENCE §container-lifecycle line refs (:233/:265/:332) stale since the
   docker_runtime split; `test_run_invariants.py` module docstring points at the renamed
-  test_prompt_unification_invariants.py.
+  test_prompt_unification_invariants.py. (All three fixed in the next batch, below.)
+
+## Deferred-items batch (2026-07-07, second follow-up — user picked deferrals #2/#3/#4 + doc drift)
+
+Four commits, CO REJECT→fixed→APPROVE:
+
+- **923b246 + c4346dd docs.** The three observed-drift spots above (session-reuse claim,
+  container-lifecycle refs → `docker_runtime.py:74/:129/:136-180/:251` + `runtime/sealer.py`
+  symbols, prompt-test docstring), plus CO's catch: sealed-dir ref (`sealer.py:172`) and the
+  `_SECB_WRAPPER`/`_REPRO_SKELETON`/`_PATCH_SCRIPT` constants heading (now `runtime/sealer.py`
+  `:39/:66/:72`), and `dependencies.md` retargeted to shared `is_o_series()`.
+- **96d648b refactor: `llm_common.py`.** `require_model` / `is_o_series` /
+  `extract_cache_tokens` moved verbatim to one module; openrouter's cross-adapter import of
+  `litellm_adapter.require_model` eliminated. A shared adapter BASE CLASS was evaluated and
+  REJECTED as the wrong abstraction: the flows diverge deliberately (240s vs 120s per-attempt
+  timeouts, disjoint retryable sets, cache-to-tail only on the litellm path, `extra_body`
+  usage.include only on openrouter, `json.loads(args)` vs `json.loads(args) if args else {}`).
+- **db40bca refactor: `worker/process_reaper.py`.** Verbatim move of `snapshot_child_pids` /
+  `reap_with_escalation` / `_drain_waitpid` (+ `SHUTDOWN_GRACE_SECONDS`, publicized) out of
+  `openhands_adapter`; the adapter keeps SDK `pause()/close()` shutdown and delegates. Test
+  patch targets retargeted to where the lookups now happen; the real-OS zombie/SIGKILL
+  escalation tests pass against the moved module. Closes the last open slice of target #3.
+- **experiments/shared re-audit (read-only, no commits).** E1–E4 all landed (`criteria/`
+  package 642/411/361; `common.py` 448→292 with `tool_categorization.py` out; `harness.py`
+  696→459 with `subprocess_runner.py`/`container_cleanup.py` extracted; `run_matrix.py`
+  581→516). No remaining god object; `harness.py`/`run_matrix.py` reclassified cohesive
+  orchestrators. Residuals for the post-study batch: publicize `_sweep_stale_containers`
+  (`run_matrix.py:34`); dedupe manifest/dataset loaders (`harness.py:80` ↔ `run_matrix.py:358`);
+  polish-only signals (`evaluate_run` 151 lines `criteria/verdict.py:492`, isinstance chain
+  `metrics.py:308`, isinstance dispatch `collect.py:85`/`load_runs.py:149`). CO concurred:
+  no live SRP fracture.
+- **Gate:** full suite 1218/13/0 after every commit, pyright 0, boundaries clean.
+- **CO review:** first pass REJECT on exactly one BLOCKING finding (the two sealed-dir/script
+  refs above, missed by 923b246); claims on both moves (body drift, patch-target correctness,
+  grace default binding, pruned imports, cycles) PASSED first try; c4346dd re-verified →
+  **APPROVE**. INFO noted: moved reaper log lines now carry logger
+  `infrastructure.adapters.worker.process_reaper` (no in-repo filter keys on the old name).
+- **Still deferred:** agent_session deep sub-state split (only remaining item; needs opt-in).
