@@ -262,30 +262,30 @@ legitimately mentions "exploit"/"repro" — from rendering the Exploiter prompt)
 
 `DockerSecBenchRuntime` prepares one host workspace per run; `SecurityDomainPlugin` starts
 one **long-lived** container for the first worker and **reuses** it (`_sessions[root_id]`,
-`plugin.py:53-63,180-195`) for the rest of that run's Builder/Exploiter/Fixer/Reporter
+`plugin.py:69-71,203-215`) for the rest of that run's Builder/Exploiter/Fixer/Reporter
 workers — one container **per run**, not per worker. So Builder outputs persist for
 downstream phases — a missing binary at the Exploiter step means the Builder genuinely
 failed, not a handoff copy problem.
 
 ```
-prepare_workspace(cve, run_output_path, image, root_id)          docker_runtime.py:152
-  │  _ensure_image_exists(image)         inspect → pull <registry>/image → else "build it"
+prepare_workspace(cve, run_output_path, image, root_id)          docker_runtime.py:74
+  │  image_ensurer.ensure_image_exists    inspect → pull <registry>/image → else "build it"
   │  docker create + docker cp  ─────────▶ host mirrors: runs/<id>/{src,testcase,work}
-  │  _remove_forbidden_testcase_artifacts  delete model_patch.diff / gold*.patch / candidate_fix*
-  │  _seed_runtime_scripts                 overwrite /testcase/repro.sh (exit-2 skeleton, 0755)
+  │  sealer.remove_forbidden_testcase_artifacts  delete model_patch.diff / gold*.patch / candidate_fix*
+  │  sealer.seed_runtime_scripts           overwrite /testcase/repro.sh (exit-2 skeleton, 0755)
   │                                                  /testcase/patch.sh  (Arise harness, 0555)
   │  (computes <run>.sealed/secb-exec PATH only — sealed files are WRITTEN in start_session)
   ▼
-start_session(cve, workspace, agent_id)                          docker_runtime.py:233
+start_session(cve, workspace, agent_id)                          docker_runtime.py:129
   │  assert every bind-mount target stays under this run's host_root
-  │  re-seed patch.sh; WRITE sealed <run>.sealed/secb wrapper (_sealed_secb_wrapper, :265)
+  │  re-seed patch.sh; WRITE sealed <run>.sealed/secb wrapper (sealer.sealed_secb_wrapper, runtime/sealer.py:184)
   │  docker run -d  <mounts below>  <image>  tail -f /dev/null
-  │  git config safe.directory; chmod +x /src/build.sh; WRITE <run>.sealed/secb-exec (_write_exec_helper, :332)
+  │  git config safe.directory; chmod +x /src/build.sh; WRITE <run>.sealed/secb-exec (_write_exec_helper, :251)
   ▼
 (B/E/F/R run via secb-exec → docker exec)   container reaped at process exit (PID cleanup → docker rm -f)
 ```
 
-### Bind mounts (`start_session`, `docker_runtime.py:266-310`)
+### Bind mounts (`start_session`, `docker_runtime.py:136-180`)
 
 | Host source | Container target | Mode | Purpose |
 |---|---|---|---|

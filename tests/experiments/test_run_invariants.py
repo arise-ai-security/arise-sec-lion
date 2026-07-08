@@ -3,7 +3,8 @@
 These cover the policy/timeout/workspace/value-object contracts that
 survived the prompt-unification refactor. The legacy briefing-path
 prompt tests were retired; the prompt-rendering invariants now live in
-``plugins/security/tests/test_prompt_unification_invariants.py``.
+``plugins/security/tests/test_prompt_building.py`` and
+``test_prompt_normalization.py``.
 """
 
 from __future__ import annotations

@@ -233,7 +233,7 @@ Key operations in `start_session`:
 ### Lifecycle in the Plugin
 
 1. **`prepare_run`** -- Called once per run. Resolves image via `resolve_secbench_image`, calls `container_runtime.prepare_workspace`. Caches in `_workspaces[root_id]`. Idempotent (returns cached workspace on repeat calls).
-2. **`prepare_worker_execution`** -- Called before each worker executes. Calls `container_runtime.start_session`. Caches in `_sessions[root_id]`. Raises `RuntimeError` if a session already exists for that run.
+2. **`prepare_worker_execution`** -- Called before each worker executes. Reuses the run's existing session when one is cached in `_sessions[root_id]` (one shared container per run); otherwise calls `container_runtime.start_session` and caches it. A per-root lock serializes the check-and-start so concurrent workers cannot race to a second container.
 3. **`cleanup_worker_execution`** -- Intentional no-op: the run's one shared container stays alive across ALL workers (stopping per-worker would destroy container-local state the next worker needs) and is reaped at process exit by the PID-labeled cleanup.
 
 ## Image Resolver
