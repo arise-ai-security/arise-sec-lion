@@ -24,6 +24,7 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
+from infrastructure.adapters.worker import process_reaper
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.worker.shared import ContainerSessionContext
 
@@ -725,7 +726,7 @@ class TestOpenHandsAdapter:
 
         # Given: send_message blocks before OpenHands can enter run().
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            "infrastructure.adapters.worker.openhands_adapter.SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
         adapter = _adapter(timeout_seconds=0.01)
@@ -768,12 +769,12 @@ class TestOpenHandsAdapter:
 
         # Given: child PID snapshots where an MCP child appears after start.
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            "infrastructure.adapters.worker.openhands_adapter.SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
         snapshots = iter([{100}, {100, 200}, {100, 200}])
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._snapshot_child_pids",
+            "infrastructure.adapters.worker.openhands_adapter.snapshot_child_pids",
             lambda: next(snapshots, {100, 200}),
         )
         adapter = _adapter(timeout_seconds=0.01)
@@ -840,7 +841,7 @@ class TestOpenHandsAdapter:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            "infrastructure.adapters.worker.openhands_adapter.SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
         adapter = _adapter(timeout_seconds=0.01)
@@ -1432,16 +1433,10 @@ class TestMcpChildProcessLifecycle:
                 "test scaffold: SIGTERM-ignoring child failed to spawn"
             )
 
-            class _FakeConv:
-                def pause(self) -> None: ...
-                def close(self) -> None: ...
-
-            adapter = _adapter()
-
             # When: the reaper runs with a tight grace so the test is
-            # fast. Internal helper to bypass the constant default.
+            # fast. Direct module call to bypass the constant default.
             started = time.monotonic()
-            adapter._reap_with_escalation(
+            process_reaper.reap_with_escalation(
                 {child.pid}, grace_seconds=0.5, poll_interval=0.05
             )
             elapsed = time.monotonic() - started
@@ -1467,9 +1462,8 @@ class TestMcpChildProcessLifecycle:
     def test_reap_with_escalation_handles_empty_set(self) -> None:
         """Defensive: empty PID set is a no-op (mirrors the no-PIDs
         contract of ``_request_shutdown``)."""
-        adapter = _adapter()
         # Should not raise nor block.
-        adapter._reap_with_escalation(set(), grace_seconds=0.1, poll_interval=0.05)
+        process_reaper.reap_with_escalation(set(), grace_seconds=0.1, poll_interval=0.05)
 
     def test_reap_with_escalation_tolerates_already_reaped_pids(self) -> None:
         """``ChildProcessError`` (already reaped) and ``ProcessLookupError``
@@ -1480,20 +1474,18 @@ class TestMcpChildProcessLifecycle:
         # ``os.kill(pid, 0)`` will succeed (process exists) but
         # ``waitpid`` will raise ``ChildProcessError`` because the
         # kernel only allows waiting for direct children.
-        adapter = _adapter()
-
         with (
-            patch("infrastructure.adapters.worker.openhands_adapter.os.kill"),
+            patch("infrastructure.adapters.worker.process_reaper.os.kill"),
             patch(
-                "infrastructure.adapters.worker.openhands_adapter.os.waitpid",
+                "infrastructure.adapters.worker.process_reaper.os.waitpid",
                 side_effect=ChildProcessError(),
             ),
             patch(
-                "infrastructure.adapters.worker.openhands_adapter.pid_alive",
+                "infrastructure.adapters.worker.process_reaper.pid_alive",
                 return_value=True,
             ),
         ):
-            adapter._reap_with_escalation(
+            process_reaper.reap_with_escalation(
                 {_os.getpid()},  # never the current process
                 grace_seconds=0.1,
                 poll_interval=0.05,
