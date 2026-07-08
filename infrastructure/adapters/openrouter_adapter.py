@@ -47,7 +47,11 @@ from infrastructure.adapters.anthropic_cache import (
     strip_tool_content,
 )
 from infrastructure.adapters.content_tool_calls import try_parse_content_tool_calls
-from infrastructure.adapters.litellm_adapter import require_model
+from infrastructure.adapters.llm_common import (
+    extract_cache_tokens,
+    is_o_series,
+    require_model,
+)
 from infrastructure.io import robust_call
 
 
@@ -115,17 +119,6 @@ class OpenRouterAdapter(LLMPort):
             timeout=self._LLM_TIMEOUT_SECONDS,
             default_headers=headers or None,
         )
-
-    @staticmethod
-    def _is_o_series(model: str) -> bool:
-        """Return True for OpenAI reasoning models that reject ``temperature``.
-
-        OpenRouter routes these as ``openai/o1-...`` / ``openai/o3-...`` /
-        ``openai/o4-...`` / ``openai/gpt-5-...`` so the suffix check is the same
-        as the direct-OpenAI path.
-        """
-        base = model.split("/")[-1].lower()
-        return base.startswith(("o1", "o3", "o4", "gpt-5"))
 
     async def _call(self, *, model: str, **kwargs: Any) -> Any:
         """Call the OpenRouter chat-completions endpoint with timeout + retry.
@@ -213,7 +206,7 @@ class OpenRouterAdapter(LLMPort):
         top_p = merged_config.get("top_p")
         if top_p is not None:
             kwargs["top_p"] = top_p
-        if not self._is_o_series(model):
+        if not is_o_series(model):
             kwargs["temperature"] = merged_config.get("temperature", 0.7)
         if tools:
             kwargs["tools"] = tools
@@ -227,7 +220,7 @@ class OpenRouterAdapter(LLMPort):
         usage = getattr(response, "usage", None)
         if usage is None:
             return LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-        cache_read_tokens, cache_write_tokens = OpenRouterAdapter._extract_cache_tokens(usage)
+        cache_read_tokens, cache_write_tokens = extract_cache_tokens(usage)
         return LLMUsage(
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
@@ -235,24 +228,6 @@ class OpenRouterAdapter(LLMPort):
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
         )
-
-    @staticmethod
-    def _extract_cache_tokens(usage: Any) -> tuple[int, int]:
-        """Extract prompt-cache read/write tokens from an OpenRouter usage object.
-
-        Anthropic-backed responses expose cache_read_input_tokens (cache hit)
-        and cache_creation_input_tokens (cache write). OpenAI-style responses
-        nest the read count under prompt_tokens_details.cached_tokens, used
-        here as a read fallback. Defensive getattr keeps non-caching providers
-        (no such fields) at 0.
-        """
-        cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
-        cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        if not cache_read_tokens:
-            details = getattr(usage, "prompt_tokens_details", None)
-            if details is not None:
-                cache_read_tokens = getattr(details, "cached_tokens", 0) or 0
-        return cache_read_tokens, cache_write_tokens
 
     def _extract_cost(
         self,

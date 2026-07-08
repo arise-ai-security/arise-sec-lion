@@ -29,17 +29,15 @@ from infrastructure.adapters.anthropic_cache import (
     strip_tool_content,
 )
 from infrastructure.adapters.content_tool_calls import try_parse_content_tool_calls
+from infrastructure.adapters.llm_common import (
+    extract_cache_tokens,
+    is_o_series,
+    require_model,
+)
 from infrastructure.io import robust_call
 
 
 logger = logging.getLogger(__name__)
-
-
-def require_model(merged_config: dict[str, Any]) -> str:
-    model = merged_config.get("model")
-    if not isinstance(model, str) or not model.strip():
-        raise LLMError("LLM model must be configured explicitly")
-    return model
 
 
 class LiteLLMAdapter(LLMPort):
@@ -59,11 +57,6 @@ class LiteLLMAdapter(LLMPort):
         """
         self.default_config = default_config or {}
         self._cost_calculator = cost_calculator
-
-    @staticmethod
-    def _is_o_series(model: str) -> bool:
-        base = model.split("/")[-1].lower()
-        return base.startswith(("o1", "o3", "o4", "gpt-5"))
 
     @staticmethod
     def _provider_overrides(merged_config: dict[str, Any]) -> dict[str, Any]:
@@ -230,7 +223,7 @@ class LiteLLMAdapter(LLMPort):
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
         total_tokens = usage.total_tokens if usage else 0
-        cache_read_tokens, cache_write_tokens = self._extract_cache_tokens(usage)
+        cache_read_tokens, cache_write_tokens = extract_cache_tokens(usage)
         cost_usd = self._calculate_cost(model, prompt_tokens, completion_tokens, response)
 
         return (
@@ -243,26 +236,6 @@ class LiteLLMAdapter(LLMPort):
             ),
             cost_usd,
         )
-
-    @staticmethod
-    def _extract_cache_tokens(raw_usage: Any) -> tuple[int, int]:
-        """Extract prompt-cache read/write tokens from a LiteLLM usage object.
-
-        LiteLLM normalizes Anthropic cache stats onto the usage object as
-        cache_read_input_tokens (cache hit) and cache_creation_input_tokens
-        (cache write). OpenAI-style responses nest the read count under
-        prompt_tokens_details.cached_tokens, used here as a read fallback.
-        Defensive getattr keeps non-caching providers (no such fields) at 0.
-        """
-        if raw_usage is None:
-            return 0, 0
-        cache_read_tokens = getattr(raw_usage, "cache_read_input_tokens", 0) or 0
-        cache_write_tokens = getattr(raw_usage, "cache_creation_input_tokens", 0) or 0
-        if not cache_read_tokens:
-            details = getattr(raw_usage, "prompt_tokens_details", None)
-            if details is not None:
-                cache_read_tokens = getattr(details, "cached_tokens", 0) or 0
-        return cache_read_tokens, cache_write_tokens
 
     async def query(self, prompt: str, config_dict: dict[str, Any]) -> str:
         """Query LLM and return response content.
@@ -287,7 +260,7 @@ class LiteLLMAdapter(LLMPort):
             "max_tokens": merged_config.get("max_tokens", 1000),
             "top_p": merged_config.get("top_p"),
         }
-        if not self._is_o_series(model):
+        if not is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
         call_kwargs.update(self._maybe_prompt_cache_key(merged_config, model))
@@ -323,7 +296,7 @@ class LiteLLMAdapter(LLMPort):
             "max_tokens": merged_config.get("max_tokens", 1000),
             "top_p": merged_config.get("top_p"),
         }
-        if not self._is_o_series(model):
+        if not is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
         call_kwargs.update(self._maybe_prompt_cache_key(merged_config, model))
@@ -376,7 +349,7 @@ class LiteLLMAdapter(LLMPort):
         call_kwargs["messages"] = apply_anthropic_cache_to_tail(
             call_kwargs["messages"], model
         )
-        if not self._is_o_series(model):
+        if not is_o_series(model):
             call_kwargs["temperature"] = merged_config.get("temperature", 0.7)
         call_kwargs.update(self._provider_overrides(merged_config))
         call_kwargs.update(self._maybe_prompt_cache_key(merged_config, model))
