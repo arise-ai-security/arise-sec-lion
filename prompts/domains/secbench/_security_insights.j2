@@ -1,0 +1,37 @@
+{# SEC-bench per-phase `security_insights` requirements — the CWE-specific guidance a
+   decomposing manager puts into each leaf subtask's justification.security_insights.
+   Kept separate from assess.j2 so the role catalog, the decomposition rules, and these
+   insight requirements stay independent concerns (they change for different reasons and
+   have different owners). Rendered identically for every manager — no per-manager
+   variation — so it stays inside the cacheable prefix. #}
+### Per-phase `security_insights` requirements
+
+**⚠️ Exploiter.** Each Exploiter subtask's `security_insights` MUST contain a runtime question the worker must answer empirically (you decide what question is most useful for each role). Two roles have additional mandatory guidance:
+
+- **[PoC-Researcher]** `security_insights` MUST additionally include: *"Map each PoC operation to its implementing C/C++ source function using search_codebase. Save the ordered mapping to {{ artifact_paths.poc_operation_map }} (one line per step: Step N: <PoC operation> → <function> in <file>). This mapping is required input for the Forward-Instrumentator."*
+- **[Forward-Instrumentator]** `security_insights` MUST additionally include: *"The crash site shows where bad data is CONSUMED, not where it is PRODUCED. For each PoC operation BEFORE the crash, read {{ artifact_paths.poc_operation_map }}, then inject fprintf probes into each implementing C function to dump internal struct fields (pointers, sizes, lengths, reference counts) before and after. DO NOT instrument the crash-site function — that answers 'what value crashed' but not 'who produced the bad value'. Anti-pattern: do NOT describe this role as crash forensics, gdb backtraces, or addr2line mapping — those are backward tracing. This role does FORWARD tracing through PoC operations. Your findings ({{ artifact_paths.forward_instrumentation }}) provide valuable evidence for the Fixer phase's Root-Cause-Analyst."*
+
+**⚠️ Fixer** (mandatory for each Fixer subtask's justification). A weak `security_insights` produces a shallow patch even with strong tools. Each Fixer subtask's `security_insights` MUST contain:
+
+1. **A runtime question the worker must answer empirically.** Not a restatement of the CVE. Phrase it as a question whose answer requires running the PoC, not reading static code. Examples by CWE:
+   - Pointer Errors (CWE-476) / Type Confusion: *"What is the runtime type/kind of the object reaching the crash site? Identify whatever field the project's object model uses to tag object types (read the struct definition — each codebase uses a different name), capture its value via one-shot `fprintf` instrumentation injected before the dereference, run `secb build`, run `secb repro`, then `git checkout -- <file>` to revert. Then grep for any static initializer of that type with NULL or uninitialized fields — often the data origin."*
+   - Memory Safety (CWE-122/121): *"What is the `len` value at allocation vs. the byte offset at the overflowing write? Print both before the write."*
+   - Memory Lifecycle (CWE-416/401): *"Print the object's address at allocation, free, and use to confirm the timing."*
+
+2. **At least two candidate fix layers** the worker must evaluate against a contract/coverage/failure-mode rubric. NOT a single predetermined target. Frame them as: (A) the closest-to-crash guard (usually the weakest — silences the symptom, hides the underlying invalid state, may produce silent wrong results downstream); (B) a caller-side chokepoint where the existing function's documented or implicit contract *already* handles error/absent values and extending that contract to cover the new invalid case is a natural generalization. Worker MUST justify the chosen layer against contract / coverage / failure-mode / **false-positive risk** (can the guard fire on valid non-malicious inputs?) and MUST pick based on the actual codebase structure — you (the decomposing manager) should NOT name the specific function; leave that to the worker's investigation.
+
+3. **Known anti-patterns to refuse.** At minimum: *"Do NOT add a NULL guard at the crash line as the sole fix — repeated prior runs produced shallow patches by stopping at the crash site. Do NOT add unrelated defensive code (NULL-checks on `malloc`/`realloc`, hardening nearby functions) — that is scope creep."*
+
+4. **Cross-phase evidence.** The `[Root-Cause-Analyst]` `security_insights` MUST include: *"Check {{ artifact_paths.forward_instrumentation }} from the Exploiter's Forward-Instrumentator — if it exists, it identifies which PoC operation first produces inconsistent internal state. Consider its corruption-origin finding alongside the crash-site evidence."*
+
+5. **For Pointer Errors and Type Confusion**: explicitly state that the Root-Cause-Analyst MUST perform one-shot source instrumentation (inject `fprintf` at the crash site to print type tag, run `secb build`, run `secb repro`, revert) and that static tools + `gdb bt` alone are insufficient evidence — reject the analyst's deliverable if it contains no runtime-observation section.
+
+**⚠️ Fixer-specific structured-handoff requirement.** The `[Root-Cause-Analyst]` subtask's `success_criteria` MUST require that `{{ hierarchical_only["Fixer"]|join('`, `') }}` contains a machine-readable block at the bottom of the file with these exact keys:
+
+```
+{% for key, value in root_cause_block_fields -%}
+{{ key }}: {{ value }}
+{% endfor -%}
+```
+
+The `[Patch-Creator]` subtask's task description MUST instruct the worker to extract `PROPOSED_FIX_SITE` from that block as its default fix location and to write a one-paragraph justification if it deviates. The `[Patch-Creator]` subtask MUST also include a no-scope-creep rule: *"The diff MUST contain only the change that fixes this CVE. Do NOT add unrelated NULL-checks, defensive hardening, or error handling for paths the PoC does not exercise. If the diff has more than one logical hunk or touches more than one function, justify each extra hunk against the analyst's block."*

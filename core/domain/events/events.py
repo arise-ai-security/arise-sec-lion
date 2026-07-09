@@ -83,6 +83,11 @@ class AgentCreated(DomainEvent):
     symbols: list[str] = Field(default_factory=list)
     search_hints: list[str] = Field(default_factory=list)
 
+    # Deterministic execution tier — from Subtask, persisted for replay
+    execution_mode: str = "auto"
+    procedure_ref: str = ""
+    procedure_params: dict[str, Any] = Field(default_factory=dict)
+
 
 class TaskAssigned(DomainEvent):
     """Task assigned to agent."""
@@ -210,6 +215,37 @@ class RetryScheduled(DomainEvent):
     escalated_model: str | None = None  # New model if escalated, None if same
 
 
+class FailureDigestRecorded(DomainEvent):
+    """Deterministic digest of a failed attempt, for retry/parent prompts.
+
+    Built without LLM involvement from the aggregate's error message and
+    recent tool-output excerpts. Retained across RetryScheduled, mirroring
+    ``verification_feedback``.
+    """
+
+    digest: str
+    source: str  # "worker_crash" | "procedure_failure"
+
+
+class ProcedureExecutionStarted(DomainEvent):
+    """WORKER started a deterministic procedure (no prompt, no LLM turns)."""
+
+    procedure_ref: str
+
+
+class ProcedureExecutionFinished(DomainEvent):
+    """Deterministic procedure finished; evidence is host-captured (unforgeable).
+
+    Terminal status comes from the WorkCompleted/WorkFailed that follows,
+    preserving the one-terminal-event worker lifecycle invariant.
+    """
+
+    procedure_ref: str
+    success: bool
+    summary: str
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class CodeGenerationStarted(DomainEvent):
     """WORKER started execution with tool."""
 
@@ -253,11 +289,15 @@ class ChildCompleted(DomainEvent):
 class ChildFailed(DomainEvent):
     """Child agent failed, parent notified with error details.
 
-    Triggers failure propagation up the hierarchy.
+    Triggers failure propagation up the hierarchy. ``child_task`` and
+    ``digest`` enrich the parent's failure record for informed re-planning;
+    defaults keep pre-enrichment rows replay-compatible.
     """
 
     child_id: UUID
     reason: str  # Error message from child
+    child_task: str = ""
+    digest: str | None = None  # Child's failure digest, when one was recorded
 
 
 class ComplexityEvaluated(DomainEvent):
@@ -354,6 +394,10 @@ class WorkerCostRecorded(DomainEvent):
     usage_metrics: list[WorkerUsageMetrics] = Field(default_factory=list)
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
+    # Execution-environment identity, so run invariants (one shared container per
+    # run, one fresh conversation per worker) are checkable from the DB alone.
+    container_id: str | None = None
+    conversation_id: str | None = None
 
     @property
     def total_recorded_tokens(self) -> int:
@@ -512,3 +556,70 @@ class DecisionRecorded(DomainEvent):
     decision_value: str  # JSON-serialized value
     rationale: str
     decided_by: UUID  # Agent that made the decision
+
+
+# =============================================================================
+# Shared Code-Context Events (shared code-prefix cache)
+# =============================================================================
+
+
+class SourceFileObserved(DomainEvent):
+    """A worker's file-view tool returned source content.
+
+    Persists the verbatim bytes a ``view`` tool call surfaced so downstream
+    workers receive the same code without re-reading it. The exact bytes
+    injected into any prompt are reconstructable from these events alone;
+    ``content_sha256`` provides integrity/dedup. Emitted on the observing
+    worker's aggregate.
+    """
+
+    path: str
+    content: str
+    content_sha256: str
+    observed_by: str  # Agent that viewed the file (string form of its UUID)
+
+
+class SourceFileEdited(DomainEvent):
+    """A worker edited a source file, invalidating its recorded content.
+
+    The shared code block is append-only, so an edit appends a stale-marker
+    note after the file's last shown revision (earlier bytes never change);
+    the next ``SourceFileObserved`` of the path appends a fresh revision.
+    Emitted on the editing worker's aggregate.
+    """
+
+    path: str
+    edited_by: str  # Agent that edited the file (string form of its UUID)
+
+
+# =============================================================================
+# Runtime-surface events (anti-leak: Arise sealing agent-visible surfaces)
+# =============================================================================
+
+
+class SealedArtifact(BaseModel):
+    """One Arise-sealed runtime artifact (nested in RuntimeSurfaceSealed)."""
+
+    model_config = {"frozen": True}
+
+    container_path: str  # e.g. "/testcase/repro.sh", "/usr/local/bin/secb"
+    kind: str  # "repro_skeleton" | "patch_script" | "secb_wrapper"
+    non_golden: bool = True  # explicit anti-leak marker
+    content_sha256: str = ""  # integrity of the Arise-owned content written
+
+
+class RuntimeSurfaceSealed(DomainEvent):
+    """Arise sealed the agent-visible runtime surface (anti-leak enforcement).
+
+    Records that the orchestrator overwrote agent-facing runtime artifacts
+    (the seeded non-golden repro skeleton, the immutable patch script, and the
+    delegating secb wrapper) with Arise-owned versions, so the agent cannot
+    read a baked golden solution. Reconstructable from the DB alone for
+    post-hoc anti-leak audit. Observability event -- does not change agent
+    state. The secb wrapper's content/path are deterministic constants
+    installed unconditionally per worker container, so it is recorded here at
+    workspace-prep time alongside the repro/patch scripts.
+    """
+
+    surface: str  # which runtime surface was sealed, e.g. "secbench"
+    sealed_artifacts: list[SealedArtifact]

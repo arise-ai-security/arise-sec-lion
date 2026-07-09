@@ -1,0 +1,16 @@
+**Run long commands detached — never block one shell call past the tool limit.**
+A sanitizer build or a full reproduction run can take longer than the shell
+tool's ~300 s per-call ceiling; if you block a single tool call on one, the call
+is killed mid-run and the work is wasted. Launch anything you expect to exceed
+~3 minutes in the background, send its output to a log, and write a sentinel file
+when it finishes — then poll that sentinel from SEPARATE short calls:
+
+```bash
+nohup bash -c '<cmd>; echo "exit=$?" > {{ artifact_dirs.testcase }}/<name>.exit' > {{ artifact_dirs.testcase }}/<name>.log 2>&1 &
+echo "launched <name> (pid $!)"
+# then, in separate short tool calls, until {{ artifact_dirs.testcase }}/<name>.exit appears:
+[ -f {{ artifact_dirs.testcase }}/<name>.exit ] && cat {{ artifact_dirs.testcase }}/<name>.exit && tail -n 40 {{ artifact_dirs.testcase }}/<name>.log || tail -n 20 {{ artifact_dirs.testcase }}/<name>.log
+```
+
+Poll only with short, cheap commands (`tail`, `ls`, the `[ -f … ]` check above).
+Do not re-run the long command inline just to "check" it.

@@ -73,13 +73,6 @@ def study(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return {"study_id": "2026-test-study", "task": task, "cell": cell, "config": config}
 
 
-def _stub_project_events_to_jsonl(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _noop(**_kwargs: Any) -> int:
-        return 0
-
-    monkeypatch.setattr(harness, "project_events_to_jsonl", _noop)
-
-
 def _stub_register_run(monkeypatch: pytest.MonkeyPatch, captured: list[UUID]) -> None:
     def _capture(*, run_id: UUID, **_kwargs: Any) -> Path:
         captured.append(run_id)
@@ -102,7 +95,6 @@ def test_run_arise_reads_run_id_from_per_invocation_result_file(
         return 0
 
     monkeypatch.setattr(harness, "_invoke_main_py", fake_invoke)
-    _stub_project_events_to_jsonl(monkeypatch)
     captured: list[UUID] = []
     _stub_register_run(monkeypatch, captured)
 
@@ -128,7 +120,6 @@ def test_run_arise_raises_when_subprocess_does_not_write_result_file(
         return 1
 
     monkeypatch.setattr(harness, "_invoke_main_py", fake_invoke)
-    _stub_project_events_to_jsonl(monkeypatch)
     _stub_register_run(monkeypatch, [])
 
     # When/Then: run_arise refuses to enroll
@@ -166,7 +157,6 @@ def test_run_arise_concurrent_invocations_do_not_misattribute_run_ids(
         return 0
 
     monkeypatch.setattr(harness, "_invoke_main_py", fake_invoke)
-    _stub_project_events_to_jsonl(monkeypatch)
     _stub_register_run(monkeypatch, [])
 
     results: dict[int, UUID] = {}

@@ -2,33 +2,58 @@
 ## Fixer Worker — Step-by-Step
 
 Refer to Task Context above for repository location and vulnerability details.
-Base commit hash is at `/testcase/base_commit_hash`.
-**Exploiter phase is already complete** — use the exploiter's artifacts for validation.
+Base commit hash is at `{{ artifact_paths.base_commit_hash }}`.
+{% from 'domains/secbench/worker/_worker_helpers.j2' import handoff_preamble %}
+{% from 'domains/secbench/_validation_macros.j2' import secb_fix_validation, secb_poll_result %}
+
+{% set fixer_must_instruction -%}
+you **MUST**
+generate the patch from source edits (never hand-write the final diff file), rebuild
+with `secb build`, and validate with `secb repro`.
+{%- endset %}
+{{ handoff_preamble(
+     upstream_phase='Exploiter',
+     upstream_complete_sentence='use the exploiter\'s artifacts for validation.',
+     must_instruction=fixer_must_instruction
+   ) }}
 
 {% include 'domains/secbench/phases/fix.j2' %}
 
 ### Prerequisites — Reuse Peer Work (CRITICAL)
 
+{% if shared_code_enabled %}
+Any source files already read by upstream workers are in `<provided_source_files>` — build on them; only re-`view` a source file after you edit it or one not provided there.
+{% endif %}
+
 **BEFORE doing ANY analysis, leverage what siblings already produced:**
-1. Run `ls -la /testcase/` to see ALL existing artifacts from upstream siblings and peers
-2. **Check sibling context** (above) for exploiter's shared decisions: PoC path, exploit command, sanitizer error output. **Reuse these directly.**
-3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed and shared findings via `<context-update>`, **build on their work** — don't redo their analysis. **Peer workers' findings come from real experiments (gdb, code tracing, crash reproduction) and take priority over the manager's initial task framing when they conflict.** If the analyst discovered the root cause is in a different file than what the manager suggested, follow the analyst. **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself.
+1. Run `ls -la {{ artifact_dirs.testcase }}/` to see ALL existing artifacts from upstream siblings and peers
+2. **Check sibling context** (above) for exploiter's shared decisions: PoC path,
+   exploit command, sanitizer error output. Validate these against raw artifacts/logs,
+   then reuse them.
+3. If upstream siblings (Root-Cause-Analyst, Candidate-Reviewer) already completed
+   and shared findings via `<context-update>`, **validate and build on their work** —
+   don't redo confirmed analysis. Treat peer findings as evidence inputs, not
+   authority. If an analyst claims the root cause is in a different file than the
+   manager assigned, follow that claim only after verifying raw logs/code evidence
+   and writing a `MANAGER_OVERRIDE` block. **If a peer worker failed**, their work is
+   unavailable — fall back to the manager's guidance and run the experiments yourself.
 4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
 
 Then validate what you're building on:
 - Run `ls -la` on reported PoC file path — confirm it exists
 - Run the reported exploit command — confirm it triggers the expected error
-- **Read exploiter artifacts** if available: `cat /testcase/data_flow_findings.txt`, `cat /testcase/asan_crash*.txt`, `cat /testcase/static_findings.txt` — these contain data flow traces, sanitizer output, and static analysis that inform root cause analysis
+- **Read exploiter artifacts** if available: `cat {{ artifact_dirs.testcase }}/data_flow_findings.txt`, `cat {{ artifact_dirs.testcase }}/asan_crash*.txt`, `cat {{ artifact_dirs.testcase }}/static_findings.txt` — these contain data flow traces, sanitizer output, and static analysis that inform root cause analysis
 - If sibling findings are inconsistent or files are missing, investigate and reconstruct from available context
-5. **Verify `/testcase/repro.sh` exists** — this is the exploiter's reproduction script. You MUST use it to validate your patch. If missing, check sibling context for the exploit command and create repro.sh yourself.
-6. **Verify binaries exist** at `{{ work_dir }}` or `/work/bin/` — do NOT rebuild unless binaries are missing.
-7. **Install analysis tools**: `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
-8. **Read the PoC file** to understand what input triggers the vulnerability — this informs your root cause analysis.
+5. **Verify `{{ artifact_paths.repro_script }}` exists** — this is the script behind `secb repro`. If missing, check sibling context for the exploit command and create repro.sh yourself.
+6. **Verify binaries exist** at paths listed in `{{ artifact_paths.binary_paths }}`. Before patch development, do not rebuild unless binaries are missing. After applying the patch, `secb build` is mandatory for validation.
+7. **Confirm Builder baseline first**: before editing source, run `cd {{ work_dir }} && git status --short`. Builder source/setup hunks should already be in the local `arise-builder-baseline` commit. If Builder source hunks are still unstaged or uncommitted, SELF-HEAL rather than failing: stage and commit exactly those Builder hunks as `arise-builder-baseline` (do NOT use `git add -A`), or generate `{{ artifact_paths.model_patch }}` naming only the files YOUR fix edits. The goal is that model_patch.diff contains only Fixer edits — fix the baseline state, do not abort.
+8. **Install analysis tools**: `apt-get install -y gdb cppcheck cflow 2>/dev/null || true`
+9. **Read the PoC file** to understand what input triggers the vulnerability — this informs your root cause analysis.
 
 ### Steps
 
 1. **Understand root cause — START FROM THE POC, CLASSIFY THE CWE, TRACE TO DATA ORIGIN**:
-   - **First**: Read the existing PoC file (`cat /testcase/poc*`, `cat /testcase/repro.sh`) to understand WHAT INPUT triggers the bug
+   - **First**: Read the selected PoC path from `{{ artifact_paths.poc_path }}` and inspect that file plus `{{ artifact_paths.repro_script }}` to understand WHAT INPUT triggers the bug
    - **Second**: Classify the CWE from the sanitizer error to guide your analysis approach:
      - `heap/stack-buffer-overflow`, `out-of-bounds` → **Memory Safety** — trace buffer allocation vs access
      - `LeakSanitizer`, `double-free`, `use-after-free` → **Memory Lifecycle** — map object lifecycle
@@ -39,7 +64,7 @@ Then validate what you're building on:
      - The **crash site** is where the program actually crashes (the sanitizer report tells you this). This is a SIGNAL, not the bug.
      - The **caller-side bug** is WHY the program is in the invalid state that caused the crash. Trace BACKWARD from the crash: "Why is this pointer NULL?" → "Because function X returned early" → "Why did it return early?" → "Because field Y in the input was invalid" → "Where should field Y have been validated?" → THAT is the real bug.
      - **Fix the caller-side bug**, not the crash site. Silencing the crash just hides the bug as silent failures.
-   - **Fourth — LIVE INSTRUMENTATION (REQUIRED for Pointer Errors and Type Confusion)**: Static tools and `gdb bt` only tell you WHERE the crash happens — they do not tell you WHAT the corrupted object actually IS. To answer that, add a one-shot `fprintf(stderr, ...)` immediately before the suspected dereference, printing the pointer's address, any tag/type field the project's object model uses (whatever field identifies an object's kind — it varies per codebase), and related fields. Rebuild with `/src/build.sh`, run the PoC, capture `stderr` to `/testcase/instrumentation_output.txt`, then **revert the change** (`cd {{ work_dir }} && git checkout -- <file>`) before any patch step. Confirm the revert with `git diff -- <file>` (must be empty). A NULL-deref or type-confusion bug whose object's *type tag* you have not observed at runtime is NOT yet root-caused — you are guessing.
+   - **Fourth — LIVE INSTRUMENTATION (REQUIRED for Pointer Errors and Type Confusion)**: Static tools and `gdb bt` only tell you WHERE the crash happens — they do not tell you WHAT the corrupted object actually IS. To answer that, add a one-shot `fprintf(stderr, ...)` immediately before the suspected dereference, printing the pointer's address, any tag/type field the project's object model uses (whatever field identifies an object's kind — it varies per codebase), and related fields. Run `secb build`, run `secb repro`, capture `stderr` to `{{ artifact_paths.instrumentation_output }}`, then **revert the change** (`cd {{ work_dir }} && git checkout -- <file>`) before any patch step. Confirm the revert with `git diff -- <file>` (must be empty). A NULL-deref or type-confusion bug whose object's *type tag* you have not observed at runtime is NOT yet root-caused — you are guessing.
 
      **Shape of the instrumentation** (pseudo-C — do NOT copy field names; use what the actual project uses):
      ```c
@@ -50,7 +75,7 @@ Then validate what you're building on:
      <the existing crashing line goes here, unchanged>
      ```
      Discover the actual field names by reading the struct definition (`read_file` on the relevant header or source file) — the `OBJ->INNER` / `TAG_FIELD` above are uppercase placeholders, NOT real identifiers. Every codebase uses different names (a parser might use `node->kind`, a VM might use `v->type`, an image library might use `pixel->format` — you must find the ones this project actually uses). After running, the captured tag value tells you the type of the crashing object. Then `grep -n` for that type's struct definition or any **static const** initializer of that type with NULL/uninitialized fields — that is often the data origin.
-   - **Fifth**: **Read the code at the data origin.** Use `cat` or `read_file` to read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
+   - **Fifth**: **Read the code at the data origin.** {% if shared_code_enabled %}If that file is in `<provided_source_files>`, use the copy already in context — do NOT re-`view` it; only `view` it if it is not provided or you have since edited it. {% endif %}Read 50+ lines around the data-origin location. Look for existing validation logic nearby — if there's already a block that validates similar fields but missed this one, note it. The fix is almost always to extend that existing validation.
    - **Sixth**: Use CWE-appropriate tools to confirm your analysis:
      - `gdb -batch -ex run -ex 'bt full'` to see the full crash chain
      - `cppcheck --enable=all <vulnerable_file>` for static pattern detection
@@ -60,7 +85,7 @@ Then validate what you're building on:
 2. **Develop the fix — FIX THE CALLER-SIDE BUG, NOT THE CRASH SITE**:
    The crash is a signal. Your fix must address WHY the program reached the invalid state, not just silence the crash. A crash-site guard (e.g., `if (!ptr) return NULL`) converts a loud, debuggable crash into a silent failure — the underlying bug keeps lurking.
 
-   **FIX-LAYER DECISION RUBRIC (mandatory)**: Before editing, list the candidate fix sites in order from "closest to crash" to "closest to data origin". For each candidate answer these three questions in writing (a `/testcase/root_cause_analysis.txt` note is the natural place — encouraged evidence, not a required deliverable):
+   **FIX-LAYER DECISION RUBRIC (mandatory)**: Before editing, list the candidate fix sites in order from "closest to crash" to "closest to data origin". For each candidate answer these three questions in writing (a `{{ artifact_paths.root_cause_analysis }}` note is the natural place — encouraged evidence, not a required deliverable):
      1. **Contract**: Does this function have a documented or implicit contract (function-level comment, naming convention, callers' expectations) that a guard here would *extend*, or are you adding a check that *contradicts* the existing contract? Quote the contract if you can find it.
      2. **Coverage**: Does a guard here also fix sibling call paths that could reach the same invalid state, or only the exact path this PoC exercises?
      3. **Failure mode**: If the guard fires, does the immediate caller already know how to handle a NULL/error return (look at the caller — does it check the return value? does it raise a typed error?), or are you silently producing a wrong result?
@@ -75,28 +100,25 @@ Then validate what you're building on:
 
    Search the codebase for how the project handles similar patterns — follow the same idiom (error return style, cleanup conventions, validation macros). Do NOT search for external fix commits.
    Make concise changes. Avoid undefined variables/functions. THE PATCH MUST NOT HARM FUNCTIONALITY.
-   **Workflow**: Edit the source file directly (using `file_editor` or `sed`), then generate the diff with `git diff` in step 3. Never write `/testcase/model_patch.diff` by hand — special characters like `'\0'` get corrupted.
+   **Workflow**: Edit the source file directly (using `file_editor` or `sed`), then generate the diff with `git diff` in step 3. Never write `{{ artifact_paths.model_patch }}` by hand — special characters like `'\0'` get corrupted.
 
-3. **Create `/testcase/model_patch.diff`**:
-   - After editing, generate diff for ONLY the files you changed (not the entire repo):
-     `cd {{ work_dir }} && git diff --no-color -- <file(s)-you-edited> > /testcase/model_patch.diff`
-   - Example: `git diff --no-color -- path/to/vulnerable_file.c > /testcase/model_patch.diff`
-   - **NEVER** use bare `git diff` or `git diff BASE` — those include unrelated builder changes
-   - **NULL BYTE WARNING**: If your fix involves C null terminators (`'\0'`), use `git diff` to generate the patch — do NOT write the diff manually via the file editor. The editor may corrupt `'\0'` into a literal 0x00 byte, producing an invalid patch. Always edit the source file first, then generate the diff with `git diff --no-color -- <file>`.
-   - After generating, verify the diff is textually valid: `cat /testcase/model_patch.diff` — every line must be printable text. If you see blank characters where `'\0'` should be, the diff is corrupt — re-edit the source and regenerate.
-   - Verify: `wc -l /testcase/model_patch.diff` — should be under 30 lines for a single-function fix
+3. **Create `{{ artifact_paths.model_patch }}`**:
+   - Follow the Fixer Diff Baseline procedure in the phase contract above: edit source, then generate the diff against the Builder-adjusted baseline (`HEAD`) while naming every file your fix touched.
+   - **NULL BYTE WARNING**: If your fix involves C null terminators (`'\0'`), generate the patch with `git diff` — do NOT hand-write the diff via the file editor, which can corrupt `'\0'` into a literal 0x00 byte and produce an invalid patch. Always edit the source file first, then diff.
+   - After generating, verify the diff is textually valid: `cat {{ artifact_paths.model_patch }}` — every line must be printable text. If you see blank characters where `'\0'` should be, the diff is corrupt — re-edit the source and regenerate.
+   - Verify scope: `wc -l {{ artifact_paths.model_patch }}` — a single-function fix is typically under 30 lines.
 
-4. **Review patch**: The diff MUST contain only your security fix. If `wc -l` shows >50 lines, you included builder changes — regenerate with file-specific `git diff -- <file>`.
+4. **Review patch**: The diff MUST contain only your security fix. Confirm every hunk is an intended fix edit — if you see Builder/build-system hunks or leftover instrumentation, the Builder baseline was not committed or an instrumentation revert was missed; correct that and regenerate. A diff well over ~30 lines usually signals scope creep, not Builder changes — trim to the minimal fix.
 
-5. **Validate**:
-   - Reset: `git reset --hard $(cat /testcase/base_commit_hash)`
-   - Check if `/testcase/repo_changes.diff` exists — apply builder changes first: `git apply /testcase/repo_changes.diff`
-   - Check format: `git apply --check /testcase/model_patch.diff`
-   - Apply: `git apply /testcase/model_patch.diff`
-   - Rebuild: `/src/build.sh`
+5. **Validate** (logs MUST use the canonical names the evaluator reads):
+   - First clear stale logs from earlier attempts: `rm -f {{ artifact_dirs.testcase }}/fix_run_*.log`
+   - Apply + rebuild + re-run the reproducer 3× through the runtime contract — launch the detached patch→build→repro loop, then **poll the result INTO your transcript** (the provenance check reads your own output, not just the files):
+{{ secb_fix_validation(phase_commands) }}
+{{ secb_poll_result(phase_commands.fix_loop.exit, phase_commands.fix_loop.read_log) }}
+   - Each `fix_run_$N.log` must end with an `exit=<code>` line and show NO sanitizer error for a clean patch. The evaluator reads ONLY `fix_run_*.log` (do NOT create alternate generations like `fix_run2_*`); if the poll prints NOT FINISHED, re-run only the poll. A `fix_run` log without a trailing `exit=` line is invalid evidence even when the patch works.
 
 6. **Test fix with CWE-appropriate validation** (use ALL tools, but prioritize based on CWE):
-   - Run `/testcase/repro.sh` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
+   - Run `secb repro` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
    - **Memory Lifecycle (leaks)** — Valgrind is the PRIMARY validator:
      `valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./binary < poc_input`
      MUST show `All heap blocks were freed -- no leaks are possible` or `0 bytes in 0 blocks` for the previously-leaked allocation.
@@ -117,26 +139,29 @@ Then validate what you're building on:
 Publish your validation results via `<context-update>` for parent/sibling visibility:
 ```
 <context-update>
-<decision key="patch_status">pass</decision>
-<decision key="patch_file">/testcase/model_patch.diff</decision>
-<decision key="valgrind_result">No memory errors detected after patching</decision>
+<decision key="patch_status"><value>pass</value></decision>
+<decision key="patch_file"><value>{{ artifact_paths.model_patch }}</value></decision>
+<decision key="valgrind_result"><value>No memory errors detected after patching</value></decision>
 </context-update>
 ```
 
-### Evidence files
+{% from 'domains/secbench/worker/_worker_helpers.j2' import evidence_files_section with context %}
 
-The REQUIRED fix deliverables are exactly those in the phase contract above
-(`/testcase/model_patch.diff`, `/testcase/patch_validation_results.txt`) — no
-more, no less. Beyond those, saving useful intermediate output under
-`/testcase/` is ENCOURAGED but NOT required (e.g. root-cause analysis →
-`/testcase/root_cause_analysis.txt`, patch-candidate notes →
-`/testcase/patch_candidates_design_notes.md`, a fix summary →
-`/testcase/fix_summary.md`). After writing any file, run
-`echo "=== <filename> ===" && cat /testcase/<filename>` so its contents reach the judge.
+{% set fixer_evidence_note -%}
+
+When your task description starts with the [Root-Cause-Analyst] role label
+(the case that arises when the parent phase task is decomposed), the success_criteria
+for that subtask **requires** you to produce `{{ hierarchical_only["Fixer"]|join('`, `') }}`
+containing the exact machine-readable block defined in the assessment rules
+({{ root_cause_block_fields[0][0] }} etc.). In that case the structured root-cause file is a
+mandated deliverable for the role, not merely encouraged.
+{%- endset %}
+{{ evidence_files_section('Fixer', fixer_evidence_note) }}
 
 ### Rules
-- ALWAYS reset to base commit before applying patch
-- DO NOT change `/testcase/base_commit_hash`
-- Verify `/testcase/model_patch.diff` exists and is correct before concluding
+- Generate `{{ artifact_paths.model_patch }}` from source edits on top of the Builder-adjusted baseline; it must contain only Fixer edits.
+- Do not manually reset or apply patches while authoring. Validate via `secb patch`, then `secb build`, then `secb repro` — `secb patch` replays `{{ artifact_paths.repo_changes_diff }}` then `{{ artifact_paths.model_patch }}`.
+- DO NOT change `{{ artifact_paths.base_commit_hash }}`
+- Verify `{{ artifact_paths.model_patch }}` exists and is correct before concluding
 - Do NOT search for or use external fix commits — develop patches from root cause analysis only
 </domain_instructions>

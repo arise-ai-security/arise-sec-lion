@@ -24,14 +24,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import logging
 import os
-import signal
 import sys
 import tempfile
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,16 +37,12 @@ from uuid import UUID
 import yaml
 
 from experiments.shared.scripts._paths import get_repo_root
-from experiments.shared.scripts.project_events import project_events_to_jsonl
 from experiments.shared.scripts.register_run import register_run
-
-
-# The harness passes a unique result-file path to each subprocess via this env
-# var so concurrent `main.py run` invocations cannot misattribute each other's
-# run_id. See `presentation/persistence/run_persistence.py:RUN_RESULT_ENV_VAR`.
-RUN_RESULT_ENV_VAR = "ARISE_RUN_RESULT_PATH"
-_SUBPROCESS_TIMEOUT_EXIT_CODE = 124
-_SUBPROCESS_TERM_GRACE_SECONDS = 30.0
+from experiments.shared.subprocess_runner import (
+    _SUBPROCESS_TIMEOUT_EXIT_CODE,
+    _invoke_main_py,
+    _invoke_main_py_async,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -57,14 +50,6 @@ logger = logging.getLogger(__name__)
 
 class MainPyTimeoutError(RuntimeError):
     """Raised when the parent kills a hung ``main.py run`` child."""
-
-
-@dataclass(frozen=True)
-class MainPyInvocation:
-    cmd: list[str]
-    cwd: Path
-    env: dict[str, str]
-    timeout_seconds: float
 
 
 @dataclass(frozen=True)
@@ -242,229 +227,6 @@ def _result_file_has_payload(result_path: Path) -> bool:
         return False
 
 
-def _subprocess_timeout_seconds() -> float:
-    return float(os.environ.get("ARISE_SUBPROCESS_TIMEOUT_SECONDS", "7800"))
-
-
-def _subprocess_term_grace_seconds() -> float:
-    return float(
-        os.environ.get("ARISE_SUBPROCESS_TERM_GRACE_SECONDS", _SUBPROCESS_TERM_GRACE_SECONDS)
-    )
-
-
-def _build_main_py_invocation(
-    *,
-    config: Path,
-    task: str,
-    context_file: Path,
-    result_path: Path,
-    python_bin: str | None = None,
-) -> MainPyInvocation:
-    """Build the exact ``main.py run`` invocation used by the harness.
-
-    `-c` MUST come BEFORE the `run` subcommand (top-level flag, see
-    bootstrap/bootstrap.py:67). The subprocess inherits ``ARISE_RUN_RESULT_PATH``
-    pointing at ``result_path`` so the CLI can emit a per-invocation
-    ``{boss_id, status}`` payload there.
-    """
-    python = python_bin or sys.executable
-    main_py = get_repo_root() / "main.py"
-    cmd = [
-        python,
-        str(main_py),
-        "-c",
-        str(config),
-        "run",
-        task,
-        "--domain",
-        "security",
-        "--domain-context-file",
-        str(context_file),
-    ]
-    env = {**os.environ, RUN_RESULT_ENV_VAR: str(result_path)}
-    return MainPyInvocation(
-        cmd=cmd,
-        cwd=get_repo_root(),
-        env=env,
-        timeout_seconds=_subprocess_timeout_seconds(),
-    )
-
-
-def _invoke_main_py(
-    *,
-    config: Path,
-    task: str,
-    context_file: Path,
-    result_path: Path,
-    python_bin: str | None = None,
-) -> int:
-    """Run ``python main.py -c <config> run <task>`` and return its exit code."""
-    return asyncio.run(
-        _invoke_main_py_async(
-            config=config,
-            task=task,
-            context_file=context_file,
-            result_path=result_path,
-            python_bin=python_bin,
-        )
-    )
-
-
-async def _invoke_main_py_async(
-    *,
-    config: Path,
-    task: str,
-    context_file: Path,
-    result_path: Path,
-    python_bin: str | None = None,
-) -> int:
-    """Run ``main.py run`` under parent-side async process supervision."""
-    invocation = _build_main_py_invocation(
-        config=config,
-        task=task,
-        context_file=context_file,
-        result_path=result_path,
-        python_bin=python_bin,
-    )
-    cmd = invocation.cmd
-    logger.info("invoking: %s", " ".join(cmd))
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=invocation.cwd,
-        env=invocation.env,
-        start_new_session=True,
-    )
-    try:
-        return await asyncio.wait_for(process.wait(), timeout=invocation.timeout_seconds)
-    except TimeoutError:
-        logger.error(
-            "subprocess timed out after %.0fs: %s",
-            invocation.timeout_seconds,
-            " ".join(cmd),
-        )
-        await _terminate_process_tree(
-            process,
-            reason="timeout",
-            grace_seconds=_subprocess_term_grace_seconds(),
-        )
-        await _cleanup_labeled_containers_for_pid(process.pid)
-        return _SUBPROCESS_TIMEOUT_EXIT_CODE
-    except asyncio.CancelledError:
-        logger.warning("subprocess dispatch cancelled; terminating: %s", " ".join(cmd))
-        await _terminate_process_tree(
-            process,
-            reason="cancellation",
-            grace_seconds=_subprocess_term_grace_seconds(),
-        )
-        await _cleanup_labeled_containers_for_pid(process.pid)
-        raise
-
-
-async def _terminate_process_tree(
-    process: asyncio.subprocess.Process,
-    *,
-    reason: str,
-    grace_seconds: float,
-) -> None:
-    if process.returncode is not None:
-        return
-
-    logger.warning(
-        "terminating process group for pid=%d after %s; grace=%.1fs",
-        process.pid,
-        reason,
-        grace_seconds,
-    )
-    if os.name == "posix":
-        with suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-    else:
-        process.terminate()
-
-    try:
-        await asyncio.wait_for(process.wait(), timeout=grace_seconds)
-    except TimeoutError:
-        logger.warning(
-            "process pid=%d ignored SIGTERM after %.1fs; sending SIGKILL",
-            process.pid,
-            grace_seconds,
-        )
-    finally:
-        if os.name == "posix":
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-        elif process.returncode is None:
-            process.kill()
-
-    if process.returncode is None:
-        with suppress(TimeoutError):
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-
-
-async def _cleanup_labeled_containers_for_pid(pid: int) -> None:
-    container_ids = await _docker_container_ids_for_pid(pid)
-    if not container_ids:
-        return
-
-    logger.warning(
-        "removing %d Docker container(s) labeled arise.session_pid=%d",
-        len(container_ids),
-        pid,
-    )
-    await _run_docker_cleanup("docker", "rm", "-f", *container_ids, deadline_seconds=60.0)
-
-
-async def _docker_container_ids_for_pid(pid: int) -> list[str]:
-    result = await _run_docker_cleanup(
-        "docker",
-        "ps",
-        "-a",
-        "--filter",
-        f"label=arise.session_pid={pid}",
-        "--format",
-        "{{.ID}}",
-        deadline_seconds=30.0,
-    )
-    if result is None:
-        return []
-    return [line.strip() for line in result.splitlines() if line.strip()]
-
-
-async def _run_docker_cleanup(*cmd: str, deadline_seconds: float) -> str | None:
-    process: asyncio.subprocess.Process | None = None
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=deadline_seconds,
-        )
-    except FileNotFoundError:
-        logger.warning("docker executable not found; skipping container cleanup")
-        return None
-    except TimeoutError:
-        logger.warning("docker cleanup command timed out: %s", " ".join(cmd))
-        if process is not None and process.returncode is None:
-            process.kill()
-            await process.wait()
-        return None
-
-    if process.returncode != 0:
-        stderr_text = stderr.decode("utf-8", errors="replace").strip()
-        logger.warning(
-            "docker cleanup command failed with %d: %s%s",
-            process.returncode,
-            " ".join(cmd),
-            f" ({stderr_text})" if stderr_text else "",
-        )
-        return None
-    return stdout.decode("utf-8", errors="replace")
-
-
 def _read_run_result_after_exit(
     *,
     exit_code: int,
@@ -484,37 +246,20 @@ def _read_run_result_after_exit(
     return _read_run_result(result_path)
 
 
-async def _project_and_register_run(
+def _register_completed_run(
     *,
     study_id: str,
     cell: str,
     task: str,
     replicate: int,
-    config: Path,
     pool: Path,
     run_id: UUID,
 ) -> None:
-    # Write events.jsonl + stamp the per-run manifest with cell/task/replicate.
-    # Pass the pinned config so the projection queries the same Postgres
-    # instance `main.py run` just wrote to. The study manifest is design-only
-    # (PR 1): the enrollment roster is regenerated by collect.py. The run is
-    # still enrolled on projection failure but with projection_status=failed
-    # so collect.py can exclude it from rollups (audit N-2).
-    events_path = pool / str(run_id) / "events.jsonl"
-    projection_status = "ok"
-    try:
-        await project_events_to_jsonl(
-            run_id=run_id,
-            output_path=events_path,
-            config_path=config,
-        )
-    except Exception:
-        projection_status = "failed"
-        logger.exception(
-            "event projection failed for run_id=%s; enrolling with projection_status=failed",
-            run_id,
-        )
-
+    # Stamp the per-run manifest with study/cell/task/replicate. The Postgres
+    # event store is the source of truth for the event stream (read directly by
+    # analysis tooling), so no events.jsonl is projected to disk. The study
+    # manifest is design-only (PR 1): the enrollment roster is regenerated by
+    # collect.py from the per-run manifests.
     register_run(
         study_id=study_id,
         run_id=run_id,
@@ -522,7 +267,6 @@ async def _project_and_register_run(
         task=task,
         replicate=replicate,
         output_directory=pool,
-        projection_status=projection_status,
     )
 
 
@@ -594,16 +338,13 @@ def run_arise(
     finally:
         prepared.result_path.unlink(missing_ok=True)
 
-    asyncio.run(
-        _project_and_register_run(
-            study_id=study_id,
-            cell=cell,
-            task=task,
-            replicate=replicate,
-            config=config,
-            pool=prepared.pool,
-            run_id=run_id,
-        )
+    _register_completed_run(
+        study_id=study_id,
+        cell=cell,
+        task=task,
+        replicate=replicate,
+        pool=prepared.pool,
+        run_id=run_id,
     )
     return run_id
 
@@ -640,12 +381,11 @@ async def run_arise_async(
     finally:
         prepared.result_path.unlink(missing_ok=True)
 
-    await _project_and_register_run(
+    _register_completed_run(
         study_id=study_id,
         cell=cell,
         task=task,
         replicate=replicate,
-        config=config,
         pool=prepared.pool,
         run_id=run_id,
     )

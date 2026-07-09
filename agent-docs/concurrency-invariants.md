@@ -59,3 +59,12 @@ reference implementation; `OpenHandsAdapter` must be aligned.
 | E (a) | `infrastructure/io/robust_call.py` (Phase 1) — retryable external calls; Docker calls use direct `asyncio.wait_for` per Phase 3 E.11 |
 | E (b) | `plugins/security/mcp/security_tools_server.py` `shell_in_container` (Phase 3 E.10); `infrastructure/workers/claude_code_worker.py:_wrap_with_docker_exec` |
 | E (c) | `plugins/security/docker_runtime.py` (labels added in Phase 3 E.3); `infrastructure/cleanup/registry.py` (Phase 1) registers the label-based cleanup handler |
+
+
+## Open concurrency gaps (still-true residuals)
+
+Salvaged from the retired pre-remediation `concurrency-audit-1..5` snapshot; these remain true in current code:
+
+- **`.last_run.json` written unconditionally** at `presentation/cli.py:208` (not gated on `ARISE_RUN_RESULT_PATH`) — a shared interactive-UI pointer that races under parallel runs. Mitigated for the matrix runner, which passes a per-invocation `ARISE_RUN_RESULT_PATH`.
+- **No worker-container resource caps**: `docker_runtime.py` issues `docker run` with no `--cpus`/`--memory`, and `SecurityConfig` exposes no `worker_cpus`/`worker_memory`; high `--parallel` can saturate the host.
+- **`--network host`**: worker containers run with `network_mode='host'` (`docker_runtime.py`), not an isolated network.

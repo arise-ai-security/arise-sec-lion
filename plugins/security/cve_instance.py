@@ -12,7 +12,9 @@ from pydantic import BaseModel, computed_field
 # body) would tutor the model with the answer key and invalidate the
 # evaluation. Python code that needs these fields (e.g., post-run patch
 # similarity scoring) accesses them via the typed attribute directly.
-_PROMPT_FORBIDDEN_FIELDS: frozenset[str] = frozenset({"patch", "candidate_fixes"})
+_PROMPT_FORBIDDEN_FIELDS: frozenset[str] = frozenset(
+    {"patch", "candidate_fixes", "secb_sh"}
+)
 
 
 class CVEInstance(BaseModel):

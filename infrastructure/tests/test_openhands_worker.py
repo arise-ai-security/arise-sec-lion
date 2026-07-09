@@ -145,6 +145,35 @@ def test_openhands_worker_returns_failed_when_adapter_raises(tmp_path: Path) -> 
     assert "OpenHandsWorker error" in (result.output_summary or "")
 
 
+def test_openhands_worker_forwards_workspace_extras_into_task_context(tmp_path: Path) -> None:
+    """Flat-mode plugin extras (container session, MCP servers) reach the adapter."""
+    # Given: a workspace whose extras carry the security plugin's task_context.
+    fake_aggregate = uuid4()
+    adapter = _FakeOpenHandsAdapter(
+        [WorkCompleted(aggregate_id=fake_aggregate, sequence_number=2, result="ok")]
+    )
+    worker = OpenHandsWorker(adapter=adapter)  # type: ignore[arg-type]
+    invocation = _make_invocation(tmp_path)
+    extras = {
+        "container_session": {"container_id": "deadbeef", "container_workspace_root": "/work"},
+        "mcp_servers": {"security-tools": {"command": "python"}},
+        "task_description": "extras must never shadow the rendered prompt",
+    }
+    invocation["workspace"] = WorkspaceSpec(root=tmp_path, extras=extras)
+
+    # When: running the task.
+    result = asyncio.run(worker.run_task(**invocation))
+
+    # Then: the adapter's task_context includes the forwarded plugin context...
+    assert result.exit_status == "completed"
+    task_context = adapter.calls[0]
+    assert task_context["container_session"] == extras["container_session"]
+    assert task_context["mcp_servers"] == extras["mcp_servers"]
+    # ...and the canonical keys still win over extras collisions.
+    assert task_context["task_description"] == "rendered"
+    assert task_context["working_directory"] == str(tmp_path)
+
+
 def test_openhands_worker_defaults_to_failed_on_empty_stream(tmp_path: Path) -> None:
     """A stream with no terminal event still returns a deterministic WorkerResult."""
     adapter = _FakeOpenHandsAdapter([])

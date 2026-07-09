@@ -1,0 +1,27 @@
+{# Shared code-prefix block: source files already read by prior workers on this CVE,
+   replayed as an APPEND-ONLY log — earlier bytes never change as the run progresses,
+   so each worker's request shares the longest possible prefix with its predecessor's
+   and OpenAI's prefix cache keeps serving the carried content at the cache-read rate.
+   A path may appear more than once: the LAST <file> entry is its current content; a
+   <file_modified> note means the copy above it is stale until a newer revision
+   appears below it. Instructions live in this header (before the entries) so a new
+   entry never rewrites earlier bytes. #}
+{% if entries %}
+<provided_source_files>
+    Source files prior workers already read, in read order. A path may appear more
+    than once: the LAST <file> entry for a path is its current content, and a
+    <file_modified> note means the copy above it is stale until a newer revision
+    appears below it. These files are provided IN FULL — do NOT re-read a file whose
+    current content is shown here. Only view a file if (a) it is not listed, (b) its
+    latest entry is a <file_modified> note, or (c) you just edited it yourself.
+    {% for e in entries -%}
+    {% if e.kind == "file" -%}
+    <file path="{{ e.path }}" revision="{{ e.revision }}">
+{{ e.content }}
+</file>
+    {% else -%}
+    <file_modified path="{{ e.path }}"/>
+    {% endif -%}
+    {% endfor -%}
+</provided_source_files>
+{% endif %}

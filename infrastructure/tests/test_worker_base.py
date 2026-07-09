@@ -161,7 +161,8 @@ async def test_worker_adapter_base_emits_failed_when_subclass_escapes() -> None:
 
     assert isinstance(events[0], ThoughtCaptured)
     assert isinstance(events[-1], WorkFailed)
-    assert events[-1].reason == "minimal adapter error: RuntimeError('boom')"
+    assert events[-1].reason.startswith("minimal adapter error: RuntimeError('boom')")
+    assert "Traceback (most recent call last)" in events[-1].reason
 
 
 @pytest.mark.asyncio
@@ -205,7 +206,8 @@ async def test_worker_adapter_base_allows_subclass_finally_to_run() -> None:
     assert adapter.finally_ran is True
     assert isinstance(events[0], ThoughtCaptured)
     assert isinstance(events[-1], WorkFailed)
-    assert events[-1].reason == "minimal adapter error: RuntimeError('boom')"
+    assert events[-1].reason.startswith("minimal adapter error: RuntimeError('boom')")
+    assert "Traceback (most recent call last)" in events[-1].reason
 
 
 # -- Per-adapter concurrent-session timing checks --------------------------------

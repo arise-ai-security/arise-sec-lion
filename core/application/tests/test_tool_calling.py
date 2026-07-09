@@ -482,3 +482,186 @@ class TestLLMUsageAddition:
         assert a.prompt_tokens == 10
         assert b.prompt_tokens == 20
         assert c.prompt_tokens == 30
+
+
+class TestSourceReadCapture:
+    """The loop captures FULL results for tools named in source_read_tools."""
+
+    @pytest.mark.asyncio
+    async def test_read_file_result_captured_verbatim(self):
+        # Given: an LLM that calls read_file once then answers, and a context
+        # that marks read_file as a source-read tool.
+        full = "line\n" * 4000  # exceeds default result_char_limit (6000 chars)
+        toolset = MockReconToolPort(results={"read_file:/src/x.c": full})
+        llm = MockLLMPort([
+            LLMToolResponse(
+                content="",
+                tool_calls=[ToolCall(id="t1", name="read_file", arguments={"path": "/src/x.c"})],
+                usage=_usage(),
+                model="m",
+                cost_usd=0.001,
+            ),
+            LLMToolResponse(content="done", tool_calls=[], usage=_usage(), model="m", cost_usd=0.0),
+        ])
+        ctx = _tool_context(toolset)
+        ctx = ActiveToolContext(
+            tool_definitions=ctx.tool_definitions,
+            loop_policy=ctx.loop_policy,
+            executors=ctx.executors,
+            source_read_tools=frozenset({"read_file"}),
+        )
+
+        # When
+        result = await ToolCallingService(llm).run_with_tools("prompt", {"model": "m"}, ctx)
+
+        # Then: the FULL pre-truncation content is captured (not the 500-char summary)
+        assert len(result.captured_reads) == 1
+        read = result.captured_reads[0]
+        assert read.tool_name == "read_file"
+        assert read.arguments["path"] == "/src/x.c"
+        assert read.content == full
+
+    @pytest.mark.asyncio
+    async def test_no_capture_when_source_read_tools_empty(self):
+        # Given: the same read_file call but the default (empty) capture set
+        toolset = MockReconToolPort()
+        llm = MockLLMPort([
+            LLMToolResponse(
+                content="",
+                tool_calls=[ToolCall(id="t1", name="read_file", arguments={"path": "/src/x.c"})],
+                usage=_usage(),
+                model="m",
+                cost_usd=0.001,
+            ),
+            LLMToolResponse(content="done", tool_calls=[], usage=_usage(), model="m", cost_usd=0.0),
+        ])
+
+        # When
+        result = await ToolCallingService(llm).run_with_tools(
+            "prompt", {"model": "m"}, _tool_context(toolset)
+        )
+
+        # Then: nothing captured (byte-identical to legacy behavior)
+        assert result.captured_reads == []
+
+
+class TestFreezeOnceMasking:
+    """Aged transient results are elided once and stay byte-stable; source reads kept."""
+
+    def _transcript(self):
+        mk_asst = lambda cid, name: {
+            "role": "assistant",
+            "tool_calls": [{"id": cid, "type": "function",
+                            "function": {"name": name, "arguments": "{}"}}],
+        }
+        return [
+            {"role": "user", "content": "prompt"},
+            mk_asst("c1", "read_file"),
+            {"role": "tool", "tool_call_id": "c1", "content": "int x; // verbatim source"},
+            mk_asst("c2", "search_codebase"),
+            {"role": "tool", "tool_call_id": "c2", "content": "hit1\nhit2"},
+            mk_asst("c3", "search_codebase"),
+            {"role": "tool", "tool_call_id": "c3", "content": "most recent search"},
+        ]
+
+    def test_source_read_kept_transient_elided_and_byte_stable(self):
+        from core.application.services.toolset.tool_calling_service import (
+            _freeze_aged_tool_results,
+        )
+
+        # Given: a 3-round transcript, boundary = the last assistant block (c3)
+        msgs = self._transcript()
+        frozen: set[int] = set()
+
+        # When: freezing once
+        _freeze_aged_tool_results(msgs, frozenset({"read_file"}), frozen)
+
+        # Then: read_file (idx2) kept verbatim; aged search (idx4) elided;
+        # most-recent search (idx6, after boundary) stays verbatim
+        assert msgs[2]["content"] == "int x; // verbatim source"
+        assert "elided" in msgs[4]["content"]
+        assert msgs[6]["content"] == "most recent search"
+        snapshot = [m.get("content") for m in msgs]
+
+        # And: a second freeze call (no new messages) changes nothing — the
+        # already-aged bytes are stable, which the rolling cache prefix needs.
+        _freeze_aged_tool_results(msgs, frozenset({"read_file"}), frozen)
+        assert [m.get("content") for m in msgs] == snapshot
+
+    def test_honest_stub_wording_no_dangling_pointer(self):
+        from core.application.services.toolset.tool_calling_service import (
+            _freeze_aged_tool_results,
+        )
+
+        # Given/When
+        msgs = self._transcript()
+        _freeze_aged_tool_results(msgs, frozenset({"read_file"}), set())
+
+        # Then: the stub does not promise a recoverable "earlier call"
+        assert "see earlier call" not in msgs[4]["content"]
+        assert "not retained" in msgs[4]["content"]
+
+
+class TestReadFileDedup:
+    """A repeated read of the same path is sent once; later reads point at it."""
+
+    @pytest.mark.asyncio
+    async def test_same_path_second_read_is_pointer_stub(self):
+        toolset = MockReconToolPort(results={"read_file:/x.c": "SOURCE-BODY-OF-X"})
+        responses = [
+            LLMToolResponse(content="",
+                tool_calls=[ToolCall(id="a", name="read_file", arguments={"path": "/x.c"})],
+                usage=_usage(), model="m", cost_usd=0.0),
+            LLMToolResponse(content="",
+                tool_calls=[ToolCall(id="b", name="read_file", arguments={"path": "/x.c"})],
+                usage=_usage(), model="m", cost_usd=0.0),
+            LLMToolResponse(content="done", tool_calls=[], usage=_usage(), model="m", cost_usd=0.0),
+        ]
+        llm = MockLLMPort(responses)
+        ctx = _tool_context(toolset)
+        ctx = ActiveToolContext(
+            tool_definitions=ctx.tool_definitions, loop_policy=ctx.loop_policy,
+            executors=ctx.executors, source_read_tools=frozenset({"read_file"}),
+        )
+
+        # When
+        result = await ToolCallingService(llm).run_with_tools("p", {"model": "m"}, ctx)
+
+        # Then: full content captured BOTH times (for the shared block)...
+        assert [r.content for r in result.captured_reads] == ["SOURCE-BODY-OF-X", "SOURCE-BODY-OF-X"]
+        # ...but the second read's MESSAGE is a pointer stub, not the re-sent body.
+        tool_msgs = [m for m in llm.calls[-1]["messages"] if m.get("role") == "tool"]
+        assert tool_msgs[0]["content"] == "SOURCE-BODY-OF-X"
+        assert "not re-sent" in tool_msgs[1]["content"]
+        assert "SOURCE-BODY-OF-X" not in tool_msgs[1]["content"]
+
+
+class TestRollingTailCacheBreakpoint:
+    """The last message gets an ephemeral breakpoint on Anthropic, no-op elsewhere."""
+
+    def test_anthropic_tail_gets_cache_control(self):
+        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
+
+        msgs = [{"role": "user", "content": "p"},
+                {"role": "tool", "tool_call_id": "c1", "content": "tool result"}]
+        out = apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6")
+
+        last = out[-1]["content"]
+        assert isinstance(last, list)
+        assert last[-1]["cache_control"] == {"type": "ephemeral"}
+        assert last[-1]["text"] == "tool result"
+        # original not mutated
+        assert msgs[-1]["content"] == "tool result"
+
+    def test_non_anthropic_is_noop(self):
+        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
+
+        msgs = [{"role": "user", "content": "p"},
+                {"role": "tool", "tool_call_id": "c1", "content": "r"}]
+        assert apply_anthropic_cache_to_tail(msgs, "gpt-5.4-mini") == msgs
+
+    def test_single_message_is_noop(self):
+        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
+
+        msgs = [{"role": "user", "content": "p"}]
+        assert apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6") == msgs

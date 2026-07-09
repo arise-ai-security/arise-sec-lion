@@ -4,4 +4,5 @@
 A: Claude Code CLI
 B: Our System
 C: Our System + Qwen
+N: Naive OpenHands
 # Add D, E, ... as new approaches are introduced.

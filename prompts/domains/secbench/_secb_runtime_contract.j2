@@ -1,0 +1,11 @@
+## SEC-bench Runtime Contract
+
+Use the public `secb` commands as the contract:
+
+- `secb build` builds through `/usr/local/bin/compile`, which runs `{{ artifact_paths.build_script }}` with the SEC-bench sanitizer environment.
+- `secb repro` runs `{{ artifact_paths.repro_script }}` against the selected PoC.
+- `secb patch` runs the immutable patch workflow, applying Builder changes and then `{{ artifact_paths.model_patch }}`.
+
+Allowed agent-visible surfaces: CVE task context, `{{ artifact_paths.build_script }}`, existing non-patch testcase/PoC inputs under `{{ artifact_dirs.testcase }}/`, `{{ artifact_paths.binary_paths }}`, `{{ artifact_paths.poc_path }}`, `{{ artifact_paths.repro_script }}`, the Fixer-created `{{ artifact_paths.model_patch }}`, and the public `secb build`, `secb repro`, and `secb patch` commands.
+
+Forbidden surfaces: do not inspect `/usr/local/bin/secb` internals, do not read golden `repro()` bodies, do not use prebuilt `{{ artifact_paths.model_patch }}`, gold patch files, candidate fix artifacts, or external fix commits, and do not treat direct build-script execution, direct repro-script execution, or manual patch application as the primary validation path.

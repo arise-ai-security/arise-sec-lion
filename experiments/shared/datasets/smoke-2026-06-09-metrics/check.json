@@ -1,0 +1,20 @@
+[
+  {
+    "model": "claude-sonnet-4-6",
+    "recomputed_usd": 5.3475,
+    "reported_usd": 5.3475,
+    "drift": 0.0
+  },
+  {
+    "model": "gpt-5.3-codex",
+    "recomputed_usd": 4.6227,
+    "reported_usd": 4.6227,
+    "drift": -0.0
+  },
+  {
+    "model": "gpt-5.4-mini",
+    "recomputed_usd": 3.7727,
+    "reported_usd": 3.7727,
+    "drift": 0.0
+  }
+]

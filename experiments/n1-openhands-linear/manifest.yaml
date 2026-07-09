@@ -1,0 +1,13 @@
+study_id: n1-openhands-linear
+created_at: 2026-06-09T00:00:00+00:00
+hypothesis: >
+  Baseline #1 — naive OpenHands, linear topology (subagents OFF). Receives the
+  same BEF 4-phase pipeline prompt + CVE context as the B-cells and writes the
+  same /testcase deliverables, so cost/outcome differences are attributable to
+  coordination structure alone. Family hypothesis on normalized cost:
+  N1,N2 > B3 > B4.
+dataset: dataset.yaml
+replicates: 1
+cells:
+  N1: {group: N, runner: arise, config: configs/N1-openhands-linear.yaml}
+headline_cells: [N1]

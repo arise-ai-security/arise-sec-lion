@@ -1,4 +1,22 @@
-{# SEC-bench assessment bias — forces DECOMPOSE for phase-level security tasks #}
+{# SEC-bench assessment bias — forces DECOMPOSE for phase-level security tasks.
+   Role menus render from the injected catalog. The
+   CWE-specific `security_insights` requirements live in the included partial
+   (_security_insights.j2) so the role catalog, the decomposition rules, and the
+   insight requirements stay independent concerns. #}
+{% macro role_menu(roles) %}
+{% for r in roles %}
+  - `[{{ r.name }}]` — {{ 'REQUIRED' if r.required else 'optional' }} — {{ r.summary }}
+{% if r.produces %}
+    produces: {% for p in r.produces %}`{{ p }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+{% if r.depends_on %}
+    `[{{ r.name }}]` hard depends_on: {% for dep in r.depends_on %}`[{{ dep }}]`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+{% if r.soft_depends_on %}
+    `[{{ r.name }}]` soft inputs: {% for dep in r.soft_depends_on %}`[{{ dep }}]`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+{% endfor %}
+{% endmacro %}
 <domain_assessment>
 ## Security Task Assessment — DECOMPOSE Required
 
@@ -6,66 +24,45 @@ This is a security vulnerability reproduction task.
 
 ### MANDATORY: Phase-level tasks MUST decompose
 
-If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose `"action": "decompose"`**. Choosing `"execute"` for these tasks is FORBIDDEN — a single worker CANNOT complete an entire phase and will fail. These are multi-step security phases that require specialized workers:
+If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose `"action": "decompose"`**. Choosing `"execute"` for these tasks is FORBIDDEN — a single worker CANNOT complete an entire phase and will fail. Decompose into the catalog roles below — spawn **EVERY role shown as REQUIRED** as a separate sibling subtask using its exact bracket name; do NOT collapse, merge, or omit any REQUIRED role (the deep code-analysis roles are what let weaker workers collectively succeed). Add **optional** roles only when the CVE needs them. Use the exact bracket names below; an out-of-catalog name still spawns but is not recognized as one of these roles:
 
-- **[Builder]** tasks involve: identifying base commit, running build scripts, fixing build errors, verifying deliverables — **exactly 3 workers** (setup → compile → verify). Builder is infrastructure work, not code analysis — keep it concise.
-- **[Exploiter]** tasks involve: static analysis, PoC research, exploit crafting, forward instrumentation, reproduction validation — **exactly 6 workers** with these EXACT role names (copy verbatim): `[PoC-Researcher]` → `[Data-Flow-Analyst]` → `[PoC-Tester]` → `[Forward-Instrumentator]` → `[Repro-Creator]` → `[Exploit-Validator]`. Do NOT paraphrase (no [Static-Analyst], [PoC-Generator], [Leak-Tester], etc.).
+### Dependency contract
 
-  **⚠️ Exploiter-specific `security_insights` requirements.** Each Exploiter subtask's `security_insights` MUST contain a runtime question the worker must answer empirically (you decide what question is most useful for each role). Two roles have additional mandatory guidance:
+Do NOT rely on any repair gate — you are responsible for emitting correct roles and dependencies. If you select a role with hard dependencies, you MUST also include each listed producer role as a sibling subtask, place the producer before the consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling position. Missing producer roles, missing `depends_on` edges, or `depends_on` edges pointing at the wrong sibling are run failures.
 
-  - **[PoC-Researcher]** `security_insights` MUST additionally include: *"Map each PoC operation to its implementing C/C++ source function using search_codebase. Save the ordered mapping to /testcase/poc_operation_map.txt (one line per step: Step N: <PoC operation> → <function> in <file>). This mapping is required input for the Forward-Instrumentator."*
-  - **[Forward-Instrumentator]** `security_insights` MUST additionally include: *"The crash site shows where bad data is CONSUMED, not where it is PRODUCED. For each PoC operation BEFORE the crash, read /testcase/poc_operation_map.txt, then inject fprintf probes into each implementing C function to dump internal struct fields (pointers, sizes, lengths, reference counts) before and after. DO NOT instrument the crash-site function — that answers 'what value crashed' but not 'who produced the bad value'. Anti-pattern: do NOT describe this role as crash forensics, gdb backtraces, or addr2line mapping — those are backward tracing. This role does FORWARD tracing through PoC operations. Your findings (/testcase/forward_instrumentation.log) provide valuable evidence for the Fixer phase's Root-Cause-Analyst."*
+Hard dependencies are only artifact dependencies: role B hard-depends on role A when B consumes an artifact A is responsible for producing. Soft inputs are useful evidence if present; they are fallback guidance only. Do not put soft inputs in JSON `depends_on`.
 
-- **[Fixer]** tasks involve: root cause analysis at code-block level, fix design, regression testing of candidates, patch creation, multi-tool validation — **exactly 6 workers** with these EXACT role names (copy verbatim): `[Root-Cause-Analyst]` → `[Candidate-Reviewer]` → `[Regression-Tester]` → `[Patch-Creator]` → `[Patch-Validator]` → `[Fix-Aggregator]`. Patches developed from first principles (no external fix commits). Do NOT paraphrase (no [Patch-Author], [Patched-Builder], etc.).
+- **[Builder]** — identify the base commit, run build scripts, fix build errors, verify deliverables. Infrastructure work, not code analysis; keep it concise.
+{{ role_menu(phase_roles['Builder']) }}
+- **[Exploiter]** — static analysis, PoC research, exploit crafting, forward instrumentation, reproduction validation.
+{{ role_menu(phase_roles['Exploiter']) }}
+- **[Fixer]** — root cause analysis at code-block level, fix design, regression testing, patch creation, multi-tool validation. Patches developed from first principles (no external fix commits).
+{{ role_menu(phase_roles['Fixer']) }}
 
-  **⚠️ Fixer-specific `security_insights` requirements (mandatory for each Fixer subtask's justification).** A weak `security_insights` produces a shallow patch even with strong tools. Each Fixer subtask's `security_insights` MUST contain:
+Exploiter and Fixer phases benefit from **more workers with narrower, more specific deliverables** because they require code-level analysis.
 
-  1. **A runtime question the worker must answer empirically.** Not a restatement of the CVE. Phrase it as a question whose answer requires running the PoC, not reading static code. Examples by CWE:
-     - Pointer Errors (CWE-476) / Type Confusion: *"What is the runtime type/kind of the object reaching the crash site? Identify whatever field the project's object model uses to tag object types (read the struct definition — each codebase uses a different name), capture its value via one-shot `fprintf` instrumentation injected before the dereference, rebuild, run PoC, then `git checkout -- <file>` to revert. Then grep for any static initializer of that type with NULL or uninitialized fields — often the data origin."*
-     - Memory Safety (CWE-122/121): *"What is the `len` value at allocation vs. the byte offset at the overflowing write? Print both before the write."*
-     - Memory Lifecycle (CWE-416/401): *"Print the object's address at allocation, free, and use to confirm the timing."*
-
-  2. **At least two candidate fix layers** the worker must evaluate against a contract/coverage/failure-mode rubric. NOT a single predetermined target. Frame them as: (A) the closest-to-crash guard (usually the weakest — silences the symptom, hides the underlying invalid state, may produce silent wrong results downstream); (B) a caller-side chokepoint where the existing function's documented or implicit contract *already* handles error/absent values and extending that contract to cover the new invalid case is a natural generalization. Worker MUST justify the chosen layer against contract / coverage / failure-mode / **false-positive risk** (can the guard fire on valid non-malicious inputs?) and MUST pick based on the actual codebase structure — you (the decomposing manager) should NOT name the specific function; leave that to the worker's investigation.
-
-  3. **Known anti-patterns to refuse.** At minimum: *"Do NOT add a NULL guard at the crash line as the sole fix — repeated prior runs produced shallow patches by stopping at the crash site. Do NOT add unrelated defensive code (NULL-checks on `malloc`/`realloc`, hardening nearby functions) — that is scope creep."*
-
-  4. **Cross-phase evidence.** The `[Root-Cause-Analyst]` `security_insights` MUST include: *"Check /testcase/forward_instrumentation.log from the Exploiter's Forward-Instrumentator — if it exists, it identifies which PoC operation first produces inconsistent internal state. Consider its corruption-origin finding alongside the crash-site evidence."*
-
-  4. **For Pointer Errors and Type Confusion**: explicitly state that the Root-Cause-Analyst MUST perform one-shot source instrumentation (inject `fprintf` at the crash site to print type tag, rebuild, run, revert) and that static tools + `gdb bt` alone are insufficient evidence — reject the analyst's deliverable if it contains no runtime-observation section.
-
-  **⚠️ Fixer-specific structured-handoff requirement.** The `[Root-Cause-Analyst]` subtask's `success_criteria` MUST require that `/testcase/root_cause_analysis.txt` contains a machine-readable block at the bottom of the file with these exact keys:
-
-  ```
-  PROPOSED_FIX_SITE: <file>:<line>
-  PROPOSED_FIX_SITE_RATIONALE: <one sentence: which contract this extends, what coverage it gives>
-  ALTERNATIVE_SITE: <file>:<line>
-  ALTERNATIVE_SITE_REJECTED_BECAUSE: <one sentence: contract violation / coverage gap / silent failure mode>
-  RUNTIME_TYPE_TAG: <value observed via fprintf, or "n/a" with justification if not a tagged-object bug>
-  ```
-
-  The `[Patch-Creator]` subtask's task description MUST instruct the worker to extract `PROPOSED_FIX_SITE` from that block as its default fix location and to write a one-paragraph justification if it deviates. The `[Patch-Creator]` subtask MUST also include a no-scope-creep rule: *"The diff MUST contain only the change that fixes this CVE. Do NOT add unrelated NULL-checks, defensive hardening, or error handling for paths the PoC does not exercise. If the diff has more than one logical hunk or touches more than one function, justify each extra hunk against the analyst's block."*
-
-A single worker attempting an entire phase will run out of iterations or time. Decomposition into role-specific workers is **required for success**. Exploiter and Fixer phases benefit from **more workers with narrower, more specific deliverables** because they require code-level analysis.
+{% include 'domains/secbench/_security_insights.j2' %}
 
 ### Sub-phase tasks — EXECUTE is MANDATORY for these role names
 
 **How to classify your task**: Look ONLY at the bracketed prefix in your task description — e.g., `[PoC-Researcher]`, `[Patch-Creator]`. Do NOT classify by task content. A task that describes security analysis is NOT an `[Exploiter]` task unless the prefix is literally `[Exploiter]`. A task prefixed `[PoC-Researcher]` is a leaf worker inside the Exploiter phase, not an Exploiter phase itself.
 
-If your task description starts with ANY of these bracketed role names, **default to EXECUTE**. These are designed as atomic leaf workers:
+If your task description starts with ANY of these bracketed role names, **default to EXECUTE** — they are atomic leaf workers:
 
-`[PoC-Researcher]`, `[Data-Flow-Analyst]`, `[PoC-Tester]`, `[Forward-Instrumentator]`, `[Repro-Creator]`, `[Exploit-Validator]`, `[Root-Cause-Analyst]`, `[Candidate-Reviewer]`, `[Regression-Tester]`, `[Patch-Creator]`, `[Patch-Validator]`, `[Fix-Aggregator]`, `[Build-Setup]`, `[Build-Compiler]`, `[Build-Verifier]`, `[Instrumented-Builder]`, `[Reporter]`
+{% for r in all_roles %}`[{{ r.name }}]`{% if not loop.last %}, {% endif %}{% endfor %}
 
-You MAY choose DECOMPOSE only if the task genuinely requires allocating new sub-agents — but every child MUST have a **unique role name** that is DIFFERENT from your own name AND from all your siblings' names. Reusing names from the parent level (e.g., creating `[PoC-Researcher]` children when your siblings already include `[PoC-Researcher]`) produces identical work, wasting the agent budget.
-
-**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles — or if you can justify genuinely different sub-roles.
+**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
-
-**If you choose DECOMPOSE, you MUST** (1) use your recon tools to read the vulnerable source code FIRST, and (2) verify that every proposed child role name is unique — no child may share a bracketed name with you or any of your siblings. Do not decompose blindly from the CVE description alone. Use these tools before producing subtasks:
+{% if shared_code_enabled %}
+The vulnerable source the boss already read is provided below — **build on it**. Only recon files it does not already contain; do NOT re-read source that is already in your context (re-reading wastes iterations and breaks the manager's prompt cache). If the provided context is missing something you need, use your recon tools for that gap only.
+{% else %}
+**If you choose DECOMPOSE, you MUST** use your recon tools to read the vulnerable source code FIRST — do not decompose from the CVE description alone:
 
 1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE/bug report — understand the function structure, error handling, and resource lifecycle
 2. **`read_symbol`** on the specific function named in the bug report — identify the exact code path that leads to the vulnerability
 3. **`search_codebase`** to find related patterns (callers, error-handling idioms, cleanup conventions) — some vulnerabilities span multiple files
+{% endif %}
 
 **Pass what you learn to workers**: exact file paths, function names, line numbers, specific code patterns, and the vulnerability mechanism. Workers given precise context (e.g., "the error path at line 291 skips cleanup of the allocation at line 273") need far fewer iterations than workers told "find and fix the vulnerability."
 
@@ -76,8 +73,8 @@ You MAY choose DECOMPOSE only if the task genuinely requires allocating new sub-
 - Workers operate fully autonomously — justifications must be comprehensive enough for self-directed execution.
 - Include in each subtask's `justification`:
   - `role`: The specific role (e.g., "Root-Cause-Analyst")
-  - `security_tools`: Specific tools to **install and use** — include `apt-get install` commands. Prescribe tool combinations beyond Valgrind/KLEE: cppcheck, cflow, gdb, strace, ltrace, addr2line, flawfinder. For type-confusion / NULL-deref bugs, also prescribe **one-shot source instrumentation** (temporarily inject `fprintf(stderr, ...)` into the suspected function, rebuild, run PoC, `git checkout -- <file>` to revert) — this is the only way to learn *what* the corrupted object is, not just *where* the crash is.
-  - `security_insights`: **NOT a restatement of the CVE**. The worker already has the bug description in its task context. A `security_insights` that paraphrases "CVE-X is a NULL deref in function Y at line Z" is wasted bandwidth and produces a shallow fix because nothing pushes the worker off the syntactically obvious line. Instead, `security_insights` MUST give the worker **hypotheses to falsify**: (a) a runtime question the worker must answer empirically (not by reading static code), (b) at least two candidate analysis/fix directions framed as alternatives to evaluate (not a predetermined target), (c) known anti-patterns to refuse. See the Fixer-specific requirements above for concrete structure.
+  - `security_tools`: Specific tools to **install and use** — include `apt-get install` commands. Prescribe tool combinations beyond Valgrind/KLEE: cppcheck, cflow, gdb, strace, ltrace, addr2line, flawfinder. For type-confusion / NULL-deref bugs, also prescribe **one-shot source instrumentation** (temporarily inject `fprintf(stderr, ...)` into the suspected function, run `secb build`, run `secb repro`, `git checkout -- <file>` to revert) — this is the only way to learn *what* the corrupted object is, not just *where* the crash is.
+  - `security_insights`: **NOT a restatement of the CVE** — give the worker **hypotheses to falsify** (a runtime question to answer empirically, at least two candidate directions to evaluate, anti-patterns to refuse). See the per-phase `security_insights` requirements above.
   - `context_sharing`: What to publish via `<context-update>` for downstream siblings
   - `peer_validation`: What each downstream worker should verify from upstream findings before proceeding
 </domain_assessment>

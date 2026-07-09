@@ -1,0 +1,10 @@
+{% macro deliverables_for_phase(phase, required_files_with_purpose, validation_required, artifact_paths) -%}
+{% for item in required_files_with_purpose[phase] %}
+- `{{ item.path }}` ({{ item.purpose }})
+{%- endfor %}
+{% if phase in validation_required %}
+{% for path in validation_required[phase] %}
+- `{{ path }}` (required validation verdict file)
+{%- endfor %}
+{% endif %}
+{%- endmacro %}

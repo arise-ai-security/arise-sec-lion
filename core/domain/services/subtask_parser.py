@@ -297,8 +297,8 @@ def _parse_json(response: str) -> Any:
         # but we guard against future changes to that function.
         data, _ = json.JSONDecoder().raw_decode(clean.lstrip())
         return data
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        decode_error = e
 
     # --- Ollama / Qwen repair fallback ---------------------------------
     repaired = _repair_json(clean)
@@ -306,7 +306,9 @@ def _parse_json(response: str) -> Any:
         logger.warning("Repaired malformed JSON from LLM (Qwen quirk)")
         return json.loads(repaired)
 
-    raise ValueError(f"LLM response is not valid JSON and repair failed: {clean[:200]}")
+    raise ValueError(
+        f"LLM response is not valid JSON and repair failed: {clean[:200]}"
+    ) from decode_error
 
 
 def _extract_subtask_list(data: Any) -> list[dict[str, Any]]:  # noqa: PLR0911

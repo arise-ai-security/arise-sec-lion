@@ -7,7 +7,7 @@ process exits normally (``atexit``) or receives ``SIGTERM`` / ``SIGINT``.
 handles cleanup of containers/files left behind by a hard-killed prior
 run.
 
-The module also exposes :func:`_pid_alive`, a small ``os.kill(pid, 0)``
+The module also exposes :func:`pid_alive`, a small ``os.kill(pid, 0)``
 wrapper used by the startup sweep (Phase 4 F.2) and by the MCP child
 reaper (Phase 5 G.4). Both call sites import from one place to avoid the
 circular-import gymnastics that would otherwise be required.
@@ -96,7 +96,7 @@ class CleanupRegistry:
         return _handler
 
 
-def _pid_alive(pid: int) -> bool:
+def pid_alive(pid: int) -> bool:
     """Return whether ``pid`` corresponds to a process this kernel knows about.
 
     Uses the ``os.kill(pid, 0)`` "signal 0" probe — sends nothing but

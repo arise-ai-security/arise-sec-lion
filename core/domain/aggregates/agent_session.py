@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections import deque
 from functools import singledispatchmethod
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -19,16 +21,23 @@ from core.domain.events.events import (
     ComplexityEvaluated,
     DecisionInfeasible,
     DomainEvent,
+    FailureDigestRecorded,
     LimitEnforced,
     OperationFinished,
     OperationStarted,
     ProbeCompleted,
     ProbeStarted,
+    ProcedureExecutionFinished,
+    ProcedureExecutionStarted,
     PromptSent,
     RedecompositionTriggered,
     RetryScheduled,
     RunCompleted,
     RunStarted,
+    RuntimeSurfaceSealed,
+    SealedArtifact,
+    SourceFileEdited,
+    SourceFileObserved,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -41,14 +50,27 @@ from core.domain.events.events import (
     WorkFailed,
 )
 from core.domain.exceptions import DomainInvariantError, InvalidEventHistoryError
+from core.domain.services.child_result_report import (
+    aggregate_child_results,
+    all_children_failed_reason,
+    failed_children_note,
+)
 from core.domain.values.agent_config import AgentConfig
 from core.domain.values.enums import AgentRole, AgentStatus
+from core.domain.values.failure import ChildFailureRecord, ThoughtExcerpt
 from core.domain.values.node_message import Briefing, Report, build_briefing
 
 
 if TYPE_CHECKING:
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.subtask import Subtask
+
+
+# Bounds for failure-context retention: the thought tail feeds the retry
+# digest (~10 KB ceiling). Note/reason caps for parent aggregation notes
+# live in core/domain/services/child_result_report.py.
+_RECENT_THOUGHTS_MAXLEN = 20
+_THOUGHT_EXCERPT_CHARS = 500
 
 
 class AgentSession:
@@ -75,11 +97,18 @@ class AgentSession:
     symbols: tuple[str, ...]
     search_hints: tuple[str, ...]
     estimated_complexity: str
+    execution_mode: str
+    procedure_ref: str
+    procedure_params: dict[str, Any]
+    last_attempt_procedural: bool
     retry_count: int
     redecomposition_count: int
     verification_feedback: str | None
     verification_score: int | None
-    failed_children: set[UUID]
+    failure_digest: str | None
+    recent_thoughts: deque[ThoughtExcerpt]
+    failed_children: dict[UUID, ChildFailureRecord]
+    failure_history: list[ChildFailureRecord]
     # Per-coroutine reservation bookkeeping for child-spawn OCC (D.2).
     # NOT event-sourced — lives only on the in-memory aggregate for the
     # duration of one run_agent_step attempt; reset on every fresh load
@@ -107,6 +136,9 @@ class AgentSession:
         symbols: list[str] | None = None,
         search_hints: list[str] | None = None,
         estimated_complexity: str = "unknown",
+        execution_mode: str = "auto",
+        procedure_ref: str = "",
+        procedure_params: dict[str, Any] | None = None,
     ) -> AgentSession:
         instance = cls(agent_id)
         event = AgentCreated(
@@ -123,6 +155,9 @@ class AgentSession:
             symbols=symbols or [],
             search_hints=search_hints or [],
             estimated_complexity=estimated_complexity,
+            execution_mode=execution_mode,
+            procedure_ref=procedure_ref,
+            procedure_params=procedure_params or {},
         )
         instance._emit(event)
         return instance
@@ -178,15 +213,9 @@ class AgentSession:
 
         reported = len(self.child_reports) + len(self.failed_children)
         if reported == len(self.child_ids):
-            aggregated_result = self._aggregate_child_results()
+            aggregated_result = aggregate_child_results(self.child_ids, self.child_reports)
             if self.failed_children:
-                failed_summary = ", ".join(
-                    str(cid)[:8] for cid in self.failed_children
-                )
-                aggregated_result += (
-                    f"\n\nNote: {len(self.failed_children)} child(ren) failed "
-                    f"({failed_summary}). Results are partial."
-                )
+                aggregated_result += f"\n\n{failed_children_note(self.failed_children)}"
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
@@ -194,32 +223,29 @@ class AgentSession:
             )
             self._emit(work_completed_event)
 
-    def _aggregate_child_results(self) -> str:
-        lines = ["Subtask results:", ""]
-        for child_id in self.child_ids:
-            report = self.child_reports.get(child_id)
-            if report is None:
-                lines.append("- No result")
-                continue
-            header = f"[{report.task}]" if report.task else "[subtask]"
-            lines.append(f"- {header}: {report.result}")
-            if report.artifacts:
-                lines.append(f"  Artifacts: {', '.join(report.artifacts)}")
-            if report.decisions:
-                lines.append(f"  Decisions: {', '.join(report.decisions)}")
-        return "\n".join(lines)
-
-    def handle_child_failure(self, child_id: UUID, reason: str) -> None:
+    def handle_child_failure(
+        self,
+        child_id: UUID,
+        reason: str,
+        *,
+        child_task: str = "",
+        digest: str | None = None,
+        max_redecompositions: int = 0,
+    ) -> None:
         """For BOSS/MANAGER: record child failure, defer parent decision.
 
         Records the failure but waits until all children have reported
         (completed or failed) before deciding the parent's fate. If at least
         one child succeeded, the parent aggregates partial results. If ALL
-        children failed, the parent fails.
+        children failed, the parent re-decomposes informed by the recorded
+        failures while redecomposition budget remains, otherwise fails.
 
         Args:
             child_id: ID of failed child
             reason: Error message from child
+            child_task: The failed child's task description
+            digest: The child's failure digest, when one was recorded
+            max_redecompositions: Re-plan budget for the all-children-failed case
         """
         # Idempotence: a child is reported terminally at most once. Under
         # OCC retry the same failure notification can arrive twice; the
@@ -235,6 +261,8 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             child_id=child_id,
             reason=reason,
+            child_task=child_task,
+            digest=digest,
         )
         self._emit(child_failed_event)
 
@@ -246,14 +274,9 @@ class AgentSession:
         # All children reported — decide parent outcome
         if self.child_reports:
             # At least one child succeeded — aggregate partial results
-            aggregated = self._aggregate_child_results()
-            failed_summary = ", ".join(
-                str(cid)[:8] for cid in self.failed_children
-            )
             result = (
-                f"{aggregated}\n\n"
-                f"Note: {len(self.failed_children)} child(ren) failed "
-                f"({failed_summary}). Results are partial."
+                f"{aggregate_child_results(self.child_ids, self.child_reports)}"
+                f"\n\n{failed_children_note(self.failed_children)}"
             )
             work_completed_event = WorkCompleted(
                 aggregate_id=self.agent_id,
@@ -261,12 +284,19 @@ class AgentSession:
                 result=result,
             )
             self._emit(work_completed_event)
+        elif self.redecomposition_count < max_redecompositions:
+            # ALL children failed with re-plan budget left — re-decompose
+            # informed by the recorded failures instead of failing upward.
+            self.trigger_redecomposition(
+                trigger_child_id=child_id,
+                reason=all_children_failed_reason(self.failed_children),
+            )
         else:
             # ALL children failed — parent fails
             work_failed_event = WorkFailed(
                 aggregate_id=self.agent_id,
                 sequence_number=self._next_sequence(),
-                reason=f"All children failed. Last: {reason}",
+                reason=all_children_failed_reason(self.failed_children),
             )
             self._emit(work_failed_event)
 
@@ -294,6 +324,9 @@ class AgentSession:
         self.symbols = tuple(event.symbols)
         self.search_hints = tuple(event.search_hints)
         self.estimated_complexity = event.estimated_complexity
+        self.execution_mode = event.execution_mode
+        self.procedure_ref = event.procedure_ref
+        self.procedure_params = dict(event.procedure_params)
         if event.briefing is not None:
             self.briefing = Briefing.model_validate(event.briefing)
         self.version += 1
@@ -349,6 +382,9 @@ class AgentSession:
     def _(self, event: RedecompositionTriggered) -> None:
         self.status = AgentStatus.ANALYZING
         self.redecomposition_count += 1
+        # Snapshot before clearing so the next decomposition prompt can
+        # render every prior attempt's failures.
+        self.failure_history.extend(self.failed_children.values())
         self.child_ids.clear()
         self.child_reports.clear()
         self.failed_children.clear()
@@ -383,7 +419,30 @@ class AgentSession:
         self.version += 1
 
     @_apply.register
+    def _(self, event: ProcedureExecutionStarted) -> None:
+        # Once-only guard: a later failed attempt must dispatch agentic.
+        self.last_attempt_procedural = True
+        self.status = AgentStatus.IN_PROGRESS
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: ProcedureExecutionFinished) -> None:
+        self.version += 1
+
+    @_apply.register
     def _(self, event: ThoughtCaptured) -> None:
+        self.recent_thoughts.append(
+            ThoughtExcerpt(
+                tool_name=event.tool_name,
+                output_type=event.output_type,
+                content=event.content[:_THOUGHT_EXCERPT_CHARS],
+            )
+        )
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: FailureDigestRecorded) -> None:
+        self.failure_digest = event.digest
         self.version += 1
 
     @_apply.register
@@ -402,7 +461,12 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ChildFailed) -> None:
-        self.failed_children.add(event.child_id)
+        self.failed_children[event.child_id] = ChildFailureRecord(
+            child_id=event.child_id,
+            child_task=event.child_task,
+            reason=event.reason,
+            digest=event.digest,
+        )
         self.version += 1
 
     @_apply.register
@@ -456,8 +520,23 @@ class AgentSession:
         self.version += 1
 
     @_apply.register
+    def _(self, event: RuntimeSurfaceSealed) -> None:
+        # Anti-leak audit event; no state change, version for OCC.
+        self.version += 1
+
+    @_apply.register
     def _(self, event: RunCompleted) -> None:
         # Run-level timing event, just increment version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SourceFileObserved) -> None:
+        # Shared code-context capture; block rebuilt by replay, version for OCC
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: SourceFileEdited) -> None:
+        # Shared code-context edit marker; block rebuilt by replay, version for OCC
         self.version += 1
 
     def _initialize_defaults(self, agent_id: UUID) -> None:
@@ -491,14 +570,29 @@ class AgentSession:
         # orchestrator skip the assessment LLM and execute directly.
         # ``"unknown"`` (default) preserves prior behaviour.
         self.estimated_complexity = "unknown"
+        # Deterministic execution tier: parent's marking from the Subtask,
+        # plus the once-only guard so a failed procedure escalates agentic.
+        self.execution_mode = "auto"
+        self.procedure_ref = ""
+        self.procedure_params = {}
+        self.last_attempt_procedural = False
         # Retry tracking
         self.retry_count = 0
         self.redecomposition_count = 0
         # Verification feedback for retry (populated on VerificationFailed)
         self.verification_feedback = None
         self.verification_score = None
-        # Track failed children for partial-success aggregation
-        self.failed_children = set()
+        # Digest of the last failed attempt (populated on FailureDigestRecorded,
+        # retained across retries like verification_feedback)
+        self.failure_digest = None
+        # Bounded tail of worker tool output, replayed from ThoughtCaptured,
+        # feeding the deterministic failure digest
+        self.recent_thoughts = deque(maxlen=_RECENT_THOUGHTS_MAXLEN)
+        # Track failed children for partial-success aggregation and re-planning
+        self.failed_children = {}
+        # Failures accumulated across redecompositions, rendered into the
+        # next decomposition prompt
+        self.failure_history = []
         # Per-coroutine reservation count (see D.2). Reset on every fresh
         # load, every replay, and after commit/release in the orchestrator.
         self.pending_reservation = 0
@@ -615,6 +709,43 @@ class AgentSession:
         )
         self._emit(event)
 
+    def record_failure_digest(self, digest: str, source: str) -> None:
+        """Record a deterministic digest of the failed attempt for retry prompts."""
+        event = FailureDigestRecorded(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            digest=digest,
+            source=source,
+        )
+        self._emit(event)
+
+    def start_procedure(self, procedure_ref: str) -> None:
+        """WORKER begins a deterministic procedure (no prompt, no LLM)."""
+        event = ProcedureExecutionStarted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            procedure_ref=procedure_ref,
+        )
+        self._emit(event)
+
+    def finish_procedure(
+        self,
+        procedure_ref: str,
+        success: bool,
+        summary: str,
+        evidence: list[dict[str, Any]],
+    ) -> None:
+        """Record the host-captured procedure outcome; terminal event follows."""
+        event = ProcedureExecutionFinished(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            procedure_ref=procedure_ref,
+            success=success,
+            summary=summary,
+            evidence=evidence,
+        )
+        self._emit(event)
+
     def fail_with_reason(self, reason: str) -> None:
         failed_event = WorkFailed(
             aggregate_id=self.agent_id,
@@ -622,6 +753,15 @@ class AgentSession:
             reason=reason,
         )
         self._emit(failed_event)
+
+    def complete_with_result(self, result: str) -> None:
+        """Complete directly with a host-computed result (procedural tier)."""
+        completed_event = WorkCompleted(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            result=result,
+        )
+        self._emit(completed_event)
 
 
     def apply_complexity_result(
@@ -804,6 +944,34 @@ class AgentSession:
         corrected_event = type(tool_event)(**event_data)
         self._emit(corrected_event)
 
+    def record_source_file_observed(
+        self, path: str, content: str, observed_by: UUID
+    ) -> None:
+        """Persist verbatim source a worker's view tool returned.
+
+        The content (and its sha256 for integrity/dedup) is recoverable from
+        this event alone, backing the shared code-prefix block.
+        """
+        event = SourceFileObserved(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            path=path,
+            content=content,
+            content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            observed_by=str(observed_by),
+        )
+        self._emit(event)
+
+    def record_source_file_edited(self, path: str, edited_by: UUID) -> None:
+        """Mark a source file edited, invalidating its recorded content."""
+        event = SourceFileEdited(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            path=path,
+            edited_by=str(edited_by),
+        )
+        self._emit(event)
+
     def mark_verification_failed(
         self,
         failed_stage: str,
@@ -916,6 +1084,23 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             task_description=task_description,
             domain_metadata=domain_metadata,
+        )
+        self._emit(event)
+
+    def emit_runtime_surface_sealed(
+        self,
+        surface: str,
+        sealed_artifacts: list[SealedArtifact],
+    ) -> None:
+        """Emit RuntimeSurfaceSealed when Arise seals the agent-visible runtime surface.
+
+        Should only be called on the BOSS agent (root of hierarchy).
+        """
+        event = RuntimeSurfaceSealed(
+            aggregate_id=self.agent_id,
+            sequence_number=self._next_sequence(),
+            surface=surface,
+            sealed_artifacts=sealed_artifacts,
         )
         self._emit(event)
 

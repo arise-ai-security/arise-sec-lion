@@ -19,21 +19,21 @@ The repository is already cloned in the working directory. DO NOT clone again.
 All work MUST be done in the working directory specified in Task Context.
 
 ### Phase 1: Build (index 0)
-Build the repository with sanitizer instrumentation.
-Deliverables: `/testcase/base_commit_hash`, `/src/build.sh` (improved), `/testcase/repo_changes.diff` (if changes), `/testcase/packages.txt` (if packages installed).
+Build the repository with sanitizer instrumentation through `secb build`.
+Deliverables: `{{ artifact_paths.base_commit_hash }}`, `{{ artifact_paths.build_script }}` (edited only when needed), `{{ artifact_paths.repo_changes_diff }}` (may be empty), `{{ artifact_paths.binary_paths }}`.
 
 ### Phase 2: Exploit (index 1, depends_on: [0])
-Create proof-of-concept that triggers the reported sanitizer error. **Runs AFTER builder finishes** — compiled binaries are already available at `/work/bin/`, do NOT rebuild from scratch.
-Deliverables: PoC artifacts under `/testcase`, `/testcase/repro.sh`.
+Create proof-of-concept that triggers the reported sanitizer error through `secb repro`. **Runs AFTER builder finishes** — use the Builder-declared executable path from `{{ artifact_paths.binary_paths }}`; do not create a new build process or rebuild — the Builder phase owns the build.
+Deliverables: `{{ artifact_paths.poc_path }}`, `{{ artifact_paths.repro_script }}`.
 
 ### Phase 3: Fix (index 2, depends_on: [1])
-Generate unified patch file. **Runs AFTER exploiter finishes** — use the exploiter's `/testcase/repro.sh` to validate the patch.
-Deliverable: `/testcase/model_patch.diff`.
+Generate unified patch file. **Runs AFTER exploiter finishes** — use `secb patch`, `secb build`, and `secb repro` to validate the patch.
+Deliverable: `{{ artifact_paths.model_patch }}`.
 
 ### Phase 4: Report (index 3, depends_on: [0, 1, 2])
 Synthesize ALL findings from Builder, Exploiter, and Fixer into a comprehensive security analysis report. **Runs AFTER all other phases finish.**
-Deliverable: `/testcase/security_report.md` — this file MUST be created and non-empty.
-The reporter MUST: (1) read all `/testcase/` artifacts and sibling context — especially `/testcase/fix_summary.md` for the Fixer's consistency check and confidence assessment, (2) ensure the report is internally consistent: if the root cause analysis identifies file X as the bug origin, the fix description must explain why the patch targets that file (or explicitly justify targeting a different file), (3) write the report to `/testcase/security_report.md` using the file editor, (4) verify the file exists and is non-empty before finishing.
+Deliverable: `{{ artifact_paths.security_report }}` — this file MUST be created and non-empty.
+The reporter MUST: (1) read all `{{ artifact_dirs.testcase }}/` artifacts and sibling context — use `{{ artifact_paths.fix_summary }}` if present, but do not require it, (2) ensure the report is internally consistent: if the root cause analysis identifies file X as the bug origin, the fix description must explain why the patch targets that file (or explicitly justify targeting a different file), (3) write the report to `{{ artifact_paths.security_report }}` using the file editor, (4) verify the file exists and is non-empty before finishing.
 
 **ALL FOUR PHASES MUST BE COMPLETED. CHECK DELIVERABLES BEFORE MOVING TO NEXT PHASE.**
 
@@ -43,11 +43,12 @@ The reporter MUST: (1) read all `/testcase/` artifacts and sibling context — e
 > may have read elsewhere about subtask counts (e.g. "2–3 subtasks
 > optimal"), per-phase complexity defaults, or "hard limits" of N.
 > Those numbers are generic priors. This domain mandates exactly four
-> top-level subtasks. The "decomposes into 3 / 4–5 / 4–5 workers"
-> notes describe the **next** decomposition level — they are
-> instructions for the children when they later decompose, not
-> additional sibling subtasks at this level. Do **not** raise a
-> ``constraints_unsatisfiable`` failure on this basis.
+> top-level subtasks unless live system constraints make that impossible.
+> The catalog-role notes describe the **next** decomposition level — they
+> are instructions for the children when they later decompose, not additional
+> sibling subtasks at this level. Return ``constraints_unsatisfiable`` only
+> when live depth/agent/child constraints cannot fit the four phase subtasks,
+> not because generic "2–3 optimal" guidance is smaller.
 
 - Create exactly 4 subtasks, one per phase.
 - Prefix the subtask descriptions with `[Builder]`, `[Exploiter]`, `[Fixer]`, and `[Reporter]`.
@@ -55,9 +56,9 @@ The reporter MUST: (1) read all `/testcase/` artifacts and sibling context — e
 - Do not merge phases together or skip validation deliverables for any phase.
 - Mark Builder, Exploiter, and Fixer as `"estimated_complexity": "complex"` — each phase benefits from further decomposition into specialized workers.
 - Mark Reporter as `"estimated_complexity": "simple"` — it is a single worker that reads and synthesizes findings, not a decomposition target.
-- **Builder** decomposes into exactly 3 workers (infrastructure, not code analysis — no deeper granularity needed).
-- **Exploiter** decomposes into 4-5 workers with progressively finer code analysis (static analysis → data flow → PoC crafting → reproduction → validation). Finer analysis demands more targeted workers.
-- **Fixer** decomposes into 4-5 workers (root cause analysis → fix design → patch creation → validation → aggregated verification). Patches must be developed from first principles based on root cause analysis — no external fix commits. Include a final validation worker that checks the big picture.
+- **Builder** later decomposes through the Builder catalog roles ({{ phase_roles["Builder"]|length }} infrastructure workers, not code analysis — no deeper granularity needed).
+- **Exploiter** later decomposes into its FULL analysis chain — every REQUIRED role as a separate worker ([PoC-Researcher] → [Data-Flow-Analyst] → [PoC-Tester] → [Forward-Instrumentator] → [Repro-Creator] → [Exploit-Validator]) — plus any optional roles the CVE needs.
+- **Fixer** later decomposes into its FULL chain — every REQUIRED role as a separate worker ([Root-Cause-Analyst] → [Candidate-Reviewer] → [Regression-Tester] → [Patch-Creator] → [Patch-Validator]) — plus optional aggregation when needed. Patches must be developed from first principles based on root cause analysis — no external fix commits.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,
@@ -66,11 +67,11 @@ The reporter MUST: (1) read all `/testcase/` artifacts and sibling context — e
 
 ## Cross-Phase Context Sharing
 
-The shared workspace (`/testcase/`, `/src/`, `/work/`) persists across all phases.
-- **Builder → Exploiter**: Compiled binaries at `/work/bin/`, improved `/src/build.sh`, base commit at `/testcase/base_commit_hash`.
-- **Exploiter → Fixer**: PoC artifacts at `/testcase/`, reproduction script at `/testcase/repro.sh`. Exploiter workers MUST publish key findings via `<context-update>` decisions: PoC file path, repro.sh command, and the exact sanitizer error observed.
-- **Fixer reads Exploiter results**: Fixer workers will see exploiter's shared decisions and result summary through sibling context. Instruct the fixer to CHECK `/testcase/repro.sh` exists and use it for patch validation.
-- **Reporter reads ALL phases**: Reporter reads all sibling context and `/testcase/` artifacts to synthesize the final security report.
+The shared workspace (`{{ artifact_dirs.testcase }}/`, `{{ artifact_dirs.source }}/`, `{{ artifact_dirs.work }}/`) persists across all phases.
+- **Builder → Exploiter**: Builder-declared executable path(s) recorded in `{{ artifact_paths.binary_paths }}` (the sole authority — Exploiter uses only these, never a scanned default location), improved `{{ artifact_paths.build_script }}`, base commit at `{{ artifact_paths.base_commit_hash }}`.
+- **Exploiter → Fixer**: selected PoC pointer at `{{ artifact_paths.poc_path }}`, reproduction script at `{{ artifact_paths.repro_script }}`. Exploiter workers MUST publish key findings via `<context-update>` decisions: PoC file path, repro command, and the exact sanitizer error observed.
+- **Fixer reads Exploiter results**: Fixer workers will see exploiter's shared decisions and result summary through sibling context. Instruct the fixer to CHECK `{{ artifact_paths.repro_script }}` exists and use `secb repro` for patch validation.
+- **Reporter reads ALL phases**: Reporter reads all sibling context and `{{ artifact_dirs.testcase }}/` artifacts to synthesize the final security report.
 
 ## Security Tool Prescriptions in Justifications
 
@@ -80,5 +81,5 @@ to install and use. Go beyond the preinstalled tools — recommend complementary
 - **[Builder]**: `"Install cppcheck (apt-get install -y cppcheck) to scan the SPECIFIC vulnerable file(s) (NOT the entire codebase — full-project scans waste time). Ensure sanitizer flags are preserved. Use ASAN_OPTIONS=detect_leaks=1 during test builds to catch early issues."`
 - **[Exploiter]**: `"Install and use multiple analysis tools for cross-validation: (1) Valgrind (--tool=memcheck --leak-check=full --error-exitcode=1) to confirm the PoC triggers the exact memory error. (2) Install gdb (apt-get install -y gdb) for detailed stack traces: run 'gdb -batch -ex run -ex bt -ex quit --args ./binary < poc_input'. (3) Use addr2line -e binary -a <address> to map crash addresses to source lines. (4) Install cflow (apt-get install -y cflow) to trace call graphs of vulnerable functions. (5) Use strace/ltrace for runtime behavior analysis. (6) Use KLEE for symbolic execution if no PoC is available."`
 - **[Fixer]**: `"Validate the patch with multiple complementary tools: (1) Valgrind (--tool=memcheck --error-exitcode=1) on patched binary — verify original error gone AND no new issues. (2) Install cppcheck for static analysis of the patched code. (3) Use gdb to confirm stack traces are clean post-patch. (4) Run with enhanced ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 for thorough validation. (5) Compare Valgrind output before vs after patch."`
-- **[Reporter]**: `"Read all artifacts in /testcase/ and sibling context from Builder, Exploiter, and Fixer. Synthesize a comprehensive security_report.md covering: executive summary, vulnerability details with root cause, PoC evidence, fix implementation, validation results, and tool usage summary. Reference specific file paths, line numbers, and command outputs as evidence."`
+- **[Reporter]**: `"Read all artifacts in {{ artifact_dirs.testcase }}/ and sibling context from Builder, Exploiter, and Fixer. Synthesize a comprehensive security_report.md covering: executive summary, vulnerability details with root cause, PoC evidence, fix implementation, validation results, and tool usage summary. Reference specific file paths, line numbers, and command outputs as evidence."`
 </domain_operation>

@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from experiments.shared import harness
+from experiments.shared import container_cleanup, harness, subprocess_runner
 
 
 if TYPE_CHECKING:
@@ -112,19 +112,7 @@ def stub_main_py_success(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         )
         return 0
 
-    async def _fake_project_events(
-        *,
-        run_id,  # noqa: ARG001
-        output_path,
-        settings=None,  # noqa: ARG001
-        config_path=None,  # noqa: ARG001
-    ):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("")  # empty events.jsonl is fine for the test
-        return 0
-
     monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke)
-    monkeypatch.setattr(harness, "project_events_to_jsonl", _fake_project_events)
     return state
 
 
@@ -166,9 +154,6 @@ def test_run_arise_enrolls_run_into_study(
         (repo_root / "experiments" / study_id / "manifest.yaml").read_text()
     )
     assert "runs" not in study_manifest
-
-    # And: events.jsonl was produced (by the fake projector).
-    assert (repo_root / "runs" / str(run_id) / "events.jsonl").exists()
 
 
 def test_run_arise_rejects_subprocess_that_never_wrote_result(
@@ -256,7 +241,7 @@ def test_terminate_process_tree_kills_child_process() -> None:
             "import time; time.sleep(30)",
             start_new_session=True,
         )
-        await harness._terminate_process_tree(
+        await container_cleanup._terminate_process_tree(
             process,
             reason="test",
             grace_seconds=0.01,
@@ -392,7 +377,7 @@ def test_run_arise_builds_main_py_argv_in_exact_order(
     captured: dict[str, object] = {}
 
     def _fake_invoke(*, config, task, context_file, result_path, python_bin=None) -> int:
-        invocation = harness._build_main_py_invocation(
+        invocation = subprocess_runner._build_main_py_invocation(
             config=config,
             task=task,
             context_file=context_file,
@@ -419,13 +404,6 @@ def test_run_arise_builds_main_py_argv_in_exact_order(
         return 0
 
     monkeypatch.setattr(harness, "_invoke_main_py", _fake_invoke)
-
-    async def _fake_project_events(*, run_id, output_path, config_path=None):  # noqa: ARG001
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("")
-        return 0
-
-    monkeypatch.setattr(harness, "project_events_to_jsonl", _fake_project_events)
 
     config_path = repo_root / "fake-config.yaml"
 
@@ -457,7 +435,7 @@ def test_run_arise_builds_main_py_argv_in_exact_order(
     assert captured["cwd"] == repo_root
     env = captured["env"]
     assert isinstance(env, dict)
-    assert harness.RUN_RESULT_ENV_VAR in env
+    assert subprocess_runner.RUN_RESULT_ENV_VAR in env
 
 
 def test_run_arise_aborts_when_subset_references_unknown_cve(

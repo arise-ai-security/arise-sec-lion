@@ -39,6 +39,10 @@ class ActiveToolContext:
     tool_definitions: tuple[dict[str, Any], ...] = ()
     loop_policy: LoopPolicy = LoopPolicy()
     executors: Mapping[str, Toolset] = field(default_factory=dict)
+    # Tool names whose FULL result the loop should capture verbatim (e.g. the
+    # recon ``read_file``), so the caller can persist them into the shared
+    # code-prefix block. Empty => capture nothing (no behavior change).
+    source_read_tools: frozenset[str] = frozenset()
 
     @property
     def has_tools(self) -> bool:

@@ -11,8 +11,7 @@ Usage::
     python -m experiments.shared.scripts.collect --study <study-id>
 
 The lockfile is written via ``write_binary`` so it carries the same
-``.generated.json`` provenance as every other artifact in the reports
-tree, and ``validate_reports`` accepts it without special-casing.
+``.generated.json`` provenance as every other artifact in the reports tree.
 """
 
 from __future__ import annotations
@@ -107,15 +106,6 @@ def _load_enrolled_record(
 
     if record.get("study_id") != study_id:
         return
-    # Audit N-2: runs whose event projection failed are stamped with
-    # projection_status="failed" by the harness; excluding them here is
-    # what makes a missing events.jsonl loud (a row dropped from the
-    # enrollment list) instead of silent (a clean-looking zero row).
-    if record.get("projection_status") == "failed":
-        logger.warning(
-            "excluding run %s: projection_status=failed", manifest_path.parent.name
-        )
-        return
 
     run_id = record.get("run_id")
     if not isinstance(run_id, str):
@@ -137,9 +127,9 @@ def _load_enrolled_record(
         "task": task,
         "replicate": _replicate_of(record),
     }
-    # Optional provenance (PR 6): downstream tooling (validate_reports,
-    # drift checks) can spot lockfile or config drift between enrolled
-    # runs. Older manifests without these fields enroll fine.
+    # Optional provenance (PR 6): downstream drift checks can spot lockfile
+    # or config drift between enrolled runs. Older manifests without these
+    # fields enroll fine.
     uv_lock_sha = record.get("uv_lock_sha256")
     if isinstance(uv_lock_sha, str):
         entry["uv_lock_sha256"] = uv_lock_sha

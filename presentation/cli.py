@@ -3,10 +3,10 @@
 This module contains the CLI class that orchestrates task execution.
 It receives fully-wired dependencies via constructor injection from
 the bootstrap layer. No Click decorators - command routing is done
-in bootstrap/cli_main.py.
+in bootstrap/bootstrap.py.
 
 Architecture:
-    bootstrap/cli_main.py (argparse + wiring) -> CLI class (pure, testable)
+    bootstrap/bootstrap.py (argparse + wiring) -> CLI class (pure, testable)
 """
 
 import sys

@@ -2,6 +2,12 @@
 
 Experiment plan for validating arise-sec-lion's tree-topology multi-agent system against SEC-bench cybersecurity benchmarks.
 
+> **Forward-looking plan.** This document is a plan, not a record of the current system.
+> For as-built truth (architecture, runtime, criteria wiring, current models, with
+> `file:line` citations) see [`SYSTEM_REFERENCE.md`](../SYSTEM_REFERENCE.md). Live
+> experiment cells and their configs are under `experiments/<cell>/configs/*.yaml`
+> (e.g. `experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml`).
+
 ## Goal
 
 1. **Reproduce SEC-bench results** using our tree-topology system for direct comparison.
@@ -158,8 +164,13 @@ CVE instance data exists on HuggingFace (`SEC-bench/Seed` dataset). We do NOT cr
 **Purpose**: Establish our system's baseline when operating in SEC-bench-equivalent mode (no deep decomposition).
 
 ### Config: SEC-bench Equivalent Mode
+
+Lives at `experiments/<flat-cell>/configs/*.yaml` (e.g. the B3 boss-direct cell). The live
+N/B cells use the dotted-key override form (`orchestration.topology.max_depth: 1`, etc.);
+the nested YAML below is shown for readability.
+
 ```yaml
-# config.secbench-flat.yaml
+# experiments/b3-boss-bef-direct/configs/B3-boss-bef-direct.yaml (shape)
 orchestration:
   topology:
     max_depth: 1          # BOSS(0) -> WORKERs(1) only, no managers
@@ -169,10 +180,10 @@ orchestration:
   max_run_duration_seconds: 7200  # Match SEC-bench timeout
 
 worker:
-  model: anthropic/claude-3.7-sonnet  # Match SEC-bench best model
-  tool: openhands                      # Match SEC-bench scaffold
+  model: gpt-5.4-mini    # current worker model (B3/B4)
+  tool: openhands        # Match SEC-bench scaffold
   timeout: 2400
-  max_iterations_per_run: 75          # Match SEC-bench iteration limit
+  max_iterations_per_run: 250   # current B-cell value (B3:33, B4:46); was 75 to match SEC-bench
 ```
 
 ### Run on 5 "Easy" Instances
@@ -198,13 +209,18 @@ worker:
 **Purpose**: Test whether deeper decomposition produces more concrete worker tasks and better results.
 
 ### Config: Tree Mode
+
+Lives at `experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml`
+(the live deep-tree cell; current values: `max_depth: 3`, `max_children_per_node: 7`,
+`max_total_agents: 40`). Shape:
+
 ```yaml
-# config.secbench-tree.yaml
+# experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml (shape)
 orchestration:
   topology:
     max_depth: 3          # BOSS(0) -> MANAGER(1) -> PENDING(2) -> WORKER(3)
-    max_children_per_node: 5
-    max_total_agents: 25
+    max_children_per_node: 7
+    max_total_agents: 40
   concurrency:
     max_concurrent_workers: 1  # Sequential for sibling context
 ```
@@ -289,11 +305,11 @@ After each run, grep worker events for:
 
 | Lever | Current | Target | Rationale |
 |-------|---------|--------|-----------|
-| BOSS model | gpt-4o-mini | gpt-4o-mini (keep) | Cheap, only does 3-way split |
-| MANAGER model | gpt-4o | gpt-4o-mini | Managers only decompose |
-| Worker model | gpt-4o | claude-3.7-sonnet | Match SEC-bench best performer |
-| Worker iterations | 30 | 50-75 | Match SEC-bench budget |
-| Total agents | 25 | 10-15 | Reduce orchestration overhead |
+| BOSS model | gpt-5.4 | gpt-5.4-mini | Only does the phase split; cheaper model may suffice |
+| MANAGER model | gpt-5.4 | gpt-5.4-mini | Managers only decompose |
+| Worker model | gpt-5.4-mini | gpt-5.4-mini (keep) | Current worker model for B-cells |
+| Worker iterations | 250 | tune down | B-cells run 250; evaluate whether fewer suffice |
+| Total agents | 40 | 10-25 | Reduce orchestration overhead |
 | max_depth | 3 | 2 | Test if shallower tree is enough |
 
 ### Cost Targets
@@ -318,9 +334,9 @@ After each run, grep worker events for:
 
 | Config | Topology | Agents | Model | Purpose |
 |--------|----------|--------|-------|---------|
-| A: Flat | depth=1, 4 agents | openhands | claude-3.7-sonnet | SEC-bench equivalent baseline |
-| B: Shallow tree | depth=2, 10 agents | openhands | claude-3.7-sonnet | Moderate decomposition |
-| C: Deep tree | depth=3, 25 agents | openhands | claude-3.7-sonnet | Full hypothesis test |
+| A: Flat | depth=1, 4 agents | openhands | gpt-5.4-mini worker | SEC-bench equivalent baseline |
+| B: Shallow tree | depth=2, ~10 agents | openhands | gpt-5.4 boss/mgr, gpt-5.4-mini worker | Moderate decomposition |
+| C: Deep tree | depth=3, ~40 agents | openhands | gpt-5.4 boss/mgr, gpt-5.4-mini worker | Full hypothesis test |
 
 ### Metrics per Run
 
@@ -386,15 +402,17 @@ After each run, grep worker events for:
 
 ## Critical Fixes Needed Before Experiments
 
-1. **Task concreteness in decomposition prompts** -- `decomposition.j2` must enforce that subtasks are strictly more concrete than parent. Add: "Each subtask MUST contain at least one specific command, file path, or exact criterion."
+> Two items from the original list have shipped and were removed: **anti-cheating
+> constraints** (now in the prompt forbidden-surfaces block — `prompts/domains/secbench/_secb_runtime_contract.j2:11`,
+> plus manager-level `secb`-only discipline in `manager.j2:39-41`) and the **worker
+> iteration budget** (B-cells already run `max_iterations_per_run: 250`, well above
+> SEC-bench's 75). The remaining open items:
 
-2. **Anti-cheating constraints** -- Add forbidden tool patterns to worker prompts (web search, git checkout of non-base commits, external URL fetching).
+1. **Task concreteness in decomposition prompts** -- partially addressed (manager/assess prompts already push `secb`-anchored concrete subtasks). Confirm the generic `decomposition.j2` itself enforces that each subtask is strictly more concrete than its parent (≥1 specific command, file path, or exact criterion).
 
-3. **Worker iteration budget** -- Current `max_iterations_per_run: 30` is too low vs SEC-bench's 75. Increase to 50-75.
+2. **Cost budget enforcement** -- still missing: no config-level budget guard exists (`config/settings.py` has no `cost_budget`/`max_cost` key). Add an explicit setting and execution-loop check before relying on cost caps.
 
-4. **Cost budget enforcement** -- no config-level budget guard exists. Add an explicit setting and execution-loop check before relying on cost caps.
-
-5. **Verification pipeline** -- Stages 2-3 are placeholders. For SEC-bench, wire verification to run `secb build` + `secb repro` + check sanitizer output.
+3. **SEC-bench correctness in the verification pipeline** -- deterministic/execution stages are still placeholders that always pass (`core/application/services/orchestration/verification_pipeline.py:181,186`), and the post-hoc Built/Exploited/Fixed success judges are UNWIRED ([`SYSTEM_REFERENCE.md`](../SYSTEM_REFERENCE.md) §IV.6). To gate on SEC-bench correctness, wire independent host-side re-execution of `secb build`/`secb repro`/`secb patch` and thread the CVE oracle into `RunData` (SYSTEM_REFERENCE §V.2, §V.4).
 
 ---
 
@@ -412,8 +430,8 @@ PENDING (depth 1) ------> assess_task() decides EXECUTE vs DECOMPOSE
                     PENDING (depth 2) --> ...recursive
 ```
 
-**Current config**: gpt-4o-mini (BOSS), gpt-4o (MANAGER), gpt-4o + openhands (WORKER)
-**Topology**: max_depth=3, max_children=5, max_total_agents=25
+**Current config** (B4 deep-tree cell): gpt-5.4 (BOSS), gpt-5.4 (MANAGER), gpt-5.4-mini + openhands (WORKER)
+**Topology**: max_depth=3, max_children_per_node=7, max_total_agents=40
 **Concurrency**: Sequential workers (max_concurrent_workers=1)
 
 ## Reference: SEC-bench `secb` Tool

@@ -10,6 +10,7 @@ from core.domain.values.prompt_capabilities import PromptCapabilities
 
 if TYPE_CHECKING:
     from core.application.services.prompt.prompt_builder import TemplateChain
+    from core.domain.values.failure import ChildFailureRecord
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
 
@@ -41,8 +42,11 @@ class PromptContext:
     domain_context: object | None = None
     handoff: Any = None
     workspace_context: str | None = None
+    shared_code_block: str | None = None
+    shared_code_index: str | None = None
     scope: SubtaskScope | None = None
     prompt_capabilities: PromptCapabilities | None = None
+    failure_history: "tuple[ChildFailureRecord, ...]" = ()
 
 
 class PromptStrategy(Protocol):

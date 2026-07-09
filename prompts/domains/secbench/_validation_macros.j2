@@ -1,0 +1,45 @@
+{% macro secb_build_validation(artifact_paths, phase_commands) -%}
+```bash
+nohup bash -c 'secb build; echo "exit=$?" > {{ phase_commands.build.exit }}' > {{ phase_commands.build.log }} 2>&1 &
+echo "launched secb build (pid $!)"
+[ -f {{ phase_commands.build.exit }} ] && cat {{ phase_commands.build.exit }} && tail -n 40 {{ phase_commands.build.log }} || tail -n 20 {{ phase_commands.build.log }}
+```
+{%- endmacro %}
+
+{% macro secb_repro_loop(phase_commands) -%}
+```bash
+nohup bash -c 'for N in 1 2 3; do
+    secb repro > {{ phase_commands.repro_loop.run_log }} 2>&1
+    echo "exit=$?" >> {{ phase_commands.repro_loop.run_log }}
+  done; echo done > {{ phase_commands.repro_loop.exit }}' > /dev/null 2>&1 &
+echo "launched secb repro loop (pid $!)"
+```
+{%- endmacro %}
+
+{# Verifiable-async provenance: after launching a detached secb loop, the worker MUST run this
+   to bounded-block on the sentinel and copy the exit + logs INTO its own transcript. secb
+   results otherwise live only in files the detached process wrote, which the provenance check
+   cannot tie to this agent's un-forgeable tool-result stream. The ~9-min cap stays under the
+   per-tool timeout; if it prints NOT FINISHED, re-run this same poll (do NOT run secb again). #}
+{% macro secb_poll_result(sentinel, read_log) -%}
+```bash
+for i in $(seq 1 110); do [ -f {{ sentinel }} ] && break; sleep 5; done
+[ -f {{ sentinel }} ] && echo "FINISHED ({{ sentinel }})" || echo "NOT FINISHED — re-run this poll (do not re-launch secb)"
+for f in {{ read_log }}; do echo "=== $f ==="; cat "$f" 2>/dev/null; done
+```
+{%- endmacro %}
+
+{% macro secb_fix_validation(phase_commands) -%}
+```bash
+nohup bash -c 'secb patch; patch_rc=$?; echo "patch_exit=$patch_rc"
+  if [ "$patch_rc" -ne 0 ]; then echo "secb patch failed; skipping build/repro"; echo done > {{ phase_commands.fix_loop.exit }}; exit 0; fi
+  secb build; build_rc=$?; echo "build_exit=$build_rc"
+  if [ "$build_rc" -ne 0 ]; then echo "secb build failed; skipping repro"; echo done > {{ phase_commands.fix_loop.exit }}; exit 0; fi
+  for N in 1 2 3; do
+    secb repro > {{ phase_commands.fix_loop.run_log }} 2>&1
+    echo "exit=$?" >> {{ phase_commands.fix_loop.run_log }}
+  done
+  echo done > {{ phase_commands.fix_loop.exit }}' > {{ phase_commands.fix_loop.log }} 2>&1 &
+echo "launched secb patch/build/repro validation (pid $!)"
+```
+{%- endmacro %}

@@ -3,6 +3,13 @@
 
 Refer to Task Context above for repository location, base commit hash, and vulnerability details.
 
+{# The included phase partial (phases/build.j2) is the shared "phase contract":
+   its Goal + deliverables render identically for every Builder worker and the
+   flat arm, so it sits in the common cacheable prefix (run-scoped shard for
+   OpenHands; cache_control for Anthropic via LiteLLM). Keep text above this
+   include stable across workers to preserve that prefix.
+#}
+
 {% include 'domains/secbench/phases/build.j2' %}
 
 ### Setup
@@ -15,13 +22,14 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
 ### Steps
 
 1. **Determine base commit** from vulnerability description (Task Context):
-   - If a more suitable commit exists: save to `/testcase/base_commit_hash`, run `git reset --hard <hash>`
-   - Otherwise: save the provided base commit to `/testcase/base_commit_hash`
-   - `/testcase/base_commit_hash` MUST exist before proceeding
+   - If a more suitable commit exists: save to `{{ artifact_paths.base_commit_hash }}`, run `git reset --hard <hash>`
+   - Otherwise: save the provided base commit to `{{ artifact_paths.base_commit_hash }}`
+   - `{{ artifact_paths.base_commit_hash }}` MUST exist before proceeding
 
-2. **Build the project**: `cd {{ work_dir }} && /src/build.sh`
+2. **Build the project**: `cd {{ work_dir }} && secb build`
 
-3. **Improve `/src/build.sh`**:
+3. **Improve `{{ artifact_paths.build_script }}` only when needed**:
+   - Treat `{{ artifact_paths.build_script }}` as the editable project build recipe used by `secb build`
    - Make standalone — remove undefined/environment variables not set in script
    - Remove fuzzer-related build commands
    - Add `-j$(nproc)` to `make` (do NOT use `make all`; keep `make install` if present — it installs binaries to the prefix directory needed by later phases)
@@ -30,9 +38,9 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - Preserve existing flags: `export CFLAGS="$CFLAGS -fsanitize=address"`
    - Define exports before `./configure` or `cmake`
    - Check local script existence before running (e.g., `[ -f ./autogen.sh ] && ./autogen.sh`)
-   - Exception: `$SRC` = `/src`, `$WORK` = `/work` are predefined
+   - Exception: `$SRC` = `{{ artifact_dirs.source }}`, `$WORK` = `{{ artifact_dirs.work }}` are predefined
 
-4. **Rebuild**: `cd {{ work_dir }} && /src/build.sh`
+4. **Rebuild**: `cd {{ work_dir }} && secb build`
 
 5. **Verify sanitizer runtime**: If the build uses `-fsanitize=address`, test that the binary actually executes: run the main binary with `--help` or `-h`. If it fails with "cannot open shared object file: libclang_rt.asan" or "libasan", the sanitizer runtime library is missing. Fix it:
    ```bash
@@ -51,35 +59,44 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - Define suppression flags before `./configure` or `cmake`
    - Make MINIMAL source changes if needed
 
-7. **Record installed packages**: If packages installed via `apt`, write to `/testcase/packages.txt` (one per line)
+7. **Declare executable paths — ONLY after a clean build**: Confirm `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`. If it does not, the current build did NOT succeed — read `build.log`, fix the compile error, and re-run `secb build` until `build.exit` reports `exit=0`. Do NOT declare a pre-existing or stale binary from an earlier failed attempt. Then write `{{ artifact_paths.binary_paths }}` with one absolute Builder-produced executable path per line, each produced by THIS successful build. To survive any later baseline reset, also copy each declared executable (resolving libtool wrapper scripts to the real ELF under `.libs/`) into `{{ artifact_dirs.testcase }}/bin/` and declare that durable copy: `mkdir -p {{ artifact_dirs.testcase }}/bin && cp <real-binary> {{ artifact_dirs.testcase }}/bin/<name>`
 
-8. **Save source changes**: `cd {{ work_dir }} && git diff --no-color [BASE_COMMIT] > /testcase/repo_changes.diff`
+8. **Save source changes and establish the Builder baseline**: Follow the
+   Builder Baseline procedure in the phase contract above. It records
+   `{{ artifact_paths.repo_changes_diff }}` and, when non-empty, commits exactly
+   that recorded source/setup diff as local `arise-builder-baseline`. Do not use
+   `git add -A`.
 
-9. **Verify deliverables exist**:
-   - `/testcase/base_commit_hash`
-   - `/testcase/repo_changes.diff`
-   - `/testcase/packages.txt` (if applicable)
-   - `/src/build.sh`
+9. **Verify deliverables exist and handoff contract is satisfied**:
+{% for p in required_files["Builder"] %}
+   - `{{ p }}`
+{%- endfor %}
+   - The instrumented executable(s) that a later `secb repro` will invoke must exist at the locations listed in `{{ artifact_paths.binary_paths }}`. Confirm each binary is real, non-vacuous, executable, and actually runs with the sanitizer.
+
+   **Handoff rule (mandatory)**: The binary location that the Exploiter's `secb repro` will use **must** be one you as Builder were responsible for producing. Downstream workers are forbidden from using a different location that bypasses your build output.
 
 10. **Run quick static analysis** (optional but recommended):
+{% if shared_code_enabled %}
+   - The relevant source is already in `<provided_source_files>` — build on it; only re-`view` a file after you edit it or one that is not provided there.
+{% endif %}
    - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
    - Note any findings in context-update for exploiter/fixer workers
 
 ### Peer Validation
 If upstream siblings (e.g., Build-Setup) shared decisions, verify them:
-- Check that `/testcase/base_commit_hash` actually contains a valid commit hash
+- Check that `{{ artifact_paths.base_commit_hash }}` actually contains a valid commit hash
 - Verify the repo is at the correct commit: `git log -1 --format=%H`
 - If findings are inconsistent, investigate and correct
 
 ### CRITICAL: Print Deliverable Files
 
-After creating each deliverable, you **MUST print its contents** via `cat` so the verification judge can see the evidence in your output log. The judge evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
+After creating each deliverable, you **MUST print its contents** via `cat` so the evaluation harness can see the evidence in your output log. The harness evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
 
 ```bash
-echo "=== base_commit_hash ===" && cat /testcase/base_commit_hash
-echo "=== build.sh ===" && cat /src/build.sh
-echo "=== repo_changes.diff ===" && cat /testcase/repo_changes.diff
-echo "=== packages.txt ===" && cat /testcase/packages.txt
+echo "=== base_commit_hash ===" && cat {{ artifact_paths.base_commit_hash }}
+echo "=== build.sh ===" && cat {{ artifact_paths.build_script }}
+echo "=== repo_changes.diff ===" && cat {{ artifact_paths.repo_changes_diff }}
+echo "=== binary_paths.txt ===" && cat {{ artifact_paths.binary_paths }}
 ```
 
 After creating or editing each file, run: `echo "=== <filename> ===" && cat /path/to/<filename>` to make the contents visible.

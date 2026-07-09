@@ -1,0 +1,13 @@
+{
+  "experiments/b3-boss-bef-direct/reports/enrollment.lock.yaml": {
+    "generated_at": "2026-06-10T20:45:46.782869Z",
+    "generated_by": "experiments/shared/scripts/collect.py",
+    "inputs": [
+      "experiments/b3-boss-bef-direct/manifest.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/b3-boss-bef-direct/manifest.yaml": "8e57ef251301a15604a8ba9bed4f8299e643b3548296f999c43fd6572f9f7f14"
+    },
+    "output_sha256": "a6aa860cd64ddfdd95cc8a297b9381de8ab298a1f7cf2bd1e4405229cbcd3b73"
+  }
+}

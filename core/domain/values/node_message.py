@@ -39,6 +39,13 @@ class Ancestor(BaseModel):
         )
 
 
+# Separates the worker's tool/command transcript from its closing message in
+# ``agent.result``. Producers (worker adapters) append it before the finish
+# message; consumers prefer the text after it as the sibling-facing summary —
+# raw transcript tails carry failed tool calls and path noise siblings can't use.
+WORKER_CONCLUSION_MARKER = "--- Agent Conclusion ---"
+
+
 class PeerStatus(BaseModel):
     """Status snapshot of a sibling worker."""
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+from experiments.shared import container_cleanup
 from experiments.shared.scripts import run_matrix
 
 
@@ -47,11 +48,11 @@ def test_sweep_removes_containers_with_dead_pid(
     # Given: docker ps returns one row whose owning PID is no longer alive.
     stdout = f"abc123\t{_DEAD_PID}\n"
     mock_run = MagicMock(side_effect=[_ps_result(stdout), _rm_result()])
-    monkeypatch.setattr(run_matrix.shutil, "which", lambda _name: "docker")
-    monkeypatch.setattr(run_matrix.subprocess, "run", mock_run)
+    monkeypatch.setattr(container_cleanup.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(container_cleanup.subprocess, "run", mock_run)
 
     # When: the sweep runs.
-    run_matrix._sweep_stale_containers()
+    container_cleanup._sweep_stale_containers()
 
     # Then: two subprocess.run calls — docker ps, then docker rm -f abc123.
     assert mock_run.call_count == 2
@@ -69,11 +70,11 @@ def test_sweep_keeps_containers_with_live_pid(
     # Given: docker ps returns one row whose owning PID is THIS pytest process.
     stdout = f"def456\t{os.getpid()}\n"
     mock_run = MagicMock(side_effect=[_ps_result(stdout)])
-    monkeypatch.setattr(run_matrix.shutil, "which", lambda _name: "docker")
-    monkeypatch.setattr(run_matrix.subprocess, "run", mock_run)
+    monkeypatch.setattr(container_cleanup.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(container_cleanup.subprocess, "run", mock_run)
 
     # When: the sweep runs.
-    run_matrix._sweep_stale_containers()
+    container_cleanup._sweep_stale_containers()
 
     # Then: only the docker ps probe ran; no docker rm follow-up.
     assert mock_run.call_count == 1

@@ -6,8 +6,11 @@ from uuid import uuid4
 from core.application.services import PromptBuilder, PromptParser
 from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 from core.domain.aggregates.agent_session import AgentRole
+from core.domain.values.limits import HierarchyLimits
 from core.domain.values.node_message import Ancestor, Briefing
 from plugins.security import CVEInstance, SecBenchPromptStrategy, SecurityDomainPlugin
+from plugins.security.prompt_strategy import _detect_branch_from_task, detect_benchmark_branch
+from plugins.security.roles import PHASE_ROLES
 
 
 def get_prompts_dir() -> Path:
@@ -36,6 +39,62 @@ def make_test_cve_instance() -> CVEInstance:
     )
 
 
+def make_test_cve_instance_with_oracle() -> CVEInstance:
+    return make_test_cve_instance().model_copy(
+        update={
+            "bug_description": "Sparse summary: NULL dereference in parser.",
+            "sanitizer_report": (
+                "==1==ERROR: AddressSanitizer: SEGV\n"
+                "#0 0x123 in gf_filter_pck_new_alloc_internal "
+                "/src/demo/filter.c:42\n"
+                "SUMMARY: AddressSanitizer: SEGV "
+                "/src/demo/filter.c:42 in gf_filter_pck_new_alloc_internal\n"
+            ),
+            "bug_report": (
+                "Expected crash frame: gf_filter_pck_new_alloc_internal "
+                "after malformed packet input."
+            ),
+            "patch": "diff --git a/demo.c b/demo.c\n",
+            "candidate_fixes": "commit abc fixes the bug",
+            "secb_sh": "repro() { echo GOLDEN-REPRO-SECRET; }",
+        }
+    )
+
+
+def test_cve_template_context_excludes_golden_secb_helper() -> None:
+    """Golden SEC-bench helper bodies are evaluation data, not prompt data."""
+    # Given: a CVE instance with a golden secb helper body.
+    cve = make_test_cve_instance().model_copy(
+        update={"secb_sh": "#!/bin/bash\necho GOLDEN-REPRO-SECRET\n"}
+    )
+
+    # When: building the render-safe template context.
+    context = cve.to_template_context()
+
+    # Then: forbidden golden helper content is absent from the prompt context.
+    assert "secb_sh" not in context
+    assert "GOLDEN-REPRO-SECRET" not in str(context)
+
+
+def test_cve_template_context_keeps_expected_failure_oracle() -> None:
+    """Sanitizer and bug reports are expected-failure oracles, not answer keys."""
+    # Given: a CVE with sparse description but detailed expected crash evidence.
+    cve = make_test_cve_instance_with_oracle()
+
+    # When: building the render-safe template context.
+    context = cve.to_template_context()
+
+    # Then: the expected failure evidence remains available to prompts.
+    assert "sanitizer_report" in context
+    assert "bug_report" in context
+    assert "gf_filter_pck_new_alloc_internal" in str(context)
+
+    # And: answer-bearing solution fields remain blocked.
+    assert "patch" not in context
+    assert "candidate_fixes" not in context
+    assert "secb_sh" not in context
+
+
 class TestSecurityPromptBuilding:
     def test_secbench_assessment_prompt_includes_cve_context_without_recon_tools(self) -> None:
         builder = PromptBuilder(
@@ -56,6 +115,162 @@ class TestSecurityPromptBuilding:
         assert (
             "Additional tool-calling capabilities are not available for this assessment." in prompt
         )
+
+    def test_secbench_prompt_renders_expected_sanitizer_oracle_without_solution_fields(
+        self,
+    ) -> None:
+        """Workers need the expected crash oracle but must not see solution artifacts."""
+        # Given: a CVE whose exact expected crash is only in sanitizer_report/bug_report.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        cve = make_test_cve_instance_with_oracle()
+
+        # When: rendering an Exploiter worker prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploiter] reproduce the vulnerability",
+            domain_context=cve,
+            briefing=None,
+        )
+
+        # Then: the exact expected crash oracle is visible.
+        assert "gf_filter_pck_new_alloc_internal" in prompt
+        assert "SUMMARY: AddressSanitizer: SEGV" in prompt
+        assert "Expected crash frame" in prompt
+
+        # And: answer-bearing solution artifacts are still not rendered.
+        assert "secb_sh" not in prompt
+        assert "candidate_fixes" not in prompt
+        assert "GOLDEN-REPRO-SECRET" not in prompt
+        assert "commit abc fixes the bug" not in prompt
+        assert "diff --git a/demo.c b/demo.c" not in prompt
+
+    def test_secbench_assessment_prompt_renders_prompt_only_role_dependencies(self) -> None:
+        # Given: a SEC-bench assessment prompt built from the role catalog.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the assessment prompt.
+        prompt = builder.build_assessment_prompt(
+            task_description="[Fixer] Produce the patch",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+        )
+
+        # Then: managers are told to emit correct deps and not lean on the repair gate.
+        assert "Do NOT rely on any repair gate" in prompt
+        assert (
+            "`[Forward-Instrumentator]` hard depends_on: `[PoC-Researcher]`"
+            in prompt
+        )
+        assert "`[Patch-Creator]` hard depends_on: `[Root-Cause-Analyst]`" in prompt
+
+        # And: soft inputs are rendered as non-scheduling guidance.
+        assert "`[Root-Cause-Analyst]` soft inputs: `[Forward-Instrumentator]`" in prompt
+        assert "Do not put soft inputs in JSON `depends_on`" in prompt
+
+    def test_secbench_assessment_constraints_do_not_force_phase_execution(self) -> None:
+        # Given: a SEC-bench phase-level assessment at the hierarchy limit.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        cve = make_test_cve_instance()
+        limits = HierarchyLimits(
+            current_depth=1,
+            max_depth=1,
+            max_children_per_node=3,
+            max_retries=0,
+            root_id=uuid4(),
+            max_total_agents=1,
+            current_total_agents=1,
+            domain_context=cve,
+        )
+
+        # When: rendering the phase-level assessment prompt.
+        prompt = builder.build_assessment_prompt(
+            task_description="[Builder] Build the project",
+            agent_id=uuid4(),
+            hierarchy_limits=limits,
+            domain_context=cve,
+        )
+
+        # Then: resource exhaustion returns an unsatisfiable decision instead of
+        # contradicting SEC-bench's "phase-level tasks must decompose" rule.
+        assert "domain-specific guidance requires decomposition" in prompt
+        assert "constraints_unsatisfiable" in prompt
+        assert '**FORCED**: You MUST choose `"execute"`' not in prompt
+
+    def test_secbench_boss_exact_phase_count_yields_to_live_limits(self) -> None:
+        # Given: a SEC-bench boss prompt rendered with fewer child slots than phases.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        cve = make_test_cve_instance()
+        limits = HierarchyLimits(
+            current_depth=0,
+            max_depth=2,
+            max_children_per_node=3,
+            max_retries=0,
+            root_id=uuid4(),
+            max_total_agents=10,
+            current_total_agents=1,
+            domain_context=cve,
+        )
+
+        # When: rendering the boss decomposition prompt.
+        prompt = builder.build_boss_delegation_prompt(
+            task_description="Run the SEC-bench task",
+            agent_id=uuid4(),
+            hierarchy_limits=limits,
+            domain_context=cve,
+        )
+
+        # Then: the SEC-bench exact-four rule is not framed as overriding live
+        # system constraints that the generic operation template must enforce.
+        assert "unless live system constraints make that impossible" in prompt
+        assert "Do **not** raise" not in prompt
+
+    def test_secbench_boss_defers_binary_location_to_binary_paths(self) -> None:
+        # Given: a SEC-bench boss decomposition prompt.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        cve = make_test_cve_instance()
+        limits = HierarchyLimits(
+            current_depth=0,
+            max_depth=2,
+            max_children_per_node=3,
+            max_retries=0,
+            root_id=uuid4(),
+            max_total_agents=10,
+            current_total_agents=1,
+            domain_context=cve,
+        )
+
+        # When: rendering the boss decomposition prompt.
+        prompt = builder.build_boss_delegation_prompt(
+            task_description="Run the SEC-bench task",
+            agent_id=uuid4(),
+            hierarchy_limits=limits,
+            domain_context=cve,
+        )
+
+        # Then: the Builder→Exploiter handoff defers to binary_paths.txt as the
+        # sole authority and does not reintroduce a /work/bin default that the
+        # exploiter prompt forbids scanning.
+        assert "binary_paths.txt" in prompt
+        assert "preferred/default" not in prompt
 
     def test_secbench_manager_prompt_strategy_path_renders(self) -> None:
         parser = PromptParser()
@@ -93,6 +308,48 @@ class TestSecurityPromptBuilding:
         assert "[Builder] Verify the environment setup" in prompt
         assert "[Builder-1]" not in prompt
 
+    def test_secbench_manager_decomposition_forbids_direct_runtime_commands(self) -> None:
+        """Managers must not emit stale direct-build/repro/patch child tasks."""
+        # Given: a SEC-bench manager decomposition prompt for a phase-level task.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        briefing = Briefing(
+            parent_task="Top-level SEC-bench task",
+            parent_role="boss",
+            ancestry=(
+                Ancestor(
+                    agent_id=str(uuid4()),
+                    role="boss",
+                    task_summary="[Builder] Build the benchmark target",
+                ),
+            ),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_manager_decomposition_prompt(
+            task_description="[Builder] Build the benchmark target",
+            agent_id=uuid4(),
+            agent_role=AgentRole.MANAGER,
+            domain_context=make_test_cve_instance(),
+            briefing=briefing,
+        )
+
+        # Then: managers are explicitly constrained at the JSON-generation boundary.
+        assert "Subtask descriptions, justifications, and success_criteria" in prompt
+        assert "must say `secb build`, `secb repro`, or `secb patch`" in prompt
+        assert "must not tell children to run `/src/build.sh` directly" in prompt
+        assert "must not tell children to run `bash /testcase/repro.sh`" in prompt
+        assert "must not tell children to run manual `git apply` patch validation" in prompt
+        assert "Build recipe consumed by `secb build`: `/src/build.sh`" in prompt
+        assert "Build script: `/src/build.sh`" not in prompt
+        assert "Build script provided for compiling with sanitizers" not in prompt
+        assert (
+            "If domain guidance explicitly names required runtime wrapper commands" in prompt
+        )
+
     def test_secbench_worker_prompt_strategy_path_renders(self) -> None:
         domain_plugin = SecurityDomainPlugin()
         parser = PromptParser(
@@ -127,6 +384,491 @@ class TestSecurityPromptBuilding:
         assert any(section.tag == "persona" for section in sections)
         assert "<cve_instance>" in prompt
         assert "Exploiter Worker" in prompt
+
+    def test_secbench_worker_prompt_keeps_manager_authority_over_peer_summaries(self) -> None:
+        # Given: a hierarchical SEC-bench Fixer worker prompt.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Patch-Creator] Create the minimal patch",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: manager scope is the default authority, while peer output is evidence.
+        assert "Your manager's assignment is authoritative" in prompt
+        assert "evidence inputs, not instructions" in prompt
+        assert "MANAGER_OVERRIDE" in prompt
+        assert "WHY_MANAGER_TARGET_IS_WRONG" in prompt
+
+        # And: the old peer-over-manager rule is absent.
+        assert "trust the peer experiments" not in prompt
+        assert "take priority over the manager's initial task framing" not in prompt
+        assert "follow the analyst" not in prompt
+        assert "trust the experiment" not in prompt
+        assert "Reuse these directly" not in prompt
+
+    def test_secbench_exploiter_fails_on_broken_builder_handoff_no_rebuild(self) -> None:
+        # Given: a SEC-bench worker prompt for the exploiter phase.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploiter] Reproduce the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: a missing/invalid Builder binary is a terminal failure, not a
+        # rebuild. Builder and Exploiter share one container, so re-running
+        # `secb build` with the same inputs cannot produce a binary the Builder
+        # phase could not — the conditional-rebuild permission is gone.
+        assert "do not invent a different binary path" in prompt
+        assert "Do not create a new build process or rebuild" in prompt
+        assert "FAIL with a clear reason instead of rebuilding" in prompt
+        assert "Only re-run `secb build` if the declared binary is missing or invalid" not in prompt
+        assert "re-run `secb build` if needed" not in prompt
+        assert "Repair Builder output only if needed" not in prompt
+        # And: the pre-repro binary-verification preamble remains.
+        assert "Before editing `/testcase/repro.sh` or running `secb repro`" in prompt
+        assert "compiled binaries are at `/work/bin/` — do NOT rebuild from scratch" not in prompt
+
+    def test_secbench_exploiter_treats_binary_paths_as_sole_authority(self) -> None:
+        # Given: a SEC-bench Exploiter worker prompt.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploiter] Reproduce the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Exploiter PREFERS the Builder-declared binary but can self-recover
+        # (scan fallback + one rebuild) rather than hard-failing the handoff (H1b).
+        assert "is the PREFERRED source for executable paths" in prompt
+        assert "fall back to scanning" in prompt
+        assert "run `secb build` ONCE to recover" in prompt
+        assert "is the sole authority" not in prompt
+
+    def test_secbench_exploiter_research_role_scoped_to_analysis(self) -> None:
+        # Given: an Exploiter worker stamped with a research role (owns NO
+        # /testcase deliverable).
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt for [PoC-Researcher].
+        prompt = builder.build_worker_prompt(
+            task_description="[PoC-Researcher] Map PoC operations to source functions",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the body is scoped to the role's analysis objective, NOT the
+        # whole-phase runbook. The role-bleed fix: a non-owner role must not be
+        # told to create the repro script or write the validation verdict (those
+        # belong to Repro-Creator / Exploit-Validator).
+        assert "### Your role: [PoC-Researcher]" in prompt
+        assert "You produce ANALYSIS ONLY" in prompt
+        assert "Create `/testcase/repro.sh`" not in prompt
+        assert "Write `/testcase/exploit_validation_results.txt`" not in prompt
+        # And: the deliverables owned by other roles are explicitly off-limits.
+        assert "Do NOT create or edit these files" in prompt
+        assert "/testcase/repro.sh" in prompt
+        assert "/testcase/exploit_validation_results.txt" in prompt
+        # And: the role's empirical objective is present.
+        assert "Map each PoC operation" in prompt
+
+    def test_secbench_research_role_uses_canonical_evidence_file(self) -> None:
+        # Research roles must name the catalog's canonical evidence file (downstream
+        # roles / eval read those exact names), not a generic per-role file.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        poc = builder.build_worker_prompt(
+            task_description="[PoC-Researcher] map PoC operations",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        assert "/testcase/poc_operation_map.txt" in poc
+        fwd = builder.build_worker_prompt(
+            task_description="[Forward-Instrumentator] probe operations",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        assert "/testcase/forward_instrumentation.log" in fwd
+
+    def test_secbench_exploiter_repro_creator_owns_repro_not_verdict(self) -> None:
+        # Given: an Exploiter worker stamped with the deliverable-owner role.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt for [Repro-Creator].
+        prompt = builder.build_worker_prompt(
+            task_description="[Repro-Creator] Write the secb repro script",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Repro-Creator OWNS repro.sh + poc_path and is told to create them.
+        assert "### Your role: [Repro-Creator]" in prompt
+        assert "Create `/testcase/repro.sh`" in prompt
+        assert "/testcase/poc_path.txt" in prompt
+        # But the verdict file belongs to Exploit-Validator — it must not write it.
+        assert "Write `/testcase/exploit_validation_results.txt`" not in prompt
+        assert "Do NOT create or edit these files" in prompt
+
+    def test_secbench_exploiter_validator_owns_verdict_not_repro(self) -> None:
+        # Given: an Exploiter worker stamped with the validation-owner role.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt for [Exploit-Validator].
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploit-Validator] Validate the reproducer and write the verdict",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Exploit-Validator OWNS the verdict and writes the machine-readable block.
+        assert "### Your role: [Exploit-Validator]" in prompt
+        assert "/testcase/exploit_validation_results.txt" in prompt
+        assert "VERDICT" in prompt
+        # Budget-robust completion contract: provisional verdict written FIRST so the
+        # deliverable always exists (the openexr failure mode: validator emitted nothing).
+        assert "verdict file FIRST" in prompt
+        # But it does NOT (re)create the repro script — Repro-Creator owns it.
+        assert "Create `/testcase/repro.sh`" not in prompt
+
+    def test_secbench_exploiter_whole_phase_keeps_full_runbook(self) -> None:
+        # Given: a phase-level [Exploiter] task (no specific catalog role).
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the worker prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploiter] Reproduce the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: with no role to scope to, the worker still gets the full
+        # whole-phase runbook (backward-compatible; mirrors the flat baseline).
+        assert "### Your role:" not in prompt
+        assert "Create `/testcase/repro.sh`" in prompt
+
+    def test_secbench_exploiter_role_gating_is_case_insensitive(self) -> None:
+        # Given: a worker stamped with a lowercase role-bracket variant. Branch
+        # routing already lowercases, so role resolution must too — otherwise the
+        # worker silently falls back to the whole-phase body and the bleed returns.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering with a case-variant bracket.
+        prompt = builder.build_worker_prompt(
+            task_description="[poc-researcher] map PoC operations",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: it still resolves to the role-scoped (analysis-only) body.
+        assert "### Your role:" in prompt
+        assert "You produce ANALYSIS ONLY" in prompt
+        assert "Create `/testcase/repro.sh`" not in prompt
+
+    def test_secbench_fixer_uses_verifiable_async_validation(self) -> None:
+        # Reverted Builder/Fixer role-gating (it regressed the weak worker), but KEPT the
+        # verifiable-async provenance in the whole-phase fixer: the validation step launches
+        # the detached secb loop AND polls the result back into the transcript.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        prompt = builder.build_worker_prompt(
+            task_description="[Patch-Validator] Validate the patch",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        # Whole-phase body (no role-scoping) + the poll-into-transcript provenance step.
+        assert "### Your role:" not in prompt
+        assert "poll the result INTO your transcript" in prompt
+        assert "launched secb patch/build/repro validation" in prompt
+
+    def test_secbench_exploiter_handoff_example_uses_parseable_decision_shape(self) -> None:
+        # Given: a Repro-Creator worker prompt whose body shows a <context-update>
+        # hand-off example. The role-separation fix relies on this channel, so the
+        # example MUST show the <decision><value> shape the runtime parser requires
+        # (core/domain/values/parsed_context.py:27 returns None for a bare
+        # <decision> — silently dropping the hand-off, the diagnosis's "channel
+        # under-used" finding).
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Repro-Creator] write repro",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the example nests <value> inside <decision> (parser-required)...
+        assert '<decision key="poc_path"><value>/testcase/poc_path.txt</value></decision>' in prompt
+        assert '<decision key="exploit_command"><value>secb repro</value></decision>' in prompt
+        # ...and has not regressed to the bare (unparseable) shape.
+        assert '<decision key="poc_path">/testcase/poc_path.txt</decision>' not in prompt
+
+    def test_secbench_exploit_validator_enforces_evidence_contract(self) -> None:
+        # Tier 2+3 flip fixes: the Exploit-Validator must validate the CLEAN binary,
+        # write full canonical logs, and judge against the golden oracle (not its own
+        # observed crash). These close openexr (probe/log) and matio (self-PASS) gaps.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        prompt = builder.build_worker_prompt(
+            task_description="[Exploit-Validator] validate the reproducer",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        # Clean-binary guard (probe contamination).
+        assert "git status --short" in prompt
+        assert "rebuild clean and re-run" in prompt
+        # Canonical-log contract (full report + exit=, no abort-truncation).
+        assert "end with an `exit=<code>` line" in prompt
+        assert "abort_on_error=1" in prompt
+        # Golden-oracle gate (no restating the observed crash as expected).
+        assert "from the CVE bug description / sanitizer report" in prompt
+        assert "do NOT restate your observed crash as the expected one" in prompt
+
+    def test_secbench_fixer_fix_run_requires_exit_marker(self) -> None:
+        # Tier 2 flip fix (libarchive): each fix_run log must carry the exit= marker
+        # INSIDE the file, not echoed to the worker's stdout.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Patch the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        assert 'echo "exit=$?" >> /testcase/fix_run_$N.log' in prompt
+        assert "without a trailing `exit=` line is invalid evidence" in prompt
+
+    def test_secbench_fixer_rebuild_guidance_separates_setup_from_validation(self) -> None:
+        # Given: a SEC-bench worker prompt for the fixer phase.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Patch the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: pre-patch setup avoids redundant rebuilds, while post-patch
+        # validation still requires a rebuild.
+        assert "Before patch development, do not rebuild unless binaries are missing" in prompt
+        assert "After applying the patch, `secb build` is mandatory for validation" in prompt
+
+    def test_secbench_builder_commits_local_baseline_for_fixer_diff(self) -> None:
+        # Given: a SEC-bench Builder worker prompt.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Builder] Build the project",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Builder records its source/setup delta, then makes it the local
+        # git baseline so Fixer diffs cannot include Builder hunks.
+        assert (
+            'git diff --no-color "$(cat /testcase/base_commit_hash)" > '
+            "/testcase/repo_changes.diff"
+        ) in prompt
+        assert "[BASE_COMMIT]" not in prompt
+        assert "git add -A &&" not in prompt
+        assert "Do not use `git add -A`" in prompt
+        assert "git apply --index /testcase/repo_changes.diff" in prompt
+        assert "cmp /testcase/repo_changes.diff" in prompt
+        assert "commit -m arise-builder-baseline" in prompt
+        assert "establishes the Builder-adjusted baseline" in prompt
+        assert "/testcase/model_patch.diff` can contain only Fixer edits" in prompt
+
+    def test_secbench_fixer_confirms_builder_baseline_before_patch_diff(self) -> None:
+        # Given: a SEC-bench Fixer worker prompt.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Patch the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: Fixer self-heals the Builder-baseline state instead of aborting (H1b).
+        assert "Confirm Builder baseline first" in prompt
+        assert "git status --short" in prompt
+        assert "SELF-HEAL rather than failing" in prompt
+        assert "fix the baseline state, do not abort" in prompt
+
+    def test_secbench_fixer_diff_targets_builder_baseline_not_original_base(self) -> None:
+        # Given: a SEC-bench Fixer worker prompt.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Patch the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the diff is taken against the committed Builder baseline (HEAD),
+        # so the prompt no longer claims a bare diff leaks Builder hunks; it warns
+        # against diffing the original base and against truncating a multi-file fix.
+        assert "git diff --no-color HEAD --" in prompt
+        assert "would re-include Builder's hunks" in prompt
+        assert "truncates a multi-file fix" in prompt
+        assert "include unrelated builder changes" not in prompt
+
+        # And: the stale "manually reset to base before applying" rule is gone —
+        # the reset/replay is owned by the sealed `secb patch` path, not a manual
+        # authoring step that could reset away the Builder baseline.
+        assert "reset to base commit before applying patch" not in prompt
+        assert "Do not manually reset or apply patches while authoring" in prompt
+
+    def test_secbench_fixer_leaf_with_exploit_wording_renders_fixer_prompt(self) -> None:
+        # Given: a Fixer leaf (Root-Cause-Analyst) whose own task carries no
+        # fixer keyword, under a Fixer parent whose summary legitimately mentions
+        # the exploit/repro it validates against.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        briefing = Briefing(
+            parent_task="Top-level SEC-bench task",
+            parent_role="manager",
+            ancestry=(
+                Ancestor(
+                    agent_id=str(uuid4()), role="boss", task_summary="[Boss] Analyze CVE"
+                ),
+                Ancestor(
+                    agent_id=str(uuid4()),
+                    role="manager",
+                    task_summary=(
+                        "[Fixer] Patch the vulnerability; validate with secb repro "
+                        "that the exploit no longer triggers"
+                    ),
+                ),
+            ),
+        )
+        leaf_task = "[Root-Cause-Analyst] Identify the data-corruption origin and emit the block"
+
+        # When / Then: the [Fixer] bracket on the parent wins over the loose
+        # "exploit" keyword, so the leaf renders the Fixer prompt, not Exploiter.
+        assert detect_benchmark_branch(briefing) == "fixer"
+
+        prompt = builder.build_worker_prompt(
+            task_description=leaf_task,
+            domain_context=make_test_cve_instance(),
+            briefing=briefing,
+        )
+        assert "Exploiter Worker" not in prompt
+        assert "/testcase/model_patch.diff" in prompt
+
+    def test_secbench_leaf_role_prefix_maps_to_catalog_phase_before_keywords(self) -> None:
+        """Catalog role labels are authoritative before loose task-content keywords."""
+        # Given: every catalog role with body keywords that point at other phases.
+        conflicting_body = {
+            "Builder": "fix exploit report after patch validation",
+            "Exploiter": "fix build environment setup after report",
+            "Fixer": "exploit builder setup report",
+            "Reporter": "exploit patch build environment setup",
+        }
+
+        # When / Then: the role catalog decides the branch, not loose keywords.
+        for phase, roles in PHASE_ROLES.items():
+            for role in roles:
+                task = f"[{role.name}] {conflicting_body[phase]}"
+                assert _detect_branch_from_task(task) == phase.lower()
+
+    def test_secbench_fixer_validation_captures_patch_build_evidence(self) -> None:
+        # Given: a SEC-bench Fixer worker prompt with the validation gate on.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        prompt = builder.build_worker_prompt(
+            task_description="[Fixer] Patch the vulnerability",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        # Then: the detached validation captures patch/build exit codes to a
+        # readable log instead of `&& ... ; echo done` to /dev/null, so a failed
+        # apply/rebuild stays visible (PATCH_APPLY_STATUS / BUILD_STATUS).
+        assert "patch_exit=$patch_rc" in prompt
+        assert "build_exit=$build_rc" in prompt
+        assert "/testcase/fix_loop.log" in prompt
+        assert "secb patch && secb build" not in prompt
+        assert "Run `secb build`, run `secb repro`" in prompt
+        assert "Rebuild with `/src/build.sh`" not in prompt
 
     def test_secbench_worker_prompt_falls_back_to_task_description_for_phase(self) -> None:
         builder = PromptBuilder(
@@ -163,6 +905,73 @@ class TestSecurityPromptBuilding:
         assert "`/testcase/security_report.md`" in prompt
         assert "Do NOT use `/testcase/security_report.md`" not in prompt
         assert "host testcase path" not in prompt
+
+    def test_secbench_bef_prompts_use_secb_commands_as_primary_contract(self) -> None:
+        """Builder/Exploiter/Fixer must validate through secb verbs, not helper internals."""
+
+        # Given: SEC-bench prompts for the three executable phases.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        prompts = {
+            phase: builder.build_worker_prompt(
+                task_description=f"[{phase}] run the phase",
+                domain_context=make_test_cve_instance(),
+                briefing=None,
+            )
+            for phase in ("Builder", "Exploiter", "Fixer")
+        }
+        combined = "\n".join(prompts.values())
+
+        # Then: each phase leads with the SEC-bench command contract.
+        assert "secb build" in prompts["Builder"]
+        assert "secb repro" in prompts["Exploiter"]
+        assert "secb patch" in prompts["Fixer"]
+
+        # And: prompt text does not ask agents to inspect golden helper internals
+        # or validate primarily through direct scripts.
+        forbidden = (
+            "Treat `/usr/local/bin/secb build()` as an optional reference/helper",
+            "Treat `/usr/local/bin/secb repro()` as an optional reference/helper",
+            "read its `repro()` function",
+            "port the trigger command",
+            "bash /testcase/repro.sh",
+            "/src/build.sh; echo \"exit=$?\"",
+            "Rebuild with `/src/build.sh`",
+            "Before writing or running repro.sh",
+            "rebuild, run PoC",
+            "git apply --check /testcase/model_patch.diff && git apply",
+        )
+        for text in forbidden:
+            assert text not in combined
+
+    def test_secbench_prompts_render_selected_poc_and_binary_path_artifacts(self) -> None:
+        """Prompts must render the new handoff artifacts and drop stale mandatory files."""
+
+        # Given: the flat prompt, which contains all phase contracts.
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        # When: rendering the prompt.
+        prompt = builder.build_flat_prompt(
+            task_description="demo.cve-2024-0001",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+        )
+
+        # Then: the mandatory artifact list includes exact binary and selected-PoC paths.
+        assert "/testcase/binary_paths.txt" in prompt
+        assert "/testcase/poc_path.txt" in prompt
+
+        # And: stale mandatory artifact names are not rendered as contract requirements.
+        assert "/testcase/poc*" not in prompt
+        assert "/testcase/packages.txt" not in prompt
 
 
 class TestFlatPromptBuilding:
@@ -222,6 +1031,27 @@ class TestFlatPromptBuilding:
         assert "## Builder Worker — Step-by-Step" not in prompt
         assert "Create exactly 4 subtasks" not in prompt  # boss.j2 decomposition leak
 
+    def test_build_flat_prompt_includes_builder_baseline_contract(self) -> None:
+        # Given: a flat-mode PromptBuilder.
+        builder = self._builder()
+
+        # When: building the flat prompt.
+        prompt = builder.build_flat_prompt(
+            task_description="openjpeg.cve-2016-7445",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+            subagent_enabled=False,
+        )
+
+        # Then: the shared build phase creates the Builder-adjusted baseline.
+        assert "arise-builder-baseline" in prompt
+        assert "git apply --index /testcase/repo_changes.diff" in prompt
+        assert "Do not use `git add -A`" in prompt
+
+        # And: the shared fix phase generates model_patch.diff from that baseline.
+        assert "git diff --no-color HEAD -- <file1> [<file2> ...]" in prompt
+        assert "would re-include Builder's hunks" in prompt
+
     def test_build_flat_prompt_includes_subagent_note_when_enabled(self) -> None:
         # Given: a flat-mode PromptBuilder.
         builder = self._builder()
@@ -271,3 +1101,49 @@ class TestFlatPromptBuilding:
 
         # Then: the strategy returns None, so only the task block survives.
         assert prompt == "<task>\nopenjpeg.cve-2016-7445\n</task>"
+
+    def test_detached_exec_guidance_shared_across_flat_and_workers(self) -> None:
+        """Long-command (detached-exec) guidance lives in the shared phase
+        partials, so it must render identically into the flat baseline and the
+        BEF workers. The guidance fixes the B4 ``shell_in_container`` 300 s
+        timeout churn; if it silently rendered in only one arm, the N-vs-B input
+        parity that makes the cost comparison fair would break.
+        """
+        # Given: a flat-mode PromptBuilder + the SEC-bench strategy.
+        builder = self._builder()
+        cve = make_test_cve_instance()
+
+        # When: rendering the flat baseline and each BEF worker branch.
+        flat = builder.build_flat_prompt(
+            task_description="demo.cve-2024-0001",
+            agent_id=uuid4(),
+            domain_context=cve,
+            subagent_enabled=False,
+        )
+        workers = {
+            branch: builder.build_worker_prompt(
+                task_description=f"[{branch}] run the {branch.lower()} phase",
+                domain_context=cve,
+                briefing=None,
+            )
+            for branch in ("Builder", "Exploiter", "Fixer")
+        }
+
+        marker = "Run long commands detached"
+        # Then: the flat baseline renders all three long-command phases, each
+        # carrying the principle and its concrete detached-launch sentinel.
+        assert marker in flat
+        for sentinel in (
+            "/testcase/build.exit",
+            "/testcase/repro_loop.exit",
+            "/testcase/fix_loop.exit",
+        ):
+            assert sentinel in flat, f"flat prompt missing detached sentinel {sentinel}"
+
+        # And: each BEF worker renders the same principle in its own phase
+        # partial, with the phase-specific detached command verbatim.
+        for branch, prompt in workers.items():
+            assert marker in prompt, f"{branch} worker missing detached-exec guidance"
+        assert "/testcase/build.exit" in workers["Builder"]
+        assert "/testcase/repro_loop.exit" in workers["Exploiter"]
+        assert "/testcase/fix_loop.exit" in workers["Fixer"]

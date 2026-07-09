@@ -54,6 +54,14 @@ conftest.py
 # Claude/AI
 .claude
 
+# Runtime outputs & experiment artifacts (huge; bind-mounted at runtime, never
+# baked into the image — the dev container overlays /app with the live repo)
+runs/
+**/runs/
+output/
+_run_logs/
+experiments/*/results/
+
 # Misc
 .DS_Store
 *.log

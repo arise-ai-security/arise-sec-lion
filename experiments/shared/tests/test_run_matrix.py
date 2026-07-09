@@ -86,17 +86,11 @@ def _seed_study(
         )
     )
 
-    # The matrix-summary template is fixture-embedded; copy from the repo so
-    # write_md can hash it. The validator never sees this path because tests
-    # never call validate_reports against the tmp dir.
-    template_dir = repo_root / "experiments" / "shared" / "templates"
-    template_dir.mkdir(parents=True, exist_ok=True)
-    (template_dir / "matrix-summary.md.j2").write_text("Total: {{ total_jobs }}\n")
-
     # Empty groups.yaml is fine; the validator will accept any group letter
     # so long as the cell name starts with it. We seed A and B because the
     # default fixture uses both.
     shared_dir = repo_root / "experiments" / "shared"
+    shared_dir.mkdir(parents=True, exist_ok=True)
     (shared_dir / "groups.yaml").write_text(
         yaml.safe_dump({"A": "Group A", "B": "Group B"}, sort_keys=False)
     )
@@ -157,23 +151,14 @@ def fake_runner(monkeypatch: pytest.MonkeyPatch) -> _FakeRunnerState:
 
 @pytest.fixture
 def stub_pipeline(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
-    """Replace post-dispatch helpers so tests don't shell out to subprocesses."""
+    """Replace the post-dispatch collect step so tests don't walk the runs pool."""
     invocations: dict[str, list[str]] = {"order": []}
 
     def _fake_collect_study(study_id: str, **_kwargs: object) -> Path:
         invocations["order"].append(f"collect:{study_id}")
         return run_matrix.get_repo_root() / "fake-collect"
 
-    def _fake_render_and_validate(study_id: str, *, repo_root: Path) -> None:  # noqa: ARG001
-        invocations["order"].append(f"render:{study_id}")
-
-    def _fake_write_matrix_summary(*args: object, **kwargs: object) -> Path:
-        invocations["order"].append(f"summary:{kwargs.get('study_id') or args[0]}")
-        return run_matrix.get_repo_root() / "fake-summary.md"
-
     monkeypatch.setattr(collect, "collect_study", _fake_collect_study)
-    monkeypatch.setattr(run_matrix, "_render_and_validate", _fake_render_and_validate)
-    monkeypatch.setattr(run_matrix, "_write_matrix_summary", _fake_write_matrix_summary)
     return invocations
 
 
@@ -375,7 +360,7 @@ def test_run_matrix_validates_manifest_before_dispatch(
     assert fake_runner["calls"] == []
 
 
-def test_run_matrix_invokes_collect_render_validate_in_order(
+def test_run_matrix_invokes_collect_after_dispatch(
     repo_root: Path,
     fake_runner: _FakeRunnerState,  # noqa: ARG001
     stub_pipeline: dict[str, list[str]],
@@ -386,31 +371,9 @@ def test_run_matrix_invokes_collect_render_validate_in_order(
     # When: matrix runs.
     rc = run_matrix.main(["--study", "study-pipeline"])
 
-    # Then: post-dispatch pipeline ran in collect → render → summary order.
+    # Then: the enrollment roster is regenerated via collect after dispatch.
     assert rc == 0
-    assert stub_pipeline["order"] == [
-        "collect:study-pipeline",
-        "render:study-pipeline",
-        "summary:study-pipeline",
-    ]
-
-
-def test_run_matrix_no_render_skips_render_step(
-    repo_root: Path,
-    fake_runner: _FakeRunnerState,  # noqa: ARG001
-    stub_pipeline: dict[str, list[str]],
-) -> None:
-    # Given: a clean study.
-    _seed_study(repo_root, study_id="study-norender")
-
-    # When: --no-render is passed.
-    rc = run_matrix.main(["--study", "study-norender", "--no-render"])
-
-    # Then: collect and summary still run, render is skipped.
-    assert rc == 0
-    assert "render:study-norender" not in stub_pipeline["order"]
-    assert "collect:study-norender" in stub_pipeline["order"]
-    assert "summary:study-norender" in stub_pipeline["order"]
+    assert stub_pipeline["order"] == ["collect:study-pipeline"]
 
 
 # -----------------------------
@@ -449,10 +412,8 @@ def test_run_matrix_parallel_dispatches_concurrently(
     monkeypatch.setattr(runners, "get", lambda rid: instance if rid == "fake" else None)
     monkeypatch.setattr(runners, "all_ids", lambda: ["fake"])
 
-    # Stub the post-dispatch pipeline (we only care about concurrent dispatch).
+    # Stub the post-dispatch collect (we only care about concurrent dispatch).
     monkeypatch.setattr(collect, "collect_study", lambda *_a, **_k: None)
-    monkeypatch.setattr(run_matrix, "_render_and_validate", lambda *_a, **_k: None)
-    monkeypatch.setattr(run_matrix, "_write_matrix_summary", lambda *_a, **_k: None)
 
     # Cells filtered to two so the barrier can proceed once two dispatches enter.
     rc = run_matrix.main(
@@ -470,32 +431,3 @@ def test_run_matrix_parallel_dispatches_concurrently(
     assert rc == 0
 
 
-# -----------------------------
-# Matrix summary output
-# -----------------------------
-
-
-def test_run_matrix_writes_matrix_summary(
-    repo_root: Path,
-    fake_runner: _FakeRunnerState,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: a study where one job is forced to fail so the summary has both
-    # success and failure rows.
-    _seed_study(repo_root, study_id="study-summary")
-    fake_runner["fail_for"].add(("B2", "cve-b", 0))
-
-    # Stub collect/render so the test only exercises the summary writer.
-    monkeypatch.setattr(collect, "collect_study", lambda *_a, **_k: None)
-    monkeypatch.setattr(run_matrix, "_render_and_validate", lambda *_a, **_k: None)
-
-    # When: matrix runs.
-    rc = run_matrix.main(["--study", "study-summary"])
-
-    # Then: matrix-summary.md exists under reports/ and contains the expected
-    # sections with succeeded/failed counts and the failure detail.
-    assert rc == 1
-    summary_path = repo_root / "experiments" / "study-summary" / "reports" / "matrix-summary.md"
-    assert summary_path.is_file()
-    body = summary_path.read_text(encoding="utf-8")
-    assert "Total: 4" in body  # template-rendered total job count

@@ -15,7 +15,10 @@ from core.ports.domain_plugin_port import (
 )
 from plugins.security.cve_inference import CVEInstanceInferenceService
 from plugins.security.cve_instance import CVEInstance
+from plugins.security.decomposition_validator import SecBenchDecompositionValidator
+from plugins.security.docker_runtime import DockerProcedureSession
 from plugins.security.image_resolver import resolve_secbench_image
+from plugins.security.procedures import SecBenchProcedureExecutor
 from plugins.security.prompt_strategy import SecBenchPromptStrategy
 
 
@@ -24,11 +27,14 @@ if TYPE_CHECKING:
 
     from core.application.services import PromptStrategy
     from core.domain.values.json_types import JsonObject
+    from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.procedure_ports import ProcedureExecutorPort
     from plugins.security.container_runtime import (
         SecBenchContainerSession,
         SecBenchWorkspace,
         SecurityContainerRuntime,
     )
+    from plugins.security.procedures import ProcedureSession
 
 
 logger = logging.getLogger(__name__)
@@ -45,9 +51,19 @@ class SecurityDomainPlugin(DomainPlugin):
         self,
         enabled_tools: list[str] | None = None,
         container_runtime: SecurityContainerRuntime | None = None,
+        shared_code_prefix_first: bool = False,
     ) -> None:
         self._enabled_tools = enabled_tools or []
         self._container_runtime = container_runtime
+        self._shared_code_prefix_first = shared_code_prefix_first
+        # A run's leaf workers ALWAYS share ONE container (started on the first
+        # worker, reused for the rest, NOT stopped per-worker) — reaped at
+        # process exit by the PID-labeled cleanup (the matrix runs one run per
+        # process). This is the correct default: per-worker containers would
+        # destroy each worker's container-local state (installed tools,
+        # non-mounted scratch files), so a later worker reading an earlier
+        # worker's file would error on a torn-down container. Mounted dirs
+        # (/src, /testcase, /work) persist either way via bind mounts.
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
@@ -64,7 +80,23 @@ class SecurityDomainPlugin(DomainPlugin):
         self._container_runtime = container_runtime
 
     def get_prompt_strategy(self) -> PromptStrategy | None:
-        return SecBenchPromptStrategy(enabled_tools=self._enabled_tools)
+        return SecBenchPromptStrategy(
+            enabled_tools=self._enabled_tools,
+            shared_code_first=self._shared_code_prefix_first,
+        )
+
+    def get_decomposition_validator(self) -> DecompositionValidator | None:
+        return SecBenchDecompositionValidator()
+
+    def get_procedure_executor(self) -> ProcedureExecutorPort | None:
+        return SecBenchProcedureExecutor(session_resolver=self._resolve_procedure_session)
+
+    def _resolve_procedure_session(self, root_id: UUID) -> ProcedureSession | None:
+        """Adapt the run's shared container session for the procedure tier."""
+        session = self._sessions.get(root_id)
+        if session is None:
+            return None
+        return DockerProcedureSession(session)
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("context_file") or kwargs.get("cve_file")
@@ -134,6 +166,7 @@ class SecurityDomainPlugin(DomainPlugin):
         return PreparedRunWorkspace(
             working_directory=str(existing.host_root),
             path_aliases=existing.path_aliases(),
+            sealed_surface=existing.sealed_surface,
         )
 
     async def prepare_worker_execution(
@@ -169,15 +202,16 @@ class SecurityDomainPlugin(DomainPlugin):
         # start_session.
         lock = self._session_locks.setdefault(root_id, asyncio.Lock())
         async with lock:
-            if root_id in self._sessions:
-                raise RuntimeError(f"SEC-bench container already active for run {root_id}")
-
-            session = await self._container_runtime.start_session(
-                cve=cve_instance,
-                workspace=workspace,
-                agent_id=agent_id,
-            )
-            self._sessions[root_id] = session
+            existing = self._sessions.get(root_id)
+            if existing is not None:
+                session = existing  # reuse the run's one shared container
+            else:
+                session = await self._container_runtime.start_session(
+                    cve=cve_instance,
+                    workspace=workspace,
+                    agent_id=agent_id,
+                )
+                self._sessions[root_id] = session
 
         return WorkerExecutionContext(
             working_directory=str(workspace.host_root),
@@ -208,16 +242,9 @@ class SecurityDomainPlugin(DomainPlugin):
         agent_id: UUID,
         domain_context: object | None,
     ) -> None:
-        _ = agent_id
-        _ = domain_context
-        session = self._sessions.pop(root_id, None)
-        if session is None or self._container_runtime is None:
-            return
-
-        try:
-            await self._container_runtime.stop_session(session)
-        except Exception:
-            logger.exception(
-                "Failed to clean up SEC-bench container",
-                extra={"root_id": str(root_id), "container_id": session.container_id},
-            )
+        # The run's one shared container is kept alive across ALL workers and
+        # reaped at process exit by the PID-labeled cleanup (matrix = one run per
+        # process). Stopping it per-worker would destroy the container-local
+        # state (installed tools, non-mounted files) the next worker needs, so
+        # per-worker cleanup is intentionally a no-op.
+        _ = (root_id, agent_id, domain_context)

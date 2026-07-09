@@ -1,0 +1,40 @@
+study_id: b3-boss-bef-direct
+rendered_at: '2026-06-10T20:45:46.770896Z'
+design_sha: a97003acce6b1f779beb22df50ff548b8ed0ed66
+enrollment:
+- run_id: 073bf990-cde8-46cd-9c9a-5edebcbec054
+  cell: B3
+  task: faad2.cve-2018-20196
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 5feeb9fe-704d-42d1-b45a-ae98f21a34e8
+  cell: B3
+  task: faad2.cve-2018-20196
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: af08effe-51dd-4ad8-9126-a909f76cc6e4
+  cell: B3
+  task: faad2.cve-2018-20196
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: 7e5a9e76-ca66-478a-ad2b-fd5e3ef7c5ff
+  cell: B3
+  task: openexr.cve-2020-16589
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: a8a9f702-2196-425d-8303-08dad2bb6a11
+  cell: B3
+  task: openexr.cve-2020-16589
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml
+- run_id: fbe635d0-3f9b-4aa3-a77b-bb9846705695
+  cell: B3
+  task: openexr.cve-2020-16589
+  replicate: 0
+  uv_lock_sha256: d40f029a976aa0fa02e0c8e88e34665e4bc7da301c748fc1a0752b19bce4ee70
+  effective_config_path: effective_config.yaml

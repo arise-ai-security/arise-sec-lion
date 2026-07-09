@@ -33,13 +33,29 @@ from core.domain.values.prompt_capabilities import PromptCapabilities
 # also adjusted.
 FLAT_SUBAGENT_NOTE = (
     "Note: The Task subagent tool is available; use it at your discretion to "
-    "decompose complex steps."
+    "delegate complex steps."
 )
 
 
 if TYPE_CHECKING:
+    from core.domain.values.failure import ChildFailureRecord
     from core.domain.values.limits import HierarchyLimits
     from core.domain.values.node_message import Briefing
+    from core.domain.values.subtask import Subtask
+
+
+def _bounded_digest(digest: str | None) -> str | None:
+    """Bound an oversized failure digest to head + tail for prompt rendering.
+
+    Keeps the first 800 and last 400 chars — the crash site and the final
+    state are the load-bearing ends — with an elision marker between them.
+    Digests within 1200 chars are returned verbatim.
+    """
+    if digest is None:
+        return None
+    if len(digest) <= 1200:
+        return digest
+    return f"{digest[:800]}\n[...omitted...]\n{digest[-400:]}"
 
 
 class TemplateChain:
@@ -160,6 +176,7 @@ class PromptBuilder:
         briefing: "Briefing | None" = None,
         task_description: str | None = None,
         workspace_context: str | None = None,
+        shared_code_index: str | None = None,
     ) -> TemplateChain:
         """Append the per-task volatile suffix to a stable-prefix chain.
 
@@ -169,12 +186,17 @@ class PromptBuilder:
         workspace). Keeping the stable prefix byte-identical across calls is
         what lets ``litellm_adapter`` realize prompt-cache hits on multi-turn
         loops and across agents on the same CVE.
+
+        ``shared_code_index`` (pre-rendered by the shared-code provider) lands
+        immediately before <task>: proximity is the mechanism that makes the
+        model trust the already-provided files instead of re-reading them.
         """
         return (
             chain.text_if(user_prompt, user_prompt)
             .render_if(scope and scope.has_scope, "context/scope.j2", scope=scope)
             .render_if(sibling_ctx, "context/sibling.j2", **(sibling_ctx or {}))
             .render_if(briefing, "context/briefing.j2", briefing=briefing)
+            .text_if(shared_code_index, shared_code_index)
             .text_if(
                 task_description is not None,
                 f"<task>\n    {task_description}\n</task>",
@@ -298,6 +320,7 @@ class PromptBuilder:
                 briefing=prompt_ctx.briefing,
                 task_description=prompt_ctx.task_description,
                 workspace_context=prompt_ctx.workspace_context,
+                shared_code_index=prompt_ctx.shared_code_index,
             )
 
         if not insert_cache_breakpoint:
@@ -315,6 +338,14 @@ class PromptBuilder:
             variable_chain = variable_chain.render(
                 operation_variable_template,
                 default_tool=prompt_ctx.default_tool,
+                failure_history=[
+                    {
+                        "task": record.child_task[:200],
+                        "reason": record.reason[:500],
+                        "digest": _bounded_digest(record.digest),
+                    }
+                    for record in prompt_ctx.failure_history
+                ],
                 **limits,
             )
         variable_text = remove_cache_breakpoints(append_volatile(variable_chain).build())
@@ -331,6 +362,7 @@ class PromptBuilder:
         domain_context: object | None = None,
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
+        shared_code_block: str | None = None,
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -342,6 +374,7 @@ class PromptBuilder:
             domain_context=domain_context,
             scope=scope,
             prompt_capabilities=prompt_capabilities,
+            shared_code_block=shared_code_block,
         )
         return self._build_role_prompt(
             prompt_ctx,
@@ -362,6 +395,7 @@ class PromptBuilder:
         domain_context: object | None = None,
         hierarchy_limits: "HierarchyLimits | None" = None,
         prompt_capabilities: PromptCapabilities | None = None,
+        failure_history: "tuple[ChildFailureRecord, ...]" = (),
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -372,6 +406,7 @@ class PromptBuilder:
             domain_context=domain_context,
             hierarchy_limits=hierarchy_limits,
             prompt_capabilities=prompt_capabilities,
+            failure_history=failure_history,
         )
         return self._build_role_prompt(
             prompt_ctx,
@@ -393,6 +428,8 @@ class PromptBuilder:
         hierarchy_limits: "HierarchyLimits | None" = None,
         scope: SubtaskScope | None = None,
         prompt_capabilities: PromptCapabilities | None = None,
+        shared_code_block: str | None = None,
+        failure_history: "tuple[ChildFailureRecord, ...]" = (),
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -405,6 +442,8 @@ class PromptBuilder:
             domain_context=domain_context,
             scope=scope,
             prompt_capabilities=prompt_capabilities,
+            shared_code_block=shared_code_block,
+            failure_history=failure_history,
         )
         return self._build_role_prompt(
             prompt_ctx,
@@ -456,6 +495,8 @@ class PromptBuilder:
         workspace_context: str | None = None,
         domain_context: object | None = None,
         briefing: "Briefing | None" = None,
+        shared_code_block: str | None = None,
+        shared_code_index: str | None = None,
     ) -> str:
         prompt_ctx = PromptContext(
             task_description=task_description,
@@ -466,6 +507,8 @@ class PromptBuilder:
             briefing=briefing,
             handoff=handoff,
             workspace_context=workspace_context,
+            shared_code_block=shared_code_block,
+            shared_code_index=shared_code_index,
         )
         return self._build_role_prompt(
             prompt_ctx,

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import shutil
-import subprocess
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -19,7 +16,9 @@ from core.application.run_invariants import (
     build_workspace_spec,
 )
 from core.application.services import PromptBuilder
-from infrastructure.workers import ClaudeCodeWorker
+from infrastructure.adapters.worker import OpenHandsAdapter
+from infrastructure.cleanup.docker_pid import docker_pid_cleanup
+from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
 from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
 from presentation.cli import CLI, CLIConfig
@@ -62,8 +61,12 @@ def _build_security_components(settings: Settings | ApiSettings) -> DomainCompon
     runtime = DockerSecBenchRuntime(
         network_mode=settings.security.worker_network_mode,
         timeout_seconds=settings.security.worker_docker_timeout_seconds,
+        tools_image_registry=settings.security.tools_image_registry,
     )
-    plugin = SecurityDomainPlugin(enabled_tools=settings.security.tools)
+    plugin = SecurityDomainPlugin(
+        enabled_tools=settings.security.tools,
+        shared_code_prefix_first=settings.orchestration.shared_code_prefix_first,
+    )
     plugin.set_container_runtime(runtime)
     return DomainComponents(
         plugin=plugin,
@@ -113,11 +116,10 @@ def get_run_domain_components(
 def _build_flat_worker(settings: Settings) -> WorkerPort:
     """Construct the ``WorkerPort`` adapter used by flat-mode dispatch.
 
-    Today only the ``claude_code`` worker is wired for flat mode at
-    composition time. Other backends (openhands, google_adk) raise
-    ``NotImplementedError`` so a misconfigured run fails loudly at
-    composition time. Add branches here when additional flat-mode workers
-    land.
+    ``claude_code`` and ``openhands`` are wired for flat mode at composition
+    time. ``google_adk`` raises ``NotImplementedError`` so a misconfigured
+    run fails loudly at composition time. Add branches here when additional
+    flat-mode workers land.
     """
     tool = settings.worker.tool
     if tool == "claude_code":
@@ -133,10 +135,44 @@ def _build_flat_worker(settings: Settings) -> WorkerPort:
             max_turns=params.max_turns,
             use_global_config=params.use_global_config,
         )
+    if tool == "openhands":
+        oh_params = settings.worker.tool_params.openhands
+        if oh_params is None:
+            raise RuntimeError(
+                "worker.tool_params.openhands must be populated when worker.tool='openhands'"
+            )
+        adapter = OpenHandsAdapter(
+            model=settings.worker.model,
+            timeout_seconds=settings.worker.timeout,
+            max_iterations_per_run=settings.worker.max_iterations_per_run,
+            base_url=settings.worker.base_url,
+            allowed_tools=settings.worker.allowed_tools,
+            mcp_tools=oh_params.mcp_tools,
+            mcp_tool_timeout_seconds=oh_params.mcp_tool_timeout_seconds,
+            enable_subagents=oh_params.enable_subagents,
+        )
+        return OpenHandsWorker(adapter=adapter)
     raise NotImplementedError(
-        f"flat mode currently supports only worker.tool='claude_code'; got {tool!r}. "
-        "openhands and google_adk flat-mode adapters are not yet wired."
+        f"flat mode supports worker.tool in {{'claude_code', 'openhands'}}; got {tool!r}. "
+        "The google_adk flat-mode adapter is not yet wired."
     )
+
+
+def _flat_subagent_enabled(settings: Settings) -> bool:
+    """Whether the flat worker has a subagent-delegation tool available.
+
+    ``claude_code`` exposes Claude's ``Task`` tool unless explicitly
+    disallowed (assumes ``allowed_tools: ["*"]``; an explicit allowlist
+    excluding ``Task`` would still get the note — revisit the predicate when
+    introducing such a config). ``openhands`` gates its native
+    task-delegation tool behind ``tool_params.openhands.enable_subagents``,
+    which is also what arms the tool in the adapter — note and capability
+    stay in lockstep (N1 vs N2 contrast).
+    """
+    if settings.worker.tool == "openhands":
+        params = settings.worker.tool_params.openhands
+        return params is not None and params.enable_subagents
+    return "Task" not in settings.worker.disallowed_tools
 
 
 def _make_flat_invariant_builder(
@@ -162,13 +198,9 @@ def _make_flat_invariant_builder(
 
     # ``subagent_enabled`` is derived once at factory time — settings are
     # constant for the lifetime of this closure. The flat prompt appends
-    # ``FLAT_SUBAGENT_NOTE`` only when the tool policy allows ``Task``.
-    # Assumes ``allowed_tools: ["*"]``; a future config that pins an
-    # explicit allowlist excluding ``Task`` (instead of relying on
-    # ``disallowed_tools``) would silently still get the subagent note here
-    # even though the CLI receives no ``Task`` entitlement. Revisit the
-    # predicate when introducing such a config.
-    subagent_enabled = "Task" not in settings.worker.disallowed_tools
+    # ``FLAT_SUBAGENT_NOTE`` only when the worker can actually delegate;
+    # see ``_flat_subagent_enabled`` for the per-tool predicate.
+    subagent_enabled = _flat_subagent_enabled(settings)
 
     def _builder(
         *,
@@ -218,53 +250,6 @@ def _make_flat_invariant_builder(
     return _builder
 
 
-def _docker_pid_cleanup() -> None:
-    """Remove every container labeled with this process's PID.
-
-    Second line of defense against leaked worker/seed containers. The
-    happy-path try/finally in flat-mode + the hierarchical role dispatch
-    already call ``cleanup_worker_execution``. This handler covers the
-    SIGKILL / SIGTERM / SIGINT / atexit paths where in-process cleanup
-    cannot run — it fires from the :class:`CleanupRegistry` once.
-
-    Best-effort: every failure is logged and swallowed because the handler
-    runs during process teardown when other state may already be torn
-    down. A raise here would block the registry's remaining handlers.
-    """
-    pid = os.getpid()
-    docker = shutil.which("docker")
-    if docker is None:
-        logger.warning("docker executable not found; skipping PID-label cleanup")
-        return
-    try:
-        listing = subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
-            [
-                docker,
-                "ps",
-                "-a",
-                "--filter",
-                f"label=arise.session_pid={pid}",
-                "--format",
-                "{{.ID}}",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        ids = [line.strip() for line in listing.stdout.splitlines() if line.strip()]
-        if not ids:
-            return
-        subprocess.run(  # noqa: S603 - docker path is resolved via shutil.which
-            [docker, "rm", "-f", *ids],
-            check=False,
-            capture_output=True,
-            timeout=60,
-        )
-    except Exception:
-        logger.warning("docker PID-label cleanup failed", exc_info=True)
-
-
 def create_runtime_cli(
     settings: Settings,
     *,
@@ -283,7 +268,7 @@ def create_runtime_cli(
     if cleanup_registry is not None and isinstance(
         active_domain_components.plugin, SecurityDomainPlugin
     ):
-        cleanup_registry.register("docker-by-pid", _docker_pid_cleanup)
+        cleanup_registry.register("docker-by-pid", docker_pid_cleanup)
 
     openhands_params = settings.worker.tool_params.openhands
     worker_mcp_tools = (
@@ -302,8 +287,24 @@ def create_runtime_cli(
             worker_allowed_tools=list(settings.worker.allowed_tools),
             worker_disallowed_tools=list(settings.worker.disallowed_tools),
             worker_mcp_tools=worker_mcp_tools,
+            worker_mcp_tool_timeout_seconds=(
+                openhands_params.mcp_tool_timeout_seconds
+                if settings.worker.tool == "openhands" and openhands_params is not None
+                else 600
+            ),
             worker_tool_max_iterations=settings.worker.max_iterations_per_run,
             worker_tool_base_url=settings.worker.base_url,
+            worker_run_scoped_cache_key=(
+                settings.worker.tool == "openhands"
+                and openhands_params is not None
+                and openhands_params.run_scoped_prompt_cache_key
+            ),
+            worker_reasoning_effort=settings.worker.reasoning_effort,
+            worker_reasoning_effort_overrides=dict(settings.worker.reasoning_effort_overrides),
+            worker_shared_session=settings.orchestration.shared_worker_session,
+            shared_code_skip_dir_listings=settings.orchestration.shared_code_skip_dir_listings,
+            shared_code_render_mode=settings.orchestration.shared_code_render_mode,
+            shared_code_index_enabled=settings.orchestration.shared_code_index,
             format_repairer_enabled=settings.format_repairer.enabled,
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,
@@ -347,6 +348,16 @@ def create_runtime_cli(
             max_run_duration_seconds=settings.orchestration.max_run_duration_seconds,
             max_redecompositions=settings.orchestration.max_redecompositions,
             skip_judge=settings.orchestration.skip_judge,
+            workspace_listing_dirs=(
+                tuple(settings.orchestration.workspace_listing_dirs)
+                if settings.orchestration.workspace_listing_dirs is not None
+                else None
+            ),
+            workspace_listing_max_entries=settings.orchestration.workspace_listing_max_entries,
+            verification_max_retries=settings.orchestration.verification_max_retries,
+            capture_recon_reads=settings.orchestration.capture_recon_reads,
+            share_boss_recon=settings.orchestration.share_boss_recon,
+            procedural_dispatch=settings.orchestration.procedural_dispatch,
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

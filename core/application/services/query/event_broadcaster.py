@@ -95,10 +95,18 @@ class EventBroadcaster:
             yield queue
         finally:
             async with self._registry_lock:
-                try:
-                    self._subscribers[root_id].remove(queue)
-                    if not self._subscribers[root_id]:
+                # .get() instead of indexing: the registry is a defaultdict,
+                # and indexing a vanished key would resurrect it as an empty
+                # list that then leaks forever.
+                queues = self._subscribers.get(root_id)
+                if queues is None or queue not in queues:
+                    logger.warning(
+                        "Subscriber queue already missing for root_id=%s; "
+                        "nothing else is supposed to unregister queues",
+                        root_id,
+                    )
+                else:
+                    queues.remove(queue)
+                    if not queues:
                         del self._subscribers[root_id]
                     logger.debug("Subscriber removed for root_id=%s", root_id)
-                except (ValueError, KeyError):
-                    pass  # Already removed

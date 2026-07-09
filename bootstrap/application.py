@@ -24,6 +24,7 @@ from core.application.services import (
     LoopPolicy,
     ParentNotificationService,
     PromptBuilder,
+    SiblingViewService,
     ToolCallingService,
     ToolsetPolicyResolver,
 )
@@ -90,6 +91,12 @@ class ApplicationConfig:
     max_run_duration_seconds: float = 1800
     max_redecompositions: int = 2
     skip_judge: bool = False
+    workspace_listing_dirs: tuple[str, ...] | None = None
+    workspace_listing_max_entries: int | None = None
+    verification_max_retries: int = 2
+    capture_recon_reads: bool = False
+    share_boss_recon: bool = False
+    procedural_dispatch: bool = False
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     prompt_builder: PromptBuilder | None = None
@@ -127,6 +134,9 @@ def get_application(
         boss_config=config.boss_config,
         manager_config=config.manager_config,
         mode=config.mode,
+        workspace_listing_dirs=config.workspace_listing_dirs,
+        workspace_listing_max_entries=config.workspace_listing_max_entries,
+        verification_max_retries=config.verification_max_retries,
     )
 
     # Create collaborators (composition root wiring). Prefer the
@@ -146,6 +156,10 @@ def get_application(
     )
     limits_registry = HierarchyLimitsRegistry()
     query_service = AgentQueryService(
+        repository=repository,
+        shared_context_port=infrastructure.shared_context,
+    )
+    sibling_view = SiblingViewService(
         repository=repository,
         shared_context_port=infrastructure.shared_context,
     )
@@ -196,6 +210,19 @@ def get_application(
         toolset_resolver=toolset_resolver,
         skip_judge=config.skip_judge,
         format_repairer=infrastructure.format_repairer,
+        shared_code_port=infrastructure.shared_code_context,
+        capture_recon_reads=config.capture_recon_reads,
+        share_boss_recon=config.share_boss_recon,
+        decomposition_validator=(
+            config.domain_plugin.get_decomposition_validator()
+            if config.domain_plugin is not None
+            else None
+        ),
+        procedure_executor=(
+            config.domain_plugin.get_procedure_executor()
+            if config.procedural_dispatch and config.domain_plugin is not None
+            else None
+        ),
     )
 
     parent_notifier = ParentNotificationService(
@@ -211,7 +238,7 @@ def get_application(
         child_factory=child_factory,
         query_service=query_service,
         shared_context_port=infrastructure.shared_context,
-        sibling_view_port=query_service,  # AgentQueryService implements SiblingViewPort
+        sibling_view_port=sibling_view,
         parent_notifier=parent_notifier,
         prompt_builder=prompt_builder,
         domain_plugin=config.domain_plugin,

@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -21,17 +21,23 @@ from core.application.services import (
     ParentNotificationService,
     PromptBuilder,
 )
-from core.domain.aggregates.agent_session import AgentRole
+from core.application.services.orchestration.workspace_context import (
+    WorkspaceContextProvider,
+)
+from core.domain.aggregates.agent_session import AgentRole, AgentSession
 from core.domain.events.events import (
     AgentCreated,
     CodeGenerationStarted,
     ComplexityEvaluated,
+    RuntimeSurfaceSealed,
     TaskAssigned,
     WorkCompleted,
 )
 from core.domain.values.node_message import Handoff
 from core.ports.domain_plugin_port import (
     PreparedRunWorkspace,
+    SealedRuntimeArtifact,
+    SealedRuntimeSurface,
     WorkerExecutionContext,
     WorkspacePathAlias,
 )
@@ -151,24 +157,19 @@ async def test_setup_working_directory_configures_recon_path_aliases(
         path_aliases=aliases,
     )
     recon_tool = CapturingReconTool()
-    service = object.__new__(AgentExecutionService)
-    service._config = ServiceConfig(
-        max_retries=3,
-        poll_interval=0.5,
+    provider = WorkspaceContextProvider(
         output_directory=str(tmp_path),
-        default_worker_tool="claude_code",
-        boss_config=BossConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
-        manager_config=ManagerConfig(model="gpt-4o", temperature=0.7, max_tokens=1000),
+        workspace_listing_dirs=None,
+        workspace_listing_max_entries=None,
+        domain_plugin=domain_plugin,
+        recon_tool=recon_tool,
     )
-    service._domain_plugin = domain_plugin
-    service._recon_tool = recon_tool
-    service._working_directory = None
 
     # When:
-    await service._setup_working_directory(root_id, domain_context=None)
+    await provider.setup_working_directory(root_id, domain_context=None)
 
     # Then:
-    assert service._working_directory == run_root
+    assert provider.working_directory == run_root
     assert recon_tool.working_directory == str(run_root)
     assert recon_tool.path_aliases == aliases
     domain_plugin.prepare_run.assert_awaited_once()
@@ -270,3 +271,72 @@ async def test_worker_execution_includes_domain_plugin_task_context(tmp_path: Pa
     assert worker_port.last_task_context["container_session"]["container_id"] == "abc123"
     domain_plugin.prepare_worker_execution.assert_awaited_once()
     domain_plugin.cleanup_worker_execution.assert_awaited_once()
+
+
+def _boss_service_with_prepared(
+    tmp_path: Path, boss: AgentSession, prepared: PreparedRunWorkspace
+) -> AgentExecutionService:
+    """A minimally-stubbed service whose boss creation returns ``boss``/``prepared``."""
+    service = object.__new__(AgentExecutionService)
+    service._reset_for_new_run = MagicMock()
+    service._prompt_builder = MagicMock()
+    service._setup_working_directory = AsyncMock(return_value=prepared)
+    service._create_shared_context = AsyncMock()
+    service._create_boss_session = MagicMock(return_value=boss)
+    service._get_run_metadata = MagicMock(return_value={})
+    service._repository = AsyncMock()
+    return service
+
+
+@pytest.mark.asyncio
+async def test_create_boss_agent_emits_runtime_surface_sealed(tmp_path: Path) -> None:
+    """When the domain plugin seals the runtime surface, the boss records the event."""
+    # Given: a prepared workspace that reports a sealed runtime surface.
+    sealed = SealedRuntimeSurface(
+        surface="secbench",
+        artifacts=(
+            SealedRuntimeArtifact(
+                container_path="/testcase/repro.sh", kind="repro_skeleton", content_sha256="a" * 64
+            ),
+            SealedRuntimeArtifact(
+                container_path="/usr/local/bin/secb", kind="secb_wrapper", content_sha256="b" * 64
+            ),
+        ),
+    )
+    boss = AgentSession.create(
+        agent_id=uuid4(), role=AgentRole.BOSS, config=_test_config(), parent_id=None
+    )
+    service = _boss_service_with_prepared(
+        tmp_path,
+        boss,
+        PreparedRunWorkspace(working_directory=str(tmp_path), sealed_surface=sealed),
+    )
+
+    # When:
+    await service.create_boss_agent("repro the CVE", domain_context=object())
+
+    # Then: the saved boss aggregate emitted exactly one RuntimeSurfaceSealed event.
+    saved = service._repository.save_new_agent.await_args.args[0]
+    sealed_events = [e for e in saved.events if isinstance(e, RuntimeSurfaceSealed)]
+    assert len(sealed_events) == 1
+    assert sealed_events[0].surface == "secbench"
+    assert {a.kind for a in sealed_events[0].sealed_artifacts} == {"repro_skeleton", "secb_wrapper"}
+
+
+@pytest.mark.asyncio
+async def test_create_boss_agent_no_seal_event_without_sealed_surface(tmp_path: Path) -> None:
+    """A run with no sealed surface (generic / no plugin) emits no RuntimeSurfaceSealed."""
+    # Given: a prepared workspace without a sealed surface.
+    boss = AgentSession.create(
+        agent_id=uuid4(), role=AgentRole.BOSS, config=_test_config(), parent_id=None
+    )
+    service = _boss_service_with_prepared(
+        tmp_path, boss, PreparedRunWorkspace(working_directory=str(tmp_path))
+    )
+
+    # When:
+    await service.create_boss_agent("generic task", domain_context=None)
+
+    # Then: no RuntimeSurfaceSealed event is recorded.
+    saved = service._repository.save_new_agent.await_args.args[0]
+    assert not [e for e in saved.events if isinstance(e, RuntimeSurfaceSealed)]

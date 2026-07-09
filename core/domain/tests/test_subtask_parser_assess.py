@@ -4,7 +4,10 @@ import json
 
 import pytest
 
-from core.domain.services.subtask_parser import parse_assessment_response
+from core.domain.services.subtask_parser import (
+    parse_assessment_response,
+    parse_subtasks_from_llm,
+)
 
 
 class TestParseAssessmentResponse:
@@ -52,6 +55,14 @@ class TestParseAssessmentResponse:
         raw = '{"action": "unknown"}'
         with pytest.raises(ValueError, match="Invalid action"):
             parse_assessment_response(raw)
+
+    def test_unparseable_json_chains_decode_error(self):
+        """parse_subtasks_from_llm's tiered parse must chain the original
+        decode error into the final ValueError instead of discarding it."""
+        with pytest.raises(ValueError, match="not valid JSON") as excinfo:
+            parse_subtasks_from_llm("definitely not json {{{")
+
+        assert isinstance(excinfo.value.__cause__, json.JSONDecodeError)
 
     def test_markdown_wrapped_json(self):
         raw = '```json\n{"action": "execute", "reasoning": "Simple"}\n```'

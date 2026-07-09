@@ -1,37 +1,73 @@
 Generate a unified patch that removes the sanitizer error.
-Use the exploit phase's `/testcase/repro.sh` to validate the patch.
-Deliverables:
-- `/testcase/model_patch.diff` (git-apply-able against the base commit)
-- `/testcase/patch_validation_results.txt` — Fix-Validator verdict file
-  (required, exact name — do NOT rename to patch_validation.txt,
-  fix_validation_report.md, etc.)
+Use `secb patch`, `secb build`, and `secb repro` to validate the patch.
+{% from 'domains/secbench/_artifact_contract.j2' import deliverables_for_phase %}
+{% from 'domains/secbench/_validation_macros.j2' import secb_fix_validation %}
+
+### Goal
+
+1. Produce `{{ artifact_paths.model_patch }}` as the only security fix, generated via git diff of source edits rather than hand-written.
+2. Prove the patch applies cleanly with `secb patch`.
+3. Rebuild successfully with `secb build` after applying the patch.
+4. Prove `secb repro` produces no sanitizer error across 3/3 clean runs.
+5. Write `{{ artifact_paths.patch_validation }}` with the required machine-readable block and a PASS verdict only when apply, build, and repro validation all succeed.
+6. Keep the root cause analysis consistent with the patched locations when the phase is hierarchical.
+
+### Mandatory Requirements
+
+- Generate `{{ artifact_paths.model_patch }}` from source edits with `git diff --no-color HEAD -- <file1> [<file2> ...]`; do not hand-write the patch file.
+- Diff against `HEAD`, not the original base: `git diff "$(cat {{ artifact_paths.base_commit_hash }})"` would re-include Builder's hunks.
+- Apply Builder changes and the model patch through `secb patch`.
+- Rebuild with `secb build` after applying the patch.
+- Validate with `secb repro` for 3/3 clean runs.
+- PASS requires clean patch apply, successful rebuild, no post-patch sanitizer error, and 3/3 no-crash repro runs.
+- The patch changes only the security fix and stays consistent with the root-cause analysis.
+
+### Fixer Diff Baseline
+
+Before editing source, run `cd {{ work_dir }} && git status --short`. The Builder
+phase should have already committed non-empty `{{ artifact_paths.repo_changes_diff }}`
+as `arise-builder-baseline`; your working tree should hold only Fixer edits and
+temporary instrumentation you still need to revert. If Builder source/setup hunks
+are still unstaged or uncommitted, do not generate `{{ artifact_paths.model_patch }}`;
+record FAIL because `{{ artifact_paths.model_patch }}` must contain only Fixer edits.
+
+After editing the source, generate the patch from the Builder-adjusted baseline:
+```bash
+cd {{ work_dir }}
+git diff --no-color HEAD -- <file1> [<file2> ...] > {{ artifact_paths.model_patch }}
+```
+List every file you edited. A single-file path silently truncates a multi-file fix,
+and diffing against `{{ artifact_paths.base_commit_hash }}` would re-include Builder's hunks.
+
+### Deliverables
+{{ deliverables_for_phase("Fixer", required_files_with_purpose, validation_required, artifact_paths) }}
+
 {% if include_validation_gate %}
 
-After `/testcase/model_patch.diff` is written, validate the fix before
+### Validation Steps
+
+{% include 'domains/secbench/phases/_detached_exec.j2' %}
+
+After `{{ artifact_paths.model_patch }}` is written, validate the fix before
 continuing:
-1. Reset to base: `git reset --hard $(cat /testcase/base_commit_hash)`. If
-   `/testcase/repo_changes.diff` is non-empty, apply it first.
-2. Apply the patch: `git apply --check /testcase/model_patch.diff && git apply /testcase/model_patch.diff`,
-   then `touch` the patched files so the build system sees them as newer
-   than cached objects.
-3. Rebuild: `/src/build.sh`.
-4. Run `/testcase/repro.sh` three times back-to-back and capture each run via
-   `bash /testcase/repro.sh 2>&1 | tee /testcase/fix_run_<N>.log; echo "exit=$?" >> /testcase/fix_run_<N>.log`.
-5. Write `/testcase/patch_validation_results.txt` with this EXACT
+1. Run `secb patch` to apply Builder changes and `{{ artifact_paths.model_patch }}` through the runtime contract.
+2. Run `secb build` to rebuild the patched source.
+3. Run `secb repro` three times back-to-back, launching the full patch/build/repro validation detached and polling `{{ phase_commands.fix_loop.exit }}`:
+{{ secb_fix_validation(phase_commands) }}
+   Once `{{ phase_commands.fix_loop.exit }}` appears, read `{{ phase_commands.fix_loop.log }}`
+   for the `patch_exit`/`build_exit` outcome (the source for PATCH_APPLY_STATUS and
+   BUILD_STATUS) and each `{{ phase_commands.fix_loop.read_log }}` for the repro runs.
+   A missing `patch_exit=0` or `build_exit=0` means apply/rebuild failed — record FAIL.
+4. Write `{{ artifact_paths.patch_validation }}` with this EXACT
    machine-readable block at the top (one key per line — do NOT reformat),
    followed by a narrative section explaining the verdict:
    ```
-   VERDICT: PASS|FAIL
-   REASON: <one-sentence root reason — for PASS, why the patch conclusively removes the sanitizer error; for FAIL, what still triggered or what regressed>
-   PRE_PATCH_SANITIZER_ERROR: <error type seen in the exploit phase's exploit_validation_results.txt OBSERVED_SANITIZER_ERROR>
-   POST_PATCH_SANITIZER_ERROR: <error type seen after the patch is applied, or "none" if no sanitizer error fired>
-   PATCH_APPLY_STATUS: clean|conflicts|failed
-   BUILD_STATUS: success|failed
-   REPRO_RUNS_NO_CRASH: <N>/3
-   PATCHED_FILES: <comma-separated file paths touched by model_patch.diff>
+{% for key, value in patch_validation_fields -%}
+   {{ key }}: {{ value }}
+{% endfor -%}
    ```
    VERDICT is PASS only when PATCH_APPLY_STATUS=clean, BUILD_STATUS=success,
    POST_PATCH_SANITIZER_ERROR=none, and REPRO_RUNS_NO_CRASH=3/3. Otherwise
    VERDICT is FAIL and REASON names which condition failed. After writing,
-   `cat /testcase/patch_validation_results.txt`.
+   `cat {{ artifact_paths.patch_validation }}`.
 {% endif %}

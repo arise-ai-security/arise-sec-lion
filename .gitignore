@@ -677,8 +677,13 @@ FodyWeavers.xsd
 # Additional files built by Visual Studio
 
 # AI
-.claude
+# `.claude/*` (not `.claude`): git cannot re-include children of an excluded
+# directory, so a bare `.claude` would defeat the !.claude/docs/ negations.
+# `.claude/docs/*` then re-ignores everything inside docs/ (files and nested
+# dirs) so that ONLY the direct *.md files re-included below are trackable.
+.claude/*
 !.claude/docs/
+.claude/docs/*
 
 # Markdown files
 # Ignore all markdown files except specific docs

@@ -36,6 +36,7 @@ from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentS
 from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
+    FailureDigestRecorded,
     RetryScheduled,
     WorkCompleted,
     WorkFailed,
@@ -160,7 +161,9 @@ def _wire_service(
         prompt_builder=prompt_builder,
         child_factory=child_factory,
     )
-    parent_notifier = ParentNotificationService(repository=repository)
+    # max_redecompositions=0 isolates these Layer-1 worker-retry tests from the
+    # Layer-2 all-children-failed redecomposition (covered in test_parent_notifier).
+    parent_notifier = ParentNotificationService(repository=repository, max_redecompositions=0)
 
     dependencies = ExecutionServiceDependencies(
         repository=repository,
@@ -224,25 +227,53 @@ class TestRetryOnFailure:
         assert _get_agent_status(event_store, child_id) == "completed"
 
     @pytest.mark.asyncio
-    async def test_no_retry_without_escalation_chain(self) -> None:
-        """Without escalation chain, failure propagates immediately."""
+    async def test_hard_failed_worker_retries_via_digest(self) -> None:
+        """A crashed worker retries via the failure digest even without an
+        escalation chain, up to verification_max_retries, then propagates."""
         event_store = InMemoryEventStore()
         llm = FakeLLM()
         worker = AlwaysFailWorker()
 
-        # No escalation chain = no retries
+        # No escalation chain: retry_policy is disabled, so any retry here comes
+        # solely from the digest path (verification_max_retries defaults to 2).
         svc = _wire_service(event_store, llm, worker)
 
-        boss_id = await svc.create_boss_agent("No retry test")
+        boss_id = await svc.create_boss_agent("Digest retry test")
         await svc.run_agent_step(boss_id)
         child_id = _find_child_ids(event_store, boss_id)[0]
-        await svc.run_agent_step(child_id)
+
+        # Child → WORKER (assessment)
         await svc.run_agent_step(child_id)
 
-        # Should be FAILED (no retry)
+        # First execution fails → crash digest recorded, worker retried
+        await svc.run_agent_step(child_id)
+        assert _get_agent_status(event_store, child_id) == "analyzing"
+        digests = [
+            e for e in event_store.events_for(child_id)
+            if isinstance(e, FailureDigestRecorded)
+        ]
+        assert len(digests) == 1
+        assert digests[0].source == "worker_crash"
+
+        # Second failure → retry 2 (digest retained, not re-recorded)
+        await svc.run_agent_step(child_id)
+        assert _get_agent_status(event_store, child_id) == "analyzing"
+
+        # Third failure → verification_max_retries exhausted → propagate
+        await svc.run_agent_step(child_id)
         assert _get_agent_status(event_store, child_id) == "failed"
-        # Boss should also be FAILED (propagated)
         assert _get_agent_status(event_store, boss_id) == "failed"
+
+        retry_events = [
+            e for e in event_store.events_for(child_id)
+            if isinstance(e, RetryScheduled)
+        ]
+        assert len(retry_events) == 2  # verification_max_retries
+        digests = [
+            e for e in event_store.events_for(child_id)
+            if isinstance(e, FailureDigestRecorded)
+        ]
+        assert len(digests) == 1  # recorded once, retained across retries
 
     @pytest.mark.asyncio
     async def test_retries_exhaust_then_propagate(self) -> None:
@@ -313,3 +344,80 @@ class TestRetryScheduledEvent:
         agent.schedule_retry(reason="error", escalated_model="gpt-4o-mini")
 
         assert agent.config.base.model == "gpt-4o-mini"
+
+
+def _worker_config() -> dict[str, Any]:
+    return {
+        "strategy": "heuristic",
+        "base": {"model": "gpt-4o", "temperature": 0.5, "max_tokens": 1000},
+        "tool": "claude_code",
+    }
+
+
+class TestWorkerCrashDigestGate:
+    """The FAILED-branch crash-digest gate in _handle_post_step."""
+
+    @pytest.mark.asyncio
+    async def test_verification_failure_skips_digest_but_retries(self) -> None:
+        """A verification failure already carries feedback context: no crash
+        digest is recorded, yet the worker still retries on that feedback."""
+        # Given: a WORKER that failed verification (feedback set, no crash digest)
+        event_store = InMemoryEventStore()
+        svc = _wire_service(event_store, FakeLLM(), AlwaysFailWorker())
+        repository = AgentRepository(event_store=event_store, max_retries=3)
+
+        worker = AgentSession.create(
+            agent_id=uuid4(),
+            role=AgentRole.WORKER,
+            config=_worker_config(),
+            parent_id=uuid4(),
+        )
+        worker.assign_task("do the thing")
+        worker.start_worker_execution("claude_code")
+        worker.mark_verification_failed(
+            failed_stage="judge",
+            feedback="Missing tests",
+            stages_passed=["structural"],
+            score=30,
+        )
+        await repository.save_new_agent(worker)
+
+        # When: post-step handling runs on the failed worker
+        reloaded = await repository.load(worker.agent_id)
+        await svc._handle_post_step(reloaded, [])
+
+        # Then: no crash digest is recorded, but a retry is scheduled
+        events = event_store.events_for(worker.agent_id)
+        assert not any(isinstance(e, FailureDigestRecorded) for e in events)
+        assert any(isinstance(e, RetryScheduled) for e in events)
+
+    @pytest.mark.asyncio
+    async def test_existing_digest_not_overwritten(self) -> None:
+        """A worker that already recorded a digest is not re-digested."""
+        # Given: a hard-failed WORKER with a digest already recorded
+        event_store = InMemoryEventStore()
+        svc = _wire_service(event_store, FakeLLM(), AlwaysFailWorker())
+        repository = AgentRepository(event_store=event_store, max_retries=3)
+
+        worker = AgentSession.create(
+            agent_id=uuid4(),
+            role=AgentRole.WORKER,
+            config=_worker_config(),
+            parent_id=uuid4(),
+        )
+        worker.assign_task("do the thing")
+        worker.start_worker_execution("claude_code")
+        worker.fail_with_reason("Segfault")
+        worker.record_failure_digest("PRE-EXISTING DIGEST", source="worker_crash")
+        await repository.save_new_agent(worker)
+
+        # When: post-step handling runs again on the failed worker
+        reloaded = await repository.load(worker.agent_id)
+        await svc._handle_post_step(reloaded, [])
+
+        # Then: the original digest survives unchanged and the worker retries
+        events = event_store.events_for(worker.agent_id)
+        digests = [e for e in events if isinstance(e, FailureDigestRecorded)]
+        assert len(digests) == 1
+        assert digests[0].digest == "PRE-EXISTING DIGEST"
+        assert any(isinstance(e, RetryScheduled) for e in events)

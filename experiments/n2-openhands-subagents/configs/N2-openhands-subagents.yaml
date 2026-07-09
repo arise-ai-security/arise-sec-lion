@@ -1,0 +1,27 @@
+# Cell N2 — naive OpenHands baseline WITH native subagents (2-level tree).
+# Identical to N1 except `enable_subagents: true`, which (a) registers
+# OpenHands' container-aware task-delegation tool (children get the parent's
+# tools but no delegation tool, bounding the tree to two levels) and (b)
+# appends FLAT_SUBAGENT_NOTE to the prompt so the agent knows it may
+# delegate. N1 vs N2 isolates ad-hoc subagent value under the same model.
+
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: flat
+  orchestration.skip_judge: true   # flat mode has no judge stage; pinned for explicitness
+  orchestration.max_run_duration_seconds: 14400   # CONTROL: identical across all 4 cells (non-binding for flat)
+  boss.model: claude-sonnet-4-6     # unused in flat mode; required by the Settings schema
+  manager.model: claude-sonnet-4-6  # unused in flat mode; required by the Settings schema
+  worker.tool: openhands
+  worker.model: gpt-5.3-codex
+  worker.allowed_tools: [file_editor, glob, grep]
+  # OpenHands native tools allowlisted above; terminal/browser omitted —
+  # shell reaches the CVE container only via the MCP shell_in_container tool.
+  worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
+  worker.tool_params.openhands.mcp_tool_timeout_seconds: 600
+  worker.tool_params.openhands.enable_subagents: true
+  # CONTROL: caps identical across N1/N2/B3/B4 (see N1 config note).
+  worker.timeout: 3600
+  worker.max_iterations_per_run: 250
+  output.directory: ./runs

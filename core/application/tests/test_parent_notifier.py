@@ -7,7 +7,13 @@ import pytest
 from bootstrap.tests.test_characterization import InMemoryEventStore
 from core.application.services import AgentRepository, ParentNotificationService
 from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
-from core.domain.events.events import ChildCompleted, WorkCompleted
+from core.domain.events.events import (
+    ChildCompleted,
+    ChildFailed,
+    RedecompositionTriggered,
+    WorkCompleted,
+    WorkFailed,
+)
 from core.domain.values.node_message import Briefing
 from core.domain.values.subtask import Subtask
 
@@ -48,6 +54,45 @@ async def _create_waiting_parent(
     child.mark_infeasible("No viable plan")
     await repository.save_new_agent(child)
     return parent, child
+
+
+async def _waiting_parent_with_children(
+    repository: AgentRepository,
+    count: int = 2,
+) -> tuple[AgentSession, list]:
+    """Persist a BOSS in WAITING with ``count`` spawned (not-yet-reported) children."""
+    parent = AgentSession.create(
+        agent_id=uuid4(),
+        role=AgentRole.BOSS,
+        config=_config(),
+    )
+    parent.assign_task("Main task")
+    spawned = parent.apply_subtasks_and_spawn_children(
+        subtasks=[
+            Subtask(description=f"Subtask {i}", config=_config()) for i in range(count)
+        ],
+        child_role=AgentRole.PENDING.value,
+        briefing=Briefing.simple("Main task"),
+    )
+    await repository.save_new_agent(parent)
+    return parent, [child_id for child_id, _ in spawned]
+
+
+def _make_failed_child(
+    child_id, parent_id, task: str, reason: str, digest: str | None = None
+) -> AgentSession:
+    """Build a hard-failed WORKER carrying task/reason and an optional digest."""
+    child = AgentSession.create(
+        agent_id=child_id,
+        role=AgentRole.WORKER,
+        config=_config(),
+        parent_id=parent_id,
+    )
+    child.assign_task(task)
+    child.fail_with_reason(reason)
+    if digest is not None:
+        child.record_failure_digest(digest, source="worker_crash")
+    return child
 
 
 @pytest.mark.asyncio
@@ -106,6 +151,87 @@ async def test_infeasible_child_propagates_failure_after_limit_exhausted() -> No
     assert failed_parent.status == AgentStatus.FAILED
     assert failed_parent.redecomposition_count == 1
     assert "Redecomposition limit reached (1)" in (failed_parent.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
+    """A non-infeasible child failure records its task and digest on the parent."""
+    # Given: a BOSS in WAITING with two children, one of which hard-fails with a digest
+    event_store = InMemoryEventStore()
+    repository = AgentRepository(event_store=event_store, max_retries=3)
+    notifier = ParentNotificationService(repository=repository, max_redecompositions=2)
+
+    parent, child_ids = await _waiting_parent_with_children(repository, count=2)
+    child = _make_failed_child(
+        child_ids[0],
+        parent.agent_id,
+        task="build the PoC",
+        reason="Segfault in parser",
+        digest="FAILURE: Segfault in parser\nLAST TOOL CALLS:\n[bash/tool_result] make",
+    )
+    await repository.save_new_agent(child)
+
+    # When: the failure is notified upward
+    await notifier.notify_if_failed(child)
+
+    # Then: the parent's ChildFailureRecord retains task, reason, and digest
+    reloaded_parent = await repository.load(parent.agent_id)
+    record = reloaded_parent.failed_children[child_ids[0]]
+    assert record.child_task == "build the PoC"
+    assert record.reason == "Segfault in parser"
+    assert record.digest is not None and "LAST TOOL CALLS" in record.digest
+    # And: the second child has not reported, so the parent stays WAITING
+    assert reloaded_parent.status == AgentStatus.WAITING
+
+
+@pytest.mark.asyncio
+async def test_all_children_failed_with_budget_redecomposes_not_fails() -> None:
+    """When every child fails and redecomposition budget remains, the parent
+    re-decomposes (ANALYZING) rather than failing."""
+    # Given: a BOSS in WAITING with two children and a redecomposition budget
+    event_store = InMemoryEventStore()
+    repository = AgentRepository(event_store=event_store, max_retries=3)
+    notifier = ParentNotificationService(repository=repository, max_redecompositions=2)
+
+    parent, child_ids = await _waiting_parent_with_children(repository, count=2)
+
+    # When: both children hard-fail and are notified upward
+    for idx, child_id in enumerate(child_ids):
+        child = _make_failed_child(
+            child_id, parent.agent_id, task=f"Subtask {idx}", reason=f"boom {idx}"
+        )
+        await repository.save_new_agent(child)
+        await notifier.notify_if_failed(child)
+
+    # Then: the parent is ANALYZING via RedecompositionTriggered, not FAILED
+    reloaded_parent = await repository.load(parent.agent_id)
+    assert reloaded_parent.status == AgentStatus.ANALYZING
+    assert reloaded_parent.redecomposition_count == 1
+    parent_events = event_store.events_for(parent.agent_id)
+    assert any(isinstance(e, RedecompositionTriggered) for e in parent_events)
+    assert not any(isinstance(e, WorkFailed) for e in parent_events)
+
+
+@pytest.mark.asyncio
+async def test_infeasible_fast_path_redecomposes_without_child_failure_record() -> None:
+    """The Infeasible: fast-path re-decomposes directly and never records a
+    ChildFailed — unchanged by the enriched failure-record path."""
+    # Given: a BOSS in WAITING with a single infeasible child and budget left
+    event_store = InMemoryEventStore()
+    repository = AgentRepository(event_store=event_store, max_retries=3)
+    notifier = ParentNotificationService(repository=repository, max_redecompositions=1)
+
+    parent, child = await _create_waiting_parent(repository)
+
+    # When: the infeasible failure is notified upward
+    await notifier.notify_if_failed(child)
+
+    # Then: the parent re-decomposes without emitting any ChildFailed
+    reloaded_parent = await repository.load(parent.agent_id)
+    assert reloaded_parent.status == AgentStatus.ANALYZING
+    parent_events = event_store.events_for(parent.agent_id)
+    assert any(isinstance(e, RedecompositionTriggered) for e in parent_events)
+    assert not any(isinstance(e, ChildFailed) for e in parent_events)
 
 
 def _emit_work_completed(worker: AgentSession, result: str) -> None:

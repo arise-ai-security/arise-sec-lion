@@ -13,6 +13,8 @@ from core.domain.values.prompt_trace import SectionProvenance
 
 if TYPE_CHECKING:
     from core.application.services import PromptStrategy
+    from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.procedure_ports import ProcedureExecutorPort
 
 
 @dataclass(frozen=True)
@@ -24,11 +26,30 @@ class WorkspacePathAlias:
 
 
 @dataclass(frozen=True)
+class SealedRuntimeArtifact:
+    """One agent-visible runtime artifact Arise overwrote with a non-golden version."""
+
+    container_path: str
+    kind: str
+    non_golden: bool = True
+    content_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class SealedRuntimeSurface:
+    """The runtime artifacts a domain plugin sealed during run preparation (anti-leak)."""
+
+    surface: str
+    artifacts: tuple[SealedRuntimeArtifact, ...] = ()
+
+
+@dataclass(frozen=True)
 class PreparedRunWorkspace:
     """Optional workspace override returned by a domain plugin."""
 
     working_directory: str
     path_aliases: tuple[WorkspacePathAlias, ...] = ()
+    sealed_surface: SealedRuntimeSurface | None = None
 
 
 @dataclass(frozen=True)
@@ -76,3 +97,7 @@ class DomainPlugin(Protocol):
     ) -> None: ...
 
     def get_prompt_strategy(self) -> PromptStrategy | None: ...
+
+    def get_decomposition_validator(self) -> DecompositionValidator | None: ...
+
+    def get_procedure_executor(self) -> ProcedureExecutorPort | None: ...

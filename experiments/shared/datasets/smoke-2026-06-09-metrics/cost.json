@@ -1,0 +1,122 @@
+[
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "model": "claude-sonnet-4-6",
+    "raw_usd": 2.695284,
+    "normalized_usd": 2.695284,
+    "reported_usd": 2.695277,
+    "uncached_input": 319996.0,
+    "cache_read": 959846.0,
+    "cache_write": 257850.0,
+    "completion": 32027.0
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "model": "gpt-5.4-mini",
+    "raw_usd": 1.808693,
+    "normalized_usd": 6.932487,
+    "reported_usd": 1.808693,
+    "uncached_input": 716459.0,
+    "cache_read": 10905600.0,
+    "cache_write": 0.0,
+    "completion": 100762.0
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "model": "claude-sonnet-4-6",
+    "raw_usd": 2.652246,
+    "normalized_usd": 2.652246,
+    "reported_usd": 2.652244,
+    "uncached_input": 308089.0,
+    "cache_read": 873379.0,
+    "cache_write": 268160.0,
+    "completion": 30691.0
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "model": "gpt-5.4-mini",
+    "raw_usd": 1.963958,
+    "normalized_usd": 7.524739,
+    "reported_usd": 1.963958,
+    "uncached_input": 718610.0,
+    "cache_read": 12378112.0,
+    "cache_write": 0.0,
+    "completion": 110365.0
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "model": "gpt-5.3-codex",
+    "raw_usd": 1.899723,
+    "normalized_usd": 2.912921,
+    "reported_usd": 1.899723,
+    "uncached_input": 195927.0,
+    "cache_read": 5840768.0,
+    "cache_write": 0.0,
+    "completion": 38194.0
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "model": "gpt-5.3-codex",
+    "raw_usd": 2.722964,
+    "normalized_usd": 4.282189,
+    "reported_usd": 2.722964,
+    "uncached_input": 336253.0,
+    "cache_read": 8768384.0,
+    "cache_write": 0.0,
+    "completion": 42861.0
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "model": "TOTAL",
+    "raw_usd": 4.503978,
+    "normalized_usd": 9.627771,
+    "reported_usd": 4.50397,
+    "uncached_input": 1036455.0,
+    "cache_read": 11865446.0,
+    "cache_write": 257850.0,
+    "completion": 132789.0
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "model": "TOTAL",
+    "raw_usd": 4.616204,
+    "normalized_usd": 10.176984,
+    "reported_usd": 4.616202,
+    "uncached_input": 1026699.0,
+    "cache_read": 13251491.0,
+    "cache_write": 268160.0,
+    "completion": 141056.0
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "model": "TOTAL",
+    "raw_usd": 1.899723,
+    "normalized_usd": 2.912921,
+    "reported_usd": 1.899723,
+    "uncached_input": 195927.0,
+    "cache_read": 5840768.0,
+    "cache_write": 0.0,
+    "completion": 38194.0
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "model": "TOTAL",
+    "raw_usd": 2.722964,
+    "normalized_usd": 4.282189,
+    "reported_usd": 2.722964,
+    "uncached_input": 336253.0,
+    "cache_read": 8768384.0,
+    "cache_write": 0.0,
+    "completion": 42861.0
+  }
+]

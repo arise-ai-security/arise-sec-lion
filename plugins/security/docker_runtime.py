@@ -8,13 +8,18 @@ import os
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from typing import TYPE_CHECKING
 
-from .container_runtime import (
-    SecBenchContainerSession,
-    SecBenchWorkspace,
-)
-from .cve_instance import CVEInstance
+from .container_runtime import SecBenchContainerSession, SecBenchWorkspace
+from .procedures import CommandOutcome
+from .runtime import docker_cli, image_ensurer, sealer, workspace_mirror
+from .runtime.sealer import _FORBIDDEN_TESTCASE_ARTIFACTS  # noqa: F401  re-exported for tests
+
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from .cve_instance import CVEInstance
 
 
 logger = logging.getLogger(__name__)
@@ -36,10 +41,12 @@ class DockerSecBenchRuntime:
         *,
         network_mode: str = "host",
         timeout_seconds: float = 300.0,
+        tools_image_registry: str = "",
     ) -> None:
         self._container_prefix = container_prefix
         self._network_mode = network_mode
         self._timeout_seconds = float(timeout_seconds)
+        self._tools_image_registry = tools_image_registry.rstrip("/")
         # DooD path mapping: container /app → host project root.
         # When running inside a container that mounts Docker socket, volume
         # bind paths must be expressed as host paths since the Docker daemon
@@ -76,21 +83,33 @@ class DockerSecBenchRuntime:
         source_dir = run_output_path / "src"
         testcase_dir = run_output_path / "testcase"
         work_root = run_output_path / "work"
-        helper_script = run_output_path / "secb-exec"
+        # Sealed (non-agent-writable) location, outside every bind mount — see
+        # sealer.sealed_dir. The host-executed secb-exec helper lives here so a
+        # root worker cannot rewrite the script the MCP server runs on the host.
+        helper_script = sealer.sealed_dir(run_output_path) / "secb-exec"
 
         source_dir.mkdir(parents=True, exist_ok=True)
         testcase_dir.mkdir(parents=True, exist_ok=True)
         work_root.mkdir(parents=True, exist_ok=True)
 
-        await self._ensure_image_exists(image)
+        await image_ensurer.ensure_image_exists(
+            image, registry=self._tools_image_registry, timeout=self._timeout_seconds
+        )
         if not any(source_dir.iterdir()):
-            await self._copy_source_tree(image, source_dir)
+            await workspace_mirror.copy_source_tree(
+                image, source_dir, timeout=self._timeout_seconds
+            )
         if not any(testcase_dir.iterdir()):
-            await self._copy_testcase_tree(image, testcase_dir)
+            await workspace_mirror.copy_testcase_tree(
+                image, testcase_dir, timeout=self._timeout_seconds
+            )
+        workspace_mirror.make_host_tree_writable(testcase_dir)
+        sealer.remove_forbidden_testcase_artifacts(testcase_dir)
+        sealer.seed_runtime_scripts(testcase_dir)
         if not any(work_root.iterdir()):
-            await self._copy_work_tree(image, work_root)
+            await workspace_mirror.copy_work_tree(image, work_root, timeout=self._timeout_seconds)
 
-        host_work_dir = self._map_host_work_dir(source_dir, cve.work_dir)
+        host_work_dir = workspace_mirror.map_host_work_dir(source_dir, cve.work_dir)
         host_work_dir.mkdir(parents=True, exist_ok=True)
 
         return SecBenchWorkspace(
@@ -104,6 +123,7 @@ class DockerSecBenchRuntime:
             container_testcase_dir="/testcase",
             container_working_directory=cve.work_dir,
             helper_script=helper_script,
+            sealed_surface=sealer.sealed_runtime_surface(),
         )
 
     async def start_session(
@@ -124,18 +144,16 @@ class DockerSecBenchRuntime:
             ("host_work_dir", workspace.host_work_dir),
         ):
             resolved = path.resolve()
-            if (
-                resolved != host_root_resolved
-                and host_root_resolved not in resolved.parents
-            ):
+            if resolved != host_root_resolved and host_root_resolved not in resolved.parents:
                 raise RuntimeError(
                     f"Refusing to mount {label}={resolved}: "
                     f"path escapes this run's host_root {host_root_resolved}"
                 )
 
-        container_name = (
-            f"{self._container_prefix}-{workspace.root_id.hex}-{agent_id.hex}"
-        )
+        container_name = f"{self._container_prefix}-{workspace.root_id.hex}-{agent_id.hex}"
+        sealer.seed_runtime_scripts(workspace.host_testcase_dir)
+        patch_script = sealer.validated_patch_script(workspace.host_testcase_dir)
+        secb_wrapper = sealer.sealed_secb_wrapper(workspace.host_root)
         cmd = [
             "docker",
             "run",
@@ -159,6 +177,8 @@ class DockerSecBenchRuntime:
             "-v",
             f"{self._host_path(workspace.host_testcase_dir)}:{workspace.container_testcase_dir}",
             "-v",
+            f"{self._host_path(patch_script)}:{workspace.container_testcase_dir}/patch.sh:ro",
+            "-v",
             f"{self._host_path(workspace.host_work_root)}:{workspace.container_work_dir}",
             # Bind the workspace root so worker scratch files (e.g. mcp config,
             # scratch CLAUDE_CONFIG_DIR) written on the host are reachable from
@@ -166,31 +186,22 @@ class DockerSecBenchRuntime:
             # runs in-container (Cell A flat-mode docker-exec path).
             "-v",
             f"{self._host_path(workspace.host_root)}:{workspace.container_workspace_root}",
+            "-v",
+            f"{self._host_path(patch_script)}:{workspace.container_workspace_root}/testcase/patch.sh:ro",
+            # Overlay the delegating secb wrapper read-only from a sealed source
+            # outside every bind mount, so a root worker shell cannot rewrite
+            # secb to fake build/repro/patch results (replaces the baked golden
+            # secb at run time without leaving a writable in-container copy).
+            "-v",
+            f"{self._host_path(secb_wrapper)}:/usr/local/bin/secb:ro",
             workspace.image,
             "tail",
             "-f",
             "/dev/null",
         ]
-        container_id = (await self._run_checked(cmd)).strip()[:12]
-
-        # Audit BUG-B: the container is already running after `docker run`;
-        # the post-run setup (`_install_secb`, etc.) may raise. Without a
-        # cleanup wrapper an exception leaks a detached container the
-        # caller never sees (the session object is never returned, so the
-        # plugin's `cleanup_worker_execution` pops nothing). Force-remove
-        # the container before re-raising so no orphan survives.
-        try:
-            if cve.secb_sh:
-                await self._install_secb(container_id, cve.secb_sh)
-
-            await self._add_git_safe_directory(container_id, cve.work_dir)
-            # Ensure build.sh is executable inside the container (DooD uid mismatch)
-            await self._run_best_effort(
-                ["docker", "exec", container_id, "chmod", "+x", "/src/build.sh"]
-            )
-        except Exception:
-            await self._run_best_effort(["docker", "rm", "-f", container_id])
-            raise
+        container_id = (await docker_cli.run_checked(cmd, timeout=self._timeout_seconds)).strip()[
+            :12
+        ]
 
         session = SecBenchContainerSession(
             workspace=workspace,
@@ -198,167 +209,48 @@ class DockerSecBenchRuntime:
             container_name=container_name,
             image=workspace.image,
         )
-        self._write_exec_helper(session)
+
+        # Audit BUG-B: the container is already running after `docker run`; the
+        # post-run setup below may raise (notably the exec-helper write). Without
+        # a cleanup wrapper an exception leaks a detached container the caller
+        # never sees (the session is never returned, so the plugin's
+        # `cleanup_worker_execution` pops nothing). Force-remove before
+        # re-raising so no orphan survives.
+        try:
+            await self._add_git_safe_directory(container_id, cve.work_dir)
+            # Ensure build.sh is executable inside the container (DooD uid mismatch)
+            await docker_cli.run_best_effort(
+                ["docker", "exec", container_id, "chmod", "+x", "/src/build.sh"],
+                timeout=self._timeout_seconds,
+            )
+            self._write_exec_helper(session)
+        except Exception:
+            await docker_cli.run_best_effort(
+                ["docker", "rm", "-f", container_id], timeout=self._timeout_seconds
+            )
+            raise
+
         return session
 
-    async def stop_session(self, session: SecBenchContainerSession) -> None:
-        """Stop and remove a worker container."""
-        await self._run_best_effort(["docker", "rm", "-f", session.container_id])
-
-    async def _ensure_image_exists(self, image: str) -> None:
-        exit_code, _, _ = await self._run_command(["docker", "image", "inspect", image])
-        if exit_code == 0:
-            return
-        raise RuntimeError(
-            "Missing SEC-bench image "
-            f"{image}. Build it first with deployment/build-secbench-tools.sh."
-        )
-
-    async def _copy_testcase_tree(self, image: str, testcase_dir: Path) -> None:
-        seed_container = (
-            await self._run_checked(
-                [
-                    "docker",
-                    "create",
-                    "--label",
-                    f"arise.session_pid={os.getpid()}",
-                    "--label",
-                    "arise.role=seed",
-                    "--label",
-                    f"arise.created_at={datetime.now(UTC).isoformat()}",
-                    image,
-                ]
-            )
-        ).strip()
-        try:
-            await self._run_checked(
-                ["docker", "cp", f"{seed_container}:/testcase/.", str(testcase_dir)]
-            )
-        finally:
-            await self._run_best_effort(["docker", "rm", "-f", seed_container])
-
     async def _add_git_safe_directory(self, container_id: str, work_dir: str) -> None:
-        await self._run_best_effort(
+        await docker_cli.run_best_effort(
             [
-                "docker", "exec", container_id, "git", "config",
-                "--global", "--add", "safe.directory", work_dir,
-            ]
-        )
-
-    async def _copy_source_tree(self, image: str, source_dir: Path) -> None:
-        seed_container = (
-            await self._run_checked(
-                [
-                    "docker",
-                    "create",
-                    "--label",
-                    f"arise.session_pid={os.getpid()}",
-                    "--label",
-                    "arise.role=seed",
-                    "--label",
-                    f"arise.created_at={datetime.now(UTC).isoformat()}",
-                    image,
-                ]
-            )
-        ).strip()
-        try:
-            await self._run_checked(
-                ["docker", "cp", f"{seed_container}:/src/.", str(source_dir)]
-            )
-        finally:
-            await self._run_best_effort(["docker", "rm", "-f", seed_container])
-        self._make_host_tree_writable(source_dir)
-        # Ensure build.sh is executable after copy (docker cp may not preserve mode).
-        build_sh = source_dir / "build.sh"
-        if build_sh.exists():
-            build_sh.chmod(build_sh.stat().st_mode | 0o755)
-
-    async def _copy_work_tree(self, image: str, work_root: Path) -> None:
-        seed_container = (
-            await self._run_checked(
-                [
-                    "docker",
-                    "create",
-                    "--label",
-                    f"arise.session_pid={os.getpid()}",
-                    "--label",
-                    "arise.role=seed",
-                    "--label",
-                    f"arise.created_at={datetime.now(UTC).isoformat()}",
-                    image,
-                ]
-            )
-        ).strip()
-        try:
-            exit_code, stdout, stderr = await self._run_command(
-                ["docker", "cp", f"{seed_container}:/work/.", str(work_root)]
-            )
-            if exit_code != 0:
-                logger.info(
-                    "No /work tree copied from %s: %s",
-                    image,
-                    stderr.strip() or stdout.strip() or "docker cp failed",
-                )
-                return
-        finally:
-            await self._run_best_effort(["docker", "rm", "-f", seed_container])
-        self._make_host_tree_writable(work_root)
-
-    @staticmethod
-    def _make_host_tree_writable(path: Path) -> None:
-        # docker cp preserves root ownership from the image. Make mirrored
-        # files writable by the host-side agent while leaving symlinks alone.
-        for item in path.rglob("*"):
-            if item.is_symlink():
-                continue
-            try:
-                mode = item.stat().st_mode
-                if item.is_dir():
-                    item.chmod(mode | 0o777)
-                else:
-                    item.chmod(mode | 0o666)
-            except OSError:
-                pass
-
-    def _map_host_work_dir(self, source_dir: Path, container_work_dir: str) -> Path:
-        # G.5 part 1 — normalize-and-validate. `Path.__truediv__` does NOT
-        # normalize, so `container_work_dir="/src/../../etc"` would produce
-        # `source_dir / "../../etc"` and a subsequent `mkdir(parents=True)`
-        # would create directories outside the runs root. Resolve both paths
-        # and require the candidate to either equal or descend from
-        # `source_dir`.
-        if container_work_dir == "/src":
-            return source_dir
-        if not container_work_dir.startswith("/src/"):
-            raise RuntimeError(
-                f"Unsupported SEC-bench work_dir outside /src: {container_work_dir}"
-            )
-        candidate = source_dir / container_work_dir.removeprefix("/src/")
-        source_resolved = source_dir.resolve()
-        candidate_resolved = candidate.resolve()
-        if (
-            candidate_resolved != source_resolved
-            and source_resolved not in candidate_resolved.parents
-        ):
-            raise RuntimeError(
-                f"Refusing work_dir escape: {container_work_dir} resolves to "
-                f"{candidate_resolved}, outside {source_resolved}"
-            )
-        return candidate
-
-    async def _install_secb(self, container_id: str, secb_content: str) -> None:
-        install_cmd = f"""
-cat > /usr/local/bin/secb << 'SECB_EOF'
-{secb_content}
-SECB_EOF
-chmod +x /usr/local/bin/secb
-"""
-        await self._run_checked(
-            ["docker", "exec", container_id, "bash", "-lc", install_cmd]
+                "docker",
+                "exec",
+                container_id,
+                "git",
+                "config",
+                "--global",
+                "--add",
+                "safe.directory",
+                work_dir,
+            ],
+            timeout=self._timeout_seconds,
         )
 
     def _write_exec_helper(self, session: SecBenchContainerSession) -> None:
         helper = session.workspace.helper_script
+        helper.parent.mkdir(parents=True, exist_ok=True)
         work_dir = session.workspace.container_working_directory
         container = session.container_id
         helper.write_text(
@@ -368,23 +260,23 @@ chmod +x /usr/local/bin/secb
                     "set -euo pipefail",
                     "",
                     'if [ "$#" -eq 0 ]; then',
-                    '  echo "Usage: ./secb-exec \'<command>\'" >&2',
+                    "  echo \"Usage: ./secb-exec '<command>'\" >&2",
                     "  exit 2",
                     "fi",
                     "",
                     f"WORKDIR={shlex.quote(work_dir)}",
                     f"CONTAINER={shlex.quote(container)}",
-                    '# Run with permissive umask so files created by root-in-container',
-                    '# land on the host bind-mount as world-writable (mode 666/777),',
-                    '# letting the host-side file editor overwrite them later.',
+                    "# Run with permissive umask so files created by root-in-container",
+                    "# land on the host bind-mount as world-writable (mode 666/777),",
+                    "# letting the host-side file editor overwrite them later.",
                     'CMD="umask 000; $*"',
-                    '# Try the project workdir first; fall back to /src, then /',
-                    '# so that commands survive directory deletion/re-creation.',
+                    "# Try the project workdir first; fall back to /src, then /",
+                    "# so that commands survive directory deletion/re-creation.",
                     'if docker exec "$CONTAINER" test -d "$WORKDIR" 2>/dev/null; then',
                     '  docker exec -i -w "$WORKDIR" "$CONTAINER" bash -lc "$CMD"',
                     'elif docker exec "$CONTAINER" test -d /src 2>/dev/null; then',
                     '  docker exec -i -w /src "$CONTAINER" bash -lc "$CMD"',
-                    'else',
+                    "else",
                     '  docker exec -i -w / "$CONTAINER" bash -lc "$CMD"',
                     "fi",
                     "",
@@ -394,41 +286,52 @@ chmod +x /usr/local/bin/secb
         )
         helper.chmod(helper.stat().st_mode | 0o755)
 
-    async def _run_checked(self, cmd: list[str]) -> str:
-        exit_code, stdout, stderr = await self._run_command(cmd)
-        if exit_code != 0:
-            raise RuntimeError(stderr.strip() or stdout.strip() or "Command failed")
-        return stdout
 
-    async def _run_best_effort(self, cmd: list[str]) -> None:
-        exit_code, _, stderr = await self._run_command(cmd)
-        if exit_code != 0 and stderr.strip():
-            logger.warning("Command failed during cleanup: %s", stderr.strip())
+class DockerProcedureSession:
+    """ProcedureSession over the run's shared worker container.
 
-    async def _run_command(self, cmd: list[str]) -> tuple[int, str, str]:
+    Drives ``docker exec`` synchronously for the deterministic procedure tier.
+    A timeout is a task-level outcome (``CommandOutcome(timed_out=True)``),
+    never an exception — the procedure turns it into a FAIL verdict digest.
+    """
+
+    def __init__(self, session: SecBenchContainerSession) -> None:
+        self._session = session
+        self.testcase_dir = session.workspace.host_testcase_dir
+
+    async def run(self, command: str, *, timeout: float) -> CommandOutcome:  # noqa: ASYNC109
+        argv = [
+            "docker",
+            "exec",
+            "-i",
+            "-w",
+            self._session.workspace.container_working_directory,
+            self._session.container_id,
+            "bash",
+            "-lc",
+            command,
+        ]
         process = await asyncio.create_subprocess_exec(
-            *cmd,
+            *argv,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
             env=os.environ.copy(),
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self._timeout_seconds
-            )
-        except asyncio.TimeoutError:
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except TimeoutError:
             process.kill()
             try:
-                await asyncio.wait_for(process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "docker subprocess did not exit after kill: %s", cmd[:3]
-                )
-            raise RuntimeError(
-                f"Docker command timed out after {self._timeout_seconds}s: {cmd[:3]}"
+                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
+            except TimeoutError:
+                stdout = b""
+                logger.warning("docker exec did not exit after kill: %s", command[:80])
+            return CommandOutcome(
+                exit_code=124,
+                output=stdout.decode("utf-8", errors="replace"),
+                timed_out=True,
             )
-        return (
-            process.returncode or 0,
-            stdout.decode("utf-8", errors="replace"),
-            stderr.decode("utf-8", errors="replace"),
+        return CommandOutcome(
+            exit_code=process.returncode or 0,
+            output=stdout.decode("utf-8", errors="replace"),
         )

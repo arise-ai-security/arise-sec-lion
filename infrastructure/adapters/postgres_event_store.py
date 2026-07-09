@@ -19,17 +19,23 @@ from core.domain.events.events import (
     DecisionInfeasible,
     DecisionRecorded,
     DomainEvent,
+    FailureDigestRecorded,
     LimitEnforced,
     OperationFinished,
     OperationStarted,
     ProbeCompleted,
     ProbeStarted,
+    ProcedureExecutionFinished,
+    ProcedureExecutionStarted,
     PromptSent,
     RedecompositionTriggered,
     RetryScheduled,
     RunCompleted,
     RunStarted,
+    RuntimeSurfaceSealed,
     SharedContextCreated,
+    SourceFileEdited,
+    SourceFileObserved,
     StatusChanged,
     SubtasksDefined,
     TaskAssigned,
@@ -68,6 +74,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "OperationFinished": OperationFinished,
     "RunStarted": RunStarted,
     "RunCompleted": RunCompleted,
+    # Runtime-surface events (anti-leak)
+    "RuntimeSurfaceSealed": RuntimeSurfaceSealed,
     # Cost tracking events
     "TokensConsumed": TokensConsumed,
     "WorkerCostRecorded": WorkerCostRecorded,
@@ -77,14 +85,20 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "SharedContextCreated": SharedContextCreated,
     "ArtifactStored": ArtifactStored,
     "DecisionRecorded": DecisionRecorded,
+    # Shared code-context events
+    "SourceFileObserved": SourceFileObserved,
+    "SourceFileEdited": SourceFileEdited,
     # New lifecycle events (refac/simplify-with-new-features)
     "VerificationFailed": VerificationFailed,
     "VerificationPassed": VerificationPassed,
     "DecisionInfeasible": DecisionInfeasible,
     "RetryScheduled": RetryScheduled,
+    "FailureDigestRecorded": FailureDigestRecorded,
     "RedecompositionTriggered": RedecompositionTriggered,
     "ProbeStarted": ProbeStarted,
     "ProbeCompleted": ProbeCompleted,
+    "ProcedureExecutionStarted": ProcedureExecutionStarted,
+    "ProcedureExecutionFinished": ProcedureExecutionFinished,
 }
 
 

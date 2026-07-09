@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from infrastructure.cleanup.registry import CleanupRegistry, _pid_alive
+from infrastructure.cleanup.registry import CleanupRegistry, pid_alive
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -114,14 +114,14 @@ def test_run_all_is_idempotent_after_first_call() -> None:
     assert counter["n"] == 1
 
 
-# --- _pid_alive ----------------------------------------------------------
+# --- pid_alive -----------------------------------------------------------
 
 
 def test_pid_alive_returns_true_for_self() -> None:
     """Test that the current process is considered alive."""
 
     # Given/When: probe own PID
-    alive = _pid_alive(os.getpid())
+    alive = pid_alive(os.getpid())
 
     # Then: alive
     assert alive is True
@@ -131,7 +131,7 @@ def test_pid_alive_returns_false_for_definitely_dead_pid() -> None:
     """Test that an out-of-range PID is reported as not alive."""
 
     # Given/When: probe a PID outside the kernel's allocation range
-    alive = _pid_alive(2**31 - 1)
+    alive = pid_alive(2**31 - 1)
 
     # Then: not alive
     assert alive is False

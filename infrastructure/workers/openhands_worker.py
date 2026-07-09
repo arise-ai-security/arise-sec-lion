@@ -50,10 +50,14 @@ class OpenHandsWorker:
         timeouts: TimeoutBudget,
         workspace: WorkspaceSpec,
     ) -> WorkerResult:
-        del tool_policy  # OpenHands' allowlist is implicit; see build_tool_policy.
+        del tool_policy  # OpenHands' allowlist is implicit; ToolPolicy only drives the Claude CLI path.
         del timeouts  # OpenHandsAdapter has its own timeout configured at construction time.
 
+        # Forward flat-mode plugin context (container session, MCP servers,
+        # helper script) so the adapter routes execution into the SEC-bench
+        # container; canonical keys win over extras collisions.
         task_context: dict[str, object] = {
+            **dict(workspace.extras),
             "agent_id": run_id,
             "task_description": spec.rendered_prompt,
             "tool_name": "openhands",

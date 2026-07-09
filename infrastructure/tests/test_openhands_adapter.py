@@ -15,6 +15,8 @@ import pytest
 from openhands.sdk.conversation.conversation_stats import ConversationStats
 from openhands.sdk.llm.utils.metrics import Metrics, ResponseLatency, TokenUsage
 
+import infrastructure.adapters.worker.openhands_adapter as openhands_adapter_module
+import infrastructure.adapters.worker.openhands_container_tools as openhands_container_tools_module
 from core.domain.events.events import (
     DomainEvent,
     ThoughtCaptured,
@@ -22,7 +24,7 @@ from core.domain.events.events import (
     WorkerCostRecorded,
     WorkFailed,
 )
-import infrastructure.adapters.worker.openhands_adapter as openhands_adapter_module
+from infrastructure.adapters.worker import process_reaper
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.worker.shared import ContainerSessionContext
 
@@ -53,7 +55,7 @@ def _resolve_container_aware_openhands_tool(
     conv_state: SimpleNamespace,
     name: str,
 ) -> Any:
-    openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+    openhands_container_tools_module._ensure_container_aware_openhands_tools_registered()
     from openhands.sdk import Tool
     from openhands.sdk.tool.registry import resolve_tool
 
@@ -460,12 +462,12 @@ class TestOpenHandsAdapter:
             calls += 1
 
         monkeypatch.setattr(
-            openhands_adapter_module,
+            openhands_container_tools_module,
             "_CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED",
             False,
         )
         monkeypatch.setattr(
-            openhands_adapter_module,
+            openhands_container_tools_module,
             "_register_container_aware_openhands_tools",
             fake_register,
         )
@@ -473,7 +475,7 @@ class TestOpenHandsAdapter:
         def target() -> None:
             try:
                 barrier.wait()
-                openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+                openhands_container_tools_module._ensure_container_aware_openhands_tools_registered()
             except BaseException as exc:
                 errors.append(exc)
 
@@ -495,14 +497,14 @@ class TestOpenHandsAdapter:
     ) -> None:
         # Given: OpenHands has already registered its default native tools.
         monkeypatch.setattr(
-            openhands_adapter_module,
+            openhands_container_tools_module,
             "_CONTAINER_AWARE_OPENHANDS_TOOLS_REGISTERED",
             False,
         )
         caplog.set_level(logging.WARNING, logger="openhands.sdk.tool.registry")
 
         # When: the adapter intentionally replaces them with container-aware tools.
-        openhands_adapter_module._ensure_container_aware_openhands_tools_registered()
+        openhands_container_tools_module._ensure_container_aware_openhands_tools_registered()
 
         # Then: expected SDK duplicate-name warnings do not pollute experiment logs.
         assert "Duplicate tool name registerd" not in caplog.text
@@ -592,6 +594,89 @@ class TestOpenHandsAdapter:
         assert "final output" in events[-1].result
 
     @pytest.mark.asyncio
+    async def test_workers_use_fresh_conversation_per_worker_with_shared_container(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """Workers never share a Conversation, even under one shared container.
+
+        Conversation reuse (which overflowed the worker context window) was
+        reverted: every worker gets its OWN fresh Conversation (one build each,
+        closed per worker) and emits its OWN full WorkerCostRecorded with no
+        delta math. The cost event carries the shared container id plus a
+        per-worker conversation id, so the invariant is checkable from the DB.
+        """
+        # Given: two workers sharing one container id.
+        adapter = _adapter(timeout_seconds=1)
+        builds: list[_FakeConversation] = []
+
+        def fake_build(*_args):
+            conversation = _FakeConversation()
+            builds.append(conversation)
+            return conversation
+
+        monkeypatch.setattr(adapter, "_build_conversation", fake_build)
+
+        cs = _container_session(tmp_path)
+        container_session_dict = {
+            "container_id": cs.container_id,
+            "container_name": cs.container_name,
+            "image": cs.image,
+            "workspace_root": str(cs.workspace_root),
+            "host_source_dir": str(cs.host_source_dir),
+            "host_testcase_dir": str(cs.host_testcase_dir),
+            "host_work_dir": str(cs.host_work_dir),
+            "container_source_dir": cs.container_source_dir,
+            "container_testcase_dir": cs.container_testcase_dir,
+            "container_working_directory": cs.container_working_directory,
+            "helper_script": str(cs.helper_script),
+        }
+
+        def task_ctx(desc: str) -> dict:
+            return {
+                "task_description": desc,
+                "agent_id": uuid4(),
+                "working_directory": str(tmp_path),
+                "container_session": container_session_dict,
+            }
+
+        # When: two sequential workers run under the same container.
+        worker1 = [e async for e in adapter.run_session(task_ctx("role-one"))]
+        worker2 = [e async for e in adapter.run_session(task_ctx("role-two"))]
+
+        # Then: each worker built and closed its OWN fresh conversation, and the
+        # message went only to that worker's conversation (the container-path
+        # prefix is prepended, so assert containment not equality).
+        assert len(builds) == 2
+        assert builds[0] is not builds[1]
+        assert len(builds[0].messages) == 1
+        assert "role-one" in builds[0].messages[0]
+        assert len(builds[1].messages) == 1
+        assert "role-two" in builds[1].messages[0]
+        assert builds[0].closed is True
+        assert builds[1].closed is True
+        assert isinstance(worker1[-1], WorkCompleted)
+        assert isinstance(worker2[-1], WorkCompleted)
+
+        # And: each worker emits its OWN full cost (no delta) — recoverable per worker.
+        cost1 = next(e for e in worker1 if isinstance(e, WorkerCostRecorded))
+        cost2 = next(e for e in worker2 if isinstance(e, WorkerCostRecorded))
+        assert cost1.cost_usd == pytest.approx(0.12)
+        assert cost2.cost_usd == pytest.approx(0.12)
+
+        # And: the cost event carries the execution-environment identity — the
+        # SHARED container id and a DISTINCT conversation id per worker.
+        assert cost1.container_id == cs.container_id
+        assert cost2.container_id == cs.container_id
+        assert cost1.conversation_id is not None
+        assert cost2.conversation_id is not None
+        assert cost1.conversation_id != cost2.conversation_id
+
+        # And: the reuse API is gone.
+        assert not hasattr(adapter, "close_shared_sessions")
+
+    @pytest.mark.asyncio
     async def test_conversation_message_and_run_share_blocking_thread(
         self,
         monkeypatch,
@@ -641,7 +726,7 @@ class TestOpenHandsAdapter:
 
         # Given: send_message blocks before OpenHands can enter run().
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            "infrastructure.adapters.worker.openhands_adapter.SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
         adapter = _adapter(timeout_seconds=0.01)
@@ -684,12 +769,12 @@ class TestOpenHandsAdapter:
 
         # Given: child PID snapshots where an MCP child appears after start.
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            "infrastructure.adapters.worker.openhands_adapter.SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
         snapshots = iter([{100}, {100, 200}, {100, 200}])
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._snapshot_child_pids",
+            "infrastructure.adapters.worker.openhands_adapter.snapshot_child_pids",
             lambda: next(snapshots, {100, 200}),
         )
         adapter = _adapter(timeout_seconds=0.01)
@@ -756,7 +841,7 @@ class TestOpenHandsAdapter:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setattr(
-            "infrastructure.adapters.worker.openhands_adapter._SHUTDOWN_GRACE_SECONDS",
+            "infrastructure.adapters.worker.openhands_adapter.SHUTDOWN_GRACE_SECONDS",
             0.05,
         )
         adapter = _adapter(timeout_seconds=0.01)
@@ -1348,16 +1433,10 @@ class TestMcpChildProcessLifecycle:
                 "test scaffold: SIGTERM-ignoring child failed to spawn"
             )
 
-            class _FakeConv:
-                def pause(self) -> None: ...
-                def close(self) -> None: ...
-
-            adapter = _adapter()
-
             # When: the reaper runs with a tight grace so the test is
-            # fast. Internal helper to bypass the constant default.
+            # fast. Direct module call to bypass the constant default.
             started = time.monotonic()
-            adapter._reap_with_escalation(
+            process_reaper.reap_with_escalation(
                 {child.pid}, grace_seconds=0.5, poll_interval=0.05
             )
             elapsed = time.monotonic() - started
@@ -1383,9 +1462,8 @@ class TestMcpChildProcessLifecycle:
     def test_reap_with_escalation_handles_empty_set(self) -> None:
         """Defensive: empty PID set is a no-op (mirrors the no-PIDs
         contract of ``_request_shutdown``)."""
-        adapter = _adapter()
         # Should not raise nor block.
-        adapter._reap_with_escalation(set(), grace_seconds=0.1, poll_interval=0.05)
+        process_reaper.reap_with_escalation(set(), grace_seconds=0.1, poll_interval=0.05)
 
     def test_reap_with_escalation_tolerates_already_reaped_pids(self) -> None:
         """``ChildProcessError`` (already reaped) and ``ProcessLookupError``
@@ -1396,20 +1474,18 @@ class TestMcpChildProcessLifecycle:
         # ``os.kill(pid, 0)`` will succeed (process exists) but
         # ``waitpid`` will raise ``ChildProcessError`` because the
         # kernel only allows waiting for direct children.
-        adapter = _adapter()
-
         with (
-            patch("infrastructure.adapters.worker.openhands_adapter.os.kill"),
+            patch("infrastructure.adapters.worker.process_reaper.os.kill"),
             patch(
-                "infrastructure.adapters.worker.openhands_adapter.os.waitpid",
+                "infrastructure.adapters.worker.process_reaper.os.waitpid",
                 side_effect=ChildProcessError(),
             ),
             patch(
-                "infrastructure.adapters.worker.openhands_adapter._pid_alive",
+                "infrastructure.adapters.worker.process_reaper.pid_alive",
                 return_value=True,
             ),
         ):
-            adapter._reap_with_escalation(
+            process_reaper.reap_with_escalation(
                 {_os.getpid()},  # never the current process
                 grace_seconds=0.1,
                 poll_interval=0.05,

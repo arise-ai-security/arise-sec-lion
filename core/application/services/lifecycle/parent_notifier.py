@@ -102,8 +102,11 @@ class ParentNotificationService:
         - ANALYZING (re-decompose in flight) or other: no-op.
 
         If child failure is infeasible (DecisionInfeasible), triggers parent
-        re-decomposition instead of propagating failure. Otherwise, parent
-        fails and failure bubbles up to BOSS.
+        re-decomposition instead of propagating failure. Otherwise the failure,
+        its task, and its digest are recorded on the parent. When ALL children
+        have failed and redecomposition budget remains, the parent re-decomposes
+        informed by those records (ends ANALYZING); once the budget is exhausted
+        it fails and the failure bubbles up to BOSS.
         """
         if child.status != AgentStatus.FAILED or child.parent_id is None:
             return
@@ -148,6 +151,9 @@ class ParentNotificationService:
                     "Redecomposition limit reached "
                     f"({self._max_redecompositions}): {error}"
                 ),
+                child_task=child.task_description,
+                digest=child.failure_digest,
+                max_redecompositions=self._max_redecompositions,
             )
             await self._repository.persist_events(
                 parent, self._progress_callback
@@ -161,6 +167,9 @@ class ParentNotificationService:
         parent.handle_child_failure(
             child_id=child.agent_id,
             reason=error,
+            child_task=child.task_description,
+            digest=child.failure_digest,
+            max_redecompositions=self._max_redecompositions,
         )
 
         await self._repository.persist_events(

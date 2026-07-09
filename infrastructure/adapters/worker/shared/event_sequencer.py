@@ -127,6 +127,8 @@ class EventSequencer:
         cache_write_tokens: int | None = None,
         reasoning_tokens: int | None = None,
         usage_metrics: list[WorkerUsageMetrics] | None = None,
+        container_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> WorkerCostRecorded:
         """Create a WorkerCostRecorded event and increment sequence.
 
@@ -142,6 +144,8 @@ class EventSequencer:
             cache_write_tokens: Cache write tokens if available.
             reasoning_tokens: Reasoning tokens if available.
             usage_metrics: Detailed per-usage worker SDK metrics if available.
+            container_id: Container the worker's tools executed in, if known.
+            conversation_id: Identity of the worker's conversation, if known.
 
         Returns:
             WorkerCostRecorded event with current sequence number.
@@ -160,6 +164,8 @@ class EventSequencer:
             usage_metrics=usage_metrics or [],
             cost_usd=cost_usd,
             duration_seconds=duration_seconds,
+            container_id=container_id,
+            conversation_id=conversation_id,
         )
         self._sequence += 1
         return event

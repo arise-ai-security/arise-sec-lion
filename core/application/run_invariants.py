@@ -9,14 +9,14 @@ task framing, tool policy, timeouts, and workspace.
 
 from __future__ import annotations
 
-from collections.abc import Mapping  # noqa: TC003 — Pydantic resolves field types at runtime.
-from pathlib import Path  # noqa: TC003 — Pydantic resolves field types at runtime.
+from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-from uuid import UUID  # noqa: TC003 — Pydantic resolves field types at runtime.
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from core.domain.events.events import DomainEvent  # noqa: TC001 - Pydantic resolves at runtime.
+from core.domain.events.events import DomainEvent
 
 
 if TYPE_CHECKING:
@@ -113,21 +113,6 @@ class WorkerResult(BaseModel):
     wall_time_seconds: float
     output_summary: str | None = None
     events: tuple[DomainEvent, ...] = ()
-
-
-def build_tool_policy(*, settings: Settings) -> ToolPolicy:
-    """Extract allowed/disallowed tool names from settings.
-
-    Reads the global ``settings.worker.allowed_tools`` / ``disallowed_tools``
-    policy so experiments apply the same allow/block list to every backend.
-    ``allowed_bash_commands`` is derived from ``settings.security.tools``
-    when security is enabled, else empty.
-    """
-    return ToolPolicy(
-        allowed=tuple(settings.worker.allowed_tools),
-        disallowed=tuple(settings.worker.disallowed_tools),
-        allowed_bash_commands=(tuple(settings.security.tools) if settings.security.enabled else ()),
-    )
 
 
 def build_timeouts(settings: Settings) -> TimeoutBudget:

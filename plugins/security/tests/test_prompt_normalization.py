@@ -20,6 +20,18 @@ import pytest
 
 from core.application.services import PromptBuilder
 from plugins.security import CVEInstance, SecBenchPromptStrategy
+from plugins.security.deliverables import (
+    ARTIFACT_DIRS,
+    ARTIFACT_PATHS,
+    EXPLOIT_VALIDATION_FIELDS,
+    HIERARCHICAL_ONLY,
+    PATCH_VALIDATION_FIELDS,
+    PHASE_COMMANDS,
+    REQUIRED_FILES,
+    REQUIRED_FILES_WITH_PURPOSE,
+    ROOT_CAUSE_BLOCK_FIELDS,
+    VALIDATION_REQUIRED,
+)
 
 
 def _prompts_dir() -> Path:
@@ -72,7 +84,23 @@ def _render_phase_partial(builder: PromptBuilder, cve: CVEInstance, phase: str) 
     ground-truth block that must appear verbatim in both prompts.
     """
     template = builder.env.get_template(f"domains/secbench/phases/{phase}.j2")
-    return template.render(include_validation_gate=True, **cve.to_template_context())
+    contract_ctx = {
+        "artifact_dirs": ARTIFACT_DIRS,
+        "artifact_paths": ARTIFACT_PATHS,
+        "phase_commands": PHASE_COMMANDS,
+        "required_files": REQUIRED_FILES,
+        "required_files_with_purpose": REQUIRED_FILES_WITH_PURPOSE,
+        "validation_required": VALIDATION_REQUIRED,
+        "hierarchical_only": HIERARCHICAL_ONLY,
+        "root_cause_block_fields": ROOT_CAUSE_BLOCK_FIELDS,
+        "exploit_validation_fields": EXPLOIT_VALIDATION_FIELDS,
+        "patch_validation_fields": PATCH_VALIDATION_FIELDS,
+    }
+    return template.render(
+        include_validation_gate=True,
+        **cve.to_template_context(),
+        **contract_ctx,
+    )
 
 
 class TestPhaseBlocksAreByteIdenticalAcrossArms:
@@ -118,6 +146,54 @@ class TestPhaseBlocksAreByteIdenticalAcrossArms:
         # And: the blocks are non-trivial (the gate text is actually rendered).
         for _, phase in _BRANCH_TO_PHASE:
             assert len(_render_phase_partial(builder, cve, phase)) > 200
+
+    def test_each_phase_partial_has_numbered_goal_and_step_headings(self) -> None:
+        # Given: the shared phase partials used by flat and worker prompts.
+        builder = _builder()
+        cve = _cve()
+
+        # When: rendering each phase partial directly.
+        blocks = {
+            phase: _render_phase_partial(builder, cve, phase)
+            for _, phase in _BRANCH_TO_PHASE
+        }
+
+        # Then: each phase presents its goal as a numbered list.
+        for phase, block in blocks.items():
+            assert "### Goal\n\n1. " in block, phase
+            assert "\n2. " in block, phase
+
+        # And: command-heavy paragraphs sit under explicit headings.
+        for phase, block in blocks.items():
+            assert "### Mandatory Requirements" in block, phase
+            assert "### Deliverables" in block, phase
+        assert "### Validation Steps" in blocks["build"]
+        assert "### Validation Steps" in blocks["exploit"]
+        assert "### Validation Steps" in blocks["fix"]
+        assert "### Validation Checks" in blocks["report"]
+
+        # And: Builder leads with the secb build contract, not direct build.sh validation.
+        assert (
+            "1. Run `secb build` from the CVE work directory to build the selected base commit"
+            in blocks["build"]
+        )
+        assert ARTIFACT_PATHS["binary_paths"] in blocks["build"]
+        assert "Treat `/usr/local/bin/secb build()` as an optional reference/helper" not in blocks[
+            "build"
+        ]
+
+        # And: Exploiter leads with selected-PoC discovery and secb repro,
+        # without relying on helper internals or poc* naming.
+        assert (
+            "1. Select the shipped PoC under `/testcase` by inspecting filenames, file types, and CVE relevance"
+            in blocks["exploit"]
+        )
+        assert "Run `secb repro`" in blocks["exploit"]
+        assert ARTIFACT_PATHS["poc_path"] in blocks["exploit"]
+        assert "Only create a new PoC when no provided PoC exists" in blocks["exploit"]
+        assert "Treat `/usr/local/bin/secb repro()` as an optional reference/helper" not in blocks[
+            "exploit"
+        ]
 
 
 class TestFlatPromptHasNoSiblingWording:

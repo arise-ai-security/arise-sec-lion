@@ -1,0 +1,82 @@
+[
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "2ec3e6cb-ffab-45e9-9c12-8eca73afafeb",
+    "exit_status": "success",
+    "agents": 1,
+    "wallclock_s": 978.2,
+    "db_status": "completed"
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "721fc607-ad58-4ca0-8030-1898096b846c",
+    "exit_status": "success",
+    "agents": 1,
+    "wallclock_s": 1235.4,
+    "db_status": "completed"
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "93effeed-04c2-4139-9525-041225d85a62",
+    "exit_status": "success",
+    "agents": 5,
+    "wallclock_s": 2003.9,
+    "db_status": "completed"
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "a8a9f702-2196-425d-8303-08dad2bb6a11",
+    "exit_status": "success",
+    "agents": 5,
+    "wallclock_s": 1848.5,
+    "db_status": "completed"
+  },
+  {
+    "study": "b3-boss-bef-direct",
+    "cell": "B3",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "af08effe-51dd-4ad8-9126-a909f76cc6e4",
+    "exit_status": "success",
+    "agents": 5,
+    "wallclock_s": 1550.3,
+    "db_status": "completed"
+  },
+  {
+    "study": "b4-boss-manager-worker",
+    "cell": "B4",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "bb7e0f2e-b02d-4b91-ba62-6048d2cf6312",
+    "exit_status": "success",
+    "agents": 5,
+    "wallclock_s": 1642.8,
+    "db_status": "completed"
+  },
+  {
+    "study": "n2-openhands-subagents",
+    "cell": "N2",
+    "task": "faad2.cve-2018-20196",
+    "run_id": "cbf3c172-a839-46ba-819e-568e25e4332c",
+    "exit_status": "success",
+    "agents": 1,
+    "wallclock_s": 2765.8,
+    "db_status": "completed"
+  },
+  {
+    "study": "n1-openhands-linear",
+    "cell": "N1",
+    "task": "openexr.cve-2020-16589",
+    "run_id": "faf28ee6-a105-4657-be39-859c63a5e280",
+    "exit_status": "success",
+    "agents": 1,
+    "wallclock_s": 817.0,
+    "db_status": "completed"
+  }
+]

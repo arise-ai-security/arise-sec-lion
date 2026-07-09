@@ -69,3 +69,18 @@ class Subtask(BaseModel):
         default=(),
         description="Keywords or patterns to search for (issue IDs, error strings, etc.)",
     )
+
+    # Deterministic execution tier (procedural dispatch). "auto" lets the
+    # registry match; unknown refs are downgraded to "auto" at spawn (fail open).
+    execution_mode: Literal["auto", "agentic", "procedural"] = Field(
+        default="auto",
+        description="Parent's marking: force agentic, force a registered procedure, or auto-match",
+    )
+    procedure_ref: str = Field(
+        default="",
+        description="Registered procedure id when execution_mode == 'procedural'",
+    )
+    procedure_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional parameters for the procedure executor",
+    )

@@ -136,14 +136,14 @@ class TestHierarchicalPathComputation:
 
     def test_root_agent_path(self) -> None:
         """Test that root agent has path (0,)."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         # Given: A root agent with sibling_index=0
         root_id = uuid4()
         summaries = self._build_summaries([(root_id, None, 0)])
 
         # When: Computing path
-        service = AgentQueryService.__new__(AgentQueryService)
+        service = AgentReadinessService.__new__(AgentReadinessService)
         path = service._compute_hierarchical_path(root_id, summaries)
 
         # Then: Path is (0,)
@@ -151,7 +151,7 @@ class TestHierarchicalPathComputation:
 
     def test_child_agent_path(self) -> None:
         """Test that child agent has path (parent_sibling, child_sibling)."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         # Given: A tree with root and second child (sibling_index=1)
         root_id = uuid4()
@@ -162,7 +162,7 @@ class TestHierarchicalPathComputation:
         ])
 
         # When: Computing path for child
-        service = AgentQueryService.__new__(AgentQueryService)
+        service = AgentReadinessService.__new__(AgentReadinessService)
         path = service._compute_hierarchical_path(child_id, summaries)
 
         # Then: Path is (0, 1) - root's index 0, child's index 1
@@ -170,7 +170,7 @@ class TestHierarchicalPathComputation:
 
     def test_grandchild_agent_path(self) -> None:
         """Test that grandchild has correct 3-level path."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         # Given: A 3-level tree
         root_id = uuid4()
@@ -183,7 +183,7 @@ class TestHierarchicalPathComputation:
         ])
 
         # When: Computing path for grandchild
-        service = AgentQueryService.__new__(AgentQueryService)
+        service = AgentReadinessService.__new__(AgentReadinessService)
         path = service._compute_hierarchical_path(grandchild_id, summaries)
 
         # Then: Path is (0, 2, 1)
@@ -191,7 +191,7 @@ class TestHierarchicalPathComputation:
 
     def test_path_ordering_is_left_to_right(self) -> None:
         """Test that lexicographic sorting gives left-to-right order."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         # Given: A tree like:
         #        BOSS (0)
@@ -215,7 +215,7 @@ class TestHierarchicalPathComputation:
         ])
 
         # When: Computing paths for all workers
-        service = AgentQueryService.__new__(AgentQueryService)
+        service = AgentReadinessService.__new__(AgentReadinessService)
         worker_paths = [
             (w_id, service._compute_hierarchical_path(w_id, summaries))
             for w_id in [w1_id, w2_id, w3_id, w4_id]
@@ -285,7 +285,7 @@ class TestSequentialWorkerOrdering:
         self, mock_repository
     ) -> None:
         """Test that sequential_workers=True returns only the leftmost active worker."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         repository, create_events = mock_repository
 
@@ -307,7 +307,7 @@ class TestSequentialWorkerOrdering:
         )
 
         # When: Getting active agents with sequential_workers=True
-        service = AgentQueryService(repository)
+        service = AgentReadinessService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
         # Then: Only w1 (leftmost) should be returned
@@ -317,7 +317,7 @@ class TestSequentialWorkerOrdering:
     @pytest.mark.asyncio
     async def test_non_workers_returned_in_parallel(self, mock_repository) -> None:
         """Test that non-workers are still returned even with sequential_workers."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         repository, create_events = mock_repository
 
@@ -341,7 +341,7 @@ class TestSequentialWorkerOrdering:
         )
 
         # When: Getting active agents with sequential_workers=True
-        service = AgentQueryService(repository)
+        service = AgentReadinessService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
         # Then: Root (non-worker) is returned plus only leftmost worker
@@ -361,7 +361,7 @@ class TestSequentialWorkerOrdering:
         right subtree has workers ready. Workers in right subtree should NOT execute
         until the left subtree is complete.
         """
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         repository, create_events = mock_repository
 
@@ -386,7 +386,7 @@ class TestSequentialWorkerOrdering:
         )
 
         # When: Getting active agents with sequential_workers=True
-        service = AgentQueryService(repository)
+        service = AgentReadinessService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
         # Then: Worker is blocked because left sibling subtree is incomplete
@@ -400,7 +400,7 @@ class TestSequentialWorkerOrdering:
         self, mock_repository
     ) -> None:
         """Test that workers can proceed once left sibling subtrees are complete."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         repository, create_events = mock_repository
 
@@ -428,7 +428,7 @@ class TestSequentialWorkerOrdering:
         )
 
         # When: Getting active agents with sequential_workers=True
-        service = AgentQueryService(repository)
+        service = AgentReadinessService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
         # Then: Worker can proceed (left sibling is complete)
@@ -446,7 +446,7 @@ class TestSequentialWorkerOrdering:
         Scenario: Left manager is completed but has children still working.
         Right worker should NOT execute until entire left subtree is done.
         """
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         repository, create_events = mock_repository
 
@@ -473,7 +473,7 @@ class TestSequentialWorkerOrdering:
         )
 
         # When: Getting active agents with sequential_workers=True
-        service = AgentQueryService(repository)
+        service = AgentReadinessService(repository)
         active = await service.get_active_agent_ids(sequential_workers=True)
 
         # Then: Worker is blocked because left subtree has incomplete child
@@ -485,7 +485,7 @@ class TestSequentialWorkerOrdering:
     @pytest.mark.asyncio
     async def test_sequential_false_returns_all_workers(self, mock_repository) -> None:
         """Test that sequential_workers=False returns all active workers."""
-        from core.application.services import AgentQueryService
+        from core.application.services import AgentReadinessService
 
         repository, create_events = mock_repository
 
@@ -506,9 +506,56 @@ class TestSequentialWorkerOrdering:
         )
 
         # When: Getting active agents with sequential_workers=False (default)
-        service = AgentQueryService(repository)
+        service = AgentReadinessService(repository)
         active = await service.get_active_agent_ids(sequential_workers=False)
 
         # Then: Both workers are returned
         assert w1_id in active
         assert w2_id in active
+
+
+class TestSiblingResultSummary:
+    """Sibling-facing result summaries prefer the worker's conclusion."""
+
+    def test_prefers_text_after_conclusion_marker(self) -> None:
+        # Given: a judge-oriented command log followed by a conclusion
+        from core.application.services.query.sibling_view import _sibling_result_summary
+        from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
+
+        result = (
+            "$ view (exit None)\nInvalid `path` parameter: /src/missing.c\n"
+            f"{WORKER_CONCLUSION_MARKER}\nBuilt the PoC; repro.sh reproduces the crash."
+        )
+
+        # When
+        summary = _sibling_result_summary(result)
+
+        # Then: siblings see the conclusion, not the transcript noise
+        assert summary == "Built the PoC; repro.sh reproduces the crash."
+        assert "Invalid `path`" not in summary
+
+    def test_falls_back_to_head_tail_without_marker(self) -> None:
+        # Given: a result with no conclusion recorded
+        from core.application.services.query.sibling_view import _sibling_result_summary
+
+        result = "$ make (exit 0)\nok\n" * 200
+
+        # When
+        summary = _sibling_result_summary(result, limit=100)
+
+        # Then: legacy head/tail truncation
+        assert "chars omitted" in summary
+        assert len(summary) < len(result)
+
+    def test_empty_conclusion_falls_back_to_full_log(self) -> None:
+        # Given: a marker with nothing after it
+        from core.application.services.query.sibling_view import _sibling_result_summary
+        from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
+
+        result = f"$ make (exit 0)\nok\n{WORKER_CONCLUSION_MARKER}\n   "
+
+        # When
+        summary = _sibling_result_summary(result)
+
+        # Then
+        assert "$ make (exit 0)" in summary
