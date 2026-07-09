@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400" font-family="ui-sans-serif,Helvetica,Arial,sans-serif" font-size="12">
+<rect width="760" height="400" fill="white"/>
+<text x="14" y="26" font-size="15" font-weight="bold">Inter-module dataflow coupling vs permutation null</text>
+<rect x="64.0" y="253.5" width="32.3" height="66.5" fill="#6baed6"/>
+<rect x="97.3" y="320.0" width="32.3" height="0.0" fill="#6baed6"/>
+<rect x="130.6" y="320.0" width="32.3" height="0.0" fill="#6baed6"/>
+<rect x="163.9" y="253.5" width="32.3" height="66.5" fill="#6baed6"/>
+<rect x="197.2" y="275.7" width="32.3" height="44.3" fill="#6baed6"/>
+<rect x="230.5" y="231.3" width="32.3" height="88.7" fill="#6baed6"/>
+<rect x="263.8" y="187.0" width="32.3" height="133.0" fill="#6baed6"/>
+<rect x="297.1" y="187.0" width="32.3" height="133.0" fill="#6baed6"/>
+<rect x="330.4" y="54.0" width="32.3" height="266.0" fill="#6baed6"/>
+<rect x="363.7" y="187.0" width="32.3" height="133.0" fill="#6baed6"/>
+<rect x="397.0" y="120.5" width="32.3" height="199.5" fill="#6baed6"/>
+<rect x="430.3" y="209.2" width="32.3" height="110.8" fill="#6baed6"/>
+<rect x="463.6" y="253.5" width="32.3" height="66.5" fill="#6baed6"/>
+<rect x="496.9" y="231.3" width="32.3" height="88.7" fill="#6baed6"/>
+<rect x="530.2" y="275.7" width="32.3" height="44.3" fill="#6baed6"/>
+<rect x="563.5" y="275.7" width="32.3" height="44.3" fill="#6baed6"/>
+<rect x="596.8" y="297.8" width="32.3" height="22.2" fill="#6baed6"/>
+<rect x="630.1" y="187.0" width="32.3" height="133.0" fill="#6baed6"/>
+<rect x="663.4" y="209.2" width="32.3" height="110.8" fill="#6baed6"/>
+<rect x="696.7" y="275.7" width="32.3" height="44.3" fill="#6baed6"/>
+<line x1="64" y1="320" x2="730" y2="320" stroke="#333"/>
+<text x="64.0" y="338" text-anchor="middle" fill="#555">-4.64</text>
+<text x="230.5" y="338" text-anchor="middle" fill="#555">-3.28</text>
+<text x="397.0" y="338" text-anchor="middle" fill="#555">-1.92</text>
+<text x="563.5" y="338" text-anchor="middle" fill="#555">-0.55</text>
+<text x="730.0" y="338" text-anchor="middle" fill="#555">0.81</text>
+<line x1="631.3" y1="54" x2="631.3" y2="320" stroke="#d6604d" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="635.3" y="66" fill="#d6604d">z &lt; 0: below null</text>
+</svg>

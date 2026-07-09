@@ -1,0 +1,291 @@
+{
+  "n_runs": 81,
+  "coupling": {
+    "modularity_labeled": {
+      "n": 81,
+      "median": 0.3230609418282548,
+      "mean": 0.29269599653260564,
+      "iqr": [
+        0.2673484295105916,
+        0.3840307750046913
+      ],
+      "ci95_mean": [
+        0.25983272359335113,
+        0.32246531644148463
+      ],
+      "min": -0.3125,
+      "max": 0.5012244897959184
+    },
+    "modularity_louvain": {
+      "n": 81,
+      "median": 0.41471074380165285,
+      "mean": 0.40983320359079967,
+      "iqr": [
+        0.38,
+        0.4554189750692521
+      ],
+      "ci95_mean": [
+        0.3893597707200864,
+        0.4273871479203276
+      ],
+      "min": 0.0,
+      "max": 0.5518367346938775
+    },
+    "recovery_nmi": {
+      "n": 81,
+      "median": 0.7531874456235571,
+      "mean": 0.7622130259846085,
+      "iqr": [
+        0.7225726749142691,
+        0.875172023123002
+      ],
+      "ci95_mean": [
+        0.7258761585809594,
+        0.7908987293006846
+      ],
+      "min": 0.0,
+      "max": 0.971262324052962
+    },
+    "recovery_ari": {
+      "n": 81,
+      "median": 0.66796875,
+      "mean": 0.6906684824664674,
+      "iqr": [
+        0.6102416046193587,
+        0.8352180936995154
+      ],
+      "ci95_mean": [
+        0.6525522727844193,
+        0.7264275907760216
+      ],
+      "min": 0.0,
+      "max": 0.9823386817499712
+    },
+    "recovery_nmi_dataflow_only": {
+      "n": 77,
+      "median": 0.6534088493232713,
+      "mean": 0.6547370490362805,
+      "iqr": [
+        0.6222674912651224,
+        0.690779757787828
+      ],
+      "ci95_mean": [
+        0.6408362112687374,
+        0.6689350691516818
+      ],
+      "min": 0.4972268046044809,
+      "max": 0.8421052631578947
+    },
+    "recovery_nmi_random_baseline": {
+      "n": 81,
+      "median": 0.38898505295229446,
+      "mean": 0.43188511558112064,
+      "iqr": [
+        0.36544326769403285,
+        0.43071981548862254
+      ],
+      "ci95_mean": [
+        0.4067875887855399,
+        0.45917528491314147
+      ],
+      "min": 0.3016347474967082,
+      "max": 1.0
+    },
+    "message_weight_fraction": {
+      "n": 81,
+      "median": 0.64,
+      "mean": 0.673014061816004,
+      "iqr": [
+        0.5862068965517241,
+        0.7083333333333334
+      ],
+      "ci95_mean": [
+        0.645908475045042,
+        0.7004547526443033
+      ],
+      "min": 0.45614035087719296,
+      "max": 1.0
+    },
+    "inter_module_fraction": {
+      "n": 81,
+      "median": 0.16326530612244897,
+      "mean": 0.17364975102737992,
+      "iqr": [
+        0.125,
+        0.21568627450980393
+      ],
+      "ci95_mean": [
+        0.1532478217811868,
+        0.19417223376396084
+      ],
+      "min": 0.0,
+      "max": 0.45454545454545453
+    },
+    "inter_module_message_count_total": 0,
+    "inter_module_dataflow_count": {
+      "n": 81,
+      "median": 6,
+      "mean": 6.814814814814815,
+      "iqr": [
+        4,
+        10
+      ],
+      "ci95_mean": [
+        5.839506172839506,
+        7.802469135802469
+      ],
+      "min": 0,
+      "max": 18
+    }
+  },
+  "task_overlap": {
+    "recon_read_mean_jaccard": {
+      "n": 81,
+      "median": 0.13241088861912226,
+      "mean": 0.16527347119057254,
+      "iqr": [
+        0.09259259259259259,
+        0.20018872901125973
+      ],
+      "ci95_mean": [
+        0.1413140030031455,
+        0.19001034053361024
+      ],
+      "min": 0.02037037037037037,
+      "max": 0.6712962962962963
+    }
+  },
+  "file_overlap": {
+    "write_write_overlap_by_zone_total": {
+      "src": 63,
+      "testcase": 1,
+      "other": 0
+    },
+    "write_write_pairs_total": {
+      "exploiter+fixer": 63,
+      "builder+exploiter": 1
+    },
+    "read_overlap_by_zone_total": {
+      "src": 365,
+      "testcase": 132,
+      "work": 0,
+      "other": 0
+    },
+    "producer_consumer_edges_by_zone_total": {
+      "src": 322,
+      "testcase": 230
+    }
+  },
+  "global_context": {
+    "writes_total": {
+      "n": 81,
+      "median": 53,
+      "mean": 50.34567901234568,
+      "iqr": [
+        39,
+        66
+      ],
+      "ci95_mean": [
+        45.65432098765432,
+        54.65432098765432
+      ],
+      "min": 0,
+      "max": 85
+    },
+    "runs_with_any_writes": 79,
+    "writes_by_module_kind": {
+      "builder": {
+        "decision_total": 492,
+        "artifact_total": 506,
+        "decision_per_run": 6.07,
+        "artifact_per_run": 6.25
+      },
+      "exploiter": {
+        "decision_total": 985,
+        "artifact_total": 999,
+        "decision_per_run": 12.16,
+        "artifact_per_run": 12.33
+      },
+      "fixer": {
+        "decision_total": 569,
+        "artifact_total": 439,
+        "decision_per_run": 7.02,
+        "artifact_per_run": 5.42
+      },
+      "reporter": {
+        "decision_total": 32,
+        "artifact_total": 56,
+        "decision_per_run": 0.4,
+        "artifact_per_run": 0.69
+      }
+    }
+  },
+  "permutation": {
+    "dataflow_inter_fraction": {
+      "runs_evaluated": 81,
+      "frac_p_below_0.05": 0.49382716049382713,
+      "mean_z": -1.8022693831051675,
+      "median_observed": 0.3888888888888889,
+      "median_null_mean": 0.722
+    },
+    "recon_read_jaccard": {
+      "runs_evaluated": 81,
+      "frac_p_below_0.05": 0.12345679012345678,
+      "mean_z": -0.21131395026291905,
+      "median_observed": 0.13241088861912226,
+      "median_null_mean": 0.1492059732939047
+    },
+    "write_write_overlap": {
+      "runs_evaluated": 81,
+      "frac_p_below_0.05": 0.0,
+      "mean_z": -0.08415355019225286,
+      "median_observed": 1.0,
+      "median_null_mean": 0.734
+    }
+  },
+  "module_profiles": {
+    "builder": {
+      "intra_weight": 6.086,
+      "inter_weight": 0.395,
+      "coupling_ratio": 0.058,
+      "afferent_ca": 0.395,
+      "efferent_ce": 0,
+      "instability": 0.0
+    },
+    "reporter": {
+      "intra_weight": 0,
+      "inter_weight": 1.025,
+      "coupling_ratio": 0.395,
+      "afferent_ca": 0,
+      "efferent_ce": 1.025,
+      "instability": 1.0
+    },
+    "fixer": {
+      "intra_weight": 8.222,
+      "inter_weight": 6.272,
+      "coupling_ratio": 0.522,
+      "afferent_ca": 0.667,
+      "efferent_ce": 5.605,
+      "instability": 0.876
+    },
+    "exploiter": {
+      "intra_weight": 15.642,
+      "inter_weight": 5.938,
+      "coupling_ratio": 0.292,
+      "afferent_ca": 5.753,
+      "efferent_ce": 0.185,
+      "instability": 0.039
+    }
+  },
+  "module_dataflow_mean_per_run": {
+    "exploiter->exploiter": 5.62,
+    "exploiter->fixer": 5.46,
+    "fixer->fixer": 3.23,
+    "fixer->reporter": 0.67,
+    "builder->builder": 0.6,
+    "exploiter->reporter": 0.3,
+    "builder->exploiter": 0.19,
+    "builder->fixer": 0.15,
+    "builder->reporter": 0.06
+  }
+}

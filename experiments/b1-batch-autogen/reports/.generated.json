@@ -1,4 +1,49 @@
 {
+  "experiments/b1-batch-autogen/reports/b1_analysis_hierarchy.csv": {
+    "generated_at": "2026-05-18T16:36:33.179148Z",
+    "generated_by": "experiments/shared/scripts/b1_analysis.py",
+    "inputs": [
+      "experiments/b1-batch-autogen/manifest.yaml",
+      "experiments/b1-batch-autogen/dataset.yaml",
+      "experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml": "26f4b8e20df0c3f82232e2df9da8588db23dfb7751540800fd16cf5a0fea401d",
+      "experiments/b1-batch-autogen/dataset.yaml": "84e34d4a21b2bc978aeb5e7e8e4c15ac13754d8a23192e357837529ad78cdab9",
+      "experiments/b1-batch-autogen/manifest.yaml": "ae815ffb98343810689445405ff69b09061e570b0f24b59814e0981e4c47070b"
+    },
+    "output_sha256": "a32ac62630f53eeba8a14e37c313660fd250c71f83551b1c69a2d70c6fddba55"
+  },
+  "experiments/b1-batch-autogen/reports/b1_analysis_metrics.csv": {
+    "generated_at": "2026-05-18T16:36:33.177305Z",
+    "generated_by": "experiments/shared/scripts/b1_analysis.py",
+    "inputs": [
+      "experiments/b1-batch-autogen/manifest.yaml",
+      "experiments/b1-batch-autogen/dataset.yaml",
+      "experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml": "26f4b8e20df0c3f82232e2df9da8588db23dfb7751540800fd16cf5a0fea401d",
+      "experiments/b1-batch-autogen/dataset.yaml": "84e34d4a21b2bc978aeb5e7e8e4c15ac13754d8a23192e357837529ad78cdab9",
+      "experiments/b1-batch-autogen/manifest.yaml": "ae815ffb98343810689445405ff69b09061e570b0f24b59814e0981e4c47070b"
+    },
+    "output_sha256": "c6bcae4a0a60218681ba444549be317f4f174f706b3b8dfc2429fd77c0738f64"
+  },
+  "experiments/b1-batch-autogen/reports/b1_analysis_summary.json": {
+    "generated_at": "2026-05-18T16:36:33.180979Z",
+    "generated_by": "experiments/shared/scripts/b1_analysis.py",
+    "inputs": [
+      "experiments/b1-batch-autogen/manifest.yaml",
+      "experiments/b1-batch-autogen/dataset.yaml",
+      "experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml"
+    ],
+    "inputs_sha256": {
+      "experiments/b1-batch-autogen/configs/B1-ours-claude-noverifier.yaml": "26f4b8e20df0c3f82232e2df9da8588db23dfb7751540800fd16cf5a0fea401d",
+      "experiments/b1-batch-autogen/dataset.yaml": "84e34d4a21b2bc978aeb5e7e8e4c15ac13754d8a23192e357837529ad78cdab9",
+      "experiments/b1-batch-autogen/manifest.yaml": "ae815ffb98343810689445405ff69b09061e570b0f24b59814e0981e4c47070b"
+    },
+    "output_sha256": "fdd0c7d0187dcf8062b9f8782d2a380e059254cef4a40597ff409022f92d9417"
+  },
   "experiments/b1-batch-autogen/reports/enrollment.lock.yaml": {
     "generated_at": "2026-05-17T03:40:11.755650Z",
     "generated_by": "experiments/shared/scripts/collect.py",
