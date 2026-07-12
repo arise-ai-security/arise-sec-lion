@@ -1,5 +1,5 @@
 <!-- Read this when: adding/moving modules or directories, understanding system design, or determining where new code goes -->
-Hexagonal (ports-and-adapters) event-sourced multi-agent platform with strict dependency inversion, two event-sourced aggregates (`AgentSession` primary + `SharedStore`), and 38 frozen Pydantic domain events.
+Hexagonal (ports-and-adapters) event-sourced multi-agent platform with strict dependency inversion, two event-sourced aggregates (`AgentSession` primary + `SharedStore`), and 42 frozen Pydantic domain events.
 
 > **If you create, move, or delete a directory/module, update the directory tree in this file.**
 
@@ -35,7 +35,7 @@ arise-sec-lion/
 │   │   └── procedure_ports.py     # ProcedureExecutorPort + NullProcedureExecutor (deterministic procedure tier)
 │   ├── domain/                    # Pure domain logic, zero external dependencies
 │   │   ├── aggregates/            # AgentSession -- primary aggregate (SharedStore is the 2nd, in shared_context.py)
-│   │   ├── events/                # 38 frozen Pydantic DomainEvent subclasses (events.py)
+│   │   ├── events/                # 42 frozen Pydantic DomainEvent subclasses (events.py)
 │   │   ├── values/                # AgentConfig, enums, NodeMessage, Subtask, HierarchyLimits, failure, procedure, etc.
 │   │   │   └── context/           # Contextual value objects
 │   │   ├── services/              # SubtaskParser, TaskScheduler, ConfigResolver, ContextUpdateParser
@@ -179,7 +179,7 @@ The pre-commit hook `scripts/check_architecture_boundaries.py` enforces the `cor
 
 ### Domain (`core/domain/`)
 
-`AgentSession` (`core/domain/aggregates/agent_session.py`) is the **primary aggregate** (mutated by 35 of the 38 event types); `SharedStore` (`core/domain/shared_context.py`) is a second event-sourced aggregate (3 event types) sharing the events table via a `uuid5`-derived `aggregate_id`. All mutable state is derived by replaying frozen Pydantic `DomainEvent` instances. The replay mechanism uses `functools.singledispatchmethod` for `_apply`, dispatching on event type.
+`AgentSession` (`core/domain/aggregates/agent_session.py`) is the **primary aggregate** (mutated by 39 of the 42 event types); `SharedStore` (`core/domain/shared_context.py`) is a second event-sourced aggregate (3 event types) sharing the events table via a `uuid5`-derived `aggregate_id`. All mutable state is derived by replaying frozen Pydantic `DomainEvent` instances. The replay mechanism uses `functools.singledispatchmethod` for `_apply`, dispatching on event type.
 
 Optimistic concurrency control: the event store enforces a unique constraint on `(aggregate_id, sequence_number)`. Version mismatch raises `ConcurrencyError`; the system loop retries.
 

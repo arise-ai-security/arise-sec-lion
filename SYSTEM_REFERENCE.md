@@ -182,13 +182,13 @@ flowchart LR
     EM -->|append-only| ES[("Postgres events table<br/>UNIQUE(aggregate_id, sequence_number)")]
     ES -->|load_from_history| RP["replay: fold events through @_apply<br/>version += 1 per event"]
     RP --> AGG["in-memory aggregate state"]
-    ES -->|EVENT_TYPE_REGISTRY<br/>38 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
+    ES -->|EVENT_TYPE_REGISTRY<br/>42 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
     classDef store fill:#cde,stroke:#226;
     class ES store
 ```
 
 - **Two event-sourced aggregates** (not one):
-  - `AgentSession` — the **primary** aggregate; 35 of the 38 event types mutate it.
+  - `AgentSession` — the **primary** aggregate; 39 of the 42 event types mutate it.
     — `core/domain/aggregates/agent_session.py`
   - `SharedStore` (= `ArtifactStore` + `DecisionLog`) — cross-agent shared state, with a
     `uuid5`-derived `aggregate_id` so it shares the same `events` table without colliding
@@ -206,12 +206,12 @@ flowchart LR
   (commit `2d669d0`); the harness no longer writes it and evaluators read DB events only.
   — `experiments/shared/harness.py:495-499`, `experiments/shared/evaluation/criteria.py:375-377`
 
-> **Aggregate & event counts.** There are **38** registered event types
+> **Aggregate & event counts.** There are **42** registered event types
 > (`postgres_event_store.py:54-102`) and **two** aggregates: `AgentSession` is the
-> *primary/central* aggregate (35 of the 38 event types), `SharedStore` the second (3).
+> *primary/central* aggregate (39 of the 42 event types), `SharedStore` the second (3).
 > `CLAUDE.md` and `.claude/docs/` are aligned with this (drift resolved — see §V.6).
 
-### Event catalog (38 types)
+### Event catalog (42 types)
 
 All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 `core/domain/events/events.py:27`); all are registered in `EVENT_TYPE_REGISTRY`.
@@ -220,7 +220,7 @@ All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 |---|---|
 | Session lifecycle / hierarchy | `AgentCreated`, `TaskAssigned`, `StatusChanged`, `SubtasksDefined`, `ChildSpawned`, `ChildCompleted`, `ChildFailed`, `ComplexityEvaluated`, `RedecompositionTriggered`, `RetryScheduled`, `FailureDigestRecorded`, `LimitEnforced` |
 | Assessment / decision | `ProbeStarted`, `ProbeCompleted`, `DecisionInfeasible`, `PromptSent` |
-| Execution | `CodeGenerationStarted`, `ThoughtCaptured`, `ProcedureExecutionStarted`, `ProcedureExecutionFinished` |
+| Execution | `CodeGenerationStarted`, `ThoughtCaptured`, `ProcedureExecutionStarted`, `ProcedureExecutionFinished`, `PhaseRouteSelected`, `PhaseGateRecorded`, `PatchPlanApproved`, `PromptContextAssembled` |
 | **Verification** | `VerificationPassed`, `VerificationFailed` (`failed_stage` ∈ structural/deterministic/execution/judge) |
 | **Runtime-surface (anti-leak)** | `RuntimeSurfaceSealed` (carries `sealed_artifacts: list[SealedArtifact]`) |
 | Completion / run-level / timing | `WorkCompleted`, `WorkFailed`, `RunStarted`, `RunCompleted`, `AgentExecutionStarted`, `AgentExecutionFinished`, `OperationStarted`, `OperationFinished` |
@@ -842,7 +842,7 @@ Consider seeding by allowlist (delete everything not explicitly permitted).
 ## V.6 — Documentation drift (resolved)
 
 `CLAUDE.md` and `.claude/docs/` now describe **two** aggregates (`AgentSession` *primary* +
-`SharedStore`) and **38** registered event types, matching `postgres_event_store.py:54-102`
+`SharedStore`) and **42** registered event types, matching `EVENT_TYPE_REGISTRY`
 and `shared_context.py`. The earlier "sole aggregate / ~31 events" drift is fixed.
 
 ## V.7 — Event-source the `secb` results (anti-fabrication by construction) — IMPLEMENTED (flag-gated) for validators

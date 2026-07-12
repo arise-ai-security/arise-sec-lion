@@ -1,5 +1,5 @@
 <!-- Read this when: working on aggregates, events, value objects, or domain services -->
-The core domain layer contains two event-sourced aggregates (`AgentSession` primary + `SharedStore`), 38 frozen domain events, immutable value objects, and stateless domain services -- all under `core/domain/`.
+The core domain layer contains two event-sourced aggregates (`AgentSession` primary + `SharedStore`), 42 frozen domain events, immutable value objects, and stateless domain services -- all under `core/domain/`.
 
 ---
 
@@ -7,7 +7,7 @@ The core domain layer contains two event-sourced aggregates (`AgentSession` prim
 
 **File:** `core/domain/aggregates/agent_session.py`
 
-`AgentSession` is the primary aggregate (35 of the 38 event types); `SharedStore` (`core/domain/shared_context.py`) is a second event-sourced aggregate (3 event types: `SharedContextCreated`, `ArtifactStored`, `DecisionRecorded`) sharing the events table via a `uuid5`-derived `aggregate_id`. All state is derived from replaying domain events -- there are no mutable state tables. `VerificationFailed.failed_stage` is one of `structural`/`deterministic`/`execution`/`judge`.
+`AgentSession` is the primary aggregate (39 of the 42 event types); `SharedStore` (`core/domain/shared_context.py`) is a second event-sourced aggregate (3 event types: `SharedContextCreated`, `ArtifactStored`, `DecisionRecorded`) sharing the events table via a `uuid5`-derived `aggregate_id`. All state is derived from replaying domain events -- there are no mutable state tables. `VerificationFailed.failed_stage` is one of `structural`/`deterministic`/`execution`/`judge`.
 
 ### Construction Rules
 

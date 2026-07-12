@@ -70,10 +70,10 @@ Related types (all in `core/domain/values/node_message.py`): `Ancestor` (lightwe
 ## 5. Event Sourcing
 
 ### DomainEvent
-Base class for all immutable domain events (`core/domain/events/events.py`). Frozen Pydantic model with `event_id`, `aggregate_id`, `sequence_number`, `occurred_at`, `metadata`. All dict/list fields are deep-copied on construction via a `model_validator`. 38 concrete event types, all registered in `EVENT_TYPE_REGISTRY` (`infrastructure/adapters/postgres_event_store.py`).
+Base class for all immutable domain events (`core/domain/events/events.py`). Frozen Pydantic model with `event_id`, `aggregate_id`, `sequence_number`, `occurred_at`, `metadata`. All dict/list fields are deep-copied on construction via a `model_validator`. 42 concrete event types, all registered in `EVENT_TYPE_REGISTRY` (`infrastructure/adapters/postgres_event_store.py`).
 
 ### AgentSession (primary aggregate)
-The primary aggregate (`core/domain/aggregates/agent_session.py`), mutated by 35 of the 38 event types; `SharedStore` is a second event-sourced aggregate (see its entry below). All agent state is derived by replaying events via `singledispatchmethod` handlers. Factory: `AgentSession.create()` or `AgentSession.load_from_history()`. Uncommitted events accessed via `.events`, cleared by `mark_changes_as_committed()`. No mutable state tables exist.
+The primary aggregate (`core/domain/aggregates/agent_session.py`), mutated by 39 of the 42 event types; `SharedStore` is a second event-sourced aggregate (see its entry below). All agent state is derived by replaying events via `singledispatchmethod` handlers. Factory: `AgentSession.create()` or `AgentSession.load_from_history()`. Uncommitted events accessed via `.events`, cleared by `mark_changes_as_committed()`. No mutable state tables exist.
 
 ### OCC (Optimistic Concurrency Control)
 Concurrency strategy enforced by `EventStoreWritePort.append()` / `append_batch()` (`core/ports/event_store_port.py`). Each append specifies `expected_version`; if the actual version differs (another process wrote first), `ConcurrencyError` is raised (`core/domain/exceptions.py`). Unique constraint on `(aggregate_id, sequence_number)`.
