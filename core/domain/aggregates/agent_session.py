@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections import deque
 from functools import singledispatchmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import TypeAdapter
@@ -25,10 +25,14 @@ from core.domain.events.events import (
     LimitEnforced,
     OperationFinished,
     OperationStarted,
+    PatchPlanApproved,
+    PhaseGateRecorded,
+    PhaseRouteSelected,
     ProbeCompleted,
     ProbeStarted,
     ProcedureExecutionFinished,
     ProcedureExecutionStarted,
+    PromptContextAssembled,
     PromptSent,
     RedecompositionTriggered,
     RetryScheduled,
@@ -93,6 +97,8 @@ class AgentSession:
     local_artifacts: list[str]
     sibling_index: int
     success_criteria: str
+    criticality: str
+    dependency_failure_policy: str
     target_paths: tuple[str, ...]
     symbols: tuple[str, ...]
     search_hints: tuple[str, ...]
@@ -108,6 +114,7 @@ class AgentSession:
     failure_digest: str | None
     recent_thoughts: deque[ThoughtExcerpt]
     failed_children: dict[UUID, ChildFailureRecord]
+    child_subtasks: dict[UUID, Subtask]
     failure_history: list[ChildFailureRecord]
     # Per-coroutine reservation bookkeeping for child-spawn OCC (D.2).
     # NOT event-sourced — lives only on the in-memory aggregate for the
@@ -132,6 +139,8 @@ class AgentSession:
         briefing: dict[str, Any] | None = None,
         depends_on: list[int] | None = None,
         success_criteria: str = "",
+        criticality: Literal["required", "optional"] = "required",
+        dependency_failure_policy: Literal["block", "replan", "continue"] = "block",
         target_paths: list[str] | None = None,
         symbols: list[str] | None = None,
         search_hints: list[str] | None = None,
@@ -151,6 +160,8 @@ class AgentSession:
             briefing=briefing,
             depends_on=depends_on or [],
             success_criteria=success_criteria,
+            criticality=criticality,
+            dependency_failure_policy=dependency_failure_policy,
             target_paths=target_paths or [],
             symbols=symbols or [],
             search_hints=search_hints or [],
@@ -183,6 +194,8 @@ class AgentSession:
         child_id: UUID,
         result: str,
         report: Report | None = None,
+        *,
+        max_redecompositions: int = 0,
     ) -> None:
         """For BOSS/MANAGER: record child completion, complete self when all children done.
 
@@ -190,6 +203,8 @@ class AgentSession:
             child_id: ID of completed child
             result: Simple result text for the event
             report: Structured Report (optional, provides additional context)
+            max_redecompositions: Re-plan budget, applied symmetrically with the
+                failure path when a required sibling has already failed.
         """
         # Idempotence: a child is reported terminally at most once. Under
         # OCC retry or grandparent walks, the same notification can arrive
@@ -211,17 +226,7 @@ class AgentSession:
         )
         self._emit(child_completed_event)
 
-        reported = len(self.child_reports) + len(self.failed_children)
-        if reported == len(self.child_ids):
-            aggregated_result = aggregate_child_results(self.child_ids, self.child_reports)
-            if self.failed_children:
-                aggregated_result += f"\n\n{failed_children_note(self.failed_children)}"
-            work_completed_event = WorkCompleted(
-                aggregate_id=self.agent_id,
-                sequence_number=self._next_sequence(),
-                result=aggregated_result,
-            )
-            self._emit(work_completed_event)
+        self._settle_if_ready(child_id, max_redecompositions=max_redecompositions)
 
     def handle_child_failure(
         self,
@@ -266,39 +271,7 @@ class AgentSession:
         )
         self._emit(child_failed_event)
 
-        # Check if all children have now reported (completed or failed)
-        reported = len(self.child_reports) + len(self.failed_children)
-        if reported < len(self.child_ids):
-            return  # Still waiting for other children
-
-        # All children reported — decide parent outcome
-        if self.child_reports:
-            # At least one child succeeded — aggregate partial results
-            result = (
-                f"{aggregate_child_results(self.child_ids, self.child_reports)}"
-                f"\n\n{failed_children_note(self.failed_children)}"
-            )
-            work_completed_event = WorkCompleted(
-                aggregate_id=self.agent_id,
-                sequence_number=self._next_sequence(),
-                result=result,
-            )
-            self._emit(work_completed_event)
-        elif self.redecomposition_count < max_redecompositions:
-            # ALL children failed with re-plan budget left — re-decompose
-            # informed by the recorded failures instead of failing upward.
-            self.trigger_redecomposition(
-                trigger_child_id=child_id,
-                reason=all_children_failed_reason(self.failed_children),
-            )
-        else:
-            # ALL children failed — parent fails
-            work_failed_event = WorkFailed(
-                aggregate_id=self.agent_id,
-                sequence_number=self._next_sequence(),
-                reason=all_children_failed_reason(self.failed_children),
-            )
-            self._emit(work_failed_event)
+        self._settle_if_ready(child_id, max_redecompositions=max_redecompositions)
 
     @singledispatchmethod
     def _apply(self, event: Any) -> None:
@@ -320,6 +293,8 @@ class AgentSession:
         self.status = AgentStatus.PENDING
         self.sibling_index = event.sibling_index
         self.success_criteria = event.success_criteria
+        self.criticality = event.criticality
+        self.dependency_failure_policy = event.dependency_failure_policy
         self.target_paths = tuple(event.target_paths)
         self.symbols = tuple(event.symbols)
         self.search_hints = tuple(event.search_hints)
@@ -351,6 +326,7 @@ class AgentSession:
         if event.child_role == AgentRole.BOSS.value:
             raise DomainInvariantError("Cannot spawn BOSS child")
         self.child_ids.append(event.child_id)
+        self.child_subtasks[event.child_id] = event.subtask
         self.version += 1
 
     @_apply.register
@@ -427,6 +403,22 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: ProcedureExecutionFinished) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: PhaseRouteSelected) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: PhaseGateRecorded) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: PatchPlanApproved) -> None:
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: PromptContextAssembled) -> None:
         self.version += 1
 
     @_apply.register
@@ -562,6 +554,8 @@ class AgentSession:
         self.sibling_index = 0
         # Verification criteria from subtask (used by verification pipeline)
         self.success_criteria = ""
+        self.criticality = "required"
+        self.dependency_failure_policy = "block"
         # Structured child scoping (from parent's subtask decomposition)
         self.target_paths = ()
         self.symbols = ()
@@ -590,6 +584,7 @@ class AgentSession:
         self.recent_thoughts = deque(maxlen=_RECENT_THOUGHTS_MAXLEN)
         # Track failed children for partial-success aggregation and re-planning
         self.failed_children = {}
+        self.child_subtasks = {}
         # Failures accumulated across redecompositions, rendered into the
         # next decomposition prompt
         self.failure_history = []
@@ -664,6 +659,112 @@ class AgentSession:
             raise DomainInvariantError(
                 f"child_id {child_id} not in spawned children"
             )
+
+    def _blocked_child_ids(self) -> set[UUID]:
+        """Unreported children that can never run because a hard dependency
+        terminally failed (or is itself blocked) under a non-"continue" policy.
+
+        ``child_ids`` is in sibling-index order, so a subtask's ``depends_on``
+        indices map positionally onto it. Computed to a fixpoint so a chain
+        A(failed) -> B -> C blocks both B and C.
+        """
+        unsatisfiable: set[UUID] = set(self.failed_children)
+        changed = True
+        while changed:
+            changed = False
+            for child_id in self.child_ids:
+                if child_id in unsatisfiable or child_id in self.child_reports:
+                    continue
+                subtask = self.child_subtasks.get(child_id)
+                if subtask is None or subtask.dependency_failure_policy == "continue":
+                    continue
+                for dep_index in subtask.depends_on:
+                    if 0 <= dep_index < len(self.child_ids):
+                        if self.child_ids[dep_index] in unsatisfiable:
+                            unsatisfiable.add(child_id)
+                            changed = True
+                            break
+        return unsatisfiable - set(self.failed_children)
+
+    def _required_children_unsatisfiable(self) -> bool:
+        """A required child has terminally failed or is permanently blocked.
+
+        Either means the parent can no longer produce a successful outcome, so
+        a ``WorkCompleted`` must not be emitted for it (self-healing/failure
+        takes over instead).
+        """
+        candidates = set(self.failed_children) | self._blocked_child_ids()
+        return any(
+            self.child_subtasks[child_id].criticality == "required"
+            for child_id in candidates
+            if child_id in self.child_subtasks
+        )
+
+    def _settle_if_ready(self, trigger_child_id: UUID, *, max_redecompositions: int) -> None:
+        """Decide the parent's outcome once every child is settled.
+
+        A child is settled when it has completed, failed, or is permanently
+        blocked by a failed hard dependency. Blocked children never report, so
+        waiting for them would stall the parent until the run watchdog fires;
+        counting them as settled lets a failed required producer drive the
+        replan/fail decision immediately.
+        """
+        blocked = self._blocked_child_ids()
+        settled = len(self.child_reports) + len(self.failed_children) + len(blocked)
+        if settled < len(self.child_ids):
+            return  # a still-runnable child has not reported yet
+
+        if self._required_children_unsatisfiable():
+            self._handle_required_child_failure(
+                trigger_child_id, max_redecompositions=max_redecompositions
+            )
+            return
+        if self.child_reports:
+            aggregated_result = aggregate_child_results(self.child_ids, self.child_reports)
+            if self.failed_children:
+                aggregated_result += f"\n\n{failed_children_note(self.failed_children)}"
+            self._emit(
+                WorkCompleted(
+                    aggregate_id=self.agent_id,
+                    sequence_number=self._next_sequence(),
+                    result=aggregated_result,
+                )
+            )
+            return
+        if self.redecomposition_count < max_redecompositions:
+            self.trigger_redecomposition(
+                trigger_child_id=trigger_child_id,
+                reason=all_children_failed_reason(self.failed_children),
+            )
+            return
+        self._emit(
+            WorkFailed(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                reason=all_children_failed_reason(self.failed_children),
+            )
+        )
+
+    def _handle_required_child_failure(
+        self,
+        trigger_child_id: UUID,
+        *,
+        max_redecompositions: int,
+    ) -> None:
+        if len(self.failed_children) == len(self.child_ids):
+            reason = all_children_failed_reason(self.failed_children)
+        else:
+            reason = f"Required child failed. {failed_children_note(self.failed_children)}"
+        if self.redecomposition_count < max_redecompositions:
+            self.trigger_redecomposition(trigger_child_id=trigger_child_id, reason=reason)
+            return
+        self._emit(
+            WorkFailed(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                reason=reason,
+            )
+        )
 
     def is_terminal(self) -> bool:
         """True if COMPLETED or FAILED."""
@@ -745,6 +846,92 @@ class AgentSession:
             evidence=evidence,
         )
         self._emit(event)
+
+    def record_phase_route(
+        self,
+        *,
+        policy_version: str,
+        phase: str,
+        route: Literal["compact", "expanded", "escalated"],
+        evidence_references: list[str],
+        selected_roles: list[str],
+        triggers: list[str],
+        remaining_budget: int,
+    ) -> None:
+        self._emit(
+            PhaseRouteSelected(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                policy_version=policy_version,
+                phase=phase,
+                route=route,
+                evidence_references=evidence_references,
+                selected_roles=selected_roles,
+                triggers=triggers,
+                remaining_budget=remaining_budget,
+            )
+        )
+
+    def record_prompt_context(
+        self,
+        *,
+        total_chars: int,
+        total_tokens: int,
+        segment_sizes: dict[str, int],
+        entries: list[dict[str, Any]],
+        omitted_entries: list[dict[str, Any]],
+    ) -> None:
+        self._emit(
+            PromptContextAssembled(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                total_chars=total_chars,
+                total_tokens=total_tokens,
+                segment_sizes=segment_sizes,
+                entries=entries,
+                omitted_entries=omitted_entries,
+            )
+        )
+
+    def record_phase_gate(
+        self,
+        *,
+        phase: str,
+        passed: bool,
+        evidence_references: list[str],
+        reason: str = "",
+    ) -> None:
+        self._emit(
+            PhaseGateRecorded(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                phase=phase,
+                passed=passed,
+                evidence_references=evidence_references,
+                reason=reason,
+            )
+        )
+
+    def record_patch_plan_approved(
+        self,
+        *,
+        plan_sha256: str,
+        evidence_references: list[str],
+    ) -> None:
+        """Record that a host-validated security PatchPlan was frozen and approved.
+
+        Emitted after plan validation passes and before the weak Patch-Applier
+        runs, so the frozen plan identity is on the event stream (provenance the
+        agent cannot forge).
+        """
+        self._emit(
+            PatchPlanApproved(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                plan_sha256=plan_sha256,
+                evidence_references=evidence_references,
+            )
+        )
 
     def fail_with_reason(self, reason: str) -> None:
         failed_event = WorkFailed(
@@ -945,20 +1132,40 @@ class AgentSession:
         self._emit(corrected_event)
 
     def record_source_file_observed(
-        self, path: str, content: str, observed_by: UUID
+        self,
+        path: str,
+        content: str,
+        observed_by: UUID,
+        *,
+        capture_type: Literal["full", "range", "truncated"] = "truncated",
+        requested_start_line: int | None = None,
+        requested_end_line: int | None = None,
+        actual_start_line: int | None = None,
+        actual_end_line: int | None = None,
+        phase: str = "",
+        role: str = "",
     ) -> None:
         """Persist verbatim source a worker's view tool returned.
 
         The content (and its sha256 for integrity/dedup) is recoverable from
         this event alone, backing the shared code-prefix block.
         """
+        content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         event = SourceFileObserved(
             aggregate_id=self.agent_id,
             sequence_number=self._next_sequence(),
             path=path,
             content=content,
-            content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            content_sha256=content_sha256,
             observed_by=str(observed_by),
+            capture_type=capture_type,
+            requested_start_line=requested_start_line,
+            requested_end_line=requested_end_line,
+            actual_start_line=actual_start_line,
+            actual_end_line=actual_end_line,
+            file_revision=content_sha256,
+            phase=phase,
+            role=role,
         )
         self._emit(event)
 
@@ -1074,6 +1281,8 @@ class AgentSession:
         self,
         task_description: str,
         domain_metadata: dict[str, str | int | float | bool | None] | None = None,
+        treatment_version: str | None = None,
+        config_hash: str | None = None,
     ) -> None:
         """Emit RunStarted event when execution run begins.
 
@@ -1084,6 +1293,8 @@ class AgentSession:
             sequence_number=self._next_sequence(),
             task_description=task_description,
             domain_metadata=domain_metadata,
+            treatment_version=treatment_version,
+            config_hash=config_hash,
         )
         self._emit(event)
 

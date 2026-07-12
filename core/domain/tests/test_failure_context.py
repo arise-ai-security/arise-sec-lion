@@ -23,12 +23,20 @@ def _config() -> dict:
     }
 
 
-def _build_waiting_parent_with_children(count: int = 2) -> tuple[AgentSession, list]:
+def _build_waiting_parent_with_children(
+    count: int = 2,
+    criticalities: list[str] | None = None,
+) -> tuple[AgentSession, list]:
     parent = AgentSession.create(agent_id=uuid4(), role=AgentRole.BOSS, config=_config())
     parent.assign_task("Top task")
     spawned = parent.apply_subtasks_and_spawn_children(
         subtasks=[
-            Subtask(description=f"subtask-{i}", config=_config()) for i in range(count)
+            Subtask(
+                description=f"subtask-{i}",
+                config=_config(),
+                criticality=(criticalities or ["required"] * count)[i],
+            )
+            for i in range(count)
         ],
         child_role=AgentRole.PENDING.value,
         briefing=Briefing.simple("Top task"),
@@ -128,7 +136,9 @@ def test_partial_completion_note_lists_failure_reasons() -> None:
     """Partial success must annotate results with each failed child's reason."""
 
     # Given: a parent in WAITING with two children
-    parent, child_ids = _build_waiting_parent_with_children()
+    parent, child_ids = _build_waiting_parent_with_children(
+        criticalities=["optional", "required"]
+    )
 
     # When: one child fails (multi-line reason) and the other completes
     parent.handle_child_failure(

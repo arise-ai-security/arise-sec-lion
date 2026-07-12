@@ -23,11 +23,15 @@ from core.domain.events.events import (
     LimitEnforced,
     OperationFinished,
     OperationStarted,
+    PatchPlanApproved,
+    PhaseGateRecorded,
+    PhaseRouteSelected,
     ProbeCompleted,
     ProbeStarted,
     ProcedureExecutionFinished,
     ProcedureExecutionStarted,
     PromptSent,
+    PromptContextAssembled,
     RedecompositionTriggered,
     RetryScheduled,
     RunCompleted,
@@ -99,6 +103,10 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "ProbeCompleted": ProbeCompleted,
     "ProcedureExecutionStarted": ProcedureExecutionStarted,
     "ProcedureExecutionFinished": ProcedureExecutionFinished,
+    "PhaseRouteSelected": PhaseRouteSelected,
+    "PhaseGateRecorded": PhaseGateRecorded,
+    "PatchPlanApproved": PatchPlanApproved,
+    "PromptContextAssembled": PromptContextAssembled,
 }
 
 

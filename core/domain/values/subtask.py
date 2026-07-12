@@ -27,6 +27,14 @@ class Subtask(BaseModel):
         default="finish_to_start",
         description="Type of dependency relationship",
     )
+    criticality: Literal["required", "optional"] = Field(
+        default="required",
+        description="Whether parent success requires this subtask to succeed",
+    )
+    dependency_failure_policy: Literal["block", "replan", "continue"] = Field(
+        default="block",
+        description="Behavior when a hard predecessor fails",
+    )
 
     # Complexity & verification hints
     estimated_complexity: Literal["simple", "complex", "unknown"] = Field(

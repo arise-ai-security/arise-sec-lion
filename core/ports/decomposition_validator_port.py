@@ -48,6 +48,19 @@ class DecompositionVerdict:
     removals: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class FixedDecomposition:
+    """Host-selected deterministic decomposition and its route provenance."""
+
+    subtasks: tuple[SuggestedSubtask, ...]
+    policy_version: str
+    phase: str
+    route: Literal["compact", "expanded", "escalated"]
+    triggers: tuple[str, ...] = ()
+    evidence_references: tuple[str, ...] = ()
+    remaining_budget: int = 0
+
+
 class DecompositionValidator(Protocol):
     """Validate a parent's proposed child decomposition against a domain role contract."""
 
@@ -66,4 +79,14 @@ class DecompositionValidator(Protocol):
         catalog-role leaf (manager-authored and injected alike). Empty for an unknown
         role or one with no hard producer.
         """
+        ...
+
+    def fixed_decomposition(
+        self,
+        *,
+        parent_task_description: str,
+        domain_context: object | None,
+        redecomposition_count: int,
+    ) -> FixedDecomposition | None:
+        """Return a host-defined decomposition, or None to use LLM decomposition."""
         ...

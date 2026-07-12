@@ -2,7 +2,7 @@
 
 import copy
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -71,6 +71,8 @@ class AgentCreated(DomainEvent):
     briefing: dict[str, Any] | None = None
     depends_on: list[int] = Field(default_factory=list)
     success_criteria: str = ""  # From Subtask.success_criteria, used by verification
+    criticality: Literal["required", "optional"] = "required"
+    dependency_failure_policy: Literal["block", "replan", "continue"] = "block"
 
     # Parent's complexity hint, propagated from Subtask. Lets the
     # orchestrator skip the assessment LLM when the parent has already
@@ -246,6 +248,44 @@ class ProcedureExecutionFinished(DomainEvent):
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class PhaseRouteSelected(DomainEvent):
+    """Host policy selected a phase execution route."""
+
+    policy_version: str
+    phase: str
+    route: Literal["compact", "expanded", "escalated"]
+    evidence_references: list[str] = Field(default_factory=list)
+    selected_roles: list[str] = Field(default_factory=list)
+    triggers: list[str] = Field(default_factory=list)
+    remaining_budget: int
+
+
+class PhaseGateRecorded(DomainEvent):
+    """Host recorded the outcome gate for an adaptive phase."""
+
+    phase: str
+    passed: bool
+    evidence_references: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class PatchPlanApproved(DomainEvent):
+    """Host approved and froze a validated security patch plan."""
+
+    plan_sha256: str
+    evidence_references: list[str] = Field(default_factory=list)
+
+
+class PromptContextAssembled(DomainEvent):
+    """Host recorded bounded context-packet composition telemetry."""
+
+    total_chars: int
+    total_tokens: int
+    segment_sizes: dict[str, int] = Field(default_factory=dict)
+    entries: list[dict[str, Any]] = Field(default_factory=list)
+    omitted_entries: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class CodeGenerationStarted(DomainEvent):
     """WORKER started execution with tool."""
 
@@ -398,6 +438,9 @@ class WorkerCostRecorded(DomainEvent):
     # run, one fresh conversation per worker) are checkable from the DB alone.
     container_id: str | None = None
     conversation_id: str | None = None
+    complete: bool = True
+    termination_reason: str = "completed"
+    usage_missing: bool = False
 
     @property
     def total_recorded_tokens(self) -> int:
@@ -498,6 +541,8 @@ class RunStarted(DomainEvent):
 
     task_description: str
     domain_metadata: JsonObject | None = None
+    treatment_version: str | None = None
+    config_hash: str | None = None
 
 
 class RunCompleted(DomainEvent):
@@ -577,6 +622,14 @@ class SourceFileObserved(DomainEvent):
     content: str
     content_sha256: str
     observed_by: str  # Agent that viewed the file (string form of its UUID)
+    capture_type: Literal["full", "range", "truncated"] = "truncated"
+    requested_start_line: int | None = None
+    requested_end_line: int | None = None
+    actual_start_line: int | None = None
+    actual_end_line: int | None = None
+    file_revision: str = ""
+    phase: str = ""
+    role: str = ""
 
 
 class SourceFileEdited(DomainEvent):
