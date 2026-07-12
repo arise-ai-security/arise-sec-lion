@@ -132,7 +132,14 @@ class _SpySharedCodePort:
     def __init__(self) -> None:
         self.views: list[str] = []
 
-    async def record_view(self, root_id: UUID, agent_id: UUID, path: str, content: str) -> None:
+    async def record_view(
+        self,
+        root_id: UUID,
+        agent_id: UUID,
+        path: str,
+        content: str,
+        **capture: Any,
+    ) -> None:
         self.views.append(path)
 
     async def record_edit(self, root_id: UUID, agent_id: UUID, path: str) -> None:

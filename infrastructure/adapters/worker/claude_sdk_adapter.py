@@ -195,6 +195,21 @@ class ClaudeAgentSDKAdapter(WorkerAdapterBase):
                             return
 
         except TimeoutError:
+            # The Claude Agent SDK surfaces usage only on the terminal
+            # ResultMessage; AssistantMessage/UserMessage/SystemMessage carry no
+            # usage, and receive_response() stops at the first ResultMessage. A
+            # timeout means no ResultMessage was received, so there is no
+            # per-message usage to harvest. Emit an explicit-incomplete cost
+            # (usage_missing via empty breakdown) rather than fabricate one.
+            yield emit_cost(
+                sequencer,
+                tool_name=self._get_tool_name(),
+                duration_seconds=time() - started_at,
+                model=self.config.model,
+                breakdown=UsageBreakdown(),
+                complete=False,
+                termination_reason="timeout",
+            )
             yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
 
         except Exception as e:

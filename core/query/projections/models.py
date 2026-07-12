@@ -88,6 +88,15 @@ class CostSummary:
     budget_limit_usd: float | None = None
     budget_remaining_usd: float | None = None
     budget_exceeded: bool = False
+    cost_incomplete: bool = False
+    worker_usage_records: int = 0
+    complete_worker_usage_records: int = 0
+
+    @property
+    def cost_completeness_rate(self) -> float:
+        if self.worker_usage_records == 0:
+            return 1.0
+        return self.complete_worker_usage_records / self.worker_usage_records
 
     def __post_init__(self) -> None:
         """Validate cost invariants after construction."""

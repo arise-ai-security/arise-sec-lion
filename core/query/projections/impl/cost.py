@@ -59,6 +59,9 @@ class CostProjection(Projection):
         cost_by_operation: dict[str, float] = defaultdict(float)
         cost_by_agent: dict[str, float] = defaultdict(float)
         budget_exceeded = False
+        worker_usage_records = 0
+        complete_worker_usage_records = 0
+        cost_incomplete = False
 
         for event in events_list:
             if isinstance(event, TokensConsumed):
@@ -73,6 +76,11 @@ class CostProjection(Projection):
                 cost_by_agent[str(event.aggregate_id)] += event.cost_usd
 
             elif isinstance(event, WorkerCostRecorded):
+                worker_usage_records += 1
+                if event.complete and not event.usage_missing:
+                    complete_worker_usage_records += 1
+                else:
+                    cost_incomplete = True
                 worker_cost += event.cost_usd
                 for model_name, model_cost in event.model_costs.items():
                     cost_by_model[model_name] += model_cost
@@ -110,4 +118,7 @@ class CostProjection(Projection):
             budget_limit_usd=self._budget_limit,
             budget_remaining_usd=budget_remaining,
             budget_exceeded=budget_exceeded,
+            cost_incomplete=cost_incomplete,
+            worker_usage_records=worker_usage_records,
+            complete_worker_usage_records=complete_worker_usage_records,
         )

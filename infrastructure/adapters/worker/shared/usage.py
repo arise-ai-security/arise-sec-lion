@@ -56,6 +56,8 @@ def emit_cost(
     usage_metrics: list[WorkerUsageMetrics] | None = None,
     container_id: str | None = None,
     conversation_id: str | None = None,
+    complete: bool = True,
+    termination_reason: str = "completed",
 ) -> WorkerCostRecorded:
     """Create a cost event from a normalized usage breakdown."""
     return sequencer.cost_recorded(
@@ -72,4 +74,7 @@ def emit_cost(
         usage_metrics=usage_metrics,
         container_id=container_id,
         conversation_id=conversation_id,
+        complete=complete,
+        termination_reason=termination_reason,
+        usage_missing=not breakdown.has_cost_data,
     )

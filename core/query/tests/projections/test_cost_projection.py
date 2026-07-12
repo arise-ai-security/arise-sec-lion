@@ -96,3 +96,25 @@ class TestCostProjection:
         assert result.reasoning_tokens == 3
         assert result.cost_by_model["openai/gpt-4o"] == pytest.approx(0.04)
         assert result.cost_by_model["openai/gpt-4o-mini"] == pytest.approx(0.08)
+
+    def test_timeout_usage_is_explicitly_incomplete(self) -> None:
+        # Given: A timeout record whose provider usage could not be recovered
+        events = [
+            WorkerCostRecorded(
+                aggregate_id=WORKER_ID,
+                sequence_number=1,
+                tool_name="openhands",
+                complete=False,
+                termination_reason="timeout",
+                usage_missing=True,
+            )
+        ]
+
+        # When: Cost completeness is projected
+        result = CostProjection().project(events)
+
+        # Then: Zero is not silently treated as complete usage
+        assert result.cost_incomplete
+        assert result.worker_usage_records == 1
+        assert result.complete_worker_usage_records == 0
+        assert result.cost_completeness_rate == 0.0

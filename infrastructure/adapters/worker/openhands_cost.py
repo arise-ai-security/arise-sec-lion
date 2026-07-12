@@ -51,6 +51,8 @@ def make_cost_recorded_event(
     duration_seconds: float,
     container_id: str | None = None,
     conversation_id: str | None = None,
+    complete: bool = True,
+    termination_reason: str = "completed",
 ) -> DomainEvent:
     cost_data = extract_cost_data(conversation)
     return emit_cost(
@@ -69,6 +71,8 @@ def make_cost_recorded_event(
         usage_metrics=cost_data.usage_metrics,
         container_id=container_id,
         conversation_id=conversation_id,
+        complete=complete,
+        termination_reason=termination_reason,
     )
 
 
