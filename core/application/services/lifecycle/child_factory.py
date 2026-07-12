@@ -200,10 +200,15 @@ class ChildAgentFactory:
         if not events:
             return []
 
+        # Resolve each child's depends_on (sibling indices) to the concrete
+        # predecessor agent ids so a worker's context packet can be scoped to
+        # exactly its hard predecessors.
+        sibling_map = {event.sibling_index: event.child_id for event in events}
+
         # Create all child agents in parallel using asyncio.gather
         # This is safe because each event creates an independent agent
         results = await asyncio.gather(
-            *[self._create_child_parallel(event, parent_id) for event in events]
+            *[self._create_child_parallel(event, parent_id, sibling_map) for event in events]
         )
 
         # Commit the reservation atomically (moves from _reserved to
@@ -216,6 +221,7 @@ class ChildAgentFactory:
         self,
         event: ChildSpawned,
         parent_id: UUID,
+        sibling_map: dict[int, UUID],
     ) -> ChildCreationResult:
         """Create a single child agent (for parallel execution).
 
@@ -223,6 +229,11 @@ class ChildAgentFactory:
         """
         child_role = AgentRole(event.child_role)
         child_config = self._apply_manager_config(event.child_config)
+        hard_predecessor_ids = [
+            sibling_map[index]
+            for index in event.subtask.depends_on
+            if index in sibling_map
+        ]
 
         child = AgentSession.create(
             agent_id=event.child_id,
@@ -232,6 +243,7 @@ class ChildAgentFactory:
             sibling_index=event.sibling_index,
             briefing=event.briefing,
             depends_on=event.subtask.depends_on,
+            hard_predecessor_ids=hard_predecessor_ids,
             success_criteria=event.subtask.success_criteria,
             criticality=event.subtask.criticality,
             dependency_failure_policy=event.subtask.dependency_failure_policy,

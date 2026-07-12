@@ -138,6 +138,7 @@ class AgentSession:
         sibling_index: int = 0,
         briefing: dict[str, Any] | None = None,
         depends_on: list[int] | None = None,
+        hard_predecessor_ids: list[UUID] | None = None,
         success_criteria: str = "",
         criticality: Literal["required", "optional"] = "required",
         dependency_failure_policy: Literal["block", "replan", "continue"] = "block",
@@ -159,6 +160,7 @@ class AgentSession:
             sibling_index=sibling_index,
             briefing=briefing,
             depends_on=depends_on or [],
+            hard_predecessor_ids=hard_predecessor_ids or [],
             success_criteria=success_criteria,
             criticality=criticality,
             dependency_failure_policy=dependency_failure_policy,
@@ -295,6 +297,7 @@ class AgentSession:
         self.success_criteria = event.success_criteria
         self.criticality = event.criticality
         self.dependency_failure_policy = event.dependency_failure_policy
+        self.hard_predecessor_ids = list(event.hard_predecessor_ids)
         self.target_paths = tuple(event.target_paths)
         self.symbols = tuple(event.symbols)
         self.search_hints = tuple(event.search_hints)
@@ -556,6 +559,8 @@ class AgentSession:
         self.success_criteria = ""
         self.criticality = "required"
         self.dependency_failure_policy = "block"
+        # Resolved hard-predecessor agent ids (used to scope the worker context packet)
+        self.hard_predecessor_ids: list[UUID] = []
         # Structured child scoping (from parent's subtask decomposition)
         self.target_paths = ()
         self.symbols = ()

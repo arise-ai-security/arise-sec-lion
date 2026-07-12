@@ -70,6 +70,7 @@ class AgentCreated(DomainEvent):
     sibling_index: int = 0
     briefing: dict[str, Any] | None = None
     depends_on: list[int] = Field(default_factory=list)
+    hard_predecessor_ids: list[UUID] = Field(default_factory=list)
     success_criteria: str = ""  # From Subtask.success_criteria, used by verification
     criticality: Literal["required", "optional"] = "required"
     dependency_failure_policy: Literal["block", "replan", "continue"] = "block"

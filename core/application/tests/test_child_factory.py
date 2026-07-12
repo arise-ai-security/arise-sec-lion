@@ -2,6 +2,7 @@
 
 import asyncio
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -9,6 +10,9 @@ from core.application.services.lifecycle.child_factory import ChildAgentFactory
 from core.application.services.lifecycle.hierarchy_limits_registry import (
     HierarchyLimitsRegistry,
 )
+from core.domain.events.events import ChildSpawned
+from core.domain.values.node_message import Briefing
+from core.domain.values.subtask import Subtask
 
 
 def _make_factory(max_total: int) -> ChildAgentFactory:
@@ -18,6 +22,40 @@ def _make_factory(max_total: int) -> ChildAgentFactory:
         limits_registry=HierarchyLimitsRegistry(),
         max_total_agents=max_total,
     )
+
+
+_CFG = {
+    "strategy": "heuristic",
+    "base": {"model": "gpt-4", "temperature": 0, "max_tokens": 100},
+    "tool": "claude_code",
+}
+
+
+@pytest.mark.asyncio
+async def test_children_resolve_hard_predecessor_ids_from_depends_on() -> None:
+    # Given: two spawned children where B (sibling 1) hard-depends on A (sibling 0)
+    factory = _make_factory(max_total=-1)
+    factory.reset(initial_count=0)
+    parent_id, a_id, b_id = uuid4(), uuid4(), uuid4()
+    ev_a = ChildSpawned(
+        aggregate_id=parent_id, sequence_number=1, child_id=a_id, child_role="worker",
+        child_config=_CFG, sibling_index=0, subtask=Subtask(description="[A] a", config=_CFG),
+        briefing=Briefing.simple("parent").model_dump(),
+    )
+    ev_b = ChildSpawned(
+        aggregate_id=parent_id, sequence_number=2, child_id=b_id, child_role="worker",
+        child_config=_CFG, sibling_index=1,
+        subtask=Subtask(description="[B] b", config=_CFG, depends_on=[0]),
+        briefing=Briefing.simple("parent").model_dump(),
+    )
+
+    # When: the children are created from those events
+    results = await factory.create_children_from_events([ev_a, ev_b], parent_id)
+
+    # Then: B resolves its predecessor to A's concrete agent id; A has none
+    by_id = {r.agent.agent_id: r.agent for r in results}
+    assert by_id[b_id].hard_predecessor_ids == [a_id]
+    assert by_id[a_id].hard_predecessor_ids == []
 
 
 @pytest.mark.asyncio

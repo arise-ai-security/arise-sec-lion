@@ -551,6 +551,7 @@ class AgentOrchestrator:
                 target_paths=agent.target_paths,
                 symbols=agent.symbols,
                 failure_digest=agent.failure_digest,
+                hard_predecessor_ids=tuple(agent.hard_predecessor_ids),
             )
             shared_code_block = context_packet.source_block if context_packet else None
             shared_code_index = context_packet.source_index if context_packet else None

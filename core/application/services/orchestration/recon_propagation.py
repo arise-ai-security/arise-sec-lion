@@ -91,6 +91,7 @@ class ReconPropagationService:
         target_paths: tuple[str, ...],
         symbols: tuple[str, ...],
         failure_digest: str | None,
+        hard_predecessor_ids: tuple[UUID, ...] = (),
     ) -> ContextPacket | None:
         """Resolve scoped packets, falling back to the legacy provider contract."""
         if self._shared_code_port is None or root_id is None:
@@ -106,6 +107,7 @@ class ReconPropagationService:
                 target_paths=target_paths,
                 symbols=symbols,
                 failure_digest=failure_digest,
+                hard_predecessor_ids=hard_predecessor_ids,
             )
         from core.ports.shared_code_context_port import ContextPacket
 
