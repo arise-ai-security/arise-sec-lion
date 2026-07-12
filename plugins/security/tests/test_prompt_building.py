@@ -168,7 +168,7 @@ class TestSecurityPromptBuilding:
             "`[Forward-Instrumentator]` hard depends_on: `[PoC-Researcher]`"
             in prompt
         )
-        assert "`[Patch-Creator]` hard depends_on: `[Root-Cause-Analyst]`" in prompt
+        assert "`[Patch-Applier]` hard depends_on: `[Root-Cause-Analyst]`" in prompt
 
         # And: soft inputs are rendered as non-scheduling guidance.
         assert "`[Root-Cause-Analyst]` soft inputs: `[Forward-Instrumentator]`" in prompt
@@ -395,7 +395,7 @@ class TestSecurityPromptBuilding:
 
         # When: rendering the prompt.
         prompt = builder.build_worker_prompt(
-            task_description="[Patch-Creator] Create the minimal patch",
+            task_description="[Patch-Applier] Apply the approved PatchPlan",
             domain_context=make_test_cve_instance(),
             briefing=None,
         )

@@ -58,7 +58,7 @@ The reporter MUST: (1) read all `{{ artifact_dirs.testcase }}/` artifacts and si
 - Mark Reporter as `"estimated_complexity": "simple"` — it is a single worker that reads and synthesizes findings, not a decomposition target.
 - **Builder** later decomposes through the Builder catalog roles ({{ phase_roles["Builder"]|length }} infrastructure workers, not code analysis — no deeper granularity needed).
 - **Exploiter** later decomposes into its FULL analysis chain — every REQUIRED role as a separate worker ([PoC-Researcher] → [Data-Flow-Analyst] → [PoC-Tester] → [Forward-Instrumentator] → [Repro-Creator] → [Exploit-Validator]) — plus any optional roles the CVE needs.
-- **Fixer** later decomposes into its FULL chain — every REQUIRED role as a separate worker ([Root-Cause-Analyst] → [Candidate-Reviewer] → [Regression-Tester] → [Patch-Creator] → [Patch-Validator]) — plus optional aggregation when needed. Patches must be developed from first principles based on root cause analysis — no external fix commits.
+- **Fixer** selects an evidence-gated compact or expanded route. The compact chain is [Root-Cause-Analyst] → manager-authored PatchPlan → [Patch-Applier] → host [Patch-Validator]. Add Candidate-Reviewer or Regression-Tester only when the evidence gate requires them.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,

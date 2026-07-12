@@ -78,7 +78,7 @@ ROLES: Final[tuple[Role, ...]] = (
         insight="Which exact commit is the vulnerable base for the SEC-bench build?",
     ),
     Role(
-        name="Build-Compiler",
+        name="Build-Executor",
         phase="Builder",
         required=True,
         summary="Run secb build, repair build inputs when needed, and declare binaries.",
@@ -95,7 +95,7 @@ ROLES: Final[tuple[Role, ...]] = (
         phase="Builder",
         required=True,
         summary="Verify the instrumented binary is real, non-vacuous, and runs under ASan.",
-        depends_on=("Build-Compiler",),
+        depends_on=("Build-Executor",),
         insight="Does the produced binary run the PoC path without missing-ASan-runtime errors?",
     ),
     # -- Exploiter ----------------------------------------------------------
@@ -186,13 +186,13 @@ ROLES: Final[tuple[Role, ...]] = (
         insight="Does the candidate fix the crash without breaking unrelated behavior?",
     ),
     Role(
-        name="Patch-Creator",
+        name="Patch-Applier",
         phase="Fixer",
         required=True,
-        summary="Generate the patch from source edits at the analyst fix site (not hand-written).",
+        summary="Apply the approved manager PatchPlan literally; block on any mismatch.",
         produces=(ARTIFACT_PATHS["model_patch"],),
         depends_on=("Root-Cause-Analyst",),
-        insight="Does the diff touch only PROPOSED_FIX_SITE (or justify), one logical hunk?",
+        insight="Did the frozen PatchPlan apply exactly, without scope drift?",
     ),
     Role(
         name="Patch-Validator",
@@ -200,7 +200,7 @@ ROLES: Final[tuple[Role, ...]] = (
         required=True,
         summary="Apply, rebuild, and re-run the repro to confirm the fix; write the verdict file.",
         produces=(ARTIFACT_PATHS["patch_validation"],),
-        depends_on=("Patch-Creator",),
+        depends_on=("Patch-Applier",),
         insight="Does the patch apply clean, build, and yield 3/3 no-crash on the repro?",
     ),
     Role(

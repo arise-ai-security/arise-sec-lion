@@ -10,10 +10,12 @@ removal and split into one leaf per role. The role contract is read from
 from __future__ import annotations
 
 import re
+from typing import Literal, cast
 
 from core.ports.decomposition_validator_port import (
     DecompositionVerdict,
     DecompositionViolation,
+    FixedDecomposition,
     SuggestedSubtask,
 )
 from plugins.security.cve_instance import CVEInstance
@@ -25,6 +27,141 @@ _BRACKET = re.compile(r"\[([^\]]+)\]")
 
 class SecBenchDecompositionValidator:
     """Validate a SEC-bench phase decomposition against the role catalog."""
+
+    _PHASES = ("Builder", "Exploiter", "Fixer", "Reporter")
+    _PHASE_DEPS = {
+        "Exploiter": ("Builder",),
+        "Fixer": ("Exploiter",),
+        "Reporter": ("Fixer",),
+    }
+    _COMPACT = {
+        "Builder": ("Build-Executor",),
+        "Exploiter": ("Repro-Creator", "Exploit-Validator"),
+        "Fixer": ("Root-Cause-Analyst", "Patch-Applier", "Patch-Validator"),
+        "Reporter": ("Reporter",),
+    }
+    _ESCALATED = {
+        "Builder": ("Build-Setup", "Build-Executor", "Build-Verifier"),
+        "Exploiter": (
+            "PoC-Researcher",
+            "PoC-Tester",
+            "Repro-Creator",
+            "Exploit-Validator",
+        ),
+        "Fixer": (
+            "Root-Cause-Analyst",
+            "Candidate-Reviewer",
+            "Regression-Tester",
+            "Patch-Applier",
+            "Patch-Validator",
+        ),
+        "Reporter": ("Reporter",),
+    }
+    # Trigger-conditioned expansion: which same-phase specialists a specific
+    # failure signal calls for, added on top of the compact roles.
+    _EXPANSION: dict[str, tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]] = {
+        "Builder": (
+            (("build", "compile", "setup", "dependenc", "binary"),
+             ("Build-Setup", "Build-Verifier")),
+        ),
+        "Exploiter": (
+            (("sanitizer", "poc", "trigger", "crash", "asan"),
+             ("PoC-Researcher", "PoC-Tester")),
+            (("reproduc", "conflict", "data flow", "dataflow", "call graph"),
+             ("Data-Flow-Analyst", "Forward-Instrumentator")),
+        ),
+        "Fixer": (
+            (("candidate", "fix layer", "multiple", "over-broad", "overbroad"),
+             ("Candidate-Reviewer",)),
+            (("regression", "patch validation", "rebuild", "still crash", "revert"),
+             ("Regression-Tester",)),
+        ),
+    }
+
+    def __init__(
+        self, adaptive_execution: bool = False, policy_version: str = "b4-adaptive-v1"
+    ) -> None:
+        self._adaptive_execution = adaptive_execution
+        # The treatment/policy version is orchestration config, supplied by the
+        # composition root — not owned here. Stamped onto route provenance so it
+        # cannot silently drift from settings.orchestration.treatment_version.
+        self._policy_version = policy_version
+
+    @staticmethod
+    def safe_route(
+        requested: str | None,
+        *,
+        decision_complete: bool,
+    ) -> Literal["compact", "expanded", "escalated"]:
+        """Fail incomplete or invalid route decisions to expanded execution."""
+        if not decision_complete or requested not in {"compact", "expanded", "escalated"}:
+            return "expanded"
+        return cast(Literal["compact", "expanded", "escalated"], requested)
+
+    def _escalated_roles(self, phase: str, failure_signal: str) -> tuple[str, ...]:
+        """Compact roles plus the specialists a specific failure signal calls for.
+
+        Preserves the phase's compact roles (their successful artifacts are reused,
+        not restarted) and adds only the targeted specialists for the observed
+        failure. With no recognizable signal, falls back to the phase's full
+        specialist set. Stays within the phase — never injects the whole catalog.
+        """
+        compact = self._COMPACT.get(phase, ())
+        signal = failure_signal.lower()
+        matched: list[str] = []
+        for keywords, specialists in self._EXPANSION.get(phase, ()):
+            if any(keyword in signal for keyword in keywords):
+                matched.extend(specialists)
+        if not matched:
+            return self._ESCALATED.get(phase, compact)
+        selected = list(dict.fromkeys((*compact, *matched)))
+        order = {role.name: i for i, role in enumerate(PHASE_ROLES.get(phase, ()))}
+        selected.sort(key=lambda name: order.get(name, len(order)))
+        return tuple(selected)
+
+    def fixed_decomposition(
+        self,
+        *,
+        parent_task_description: str,
+        domain_context: object | None,
+        redecomposition_count: int,
+        failure_signal: str = "",
+    ) -> FixedDecomposition | None:
+        if not self._adaptive_execution or not isinstance(domain_context, CVEInstance):
+            return None
+        phase = self._phase_of(parent_task_description)
+        if phase is None:
+            if _BRACKET.match((parent_task_description or "").lstrip()) is not None:
+                return None
+            subtasks = tuple(
+                SuggestedSubtask(
+                    description=f"[{name}] Execute the {name} phase outcome gate.",
+                    estimated_complexity="complex",
+                )
+                for name in self._PHASES
+            )
+            return FixedDecomposition(
+                subtasks=subtasks,
+                policy_version=self._policy_version,
+                phase="skeleton",
+                route="compact",
+                triggers=("run_started",),
+                remaining_budget=1,
+            )
+        if redecomposition_count == 0:
+            role_names: tuple[str, ...] = self._COMPACT[phase]
+            route_name = self.safe_route("compact", decision_complete=True)
+        else:
+            role_names = self._escalated_roles(phase, failure_signal)
+            route_name = self.safe_route("escalated", decision_complete=True)
+        return FixedDecomposition(
+            subtasks=tuple(self._leaf_for(name) for name in role_names),
+            policy_version=self._policy_version,
+            phase=phase,
+            route=route_name,
+            triggers=("upstream_success",) if route_name == "compact" else ("phase_gate_failed",),
+            remaining_budget=max(0, 1 - redecomposition_count),
+        )
 
     def classify(
         self,
@@ -40,7 +177,13 @@ class SecBenchDecompositionValidator:
         phase = self._phase_of(parent_task_description)
         if phase is None:
             return DecompositionVerdict(ok=True)
-        required = tuple(role for role in PHASE_ROLES.get(phase, ()) if role.required)
+        if self._adaptive_execution:
+            required_names = set(self._COMPACT[phase])
+            required = tuple(
+                role for role in PHASE_ROLES.get(phase, ()) if role.name in required_names
+            )
+        else:
+            required = tuple(role for role in PHASE_ROLES.get(phase, ()) if role.required)
         if not required:
             return DecompositionVerdict(ok=True)
 
@@ -133,7 +276,8 @@ class SecBenchDecompositionValidator:
             estimated_complexity="simple",
         )
 
-    @staticmethod
-    def hard_dependencies(role_label: str) -> tuple[str, ...]:
+    def hard_dependencies(self, role_label: str) -> tuple[str, ...]:
+        if self._adaptive_execution and role_label in self._PHASE_DEPS:
+            return self._PHASE_DEPS[role_label]
         role = role_by_name_ci(role_label)
         return role.depends_on if role is not None else ()

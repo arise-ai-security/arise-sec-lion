@@ -52,8 +52,8 @@ def test_hard_dependencies_match_develop_prompt_artifact_handoffs() -> None:
     """Hard edges only describe required producer artifacts from the old prompt contract."""
     expected = {
         "Build-Setup": (),
-        "Build-Compiler": ("Build-Setup",),
-        "Build-Verifier": ("Build-Compiler",),
+        "Build-Executor": ("Build-Setup",),
+        "Build-Verifier": ("Build-Executor",),
         "PoC-Researcher": (),
         "Data-Flow-Analyst": (),
         "PoC-Tester": (),
@@ -63,8 +63,8 @@ def test_hard_dependencies_match_develop_prompt_artifact_handoffs() -> None:
         "Root-Cause-Analyst": (),
         "Candidate-Reviewer": ("Root-Cause-Analyst",),
         "Regression-Tester": (),
-        "Patch-Creator": ("Root-Cause-Analyst",),
-        "Patch-Validator": ("Patch-Creator",),
+        "Patch-Applier": ("Root-Cause-Analyst",),
+        "Patch-Validator": ("Patch-Applier",),
         "Fix-Aggregator": ("Patch-Validator",),
         "Reporter": (),
     }

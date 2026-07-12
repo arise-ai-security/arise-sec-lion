@@ -149,7 +149,7 @@ def test_injected_leaf_carries_insight_and_validator_exposes_hard_deps() -> None
 def test_builder_phase_required_roles_enforced() -> None:
     # Generic across phases: a Builder decomposition missing Build-Verifier is repaired.
     v = SecBenchDecompositionValidator()
-    subs = ("[Build-Setup] x", "[Build-Compiler] x")
+    subs = ("[Build-Setup] x", "[Build-Executor] x")
     verdict = v.classify(
         parent_task_description="[Builder] Build the project",
         subtask_descriptions=subs,
@@ -157,3 +157,135 @@ def test_builder_phase_required_roles_enforced() -> None:
     )
     assert not verdict.ok
     assert any(a.description.startswith("[Build-Verifier]") for a in verdict.additions)
+
+
+def test_adaptive_policy_returns_fixed_skeleton_then_compact_route() -> None:
+    # Given: Adaptive B4 policy and a SEC-bench task
+    validator = SecBenchDecompositionValidator(adaptive_execution=True)
+
+    # When: The root and Exploiter controller request fixed decompositions
+    skeleton = validator.fixed_decomposition(
+        parent_task_description="Repair the CVE",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+    compact = validator.fixed_decomposition(
+        parent_task_description="[Exploiter] reproduce",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+
+    # Then: The root skeleton is fixed and Exploiter starts compact
+    assert skeleton is not None
+    assert [item.description.split("]")[0] for item in skeleton.subtasks] == [
+        "[Builder",
+        "[Exploiter",
+        "[Fixer",
+        "[Reporter",
+    ]
+    assert compact is not None
+    assert compact.route == "compact"
+    assert [item.description.split("]")[0] for item in compact.subtasks] == [
+        "[Repro-Creator",
+        "[Exploit-Validator",
+    ]
+
+
+def test_adaptive_failed_compact_route_expands_only_same_phase() -> None:
+    # Given: An Exploiter controller re-entering after its phase gate failed
+    validator = SecBenchDecompositionValidator(adaptive_execution=True)
+
+    # When: The route is selected for redecomposition
+    selection = validator.fixed_decomposition(
+        parent_task_description="[Exploiter] reproduce",
+        domain_context=_cve(),
+        redecomposition_count=1,
+    )
+
+    # Then: Only exploit specialists are added and the route is escalated
+    assert selection is not None
+    assert selection.route == "escalated"
+    labels = {item.description.split("]")[0] for item in selection.subtasks}
+    assert labels == {
+        "[PoC-Researcher",
+        "[PoC-Tester",
+        "[Repro-Creator",
+        "[Exploit-Validator",
+    }
+
+
+def test_policy_version_is_sourced_from_config_not_hardcoded() -> None:
+    # Given: a validator configured with a specific treatment/policy version
+    validator = SecBenchDecompositionValidator(
+        adaptive_execution=True, policy_version="b4-adaptive-v2"
+    )
+
+    # When: it produces both the skeleton and a phase route
+    skeleton = validator.fixed_decomposition(
+        parent_task_description="Repair the CVE",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+    compact = validator.fixed_decomposition(
+        parent_task_description="[Exploiter] reproduce",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+
+    # Then: the emitted policy version reflects config, not a hardcoded literal
+    assert skeleton is not None and skeleton.policy_version == "b4-adaptive-v2"
+    assert compact is not None and compact.policy_version == "b4-adaptive-v2"
+
+
+def test_exploiter_expansion_is_conditioned_on_the_failure_signal() -> None:
+    # Given: an Exploiter controller re-entering after a reproduction/data-flow conflict
+    validator = SecBenchDecompositionValidator(adaptive_execution=True)
+
+    # When: the escalation is selected with that specific failure signal
+    selection = validator.fixed_decomposition(
+        parent_task_description="[Exploiter] reproduce",
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failure_signal="reproduction conflicts with the CVE evidence; data flow unclear",
+    )
+
+    # Then: the compact roles are preserved and only the data-flow specialists are added
+    assert selection is not None and selection.route == "escalated"
+    labels = {item.description.split("]")[0] for item in selection.subtasks}
+    assert "[Repro-Creator" in labels and "[Exploit-Validator" in labels  # compact preserved
+    assert "[Data-Flow-Analyst" in labels and "[Forward-Instrumentator" in labels
+    # the sanitizer-trigger specialists are NOT pulled in for this signal
+    assert "[PoC-Tester" not in labels
+
+
+def test_fixer_patch_failure_expands_with_regression_tester() -> None:
+    # Given: a Fixer controller re-entering after patch validation regressed
+    validator = SecBenchDecompositionValidator(adaptive_execution=True)
+
+    # When: the escalation is selected with a patch/regression failure signal
+    selection = validator.fixed_decomposition(
+        parent_task_description="[Fixer] fix",
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failure_signal="patch validation failed: the repro still crashes after rebuild",
+    )
+
+    # Then: the targeted Regression-Tester is added, compact Fixer roles preserved,
+    # and the whole catalog is NOT injected (stays same-phase)
+    assert selection is not None and selection.route == "escalated"
+    labels = {item.description.split("]")[0] for item in selection.subtasks}
+    assert "[Regression-Tester" in labels
+    assert "[Root-Cause-Analyst" in labels and "[Patch-Applier" in labels
+    assert "[PoC-Researcher" not in labels  # no cross-phase leakage
+
+
+def test_invalid_or_incomplete_route_falls_back_to_expanded() -> None:
+    # Given/When: Route policy receives invalid or incomplete decisions
+    invalid = SecBenchDecompositionValidator.safe_route("unknown", decision_complete=True)
+    incomplete = SecBenchDecompositionValidator.safe_route(
+        "compact", decision_complete=False
+    )
+
+    # Then: Both fail safe to expanded
+    assert invalid == "expanded"
+    assert incomplete == "expanded"
