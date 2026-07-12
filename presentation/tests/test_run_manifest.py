@@ -123,6 +123,8 @@ async def test_write_run_manifest_emits_full_payload(tmp_path: Path) -> None:
     assert payload["summary_available"] is True
     assert payload["tokens"] == {"prompt": 12345, "completion": 678}
     assert payload["costs_by_model"] == {"o3": 0.41, "openai/o3": 0.29}
+    assert payload["cost_incomplete"] is False
+    assert payload["cost_completeness_rate"] == 1.0
     # Deliverables come from a filesystem probe — only files actually on
     # disk appear, keyed by their real filenames.
     assert payload["deliverables"] == {
@@ -286,6 +288,8 @@ async def test_write_run_manifest_records_provenance_fields(tmp_path: Path) -> N
         int(uv_lock_sha, 16)  # must be hex
     # effective_config_path is documented relative location of the snapshot.
     assert payload["effective_config_path"] == "effective_config.yaml"
+    assert len(payload["config_hash"]) == 64
+    assert payload["treatment_version"] is None
 
 
 @pytest.mark.asyncio

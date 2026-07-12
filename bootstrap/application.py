@@ -97,6 +97,8 @@ class ApplicationConfig:
     capture_recon_reads: bool = False
     share_boss_recon: bool = False
     procedural_dispatch: bool = False
+    treatment_version: str | None = None
+    config_hash: str | None = None
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     prompt_builder: PromptBuilder | None = None
@@ -137,6 +139,8 @@ def get_application(
         workspace_listing_dirs=config.workspace_listing_dirs,
         workspace_listing_max_entries=config.workspace_listing_max_entries,
         verification_max_retries=config.verification_max_retries,
+        treatment_version=config.treatment_version,
+        config_hash=config.config_hash,
     )
 
     # Create collaborators (composition root wiring). Prefer the

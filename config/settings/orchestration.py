@@ -79,6 +79,11 @@ class OrchestrationConfig(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    treatment_version: str | None = Field(
+        default=None,
+        description="Frozen experimental treatment identifier persisted on RunStarted.",
+    )
+
     mode: Literal["hierarchical", "flat"] = Field(
         default="hierarchical",
         description="Top-level execution shape: hierarchical (BOSS->managers->workers) or flat.",
@@ -154,6 +159,24 @@ class OrchestrationConfig(BaseModel):
             "latest_only renders one entry per path with its newest content — "
             "smaller block, but a re-viewed file rewrites the block mid-run and "
             "busts the prefix cache from that point for later-spawned workers."
+        ),
+    )
+    scoped_worker_context: bool = Field(
+        default=False,
+        description="Assemble consumer-scoped latest-revision packets instead of a run-global block.",
+    )
+    source_context_token_budget: int = Field(
+        default=16_000,
+        gt=0,
+        description="Maximum source tokens in one scoped worker context packet.",
+    )
+    metadata_context_token_budget: int = Field(
+        default=4_000,
+        gt=0,
+        description=(
+            "Maximum tokens for a scoped packet's metadata/evidence index segment "
+            "(the provided-files index and its omission log). Overflow entries are "
+            "recorded as a single metadata_budget omission instead of overflowing."
         ),
     )
     workspace_listing_dirs: list[str] | None = Field(

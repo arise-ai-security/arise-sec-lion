@@ -1,25 +1,17 @@
-# Cell B4 — our system, full 3-level tree: BOSS -> BEF managers -> workers.
-# `topology.max_depth: 3` is what actually forms three levels: at depth-1 a
-# BEF manager has depth_remaining = 3-1 = 2, so the assess_variable.j2:10 soft
-# nudge ("1 level remaining — prefer executing directly") does NOT fire and the
-# manager follows assess.j2's MANDATORY-decompose guidance, spawning its full
-# role roster (Builder -> 3, Exploiter -> 6, Fixer -> 6, Reporter leaf). At
-# depth-2 a worker has depth_remaining = 1, so the nudge + assess.j2 leaf rules
-# keep it executing — the tree stops at three levels (proven by historical B1
-# runs at the default max_depth=3). max_depth=2 was wrong: it gave depth-1
-# managers depth_remaining=1 and the nudge collapsed them to executors (B4==B3).
-# Single-provider (OpenAI): gpt-5.4 boss/managers decompose and coordinate;
-# cheap gpt-5.4-mini OpenHands workers execute. LLM judge OFF.
+# Cell B4 — adaptive fixed phase controllers with evidence-gated worker routes.
+# max_depth=3 preserves BOSS -> phase controller -> selected worker. The security
+# decomposition policy supplies the top-level skeleton and compact/escalated routes;
+# the LLM does not rediscover those structures.
 
 extends: config/config.yaml
 
 overrides:
+  orchestration.treatment_version: b4-adaptive-v1
   orchestration.mode: hierarchical
   orchestration.skip_judge: true
-  # One shared container + OpenHands conversation across the run's workers: each
-  # role inherits prior context (no re-read into a fresh LLM context) and prior
-  # container state (installed tools + non-mounted files persist). Per-role
-  # aggregates/events/cost are preserved (cost recorded as a per-worker delta).
+  orchestration.procedural_dispatch: true
+  # Workers share one container but always open fresh conversations. Scoped packets
+  # carry only current, consumer-relevant source observations between workers.
   orchestration.shared_worker_session: true
   # B-side recon-loop caps (boss/manager tool-calling iterations). The N cells keep
   # the base default (3) — non-binding there since flat mode runs no boss/manager
@@ -28,10 +20,9 @@ overrides:
   orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
   orchestration.topology.max_depth: 3
-  orchestration.topology.max_children_per_node: 7   # Exploiter/Fixer need 6 leaf workers each
-  orchestration.topology.max_total_agents: 40       # boss + 4 managers + ~16 leaf workers
-  # ~16-20 sequential workers (max_concurrent_workers=1) need a wide wall-clock
-  # cap; the full role roster is the point of this cell.
+  orchestration.topology.max_children_per_node: 5
+  orchestration.topology.max_total_agents: 24
+  # Escalated routes and verification retries still require a wide wall-clock cap.
   orchestration.max_run_duration_seconds: 14400
   boss.model: gpt-5.4
   manager.model: gpt-5.4
@@ -61,6 +52,9 @@ overrides:
   orchestration.shared_code_prefix_first: true
   orchestration.shared_code_index: true
   orchestration.shared_code_skip_dir_listings: true
+  orchestration.shared_code_render_mode: latest_only
+  orchestration.scoped_worker_context: true
+  orchestration.source_context_token_budget: 16000
   # workspace_listing narrowed to [testcase, work] (2026-06-15, H1b): the worker must
   # SEE /work/bin binaries for the Exploiter self-recovery fallback, but listing ALL
   # dirs (None) re-bloats the prompt (~13K tok/turn on out-of-tree CMake builds).

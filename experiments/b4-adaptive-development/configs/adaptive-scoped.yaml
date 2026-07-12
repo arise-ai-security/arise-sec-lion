@@ -1,0 +1,7 @@
+extends: experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml
+
+overrides:
+  orchestration.treatment_version: b4-adaptive-v1
+  orchestration.scoped_worker_context: true
+  orchestration.shared_code_render_mode: latest_only
+  orchestration.source_context_token_budget: 16000

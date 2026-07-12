@@ -1,0 +1,4 @@
+extends: experiments/b4-adaptive-development/configs/adaptive-scoped.yaml
+
+overrides:
+  orchestration.source_context_token_budget: 8000

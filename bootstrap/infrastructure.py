@@ -75,6 +75,9 @@ class InfrastructureConfig:
     shared_code_skip_dir_listings: bool = False
     shared_code_render_mode: str = "append_only"
     shared_code_index_enabled: bool = False
+    scoped_worker_context: bool = False
+    source_context_token_budget: int = 16_000
+    metadata_context_token_budget: int = 4_000
     format_repairer_enabled: bool = False
     format_repairer_model: str | None = None
     format_repairer_max_tokens: int = 16000
@@ -166,6 +169,9 @@ def get_infrastructure(config: InfrastructureConfig) -> Infrastructure:
             event_store,
             render_mode=config.shared_code_render_mode,
             index_enabled=config.shared_code_index_enabled,
+            scoped_packets=config.scoped_worker_context,
+            source_token_budget=config.source_context_token_budget,
+            metadata_token_budget=config.metadata_context_token_budget,
         )
         if config.worker_shared_session
         else None

@@ -22,12 +22,18 @@ from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
 from plugins.security import CVEInstance, SecurityDomainPlugin
 from plugins.security.docker_runtime import DockerSecBenchRuntime
 from presentation.cli import CLI, CLIConfig
+from presentation.persistence.invocation_hash import compute_config_sha256
 
 from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
 
 
 logger = logging.getLogger(__name__)
+
+
+def _experimental_config_hash(settings: Settings) -> str:
+    """Hash behavior-bearing settings without database credentials."""
+    return compute_config_sha256(settings)
 
 
 if TYPE_CHECKING:
@@ -66,6 +72,10 @@ def _build_security_components(settings: Settings | ApiSettings) -> DomainCompon
     plugin = SecurityDomainPlugin(
         enabled_tools=settings.security.tools,
         shared_code_prefix_first=settings.orchestration.shared_code_prefix_first,
+        adaptive_execution=(
+            settings.orchestration.treatment_version == "b4-adaptive-v1"
+        ),
+        policy_version=settings.orchestration.treatment_version or "b4-adaptive-v1",
     )
     plugin.set_container_runtime(runtime)
     return DomainComponents(
@@ -305,6 +315,9 @@ def create_runtime_cli(
             shared_code_skip_dir_listings=settings.orchestration.shared_code_skip_dir_listings,
             shared_code_render_mode=settings.orchestration.shared_code_render_mode,
             shared_code_index_enabled=settings.orchestration.shared_code_index,
+            scoped_worker_context=settings.orchestration.scoped_worker_context,
+            source_context_token_budget=settings.orchestration.source_context_token_budget,
+            metadata_context_token_budget=settings.orchestration.metadata_context_token_budget,
             format_repairer_enabled=settings.format_repairer.enabled,
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,
@@ -358,6 +371,8 @@ def create_runtime_cli(
             capture_recon_reads=settings.orchestration.capture_recon_reads,
             share_boss_recon=settings.orchestration.share_boss_recon,
             procedural_dispatch=settings.orchestration.procedural_dispatch,
+            treatment_version=settings.orchestration.treatment_version,
+            config_hash=_experimental_config_hash(settings),
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,
