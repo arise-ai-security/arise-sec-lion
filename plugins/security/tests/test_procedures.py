@@ -10,6 +10,8 @@ The verdict-file writers are pinned to the ``deliverables.py`` field constants
 production code must never cross that boundary).
 """
 
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -95,8 +97,10 @@ class FakeSession:
         testcase_dir: Path,
         responses: list[_Resp] | None = None,
         default: CommandOutcome | None = None,
+        source_dir: Path | None = None,
     ) -> None:
         self.testcase_dir = testcase_dir
+        self.source_dir = source_dir or testcase_dir
         self._responses = list(responses or [])
         self._default = default or CommandOutcome(exit_code=0, output="")
         self.commands: list[str] = []
@@ -174,6 +178,7 @@ def test_match_maps_validator_brackets_to_procedures() -> None:
 
     # When / Then: each validator bracket maps to its procedure_ref
     assert ex.match("[Build-Verifier] verify the binary", cve) == "secb_build_validation"
+    assert ex.match("[Patch-Applier] apply the plan", cve) == "secb_patch_apply"
     assert ex.match("[Exploit-Validator] validate the repro", cve) == "secb_exploit_validation"
     assert ex.match("[Patch-Validator] validate the patch", cve) == "secb_patch_validation"
 
@@ -233,6 +238,79 @@ async def test_build_validation_fails_when_binary_pointer_missing(tmp_path: Path
     assert result.success is False
 
 
+def _patch_plan(target: Path) -> dict:
+    return {
+        "evidence_references": ["event:root-cause"],
+        "target_file": "/src/project/vulnerable.c",
+        "target_symbol": "parse",
+        "base_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        "operations": [
+            {
+                "kind": "replace",
+                "anchor": "unsafe();",
+                "replacement": "safe();",
+                "expected_occurrences": 1,
+            }
+        ],
+        "allowed_paths": ["/src/project"],
+        "forbidden_paths": ["/testcase"],
+        "required_postconditions": ["sanitizer finding absent"],
+        "pre_patch_exploit_identity": "sha256:poc",
+        "validation_commands": ["secb patch", "secb build", "secb repro"],
+    }
+
+
+async def test_patch_apply_applies_validated_plan_and_writes_diff(tmp_path: Path) -> None:
+    # Given: a sealed /src source, a manager-authored PatchPlan, and a git diff to emit
+    src = tmp_path / "src" / "project"
+    src.mkdir(parents=True)
+    target = src / "vulnerable.c"
+    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "patch_plan.json").write_text(json.dumps(_patch_plan(target)), encoding="utf-8")
+    session = FakeSession(
+        tc,
+        responses=[_Resp(needle="git", outcome=CommandOutcome(exit_code=0, output="diff --git a b\n"))],
+        source_dir=tmp_path / "src",
+    )
+
+    # When: the weak Patch-Applier procedure runs
+    result = await _executor(session).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: the exact edit is applied host-side and the diff deliverable is written
+    assert result.success is True
+    assert target.read_text(encoding="utf-8") == "void parse(void) { safe(); }\n"
+    assert (tc / "model_patch.diff").read_text(encoding="utf-8").startswith("diff --git")
+
+
+async def test_patch_apply_blocks_and_makes_no_edit_on_forbidden_target(tmp_path: Path) -> None:
+    # Given: a PatchPlan that forbids its own target path
+    src = tmp_path / "src" / "project"
+    src.mkdir(parents=True)
+    target = src / "vulnerable.c"
+    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    before = target.read_bytes()
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    plan = _patch_plan(target)
+    plan["forbidden_paths"] = ["/src/project"]
+    (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    session = FakeSession(tc, source_dir=tmp_path / "src")
+
+    # When: the applier validates the plan
+    result = await _executor(session).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: it blocks, edits nothing, and emits no diff deliverable
+    assert result.success is False
+    assert target.read_bytes() == before
+    assert not (tc / "model_patch.diff").exists()
+
+
 def test_match_returns_none_for_unregistered_or_missing_bracket() -> None:
     # Given: an executor
     ex = _executor(None)
@@ -250,6 +328,7 @@ def test_resolve_accepts_only_registered_refs() -> None:
 
     # When / Then: only the registered refs resolve
     assert ex.resolve("secb_build_validation") is True
+    assert ex.resolve("secb_patch_apply") is True
     assert ex.resolve("secb_exploit_validation") is True
     assert ex.resolve("secb_patch_validation") is True
     assert ex.resolve("secb_unregistered_procedure") is False

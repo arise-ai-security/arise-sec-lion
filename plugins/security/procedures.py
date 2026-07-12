@@ -22,6 +22,8 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from core.domain.values.procedure import ProcedureEvidence, ProcedureResult
 from plugins.security.crash_signature import (
     CrashSignature,
@@ -29,6 +31,7 @@ from plugins.security.crash_signature import (
     signatures_match,
 )
 from plugins.security.cve_instance import CVEInstance
+from plugins.security.patch_plan import PatchApplier, PatchPlan, PatchPlanValidator
 from plugins.security.deliverables import (
     ARTIFACT_PATHS,
     EXPLOIT_VALIDATION_FIELDS,
@@ -62,11 +65,15 @@ _REPRO_SKELETON_MARKER = "Arise seeded an empty"
 _PROCEDURE_EXPLOIT = "secb_exploit_validation"
 _PROCEDURE_PATCH = "secb_patch_validation"
 _PROCEDURE_BUILD = "secb_build_validation"
+_PROCEDURE_PATCH_APPLY = "secb_patch_apply"
 _REGISTRY: dict[str, str] = {
     "Build-Verifier": _PROCEDURE_BUILD,
     "Exploit-Validator": _PROCEDURE_EXPLOIT,
+    "Patch-Applier": _PROCEDURE_PATCH_APPLY,
     "Patch-Validator": _PROCEDURE_PATCH,
 }
+# The manager-authored PatchPlan the weak Patch-Applier consumes (never reasons).
+_PATCH_PLAN_JSON = "patch_plan.json"
 _PROCEDURE_REFS = frozenset(_REGISTRY.values())
 
 # Canonical /testcase filenames, derived from the deliverables contract.
@@ -117,6 +124,7 @@ class ProcedureSession(Protocol):
     """
 
     testcase_dir: Path
+    source_dir: Path
 
     async def run(self, command: str, *, timeout: float) -> CommandOutcome: ...
 
@@ -176,6 +184,8 @@ class SecBenchProcedureExecutor:
             raise ProcedureInfrastructureError(f"no container session for run {root_id}")
         if procedure_ref == _PROCEDURE_BUILD:
             return await _run_build_validation(session, cve)
+        if procedure_ref == _PROCEDURE_PATCH_APPLY:
+            return await _run_patch_apply(session, cve)
         if procedure_ref == _PROCEDURE_EXPLOIT:
             return await _run_exploit_validation(session, cve)
         if procedure_ref == _PROCEDURE_PATCH:
@@ -210,6 +220,62 @@ async def _run_build_validation(
     return ProcedureResult(
         success=True,
         summary="Build validation PASS: secb build succeeded and the binary resolves",
+        evidence=tuple(evidence),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Patch apply (weak literal Patch-Applier)
+# ---------------------------------------------------------------------------
+
+
+async def _run_patch_apply(
+    session: ProcedureSession, cve: CVEInstance | None
+) -> ProcedureResult:
+    """Apply the manager-authored PatchPlan literally, or block without editing.
+
+    The Fixer manager authors ``patch_plan.json``; this applier NEVER reasons. It
+    validates the frozen plan against the sealed ``/src`` source (hash, unique
+    anchor, allow/forbid paths) and either applies it exactly and emits the diff
+    deliverable, or returns ``PATCH_PLAN_BLOCKED`` leaving every byte untouched.
+    """
+    _ = cve
+    evidence: list[ProcedureEvidence] = []
+    tc = session.testcase_dir
+    plan_text = _read(tc / _PATCH_PLAN_JSON)
+    if not plan_text.strip():
+        reason = f"{_PATCH_PLAN_JSON} missing or empty — manager authored no PatchPlan"
+        return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
+    try:
+        plan = PatchPlan.model_validate_json(plan_text)
+    except ValidationError as exc:
+        reason = f"PatchPlan schema invalid ({exc.error_count()} errors)"
+        return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
+
+    applier = PatchApplier(PatchPlanValidator(session.source_dir, set(plan.evidence_references)))
+    outcome = applier.apply(plan)
+    evidence.append(
+        ProcedureEvidence(
+            argv=("patch-plan-apply", plan.target_file),
+            exit_code=0 if outcome.status == "APPLIED" else 1,
+            output_sha256=outcome.plan_sha256,
+            excerpt=outcome.reason[:_EXCERPT_LIMIT],
+        )
+    )
+    if outcome.status != "APPLIED":
+        return _failed(
+            _PROCEDURE_PATCH_APPLY,
+            f"Patch apply BLOCKED: {outcome.reason}",
+            outcome.reason,
+            evidence,
+        )
+
+    # Emit the model_patch.diff deliverable from the applied source change.
+    diff = await _run_cmd(session, "git -C /src diff", timeout=_PATCH_TIMEOUT, evidence=evidence)
+    _write_file(tc / _MODEL_PATCH, diff.output)
+    return ProcedureResult(
+        success=True,
+        summary=f"Patch apply APPLIED plan {outcome.plan_sha256[:12]} to {plan.target_file}",
         evidence=tuple(evidence),
     )
 

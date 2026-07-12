@@ -298,6 +298,7 @@ class DockerProcedureSession:
     def __init__(self, session: SecBenchContainerSession) -> None:
         self._session = session
         self.testcase_dir = session.workspace.host_testcase_dir
+        self.source_dir = session.workspace.host_source_dir
 
     async def run(self, command: str, *, timeout: float) -> CommandOutcome:  # noqa: ASYNC109
         argv = [
