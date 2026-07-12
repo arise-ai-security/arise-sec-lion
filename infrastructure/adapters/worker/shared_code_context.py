@@ -197,8 +197,17 @@ class SharedCodeContextProvider:
         target_paths: tuple[str, ...] = (),
         symbols: tuple[str, ...] = (),
         failure_digest: str | None = None,
+        hard_predecessor_ids: tuple[UUID, ...] = (),
+        consumed_artifacts: tuple[str, ...] = (),
+        phase: str = "",
     ) -> ContextPacket:
-        """Select a bounded, current source packet for one worker."""
+        """Select a bounded, current source packet for one worker.
+
+        When any dependency-scope input is supplied the candidate observations are
+        FILTERED to the consumer's dependency cone (see ``_in_scope``); everything
+        else stays as before, so a call with only the legacy target/symbol/failure
+        inputs is byte-identical to the hierarchy-global packet.
+        """
         if not self._scoped_packets:
             block = await self.code_block(root_id)
             index = await self.code_index(root_id)
@@ -209,20 +218,39 @@ class SharedCodeContextProvider:
                 total_chars=len(text),
                 total_tokens=self._estimated_tokens(text),
             )
+        predecessor_ids = frozenset(str(agent_id) for agent_id in hard_predecessor_ids)
+        consumed = frozenset(consumed_artifacts)
+        scoped = bool(predecessor_ids or consumed or phase)
         relevant = await self._source_events(root_id)
         current = self._latest_current_observations(relevant)
+        omitted: list[dict[str, object]] = []
+        candidates: list[SourceFileObserved] = []
+        for event in current.values():
+            if scoped and not self._in_scope(
+                event,
+                target_paths=target_paths,
+                symbols=symbols,
+                failure_digest=failure_digest,
+                predecessor_ids=predecessor_ids,
+                consumed_artifacts=consumed,
+                phase=phase,
+            ):
+                omitted.append({"path": event.path, "reason": "out_of_scope"})
+                continue
+            candidates.append(event)
         ranked = sorted(
-            current.values(),
+            candidates,
             key=lambda event: self._selection_key(
                 event,
                 target_paths=target_paths,
                 symbols=symbols,
                 failure_digest=failure_digest,
+                predecessor_ids=predecessor_ids,
+                consumed_artifacts=consumed,
             ),
         )
         selected: list[dict[str, object]] = []
         telemetry: list[dict[str, object]] = []
-        omitted: list[dict[str, object]] = []
         used_tokens = 0
         for event in ranked:
             if not self._is_source_path(event.path):
@@ -266,6 +294,8 @@ class SharedCodeContextProvider:
                         target_paths=target_paths,
                         symbols=symbols,
                         failure_digest=failure_digest,
+                        predecessor_ids=predecessor_ids,
+                        consumed_artifacts=consumed,
                     ),
                 }
             )
@@ -315,18 +345,23 @@ class SharedCodeContextProvider:
         target_paths: tuple[str, ...],
         symbols: tuple[str, ...],
         failure_digest: str | None,
+        predecessor_ids: frozenset[str] = frozenset(),
+        consumed_artifacts: frozenset[str] = frozenset(),
     ) -> tuple[int, str, str]:
         reason = cls._inclusion_reason(
             event,
             target_paths=target_paths,
             symbols=symbols,
             failure_digest=failure_digest,
+            predecessor_ids=predecessor_ids,
+            consumed_artifacts=consumed_artifacts,
         )
         # Plan order: exact target SYMBOL -> exact target PATH -> required
-        # predecessor artifact (2, reserved) -> failure-referenced -> phase-local.
+        # predecessor artifact -> failure-referenced -> phase-local.
         priority = {
             "exact_target_symbol": 0,
             "exact_target_path": 1,
+            "required_predecessor_artifact": 2,
             "failure_referenced_source": 3,
             "phase_local_recent_evidence": 4,
         }[reason]
@@ -339,14 +374,50 @@ class SharedCodeContextProvider:
         target_paths: tuple[str, ...],
         symbols: tuple[str, ...],
         failure_digest: str | None,
+        predecessor_ids: frozenset[str] = frozenset(),
+        consumed_artifacts: frozenset[str] = frozenset(),
     ) -> str:
         if any(symbol and symbol in event.content for symbol in symbols):
             return "exact_target_symbol"
         if event.path in target_paths:
             return "exact_target_path"
+        if event.observed_by in predecessor_ids or event.path in consumed_artifacts:
+            return "required_predecessor_artifact"
         if failure_digest and event.path in failure_digest:
             return "failure_referenced_source"
         return "phase_local_recent_evidence"
+
+    @classmethod
+    def _in_scope(
+        cls,
+        event: SourceFileObserved,
+        *,
+        target_paths: tuple[str, ...],
+        symbols: tuple[str, ...],
+        failure_digest: str | None,
+        predecessor_ids: frozenset[str],
+        consumed_artifacts: frozenset[str],
+        phase: str,
+    ) -> bool:
+        """Whether an observation belongs to the consumer's dependency cone.
+
+        In scope when it is produced by a hard predecessor, on a consumed-artifact
+        or target path, matches a target symbol, or is referenced by the failure
+        digest (every non-fallback ``_inclusion_reason``); a fallback observation is
+        in scope only when it is local to the consumer's phase. Everything else
+        belongs to an unrelated sibling/phase and is excluded.
+        """
+        reason = cls._inclusion_reason(
+            event,
+            target_paths=target_paths,
+            symbols=symbols,
+            failure_digest=failure_digest,
+            predecessor_ids=predecessor_ids,
+            consumed_artifacts=consumed_artifacts,
+        )
+        if reason != "phase_local_recent_evidence":
+            return True
+        return bool(phase) and event.phase == phase
 
     @staticmethod
     def _estimated_tokens(content: str) -> int:

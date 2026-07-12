@@ -530,6 +530,146 @@ async def test_block_byte_stable_across_calls_and_memoized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_predecessor_scope_includes_predecessor_and_excludes_unrelated_sibling() -> None:
+    """Dependency scope keeps a hard predecessor's source and drops an unrelated sibling."""
+
+    # Given: a predecessor and an unrelated sibling each observe a distinct file
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    predecessor = uuid4()
+    sibling = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    await _seed_worker(store, root_id=root_id, agent_id=predecessor)
+    await _seed_worker(store, root_id=root_id, agent_id=sibling)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(root_id, predecessor, "/src/pred.c", "void from_pred(void) {}\n")
+    await provider.record_view(root_id, sibling, "/src/unrelated.c", "void from_sib(void) {}\n")
+
+    # When: the consumer scopes the packet to the hard predecessor only
+    packet = await provider.context_packet(root_id, hard_predecessor_ids=(predecessor,))
+
+    # Then: the predecessor's observation is included; the sibling's is excluded
+    paths = [entry["path"] for entry in packet.entries]
+    assert "/src/pred.c" in paths
+    assert "/src/unrelated.c" not in paths
+    # And: it is tagged as the (previously-unreachable) required-predecessor-artifact tier
+    assert packet.entries[0]["inclusion_reason"] == "required_predecessor_artifact"
+    # And: the excluded sibling is recorded as out-of-scope, not silently dropped
+    assert packet.source_index is not None
+    assert "/src/unrelated.c" in packet.source_index
+    assert "out_of_scope" in packet.source_index
+
+
+@pytest.mark.asyncio
+async def test_consumed_artifact_scope_selects_referenced_path_over_noise() -> None:
+    """A consumed-artifact path reference selects that path and excludes noise."""
+
+    # Given: two workers observe files; only one path is a consumed contract artifact
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    producer = uuid4()
+    other = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    await _seed_worker(store, root_id=root_id, agent_id=producer)
+    await _seed_worker(store, root_id=root_id, agent_id=other)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(root_id, producer, "/src/contract.c", "artifact body\n")
+    await provider.record_view(root_id, other, "/src/noise.c", "noise body\n")
+
+    # When: the consumer scopes by a consumed-artifact path reference (no predecessor id)
+    packet = await provider.context_packet(
+        root_id, consumed_artifacts=("/src/contract.c",)
+    )
+
+    # Then: only the artifact-referenced path is selected, tagged predecessor-artifact
+    assert [entry["path"] for entry in packet.entries] == ["/src/contract.c"]
+    assert packet.entries[0]["inclusion_reason"] == "required_predecessor_artifact"
+
+
+@pytest.mark.asyncio
+async def test_phase_scope_excludes_foreign_phase_but_keeps_explicit_target() -> None:
+    """Phase scope keeps same-phase evidence and explicit targets, drops foreign phases."""
+
+    # Given: one same-phase file, one foreign-phase file, and a foreign-phase target
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(root_id, root_id, "/src/repro_local.c", "a\n", phase="reproduce")
+    await provider.record_view(root_id, root_id, "/src/analysis.c", "b\n", phase="analyze")
+    await provider.record_view(root_id, root_id, "/src/target.c", "c\n", phase="analyze")
+
+    # When: the consumer scopes to the "reproduce" phase but names /src/target.c a target
+    packet = await provider.context_packet(
+        root_id, phase="reproduce", target_paths=("/src/target.c",)
+    )
+
+    # Then: same-phase evidence and the explicit target are kept; the foreign-phase,
+    # non-target file is excluded as out-of-scope
+    paths = {entry["path"] for entry in packet.entries}
+    assert "/src/repro_local.c" in paths
+    assert "/src/target.c" in paths
+    assert "/src/analysis.c" not in paths
+
+
+@pytest.mark.asyncio
+async def test_no_scope_inputs_leave_packet_unfiltered() -> None:
+    """Back-compat: with no dependency-scope inputs, no observation is filtered out."""
+
+    # Given: two workers observe two files (an unrelated sibling among them)
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    sibling = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    await _seed_worker(store, root_id=root_id, agent_id=sibling)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(root_id, root_id, "/src/a.c", "a\n")
+    await provider.record_view(root_id, sibling, "/src/b.c", "b\n")
+
+    # When: no dependency-scope inputs are supplied
+    packet = await provider.context_packet(root_id)
+
+    # Then: both observations remain (no filtering) and none is marked out_of_scope
+    assert {entry["path"] for entry in packet.entries} == {"/src/a.c", "/src/b.c"}
+    assert "out_of_scope" not in (packet.source_index or "")
+
+
+@pytest.mark.asyncio
+async def test_scoped_packet_is_deterministic_across_calls() -> None:
+    """A dependency-scoped packet is byte-identical across repeated builds."""
+
+    # Given: a predecessor with several files and an unrelated sibling with several files
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    predecessor = uuid4()
+    sibling = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    await _seed_worker(store, root_id=root_id, agent_id=predecessor)
+    await _seed_worker(store, root_id=root_id, agent_id=sibling)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    for i in range(3):
+        await provider.record_view(
+            root_id, predecessor, f"/src/pred_{i}.c", f"void p{i}(void) {{}}\n"
+        )
+    for i in range(3):
+        await provider.record_view(
+            root_id, sibling, f"/src/sib_{i}.c", f"void s{i}(void) {{}}\n"
+        )
+
+    # When: the same predecessor-scoped packet is built twice
+    first = await provider.context_packet(root_id, hard_predecessor_ids=(predecessor,))
+    second = await provider.context_packet(root_id, hard_predecessor_ids=(predecessor,))
+
+    # Then: identical, and scoped to exactly the predecessor's files
+    assert first == second
+    assert {entry["path"] for entry in first.entries} == {
+        "/src/pred_0.c",
+        "/src/pred_1.c",
+        "/src/pred_2.c",
+    }
+
+
+@pytest.mark.asyncio
 async def test_recoverability_block_rebuilds_from_event_store_alone() -> None:
     # Given: a run is simulated, then a BRAND-NEW provider is built over the
     # same store with no in-memory state carried over (recoverability check).

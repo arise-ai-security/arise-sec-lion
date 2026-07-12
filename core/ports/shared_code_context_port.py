@@ -84,6 +84,20 @@ class SharedCodeContextPort(Protocol):
         target_paths: tuple[str, ...] = (),
         symbols: tuple[str, ...] = (),
         failure_digest: str | None = None,
+        hard_predecessor_ids: tuple[UUID, ...] = (),
+        consumed_artifacts: tuple[str, ...] = (),
+        phase: str = "",
     ) -> ContextPacket:
-        """Build a deterministic latest-revision packet for one consumer."""
+        """Build a deterministic latest-revision packet for one consumer.
+
+        The dependency-scope inputs make the packet consumer-specific instead of
+        hierarchy-global. When ANY of ``hard_predecessor_ids`` (agent ids whose
+        observations the consumer depends on), ``consumed_artifacts`` (source-path
+        references the consumer's contract inputs cover), or ``phase`` (the
+        consumer's phase) is supplied, the candidate observations are FILTERED to
+        those produced by a hard predecessor, on a consumed-artifact/target path,
+        matching a target symbol, referenced by ``failure_digest``, or local to the
+        consumer's phase — excluding evidence that belongs to unrelated siblings or
+        phases. With none supplied, the packet stays hierarchy-global (back-compat).
+        """
         ...
