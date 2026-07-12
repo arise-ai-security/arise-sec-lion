@@ -44,10 +44,12 @@ testpaths = [
     "core/application/tests",
     "core/query/tests",
     "infrastructure/tests",
+    "infrastructure/adapters/worker/tests",
     "presentation/tests",
     "bootstrap/tests",
     "config/tests",
     "plugins/security/tests",
+    "experiments/shared/evaluation/tests",
     "tests/experiments",
 ]
 markers = [
