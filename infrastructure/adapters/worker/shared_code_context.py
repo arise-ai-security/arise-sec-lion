@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader
@@ -45,6 +45,7 @@ from core.domain.events.events import (
     SourceFileEdited,
     SourceFileObserved,
 )
+from core.ports.shared_code_context_port import ContextPacket
 
 
 if TYPE_CHECKING:
@@ -56,6 +57,13 @@ logger = logging.getLogger(__name__)
 _TEMPLATE_NAME = "context/shared_code.j2"
 _INDEX_TEMPLATE_NAME = "context/shared_code_index.j2"
 _DEFAULT_TEMPLATE_ROOT = "prompts"
+_MAX_SOURCE_ENTRIES = 4
+_MAX_ENTRY_TOKENS = 4_000
+_METADATA_BUDGET = 4_000  # Token ceiling for the packet's index/evidence segment.
+_CHARS_PER_TOKEN = 4
+_EXCLUDED_SUFFIXES = (
+    ".a", ".bin", ".core", ".gif", ".jpg", ".log", ".o", ".pdf", ".png", ".so", ".zip"
+)
 
 RenderMode = str  # "append_only" (byte-stable log) | "latest_only" (one entry per path)
 
@@ -75,6 +83,9 @@ class SharedCodeContextProvider:
         emit_sink: EmitSink | None = None,
         render_mode: RenderMode = "append_only",
         index_enabled: bool = False,
+        scoped_packets: bool = False,
+        source_token_budget: int = 16_000,
+        metadata_token_budget: int = _METADATA_BUDGET,
         _shared_memo: dict[tuple[str, UUID, frozenset[UUID]], str | None] | None = None,
         _shared_env: Environment | None = None,
     ) -> None:
@@ -94,6 +105,9 @@ class SharedCodeContextProvider:
         # that path onward. Both modes stay pure functions of the event set.
         self._render_mode: RenderMode = render_mode
         self._index_enabled = index_enabled
+        self._scoped_packets = scoped_packets
+        self._source_token_budget = source_token_budget
+        self._metadata_token_budget = metadata_token_budget
         # Render memo: (kind, root_id, frozenset of event_ids) -> rendered text.
         # The key is the exact set of events the text was built from, so any new
         # view/edit busts it while a no-op rebuild is served from memory. Shared
@@ -103,13 +117,41 @@ class SharedCodeContextProvider:
         )
 
     async def record_view(
-        self, root_id: UUID, agent_id: UUID, path: str, content: str
+        self,
+        root_id: UUID,
+        agent_id: UUID,
+        path: str,
+        content: str,
+        *,
+        capture_type: Literal["full", "range", "truncated"] = "full",
+        requested_start_line: int | None = None,
+        requested_end_line: int | None = None,
+        actual_start_line: int | None = None,
+        actual_end_line: int | None = None,
+        phase: str = "",
+        role: str = "",
     ) -> None:
-        """Persist the content a worker's ``view`` returned as ``SourceFileObserved``."""
+        """Persist the content a worker's ``view`` returned as ``SourceFileObserved``.
+
+        The truthful ``capture_type`` and requested/actual line span are recorded so
+        a range/truncated excerpt is never later rendered as a full file. A bare view
+        defaults to ``full`` (no range requested returns the whole file).
+        """
         del root_id  # Event lands on the worker's own aggregate; root scopes only reads.
 
         def emit(agent: AgentSession) -> None:
-            agent.record_source_file_observed(path=path, content=content, observed_by=agent_id)
+            agent.record_source_file_observed(
+                path=path,
+                content=content,
+                observed_by=agent_id,
+                capture_type=capture_type,
+                requested_start_line=requested_start_line,
+                requested_end_line=requested_end_line,
+                actual_start_line=actual_start_line,
+                actual_end_line=actual_end_line,
+                phase=phase,
+                role=role,
+            )
 
         await self._emit_on_aggregate(agent_id, emit)
 
@@ -148,11 +190,220 @@ class SharedCodeContextProvider:
         self._memo[memo_key] = index
         return index
 
+    async def context_packet(
+        self,
+        root_id: UUID,
+        *,
+        target_paths: tuple[str, ...] = (),
+        symbols: tuple[str, ...] = (),
+        failure_digest: str | None = None,
+    ) -> ContextPacket:
+        """Select a bounded, current source packet for one worker."""
+        if not self._scoped_packets:
+            block = await self.code_block(root_id)
+            index = await self.code_index(root_id)
+            text = (block or "") + (index or "")
+            return ContextPacket(
+                source_block=block,
+                source_index=index,
+                total_chars=len(text),
+                total_tokens=self._estimated_tokens(text),
+            )
+        relevant = await self._source_events(root_id)
+        current = self._latest_current_observations(relevant)
+        ranked = sorted(
+            current.values(),
+            key=lambda event: self._selection_key(
+                event,
+                target_paths=target_paths,
+                symbols=symbols,
+                failure_digest=failure_digest,
+            ),
+        )
+        selected: list[dict[str, object]] = []
+        telemetry: list[dict[str, object]] = []
+        omitted: list[dict[str, object]] = []
+        used_tokens = 0
+        for event in ranked:
+            if not self._is_source_path(event.path):
+                omitted.append({"path": event.path, "reason": "non_source"})
+                continue
+            if len(selected) >= _MAX_SOURCE_ENTRIES:
+                omitted.append({"path": event.path, "reason": "entry_limit"})
+                continue
+            content = event.content
+            capture_type = event.capture_type
+            if self._estimated_tokens(content) > _MAX_ENTRY_TOKENS:
+                content = content[: _MAX_ENTRY_TOKENS * _CHARS_PER_TOKEN]
+                capture_type = "truncated"
+            tokens = self._estimated_tokens(content)
+            if used_tokens + tokens > self._source_token_budget:
+                omitted.append({"path": event.path, "reason": "source_budget"})
+                continue
+            used_tokens += tokens
+            selected.append(
+                {
+                    "kind": "file",
+                    "path": event.path,
+                    "content": content,
+                    "revision": event.file_revision or event.content_sha256,
+                    "capture_type": capture_type,
+                    "line_range": self._format_line_range(
+                        event.actual_start_line, event.actual_end_line
+                    ),
+                }
+            )
+            telemetry.append(
+                {
+                    "path": event.path,
+                    "content_sha256": event.content_sha256,
+                    "capture_type": capture_type,
+                    "requested_range": [event.requested_start_line, event.requested_end_line],
+                    "actual_range": [event.actual_start_line, event.actual_end_line],
+                    "tokens": tokens,
+                    "inclusion_reason": self._inclusion_reason(
+                        event,
+                        target_paths=target_paths,
+                        symbols=symbols,
+                        failure_digest=failure_digest,
+                    ),
+                }
+            )
+        block = self._render(selected) if selected else None
+        index = self._packet_index(telemetry, omitted)
+        total_chars = len(block or "") + len(index or "")
+        return ContextPacket(
+            source_block=block,
+            source_index=index,
+            total_chars=total_chars,
+            total_tokens=self._estimated_tokens((block or "") + (index or "")),
+            entries=tuple(telemetry),
+            omitted_entries=tuple(omitted),
+        )
+
     async def _source_events(
         self, root_id: UUID
     ) -> list[SourceFileObserved | SourceFileEdited]:
         grouped = await self._event_store.get_hierarchy_events_grouped(root_id)
         return self._collect_source_events(grouped)
+
+    @staticmethod
+    def _latest_current_observations(
+        events: list[SourceFileObserved | SourceFileEdited],
+    ) -> dict[str, SourceFileObserved]:
+        latest: dict[str, SourceFileObserved] = {}
+        for event in events:
+            if isinstance(event, SourceFileEdited):
+                latest.pop(event.path, None)
+            else:
+                latest[event.path] = event
+        return latest
+
+    @staticmethod
+    def _is_source_path(path: str) -> bool:
+        lowered = path.lower()
+        if not lowered.startswith("/src/") or lowered.endswith(_EXCLUDED_SUFFIXES):
+            return False
+        excluded_parts = {"build", "cmakefiles", "node_modules", ".git"}
+        return not any(part.lower() in excluded_parts for part in Path(path).parts)
+
+    @classmethod
+    def _selection_key(
+        cls,
+        event: SourceFileObserved,
+        *,
+        target_paths: tuple[str, ...],
+        symbols: tuple[str, ...],
+        failure_digest: str | None,
+    ) -> tuple[int, str, str]:
+        reason = cls._inclusion_reason(
+            event,
+            target_paths=target_paths,
+            symbols=symbols,
+            failure_digest=failure_digest,
+        )
+        # Plan order: exact target SYMBOL -> exact target PATH -> required
+        # predecessor artifact (2, reserved) -> failure-referenced -> phase-local.
+        priority = {
+            "exact_target_symbol": 0,
+            "exact_target_path": 1,
+            "failure_referenced_source": 3,
+            "phase_local_recent_evidence": 4,
+        }[reason]
+        return priority, event.path, event.content_sha256
+
+    @staticmethod
+    def _inclusion_reason(
+        event: SourceFileObserved,
+        *,
+        target_paths: tuple[str, ...],
+        symbols: tuple[str, ...],
+        failure_digest: str | None,
+    ) -> str:
+        if any(symbol and symbol in event.content for symbol in symbols):
+            return "exact_target_symbol"
+        if event.path in target_paths:
+            return "exact_target_path"
+        if failure_digest and event.path in failure_digest:
+            return "failure_referenced_source"
+        return "phase_local_recent_evidence"
+
+    @staticmethod
+    def _estimated_tokens(content: str) -> int:
+        return (len(content) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+
+    @staticmethod
+    def _format_line_range(start: int | None, end: int | None) -> str:
+        """Render an excerpt's 1-indexed line span (e.g. ``40-80``), or ``""``."""
+        if start is None and end is None:
+            return ""
+        if start is not None and end is not None:
+            return f"{start}-{end}"
+        return str(start if start is not None else end)
+
+    def _packet_index(
+        self, entries: list[dict[str, object]], omitted: list[dict[str, object]]
+    ) -> str | None:
+        """Render the index/evidence segment, bounded by the metadata token budget.
+
+        The selected entries (evidence for what WAS provided) are always kept; the
+        omitted tail is included until the budget is reached, and the clipped
+        remainder is recorded as a single ``metadata_budget`` omission line rather
+        than silently overflowing the prompt.
+        """
+        if not entries and not omitted:
+            return None
+        header = "<provided_files_index>"
+        footer = "</provided_files_index>"
+        lines = [header]
+        used = self._estimated_tokens(header) + self._estimated_tokens(footer)
+        for entry in entries:
+            line = (
+                f"{entry['path']} sha256={entry['content_sha256']} "
+                f"capture={entry['capture_type']} reason={entry['inclusion_reason']}"
+            )
+            used += self._estimated_tokens(line)
+            lines.append(line)
+        summary_reserve = (
+            self._estimated_tokens(
+                f"OMITTED +{len(omitted)} more entries reason=metadata_budget"
+            )
+            if omitted
+            else 0
+        )
+        dropped = 0
+        for index, entry in enumerate(omitted):
+            line = f"OMITTED {entry['path']} reason={entry['reason']}"
+            tokens = self._estimated_tokens(line)
+            if used + tokens + summary_reserve > self._metadata_token_budget:
+                dropped = len(omitted) - index
+                break
+            used += tokens
+            lines.append(line)
+        if dropped:
+            lines.append(f"OMITTED +{dropped} more entries reason=metadata_budget")
+        lines.append(footer)
+        return "\n".join(lines)
 
     def _entries_for_mode(
         self, events: list[SourceFileObserved | SourceFileEdited]
@@ -178,6 +429,9 @@ class SharedCodeContextProvider:
             emit_sink=emit_sink,
             render_mode=self._render_mode,
             index_enabled=self._index_enabled,
+            scoped_packets=self._scoped_packets,
+            source_token_budget=self._source_token_budget,
+            metadata_token_budget=self._metadata_token_budget,
             _shared_memo=self._memo,
             _shared_env=self._env,
         )
@@ -262,6 +516,10 @@ class SharedCodeContextProvider:
                     "path": path,
                     "content": event.content,
                     "revision": revisions[path],
+                    "capture_type": event.capture_type,
+                    "line_range": SharedCodeContextProvider._format_line_range(
+                        event.actual_start_line, event.actual_end_line
+                    ),
                 }
             )
             last_content[path] = event.content

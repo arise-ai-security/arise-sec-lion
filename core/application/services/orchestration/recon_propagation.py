@@ -14,19 +14,27 @@ Two independent propagation paths, both fed by tool-calling recon results:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, Literal, cast
 
 from core.domain.values.enums import AgentRole
 
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from typing import Any
     from uuid import UUID
 
     from core.domain.aggregates.agent_session import AgentSession
-    from core.ports.shared_code_context_port import SharedCodeContextPort
+    from core.ports.shared_code_context_port import ContextPacket, SharedCodeContextPort
 
 logger = logging.getLogger(__name__)
+
+# recon read_file frames a targeted range read with a "lines S-E of TOTAL" header
+# and appends this marker when a rangeless read overflows its max_lines cap
+# (see infrastructure/adapters/recon_tool_adapter.read_file).
+_RECON_RANGE_HEADER = re.compile(r"lines (\d+)-(\d+) of \d+")
+_RECON_TRUNCATION_MARKER = "[...truncated,"
 
 
 class ReconPropagationService:
@@ -76,6 +84,41 @@ class ReconPropagationService:
             return None
         return await self._shared_code_port.code_index(root_id)
 
+    async def resolve_context_packet(
+        self,
+        root_id: UUID | None,
+        *,
+        target_paths: tuple[str, ...],
+        symbols: tuple[str, ...],
+        failure_digest: str | None,
+    ) -> ContextPacket | None:
+        """Resolve scoped packets, falling back to the legacy provider contract."""
+        if self._shared_code_port is None or root_id is None:
+            return None
+        assembler = getattr(self._shared_code_port, "context_packet", None)
+        if callable(assembler):
+            typed_assembler = cast(
+                "Callable[..., Awaitable[ContextPacket]]",
+                assembler,
+            )
+            return await typed_assembler(
+                root_id,
+                target_paths=target_paths,
+                symbols=symbols,
+                failure_digest=failure_digest,
+            )
+        from core.ports.shared_code_context_port import ContextPacket
+
+        block = await self._shared_code_port.code_block(root_id)
+        index = await self._shared_code_port.code_index(root_id)
+        text = (block or "") + (index or "")
+        return ContextPacket(
+            source_block=block,
+            source_index=index,
+            total_chars=len(text),
+            total_tokens=(len(text) + 3) // 4,
+        )
+
     def capture_source_reads(self, agent: AgentSession, captured_reads: list) -> None:
         """Persist a manager's recon read_file results as SourceFileObserved.
 
@@ -92,6 +135,8 @@ class ReconPropagationService:
         """
         if not self._capture_recon_reads or not captured_reads or self._shared_code_port is None:
             return
+        agent_role = getattr(agent, "role", None)
+        role = agent_role.value if agent_role is not None else ""
         seen: set[str] = set()
         for read in captured_reads:
             path = read.arguments.get("path")
@@ -100,9 +145,45 @@ class ReconPropagationService:
             if not read.content:
                 continue
             seen.add(path)
+            capture_type, req_start, req_end, act_start, act_end = self._classify_recon_read(read)
             agent.record_source_file_observed(
-                path=path, content=read.content, observed_by=agent.agent_id
+                path=path,
+                content=read.content,
+                observed_by=agent.agent_id,
+                capture_type=capture_type,
+                requested_start_line=req_start,
+                requested_end_line=req_end,
+                actual_start_line=act_start,
+                actual_end_line=act_end,
+                phase="recon",
+                role=role,
             )
+
+    @staticmethod
+    def _classify_recon_read(
+        read: Any,
+    ) -> tuple[
+        Literal["full", "range", "truncated"], int | None, int | None, int | None, int | None
+    ]:
+        """Classify a recon read_file result truthfully (Bug 1: never blanket 'full').
+
+        A read carrying start_line/end_line is a slice (``range``); a rangeless read
+        clipped at its max_lines cap is ``truncated``; only a whole-file read is
+        ``full``. Returns ``(capture_type, requested_start, requested_end,
+        actual_start, actual_end)`` so an excerpt is never later shown as a full file.
+        """
+        arguments = getattr(read, "arguments", None) or {}
+        start = arguments.get("start_line")
+        end = arguments.get("end_line")
+        content = getattr(read, "content", "") or ""
+        if isinstance(start, int) or isinstance(end, int):
+            match = _RECON_RANGE_HEADER.search(content)
+            actual_start = int(match.group(1)) if match else start
+            actual_end = int(match.group(2)) if match else end
+            return "range", start, end, actual_start, actual_end
+        if _RECON_TRUNCATION_MARKER in content:
+            return "truncated", None, None, 1, None
+        return "full", None, None, None, None
 
     def store_boss_recon_block(self, agent: AgentSession, captured_reads: list) -> None:
         """Render the BOSS's recon reads into a block for the run's managers.

@@ -172,13 +172,39 @@ async def test_execute_task_without_port_passes_none_block() -> None:
 class _CapturingAggregate:
     """Minimal AgentSession stand-in recording record_source_file_observed calls."""
 
+    role = None
+
     def __init__(self, agent_id: UUID) -> None:
         self.agent_id = agent_id
         self.observed: list[tuple[str, str]] = []
+        self.captures: list[dict[str, object]] = []
 
-    def record_source_file_observed(self, path: str, content: str, observed_by: UUID) -> None:
+    def record_source_file_observed(
+        self,
+        path: str,
+        content: str,
+        observed_by: UUID,
+        *,
+        capture_type: str = "truncated",
+        requested_start_line: int | None = None,
+        requested_end_line: int | None = None,
+        actual_start_line: int | None = None,
+        actual_end_line: int | None = None,
+        phase: str = "",
+        role: str = "",
+    ) -> None:
         assert observed_by == self.agent_id
         self.observed.append((path, content))
+        self.captures.append(
+            {
+                "path": path,
+                "capture_type": capture_type,
+                "requested": (requested_start_line, requested_end_line),
+                "actual": (actual_start_line, actual_end_line),
+                "phase": phase,
+                "role": role,
+            }
+        )
 
 
 def _make_orchestrator(*, capture: bool, port: object) -> AgentOrchestrator:
@@ -190,9 +216,9 @@ def _make_orchestrator(*, capture: bool, port: object) -> AgentOrchestrator:
 
 
 class _Read:
-    def __init__(self, path, content, tool_name="read_file"):
+    def __init__(self, path, content, tool_name="read_file", **arguments):
         self.tool_name = tool_name
-        self.arguments = {"path": path}
+        self.arguments = {"path": path, **arguments}
         self.content = content
 
 
@@ -211,6 +237,31 @@ def test_capture_recon_source_reads_emits_one_event_per_path() -> None:
 
     # Then: one SourceFileObserved per distinct path (no aggregate bloat)
     assert agg.observed == [("/src/a.c", "AAA"), ("/src/b.c", "BBB")]
+
+
+def test_capture_recon_source_reads_records_truthful_capture_type() -> None:
+    """The recon producer no longer stamps every read 'full' (Bug 1)."""
+
+    # Given: a whole-file read, a ranged read, and a truncated read
+    agg = _CapturingAggregate(uuid4())
+    orch = _make_orchestrator(capture=True, port=object())
+    reads = [
+        _Read("/src/whole.c", "int main(void) { return 0; }\n"),
+        _Read("/src/big.c", "[/src/big.c lines 40-80 of 2000]\n...", start_line=40, end_line=80),
+        _Read("/src/long.c", "line1\nline2\n\n[...truncated, 2000 total lines]"),
+    ]
+
+    # When
+    orch._capture_recon_source_reads(agg, reads)
+
+    # Then: only the genuine whole-file read is 'full'; the slice is 'range' with
+    # its requested/actual span, and the clipped read is 'truncated'.
+    by_path = {c["path"]: c for c in agg.captures}
+    assert by_path["/src/whole.c"]["capture_type"] == "full"
+    assert by_path["/src/big.c"]["capture_type"] == "range"
+    assert by_path["/src/big.c"]["requested"] == (40, 80)
+    assert by_path["/src/big.c"]["actual"] == (40, 80)
+    assert by_path["/src/long.c"]["capture_type"] == "truncated"
 
 
 def test_capture_recon_source_reads_noop_without_port() -> None:

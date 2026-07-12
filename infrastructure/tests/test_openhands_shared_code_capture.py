@@ -40,11 +40,34 @@ class _RecordingSharedCodePort:
 
     def __init__(self) -> None:
         self.views: list[tuple[UUID, UUID, str, str]] = []
+        self.view_captures: list[dict[str, Any]] = []
         self.edits: list[tuple[UUID, UUID, str]] = []
         self._sink: Any = None
 
-    async def record_view(self, root_id: UUID, agent_id: UUID, path: str, content: str) -> None:
+    async def record_view(
+        self,
+        root_id: UUID,
+        agent_id: UUID,
+        path: str,
+        content: str,
+        *,
+        capture_type: str = "full",
+        requested_start_line: int | None = None,
+        requested_end_line: int | None = None,
+        actual_start_line: int | None = None,
+        actual_end_line: int | None = None,
+        phase: str = "",
+        role: str = "",
+    ) -> None:
         self.views.append((root_id, agent_id, path, content))
+        self.view_captures.append(
+            {
+                "capture_type": capture_type,
+                "requested": (requested_start_line, requested_end_line),
+                "actual": (actual_start_line, actual_end_line),
+                "role": role,
+            }
+        )
         await self._sink(
             agent_id,
             [
@@ -55,6 +78,7 @@ class _RecordingSharedCodePort:
                     content=content,
                     content_sha256="x" * 64,
                     observed_by=str(agent_id),
+                    capture_type=capture_type,
                 )
             ],
         )
@@ -143,6 +167,11 @@ async def test_view_observation_forwards_to_record_view(monkeypatch, tmp_path) -
     assert view_agent == agent_id
     assert view_path == "/src/demo/vuln.c"
     assert "int x;" in view_content
+    # And: a rangeless whole-file view is forwarded as a verified full capture
+    # (role recorded), not the old conservative "truncated" mislabel (Bug 2).
+    assert port.view_captures[0]["capture_type"] == "full"
+    assert port.view_captures[0]["actual"] == (1, 1)
+    assert port.view_captures[0]["role"] == "worker"
     assert port.edits == [(root_id, agent_id, "/src/demo/vuln.c")]
 
 

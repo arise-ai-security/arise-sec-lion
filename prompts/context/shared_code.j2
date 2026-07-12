@@ -2,23 +2,30 @@
    replayed as an APPEND-ONLY log — earlier bytes never change as the run progresses,
    so each worker's request shares the longest possible prefix with its predecessor's
    and OpenAI's prefix cache keeps serving the carried content at the cache-read rate.
-   A path may appear more than once: the LAST <file> entry is its current content; a
+   A path may appear more than once: the LAST entry is its current content; a
    <file_modified> note means the copy above it is stale until a newer revision
-   appears below it. Instructions live in this header (before the entries) so a new
-   entry never rewrites earlier bytes. #}
+   appears below it. A <file> is the WHOLE file; a <file_excerpt> is only the line
+   range in its `lines=` attribute, so it is never "provided in full". Instructions
+   live in this header (before the entries) so a new entry never rewrites earlier
+   bytes. #}
 {% if entries %}
 <provided_source_files>
-    Source files prior workers already read, in read order. A path may appear more
-    than once: the LAST <file> entry for a path is its current content, and a
-    <file_modified> note means the copy above it is stale until a newer revision
-    appears below it. These files are provided IN FULL — do NOT re-read a file whose
-    current content is shown here. Only view a file if (a) it is not listed, (b) its
-    latest entry is a <file_modified> note, or (c) you just edited it yourself.
+    Source files prior workers already read, in read order. An entry marked <file>
+    is provided IN FULL — do NOT re-read a <file> whose current content is shown
+    here. An entry marked <file_excerpt> is PARTIAL — only the lines in its `lines=`
+    attribute are shown, so re-read that file if you need anything outside that
+    range. A path may appear more than once: its LAST entry is the current content,
+    and a <file_modified> note means the copy above it is stale until a newer
+    revision appears below it.
     {% for e in entries -%}
-    {% if e.kind == "file" -%}
+    {% if e.kind == "file" and e.capture_type == "full" -%}
     <file path="{{ e.path }}" revision="{{ e.revision }}">
 {{ e.content }}
 </file>
+    {% elif e.kind == "file" -%}
+    <file_excerpt path="{{ e.path }}" revision="{{ e.revision }}" capture="{{ e.capture_type }}" lines="{{ e.line_range }}">
+{{ e.content }}
+</file_excerpt>
     {% else -%}
     <file_modified path="{{ e.path }}"/>
     {% endif -%}

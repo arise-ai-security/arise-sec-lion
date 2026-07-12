@@ -8,7 +8,7 @@ import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from time import time
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from core.domain.events.events import DomainEvent
@@ -76,6 +76,53 @@ _FILE_EDIT_COMMANDS = frozenset({"str_replace", "create", "insert", "undo_edit"}
 # they go stale on the next file write and duplicate the workspace listing.
 _DIRECTORY_LISTING_VIEW_PREFIX = "Here's the files and directories up to"
 _TRAILING_PORT_DOT_PATTERN = re.compile(r":(?P<port>\d+)\.(?=$|/)")
+
+# OpenHands renders file-view content ``cat -n`` framed: each line is a right-
+# justified 1-indexed number, a tab, then the text (editor._make_output). The
+# first/last numbers give the actual line span the observation carried.
+_CAT_N_LINE_NUMBER_PATTERN = re.compile(r"^\s*(\d+)\t", re.MULTILINE)
+# Stable marker OpenHands inserts when a view is clipped to the output limit
+# (openhands.tools.file_editor.utils.constants.TEXT_FILE_CONTENT_TRUNCATED_NOTICE).
+_VIEW_TRUNCATED_MARKER = "<response clipped>"
+
+
+def _classify_view_capture(
+    content: str, requested: list[int] | None
+) -> tuple[
+    Literal["full", "range", "truncated"], int | None, int | None, int | None, int | None
+]:
+    """Classify an OpenHands file ``view`` result into a truthful capture type.
+
+    Returns ``(capture_type, requested_start, requested_end, actual_start,
+    actual_end)``. The actual span comes from the ``cat -n`` line numbers in the
+    content; the requested span from the view action's ``view_range``. A view
+    with no requested slice, starting at line 1 and not clipped, is a verified
+    full-file read; a requested slice, a mid-file start, or a clip marker makes
+    it an excerpt (``range``/``truncated``) so the block never presents it as a
+    complete file.
+    """
+    numbers = [int(n) for n in _CAT_N_LINE_NUMBER_PATTERN.findall(content)]
+    actual_start = numbers[0] if numbers else None
+    actual_end = numbers[-1] if numbers else None
+    clipped = _VIEW_TRUNCATED_MARKER in content
+
+    req_start: int | None = None
+    req_end: int | None = None
+    if requested and len(requested) == 2:
+        req_start, req_end = requested[0], requested[1]
+
+    # A view_range of [1, -1] (or an omitted bound) requests the whole file.
+    whole_file_request = (req_start is None or req_start <= 1) and (
+        req_end is None or req_end == -1
+    )
+    partial = clipped or not whole_file_request or (actual_start is not None and actual_start > 1)
+    if not partial:
+        capture_type = "full"
+    elif clipped and whole_file_request:
+        capture_type = "truncated"
+    else:
+        capture_type = "range"
+    return capture_type, req_start, req_end, actual_start, actual_end
 
 
 def _normalize_base_url(base_url: str | None) -> str | None:
@@ -177,6 +224,10 @@ class _SharedCodeCapture:
     root_id: UUID
     agent_id: UUID
     queue: asyncio.Queue[DomainEvent]
+    # Last ``view`` action's requested ``view_range`` per path, awaiting its
+    # observation. Absence => the model requested no range (a verified full-file
+    # view); presence => a slice, so the capture is recorded as an excerpt.
+    pending_view_ranges: dict[str, list[int] | None] = field(default_factory=dict)
 
 
 def _conversation_identity(conversation: _ConversationLike) -> str:
@@ -384,6 +435,17 @@ class OpenHandsAdapter(WorkerAdapterBase):
             outcome = await run_task
             shutdown_requested = outcome.shutdown_requested
             if outcome.timed_out:
+                yield make_cost_recorded_event(
+                    conversation,
+                    sequencer,
+                    tool_name=self._get_tool_name(),
+                    model=self.model,
+                    duration_seconds=time() - started_at,
+                    container_id=container_session.container_id if container_session else None,
+                    conversation_id=conversation_identity,
+                    complete=False,
+                    termination_reason="timeout",
+                )
                 yield sequencer.failed(f"Task timed out after {self.timeout_seconds} seconds")
                 return
 
@@ -558,6 +620,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
         """
         if capture is None:
             return
+        # A ``view`` action carries the requested ``view_range``; its observation
+        # arrives as a later event. Stash the range so the observation can be
+        # recorded as a full read (no range) or an excerpt (a slice) truthfully.
+        self._track_view_action(getattr(sdk_event, "action", None), capture)
         observation = getattr(sdk_event, "observation", None)
         if observation is None:
             return
@@ -569,9 +635,22 @@ class OpenHandsAdapter(WorkerAdapterBase):
         try:
             if command in _FILE_VIEW_COMMANDS:
                 content = observation_text(observation)
+                requested = capture.pending_view_ranges.pop(path, None)
                 if content and not self._is_skipped_directory_listing(content):
+                    capture_type, req_start, req_end, act_start, act_end = _classify_view_capture(
+                        content, requested
+                    )
                     await capture.port.record_view(
-                        capture.root_id, capture.agent_id, path, content
+                        capture.root_id,
+                        capture.agent_id,
+                        path,
+                        content,
+                        capture_type=capture_type,
+                        requested_start_line=req_start,
+                        requested_end_line=req_end,
+                        actual_start_line=act_start,
+                        actual_end_line=act_end,
+                        role="worker",
                     )
             elif command in _FILE_EDIT_COMMANDS:
                 await capture.port.record_edit(capture.root_id, capture.agent_id, path)
@@ -582,6 +661,17 @@ class OpenHandsAdapter(WorkerAdapterBase):
 
         while not capture.queue.empty():
             yield capture.queue.get_nowait()
+
+    @staticmethod
+    def _track_view_action(action: Any, capture: _SharedCodeCapture) -> None:
+        """Remember a ``view`` action's requested range until its observation lands."""
+        if action is None:
+            return
+        if getattr(action, "command", None) != "view":
+            return
+        path = getattr(action, "path", None)
+        if isinstance(path, str) and path:
+            capture.pending_view_ranges[path] = getattr(action, "view_range", None)
 
     def _is_skipped_directory_listing(self, content: str) -> bool:
         return self._skip_directory_view_capture and content.lstrip().startswith(

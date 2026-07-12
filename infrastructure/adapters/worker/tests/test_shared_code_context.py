@@ -126,7 +126,7 @@ async def test_record_view_emits_source_file_observed_with_sha256() -> None:
     store = _InMemoryEventStore()
     root_id = uuid4()
     await _seed_worker(store, root_id=root_id, agent_id=root_id)
-    provider = SharedCodeContextProvider(event_store=store)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
     content = "int main() { return 0; }\n"
 
     # When: the worker records a viewed file
@@ -141,6 +141,230 @@ async def test_record_view_emits_source_file_observed_with_sha256() -> None:
     assert observed[0].content == content
     assert observed[0].content_sha256 == hashlib.sha256(content.encode("utf-8")).hexdigest()
     assert observed[0].observed_by == str(root_id)
+    # A bare view returns the file in full: the default capture is "full", not a
+    # conservative "truncated" (Bug 2 — the old default mislabeled full reads).
+    assert observed[0].capture_type == "full"
+
+
+@pytest.mark.asyncio
+async def test_record_view_records_full_capture_with_real_range() -> None:
+    """A verified full-file view is stored capture_type='full' with its real range."""
+
+    # Given: a provider over an in-memory store and a single worker == root
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    content = "line1\nline2\nline3\n"
+
+    # When: the worker records a full-file view with its actual line span
+    await provider.record_view(
+        root_id,
+        root_id,
+        "/src/full.c",
+        content,
+        capture_type="full",
+        actual_start_line=1,
+        actual_end_line=3,
+        phase="reproduce",
+        role="worker",
+    )
+
+    # Then: the observation is stored as a full capture with the real range
+    observed = [e for e in await store.get_events(root_id) if isinstance(e, SourceFileObserved)]
+    assert len(observed) == 1
+    assert observed[0].capture_type == "full"
+    assert observed[0].actual_start_line == 1
+    assert observed[0].actual_end_line == 3
+    assert observed[0].phase == "reproduce"
+    assert observed[0].role == "worker"
+
+
+@pytest.mark.asyncio
+async def test_record_view_records_partial_capture_with_requested_and_actual_range() -> None:
+    """A ranged/truncated view is stored partial with both requested and actual range."""
+
+    # Given: a provider over an in-memory store and a single worker == root
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+
+    # When: the worker records a range excerpt (requested 40-80, got 40-80)
+    await provider.record_view(
+        root_id,
+        root_id,
+        "/src/big.c",
+        "excerpt body\n",
+        capture_type="range",
+        requested_start_line=40,
+        requested_end_line=80,
+        actual_start_line=40,
+        actual_end_line=80,
+    )
+
+    # Then: the observation is a range capture carrying requested + actual span
+    observed = [e for e in await store.get_events(root_id) if isinstance(e, SourceFileObserved)]
+    assert len(observed) == 1
+    assert observed[0].capture_type == "range"
+    assert observed[0].requested_start_line == 40
+    assert observed[0].requested_end_line == 80
+    assert observed[0].actual_start_line == 40
+    assert observed[0].actual_end_line == 80
+
+
+@pytest.mark.asyncio
+async def test_context_packet_is_targeted_deterministic_and_budget_bounded() -> None:
+    """Scoped packets prioritize targets and explicitly index omissions."""
+
+    # Given: Six current source observations plus a generated log
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    for index in range(6):
+        await provider.record_view(
+            root_id,
+            root_id,
+            f"/src/file_{index}.c",
+            f"void symbol_{index}(void) {{}}\n",
+        )
+    await provider.record_view(root_id, root_id, "/src/build/run.log", "raw log")
+
+    # When: A worker requests one exact target and symbol
+    first = await provider.context_packet(
+        root_id,
+        target_paths=("/src/file_5.c",),
+        symbols=("symbol_4",),
+    )
+    second = await provider.context_packet(
+        root_id,
+        target_paths=("/src/file_5.c",),
+        symbols=("symbol_4",),
+    )
+
+    # Then: Selection is stable, bounded, prioritized, and omissions are visible.
+    # Priority is SYMBOL before PATH (Bug 3): the symbol_4 match (file_4) outranks
+    # the path target (file_5).
+    assert first == second
+    assert len(first.entries) == 4
+    assert first.total_tokens <= 16_000
+    assert first.entries[0]["path"] == "/src/file_4.c"
+    assert first.entries[1]["path"] == "/src/file_5.c"
+    assert first.source_index is not None
+    assert "OMITTED" in first.source_index
+    assert "/src/build/run.log" in first.source_index
+
+
+@pytest.mark.asyncio
+async def test_range_excerpt_never_rendered_as_full_file() -> None:
+    """A range excerpt is marked partial with its span, never a full <file> (Bug 1)."""
+
+    # Given: a whole-file view and a 40-80 excerpt of a large file
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(
+        root_id, root_id, "/src/whole.c", "FULL BODY\n",
+        capture_type="full", actual_start_line=1, actual_end_line=1,
+    )
+    await provider.record_view(
+        root_id, root_id, "/src/big.c", "EXCERPT BODY\n",
+        capture_type="range",
+        requested_start_line=40, requested_end_line=80,
+        actual_start_line=40, actual_end_line=80,
+    )
+
+    # When: the packet block is rendered
+    block = (await provider.context_packet(root_id)).source_block
+
+    # Then: the full file is provided as a full <file>; the excerpt is NEVER a full
+    # <file> — it renders as a distinct <file_excerpt> carrying its line range.
+    assert block is not None
+    assert '<file path="/src/whole.c" revision="' in block
+    assert '<file path="/src/big.c"' not in block
+    assert "<file_excerpt" in block
+    assert '"/src/big.c"' in block
+    assert 'lines="40-80"' in block
+
+
+@pytest.mark.asyncio
+async def test_symbol_target_ordered_before_path_target() -> None:
+    """Selection priority: exact SYMBOL target outranks exact PATH target (Bug 3)."""
+
+    # Given: one file matched by symbol, one matched by path
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(
+        root_id, root_id, "/src/by_symbol.c", "void target_symbol(void) {}\n"
+    )
+    await provider.record_view(root_id, root_id, "/src/by_path.c", "void other(void) {}\n")
+
+    # When: a worker requests one exact path target and one exact symbol target
+    packet = await provider.context_packet(
+        root_id,
+        target_paths=("/src/by_path.c",),
+        symbols=("target_symbol",),
+    )
+
+    # Then: the symbol-target entry is selected/ordered ahead of the path-target
+    assert packet.entries[0]["path"] == "/src/by_symbol.c"
+    assert packet.entries[1]["path"] == "/src/by_path.c"
+
+
+@pytest.mark.asyncio
+async def test_packet_index_bounded_by_metadata_budget() -> None:
+    """The metadata/evidence index is bounded and records its overflow (Bug 4)."""
+
+    # Given: many source files (few selected, a long omitted tail) and a tight
+    # metadata budget for the index/evidence segment.
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(
+        event_store=store, scoped_packets=True, metadata_token_budget=300
+    )
+    for i in range(200):
+        await provider.record_view(
+            root_id, root_id, f"/src/file_{i:03d}.c", f"void s_{i}(void) {{}}\n"
+        )
+
+    # When: the packet is assembled
+    packet = await provider.context_packet(root_id)
+
+    # Then: the index fits its metadata budget, and the clipped remainder is
+    # recorded rather than silently overflowing.
+    assert packet.source_index is not None
+    index_tokens = (len(packet.source_index) + 3) // 4
+    assert index_tokens <= 300
+    assert "metadata_budget" in packet.source_index
+
+
+@pytest.mark.asyncio
+async def test_context_packet_excludes_stale_revision_after_edit() -> None:
+    """An edited path is absent until a newer observation is captured."""
+
+    # Given: A viewed source revision that is subsequently edited
+    store = _InMemoryEventStore()
+    root_id = uuid4()
+    await _seed_worker(store, root_id=root_id, agent_id=root_id)
+    provider = SharedCodeContextProvider(event_store=store, scoped_packets=True)
+    await provider.record_view(root_id, root_id, "/src/a.c", "old\n")
+    await provider.record_edit(root_id, root_id, "/src/a.c")
+
+    # When: A packet is assembled before and after a fresh observation
+    stale_packet = await provider.context_packet(root_id)
+    await provider.record_view(root_id, root_id, "/src/a.c", "new\n")
+    fresh_packet = await provider.context_packet(root_id)
+
+    # Then: Stale content is excluded and only the current revision returns
+    assert stale_packet.source_block is None
+    assert fresh_packet.source_block is not None
+    assert "new" in fresh_packet.source_block
+    assert "old" not in fresh_packet.source_block
 
 
 @pytest.mark.asyncio
