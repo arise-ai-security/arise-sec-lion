@@ -41,6 +41,8 @@ class AgentSummaryReadModel:
     is_terminal: bool
     sibling_index: int  # Position among siblings for ordering
     depends_on: tuple[int, ...]  # Sibling indices this agent depends on (DAG scheduling)
+    criticality: str = "required"
+    dependency_failure_policy: str = "block"
 
     @classmethod
     def from_events(cls, events: list[DomainEvent]) -> AgentSummaryReadModel | None:
@@ -71,6 +73,8 @@ class AgentSummaryReadModel:
         parent_id = first_event.parent_id
         sibling_index = first_event.sibling_index
         depends_on = tuple(first_event.depends_on)
+        criticality = first_event.criticality
+        dependency_failure_policy = first_event.dependency_failure_policy
 
         # Default values
         task_summary = ""
@@ -112,4 +116,6 @@ class AgentSummaryReadModel:
             is_terminal=is_terminal,
             sibling_index=sibling_index,
             depends_on=depends_on,
+            criticality=criticality,
+            dependency_failure_policy=dependency_failure_policy,
         )

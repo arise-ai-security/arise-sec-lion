@@ -10,6 +10,7 @@ from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentS
 from core.domain.events.events import (
     ChildCompleted,
     ChildFailed,
+    PhaseGateRecorded,
     RedecompositionTriggered,
     WorkCompleted,
     WorkFailed,
@@ -24,6 +25,53 @@ def _config() -> dict:
         "base": {"model": "gpt-4o", "temperature": 0.7, "max_tokens": 1000},
         "tool": "claude_code",
     }
+
+
+def _phase_manager() -> AgentSession:
+    parent = AgentSession.create(agent_id=uuid4(), role=AgentRole.MANAGER, config=_config())
+    parent.assign_task("[Fixer] fix")
+    return parent
+
+
+def test_phase_gate_not_recorded_while_redecomposing() -> None:
+    # Given: a phase manager that is mid-flight (ANALYZING, e.g. re-decomposing),
+    # not a terminal outcome
+    parent = _phase_manager()
+    child = AgentSession.create(
+        agent_id=uuid4(), role=AgentRole.WORKER, config=_config(), parent_id=parent.agent_id
+    )
+    assert parent.status == AgentStatus.ANALYZING
+
+    # When: the terminal-gate recorder runs
+    ParentNotificationService._record_terminal_phase_gate(parent, child)
+
+    # Then: no phase gate is recorded for a non-terminal parent
+    assert not any(isinstance(e, PhaseGateRecorded) for e in parent.events)
+
+
+def test_phase_gate_recorded_once_on_terminal_completion() -> None:
+    # Given: a phase manager that terminally completes
+    parent = _phase_manager()
+    spawned = parent.apply_subtasks_and_spawn_children(
+        subtasks=[Subtask(description="w", config=_config())],
+        child_role=AgentRole.WORKER.value,
+        briefing=parent.build_briefing_for_child(),
+    )
+    child_id, _ = spawned[0]
+    parent.handle_child_update(child_id, "done")
+    assert parent.status == AgentStatus.COMPLETED
+    child = AgentSession.create(
+        agent_id=child_id, role=AgentRole.WORKER, config=_config(), parent_id=parent.agent_id
+    )
+
+    # When: the terminal-gate recorder runs
+    ParentNotificationService._record_terminal_phase_gate(parent, child)
+
+    # Then: exactly one passing gate is recorded for the Fixer phase
+    gates = [e for e in parent.events if isinstance(e, PhaseGateRecorded)]
+    assert len(gates) == 1
+    assert gates[0].phase == "Fixer"
+    assert gates[0].passed is True
 
 
 async def _create_waiting_parent(

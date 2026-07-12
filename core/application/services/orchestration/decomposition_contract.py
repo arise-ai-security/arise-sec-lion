@@ -12,16 +12,17 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from typing import Any
 
     from core.application.services import ChildAgentFactory
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.subtask import Subtask
-    from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.decomposition_validator_port import DecompositionValidator, FixedDecomposition
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,52 @@ class DecompositionContractService:
     ) -> None:
         self._child_factory = child_factory
         self._decomposition_validator = decomposition_validator
+
+    def fixed_decomposition(
+        self, agent: AgentSession
+    ) -> tuple[list[Subtask], FixedDecomposition] | None:
+        """Build host-defined children when the domain owns a fixed control skeleton."""
+        validator = self._decomposition_validator
+        factory = getattr(validator, "fixed_decomposition", None)
+        if not callable(factory):
+            return None
+        typed_factory = cast("Callable[..., FixedDecomposition | None]", factory)
+        domain_context = agent.hierarchy_limits.domain_context if agent.hierarchy_limits else None
+        selection = typed_factory(
+            parent_task_description=agent.task_description,
+            domain_context=domain_context,
+            redecomposition_count=agent.redecomposition_count,
+            failure_signal=self._failure_signal(agent),
+        )
+        if selection is None:
+            return None
+
+        from core.domain.values.subtask import Subtask
+
+        config = agent.config.model_dump()
+        subtasks = [
+            Subtask(
+                description=suggestion.description,
+                config=config,
+                estimated_complexity=suggestion.estimated_complexity,
+                task_type=suggestion.task_type,
+            )
+            for suggestion in selection.subtasks
+        ]
+        return subtasks, selection
+
+    @staticmethod
+    def _failure_signal(agent: AgentSession) -> str:
+        """Concatenate a re-decomposing manager's recorded failures into a signal.
+
+        A domain validator uses this to target its escalation (which specialists
+        the specific failure calls for). Empty on the first decomposition.
+        """
+        parts = [record.reason for record in agent.failure_history if record.reason]
+        parts.extend(record.digest for record in agent.failure_history if record.digest)
+        if agent.failure_digest:
+            parts.append(agent.failure_digest)
+        return " ".join(parts)
 
     async def enforce_decomposition_contract(
         self,

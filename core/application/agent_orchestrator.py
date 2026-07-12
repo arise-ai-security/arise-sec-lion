@@ -167,6 +167,25 @@ class AgentOrchestrator:
         op: OperationType = "task_assessment"
         with self._timed_operation(agent, op):
             try:
+                fixed = self._contract.fixed_decomposition(agent)
+                if fixed is not None:
+                    fixed_subtasks, selection = fixed
+                    agent.record_phase_route(
+                        policy_version=selection.policy_version,
+                        phase=selection.phase,
+                        route=selection.route,
+                        evidence_references=list(selection.evidence_references),
+                        selected_roles=[subtask.description for subtask in fixed_subtasks],
+                        triggers=list(selection.triggers),
+                        remaining_budget=selection.remaining_budget,
+                    )
+                    agent.apply_complexity_result(
+                        complexity="complex",
+                        reasoning="Domain policy selected a fixed phase-controller route",
+                        determined_role=AgentRole.MANAGER,
+                    )
+                    await self._enforce_and_spawn(agent, fixed_subtasks)
+                    return
                 # Shortcut: when the parent's decomposition flagged this
                 # task as ``estimated_complexity="simple"``, the parent has
                 # already scoped it to an atomic worker. Skip the assessment
@@ -414,6 +433,20 @@ class AgentOrchestrator:
         op: OperationType = "task_decomposition"
         with self._timed_operation(agent, op):
             domain_context = self._get_domain_context(agent)
+            fixed = self._contract.fixed_decomposition(agent)
+            if fixed is not None:
+                fixed_subtasks, selection = fixed
+                agent.record_phase_route(
+                    policy_version=selection.policy_version,
+                    phase=selection.phase,
+                    route=selection.route,
+                    evidence_references=list(selection.evidence_references),
+                    selected_roles=[subtask.description for subtask in fixed_subtasks],
+                    triggers=list(selection.triggers),
+                    remaining_budget=selection.remaining_budget,
+                )
+                await self._enforce_and_spawn(agent, fixed_subtasks)
+                return
             tool_context = self._toolset_resolver.resolve(agent.role)
 
             # Build role-specific prompt (with recon tool capabilities if available)
@@ -513,8 +546,27 @@ class AgentOrchestrator:
             agent.start_worker_execution(tool_name)
 
             root_id = agent.hierarchy_limits.root_id if agent.hierarchy_limits else None
-            shared_code_block = await self._resolve_shared_code_block(root_id)
-            shared_code_index = await self._resolve_shared_code_index(root_id)
+            context_packet = await self._recon.resolve_context_packet(
+                root_id,
+                target_paths=agent.target_paths,
+                symbols=agent.symbols,
+                failure_digest=agent.failure_digest,
+            )
+            shared_code_block = context_packet.source_block if context_packet else None
+            shared_code_index = context_packet.source_index if context_packet else None
+            if context_packet is not None:
+                agent.record_prompt_context(
+                    total_chars=context_packet.total_chars,
+                    total_tokens=context_packet.total_tokens,
+                    segment_sizes={
+                        "source": len(context_packet.source_block or ""),
+                        "index": len(context_packet.source_index or ""),
+                    },
+                    entries=[dict(entry) for entry in context_packet.entries],
+                    omitted_entries=[
+                        dict(entry) for entry in context_packet.omitted_entries
+                    ],
+                )
 
             prompt = self._prompt_builder.build_worker_prompt(
                 task_description=agent.task_description,

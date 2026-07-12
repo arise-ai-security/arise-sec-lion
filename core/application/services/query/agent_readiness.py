@@ -65,6 +65,10 @@ class AgentReadinessService:
         for agent_id, summary in summaries.items():
             if summary.is_terminal:
                 continue
+            if not self._sibling_deps_satisfied(summary, summaries, children_map):
+                continue
+            if not self._ancestors_deps_satisfied(summary, summaries, children_map):
+                continue
             if summary.role == "worker":
                 # Only include worker if parent has finished spawning children
                 # Parent must be in WAITING (spawned all children) or terminal state
@@ -87,7 +91,7 @@ class AgentReadinessService:
         # Group workers by parent for sibling-level dependency resolution
         eligible_workers: list[tuple[UUID, tuple[int, ...]]] = []
 
-        has_dag_edges = any(s.depends_on for _, s in workers)
+        has_dag_edges = any(s.depends_on for s in summaries.values())
 
         if has_dag_edges:
             # DAG mode: use depends_on edges to determine readiness
@@ -130,10 +134,6 @@ class AgentReadinessService:
         eligible = []
 
         for agent_id, summary in workers:
-            if not self._sibling_deps_satisfied(summary, summaries, children_map):
-                continue
-            if not self._ancestors_deps_satisfied(summary, summaries, children_map):
-                continue
             path = self._compute_hierarchical_path_optimized(agent_id, summaries)
             eligible.append((agent_id, path))
 
@@ -152,13 +152,25 @@ class AgentReadinessService:
         if parent_id is None:
             return True
         siblings = children_map.get(parent_id, [])
-        sibling_status: dict[int, bool] = {}
+        sibling_status: dict[int, str] = {}
         for sib_id in siblings:
             if sib_id in summaries:
                 sib = summaries[sib_id]
-                sibling_status[sib.sibling_index] = sib.is_terminal
+                sibling_status[sib.sibling_index] = sib.status
         effective_deps = [d for d in summary.depends_on if d != summary.sibling_index]
-        return all(sibling_status.get(dep_idx, False) for dep_idx in effective_deps)
+        return all(
+            AgentReadinessService._dependency_satisfied(
+                sibling_status.get(dep_idx),
+                summary.dependency_failure_policy,
+            )
+            for dep_idx in effective_deps
+        )
+
+    @staticmethod
+    def _dependency_satisfied(status: str | None, failure_policy: str) -> bool:
+        if status == "completed":
+            return True
+        return status == "failed" and failure_policy == "continue"
 
     @staticmethod
     def _ancestors_deps_satisfied(
@@ -178,13 +190,19 @@ class AgentReadinessService:
                 ancestor_parent = ancestor.parent_id
                 if ancestor_parent is not None:
                     siblings = children_map.get(ancestor_parent, [])
-                    sibling_status: dict[int, bool] = {}
+                    sibling_status: dict[int, str] = {}
                     for sib_id in siblings:
                         if sib_id in summaries:
                             sib = summaries[sib_id]
-                            sibling_status[sib.sibling_index] = sib.is_terminal
+                            sibling_status[sib.sibling_index] = sib.status
                     effective_deps = [d for d in ancestor.depends_on if d != ancestor.sibling_index]
-                    if not all(sibling_status.get(dep_idx, False) for dep_idx in effective_deps):
+                    if not all(
+                        AgentReadinessService._dependency_satisfied(
+                            sibling_status.get(dep_idx),
+                            ancestor.dependency_failure_policy,
+                        )
+                        for dep_idx in effective_deps
+                    ):
                         return False
             current_id = ancestor.parent_id
         return True

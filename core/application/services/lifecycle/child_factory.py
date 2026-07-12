@@ -233,6 +233,8 @@ class ChildAgentFactory:
             briefing=event.briefing,
             depends_on=event.subtask.depends_on,
             success_criteria=event.subtask.success_criteria,
+            criticality=event.subtask.criticality,
+            dependency_failure_policy=event.subtask.dependency_failure_policy,
             target_paths=list(event.subtask.target_paths),
             symbols=list(event.subtask.symbols),
             search_hints=list(event.subtask.search_hints),

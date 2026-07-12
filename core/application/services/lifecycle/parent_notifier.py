@@ -4,6 +4,8 @@ Handles notifying parent agents when children complete or fail.
 Extracted from ExecutionService to follow Single Responsibility Principle.
 """
 
+import re
+
 from core.application.types import ProgressCallback
 from core.domain.aggregates.agent_session import AgentSession, AgentStatus
 
@@ -65,7 +67,9 @@ class ParentNotificationService:
                 child_id=child.agent_id,
                 result=child.result or "",
                 report=report,
+                max_redecompositions=self._max_redecompositions,
             )
+            self._record_terminal_phase_gate(parent, child)
 
             await self._repository.persist_events(
                 parent,
@@ -171,6 +175,7 @@ class ParentNotificationService:
             digest=child.failure_digest,
             max_redecompositions=self._max_redecompositions,
         )
+        self._record_terminal_phase_gate(parent, child)
 
         await self._repository.persist_events(
             parent,
@@ -183,3 +188,20 @@ class ParentNotificationService:
             # Partial success: some children succeeded, parent completed with
             # aggregated results. Notify grandparent of completion.
             await self.notify_if_complete(parent)
+
+    @staticmethod
+    def _record_terminal_phase_gate(parent: AgentSession, child: AgentSession) -> None:
+        # Only a terminal phase outcome gates. A parent that is still WAITING or
+        # re-decomposing (ANALYZING) has no settled verdict yet, so recording a
+        # gate there would emit a spurious passed=False on every replan.
+        if not parent.is_terminal():
+            return
+        match = re.match(r"^\s*\[([^\]]+)\]", parent.task_description)
+        if match is None:
+            return
+        parent.record_phase_gate(
+            phase=match.group(1),
+            passed=parent.status == AgentStatus.COMPLETED,
+            evidence_references=[f"agent:{child.agent_id}"],
+            reason=child.error_message or child.result or "",
+        )
