@@ -80,7 +80,7 @@ def test_artifacts_by_bef_excludes_vacuous_and_dedups(tmp_path) -> None:
     builder = RunBuilder()
     boss = builder.boss()
     manager = builder.agent("manager", boss, "[Fixer] fix")
-    worker = builder.agent("worker", manager, "[Patch-Creator] patch")
+    worker = builder.agent("worker", manager, "[Patch-Applier] patch")
     builder.edited(worker, "/testcase/model_patch.diff")
     builder.edited(worker, "/testcase/empty.log")
     builder.edited(worker, "/testcase/model_patch.diff")  # duplicate path
@@ -118,7 +118,7 @@ def test_success_criteria_three_independent_results(tmp_path) -> None:
     manager = builder.agent(
         "manager", boss, "[Fixer] fix", success_criteria="patch applies cleanly"
     )
-    worker = builder.agent("worker", manager, "[Patch-Creator] patch")
+    worker = builder.agent("worker", manager, "[Patch-Applier] patch")
     builder.completed(worker, "patch created")
     builder.verification_passed(worker)
     run_dir = write_files(tmp_path, {"/testcase/model_patch.diff": b"diff"})
@@ -141,13 +141,13 @@ def test_success_criteria_three_independent_results(tmp_path) -> None:
 
 def test_success_criteria_reports_catalog_dependency_contract_failures(tmp_path) -> None:
     """Hierarchical SEC-bench runs fail the role dependency contract mechanically."""
-    # Given: a Fixer decomposition where Patch-Creator has its producer sibling
+    # Given: a Fixer decomposition where Patch-Applier has its producer sibling
     # present, but omits the required depends_on edge to Root-Cause-Analyst.
     builder = RunBuilder()
     boss = builder.boss()
     manager = builder.agent("manager", boss, "[Fixer] fix")
     builder.agent("worker", manager, "[Root-Cause-Analyst] analyze", sibling_index=0)
-    builder.agent("worker", manager, "[Patch-Creator] patch", sibling_index=1)
+    builder.agent("worker", manager, "[Patch-Applier] patch", sibling_index=1)
     run_dir = write_files(tmp_path, {"/testcase/model_patch.diff": b"diff"})
 
     # When
@@ -156,7 +156,7 @@ def test_success_criteria_reports_catalog_dependency_contract_failures(tmp_path)
     # Then: the prompt-only dependency contract is reported as failed.
     fixer_contract = result["Fixer"]["dependency_contract"]
     assert fixer_contract["ok"] is False
-    assert any("[Patch-Creator]" in item for item in fixer_contract["violations"])
+    assert any("[Patch-Applier]" in item for item in fixer_contract["violations"])
 
 
 def test_repo_changes_diff_may_be_empty(tmp_path) -> None:

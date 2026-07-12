@@ -37,11 +37,11 @@ def test_cache_rate_none_when_no_prompt_tokens(tmp_path) -> None:
 
 def test_cache_rate_by_bef(tmp_path) -> None:
     """Worker cache tokens are attributed to the worker's BEF subtree."""
-    # Given: boss → [Fixer] manager → [Patch-Creator] worker (750/1000)
+    # Given: boss → [Fixer] manager → [Patch-Applier] worker (750/1000)
     builder = RunBuilder()
     boss = builder.boss()
     manager = builder.agent("manager", boss, "[Fixer] fix")
-    worker = builder.agent("worker", manager, "[Patch-Creator] patch")
+    worker = builder.agent("worker", manager, "[Patch-Applier] patch")
     builder.worker_cost(worker, cost=0.5, prompt=1000, cache_read=750)
     # When
     result = BefRunEvaluator(builder.run_data(tmp_path)).cache_rate_by_bef()
