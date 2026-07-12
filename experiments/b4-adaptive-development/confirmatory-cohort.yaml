@@ -1,0 +1,30 @@
+# Untouched confirmatory cohort — the FROZEN N1-vs-B4 comparison, distinct from
+# the development held-out-20 that manifest.yaml reuses for configuration
+# selection. The cohort (confirmatory-cohort-dataset.yaml) is disjoint from every
+# project inspected during development: it draws only from
+# faad2/libredwg/mruby/mupdf/njs/openjpeg/upx/wasm3/yara, never from the
+# dev-inspected gpac/imagemagick/libxml2/php/openexr/readstat/matio/md4c/libarchive.
+#
+# Design-only manifest (§4.3 convention): it is NOT auto-discovered as a study
+# (only manifest.yaml is). Promote to a runnable study by moving this file to
+# experiments/b4-confirmatory-cohort/manifest.yaml — the ../ config refs resolve
+# from any study directory placed directly under experiments/. Both arms
+# reference the frozen dev-selected configs verbatim (single source of truth for
+# the frozen N1/B4 models); the confirmatory runner
+# (experiments/shared/evaluation/confirmatory_runner.py) launches them in
+# randomized-interleaved order and enrolls every launch intention-to-treat.
+study_id: b4-confirmatory-cohort
+created_at: 2026-07-12T00:00:00+00:00
+hypothesis: >
+  Confirmatory: frozen N1 (naive linear) vs frozen B4 (adaptive) on an untouched
+  cohort never inspected during development. Arms are paired by (task,
+  base_commit), launched in randomized-interleaved order (explicit seed), and
+  enrolled intention-to-treat — failures and timeouts are retained, not curated
+  to the latest success. Primary endpoint: the predeclared B4 superiority rule
+  (paired success-difference lower bound > 0 and point estimate >= 0.05).
+dataset: confirmatory-cohort-dataset.yaml
+replicates: 1
+cells:
+  N1: {group: N, runner: arise, config: ../n1-openhands-linear/configs/N1-openhands-linear.yaml}
+  B4: {group: B, runner: arise, config: ../b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml}
+headline_cells: [N1, B4]
