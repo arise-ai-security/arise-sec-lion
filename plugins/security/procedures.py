@@ -61,7 +61,9 @@ _REPRO_SKELETON_MARKER = "Arise seeded an empty"
 # Static Tier-1 registry: role bracket -> procedure_ref.
 _PROCEDURE_EXPLOIT = "secb_exploit_validation"
 _PROCEDURE_PATCH = "secb_patch_validation"
+_PROCEDURE_BUILD = "secb_build_validation"
 _REGISTRY: dict[str, str] = {
+    "Build-Verifier": _PROCEDURE_BUILD,
     "Exploit-Validator": _PROCEDURE_EXPLOIT,
     "Patch-Validator": _PROCEDURE_PATCH,
 }
@@ -172,11 +174,44 @@ class SecBenchProcedureExecutor:
         session = self._session_resolver(root_id)
         if session is None:
             raise ProcedureInfrastructureError(f"no container session for run {root_id}")
+        if procedure_ref == _PROCEDURE_BUILD:
+            return await _run_build_validation(session, cve)
         if procedure_ref == _PROCEDURE_EXPLOIT:
             return await _run_exploit_validation(session, cve)
         if procedure_ref == _PROCEDURE_PATCH:
             return await _run_patch_validation(session, cve)
         raise ProcedureInfrastructureError(f"unknown procedure_ref {procedure_ref!r}")
+
+
+# ---------------------------------------------------------------------------
+# Build validation (deterministic Builder phase gate)
+# ---------------------------------------------------------------------------
+
+
+async def _run_build_validation(
+    session: ProcedureSession, cve: CVEInstance | None
+) -> ProcedureResult:
+    """Host-determined Builder gate: ``secb build`` must succeed and declare a resolvable binary.
+
+    Runs entirely host-side so the Builder phase outcome is agent-unforgeable (evidence
+    on ``ProcedureExecutionFinished``), not an agent-authored verdict.
+    """
+    _ = cve
+    evidence: list[ProcedureEvidence] = []
+    build_out = await _run_cmd(session, "secb build", timeout=_BUILD_TIMEOUT, evidence=evidence)
+    if build_out.exit_code != 0 or build_out.timed_out:
+        reason = _timeout_or(build_out, "secb build failed")
+        return _failed(_PROCEDURE_BUILD, f"Build validation FAIL: {reason}", reason, evidence)
+    binary_reason = await _pointer_resolves(session, _BINARY_POINTER, "Builder binary", evidence)
+    if binary_reason is not None:
+        return _failed(
+            _PROCEDURE_BUILD, f"Build validation FAIL: {binary_reason}", binary_reason, evidence
+        )
+    return ProcedureResult(
+        success=True,
+        summary="Build validation PASS: secb build succeeded and the binary resolves",
+        evidence=tuple(evidence),
+    )
 
 
 # ---------------------------------------------------------------------------

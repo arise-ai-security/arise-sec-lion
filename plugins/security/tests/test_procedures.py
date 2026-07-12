@@ -173,8 +173,64 @@ def test_match_maps_validator_brackets_to_procedures() -> None:
     cve = _cve()
 
     # When / Then: each validator bracket maps to its procedure_ref
+    assert ex.match("[Build-Verifier] verify the binary", cve) == "secb_build_validation"
     assert ex.match("[Exploit-Validator] validate the repro", cve) == "secb_exploit_validation"
     assert ex.match("[Patch-Validator] validate the patch", cve) == "secb_patch_validation"
+
+
+async def test_build_validation_passes_when_build_succeeds_and_binary_resolves(
+    tmp_path: Path,
+) -> None:
+    # Given: a declared binary pointer and a session where secb build succeeds
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n")
+    session = FakeSession(tc)  # default exit 0 → build ok, binary resolves
+    ex = _executor(session)
+
+    # When: the build-validation procedure runs
+    result = await ex.execute(
+        "secb_build_validation", "[Build-Verifier] verify", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: it passes host-side and records the secb build command as evidence
+    assert result.success is True
+    assert any("secb build" in command for command in session.commands)
+
+
+async def test_build_validation_fails_when_build_fails(tmp_path: Path) -> None:
+    # Given: a session where secb build returns a nonzero exit
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n")
+    session = FakeSession(
+        tc, responses=[_Resp(needle="secb build", outcome=CommandOutcome(exit_code=1, output="err"))]
+    )
+    ex = _executor(session)
+
+    # When: the build-validation procedure runs
+    result = await ex.execute(
+        "secb_build_validation", "[Build-Verifier] verify", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: the host verdict is FAIL — the agent cannot override it
+    assert result.success is False
+
+
+async def test_build_validation_fails_when_binary_pointer_missing(tmp_path: Path) -> None:
+    # Given: secb build succeeds but no binary pointer was declared
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    session = FakeSession(tc)  # build ok, but binary_paths.txt absent
+    ex = _executor(session)
+
+    # When: the build-validation procedure runs
+    result = await ex.execute(
+        "secb_build_validation", "[Build-Verifier] verify", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: it fails — a build without a resolvable binary is not a valid Builder outcome
+    assert result.success is False
 
 
 def test_match_returns_none_for_unregistered_or_missing_bracket() -> None:
@@ -192,10 +248,11 @@ def test_resolve_accepts_only_registered_refs() -> None:
     # Given: an executor
     ex = _executor(None)
 
-    # When / Then: only the two registered refs resolve
+    # When / Then: only the registered refs resolve
+    assert ex.resolve("secb_build_validation") is True
     assert ex.resolve("secb_exploit_validation") is True
     assert ex.resolve("secb_patch_validation") is True
-    assert ex.resolve("secb_build_validation") is False
+    assert ex.resolve("secb_unregistered_procedure") is False
     assert ex.resolve("") is False
 
 

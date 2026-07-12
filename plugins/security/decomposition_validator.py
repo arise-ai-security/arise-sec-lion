@@ -35,7 +35,7 @@ class SecBenchDecompositionValidator:
         "Reporter": ("Fixer",),
     }
     _COMPACT = {
-        "Builder": ("Build-Executor",),
+        "Builder": ("Build-Executor", "Build-Verifier"),
         "Exploiter": ("Repro-Creator", "Exploit-Validator"),
         "Fixer": ("Root-Cause-Analyst", "Patch-Applier", "Patch-Validator"),
         "Reporter": ("Reporter",),
