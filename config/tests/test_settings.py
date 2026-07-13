@@ -126,7 +126,7 @@ def test_shared_worker_session_defaults_false_and_accepts_true(tmp_path: Path) -
 def test_openhands_enable_subagents_defaults_false_and_accepts_true(tmp_path: Path) -> None:
     """``worker.tool_params.openhands.enable_subagents`` defaults False; YAML can enable it."""
 
-    # Given: an openhands worker with an empty tool_params slot (N1-shaped).
+    # Given: an OpenHands worker with an empty tool_params slot.
     payload = _add_required_models(_load_base_config())
     payload["worker"]["tool"] = "openhands"
     payload["worker"]["tool_params"] = {"openhands": {}}
@@ -140,12 +140,12 @@ def test_openhands_enable_subagents_defaults_false_and_accepts_true(tmp_path: Pa
     assert settings.worker.tool_params.openhands is not None
     assert settings.worker.tool_params.openhands.enable_subagents is False
 
-    # Given: the same config with the flag enabled (N2-shaped).
+    # Given: the same config with the flag enabled.
     payload["worker"]["tool_params"] = {"openhands": {"enable_subagents": True}}
     target_enabled = tmp_path / "oh_enabled.yaml"
     _write_yaml(target_enabled, payload)
 
-    # When: loading the N2-shaped settings.
+    # When: loading the settings with subagents enabled.
     enabled = Settings.from_yaml(target_enabled)
 
     # Then: the flag round-trips as True.

@@ -13,6 +13,7 @@ from core.domain.values.prompt_trace import SectionProvenance
 
 if TYPE_CHECKING:
     from core.application.services import PromptStrategy
+    from core.ports.decomposition_policy_port import InitialDecompositionPolicy
     from core.ports.decomposition_validator_port import DecompositionValidator
     from core.ports.procedure_ports import ProcedureExecutorPort
 
@@ -97,6 +98,8 @@ class DomainPlugin(Protocol):
     ) -> None: ...
 
     def get_prompt_strategy(self) -> PromptStrategy | None: ...
+
+    def get_decomposition_policy(self) -> InitialDecompositionPolicy | None: ...
 
     def get_decomposition_validator(self) -> DecompositionValidator | None: ...
 

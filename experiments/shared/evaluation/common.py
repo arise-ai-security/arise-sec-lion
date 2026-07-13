@@ -102,7 +102,7 @@ def build_role_map(events: Iterable[DomainEvent]) -> dict[UUID, str]:
     resolved role per aggregate is, in priority order:
 
     1. ``BOSS`` if created as boss (the root stays boss even when it runs worker
-       execution in flat N1/N2 mode).
+       execution in flat mode).
     2. ``ComplexityEvaluated.determined_role`` (the assess decision: manager/worker).
     3. The execution role (``AgentExecution{Started,Finished}.role``).
     4. The initial ``AgentCreated.role`` (e.g. ``pending`` if never assessed).

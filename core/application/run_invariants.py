@@ -56,9 +56,8 @@ class TaskPromptSpec(BaseModel):
 
     ``prompt_sha`` is the sha256 hex digest of ``rendered_prompt`` itself — a
     content-addressed fingerprint for run-level provenance. (The historical
-    ``briefing_sha`` field, which hashed ``briefing.md``, was retired when
-    Cell A's prompt switched to the unified ``inputs/*`` + ``system/*``
-    template chain.)
+    ``briefing_sha`` field, which hashed ``briefing.md``, was retired when the
+    flat prompt switched to the unified ``inputs/*`` + ``system/*`` template chain.)
     """
 
     model_config = {"frozen": True}

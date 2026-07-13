@@ -9,10 +9,15 @@ minimal in-memory event store so the rebuild path is exercised end to end.
 from __future__ import annotations
 
 import hashlib
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 
+from core.application.services.lifecycle.child_factory import ChildAgentFactory
+from core.application.services.lifecycle.hierarchy_limits_registry import (
+    HierarchyLimitsRegistry,
+)
 from core.domain.events.events import (
     AgentCreated,
     ChildSpawned,
@@ -20,6 +25,7 @@ from core.domain.events.events import (
     SourceFileEdited,
     SourceFileObserved,
 )
+from core.domain.values.node_message import Briefing
 from core.domain.values.subtask import Subtask
 from infrastructure.adapters.worker.shared_code_context import SharedCodeContextProvider
 
@@ -558,6 +564,168 @@ async def test_predecessor_scope_includes_predecessor_and_excludes_unrelated_sib
     assert packet.source_index is not None
     assert "/src/unrelated.c" in packet.source_index
     assert "out_of_scope" in packet.source_index
+
+
+@pytest.mark.asyncio
+async def test_direct_and_grouped_entry_children_receive_equivalent_scoped_packets() -> None:
+    # Given: equivalent direct and grouped entry children with different concrete producers
+    factory = ChildAgentFactory(
+        repository=AsyncMock(),
+        limits_registry=HierarchyLimitsRegistry(),
+    )
+    agent_config = {
+        "strategy": "heuristic",
+        "base": {"model": "test-model", "temperature": 0.0, "max_tokens": 1000},
+        "tool": "openhands",
+    }
+    direct_parent, direct_producer, direct_entry = uuid4(), uuid4(), uuid4()
+    grouped_parent, grouped_producer, grouped_source, grouped_sink, grouped_entry = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    direct_events = [
+        ChildSpawned(
+            aggregate_id=direct_parent,
+            sequence_number=1,
+            child_id=direct_producer,
+            child_role="worker",
+            child_config=agent_config,
+            sibling_index=0,
+            subtask=Subtask(description="producer", config=agent_config),
+            briefing=Briefing.simple("direct").model_dump(),
+        ),
+        ChildSpawned(
+            aggregate_id=direct_parent,
+            sequence_number=2,
+            child_id=direct_entry,
+            child_role="worker",
+            child_config=agent_config,
+            sibling_index=1,
+            subtask=Subtask(
+                description="entry", config=agent_config, depends_on=[0]
+            ),
+            briefing=Briefing.simple("direct").model_dump(),
+        ),
+    ]
+    grouped_producer_events = [
+        ChildSpawned(
+            aggregate_id=grouped_producer,
+            sequence_number=2,
+            child_id=grouped_source,
+            child_role="worker",
+            child_config=agent_config,
+            sibling_index=0,
+            subtask=Subtask(description="source", config=agent_config),
+            briefing=Briefing.simple("producer group").model_dump(),
+        ),
+        ChildSpawned(
+            aggregate_id=grouped_producer,
+            sequence_number=3,
+            child_id=grouped_sink,
+            child_role="worker",
+            child_config=agent_config,
+            sibling_index=1,
+            subtask=Subtask(
+                description="sink", config=agent_config, depends_on=[0]
+            ),
+            briefing=Briefing.simple("producer group").model_dump(),
+        ),
+    ]
+    grouped_consumer_events = [
+        ChildSpawned(
+            aggregate_id=grouped_parent,
+            sequence_number=1,
+            child_id=grouped_entry,
+            child_role="worker",
+            child_config=agent_config,
+            sibling_index=0,
+            subtask=Subtask(description="entry", config=agent_config),
+            briefing=Briefing.simple("grouped").model_dump(),
+        )
+    ]
+    direct_results = await factory.create_children_from_events(
+        direct_events, direct_parent
+    )
+    await factory.create_children_from_events(
+        grouped_producer_events, grouped_producer
+    )
+    grouped_results = await factory.create_children_from_events(
+        grouped_consumer_events,
+        grouped_parent,
+        parent_hard_predecessor_ids=(grouped_producer,),
+    )
+    direct_child = next(
+        result.agent for result in direct_results if result.agent.agent_id == direct_entry
+    )
+    grouped_child = grouped_results[0].agent
+    assert direct_child.hard_predecessor_ids == [direct_producer]
+    assert grouped_child.hard_predecessor_ids == [grouped_sink]
+
+    direct_store = _InMemoryEventStore()
+    grouped_store = _InMemoryEventStore()
+    await _seed_worker(direct_store, root_id=direct_parent, agent_id=direct_parent)
+    await _seed_worker(direct_store, root_id=direct_parent, agent_id=direct_producer)
+    await _seed_worker(grouped_store, root_id=grouped_parent, agent_id=grouped_parent)
+    await grouped_store.append(
+        AgentCreated(
+            aggregate_id=grouped_producer,
+            sequence_number=1,
+            role="manager",
+            parent_id=grouped_parent,
+            config=agent_config,
+        )
+    )
+    await grouped_store.append(
+        ChildSpawned(
+            aggregate_id=grouped_parent,
+            sequence_number=2,
+            child_id=grouped_producer,
+            child_role="manager",
+            subtask=Subtask(description="producer group", config=agent_config),
+            child_config=agent_config,
+        )
+    )
+    for child_id in (grouped_source, grouped_sink):
+        await grouped_store.append(
+            AgentCreated(
+                aggregate_id=child_id,
+                sequence_number=1,
+                role="worker",
+                parent_id=grouped_producer,
+                config=agent_config,
+            )
+        )
+    await grouped_store.append_batch(grouped_producer_events)
+    direct_provider = SharedCodeContextProvider(
+        event_store=direct_store, scoped_packets=True
+    )
+    grouped_provider = SharedCodeContextProvider(
+        event_store=grouped_store, scoped_packets=True
+    )
+    content = "int upstream(void) { return 1; }\n"
+    await direct_provider.record_view(
+        direct_parent, direct_producer, "/src/upstream.c", content
+    )
+    await grouped_provider.record_view(
+        grouped_parent, grouped_sink, "/src/upstream.c", content
+    )
+
+    # When: each entry child requests its dependency-scoped packet
+    direct_packet = await direct_provider.context_packet(
+        direct_parent,
+        hard_predecessor_ids=tuple(direct_child.hard_predecessor_ids),
+    )
+    grouped_packet = await grouped_provider.context_packet(
+        grouped_parent,
+        hard_predecessor_ids=tuple(grouped_child.hard_predecessor_ids),
+    )
+
+    # Then: omitting one grouping layer does not change the packet contents
+    assert direct_packet == grouped_packet
+    assert [entry["path"] for entry in direct_packet.entries] == ["/src/upstream.c"]
 
 
 @pytest.mark.asyncio

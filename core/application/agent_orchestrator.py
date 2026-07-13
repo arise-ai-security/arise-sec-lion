@@ -73,7 +73,11 @@ if TYPE_CHECKING:
     from core.domain.values.llm_response import LLMResponse
     from core.domain.values.node_message import Handoff
     from core.domain.values.subtask import Subtask
-    from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.decomposition_policy_port import InitialDecompositionPolicy
+    from core.ports.decomposition_validator_port import (
+        DecompositionRoute,
+        DecompositionValidator,
+    )
     from core.ports.procedure_ports import ProcedureExecutorPort
     from core.ports.runtime_ports import (
         FormatRepairerPort,
@@ -118,7 +122,10 @@ class AgentOrchestrator:
         shared_code_port: "SharedCodeContextPort | None" = None,
         capture_recon_reads: bool = False,
         share_boss_recon: bool = False,
+        decomposition_policy: "InitialDecompositionPolicy | None" = None,
         decomposition_validator: "DecompositionValidator | None" = None,
+        include_manager_layer: bool = True,
+        max_redecompositions: int = 0,
         procedure_executor: "ProcedureExecutorPort | None" = None,
     ) -> None:
         self._llm_port = llm_port
@@ -141,7 +148,13 @@ class AgentOrchestrator:
         # enforcement, and recon/shared-source propagation. Each owns the state
         # and rationale for its concern; the orchestrator only coordinates them.
         self._assessment_recovery = AssessmentRecoveryService(llm_port, format_repairer)
-        self._contract = DecompositionContractService(child_factory, decomposition_validator)
+        self._contract = DecompositionContractService(
+            child_factory,
+            decomposition_policy=decomposition_policy,
+            decomposition_validator=decomposition_validator,
+            include_manager_layer=include_manager_layer,
+            max_redecompositions=max_redecompositions,
+        )
         self._recon = ReconPropagationService(
             shared_code_port, capture_recon_reads, share_boss_recon
         )
@@ -167,24 +180,19 @@ class AgentOrchestrator:
         op: OperationType = "task_assessment"
         with self._timed_operation(agent, op):
             try:
-                fixed = self._contract.fixed_decomposition(agent)
-                if fixed is not None:
-                    fixed_subtasks, selection = fixed
-                    agent.record_phase_route(
-                        policy_version=selection.policy_version,
-                        phase=selection.phase,
-                        route=selection.route,
-                        evidence_references=list(selection.evidence_references),
-                        selected_roles=[subtask.description for subtask in fixed_subtasks],
-                        triggers=list(selection.triggers),
-                        remaining_budget=selection.remaining_budget,
-                    )
+                initial = self._contract.initial_decomposition(agent)
+                if initial is not None:
+                    initial_subtasks, route = initial
                     agent.apply_complexity_result(
                         complexity="complex",
-                        reasoning="Domain policy selected a fixed phase-controller route",
+                        reasoning="Host policy selected the canonical initial route",
                         determined_role=AgentRole.MANAGER,
                     )
-                    await self._enforce_and_spawn(agent, fixed_subtasks)
+                    await self._enforce_and_spawn(
+                        agent,
+                        initial_subtasks,
+                        initial_route=route,
+                    )
                     return
                 # Shortcut: when the parent's decomposition flagged this
                 # task as ``estimated_complexity="simple"``, the parent has
@@ -389,6 +397,11 @@ class AgentOrchestrator:
         so each manager's real assessment call reads it back. Returns the primed
         prefix length in chars (0 = skipped: <2 managers or prefix below the floor).
         """
+        agents = [
+            agent
+            for agent in agents
+            if self._contract.initial_decomposition(agent) is None
+        ]
         if len(agents) < 2:
             return 0
         prefix = _longest_common_prefix(
@@ -429,24 +442,22 @@ class AgentOrchestrator:
         if agent.role not in (AgentRole.BOSS, AgentRole.MANAGER):
             agent.fail_with_reason(f"Expected BOSS/MANAGER role, got {agent.role}")
             return
+        if agent.redecomposition_count > 0 and agent.role != AgentRole.MANAGER:
+            agent.fail_with_reason("Only MANAGER agents may re-decompose after child failure")
+            return
 
         op: OperationType = "task_decomposition"
         with self._timed_operation(agent, op):
-            domain_context = self._get_domain_context(agent)
-            fixed = self._contract.fixed_decomposition(agent)
-            if fixed is not None:
-                fixed_subtasks, selection = fixed
-                agent.record_phase_route(
-                    policy_version=selection.policy_version,
-                    phase=selection.phase,
-                    route=selection.route,
-                    evidence_references=list(selection.evidence_references),
-                    selected_roles=[subtask.description for subtask in fixed_subtasks],
-                    triggers=list(selection.triggers),
-                    remaining_budget=selection.remaining_budget,
+            initial = self._contract.initial_decomposition(agent)
+            if initial is not None:
+                initial_subtasks, route = initial
+                await self._enforce_and_spawn(
+                    agent,
+                    initial_subtasks,
+                    initial_route=route,
                 )
-                await self._enforce_and_spawn(agent, fixed_subtasks)
                 return
+            domain_context = self._get_domain_context(agent)
             tool_context = self._toolset_resolver.resolve(agent.role)
 
             # Build role-specific prompt (with recon tool capabilities if available)
@@ -626,21 +637,7 @@ class AgentOrchestrator:
                 await self._verification_pipeline.verify(agent)
 
     def _resolve_procedure_ref(self, agent: "AgentSession") -> str | None:
-        """Dispatch ladder: explicit marking → static registry match.
-
-        Unknown explicit refs downgrade to auto with a warning (fail open —
-        a bad LLM marking must never dead-end a task).
-        """
-        if agent.execution_mode == "agentic":
-            return None
-        if agent.execution_mode == "procedural":
-            if agent.procedure_ref and self._procedure_executor.resolve(agent.procedure_ref):
-                return agent.procedure_ref
-            logger.warning(
-                "Unknown procedure_ref %r on agent %s; downgrading to auto",
-                agent.procedure_ref,
-                agent.agent_id,
-            )
+        """Resolve procedures only through the trusted Host registry."""
         matched = self._procedure_executor.match(
             agent.task_description, self._get_domain_context(agent)
         )
@@ -669,7 +666,7 @@ class AgentOrchestrator:
             # The run's root_id rides in params so a domain executor can
             # resolve the run's shared container session (core stays
             # topology-only; params remain an opaque dict).
-            params: dict[str, Any] = dict(agent.procedure_params)
+            params: dict[str, Any] = {}
             if agent.hierarchy_limits is not None:
                 params.setdefault("root_id", agent.hierarchy_limits.root_id)
 
@@ -739,7 +736,13 @@ class AgentOrchestrator:
                 duration_seconds=duration,
             )
 
-    async def _enforce_and_spawn(self, agent: "AgentSession", subtasks: list["Subtask"]) -> None:
+    async def _enforce_and_spawn(
+        self,
+        agent: "AgentSession",
+        subtasks: list["Subtask"],
+        *,
+        initial_route: "DecompositionRoute | None" = None,
+    ) -> None:
         """Enforce the decomposition contract, then spawn children.
 
         Shared by BOTH decomposition paths — ``evaluate_task`` (explicit BOSS/MANAGER
@@ -747,6 +750,11 @@ class AgentOrchestrator:
         single call) — so the role-contract gate cannot be bypassed by either path. The
         agent is failed on contract-unsatisfiable (inside enforcement) or spawn failure.
         """
+        authored_source = "host_policy" if initial_route is not None else "llm"
+        subtasks = [
+            subtask.model_copy(update={"selection_source": authored_source})
+            for subtask in subtasks
+        ]
         # Dedup FIRST so the contract gate has the final word on completeness: a gate that
         # ran before dedup could be undone by dedup dropping a re-injected required role
         # (e.g. on re-decomposition, where the cross-tree role registry still lists the
@@ -758,19 +766,56 @@ class AgentOrchestrator:
             for new_index, st in enumerate(subtasks)
             if id(st) in pre_dedup_index
         }
-        corrected = await self._enforce_decomposition_contract(agent, subtasks, dedup_map)
+        corrected, validated_route = await self._enforce_decomposition_contract(
+            agent, subtasks, dedup_map
+        )
         if corrected is None:
             return  # enforcement already failed the agent before any spawn
+        if initial_route is not None and validated_route is not None:
+            agent.fail_with_reason("initial and adaptive decomposition routes cannot overlap")
+            return
+        route = validated_route or initial_route
+        # Record route provenance after validation using the final corrected roles.
+        if route is not None:
+            selected_roles: list[str] = []
+            task_instructions: dict[str, str] = {}
+            task_sources: dict[str, str] = {}
+            evidence_references = list(route.evidence_references)
+            for subtask in corrected:
+                label, instruction = self._split_role_instruction(subtask.description)
+                selected_roles.append(label)
+                task_instructions[label] = instruction
+                task_sources[label] = subtask.selection_source
+                evidence_references.extend(subtask.evidence_references)
+            agent.record_phase_route(
+                policy_version=route.policy_version,
+                phase=route.phase,
+                route=route.route,
+                evidence_references=list(dict.fromkeys(evidence_references)),
+                selected_roles=selected_roles,
+                task_instructions=task_instructions,
+                task_sources=task_sources,
+                triggers=list(route.triggers),
+                remaining_budget=route.remaining_budget,
+            )
         failure = await self._spawn_children(agent, corrected)
         if failure:
             agent.fail_with_reason(failure)
+
+    @staticmethod
+    def _split_role_instruction(description: str) -> tuple[str, str]:
+        stripped = description.strip()
+        if stripped.startswith("[") and "]" in stripped:
+            closing = stripped.index("]")
+            return stripped[1:closing], stripped[closing + 1 :].strip()
+        return stripped, ""
 
     async def _enforce_decomposition_contract(
         self,
         agent: "AgentSession",
         subtasks: list["Subtask"],
         dedup_map: "dict[int, int] | None" = None,
-    ) -> "list[Subtask] | None":
+    ) -> "tuple[list[Subtask] | None, DecompositionRoute | None]":
         return await self._contract.enforce_decomposition_contract(agent, subtasks, dedup_map)
 
     def _resolve_catalog_dependencies(

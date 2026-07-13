@@ -74,7 +74,7 @@ class ContainerSessionContext:
     def host_to_container_path(self, host_path: Path) -> str:
         """Translate a host path under ``workspace_root`` to its in-container path.
 
-        Used by the Cell A docker-exec runner to point the in-container CLI at
+        Used by the flat docker-exec runner to point the in-container CLI at
         scratch files (mcp config, ``CLAUDE_CONFIG_DIR``) the host wrote under
         ``workspace_root`` (which is bind-mounted at ``container_workspace_root``).
         """

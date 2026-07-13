@@ -1,4 +1,4 @@
-"""Dump B4 MANAGER-node events (full payloads) to a flat text file per run.
+"""Dump MANAGER-node events (full payloads) to a flat text file per run.
 
 Manager = a depth-1 node whose operation resolves to decomposition. Depth-1 leaf
 workers are excluded because they belong to the worker dump. Source of truth is
@@ -98,9 +98,8 @@ async def _run(args: argparse.Namespace) -> str:
         out: list[str] = []
         bar = "=" * 80
         out.append(bar)
-        out.append("B4 MANAGER-NODE EVENTS  (depth-1 decomposers only; boss + workers excluded)")
+        out.append("MANAGER-NODE EVENTS  (depth-1 decomposers only; boss + workers excluded)")
         out.append(f"Run:            {args.run}")
-        out.append(f"Study:          b4-boss-manager-worker")
         out.append(f"Task:           {args.task}")
         out.append(f"Manager nodes:  {len(managers)}")
         out.append(f"Manager events: {total}")

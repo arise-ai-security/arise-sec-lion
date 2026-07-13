@@ -1,10 +1,11 @@
 study_id: b4-boss-manager-worker
 created_at: 2026-06-09T00:00:00+00:00
 hypothesis: >
-  B4 adaptive-v1 uses fixed Builder, Exploiter, Fixer, and Reporter controllers.
-  Each controller starts with a compact outcome-producing route and adds only
-  phase-specific specialists after a failed evidence gate. Context is bounded
-  and consumer-scoped; host procedures own exploit and patch validation.
+  B4 uses fixed Builder, Exploiter, Fixer, and Reporter controllers. Each
+  controller starts with a compact outcome-producing route. After a failed
+  evidence gate, its Manager selects phase-specific specialists and the host
+  validates the selection. Context is bounded and consumer-scoped; host
+  procedures own exploit and patch validation.
 dataset: dataset.yaml
 replicates: 1
 cells:

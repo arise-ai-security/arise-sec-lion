@@ -92,6 +92,18 @@ class StubDomainPlugin:
     ):
         return None
 
+    def get_prompt_strategy(self):
+        return None
+
+    def get_decomposition_validator(self):
+        return None
+
+    def get_decomposition_policy(self):
+        return None
+
+    def get_procedure_executor(self):
+        return None
+
 
 class AsyncWorkerPort:
     def __init__(self, agent_id):

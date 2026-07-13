@@ -187,7 +187,7 @@
 <header class="hero"><div class="wrap">
   <div class="eyebrow">System Overview</div>
   <h1>A self-healing multi-agent platform for reproducing &amp; fixing real CVEs</h1>
-  <p class="sub">Arise compares a flat N1 baseline with adaptive and role-fused agent teams on SEC-bench CVEs. LLM workers build evidence and code; trusted host procedures execute fixed checks; a separate evaluator decides success from fresh replay, provenance, and blinded semantic review.</p>
+  <p class="sub">Arise compares a flat N1 baseline with B4's adaptive Manager hierarchy and B3's direct compact-role topology on SEC-bench CVEs. LLM workers build evidence and code; Host-controlled procedures execute fixed in-run checks; a separate evaluator decides success from fresh replay, provenance, and blinded semantic review.</p>
   <div class="props">
     <span class="p"><b></b> event-sourced · 42 event types</span>
     <span class="p b"><b></b> hexagonal / ports-and-adapters</span>
@@ -260,8 +260,8 @@
   <!-- ============ 02 — EXPERIMENT MATRIX ============ -->
   <section id="matrix">
     <div class="kick" data-reveal><b>02</b> / Treatments</div>
-    <h2 data-reveal>N1 baseline, B4 adaptive, B3 role-fused</h2>
-    <p class="intro" data-reveal>The next confirmatory study compares <strong>N1 with B4</strong>. B3 remains a development ablation. It is a <strong>manager-plus-specialization composite</strong>, because removing managers also fuses role prompts and reallocates model tokens; it cannot identify a pure manager effect.</p>
+    <h2 data-reveal>N1 baseline, B4 adaptive, B3 direct compact</h2>
+    <p class="intro" data-reveal>The next confirmatory study compares <strong>N1 with B4</strong>. B3 is the direct Manager-layer ablation: the host flattens B4's same compact DAG into nine direct roles. B3 inherits the same role prompts, models, tools, procedures, dependency-scoped source packets, retries, and budgets; only ancestry metadata reflects the omitted Manager.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 330" role="img" aria-label="N1 B3 and B4 experiment treatments">
@@ -269,7 +269,7 @@
           <path class="d-edge dashed" d="M360,42 V310" style="stroke:var(--line-2);stroke-width:1"/>
           <path class="d-edge dashed" d="M720,42 V310" style="stroke:var(--line-2);stroke-width:1"/>
           <text class="d-role blue" x="180" y="32" text-anchor="middle">N1 · flat baseline</text>
-          <text class="d-role amber" x="540" y="32" text-anchor="middle">B3 · role-fused target</text>
+          <text class="d-role amber" x="540" y="32" text-anchor="middle">B3 · direct compact</text>
           <text class="d-role green" x="900" y="32" text-anchor="middle">B4 · adaptive target</text>
 
           <rect class="d-card blue" x="95" y="126" width="170" height="58" rx="6"/>
@@ -279,40 +279,33 @@
 
           <rect class="d-card ink" x="475" y="64" width="130" height="44" rx="6"/>
           <text class="d-title xs" x="540" y="91" text-anchor="middle">BOSS</text>
-          <path class="d-edge" d="M540,108 V146 H430 V176" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M540,146 H505 V176" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M540,146 H575 V176" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M540,146 H650 V176" marker-end="url(#m-a)"/>
-          <rect class="d-card fill-green" x="385" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="430" y="203" text-anchor="middle">Builder</text>
-          <rect class="d-card fill-green" x="480" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="525" y="203" text-anchor="middle">Exploiter</text>
-          <rect class="d-card fill-green" x="575" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="620" y="203" text-anchor="middle">Fixer</text>
-          <rect class="d-card fill-green" x="670" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="715" y="203" text-anchor="middle">Reporter</text>
-          <rect class="d-card blue" x="385" y="232" width="375" height="48" rx="6"/>
-          <text class="d-title xs" x="572" y="252" text-anchor="middle">4 direct host procedures</text>
-          <text class="d-sub xs" x="572" y="270" text-anchor="middle">build verify · exploit verify · patch apply · patch verify</text>
-          <text class="d-cap" x="540" y="304" text-anchor="middle">four fused LLM phases + four procedures · no role children</text>
-          <text class="d-cap" x="540" y="322" text-anchor="middle">composite ablation, not manager-only</text>
+          <path class="d-edge" d="M540,108 V176" marker-end="url(#m-a)"/>
+          <rect class="d-card fill-green" x="385" y="178" width="310" height="58" rx="6"/>
+          <text class="d-title xs" x="540" y="202" text-anchor="middle">9 direct compact roles</text>
+          <text class="d-sub xs" x="540" y="221" text-anchor="middle">same 5 LLM + 4 procedures as B4</text>
+          <text class="d-cap" x="540" y="272" text-anchor="middle">same dependency DAG · Manager layer omitted</text>
+          <text class="d-cap" x="540" y="292" text-anchor="middle">same limits · Manager layer omitted</text>
 
           <rect class="d-card ink" x="835" y="54" width="130" height="42" rx="6"/><text class="d-title xs" x="900" y="80" text-anchor="middle">BOSS</text>
           <path class="d-edge" d="M900,96 V126" marker-end="url(#m-a)"/>
-          <rect class="d-card amber" x="805" y="128" width="190" height="44" rx="6"/><text class="d-title xs" x="900" y="155" text-anchor="middle">4 phase controllers</text>
+          <rect class="d-card amber" x="805" y="128" width="190" height="44" rx="6"/><text class="d-title xs" x="900" y="155" text-anchor="middle">4 phase Managers</text>
           <path class="d-edge" d="M900,172 V202" marker-end="url(#m-a)"/>
           <rect class="d-card fill-green" x="805" y="204" width="190" height="52" rx="6"/>
           <text class="d-title xs" x="900" y="226" text-anchor="middle">9 compact workers</text>
           <text class="d-sub xs" x="900" y="244" text-anchor="middle">5 LLM + 4 procedures</text>
           <path class="d-edge red dashed" d="M995,230 H1032 V150 H997" marker-end="url(#m-a)"/>
-          <text class="d-cap" x="900" y="286" text-anchor="middle">phase failure → targeted specialists only</text>
+          <text class="d-cap" x="900" y="286" text-anchor="middle">phase failure → Manager-selected same-phase recovery</text>
         </svg>
       </div>
-      <div class="legend"><span><i class="li-blue"></i> flat baseline</span><span><i class="li-amber"></i> phase controller</span><span><i class="li-green"></i> worker or fused phase</span><span><i class="li-red"></i> bounded escalation</span></div>
-      <figcaption><b>Fig 2.</b> B4 begins with a deterministic compact route. B3 removes the phase-controller and specialist-child layers together. The treatment version, prompts, model map, procedure flag, context policy, budgets, and evaluator hashes must be recorded for every run.</figcaption>
+      <div class="legend"><span><i class="li-blue"></i> flat baseline</span><span><i class="li-amber"></i> phase Manager</span><span><i class="li-green"></i> role worker</span><span><i class="li-red"></i> bounded recovery</span></div>
+      <figcaption><b>Fig 2.</b> B4 <code>b4-adaptive-manager-v2</code> and B3 <code>b3-direct-compact-v1</code> share the same host-owned compact route and resolved behavioral settings. B3 omits only the Manager layer; dependency-sink expansion preserves scoped source context across flattening. After a required B4 failure, the Manager may reissue a compact role or add same-phase specialists; the Host expands the remaining same-phase set only when the Manager output is invalid and no safe selection remains.</figcaption>
     </figure>
     <table class="grid" data-reveal>
       <thead><tr><th>Cell</th><th>Topology</th><th>Use</th><th>Interpretation</th></tr></thead>
       <tbody>
         <tr><td class="cell">N1</td><td>one flat OpenHands session</td><td>confirmatory baseline</td><td>naive single-agent performance</td></tr>
-        <tr><td class="cell">B4</td><td>BOSS → phase controllers → adaptive role workers</td><td>confirmatory treatment</td><td>adaptive hierarchical system</td></tr>
-        <tr><td class="cell">B3</td><td>BOSS → four fused LLM phases + four host procedures</td><td>development ablation</td><td>manager removal plus role fusion</td></tr>
+        <tr><td class="cell">B4</td><td>BOSS → four phase Managers → compact roles; LLM recovery after required failure</td><td>confirmatory treatment</td><td>adaptive hierarchical system</td></tr>
+        <tr><td class="cell">B3</td><td>BOSS → nine direct compact roles</td><td>development ablation</td><td>Manager-layer omission</td></tr>
       </tbody>
     </table>
   </section>
@@ -320,8 +313,8 @@
   <!-- ============ 03 — SYSTEM ARCHITECTURE ============ -->
   <section id="arch">
     <div class="kick" data-reveal><b>03</b> &nbsp;/&nbsp; System architecture</div>
-    <h2 data-reveal>Hexagonal: a pure core, adapters at the edge</h2>
-    <p class="intro" data-reveal>The <strong>domain core</strong> depends only on the standard library and its own <code>Protocol</code> ports — it never imports infrastructure (a pre-commit hook enforces this). Everything concrete (Postgres, LLM providers, the OpenHands worker, the SEC-bench container runtime) is an <strong>adapter</strong> injected at startup. <code>bootstrap/composition.py</code> is the <em>only</em> file allowed to reach across the boundary into <code>plugins/</code>.</p>
+    <h2 data-reveal>Hexagonal: domain logic behind ports, adapters at the edge</h2>
+    <p class="intro" data-reveal>The <strong>domain core</strong> owns orchestration logic and its <code>Protocol</code> ports. It uses declared libraries such as Pydantic and Jinja2, but never imports <code>infrastructure/</code> (a pre-commit hook enforces this). Concrete Postgres, LLM, worker, and container adapters are injected at startup. <code>bootstrap/composition.py</code> is the <em>only</em> file allowed to reach across the boundary into <code>plugins/</code>.</p>
     <figure data-reveal>
       <div class="frame l">
         <svg viewBox="0 0 1080 500" role="img" aria-label="Hexagonal layered architecture">
@@ -411,11 +404,11 @@
 ├── <span class="dir">main.py</span>                 <span class="cm"># CLI entry → bootstrap.bootstrap.main()</span>
 ├── <span class="dir t-green">core/</span>                   <span class="cm t-green"># pure domain — never imports infrastructure</span>
 │   ├── <span class="dir">domain/</span>             <span class="cm"># aggregates, 42 frozen events, value objects, services</span>
-│   ├── <span class="dir">ports/</span>              <span class="cm"># Protocol interfaces (event store, LLM, worker, procedure)</span>
+│   ├── <span class="dir">ports/</span>              <span class="cm"># Protocol interfaces, including decomposition_policy_port.py</span>
 │   ├── <span class="dir">application/</span>        <span class="cm"># AgentOrchestrator, execution loop, verification, retry</span>
 │   └── <span class="dir">query/</span>              <span class="cm"># CQRS read-side projections</span>
 ├── <span class="dir t-blue">infrastructure/</span>         <span class="cm t-blue"># adapters implementing core/ports/ (Postgres, LiteLLM, OpenHands)</span>
-├── <span class="dir t-amber">plugins/security/</span>       <span class="cm t-amber"># STRICTLY cybersecurity: CVE, container runtime, procedures, crash signature</span>
+├── <span class="dir t-amber">plugins/security/</span>       <span class="cm t-amber"># SEC-bench policy (decomposition_policy.py), roles, runtime, procedures</span>
 ├── <span class="dir">bootstrap/</span>              <span class="cm"># composition root — sole cross-boundary import (composition.py)</span>
 ├── <span class="dir">prompts/</span>                <span class="cm"># 4-tier Jinja2: system → roles → operations → domains</span>
 ├── <span class="dir">presentation/</span>           <span class="cm"># CLI, renderers, formatters</span>
@@ -424,7 +417,7 @@
 └── <span class="dir">experiments/</span>            <span class="cm"># N1/B4 confirmatory runner, B3 ablation, evaluator adapters</span></pre>
       </div>
       <div class="legend">
-        <span><i class="li-green"></i> core (stdlib + own ports only)</span>
+        <span><i class="li-green"></i> core (domain logic + own ports; no infrastructure imports)</span>
         <span><i class="li-blue"></i> adapters</span>
         <span><i class="li-amber"></i> security plugin only</span>
         <span><i class="li-ink"></i> composition · prompts · read side</span>
@@ -437,19 +430,19 @@
   <section id="adaptive">
     <div class="kick" data-reveal><b>05</b> / Adaptive B4</div>
     <h2 data-reveal>Compact first; specialists only after evidence of failure</h2>
-    <p class="intro" data-reveal>Trusted host policy creates the four phase controllers and their compact role children. The managers do not freely invent the initial route. Required dependencies make each phase wait for its predecessor; a failed required child prevents false phase completion.</p>
+    <p class="intro" data-reveal>Trusted host policy deterministically creates the four-phase DAG and compact role children. Managers do not choose the initial route. Only after a required failure does the phase Manager use the existing LLM decomposition path to propose same-phase roles and failure-specific instructions.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 430" role="img" aria-label="Adaptive B4 compact and escalated routes">
           <defs><marker id="t-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
           <text class="d-role amber" x="60" y="34">phase order</text>
-          <rect class="d-card amber" x="60" y="58" width="190" height="54" rx="6"/><text class="d-title xs" x="155" y="81" text-anchor="middle">Builder controller</text><text class="d-sub xs" x="155" y="99" text-anchor="middle">Setup → Executor → Verifier</text>
+          <rect class="d-card amber" x="60" y="58" width="190" height="54" rx="6"/><text class="d-title xs" x="155" y="81" text-anchor="middle">Builder Manager</text><text class="d-sub xs" x="155" y="99" text-anchor="middle">Setup → Executor → Verifier</text>
           <path class="d-edge" d="M250,85 H310" marker-end="url(#t-a)"/>
-          <rect class="d-card amber" x="312" y="58" width="210" height="54" rx="6"/><text class="d-title xs" x="417" y="81" text-anchor="middle">Exploiter controller</text><text class="d-sub xs" x="417" y="99" text-anchor="middle">Repro → Validator</text>
+          <rect class="d-card amber" x="312" y="58" width="210" height="54" rx="6"/><text class="d-title xs" x="417" y="81" text-anchor="middle">Exploiter Manager</text><text class="d-sub xs" x="417" y="99" text-anchor="middle">Repro → Validator</text>
           <path class="d-edge" d="M522,85 H582" marker-end="url(#t-a)"/>
-          <rect class="d-card amber" x="584" y="58" width="230" height="54" rx="6"/><text class="d-title xs" x="699" y="81" text-anchor="middle">Fixer controller</text><text class="d-sub xs" x="699" y="99" text-anchor="middle">RCA → Apply → Validate</text>
+          <rect class="d-card amber" x="584" y="58" width="230" height="54" rx="6"/><text class="d-title xs" x="699" y="81" text-anchor="middle">Fixer Manager</text><text class="d-sub xs" x="699" y="99" text-anchor="middle">RCA → Apply → Validate</text>
           <path class="d-edge" d="M814,85 H874" marker-end="url(#t-a)"/>
-          <rect class="d-card amber" x="876" y="58" width="150" height="54" rx="6"/><text class="d-title xs" x="951" y="81" text-anchor="middle">Reporter</text><text class="d-sub xs" x="951" y="99" text-anchor="middle">synthesis</text>
+          <rect class="d-card amber" x="876" y="58" width="150" height="54" rx="6"/><text class="d-title xs" x="951" y="81" text-anchor="middle">Reporter Manager</text><text class="d-sub xs" x="951" y="99" text-anchor="middle">synthesis</text>
 
           <text class="d-role green" x="60" y="166">compact route · 9 leaves</text>
           <rect class="d-card fill-green" x="60" y="190" width="966" height="58" rx="6"/>
@@ -460,11 +453,11 @@
 
           <text class="d-role red" x="60" y="324">targeted escalation</text>
           <rect class="d-card fill-red" x="60" y="346" width="966" height="58" rx="6"/>
-          <text class="d-anno" x="84" y="372">build failure → rerun dependency-closed Builder route · sanitizer/PoC → Researcher + Tester</text>
-          <text class="d-anno" x="84" y="392">data-flow → Researcher + Analyst + Instrumentator · patch risk → Candidate/Regression</text>
+          <text class="d-anno" x="84" y="372">Manager receives failure evidence → proposes same-phase roles + failure-specific instructions</text>
+          <text class="d-anno" x="84" y="392">host drops unsafe choices · closes hard dependencies · binds trusted role config · records provenance</text>
         </svg>
       </div>
-      <figcaption><b>Fig 5.</b> Successful compact artifacts are reused. Escalation stays inside the failed phase. Hard dependencies are added transitively, and an unknown failure selects that phase's full specialist set. The prompts implement this adaptive route and the separate role-fused treatment.</figcaption>
+      <figcaption><b>Fig 5.</b> The host never interprets failure keywords. It drops unsafe selections, closes hard dependencies, binds trusted role prompts/models/procedures, schedules execution, and records per-role provenance as <code>host_policy</code>, <code>llm</code>, or <code>host_repair</code>. Manager evidence references flow into child briefings and worker prompts. Full remaining same-phase expansion is only the explicit-invalid-decision fail-safe.</figcaption>
     </figure>
   </section>
 
@@ -515,7 +508,7 @@
   <section id="heal">
     <div class="kick" data-reveal><b>07</b> / Resilience</div>
     <h2 data-reveal>Self-healing: a crash becomes context, not a dead end</h2>
-    <p class="intro" data-reveal>When a worker crashes it usually carries <em>no</em> retry context. Arise fixes that deterministically — <strong>no LLM involved</strong>. The failure is distilled into a bounded digest and injected into the next attempt; if every sibling worker still fails, the parent doesn't give up — it <strong>re-decomposes, informed by exactly why the last attempt failed</strong>.</p>
+    <p class="intro" data-reveal>When a worker crashes it usually carries <em>no</em> retry context. Arise fixes that deterministically — <strong>no LLM involved</strong>. The failure is distilled into a bounded digest and injected into the next attempt. If required workers still fail, only their Manager may <strong>re-decompose from the recorded failure evidence</strong>; non-Manager parents fail upward.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 560" role="img" aria-label="Self-healing failure loop">
@@ -556,11 +549,11 @@
 
           <!-- all children fail -> redecomposition (down) -->
           <path class="d-edge green" d="M360,392 V430" marker-end="url(#s-g)"/>
-          <text class="d-anno sm green" x="378" y="416" text-anchor="start">all sibling workers failed, budget left</text>
+          <text class="d-anno sm green" x="378" y="416" text-anchor="start">required sibling workers failed, Manager budget left</text>
 
           <rect class="d-card fill-green" x="190" y="432" width="340" height="58" rx="6"/>
           <text class="d-title sm" x="360" y="456" text-anchor="middle">RedecompositionTriggered</text>
-          <text class="d-sub" x="360" y="474" text-anchor="middle">failure_history → parent re-plans (informed)</text>
+          <text class="d-sub" x="360" y="474" text-anchor="middle">failure_history → Manager re-plans (informed)</text>
 
           <!-- right side: informed decomposition target -->
           <rect class="d-card green" x="700" y="432" width="320" height="58" rx="6"/>
@@ -584,7 +577,7 @@
         <span><i class="li-amber"></i> retry gate</span>
         <span><i class="li-green"></i> informed re-decomposition</span>
       </div>
-      <figcaption><b>Fig 7.</b> The retry edge wraps the outside margin back to the worker (bounded by <code>verification_max_retries</code>); only when every required sibling fails does the parent escalate to <code>RedecompositionTriggered</code>, seeding the new decomposition prompt with prior failures while keeping the cached prefix byte-identical.</figcaption>
+      <figcaption><b>Fig 7.</b> The retry edge wraps the outside margin back to the worker (bounded by <code>verification_max_retries</code>); when required sibling workers fail, only their Manager may emit <code>RedecompositionTriggered</code>. The Manager prompt receives prior failures while its cached prefix remains byte-identical; non-Manager parents fail upward.</figcaption>
     </figure>
   </section>
 
@@ -592,7 +585,7 @@
   <section id="proc">
     <div class="kick" data-reveal><b>08</b> / Deterministic procedures</div>
     <h2 data-reveal>A deterministic tier for tasks that don't need an LLM</h2>
-    <p class="intro" data-reveal>Four roles have frozen command and transformation contracts. With <code>procedural_dispatch</code> enabled, they run <strong>host-side with zero LLM turns</strong>. Here, “host” means the trusted Arise process—not a human operator. Arise captures command evidence and computes the verdict; an agent-written <code>VERDICT: PASS</code> is never authoritative.</p>
+    <p class="intro" data-reveal>Four roles have frozen command and transformation contracts. With <code>procedural_dispatch</code> enabled, the Arise Host controls them with <strong>zero LLM turns</strong>. “Host” means the orchestrator process, not a human. Arise captures argv evidence and computes the in-run verdict; an agent-written <code>VERDICT: PASS</code> is never authoritative. Commands still execute in the run's mutable shared worker container, so fresh external replay remains the confirmatory authority.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 520" role="img" aria-label="Procedural dispatch ladder and escalation">
@@ -611,20 +604,20 @@
 
           <!-- decision ladder — left column of 4 rungs -->
           <rect class="d-card amber" x="80" y="98" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="119" text-anchor="middle">execution_mode = "agentic"</text>
-          <text class="d-sub xs" x="210" y="134" text-anchor="middle">bypass — always agentic</text>
+          <text class="d-title xs" x="210" y="119" text-anchor="middle">Host executor.match(task)</text>
+          <text class="d-sub xs" x="210" y="134" text-anchor="middle">no match → agentic</text>
 
           <rect class="d-card amber" x="80" y="158" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="179" text-anchor="middle">"procedural" + resolve(ref)</text>
-          <text class="d-sub xs" x="210" y="194" text-anchor="middle">explicit registered procedure</text>
+          <text class="d-title xs" x="210" y="179" text-anchor="middle">match returns ref</text>
+          <text class="d-sub xs" x="210" y="194" text-anchor="middle">Host-registry candidate</text>
 
           <rect class="d-card amber" x="80" y="218" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="239" text-anchor="middle">"procedural" + unknown ref</text>
-          <text class="d-sub xs" x="210" y="254" text-anchor="middle">warn → fail open → auto</text>
+          <text class="d-title xs" x="210" y="239" text-anchor="middle">executor.resolve(ref)</text>
+          <text class="d-sub xs" x="210" y="254" text-anchor="middle">stale ref → agentic</text>
 
           <rect class="d-card amber" x="80" y="278" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="299" text-anchor="middle">"auto" → executor.match()</text>
-          <text class="d-sub xs" x="210" y="314" text-anchor="middle">registry decides (may be None)</text>
+          <text class="d-title xs" x="210" y="299" text-anchor="middle">resolved Host ref</text>
+          <text class="d-sub xs" x="210" y="314" text-anchor="middle">zero-LLM procedure path</text>
 
           <!-- rung to rung -->
           <path class="d-edge" d="M210,144 V158" marker-end="url(#p-a)"/>
@@ -635,26 +628,25 @@
           <rect class="d-card blue" x="470" y="98" width="250" height="52" rx="6"/>
           <text class="d-title sm" x="595" y="122" text-anchor="middle">Agentic worker</text>
           <text class="d-sub" x="595" y="139" text-anchor="middle">WorkerToolPort · LLM · verify</text>
-          <!-- rung1 (explicit agentic) -> agentic worker -->
+          <!-- no Host match -> agentic worker -->
           <path class="d-edge blue" d="M340,121 H468" marker-end="url(#p-b)"/>
-          <text class="d-anno sm blue" x="404" y="112" text-anchor="middle">ref = None</text>
+          <text class="d-anno sm blue" x="404" y="112" text-anchor="middle">no trusted ref</text>
 
           <!-- PROCEDURAL lane -->
           <rect class="d-card fill-blue" x="470" y="278" width="250" height="46" rx="6"/>
           <text class="d-title xs" x="595" y="299" text-anchor="middle">start_procedure(ref)</text>
           <text class="d-sub xs" x="595" y="314" text-anchor="middle">ProcedureExecutionStarted</text>
-          <!-- fan-in bus: rung2 (resolve) + rung4 (auto match) both yield a ref -->
-          <path class="d-edge" d="M340,181 H430"/>
+          <!-- resolved Host ref enters the procedural lane -->
           <path class="d-edge" d="M340,301 H430"/>
           <path class="d-edge" d="M430,181 V301"/>
           <path class="d-edge" d="M430,301 H468" marker-end="url(#p-a)"/>
           <text class="d-anno sm" x="452" y="252" text-anchor="middle">ref</text>
-          <text class="d-cap" x="210" y="344" text-anchor="middle">rung 3 falls through to auto · no match → agentic</text>
+          <text class="d-cap" x="210" y="344" text-anchor="middle">parent hints/refs/params never override Host dispatch</text>
 
           <path class="d-edge blue" d="M595,324 V352" marker-end="url(#p-b)"/>
           <rect class="d-card blue" x="470" y="354" width="250" height="60" rx="6"/>
-          <text class="d-title xs" x="595" y="377" text-anchor="middle">executor.execute — host-side</text>
-          <text class="d-sub xs" x="595" y="395" text-anchor="middle">build / repro×3 / plan→diff / patch / replay×3</text>
+          <text class="d-title xs" x="595" y="377" text-anchor="middle">executor.execute — Host-controlled</text>
+          <text class="d-sub xs" x="595" y="395" text-anchor="middle">build / direct argv×3 / plan→diff / patch / replay×3</text>
           <path class="d-edge blue" d="M595,414 V442" marker-end="url(#p-b)"/>
 
           <rect class="d-card blue" x="470" y="444" width="250" height="52" rx="6"/>
@@ -691,24 +683,25 @@
         <span><i class="li-green"></i> success</span>
         <span><i class="li-red"></i> failure → 1 agentic retry</span>
       </div>
-      <figcaption><b>Fig 8.</b> A procedure is dispatched at most once. Failure records its host evidence and escalates to exactly one agentic retry carrying the digest; the retry does not erase the mechanical failure.</figcaption>
+      <figcaption><b>Fig 8.</b> A procedure is dispatched at most once. The Host freezes source, Builder, binary, PoC, argv/stdin, verdict, plan, and patch identity. Direct argv runs use a fixed launch environment and an in-container timeout; timeout recovery restarts the shared container. Failure records Host-computed evidence and escalates to exactly one agentic retry carrying the digest.</figcaption>
     </figure>
     <table class="grid" data-reveal>
       <thead><tr><th>Role</th><th>Procedure</th><th>PASS</th><th>Immediate failure</th></tr></thead>
       <tbody>
-        <tr><td class="cell">Build-Verifier</td><td><code>secb_build_validation</code></td><td>build exits 0 before timeout; declared binary resolves</td><td>timeout, nonzero exit, missing/invalid binary</td></tr>
-        <tr><td class="cell">Exploit-Validator</td><td><code>secb_exploit_validation</code></td><td>real reproducer; frozen crash signature matches 3/3</td><td>stub/missing input, timeout, signal/exit drift, sanitizer/access/top-frame mismatch</td></tr>
+        <tr><td class="cell">Build-Verifier</td><td><code>secb_build_validation</code></td><td>build exits 0; every declared executable ELF initializes the configured sanitizer</td><td>timeout, nonzero exit, non-ELF/non-executable path, missing sanitizer runtime</td></tr>
+        <tr><td class="cell">Exploit-Validator</td><td><code>secb_exploit_validation</code></td><td>complete frozen crash signature and consistent termination match 3/3; complete UBSan evidence may exit 0</td><td>unsafe/missing input, timeout, termination drift, incomplete or mismatched sanitizer/access/top-frame</td></tr>
         <tr><td class="cell">Patch-Applier</td><td><code>secb_patch_apply</code></td><td>approved PatchPlan validates and renders exactly</td><td>schema/path/anchor/scope mismatch or protected-path edit</td></tr>
-        <tr><td class="cell">Patch-Validator</td><td><code>secb_patch_validation</code></td><td>patch applies, build succeeds, replay is crash-free 3/3</td><td>apply/build/replay timeout, nonzero exit, signal, assertion, sanitizer, or crash</td></tr>
+        <tr><td class="cell">Patch-Validator</td><td><code>secb_patch_validation</code></td><td>patch applies, build succeeds, replay is sanitizer-free 3/3 with exit 0 or the frozen dataset oracle</td><td>timeout, exit outside the accepted set, signal, assertion, sanitizer, or crash</td></tr>
       </tbody>
     </table>
+    <p data-reveal>The agent-authored <code>repro.sh</code> is parsed, not executed. Its final <code>exec "$BIN"</code> accepts only inert arguments with one <code>$POC</code>, or a final stdin redirect. Valid examples are OpenEXR <code>exec "$BIN" -v "$POC" /dev/null</code> and FAAD2 <code>exec "$BIN" "$POC" -o /dev/null</code>; shell control, substitution, wrappers, pipes, setup, and other redirection fail closed.</p>
   </section>
 
   <!-- ============ 09 — EVALUATOR ============ -->
   <section id="evaluator">
     <div class="kick" data-reveal><b>09</b> / Success and judges</div>
     <h2 data-reveal>Mechanical truth first; semantic judgment stays separate</h2>
-    <p class="intro" data-reveal>The target evaluator has no human queue or override. It seals objective execution facts before asking models about root-cause and patch semantics. Judges cannot rescue a timeout, wrong crash, sanitizer suppression, failed build, or regression.</p>
+    <p class="intro" data-reveal>The authoritative evaluator has no human queue or override. It seals objective execution facts before asking models about root-cause and patch semantics. Judges cannot rescue a timeout, wrong crash, sanitizer suppression, failed build, or regression.</p>
     <figure data-reveal>
       <div class="frame l">
         <svg viewBox="0 0 1080 570" role="img" aria-label="Mechanical evaluator and automated semantic judge architecture">
@@ -724,7 +717,7 @@
 
           <rect class="d-card fill-red" x="50" y="152" width="980" height="64" rx="6"/>
           <text class="d-title xs" x="70" y="178">Non-overridable failures</text>
-          <text class="d-sub" x="70" y="198">timeout · signal · assertion abort · non-frozen exit · wrong sanitizer/access/top-frame · apply/build/repro failure · regression failure</text>
+          <text class="d-sub" x="70" y="198">timeout · signal · assertion abort · exit outside 0/frozen oracle · wrong sanitizer/access/top-frame · apply/build/repro failure · regression failure</text>
 
           <text class="d-role blue" x="50" y="268">semantic plane · only after mechanical eligibility</text>
           <rect class="d-card ink" x="50" y="290" width="260" height="78" rx="6"/>
@@ -758,6 +751,7 @@
         <tr><td>Errors</td><td>fixed retries against the same stored prompt and model; exhausted errors fail closed</td></tr>
         <tr><td>Provenance</td><td>persist each prompt, schema, response, model snapshot, effort, tokens, cost, retry, timestamp, and hash</td></tr>
         <tr><td>Cost accounting</td><td>judge cost reported separately; it never changes N1/B4 treatment cost endpoints</td></tr>
+        <tr><td>Evaluator completeness</td><td>reported separately from cost completeness; an incomplete assignment remains an ITT failure and blocks the superiority decision</td></tr>
       </tbody>
     </table>
   </section>
@@ -766,23 +760,25 @@
   <section id="release">
     <div class="kick" data-reveal><b>10</b> / Experiment release gate</div>
     <h2 data-reveal>Current status: not ready for confirmatory N1 vs B4</h2>
-    <p class="intro" data-reveal>Evaluator architecture is implemented on this branch (six-replay mechanical, provenance-proven fresh base, containerized host regression, zero-human three-seat panel). Launch is still blocked on operational freeze and live smoke — not on missing design.</p>
+    <p class="intro" data-reveal>Evaluator architecture is implemented on this branch (six-replay mechanical, provenance-proven fresh base, containerized host regression, zero-human three-seat panel). Launch is still blocked on a replacement untouched cohort, operational freeze, recovery-path validation, and live smoke.</p>
     <table class="grid" data-reveal>
       <thead><tr><th>Requirement</th><th>Current evidence</th><th>Blocking action</th></tr></thead>
       <tbody>
         <tr><td>Zero-human semantic gate</td><td>panel is <code>claude-opus-4-8</code> + <code>gpt-5.5-2026-04-23</code> + <code>gemini/gemini-3.5-flash</code>; human audit queue removed</td><td>prove live three-seat structured responses; fund Anthropic seat</td></tr>
         <tr><td>Per-role model routing</td><td><code>worker.model_overrides</code> wired through config/bootstrap/OpenHands</td><td>none in code; freeze role map in study manifest</td></tr>
-        <tr><td>Prompt-treatment agreement</td><td>adaptive + role-fused treatments declared; prompts aligned for B4 adaptive route</td><td>re-verify assess/worker templates against treatment version before launch</td></tr>
+        <tr><td>Prompt-treatment agreement</td><td><code>b4-adaptive-manager-v2</code> and <code>b3-direct-compact-v1</code> match the host-owned initial route and LLM-only recovery design</td><td>validate real DB-backed recovery provenance before launch</td></tr>
         <tr><td>Exact independent replay</td><td>PoC×3 + patch×3; exact crash oracle (class/access/frame); SEGV <code>unknown</code> + module-offset frames</td><td>live replay on all cohort images</td></tr>
         <tr><td>Fresh-base provenance</td><td><code>fresh_base</code> derived from six distinct container IDs; each replay stores <code>replay_id</code>, digest, base commit</td><td>none in code path</td></tr>
         <tr><td>Replay target identity</td><td>each replay stores instance + base commit; both trios must independently resolve to the requested instance and same base</td><td>none in code path</td></tr>
-        <tr><td>Host regression</td><td>19 project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound</td><td>none in code path</td></tr>
+        <tr><td>Host regression</td><td>19 candidate project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound</td><td>regenerate and freeze plans for the replacement cohort</td></tr>
         <tr><td>Grounded judges</td><td>blinded packet includes frozen oracle + raw host replay + host regression</td><td>pilot bundle proves no arm/model fields leak</td></tr>
         <tr><td>Complete provenance</td><td>immutable evaluation bundle: replays, regression, semantic panel, hashes</td><td>pilot bundle inspection</td></tr>
         <tr><td>Strict pairing</td><td>confirmatory runner rejects missing/duplicate/unequal arms</td><td>none in code path</td></tr>
+        <tr><td>Evaluator completeness</td><td>separate rate and exact incomplete assignment keys; incomplete bundles fail closed and block the superiority decision</td><td>pilot must produce a complete bundle for every assignment</td></tr>
+        <tr><td>Cohort isolation</td><td>adapter rejects tasks present in declared development enrollment locks</td><td>replace the current 19-task candidate roster, which overlaps development runs</td></tr>
         <tr><td>Cost integrity</td><td>missing usage is unavailable, never imputed zero for ITT success</td><td>none in code path</td></tr>
-        <tr><td>Untouched cohort</td><td><code>b4-confirmatory-cohort</code> + preregistration exist; 19 fixtures</td><td>freeze plans, digests, seed, and evaluator hashes after pilot</td></tr>
-        <tr><td>Verification</td><td>1,494 passed / 13 skipped; Pyright 0; manifests, architecture, diff check, 19/19 signature preflight, and 20-page DOCX render pass</td><td>development end-to-end pilot</td></tr>
+        <tr><td>Confirmatory freeze</td><td><code>b4-boss-manager-worker/confirmatory</code> assets exist; the preregistration is draft and unfrozen</td><td>freeze only after cohort replacement, real DB recovery-path validation, and pilot</td></tr>
+        <tr><td>Verification</td><td>use the final task report for current focused/full tests, type checks, architecture boundary, and diff checks</td><td>development end-to-end pilot still required</td></tr>
       </tbody>
     </table>
   </section>
@@ -806,11 +802,11 @@
         <div class="term"><dt>AgentSession</dt><dd>Primary event-sourced aggregate; 39 of 42 events replay into it. Never mutated directly.</dd></div>
         <div class="term"><dt>SharedStore</dt><dd>Second aggregate (artifacts + decisions), sharing the events table via a <code>uuid5</code> id.</dd></div>
         <div class="term"><dt>failure_digest</dt><dd>Deterministic, LLM-free summary of a failed attempt, injected into the retry prompt.</dd></div>
-        <div class="term"><dt>Re-decomposition</dt><dd>A parent re-plans (bounded by <code>max_redecompositions</code>) informed by <code>failure_history</code>.</dd></div>
+        <div class="term"><dt>Re-decomposition</dt><dd>A Manager re-plans (bounded by <code>max_redecompositions</code>) from <code>failure_history</code>; non-Manager parents fail upward.</dd></div>
       </dl>
       <dl>
-        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier running registry-matched tasks host-side with zero LLM turns.</dd></div>
-        <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — captured by the host, unforgeable.</dd></div>
+        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier running registry-matched tasks under Host control with zero LLM turns.</dd></div>
+        <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — Host-computed and not directly agent-authored; still in-run evidence from the shared worker container.</dd></div>
         <div class="term"><dt>DooD</dt><dd>Docker-out-of-Docker: the orchestrator launches each CVE container on the host's Docker daemon.</dd></div>
         <div class="term"><dt>Crash signature</dt><dd><code>(sanitizer_class, access_type, top_frame)</code> — matched against the CVE oracle to decide a verdict.</dd></div>
       </dl>

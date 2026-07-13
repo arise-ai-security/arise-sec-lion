@@ -31,6 +31,7 @@ class SecurityPluginConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     enabled: bool = True
+    route_policy_version: str = "secbench-manager-recovery-v1"
     tools: list[str] = Field(default_factory=lambda: ["valgrind", "klee"])
     worker_network_mode: Literal["bridge", "host"] = "host"
     worker_docker_timeout_seconds: int = Field(default=300, ge=1, le=3600)

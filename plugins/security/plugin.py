@@ -14,6 +14,7 @@ from core.ports.domain_plugin_port import (
     WorkerExecutionContext,
 )
 from plugins.security.cve_inference import CVEInstanceInferenceService
+from plugins.security.decomposition_policy import SecBenchInitialDecompositionPolicy
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.decomposition_validator import SecBenchDecompositionValidator
 from plugins.security.docker_runtime import DockerProcedureSession
@@ -52,14 +53,12 @@ class SecurityDomainPlugin(DomainPlugin):
         enabled_tools: list[str] | None = None,
         container_runtime: SecurityContainerRuntime | None = None,
         shared_code_prefix_first: bool = False,
-        adaptive_execution: bool = False,
-        policy_version: str = "b4-adaptive-v1",
+        route_policy_version: str = "secbench-manager-recovery-v1",
     ) -> None:
         self._enabled_tools = enabled_tools or []
         self._container_runtime = container_runtime
         self._shared_code_prefix_first = shared_code_prefix_first
-        self._adaptive_execution = adaptive_execution
-        self._policy_version = policy_version
+        self._route_policy_version = route_policy_version
         # A run's leaf workers ALWAYS share ONE container (started on the first
         # worker, reused for the rest, NOT stopped per-worker) — reaped at
         # process exit by the PID-labeled cleanup (the matrix runs one run per
@@ -87,14 +86,13 @@ class SecurityDomainPlugin(DomainPlugin):
         return SecBenchPromptStrategy(
             enabled_tools=self._enabled_tools,
             shared_code_first=self._shared_code_prefix_first,
-            role_fused=self._policy_version == "b4-adaptive-rolefused-v1",
         )
 
+    def get_decomposition_policy(self) -> SecBenchInitialDecompositionPolicy:
+        return SecBenchInitialDecompositionPolicy(self._route_policy_version)
+
     def get_decomposition_validator(self) -> DecompositionValidator | None:
-        return SecBenchDecompositionValidator(
-            adaptive_execution=self._adaptive_execution,
-            policy_version=self._policy_version,
-        )
+        return SecBenchDecompositionValidator(policy_version=self._route_policy_version)
 
     def get_procedure_executor(self) -> ProcedureExecutorPort | None:
         return SecBenchProcedureExecutor(session_resolver=self._resolve_procedure_session)

@@ -305,7 +305,7 @@ class ClaudeCodeWorker:
         if self._output_format == "stream-json":
             argv.append("--verbose")
         # The Claude CLI's default permission mode requires interactive
-        # approval for every tool call. In a batch / sandboxed experiment run
+        # approval for every tool call. In an unattended sandboxed run
         # there is no operator to click "approve", so the agent burns turns on
         # denials and hits max-turns without making progress. Tool policy is
         # still enforced via ``--allowedTools`` / ``--disallowedTools`` and

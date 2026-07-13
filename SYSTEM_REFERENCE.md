@@ -6,10 +6,10 @@
 > pipeline), the role/artifact contract, and the mechanical + qualitative success/fail
 > criteria.
 >
-> **As-built vs target.** Parts I–IV describe the system **as it actually runs today**
-> (verified against source on 2026-06-14, citations are `file:line`). Forward-looking
-> work is isolated in **Part V — Target State & Known Gaps**, and target-only judges in
-> Part IV are explicitly labelled *DEFERRED*.
+> **As-built vs target.** Parts I–III and §IV.0 describe the current implementation.
+> §§IV.1–IV.6 preserve legacy criteria and earlier advisory designs and are labelled as
+> such; they are not the confirmatory authority. Part V records remaining gaps and the
+> status of fixes that replaced those legacy paths. Code and tests remain authoritative.
 >
 > **Provenance.** Every claim below was checked against live code (serena symbol tools +
 > `Read`/`Grep`) and the reference repos `../SEC-bench`, `../SecVerifier`. Where this
@@ -160,12 +160,9 @@ not literal. All infrastructure is injected at `bootstrap/`.
 - `infrastructure/` — adapters implementing `core/ports/` protocols (Postgres event
   store, worker adapters).
 - `plugins/security/` — **strictly cybersecurity**: the SEC-bench runtime, role catalog,
-  `CVEInstance`, deliverables, prompt strategy. The *main* SEC-bench implementation — but,
-  as built, security seams also live outside it: a `security` config section (`settings.py`),
-  worker MCP config referencing `plugins.security.mcp` (`mcp_config.py:14,26`), and
-  `run_invariants` deriving allowed bash commands from `settings.security`
-  (`run_invariants.py:123-129`). Treat "plugins is the only place" as the intended boundary
-  plus known drift, not a literal as-built fact.
+  `CVEInstance`, deliverables, prompt strategy, procedure registry, and security tools.
+  Generic layers reference only core ports; `bootstrap/composition.py` is the sole concrete
+  cross-boundary importer.
 - `bootstrap/` — wires plugins + infrastructure into core. Sole cross-boundary importer.
 - `prompts/` — Jinja2 templates, 4-tier (§II.6). No Python.
 - `query/` — FastAPI REST + React SPA, the read side of CQRS.
@@ -238,18 +235,25 @@ All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 
 ## II.3 — Execution modes: flat vs hierarchical
 
+Active experiment treatments are N1 flat, B4 `b4-adaptive-manager-v2`, and B3
+`b3-direct-compact-v1`.
+
 ```
 FLAT ARM (single agent runs all four phases in order)
    one WORKER ── Build ─▶ Exploit ─▶ Fix ─▶ Report
    no manager / sibling / handoff vocabulary
 
-HIERARCHICAL ARM (BOSS → MANAGER → WORKER recursion)
+HIERARCHICAL B4 (BOSS → MANAGER → WORKER)
                 ┌──────── BOSS ────────┐         decomposition + verification
                 │   assess + decompose │
         ┌───────┼───────────┬──────────┼─────────┐
      [Builder] [Exploiter] [Fixer]  [Reporter]   ← phase managers
         │           │          │          │
     leaf WORKERs prefixed with a [Role] from the catalog (§III)
+
+DIRECT-COMPACT B3 (BOSS → WORKER)
+   the host generically flattens the same B4 phase/role DAG
+   → 9 direct role workers (5 LLM + 4 host procedures), no Managers
 ```
 
 Both arms share the **same phase contracts** (§II.6); the hierarchical arm adds role
@@ -412,18 +416,13 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
 
 ### Retry semantics — what triggers a retry, and the cap
 
-Only **WORKER** agents retry. **Two paths run in sequence** on a failed worker
-(`execution_service.py:1139-1148`): (1) **verification-specific** — on a verification
-failure with judge feedback, capped at `verification_max_retries` (default **2** ⇒ up to
-**3** attempts); then if that declines, (2) the **generic `RetryPolicy`** — for any
-still-failed worker, with budget = length of `orchestration.retry.model_escalation_chain`
-plus model escalation + circuit breaker (`retry_policy.py:44,68-76`). With an empty
-escalation chain (the common default) path (2) is a no-op and the 3-attempt verification
-cap governs; with a configured chain, generic retries fire only while the existing
-`agent.retry_count` is still below `len(model_escalation_chain)` — both paths share
-`agent.retry_count` (`agent_session.py:371,627-633`), so it is **not** an extra budget
-stacked on top of the 3-attempt cap. The diagram below shows path (1); path (2) is omitted
-for clarity.
+Only **WORKER** agents retry. `PostStepHandler` owns three mutually bounded cases. A failed
+host procedure receives exactly one agentic attempt and never enters either generic retry
+path afterward. A non-procedural verification failure or crash carrying feedback/digest
+uses `_maybe_retry_worker`, capped at `verification_max_retries` (default **2** ⇒ up to
+**3** attempts). If that path declines, `RetryPolicy` may schedule model escalation from
+`orchestration.retry.model_escalation_chain`. Both non-procedural paths share
+`agent.retry_count`, so their budgets do not stack independently.
 
 ```mermaid
 stateDiagram-v2
@@ -432,7 +431,7 @@ stateDiagram-v2
     Completed --> Verify : VerificationPipeline.verify (verification_pipeline.py:133)
     Verify --> Passed : all stages + judge pass → VerificationPassed
     Verify --> Failed : any stage.check==False OR judge fail → VerificationFailed\nsets verification_feedback
-    Failed --> RetryGate : _maybe_retry_verification (execution_service.py:1150)
+    Failed --> RetryGate : PostStepHandler._maybe_retry_worker
     RetryGate --> Requeued : retry_count < 2 → schedule_retry (RetryScheduled)\nfeedback injected into retry prompt
     RetryGate --> TerminalFail : retry_count >= 2 (cap) OR role != WORKER → WorkFailed
     Requeued --> Running
@@ -442,11 +441,12 @@ stateDiagram-v2
 
 | Item | Value | Source |
 |---|---|---|
-| Config key / default / bounds | `verification_max_retries` / `2` / `ge=0,le=10` | `config/settings.py:486-489` |
-| Attempt cap (verification path) | ≤ 3 (1 initial + 2 retries; `retry_count` 0→1→2) | `execution_service.py:1161` |
-| Second path (generic) | `RetryPolicy` model-escalation, budget = `len(model_escalation_chain)`; runs after the verification-specific path declines; shares `agent.retry_count` (not an extra budget) | `execution_service.py:1144`, `retry_policy.py:44,68-76` |
+| Config key / default / bounds | `verification_max_retries` / `2` / `ge=0,le=10` | `config/settings/orchestration.py` |
+| Attempt cap (verification/crash path) | ≤ 3 (1 initial + 2 retries; `retry_count` 0→1→2) | `post_step.py:_maybe_retry_worker` |
+| Procedure failure | exactly one agentic attempt, then terminal propagation | `post_step.py:handle_post_step` |
+| Second non-procedural path | `RetryPolicy` model escalation; runs after `_maybe_retry_worker` declines and shares `agent.retry_count` | `retry_policy.py` |
 | Trigger | a structural stage failing **or** the LLM judge failing on a COMPLETED worker | `verification_pipeline.py:138-172` |
-| Enforcement site | `ExecutionService._maybe_retry_verification` | `execution_service.py:1150-1177` |
+| Enforcement site | `PostStepHandler.handle_post_step` | `core/application/services/orchestration/post_step.py` |
 
 > The live verification loop checks **generic worker-output** stages
 > (structural/deterministic/execution/judge); it does **not** re-check SEC-bench
@@ -469,10 +469,23 @@ stateDiagram-v2
 optional**); `plugins/security/deliverables.py` is the artifact contract; a drift test
 (`plugins/security/tests/test_roles.py`) keeps them — and the prompts — in lock-step.
 
-Those `required` flags describe the full catalog contract. Adaptive B4 starts with the
-eight-role compact route (Build-Executor, Build-Verifier, Repro-Creator,
-Exploit-Validator, Root-Cause-Analyst, Patch-Applier, Patch-Validator, Reporter) and adds
-specialists only after a trigger-matched phase failure.
+Those `required` flags describe the full catalog contract. The host's
+`InitialDecompositionPolicy` creates the root four-phase DAG and the nine-role compact
+route (Build-Setup, Build-Executor, Build-Verifier, Repro-Creator, Exploit-Validator,
+Root-Cause-Analyst, Patch-Applier, Patch-Validator, Reporter). After a required B4 phase
+failure, the LLM Manager uses the existing decomposition path to select same-phase roles
+and write failure-specific instructions.
+
+The host never interprets failure keywords. It validates and drops unsafe selections,
+closes hard dependencies, binds trusted catalog prompts/models/procedures, schedules the
+accepted route, and records provenance. Full remaining same-phase expansion is only the
+explicit-invalid-decision fail-safe. B3 sets `include_manager_layer: false`; generic core
+flattening preserves the same compact DAG as direct BOSS children. No study name or
+treatment identifier selects runtime behavior.
+
+`PhaseRouteSelected.task_sources` attributes every role instruction to `host_policy`,
+`llm`, or `host_repair`. Manager evidence references propagate through the selected
+subtask into the child `Briefing` and worker prompt.
 
 ## III.2 — Role dependency DAG
 
@@ -512,8 +525,8 @@ graph LR
 - **Optional (1):** Fix-Aggregator.
 - **Data-Flow-Analyst** is an isolated required analysis node (no hard/soft edge).
 
-> **Naming note.** The catalog has `Exploit-Validator` (required verdict) and `PoC-Tester`
-> (optional empirical confirmation) — there is **no** `PoC-Validator` in source; that name
+> **Naming note.** The catalog has `Exploit-Validator` and `PoC-Tester`; both are required.
+> There is **no** `PoC-Validator` in source; that name
 > appears only in historical `events.jsonl` run logs. Any rename must be an explicit
 > catalog change with tests. — `roles.py:115,144`
 
@@ -549,7 +562,9 @@ Mechanism and task character are independent axes. `thinking` is not a separate 
 class from reasoning.
 
 `host procedure` means deterministic code in the trusted Arise process, not a human
-operator or review queue.
+operator or review queue. Its dispatch, argv, hashing, and event record are Host-owned;
+the command still executes in the run's mutable shared worker container. The procedure
+tier is an in-run gate, while the fresh external evaluator remains confirmatory authority.
 
 | Roles | Mechanism | Task character | Model |
 |---|---|---|---|
@@ -561,9 +576,10 @@ operator or review queue.
 | Fix-Aggregator, Reporter | LLM | synthesis/reasoning | `gpt-5.3-codex` |
 
 This routing is implemented by `WorkerConfig.model_overrides` and resolved from the
-leading task-role prefix. In B3 the routing key is the fused phase (`[Builder]`,
-`[Exploiter]`, `[Fixer]`, `[Reporter]`): Builder uses the mini model, while every fused
-phase containing reasoning uses Codex.
+leading task-role prefix. B3 uses the same nine role labels and inherits B4's worker
+configuration, so each direct role resolves to the same model or host procedure. The
+missing Manager changes ancestry metadata only; dependency-scoped source packets remain
+equivalent because grouping predecessors expand to their current terminal leaf sinks.
 
 ## III.4 — Artifact contract
 
@@ -631,7 +647,7 @@ Arise judges a run in two planes a non-LLM reader can both reach:
    `size>0` rule.
 2. **The Postgres event stream** — the single source of truth (`events.jsonl` retired).
 
-## IV.0 — Authoritative combined evaluator (as built 2026-07-12)
+## IV.0 — Authoritative combined evaluator (current)
 
 `experiments/shared/scripts/evaluate_run.py::run_verdict()` is the authoritative entry
 point. It exports run artifacts to the external SEC-bench evaluator and composes:
@@ -649,43 +665,39 @@ success = official_mechanical
 | Layer | As-built implementation | Remaining gap before confirmatory launch |
 |---|---|---|
 | Official mechanical | six independent fresh containers (PoC×3 + patch×3); exact crash-signature oracle on class / access / top frame; medium primary, strict/generous sensitivity | live image availability for every cohort instance |
-| Safety/provenance | protected paths, artifact hashes, PoC identity; **`fresh_base` proven from six distinct `container_id`s** (never asserted); each `ReferenceReplayResult` carries `replay_id`, `container_id`, `image_digest`, `base_commit` | none in code path |
-| Host regression | 19 frozen plans keyed by `(instance_id, base_commit)`; project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound; confirmatory adapter fails before launch on any mismatch | none in code path |
+| Safety/provenance | canonical protected paths, current artifact hashes, replay target/base identity; **`fresh_base` proven from six distinct `container_id`s** (never asserted); each `ReferenceReplayResult` carries `replay_id`, `container_id`, `image_digest`, `base_commit` | the declared PoC payload path is not dynamically added to the protected set; PatchPlan/diff consistency is semantic evidence, not an arm-independent mechanical gate |
+| Host regression | 19 candidate plans keyed by `(instance_id, base_commit)`; project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound; confirmatory adapter fails before launch on any mismatch | replace the overlapping candidate roster and regenerate/freeze its plans |
 | Semantic | zero-human heterogeneous panel: `claude-opus-4-8`, `gpt-5.5-2026-04-23`, `gemini/gemini-3.5-flash` (LiteLLM Google AI Studio); all three seats valid, then 2-of-3; blinded packet includes frozen oracle + raw host replay + host regression | GPT and Gemini live smoke pass; Opus is externally blocked by Anthropic account credit |
+| Confirmatory completeness | evaluator availability is tracked separately from cost completeness; incomplete evaluations remain ITT failures with exact assignment keys and block the superiority decision | pilot must produce complete bundles for every assignment |
 | Human audit | removed from the authoritative path | do not reintroduce audit queue or overrides |
+
+The confirmatory N1/B4 preregistration is **draft and unfrozen**. Its 19-task candidate
+roster overlaps development enrollments; the adapter now rejects that overlap if someone
+tries to freeze it. Launch remains blocked until the roster is replaced and a real
+Postgres-backed run proves the required-failure recovery path end to end: Manager decision,
+host validation/repair, dependency closure, trusted binding, scheduling, execution, and
+persisted route provenance.
 
 Crash-signature oracle notes (cohort preflight): SEGV without READ/WRITE is the explicit
 access category `unknown` (e.g. `faad2.cve-2018-20362`); symbol-less stacks yield a
 normalized module-relative frame (e.g. `mutool+0x45c0d5` for `mupdf.ossfuzz-42520029`).
-All 19 confirmatory fixtures produce complete signatures.
+All 19 current candidate fixtures produce complete signatures.
 
 Worker-model policy (separate from the judge plane): reasoning, hybrid, and synthesis
 roles use `gpt-5.3-codex`; pure coding/execution roles use `gpt-5.4-mini`; the four
 registered procedures use no model. See `.claude/docs/plugins-security.md` for the
 16-role mapping and `.claude/docs/experiments-rearchitecture.md` for the release gate.
 
-> **Supersession note.** Sections IV.1-IV.6 below preserve the legacy `criteria.py` and
-> earlier target-state analysis. Where they call `criteria.py` the wired verdict or say
-> the combined evaluator is absent, IV.0 is authoritative.
+> **Supersession note.** Sections IV.1–IV.6 document the legacy in-run artifact criteria
+> and the design history that led to §IV.0. They explain retry diagnostics and residual
+> agentic-path risks only. `run_verdict()` and `combined_verdict.py` are the current
+> confirmatory authority.
 
-> ⚠️ **Correction (verified against source 2026-07-07).** An earlier revision of this section
-> said `criteria.py` self-labels OBSOLETE with all success judges UNWIRED. That is **stale**:
-> the banner was removed when the eval path was rewired (commits `fa51676`, `2ed422a`).
-> Today `evaluate_run` is the wired per-run verdict (consumed by `scripts/evaluate_run.py`,
-> `scripts/analyze_runs.py`), the `build_*_prompt` judge builders are invoked inside it, and
-> the file-presence/non-vacuity subset (`key_file_exists`, `artifacts_by_bef`,
-> `success_criteria_by_bef`) is consumed by `bef.py`/`linear.py`. Where §IV.6's honesty table
-> still labels judges UNWIRED/DEFERRED, treat it as predating this rewiring — re-verify
-> against `criteria.py` before relying on it.
+## IV.1 — Legacy pass/fail flow (historical/advisory)
 
-## IV.1 — Pass/fail decision flow (target/advisory — not live enforcement)
-
-The flow below is the *intended* gate sequence (phases run in catalog order
-Builder → Exploiter → Fixer → Reporter). **As built it is mostly advisory:** only the
-anti-leak seal (live in the runtime) and deliverable presence/non-vacuity (reported by
-`bef.py`/`linear.py`) actually run; the Built/Exploited/Fixed *success* gates are
-unwired/obsolete (criteria banner, §IV.6). Read it as the contract a future enforcement
-pass would apply, not what fails a run today.
+The flow below was the intended gate sequence before the combined evaluator landed.
+It records the legacy artifact contract and must not be used to determine confirmatory
+success; §IV.0 supersedes it.
 
 ```mermaid
 flowchart TD
@@ -710,12 +722,12 @@ flowchart TD
     class PASS ok
 ```
 
-## IV.2 — Mechanical gates (per role / phase)
+## IV.2 — Legacy mechanical gates (historical/advisory)
 
-A script *can* check each row from disk + supplied DB events. "Blocking?" = whether a
-failure *should* fail the run under full enforcement — **not** that it does today (most
-success rows are unwired, §IV.6; the live-wired rows are the anti-leak seal and deliverable
-presence). Names are the exact `deliverables.py` / `criteria.py` constants.
+At the time represented by this proposal, a script could check each row from disk plus
+supplied DB events. "Blocking?" meant whether a failure should fail under the proposed
+full enforcement; it does not describe the current §IV.0 authority. Names are the legacy
+`deliverables.py` / `criteria.py` constants.
 
 | Gate | Check | Blocking? | Artifact / event |
 |---|---|---|---|
@@ -735,13 +747,12 @@ presence). Names are the exact `deliverables.py` / `criteria.py` constants.
 | **Reporter** | `security_report.md` present + non-vacuous (sections are an LLM concern) | **yes** | `REQUIRED_FILES['Reporter']` |
 | **Lifecycle** | first event == `AgentCreated`; each WORKER reaches one terminal `WorkCompleted`/`WorkFailed`; retry chain respects ≤3 | warning | replay invariant `agent_session.py:558` |
 
-## IV.3 — Qualitative / LLM-judge rubric (target-state, currently DEFERRED)
+## IV.3 — Superseded qualitative-judge proposal (historical)
 
-Most of these judges are **target-state** (DEFERRED): the three `build_*_success_llm_prompt`
-builders are UNWIRED and `RunData` does not yet thread `CVEInstance` (it carries only
-`run_id`, `events`, `run_dir`, `manifest` — `experiments/shared/evaluation/models.py:64-77`).
-Each judge compares observed agent artifacts + DB events against the CVE **golden/reference**
-fields.
+This subsection preserves the earlier per-phase judge proposal. Its old assumptions are
+not current: `RunData` now carries an optional host-side CVE oracle and §IV.0 wires a
+three-seat, zero-human semantic panel after the mechanical, safety, and regression gates.
+The table remains useful as rubric history, not as an implementation description.
 
 > **Anti-leak nuance (important — see §II.6).** "Golden" here means *ground-truth expected
 > values*, **not** *secret-from-the-agent*. `sanitizer_report` / `bug_report` /
@@ -753,7 +764,7 @@ fields.
 > the gold `patch`. *Hiding* the oracle from the agent would itself be a target-state
 > anti-leak change, not current behavior.
 
-The **first** judge below is different — a *provenance precondition* that needs no reference
+The **first proposed** judge below is different — a *provenance precondition* that needs no reference
 data at all: it cross-checks the agent's event-sourced transcript to catch fabricated
 verdicts (§IV.5).
 
@@ -766,24 +777,24 @@ verdicts (§IV.5).
 | Patch correctness & minimality | observed: full `model_patch.diff`, `patch_validation_results.txt`, `PROPOSED_FIX_SITE`, DB `SourceFileEdited`. **golden:** `bug_description`, `sanitizer_report`; optional host-side `patch` as reference | post-patch sanitizer none + 3/3 + clean + success; diff edits the root-cause site; **`over_broad_suppression=false`** (must NOT disable the sanitizer / strip `-fsanitize` / widen the allocation / blanket try-catch) | `{verdict, over_broad_suppression, fixes_root_cause, …}` |
 | Report evidence-quality | observed: `security_report.md` + all upstream verdict/log artifacts + DB events. **golden:** `sanitizer_report`, `bug_report`, `bug_description` | required sections present; every claim traces to a real artifact; stated error/site agree with golden (no narrating an unreproduced crash) | `{verdict, confidence, reason, evidence_refs}` |
 
-## IV.4 — How criteria read the event store (not files)
+## IV.4 — Legacy criteria event inputs (historical)
 
 **Invariant (holds today; target preserves it):** every mechanical function takes an
 explicit `events: list[dict]` argument and **never** reads on-disk `events.jsonl`
 (`criteria.py:375-377`; regression `test_criteria.py:139`).
 
-The events the wired path consults are those that actually exist: `AgentCreated`,
+The events the legacy diagnostic path consults are those that actually exist: `AgentCreated`,
 `WorkCompleted`/`WorkFailed`, `VerificationPassed`/`VerificationFailed`, `ChildSpawned`
 (drives `_is_hierarchical`), `SourceFileEdited` (edit provenance for `artifacts_by_bef`),
 and `RuntimeSurfaceSealed` (DB-only anti-leak audit). There is **no** dedicated
 per-stage "validation-result" event beyond `VerificationPassed`/`VerificationFailed`; the
 Built/Exploited/Fixed verdicts are computed *from disk* + supplied events (§V.2).
 
-## IV.5 — Execution provenance: how we know `secb` ran (and the fabrication gap)
+## IV.5 — Legacy agentic execution provenance and fabrication gap
 
-The agent runs `secb build|repro|patch` as **detached** bash commands that redirect output
-to **files**; separately, the worker adapter streams the agent's tool calls into the event
-store. Two channels, very different trust levels:
+On the legacy agentic path, the agent runs `secb build|repro|patch` as **detached** bash
+commands that redirect output to **files**; separately, the worker adapter streams the
+agent's tool calls into the event store. Two channels, very different trust levels:
 
 ```
 secb build|repro|patch  ← agent runs it DETACHED:  nohup bash -c 'secb repro > run.log 2>&1' &
@@ -801,37 +812,34 @@ secb build|repro|patch  ← agent runs it DETACHED:  nohup bash -c 'secb repro >
 |---|---|---|
 | Did the agent *issue* `secb …`? | **Yes — in events**, as a generic `ThoughtCaptured` tool_use (command text in `content`). | `ThoughtCaptured` `events.py:219-231` |
 | What did `secb` *output / exit*? | **Only weakly.** Launched detached → crash/exit go to `/testcase` files; the launcher's `tool_result` shows just "launched … pid N". The real output enters events **only if the agent reads the file back**. | `_validation_macros.j2:3-30`; `CmdRunObservation → tool_result` `openhands_adapter.py:356-364` |
-| Is there an authoritative `secb` *result* event? | **No.** No `SecbCommandExecuted` / dedicated exit-code event exists; the verdicts + `DETERMINISM_RUNS` live in agent-authored **files**, not events. | `events.py` (none); `criteria.py` reads files |
+| Is there an authoritative `secb` *result* event? | **Yes for the in-run procedure tier:** `ProcedureExecutionFinished` carries Host-created `ProcedureEvidence`. The worker cannot directly author that event, but execution still occurs in its mutable shared container, so the external fresh evaluator remains the confirmatory authority. **No for a legacy agentic command:** its verdict remains an agent-authored file plus generic transcript. | `events.py`; `procedure.py`; `criteria.py` |
 
-**The fabrication gap (the hallucination observed in practice).** Because the verdict is an
-agent-writable file and the result is *not* authoritatively event-sourced, an agent can
+**The residual legacy-path fabrication gap.** Because an agentic verdict is an
+agent-writable file and its result is not authoritatively event-sourced, an agent can
 write `VERDICT: PASS` / `DETERMINISM_RUNS: 3/3` **without ever launching `secb repro`** and
 still pass every file-presence / string-match gate (it can even `echo` fake
 `repro_run_*.log` files). The only hard-to-forge signal is the **event-sourced
 `ThoughtCaptured` transcript** — append-only, written by the orchestrator from worker-SDK
 callbacks, not by the agent's shell — where a missing `secb repro` launch or a missing
-real-crash observation gives the fabrication away. Nothing cross-checks the verdict file
-against that transcript today. Two fixes:
-
-- **Near-term (LLM judge):** the **Execution-provenance / anti-fabrication** judge (§IV.3)
-  reads the transcript + verdict files and rejects a PASS the transcript does not back.
-  This is the sub-criterion for the self-reported-verdict / determinism hallucination.
-- **By construction:** event-source the `secb` results themselves (§V.7) so the verdict is
-  read from an agent-unforgeable event instead of inferred from a transcript.
+real-crash observation gives the fabrication away. The procedure tier prevents direct
+fabrication of its event and verdict path for four fixed roles. It does not make the
+shared worker container a trusted fresh environment; the external combined evaluator
+separately establishes confirmatory truth through fresh replay. Agentic retry evidence
+remains diagnostic and cannot substitute for either Host-owned channel.
 
 ## IV.6 — Legacy in-run criteria (not confirmatory authority)
 
 This table describes the runtime artifact/retry path only. The confirmatory success
-authority is the independent combined evaluator in §III.6, which closes the exact-oracle,
+authority is the independent combined evaluator in §IV.0, which closes the exact-oracle,
 fresh-replay, regression, and semantic-review gaps listed here.
 
-| Criterion | Currently mechanical (wired) | LLM-judged (wired) | Not-yet-enforced (gap) |
+| Criterion | Legacy mechanical state | Legacy LLM state | Residual in-run gap |
 |---|---|---|---|
 | Deliverable presence + non-vacuity | ✅ BEF: `artifacts_by_bef` / `success_criteria_by_bef` / `key_file_exists`; linear: `_artifacts_linear` / `_success_linear` + `key_file_exists` (`linear.py:61,84,102`) | — | — |
 | Anti-leak sealing | ✅ live in `docker_runtime.py`, audited by `RuntimeSurfaceSealed` | — | golden file under a name outside `_FORBIDDEN_TESTCASE_ARTIFACTS` survives |
 | Build success (real ELF) | ✅ presence of `binary_paths.txt` only | — | `built_success_mechanical` UNWIRED; ELF check is size+name hack; globs a **phantom** `build_verification*` no prompt emits |
 | Exploit verdict (PASS + 3/3) | partial: verdict-file **presence** wired | — | never re-runs `secb repro`; accepts ANY sanitizer token, not the CVE's expected error |
-| **`secb` actually executed (vs fabricated verdict)** | the agent's tool-call transcript IS event-sourced (`ThoughtCaptured`) | — | nothing cross-checks the verdict file against the transcript; `VERDICT`/`DETERMINISM_RUNS` are agent-written & forgeable → **anti-fabrication judge §IV.3 is the mitigation, §V.7 the by-construction fix** |
+| **`secb` actually executed (vs fabricated verdict)** | the legacy agentic tool-call transcript is event-sourced (`ThoughtCaptured`); procedure roles emit host-created evidence | — | agentic verdict files remain forgeable diagnostics; procedure events and §IV.0 fresh replay are authoritative for their respective paths |
 | Exploit triggers the CVE's exact error/site | — | — (target judges UNWIRED) | wrong-reason crash passes; only agent self-report compares |
 | Repro→binary handoff | strict logic exists | — | **UNWIRED** (test-only); live defense is prompt self-report |
 | Patch valid + clean apply + 3/3 | partial: verdict-file **presence** wired | — | `fixed_success_mechanical` **fully dead**; nothing re-applies/re-builds post-hoc |
@@ -909,9 +917,10 @@ and `shared_context.py`. The earlier "sole aggregate / ~31 events" drift is fixe
 
 ## V.7 — Event-source fixed SEC-bench work (anti-fabrication by construction) — IMPLEMENTED (flag-gated)
 
-**Gap.** `secb build|repro|patch` runs as the agent's own **detached** bash; its exit code
-and sanitizer output land in agent-writable `/testcase` files, and only a *generic* tool
-transcript (`ThoughtCaptured`) is event-sourced (§IV.5). So `VERDICT: PASS` /
+**Legacy agentic-path gap.** When `secb build|repro|patch` runs as the agent's own
+**detached** bash, its exit code and sanitizer output land in agent-writable `/testcase`
+files, and only a *generic* tool transcript (`ThoughtCaptured`) is event-sourced (§IV.5).
+So `VERDICT: PASS` /
 `DETERMINISM_RUNS: 3/3` are agent-authored and forgeable — the hallucination observed in
 practice (a PASS written without `secb repro` ever running).
 
@@ -919,18 +928,43 @@ practice (a PASS written without `secb repro` ever running).
 **procedure tier** routes four fixed roles (`Build-Verifier`, `Exploit-Validator`,
 `Patch-Applier`, `Patch-Validator`) through an Arise-mediated host-side channel.
 `SecBenchProcedureExecutor` (`plugins/security/procedures.py`), bound via
-`DomainPlugin.get_procedure_executor()`, drives build verification, `secb repro` ×3,
-literal approved-PatchPlan rendering, `secb patch`, and post-patch build/replay
-on the run's container and emits `ProcedureExecutionStarted` / `ProcedureExecutionFinished`
-carrying per-command `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, bounded
-`excerpt`) captured **outside the agent's control**. The exploit/patch verdict is
-host-computed from crash signatures (`plugins/security/crash_signature.py`) matched against
-the CVE oracle, so determinism (3/3) and the Exploited/Fixed verdicts are verifiable from the
-DB and agent-unforgeable — closing this gap for validator verdicts when the flag is on. (The
-landed events are `ProcedureExecution{Started,Finished}` + `ProcedureEvidence`, not the
-originally-sketched `SecbCommandExecuted`.) Default off ⇒ `NullProcedureExecutor` ⇒
-in-container agentic `secb`, and the §IV.3 anti-fabrication judge remains the mitigation for
-the agentic path; Build-Setup, Build-Executor, and Reporter remain agentic.
+`DomainPlugin.get_procedure_executor()`, drives build verification, three direct exploit
+replays, literal approved-PatchPlan rendering, `secb patch`, and post-patch build/replay on
+the run's container. It emits `ProcedureExecutionStarted` / `ProcedureExecutionFinished`
+with per-command `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, bounded
+`excerpt`) computed by the Host. The worker cannot directly author those events, but the
+commands still run inside its mutable shared container; the evidence is an in-run control,
+not a substitute for the external §IV.0 fresh-replay authority.
+
+The agent-authored `repro.sh` is parsed as a structured contract, not executed. Its first
+four non-empty lines are fixed; the final line is `exec "$BIN"` plus inert literal
+arguments and exactly one `$POC`, or ends with the sole supported redirection `< "$POC"`.
+Examples are OpenEXR `exec "$BIN" -v "$POC" /dev/null` and FAAD2
+`exec "$BIN" "$POC" -o /dev/null`. Other variables, command substitution, shell control
+operators, wrappers, pipes, setup commands, and other redirections fail closed. The Host
+resolves and directly executes the argv vector or supplies the frozen PoC bytes on stdin.
+
+Before exploit validation, a sealed replay contract binds the CVE/base/sanitizer/work
+directory, dataset exit oracle, source HEAD, Builder-baseline digest (`build.sh`,
+`repo_changes.diff`, and tracked state), reproducer, PoC/pointer, selected binary and
+digest, resolved argv/stdin mode, and verdict. Patch approval additionally seals the plan,
+rendered diff, and replay identity. Symlinked or changed inputs fail closed.
+
+Procedure execution never uses `bash -lc`. It preserves the image's OSS-Fuzz variables,
+fixes `PATH`, `LC_ALL=C`, `BASH_ENV=/dev/null`, and `ENV=/dev/null`, and adds
+sanitizer-specific halt options for direct replay. An in-container GNU `timeout` sends
+TERM then KILL; exit 124 or the outer watchdog restarts the shared container before
+returning a task-level timeout. Restart failure is an infrastructure error. Build
+verification requires exit 0, executable ELF targets, and the configured sanitizer
+runtime. Exploit validation requires complete 3/3 oracle-matching signatures and
+consistent termination; complete sanitizer evidence may legitimately accompany exit 0,
+including recoverable UBSan. Post-patch replay rejects timeouts, signals, assertions, sanitizer findings,
+unsanitized crashes, and exits outside `{0, frozen dataset exit oracle}`.
+
+The landed events are `ProcedureExecution{Started,Finished}` + `ProcedureEvidence`, not
+the originally sketched `SecbCommandExecuted`. Default off ⇒ `NullProcedureExecutor` ⇒
+in-container agentic `secb`; its transcript and verdict files remain diagnostic.
+Build-Setup, Build-Executor, and Reporter remain agentic.
 
 ---
 
@@ -942,6 +976,8 @@ the agentic path; Build-Setup, Build-Executor, and Reporter remain agentic.
 | Image build | `deployment/build-secbench-tools.sh`, `deployment/secbench-tools.Dockerfile`, `deployment/push-study-images.sh` |
 | CVE instance / anti-leak fields | `plugins/security/cve_instance.py` |
 | Role catalog | `plugins/security/roles.py` |
+| Initial decomposition policy | `core/ports/decomposition_policy_port.py`, `plugins/security/decomposition_policy.py`, `core/application/services/orchestration/decomposition_contract.py` |
+| Recovery decomposition validation | `core/ports/decomposition_validator_port.py`, `plugins/security/decomposition_validator.py` |
 | Artifact contract | `plugins/security/deliverables.py` |
 | Drift tests | `plugins/security/tests/test_roles.py`, `test_prompt_building.py`, `test_prompt_normalization.py` |
 | Prompt strategy / branch detection | `plugins/security/prompt_strategy.py` |

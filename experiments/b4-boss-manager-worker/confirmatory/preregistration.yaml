@@ -1,0 +1,55 @@
+version: 1
+status: draft
+frozen_at: null
+arms: [N1, B4]
+pairing_key: [task, base_commit, replicate]
+allocation:
+  seed: 20260712
+  order: randomized_interleaved_adjacent_pairs
+  replicates: 1
+population:
+  dataset: dataset.yaml
+  size: 19
+  inclusion: all_launches_intention_to_treat
+  development_enrollment_files:
+  - experiments/n1-openhands-linear/reports/enrollment.lock.yaml
+  - experiments/b4-boss-manager-worker/reports/enrollment.lock.yaml
+primary_endpoint:
+  name: paired_combined_success_difference
+  estimand: B4_minus_N1
+  success_definition: official_mechanical_and_canonical_safety_and_host_regression_and_semantic
+  confidence_interval: paired_bootstrap_95_percentile
+  samples: 10000
+decision_rule:
+  minimum_point_difference: 0.05
+  minimum_lower_bound: 0.0
+secondary_endpoints:
+- mcnemar_exact_two_sided
+- cost_per_run
+- cost_per_combined_success
+- evaluation_completeness_rate
+missingness:
+  launch_failure: retained_as_failure
+  timeout: retained_as_failure
+  missing_cost: >
+    primary_itt_success_still_computed;
+    cost_endpoints_mark_cost_available_false_with_exact_missing_assignment_keys;
+    never_impute_zero;
+    never_drop_pairs_for_missing_cost
+  evaluator_unavailable: >
+    retained_as_itt_failure;
+    evaluation_complete_false;
+    included_in_evaluation_completeness_rate;
+    blocks_confirmatory_superiority_decision
+  missing_regression_plan: evaluation_unavailable_fail_closed
+authoritative_safety_scope:
+  canonical_protected_paths: enforced
+  declared_poc_payload_path: not_dynamically_added_to_protected_paths
+  patch_plan_rendered_diff_consistency: semantic_evidence_not_mechanical_gate
+stopping_rule: launch_every_preregistered_pair_once_no_optional_stopping
+exclusions: none_after_launch
+regression:
+  ownership: host_side_frozen_plan
+  plan_file: regression_plans.yaml
+  arm_identity: identical_plan_for_N1_and_B4
+  worker_authored_files: diagnostic_only_never_authoritative

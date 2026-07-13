@@ -23,6 +23,7 @@ from experiments.shared.evaluation.confirmatory_runner import (
     to_paired_observations,
 )
 from experiments.shared.evaluation.models import RunData
+from experiments.shared.evaluation.regression import RegressionCommand, plan_sha256
 
 
 def _outcome(
@@ -35,7 +36,8 @@ def _outcome(
     cost: float | None = 1.0,
     mechanical: bool = True,
     combined: bool = True,
-    completeness: float = 1.0,
+    cost_completeness: float = 1.0,
+    evaluation_complete: bool = True,
 ) -> LaunchOutcome:
     return LaunchOutcome(
         cell=cell,
@@ -47,8 +49,178 @@ def _outcome(
         cost=cost,
         mechanical_success=mechanical,
         combined_success=combined,
-        completeness_rate=completeness,
+        cost_completeness_rate=cost_completeness,
+        evaluation_complete=evaluation_complete,
     )
+
+
+def _command_evidence() -> dict[str, object]:
+    return {
+        "argv": ["secb", "evaluate"],
+        "exit_code": 0,
+        "signal": None,
+        "timed_out": False,
+        "output_sha256": "a" * 64,
+        "sanitizer_detected": False,
+        "final_step_reached": True,
+        "assertion_abort": False,
+        "core_dumped": False,
+    }
+
+
+def _replay(index: int, *, identities_available: bool) -> dict[str, object]:
+    evidence = _command_evidence()
+    return {
+        "modes": {
+            "primary": {
+                "verdict": {"passed": True, "reason": "host replay completed"},
+                "evidence": evidence,
+                "crash_signature": {
+                    "sanitizer_class": "heap-buffer-overflow",
+                    "access_kind": "read",
+                    "top_application_frame": "vulnerable",
+                },
+            }
+        },
+        "invocation_evidence": evidence,
+        "raw_reports": {"raw": [{"logs": "host output"}]},
+        "replay_id": f"replay-{index}",
+        "instance_id": "project.cve-0000-0000",
+        "container_id": f"container-{index}" if identities_available else None,
+        "image_digest": "sha256:deadbeef" if identities_available else None,
+        "base_commit": "base" if identities_available else None,
+    }
+
+
+def _regression(*, passed: bool) -> dict[str, object]:
+    command = RegressionCommand(argv=("project-smoke",), timeout_seconds=5.0)
+    work_dir = "/src/project"
+    plan = {
+        "instance_id": "project.cve-0000-0000",
+        "base_commit": "base",
+        "commands": [
+            {
+                "argv": list(command.argv),
+                "timeout_seconds": command.timeout_seconds,
+                "required": command.required,
+                "cwd": command.cwd,
+            }
+        ],
+        "plan_sha256": plan_sha256(
+            "project.cve-0000-0000",
+            "base",
+            (command,),
+            work_dir=work_dir,
+            image_digest="sha256:deadbeef",
+        ),
+        "generated_at": "2026-07-13T00:00:00Z",
+        "work_dir": work_dir,
+        "generator_model": None,
+        "dataset_revision": None,
+        "image_digest": "sha256:deadbeef",
+        "base_validation_sha256": None,
+        "gold_validation_sha256": None,
+    }
+    return {
+        "available": True,
+        "passed": passed,
+        "reason": "host regression complete",
+        "plan": plan,
+        "results": [],
+        "container_id": "regression-container",
+        "image_digest": "sha256:deadbeef",
+        "base_commit": "base",
+        "patch_hash": "b" * 64,
+        "started_at": "2026-07-13T00:00:00Z",
+        "finished_at": "2026-07-13T00:00:01Z",
+    }
+
+
+def _semantic(verdict: bool) -> dict[str, object]:
+    models = ["judge-a", "judge-b", "judge-c"]
+    votes = [verdict, verdict, not verdict]
+    return {
+        "task_id": "opaque-evaluation",
+        "verdict": verdict,
+        "available": True,
+        "valid_votes": 3,
+        "positive_votes": sum(votes),
+        "judge_error": False,
+        "prompt": "blinded prompt",
+        "schema": {"verdict": "bool"},
+        "models": models,
+        "calls": [
+            {
+                "model": model,
+                "valid": True,
+                "verdict": vote,
+                "response": {"verdict": vote, "reason": "test"},
+                "started_at": "2026-07-13T00:00:00Z",
+                "finished_at": "2026-07-13T00:00:01Z",
+            }
+            for model, vote in zip(models, votes, strict=True)
+        ],
+    }
+
+
+def _authoritative_verdict(
+    *,
+    mechanical: bool = True,
+    safety: bool = True,
+    regression: bool = True,
+    semantic: bool | None = True,
+    identities_available: bool = True,
+) -> dict[str, object]:
+    semantic_accepted = semantic is True
+    success = mechanical and safety and regression and semantic_accepted
+    return {
+        "authoritative": "combined_verdict",
+        "success": success,
+        "combined": {
+            "success": success,
+            "mechanical": {
+                "passed": mechanical,
+                "replay_count": 3,
+                "expected_crash_signature": {
+                    "sanitizer_class": "heap-buffer-overflow",
+                    "access_kind": "read",
+                    "top_application_frame": "vulnerable",
+                },
+                "poc": {"passed": mechanical, "reason": "PoC replay complete"},
+                "patch_primary": {
+                    "passed": mechanical,
+                    "reason": "patch replay complete",
+                },
+                "sensitivity": {
+                    "strict": {"passed": mechanical, "reason": "strict result"},
+                    "generous": {"passed": mechanical, "reason": "generous result"},
+                },
+            },
+            "safety": {
+                "passed": safety,
+                "reasons": [] if safety else ["replay identity unavailable"],
+            },
+            "regression": _regression(passed=regression),
+            "semantic": (
+                _semantic(semantic)
+                if semantic is not None
+                else {
+                    "accepted": False,
+                    "available": False,
+                    "skipped": "prior_gate_failed",
+                }
+            ),
+            "semantic_accepted": semantic_accepted,
+            "poc_replays": [
+                _replay(index, identities_available=identities_available)
+                for index in range(3)
+            ],
+            "patch_replays": [
+                _replay(index + 3, identities_available=identities_available)
+                for index in range(3)
+            ],
+        },
+    }
 
 
 class _FakeLauncher:
@@ -234,9 +406,16 @@ def test_paired_observations_projection_honours_success_kind() -> None:
 def test_cost_endpoints_from_outcomes_reports_all_fields() -> None:
     # Given: Two B4 outcomes, one combined-success and one failure
     outcomes = (
-        _outcome("B4", "t1", cost=1.6, mechanical=True, combined=True, completeness=1.0),
         _outcome(
-            "B4", "t2", cost=1.4, mechanical=False, combined=False, completeness=0.5
+            "B4", "t1", cost=1.6, mechanical=True, combined=True, cost_completeness=1.0
+        ),
+        _outcome(
+            "B4",
+            "t2",
+            cost=1.4,
+            mechanical=False,
+            combined=False,
+            cost_completeness=0.5,
         ),
     )
 
@@ -280,7 +459,7 @@ def test_missing_launch_cost_marks_endpoint_unavailable_not_zero(
             cost=cost,
             mechanical=False,
             combined=False,
-            completeness=completeness,
+            cost_completeness=completeness,
         ),
     )
 
@@ -305,7 +484,7 @@ def test_primary_success_itt_survives_missing_cost() -> None:
             cost=None,
             mechanical=False,
             combined=False,
-            completeness=0.0,
+            cost_completeness=0.0,
         ),
     )
     pairs = pair_by_instance(outcomes, n1_cell="N1", b4_cell="B4")
@@ -329,6 +508,9 @@ def test_primary_success_itt_survives_missing_cost() -> None:
     assert report.cost_available is False
     assert report.missing_cost_keys == ("B4/gpac.a/c1/r0",)
     assert report.b4_cost.cost_available is False
+    assert report.evaluation_complete
+    assert report.evaluation_completeness_rate == 1.0
+    assert report.incomplete_evaluation_keys == ()
 
 
 def test_run_confirmatory_study_injects_launcher_and_assembles_report() -> None:
@@ -365,6 +547,8 @@ def test_run_confirmatory_study_injects_launcher_and_assembles_report() -> None:
         report.intervals
     )
     assert isinstance(report.superiority, bool)
+    assert report.evaluation_complete
+    assert report.evaluation_completeness_rate == 1.0
 
 
 def test_production_adapter_resolves_cost_and_authoritative_verdict(
@@ -386,7 +570,7 @@ def test_production_adapter_resolves_cost_and_authoritative_verdict(
     async def fake_verdict(value, **kwargs):
         assert value == str(run_id)
         assert kwargs.get("regression_plans_path") == tmp_path / "regression_plans.yaml"
-        return {"success": True, "combined": {"mechanical": {"passed": True}}}
+        return _authoritative_verdict()
 
     monkeypatch.setattr(arise_confirmatory, "load_run", fake_load)
     monkeypatch.setattr(arise_confirmatory, "run_verdict", fake_verdict)
@@ -402,9 +586,175 @@ def test_production_adapter_resolves_cost_and_authoritative_verdict(
     assert outcome.run_id == str(run_id)
     assert outcome.status == "completed"
     assert outcome.cost == 0.0
-    assert outcome.completeness_rate == 1.0
+    assert outcome.cost_completeness_rate == 1.0
+    assert outcome.evaluation_complete
     assert outcome.mechanical_success
     assert outcome.combined_success
+
+
+def test_production_adapter_marks_evaluator_failure_incomplete(
+    tmp_path, monkeypatch
+) -> None:
+    # Given: A run with complete cost records whose authoritative evaluator fails
+    run_id = uuid4()
+    run_data = RunData(
+        run_id=run_id,
+        events=[],
+        run_dir=tmp_path,
+        manifest={"exit_status": "completed"},
+    )
+
+    async def fake_load(value):
+        assert value == str(run_id)
+        return run_data
+
+    async def failed_verdict(value, **kwargs):
+        assert value == str(run_id)
+        raise RuntimeError("evaluator unavailable")
+
+    monkeypatch.setattr(arise_confirmatory, "load_run", fake_load)
+    monkeypatch.setattr(arise_confirmatory, "run_verdict", failed_verdict)
+    adapter = object.__new__(AriseConfirmatoryAdapter)
+    adapter._regression_plans_path = tmp_path / "regression_plans.yaml"
+    candidate = ConfirmatoryCandidate("B4", "task", "base", 0)
+
+    # When: The production adapter resolves the failed evaluation
+    outcome = adapter._resolve_run(candidate, str(run_id))
+
+    # Then: Evaluator completeness fails closed without changing cost completeness
+    assert outcome.status == "evaluation_failed"
+    assert outcome.cost_completeness_rate == 1.0
+    assert not outcome.evaluation_complete
+    assert not outcome.mechanical_success
+    assert not outcome.combined_success
+
+
+def test_complete_failing_bundle_keeps_evaluation_complete(tmp_path, monkeypatch) -> None:
+    # Given: A complete evaluator bundle whose replay identities fail the safety gate
+    run_id = uuid4()
+    run_data = RunData(
+        run_id=run_id,
+        events=[],
+        run_dir=tmp_path,
+        manifest={"exit_status": "completed"},
+    )
+
+    async def fake_load(value):
+        assert value == str(run_id)
+        return run_data
+
+    async def failing_verdict(value, **kwargs):
+        assert value == str(run_id)
+        return _authoritative_verdict(
+            safety=False,
+            semantic=None,
+            identities_available=False,
+        )
+
+    monkeypatch.setattr(arise_confirmatory, "load_run", fake_load)
+    monkeypatch.setattr(arise_confirmatory, "run_verdict", failing_verdict)
+    adapter = object.__new__(AriseConfirmatoryAdapter)
+    adapter._regression_plans_path = tmp_path / "regression_plans.yaml"
+    candidate = ConfirmatoryCandidate("B4", "task", "base", 0)
+
+    # When: The production adapter validates the complete failing envelope
+    outcome = adapter._resolve_run(candidate, str(run_id))
+
+    # Then: Completeness is distinct from gate success and missing identity values
+    assert outcome.status == "completed"
+    assert outcome.evaluation_complete
+    assert outcome.mechanical_success
+    assert not outcome.combined_success
+
+
+@pytest.mark.parametrize(
+    "broken_field",
+    ("combined", "safety", "regression", "semantic", "poc_replay", "patch_replay"),
+)
+def test_production_adapter_rejects_incomplete_evaluator_envelope(
+    tmp_path, monkeypatch, broken_field
+) -> None:
+    # Given: Evaluation returns with one malformed authoritative record
+    run_id = uuid4()
+    run_data = RunData(
+        run_id=run_id,
+        events=[],
+        run_dir=tmp_path,
+        manifest={"exit_status": "completed"},
+    )
+
+    async def fake_load(value):
+        assert value == str(run_id)
+        return run_data
+
+    async def incomplete_verdict(value, **kwargs):
+        assert value == str(run_id)
+        envelope = _authoritative_verdict()
+        combined = envelope["combined"]
+        assert isinstance(combined, dict)
+        if broken_field == "combined":
+            envelope["combined"] = {}
+        elif broken_field in {"safety", "regression", "semantic"}:
+            combined[broken_field] = {}
+        else:
+            replay_field = "poc_replays" if broken_field == "poc_replay" else "patch_replays"
+            replays = combined[replay_field]
+            assert isinstance(replays, list)
+            replays[0] = {}
+        return envelope
+
+    monkeypatch.setattr(arise_confirmatory, "load_run", fake_load)
+    monkeypatch.setattr(arise_confirmatory, "run_verdict", incomplete_verdict)
+    adapter = object.__new__(AriseConfirmatoryAdapter)
+    adapter._regression_plans_path = tmp_path / "regression_plans.yaml"
+    candidate = ConfirmatoryCandidate("B4", "task", "base", 0)
+
+    # When: The production adapter validates the returned envelope
+    outcome = adapter._resolve_run(candidate, str(run_id))
+
+    # Then: Missing authoritative evidence is an evaluation failure, not a valid failure
+    assert outcome.status == "evaluation_failed"
+    assert not outcome.evaluation_complete
+    assert not outcome.mechanical_success
+    assert not outcome.combined_success
+
+
+def test_incomplete_evaluation_blocks_confirmatory_decision() -> None:
+    # Given: One arm has no authoritative evaluator bundle
+    outcomes = (
+        _outcome("N1", "task", base_commit="base"),
+        _outcome(
+            "B4",
+            "task",
+            base_commit="base",
+            status="evaluation_failed",
+            mechanical=False,
+            combined=False,
+            evaluation_complete=False,
+        ),
+    )
+
+    # When: The incomplete assignment is retained under intention to treat
+    report = run_confirmatory_study(
+        [("task", "base")],
+        n1_cell="N1",
+        b4_cell="B4",
+        seed=7,
+        launch=lambda candidate: outcomes[0] if candidate.cell == "N1" else outcomes[1],
+        bootstrap_samples=50,
+    )
+
+    # Then: The rate and exact key are reported, and no superiority decision is allowed
+    assert report.evaluation_completeness_rate == 0.5
+    assert not report.evaluation_complete
+    assert report.incomplete_evaluation_keys == ("B4/task/base/r0",)
+    assert not report.superiority
+
+
+def test_incomplete_evaluation_cannot_report_success() -> None:
+    # Given/When/Then: The outcome model rejects success without evaluator evidence
+    with pytest.raises(ValueError, match="incomplete evaluation cannot report success"):
+        _outcome("B4", "task", evaluation_complete=False)
 
 
 def test_production_adapter_dispatches_declared_runner(tmp_path, monkeypatch) -> None:
@@ -467,7 +817,8 @@ def test_failed_launch_records_unknown_cost() -> None:
     )
 
     assert outcome.cost is None
-    assert outcome.completeness_rate == 0.0
+    assert outcome.cost_completeness_rate == 0.0
+    assert not outcome.evaluation_complete
 
 
 def test_production_adapter_reads_frozen_parameters() -> None:
@@ -488,3 +839,32 @@ def test_production_adapter_rejects_incomplete_oracle(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="lack complete frozen crash signatures"):
         adapter._validate_oracles()
+
+
+def test_production_adapter_rejects_development_cohort_overlap(tmp_path: Path) -> None:
+    enrollment = tmp_path / "development-enrollment.yaml"
+    enrollment.write_text(
+        "enrollment:\n- task: already-used\n- task: another-task\n",
+        encoding="utf-8",
+    )
+    adapter = object.__new__(AriseConfirmatoryAdapter)
+    adapter._repo_root = tmp_path
+    adapter._coverage = {"already-used": tmp_path / "fixture.json"}
+    adapter._preregistration = {
+        "population": {"development_enrollment_files": [enrollment.name]}
+    }
+
+    with pytest.raises(ValueError, match="overlaps development enrollments"):
+        adapter._validate_unseen_cohort()
+
+
+def test_draft_confirmatory_preregistration_cannot_launch() -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+
+    with pytest.raises(ValueError, match="preregistration is draft"):
+        AriseConfirmatoryAdapter(
+            study_id="b4-boss-manager-worker/confirmatory",
+            n1_cell="N1",
+            b4_cell="B4",
+            repo_root=repo_root,
+        )

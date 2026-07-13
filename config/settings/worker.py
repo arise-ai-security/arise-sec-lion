@@ -30,15 +30,15 @@ class OpenHandsParams(BaseModel):
         le=3600,
         description=(
             "Per-call timeout (seconds) for OpenHands MCP tools (e.g. "
-            "shell_in_container). Applied to the SDK so every cell shares one "
-            "shell timeout — keep it identical across cells for a fair comparison."
+            "shell_in_container). Applied to the SDK so all workers in a run "
+            "share one consistent shell timeout."
         ),
     )
     enable_subagents: bool = Field(
         default=False,
         description=(
             "Expose OpenHands' native task-delegation tool so the worker can "
-            "spawn a bounded two-level tree of child agents (N2 baseline)."
+            "spawn a bounded two-level tree of child agents."
         ),
     )
     run_scoped_prompt_cache_key: bool = Field(

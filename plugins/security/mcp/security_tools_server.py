@@ -156,7 +156,7 @@ def _read_env() -> tuple[str | None, str | None, str | None] | dict[str, Any]:
       on the host. Commands are routed into the per-run secb-tools container
       via the ``secb-exec`` helper, which does ``docker exec``.
     - **In-container mode** (helper script unset): the MCP server runs *inside*
-      the secb-tools container alongside the agent (Cell A). Commands execute
+      the secb-tools container alongside a flat in-container agent. Commands execute
       directly via ``bash -lc`` — no ``docker exec`` hop, since we're already
       in the target container.
 

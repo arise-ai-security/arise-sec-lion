@@ -106,6 +106,33 @@ class FakeChildAgentFactory:
     def max_total_agents(self) -> int:
         return self._max_total_agents
 
+    def get_sibling_role_prefixes(self, agent_id, parent_id) -> set[str]:
+        return set()
+
+    def get_tree_role_prefixes(self, agent_id) -> set[str]:
+        return set()
+
+    def get_completed_role_prefixes(self, agent_id) -> set[str]:
+        return set()
+
+    def get_failed_role_prefixes(self, agent_id) -> set[str]:
+        return set()
+
+    def mark_role_completed(self, agent_id) -> None:
+        return None
+
+    def mark_role_failed(self, agent_id) -> None:
+        return None
+
+    async def try_reserve(self, n: int) -> bool:
+        return True
+
+    async def commit_reservation(self, n: int) -> None:
+        self._total_created += n
+
+    async def release_reservation(self, n: int) -> None:
+        return None
+
 
 def _create_orchestrator(
     worker_port: WorkerToolPort,

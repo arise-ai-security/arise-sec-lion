@@ -290,8 +290,8 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self._reasoning_effort_overrides: dict[str, str] = dict(reasoning_effort_overrides or {})
         self._skip_directory_view_capture: bool = skip_directory_view_capture
         # When True, the agent gets OpenHands' native task-delegation tool so it
-        # can spawn a (single-level) tree of child subagents — the naive #2 (N2)
-        # baseline. Children reuse the parent's container-aware tools and lack
+        # can spawn a single-level tree of child subagents. Children reuse the
+        # parent's container-aware tools and lack
         # the delegation tool, so the tree is bounded to exactly two levels.
         self.enable_subagents: bool = enable_subagents
         # OpenHands binds its MCP tool-call timeout (shell_in_container etc.) as a
@@ -857,7 +857,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         container_session: ContainerSessionContext | None,
         mcp_config: dict[str, Any],
     ) -> None:
-        """Register a container-aware ``general-purpose`` child agent for N2.
+        """Register a container-aware ``general-purpose`` child agent.
 
         OpenHands' native ``task_tool_set`` delegates to a registered agent
         type (default ``general-purpose``). The SDK's built-in general-purpose

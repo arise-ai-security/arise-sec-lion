@@ -99,7 +99,7 @@ def test_valgrind_run_uses_bash_lc_in_in_container_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When ARISE_SECBENCH_HELPER_SCRIPT is unset, the server is running
-    inside the target container (Cell A path). It must execute commands
+    inside the target container. It must execute commands
     directly via ``bash -lc`` instead of shelling out to ``secb-exec``."""
     # Given: only in-container env vars set (no helper script).
     monkeypatch.delenv(server.ENV_HELPER_SCRIPT, raising=False)

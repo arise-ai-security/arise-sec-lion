@@ -1,4 +1,4 @@
-"""Resolve worker models for B4 specialists and B3 fused phase labels."""
+"""Resolve worker models for B4 roles and B3's matching direct compact route."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 B4_CONFIG = REPO_ROOT / "experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml"
-B3_CONFIG = REPO_ROOT / "experiments/b3-rolefused/configs/B3-rolefused.yaml"
+B3_CONFIG = REPO_ROOT / "experiments/b3-direct-compact/configs/B3-direct-compact.yaml"
 
 B4_CODING = (
     "[Build-Setup]",
@@ -36,10 +36,15 @@ B4_PROCEDURE = (
     "[Patch-Applier]",
     "[Patch-Validator]",
 )
-B3_FUSED = (
-    "[Builder]",
-    "[Exploiter]",
-    "[Fixer]",
+B3_DIRECT_COMPACT = (
+    "[Build-Setup]",
+    "[Build-Executor]",
+    "[Build-Verifier]",
+    "[Repro-Creator]",
+    "[Exploit-Validator]",
+    "[Root-Cause-Analyst]",
+    "[Patch-Applier]",
+    "[Patch-Validator]",
     "[Reporter]",
 )
 
@@ -77,17 +82,9 @@ def test_b4_procedure_roles_have_no_override(prefix: str) -> None:
     assert prefix not in adapter._model_overrides
 
 
-def test_b3_fused_phase_model_routing() -> None:
-    adapter = _adapter_from_overlay(B3_CONFIG)
-    assert adapter._resolve_model({"task_summary": "[Builder] build"}) == "gpt-5.4-mini"
-    assert adapter._resolve_model({"task_summary": "[Exploiter] repro"}) == "gpt-5.3-codex"
-    assert adapter._resolve_model({"task_summary": "[Fixer] patch"}) == "gpt-5.3-codex"
-    assert adapter._resolve_model({"task_summary": "[Reporter] write"}) == "gpt-5.3-codex"
-
-
-def test_b3_inherits_specialist_overrides() -> None:
-    adapter = _adapter_from_overlay(B3_CONFIG)
-    assert (
-        adapter._resolve_model({"task_summary": "[Root-Cause-Analyst] dig"})
-        == "gpt-5.3-codex"
-    )
+@pytest.mark.parametrize("prefix", B3_DIRECT_COMPACT)
+def test_b3_direct_compact_role_matches_b4_model(prefix: str) -> None:
+    b3 = _adapter_from_overlay(B3_CONFIG)
+    b4 = _adapter_from_overlay(B4_CONFIG)
+    task = {"task_summary": f"{prefix} execute the assigned role"}
+    assert b3._resolve_model(task) == b4._resolve_model(task)

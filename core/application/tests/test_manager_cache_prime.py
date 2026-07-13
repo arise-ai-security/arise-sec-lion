@@ -3,8 +3,8 @@
 OpenAI serves a cached entry only when it is a complete prefix of the new request, so
 the prime must send the managers' *longest common prefix*. ``_longest_common_prefix`` is
 the load-bearing piece: its result is, by definition, a true byte-prefix of every manager
-prompt, which is exactly what the cache needs. The end-to-end cache effect is validated by
-a real B4 run, not here.
+prompt, which is exactly what the cache needs. End-to-end cache behavior is validated by
+configured integration runs, not here.
 """
 
 import pytest

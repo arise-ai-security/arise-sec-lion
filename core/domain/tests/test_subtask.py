@@ -101,6 +101,7 @@ def test_subtask_defaults_for_new_fields() -> None:
     assert subtask.success_criteria == ""
     assert subtask.failure_indicators == []
     assert subtask.task_type == "general"
+    assert subtask.selection_source == "unspecified"
 
 
 def test_subtask_with_enriched_fields() -> None:

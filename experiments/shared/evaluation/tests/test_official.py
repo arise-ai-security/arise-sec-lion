@@ -180,6 +180,20 @@ def test_host_evidence_builder_derives_abort_and_sanitizer_from_capture() -> Non
     assert evidence.output_sha256 == hashlib.sha256(output.encode("utf-8")).hexdigest()
 
 
+def test_host_evidence_builder_does_not_treat_exit_255_as_a_signal() -> None:
+    """A normal high exit status is not shell-encoded signal termination."""
+
+    # Given: A normal command exit at the maximum eight-bit status
+    # When: Host evidence is derived from the capture
+    evidence = command_evidence_from_capture(
+        argv=("target",), exit_code=255, output="failed", timed_out=False
+    )
+
+    # Then: The out-of-range shell status is not decoded as signal 127
+    assert evidence.signal is None
+    assert not evidence.core_dumped
+
+
 def test_host_evidence_builder_flags_timeout() -> None:
     """A timed-out capture sets timed_out regardless of exit code."""
 

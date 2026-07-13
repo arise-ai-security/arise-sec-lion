@@ -23,7 +23,7 @@ from .worker import (
 
 
 class ApiSettings(BaseSettings):
-    """Query API config that intentionally does not require experiment models."""
+    """Query API config that intentionally does not require provider model settings."""
 
     model_config = SettingsConfigDict(extra="ignore")
 

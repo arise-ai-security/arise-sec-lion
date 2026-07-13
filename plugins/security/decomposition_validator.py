@@ -1,208 +1,67 @@
-"""SEC-bench adaptive and role-contract decomposition policy.
+"""SEC-bench decomposition contract validator (constraints + deterministic fallback).
 
-Adaptive treatments select dependency-closed compact or escalated routes. Legacy phase
-decompositions still enforce required single-role leaves. The role-fused treatment emits
-four LLM phase workers and four host procedure roles directly under the boss.
+Enforces legal roles, one-role-per-leaf, same-phase, dependency closure, and
+invalid-decision fail-safe. Does NOT select specialists from failure keywords —
+that is the Manager's job on re-decomposition.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Literal, cast
+from typing import Literal
 
 from core.ports.decomposition_validator_port import (
     DecompositionVerdict,
     DecompositionViolation,
-    FixedDecomposition,
     SuggestedSubtask,
+    ValidatedSubtask,
 )
 from plugins.security.cve_instance import CVEInstance
-from plugins.security.roles import PHASE_ROLES, role_by_name_ci
+from plugins.security.roles import (
+    ADAPTIVE_SPECIALISTS,
+    COMPACT_ROLES,
+    PHASE_ROLES,
+    role_by_name_ci,
+)
+from plugins.security.route_catalog import (
+    dependency_closed_roles,
+    phase_from_controller_task,
+    role_instruction,
+)
 
 
 _BRACKET = re.compile(r"\[([^\]]+)\]")
+_PHASE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "Exploiter": ("Builder",),
+    "Fixer": ("Exploiter",),
+    "Reporter": ("Builder", "Exploiter", "Fixer"),
+}
+_DIRECT_ROLE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "Repro-Creator": ("Build-Verifier",),
+    "Root-Cause-Analyst": ("Exploit-Validator",),
+    "Reporter": ("Build-Verifier", "Exploit-Validator", "Patch-Validator"),
+}
+
+
+def _phase_of(parent_task_description: str) -> str | None:
+    return phase_from_controller_task(parent_task_description or "")
+
+
+def _leaf_for(role_name: str) -> SuggestedSubtask:
+    return SuggestedSubtask(
+        description=role_instruction(role_name),
+        estimated_complexity="simple",
+    )
 
 
 class SecBenchDecompositionValidator:
     """Validate a SEC-bench phase decomposition against the role catalog."""
 
-    _PHASES = ("Builder", "Exploiter", "Fixer", "Reporter")
-    _PHASE_DEPS = {
-        "Exploiter": ("Builder",),
-        "Fixer": ("Exploiter",),
-        "Reporter": ("Fixer",),
-    }
-    _COMPACT = {
-        "Builder": ("Build-Executor", "Build-Verifier"),
-        "Exploiter": ("Repro-Creator", "Exploit-Validator"),
-        "Fixer": ("Root-Cause-Analyst", "Patch-Applier", "Patch-Validator"),
-        "Reporter": ("Reporter",),
-    }
-    _ROLE_FUSED_ROOT = (
-        "Builder",
-        "Build-Verifier",
-        "Exploiter",
-        "Exploit-Validator",
-        "Fixer",
-        "Patch-Applier",
-        "Patch-Validator",
-        "Reporter",
-    )
-    _ROLE_FUSED_DEPS = {
-        "Build-Verifier": ("Builder",),
-        "Exploiter": ("Build-Verifier",),
-        "Exploit-Validator": ("Exploiter",),
-        "Fixer": ("Exploit-Validator",),
-        "Patch-Applier": ("Fixer",),
-        "Patch-Validator": ("Patch-Applier",),
-        "Reporter": ("Patch-Validator",),
-    }
-    _ESCALATED = {
-        "Builder": ("Build-Setup", "Build-Executor", "Build-Verifier"),
-        "Exploiter": (
-            "PoC-Researcher",
-            "PoC-Tester",
-            "Repro-Creator",
-            "Exploit-Validator",
-        ),
-        "Fixer": (
-            "Root-Cause-Analyst",
-            "Candidate-Reviewer",
-            "Regression-Tester",
-            "Patch-Applier",
-            "Patch-Validator",
-        ),
-        "Reporter": ("Reporter",),
-    }
-    # Trigger-conditioned expansion: which same-phase specialists a specific
-    # failure signal calls for, added on top of the compact roles.
-    _EXPANSION: dict[str, tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]] = {
-        "Builder": (
-            (("build", "compile", "setup", "dependenc", "binary"),
-             ("Build-Setup", "Build-Verifier")),
-        ),
-        "Exploiter": (
-            (("sanitizer", "poc", "trigger", "crash", "asan"),
-             ("PoC-Researcher", "PoC-Tester")),
-            (("reproduc", "conflict", "data flow", "dataflow", "call graph"),
-             ("Data-Flow-Analyst", "Forward-Instrumentator")),
-        ),
-        "Fixer": (
-            (("candidate", "fix layer", "multiple", "over-broad", "overbroad"),
-             ("Candidate-Reviewer",)),
-            (("regression", "patch validation", "rebuild", "still crash", "revert"),
-             ("Regression-Tester",)),
-        ),
-    }
-
     def __init__(
-        self, adaptive_execution: bool = False, policy_version: str = "b4-adaptive-v1"
-    ) -> None:
-        self._adaptive_execution = adaptive_execution
-        # The treatment/policy version is orchestration config, supplied by the
-        # composition root — not owned here. Stamped onto route provenance so it
-        # cannot silently drift from settings.orchestration.treatment_version.
-        self._policy_version = policy_version
-        self._role_fused = policy_version == "b4-adaptive-rolefused-v1"
-
-    @staticmethod
-    def safe_route(
-        requested: str | None,
-        *,
-        decision_complete: bool,
-    ) -> Literal["compact", "expanded", "escalated"]:
-        """Fail incomplete or invalid route decisions to expanded execution."""
-        if not decision_complete or requested not in {"compact", "expanded", "escalated"}:
-            return "expanded"
-        return cast(Literal["compact", "expanded", "escalated"], requested)
-
-    def _escalated_roles(self, phase: str, failure_signal: str) -> tuple[str, ...]:
-        """Compact roles plus the specialists a specific failure signal calls for.
-
-        Preserves the phase's compact roles (their successful artifacts are reused,
-        not restarted) and adds only the targeted specialists for the observed
-        failure. With no recognizable signal, falls back to the phase's full
-        specialist set. Stays within the phase — never injects the whole catalog.
-        """
-        compact = self._COMPACT.get(phase, ())
-        signal = failure_signal.lower()
-        matched: list[str] = []
-        for keywords, specialists in self._EXPANSION.get(phase, ()):
-            if any(keyword in signal for keyword in keywords):
-                matched.extend(specialists)
-        if not matched:
-            return self._ESCALATED.get(phase, compact)
-        selected = list(dict.fromkeys((*compact, *matched)))
-        order = {role.name: i for i, role in enumerate(PHASE_ROLES.get(phase, ()))}
-        selected.sort(key=lambda name: order.get(name, len(order)))
-        return tuple(selected)
-
-    @staticmethod
-    def _with_hard_dependencies(phase: str, role_names: tuple[str, ...]) -> tuple[str, ...]:
-        """Return selected roles plus every transitive hard producer in catalog order."""
-        selected = set(role_names)
-        changed = True
-        while changed:
-            changed = False
-            for role in PHASE_ROLES.get(phase, ()):
-                if role.name not in selected:
-                    continue
-                for dependency in role.depends_on:
-                    if dependency not in selected:
-                        selected.add(dependency)
-                        changed = True
-        return tuple(
-            role.name for role in PHASE_ROLES.get(phase, ()) if role.name in selected
-        )
-
-    def fixed_decomposition(
         self,
-        *,
-        parent_task_description: str,
-        domain_context: object | None,
-        redecomposition_count: int,
-        failure_signal: str = "",
-    ) -> FixedDecomposition | None:
-        if not self._adaptive_execution or not isinstance(domain_context, CVEInstance):
-            return None
-        phase = self._phase_of(parent_task_description)
-        if phase is None:
-            if _BRACKET.match((parent_task_description or "").lstrip()) is not None:
-                return None
-            root_roles = self._ROLE_FUSED_ROOT if self._role_fused else self._PHASES
-            subtasks = tuple(
-                SuggestedSubtask(
-                    description=f"[{name}] Execute the {name} phase outcome gate.",
-                    estimated_complexity="simple" if self._role_fused else "complex",
-                )
-                for name in root_roles
-            )
-            return FixedDecomposition(
-                subtasks=subtasks,
-                policy_version=self._policy_version,
-                phase="skeleton",
-                route="compact",
-                triggers=("run_started",),
-                remaining_budget=1,
-            )
-        if self._role_fused:
-            return None
-        if redecomposition_count == 0:
-            role_names = self._with_hard_dependencies(phase, self._COMPACT[phase])
-            route_name = self.safe_route("compact", decision_complete=True)
-        else:
-            role_names = self._with_hard_dependencies(
-                phase, self._escalated_roles(phase, failure_signal)
-            )
-            route_name = self.safe_route("escalated", decision_complete=True)
-        return FixedDecomposition(
-            subtasks=tuple(self._leaf_for(name) for name in role_names),
-            policy_version=self._policy_version,
-            phase=phase,
-            route=route_name,
-            triggers=("upstream_success",) if route_name == "compact" else ("phase_gate_failed",),
-            remaining_budget=max(0, 1 - redecomposition_count),
-        )
+        policy_version: str = "unversioned",
+    ) -> None:
+        self._policy_version = policy_version
 
     def classify(
         self,
@@ -210,23 +69,44 @@ class SecBenchDecompositionValidator:
         parent_task_description: str,
         subtask_descriptions: tuple[str, ...],
         domain_context: object | None,
+        redecomposition_count: int = 0,
+        previously_selected_roles: tuple[str, ...] = (),
+        failed_role_labels: tuple[str, ...] = (),
+        completed_role_labels: tuple[str, ...] = (),
+        redecomposition_limit: int = 0,
     ) -> DecompositionVerdict:
-        # Only CVE phase decompositions carry a role contract; everything else is a no-op
-        # so the gate never touches non-SEC-bench or boss-level (no phase bracket) runs.
+        _ = previously_selected_roles  # available for future multi-attempt tracking
         if not isinstance(domain_context, CVEInstance):
             return DecompositionVerdict(ok=True)
-        phase = self._phase_of(parent_task_description)
+        phase = _phase_of(parent_task_description)
         if phase is None:
             return DecompositionVerdict(ok=True)
-        if self._adaptive_execution:
-            required_names = set(
-                self._with_hard_dependencies(phase, self._COMPACT[phase])
+
+        if redecomposition_count > 0:
+            return self._classify_adaptive_redecomposition(
+                phase=phase,
+                subtask_descriptions=subtask_descriptions,
+                failed_role_labels=failed_role_labels,
+                completed_role_labels=completed_role_labels,
+                redecomposition_count=redecomposition_count,
+                redecomposition_limit=redecomposition_limit,
             )
-            required = tuple(
-                role for role in PHASE_ROLES.get(phase, ()) if role.name in required_names
-            )
-        else:
-            required = tuple(role for role in PHASE_ROLES.get(phase, ()) if role.required)
+
+        return self._classify_standard(
+            phase=phase,
+            subtask_descriptions=subtask_descriptions,
+        )
+
+    def _classify_standard(
+        self,
+        *,
+        phase: str,
+        subtask_descriptions: tuple[str, ...],
+    ) -> DecompositionVerdict:
+        required_names = set(dependency_closed_roles(phase, COMPACT_ROLES[phase]))
+        required = tuple(
+            role for role in PHASE_ROLES.get(phase, ()) if role.name in required_names
+        )
         if not required:
             return DecompositionVerdict(ok=True)
 
@@ -234,26 +114,74 @@ class SecBenchDecompositionValidator:
         removals: list[int] = []
         present: set[str] = set()
         merged_roles: list[str] = []
+        validated: list[ValidatedSubtask] = []
 
         for index, description in enumerate(subtask_descriptions):
-            roles = self._catalog_roles_in(description, phase)
+            roles = self._catalog_roles_in(description)
             if len(roles) > 1:
-                # Merged leaf: the router only honours the leading bracket, so the
-                # trailing role's deliverable is silently dropped. Drop + split it.
                 removals.append(index)
-                merged_roles.extend(roles)
+                merged_roles.extend(
+                    role_name
+                    for role_name in roles
+                    if self._role_phase(role_name) == phase and role_name in required_names
+                )
                 violations.append(
                     DecompositionViolation(
                         kind="merged_leaf",
-                        detail=f"leaf {index} merges multiple {phase} roles: {', '.join(roles)}",
+                        detail=f"leaf {index} merges multiple catalog roles: {', '.join(roles)}",
                         subtask_index=index,
                     )
                 )
             elif len(roles) == 1:
-                present.add(roles[0])
+                role_name = roles[0]
+                if self._role_phase(role_name) == phase and role_name in required_names:
+                    if role_name in present:
+                        removals.append(index)
+                        violations.append(
+                            DecompositionViolation(
+                                kind="duplicate_role",
+                                detail=f"leaf {index} duplicates {role_name}",
+                                subtask_index=index,
+                            )
+                        )
+                    else:
+                        present.add(role_name)
+                        validated.append(
+                            ValidatedSubtask(
+                                subtask_index=index,
+                                canonical_description=self._canonical_description(
+                                    description, role_name
+                                ),
+                            )
+                        )
+                else:
+                    removals.append(index)
+                    detail = (
+                        f"leaf {index} uses {role_name} outside {phase}"
+                        if self._role_phase(role_name) != phase
+                        else f"leaf {index} uses non-compact initial role {role_name}"
+                    )
+                    violations.append(
+                        DecompositionViolation(
+                            kind=(
+                                "invalid_role"
+                                if self._role_phase(role_name) != phase
+                                else "disallowed_role"
+                            ),
+                            detail=detail,
+                            subtask_index=index,
+                        )
+                    )
+            else:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="invalid_role",
+                        detail=f"leaf {index} has no catalog role",
+                        subtask_index=index,
+                    )
+                )
 
-        # Roles to inject: merged-leaf roles not also present as a clean leaf, plus any
-        # missing required role. Each is queued at most once.
         inject: list[str] = []
         for role_name in merged_roles:
             if role_name not in present and role_name not in inject:
@@ -268,61 +196,281 @@ class SecBenchDecompositionValidator:
                 )
                 inject.append(role.name)
 
-        # Emit injections in catalog (execution) order so a producer leaf precedes its
-        # consumer when appended (depends_on is also enforced as DAG edges by the scheduler).
         catalog_order = {role.name: i for i, role in enumerate(PHASE_ROLES.get(phase, ()))}
         inject.sort(key=lambda name: catalog_order.get(name, len(catalog_order)))
 
         return DecompositionVerdict(
             ok=not violations,
             violations=tuple(violations),
-            additions=tuple(self._leaf_for(name) for name in inject),
+            additions=tuple(_leaf_for(name) for name in inject),
             removals=tuple(removals),
+            validated_subtasks=tuple(validated),
         )
 
-    @staticmethod
-    def _phase_of(parent_task_description: str) -> str | None:
-        """Resolve the parent's phase from its LEADING bracket, or None.
+    def _classify_adaptive_redecomposition(
+        self,
+        *,
+        phase: str,
+        subtask_descriptions: tuple[str, ...],
+        failed_role_labels: tuple[str, ...],
+        completed_role_labels: tuple[str, ...],
+        redecomposition_count: int,
+        redecomposition_limit: int,
+    ) -> DecompositionVerdict:
+        """Validate Manager-authored escalation; expand when no legal role remains."""
+        completed = self._canonical_role_names(completed_role_labels)
+        failed = self._canonical_role_names(failed_role_labels)
+        allowed = self._allowed_escalation_roles(phase, completed=completed, failed=failed)
+        allowed_set = set(allowed)
 
-        Only a *phase* bracket ([Builder]/[Exploiter]/[Fixer]/[Reporter]) owns a leaf-role
-        contract. A parent bracketed with a leaf role (a worker that itself decomposed)
-        does NOT own the phase's full role set, so it resolves to None (no enforcement).
-        Anchored at the start so an incidental phase name mid-text does not trigger a contract.
-        """
-        match = _BRACKET.match((parent_task_description or "").lstrip())
-        if match is None:
-            return None
-        label = match.group(1).strip()
-        return label if label in PHASE_ROLES else None
+        violations: list[DecompositionViolation] = []
+        removals: list[int] = []
+        # Roles the Manager intended (including splits from merged leaves).
+        manager_roles: list[str] = []
+        validated: list[ValidatedSubtask] = []
+
+        for index, description in enumerate(subtask_descriptions):
+            roles = self._catalog_roles_in(description)
+            if len(roles) > 1:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="merged_leaf",
+                        detail=f"leaf {index} merges multiple catalog roles: {', '.join(roles)}",
+                        subtask_index=index,
+                    )
+                )
+                for role_name in roles:
+                    if (
+                        role_name in allowed_set
+                        and role_name not in completed
+                        and role_name not in manager_roles
+                    ):
+                        manager_roles.append(role_name)
+                continue
+
+            if not roles:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="invalid_role",
+                        detail=f"leaf {index} has no legal {phase} catalog role",
+                        subtask_index=index,
+                    )
+                )
+                continue
+
+            role_name = roles[0]
+            if self._role_phase(role_name) != phase:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="invalid_role",
+                        detail=f"leaf {index} uses {role_name} outside {phase}",
+                        subtask_index=index,
+                    )
+                )
+                continue
+
+            if role_name in completed:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="completed_role",
+                        detail=f"completed role must not be respawned: {role_name}",
+                        subtask_index=index,
+                    )
+                )
+                continue
+
+            if role_name not in allowed_set:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="disallowed_role",
+                        detail=f"role not in adaptive catalog for {phase}: {role_name}",
+                        subtask_index=index,
+                    )
+                )
+                continue
+
+            if role_name in manager_roles:
+                removals.append(index)
+                violations.append(
+                    DecompositionViolation(
+                        kind="duplicate_role",
+                        detail=f"leaf {index} duplicates {role_name}",
+                        subtask_index=index,
+                    )
+                )
+                continue
+
+            manager_roles.append(role_name)
+            validated.append(
+                ValidatedSubtask(
+                    subtask_index=index,
+                    canonical_description=self._canonical_description(
+                        description, role_name
+                    ),
+                )
+            )
+
+        # Close hard dependencies; completed producers are treated as satisfied.
+        closed = [
+            name
+            for name in dependency_closed_roles(phase, tuple(manager_roles))
+            if name not in completed
+        ]
+        injected_deps = [name for name in closed if name not in manager_roles]
+        if injected_deps:
+            violations.append(
+                DecompositionViolation(
+                    kind="missing_hard_dependency",
+                    detail=f"injected hard producers: {', '.join(injected_deps)}",
+                )
+            )
+
+        final_roles = closed
+        route: Literal["expanded", "escalated"]
+        triggers: tuple[str, ...]
+
+        if not final_roles:
+            # Fail-safe: full remaining same-phase escalation set.
+            final_roles = list(allowed)
+            route = "expanded"
+            triggers = ("manager_decision_invalid", "fallback_expanded")
+            violations.append(
+                DecompositionViolation(
+                    kind="empty_after_correction",
+                    detail="no valid role remained; expanded to remaining same-phase set",
+                )
+            )
+            removals = list(range(len(subtask_descriptions)))
+            additions = tuple(_leaf_for(name) for name in final_roles)
+        else:
+            route = "escalated"
+            trigger_list = ["phase_gate_failed", "manager_llm"]
+            if removals:
+                trigger_list.append("host_structural_repair")
+            if injected_deps:
+                trigger_list.append("host_dependency_closure")
+            triggers = tuple(trigger_list)
+            present_after = {
+                roles[0]
+                for i, description in enumerate(subtask_descriptions)
+                if i not in removals
+                for roles in (self._catalog_roles_in(description),)
+                if len(roles) == 1
+                and self._role_phase(roles[0]) == phase
+                and roles[0] not in completed
+            }
+            inject_names = [n for n in final_roles if n not in present_after]
+            catalog_order = {
+                role.name: i for i, role in enumerate(PHASE_ROLES.get(phase, ()))
+            }
+            inject_names.sort(key=lambda name: catalog_order.get(name, len(catalog_order)))
+            additions = tuple(_leaf_for(name) for name in inject_names)
+
+        if not final_roles:
+            return DecompositionVerdict(
+                ok=False,
+                violations=tuple(violations)
+                + (
+                    DecompositionViolation(
+                        kind="unsatisfiable_dependency",
+                        detail=f"no runnable {phase} roles remain after completed filter",
+                    ),
+                ),
+                route="expanded",
+                triggers=("manager_decision_invalid", "fallback_expanded"),
+                policy_version=self._policy_version,
+                phase=phase,
+                remaining_budget=max(0, redecomposition_limit - redecomposition_count),
+                validated_subtasks=tuple(validated),
+            )
+
+        ok = not violations and not removals and not additions
+        return DecompositionVerdict(
+            ok=ok,
+            violations=tuple(violations),
+            additions=additions,
+            removals=tuple(sorted(set(removals))),
+            route=route,
+            triggers=triggers,
+            policy_version=self._policy_version,
+            phase=phase,
+            remaining_budget=max(0, redecomposition_limit - redecomposition_count),
+            validated_subtasks=tuple(validated),
+        )
+
+    def _allowed_escalation_roles(
+        self,
+        phase: str,
+        *,
+        completed: set[str],
+        failed: set[str],
+    ) -> tuple[str, ...]:
+        """Compact + specialists for the phase, minus completed roles."""
+        compact = COMPACT_ROLES.get(phase, ())
+        specialists = ADAPTIVE_SPECIALISTS.get(phase, ())
+        selected = dependency_closed_roles(phase, (*compact, *specialists))
+        extra_failed = tuple(
+            role.name
+            for name in failed
+            if (role := role_by_name_ci(name)) is not None
+            and role.name not in selected
+            and role.phase == phase
+        )
+        if extra_failed:
+            selected = dependency_closed_roles(phase, (*selected, *extra_failed))
+        return tuple(name for name in selected if name not in completed)
 
     @staticmethod
-    def _catalog_roles_in(description: str, phase: str) -> list[str]:
-        """Catalog roles of ``phase`` referenced by brackets in this leaf, in order."""
+    def _catalog_roles_in(description: str) -> list[str]:
         out: list[str] = []
         for match in _BRACKET.finditer(description or ""):
             role = role_by_name_ci(match.group(1).strip())
-            if role is not None and role.phase == phase and role.name not in out:
+            if role is not None and role.name not in out:
                 out.append(role.name)
         return out
 
     @staticmethod
-    def _leaf_for(role_name: str) -> SuggestedSubtask:
+    def _role_phase(role_name: str) -> str | None:
         role = role_by_name_ci(role_name)
-        if role is None:
-            return SuggestedSubtask(description=f"[{role_name}]")
-        # Carry the role's full objective (summary + empirical insight) and its hard
-        # catalog deps so the injected leaf is as rich as a manager-authored one and is
-        # scheduled after its producer.
-        objective = " ".join(part for part in (role.summary, role.insight) if part)
-        return SuggestedSubtask(
-            description=f"[{role.name}] {objective}".strip(),
-            estimated_complexity="simple",
-        )
+        return role.phase if role is not None else None
+
+    @staticmethod
+    def _canonical_role_names(role_labels: tuple[str, ...]) -> set[str]:
+        return {
+            role.name
+            for label in role_labels
+            if (role := role_by_name_ci(label)) is not None
+        }
+
+    @staticmethod
+    def _canonical_description(description: str, role_name: str) -> str:
+        stripped = description.strip()
+        for match in _BRACKET.finditer(stripped):
+            role = role_by_name_ci(match.group(1).strip())
+            if role is None or role.name != role_name:
+                continue
+            instruction = " ".join(
+                f"{stripped[:match.start()]} {stripped[match.end():]}".split()
+            )
+            return f"[{role_name}] {instruction}".strip()
+        return f"[{role_name}]"
 
     def hard_dependencies(self, role_label: str) -> tuple[str, ...]:
-        if self._role_fused and role_label in self._ROLE_FUSED_DEPS:
-            return self._ROLE_FUSED_DEPS[role_label]
-        if self._adaptive_execution and role_label in self._PHASE_DEPS:
-            return self._PHASE_DEPS[role_label]
         role = role_by_name_ci(role_label)
-        return role.depends_on if role is not None else ()
+        phase_dependencies = _PHASE_DEPENDENCIES.get(role_label, ())
+        if role is None:
+            return phase_dependencies
+        return tuple(
+            dict.fromkeys(
+                (
+                    *phase_dependencies,
+                    *role.depends_on,
+                    *_DIRECT_ROLE_DEPENDENCIES.get(role.name, ()),
+                )
+            )
+        )

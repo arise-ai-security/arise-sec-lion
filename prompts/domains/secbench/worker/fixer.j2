@@ -7,31 +7,7 @@ Base commit hash is at `{{ artifact_paths.base_commit_hash }}`.
 {% from 'domains/secbench/_validation_macros.j2' import secb_fix_validation, secb_poll_result %}
 {% set wr = worker_role %}
 
-{% if role_fused %}
-### Role-fused Fixer — root cause, candidate review, and PatchPlan
-
-You combine the LLM-backed Fixer specialties. The separate host `[Patch-Applier]` and
-`[Patch-Validator]` own source transformation and final execution gates.
-
-1. Read the selected PoC, `{{ artifact_paths.repro_script }}`, the frozen sanitizer report,
-   and raw Exploit-Validator evidence. Reproduce once only when evidence is incomplete.
-2. Trace backward from the first application crash frame to the data origin. For pointer or
-   type-confusion bugs, use one-shot instrumentation, capture the output, and revert every
-   probe before continuing.
-3. Compare at least two repair sites against contract, coverage, failure mode, and regression
-   risk. Reject crash-site suppression unless no causal repair layer exists.
-4. Write `{{ artifact_paths.root_cause_analysis }}` with the exact machine-readable keys:
-{% for key, description in root_cause_block_fields %}   - `{{ key }}`: {{ description }}
-{% endfor %}
-5. Without editing project source, author `{{ artifact_paths.patch_plan }}` using the frozen
-   PatchPlan schema: exact current file SHA-256, unique anchors, literal replacements,
-   evidence references, allowed/forbidden paths, postconditions, pre-patch exploit identity,
-   and `validation_commands=["secb patch", "secb build", "secb repro"]`.
-6. Print both artifacts verbatim and finish. Do not create `{{ artifact_paths.model_patch }}`
-   or `{{ artifact_paths.patch_validation }}`.
-
-The host rejects ambiguous, stale, unsupported, or out-of-scope plans instead of guessing.
-{% elif wr and wr.name == 'Root-Cause-Analyst' %}
+{% if wr and wr.name == 'Root-Cause-Analyst' %}
 ### Your role: [Root-Cause-Analyst]
 
 Reason about the causal defect and author the exact PatchPlan. You must not edit source,
@@ -95,7 +71,8 @@ The host validation procedure failed once. Diagnose that evidence and rerun the 
 1. `secb patch`; require a clean apply.
 2. `secb build`; require exit 0.
 3. Clear stale fix logs and run `secb repro` three times.
-4. Fail on timeout, signal, assertion, sanitizer report, or inconsistent exits.
+4. Fail on timeout, signal, assertion, sanitizer report, inconsistent exits, or an exit
+   outside the frozen clean set: `0` plus the CVE dataset exit oracle.
 5. Write `{{ artifact_paths.patch_validation }}` using the exact required keys, then print the
    raw commands, exits, logs, and final verdict.
 
@@ -135,9 +112,9 @@ Any source files already read by upstream workers are in `<provided_source_files
    and shared findings via `<context-update>`, **validate and build on their work** —
    don't redo confirmed analysis. Treat peer findings as evidence inputs, not
    authority. If an analyst claims the root cause is in a different file than the
-   manager assigned, follow that claim only after verifying raw logs/code evidence
-   and writing a `MANAGER_OVERRIDE` block. **If a peer worker failed**, their work is
-   unavailable — fall back to the manager's guidance and run the experiments yourself.
+   supervisor assigned, follow that claim only after verifying raw logs/code evidence
+   and writing a `SUPERVISOR_OVERRIDE` block. **If a peer worker failed**, their work is
+   unavailable — fall back to the supervisor's guidance and run the experiments yourself.
 4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
 
 Then validate what you're building on:
@@ -219,7 +196,7 @@ Then validate what you're building on:
    - Each `fix_run_$N.log` must end with an `exit=<code>` line and show NO sanitizer error for a clean patch. The evaluator reads ONLY `fix_run_*.log` (do NOT create alternate generations like `fix_run2_*`); if the poll prints NOT FINISHED, re-run only the poll. A `fix_run` log without a trailing `exit=` line is invalid evidence even when the patch works.
 
 6. **Test fix with CWE-appropriate validation** (use ALL tools, but prioritize based on CWE):
-   - Run `secb repro` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
+   - Run `secb repro` — it must print NO sanitizer errors and exit either 0 or the frozen CVE dataset exit oracle. Do not treat an arbitrary nonzero exit as acceptable merely because it looks like normal exception handling.
    - **Memory Lifecycle (leaks)** — Valgrind is the PRIMARY validator:
      `valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./binary < poc_input`
      MUST show `All heap blocks were freed -- no leaks are possible` or `0 bytes in 0 blocks` for the previously-leaked allocation.

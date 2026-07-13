@@ -1,12 +1,13 @@
-# Cell B4 — adaptive fixed phase controllers with evidence-gated worker routes.
-# max_depth=3 preserves BOSS -> phase controller -> selected worker. The security
-# decomposition policy supplies the top-level skeleton and compact/escalated routes;
-# the LLM does not rediscover those structures.
+# Cell B4 — host-fixed phase controllers with Manager-authored failure recovery.
+# The host creates the initial phase skeleton and compact role route. After a
+# required failure, the phase Manager selects a revised same-phase route and the
+# host validates it before children spawn.
 
 extends: config/config.yaml
 
 overrides:
-  orchestration.treatment_version: b4-adaptive-v1
+  orchestration.treatment_version: b4-adaptive-manager-v2
+  orchestration.max_redecompositions: 1
   orchestration.mode: hierarchical
   orchestration.skip_judge: true
   orchestration.procedural_dispatch: true
@@ -20,8 +21,10 @@ overrides:
   orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
   orchestration.topology.max_depth: 3
-  orchestration.topology.max_children_per_node: 5
-  orchestration.topology.max_total_agents: 24
+  # Nine permits the same flattened compact route in the no-Manager topology.
+  # The security validator independently caps Manager routes to the phase catalog.
+  orchestration.topology.max_children_per_node: 9
+  orchestration.topology.max_total_agents: 30
   # Escalated routes and verification retries still require a wide wall-clock cap.
   orchestration.max_run_duration_seconds: 14400
   boss.model: gpt-5.4

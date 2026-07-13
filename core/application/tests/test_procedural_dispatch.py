@@ -31,6 +31,7 @@ from core.application.services import (
     PromptBuilder,
 )
 from core.domain.events.events import (
+    ChildFailed,
     CodeGenerationStarted,
     DomainEvent,
     FailureDigestRecorded,
@@ -38,7 +39,9 @@ from core.domain.events.events import (
     ProcedureExecutionFinished,
     ProcedureExecutionStarted,
     RetryScheduled,
+    ThoughtCaptured,
     WorkCompleted,
+    WorkFailed,
 )
 from core.domain.values.procedure import (
     ProcedureEvidence,
@@ -86,6 +89,26 @@ class RecordingWorker:
         agent_id = task_context["agent_id"]
         yield CodeGenerationStarted(aggregate_id=agent_id, sequence_number=0, tool_name="fake")
         yield WorkCompleted(aggregate_id=agent_id, sequence_number=0, result="agentic done")
+
+
+class FailingWorker:
+    """Agentic worker fake that records one failed recovery attempt."""
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def run_session(self, task_context: dict[str, Any]) -> AsyncIterator[DomainEvent]:
+        self.prompts.append(task_context["task_description"])
+        agent_id = task_context["agent_id"]
+        yield CodeGenerationStarted(aggregate_id=agent_id, sequence_number=0, tool_name="fake")
+        yield ThoughtCaptured(
+            aggregate_id=agent_id,
+            sequence_number=0,
+            content="agentic fallback inspected the rejected artifact",
+            output_type="tool_result",
+            tool_name="inspect",
+        )
+        yield WorkFailed(aggregate_id=agent_id, sequence_number=0, reason="agentic failed")
 
 
 def _wire_service(
@@ -235,6 +258,43 @@ async def test_failed_procedure_escalates_agentic_with_digest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_procedure_gets_exactly_one_agentic_attempt() -> None:
+    event_store = InMemoryEventStore()
+    llm = FakeLLM()
+    llm._default_subtasks = _subtask_json("[Fake-Procedure] validate the artifact")
+    executor = FakeProcedureExecutor(
+        result=ProcedureResult(
+            success=False,
+            summary="VERDICT: FAIL",
+            digest="FAILURE: procedure rejected the artifact",
+        )
+    )
+    worker = FailingWorker()
+    svc = _wire_service(event_store, llm, worker, executor)
+    boss_id, child_id = await _spawn_worker(svc, event_store)
+
+    await svc.run_agent_step(child_id)
+    await svc.run_agent_step(child_id)
+
+    events = _events_for(event_store, child_id)
+    assert len([event for event in events if isinstance(event, RetryScheduled)]) == 1
+    digests = [event for event in events if isinstance(event, FailureDigestRecorded)]
+    assert [digest.source for digest in digests] == [
+        "procedure_failure",
+        "worker_crash",
+    ]
+    assert "FAILURE: agentic failed" in digests[-1].digest
+    assert "agentic fallback inspected the rejected artifact" in digests[-1].digest
+    parent_failures = [
+        event for event in _events_for(event_store, boss_id) if isinstance(event, ChildFailed)
+    ]
+    assert parent_failures[-1].digest == digests[-1].digest
+    assert executor.execute_calls == ["fake_validation"]
+    assert len(worker.prompts) == 1
+    assert _get_agent_status(event_store, child_id) == "failed"
+
+
+@pytest.mark.asyncio
 async def test_procedure_records_plan_approval_provenance() -> None:
     """A host-approved plan is frozen on the worker event stream."""
 
@@ -293,8 +353,8 @@ async def test_infrastructure_fault_fails_open_to_agentic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agentic_marking_bypasses_registry_match() -> None:
-    """execution_mode='agentic' forces the worker path even when the registry matches."""
+async def test_parent_agentic_hint_cannot_bypass_registry_match() -> None:
+    """Only the Host registry decides whether a matching task is procedural."""
 
     # Given: a matching description explicitly marked agentic by the parent
     event_store = InMemoryEventStore()
@@ -312,21 +372,23 @@ async def test_agentic_marking_bypasses_registry_match() -> None:
     _, child_id = await _spawn_worker(svc, event_store)
     await svc.run_agent_step(child_id)
 
-    # Then: the procedure never ran; the agentic worker did
-    assert executor.execute_calls == []
-    assert len(worker.prompts) == 1
+    # Then: the Host registry won; the untrusted execution hint was ignored
+    assert executor.execute_calls == ["fake_validation"]
+    assert worker.prompts == []
     assert _get_agent_status(event_store, child_id) == "completed"
 
 
 @pytest.mark.asyncio
-async def test_unknown_explicit_ref_downgrades_to_auto() -> None:
-    """A bad LLM marking (unknown ref) falls back to auto-match, never dead-ends."""
+async def test_parent_procedure_hint_cannot_select_registry_entry() -> None:
+    """A parent cannot dispatch a procedure for a task the Host registry did not match."""
 
-    # Given: an explicit procedural marking with an unregistered ref and no auto match
+    # Given: a registered procedure hint on a task with no Host registry match
     event_store = InMemoryEventStore()
     llm = FakeLLM()
     llm._default_subtasks = _subtask_json(
-        "plain task, no bracket", execution_mode="procedural", procedure_ref="not_registered"
+        "plain task, no bracket",
+        execution_mode="procedural",
+        procedure_ref="fake_validation",
     )
     executor = FakeProcedureExecutor(
         result=ProcedureResult(success=True, summary="unused")
@@ -338,7 +400,7 @@ async def test_unknown_explicit_ref_downgrades_to_auto() -> None:
     _, child_id = await _spawn_worker(svc, event_store)
     await svc.run_agent_step(child_id)
 
-    # Then: dispatch downgraded to auto (no match) and executed agentically
+    # Then: no Host match means agentic execution, despite the registered hint
     assert executor.execute_calls == []
     assert len(worker.prompts) == 1
     assert _get_agent_status(event_store, child_id) == "completed"

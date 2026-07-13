@@ -10,7 +10,7 @@ frozen N1/B4 arms paired by ``(task, base_commit)``, a deterministic randomized-
 interleaved launch order (so temporal/host-contention drift cannot align with
 one arm), intention-to-treat enrollment that RETAINS failures and timeouts
 instead of curating to the latest success, and report integration over the
-predeclared cost/success endpoints.
+predeclared cost/success endpoints and evaluator-completeness guard.
 """
 
 from __future__ import annotations
@@ -61,7 +61,9 @@ class LaunchOutcome:
     ``failed`` / ``timeout`` / ...). Failures and timeouts are retained with
     their real (usually False) success flags — never curated away.
     ``cost=None`` represents unavailable usage and is rejected by cost analysis;
-    it must never be replaced with a numeric zero.
+    it must never be replaced with a numeric zero. ``evaluation_complete`` is
+    independent of cost completeness: it records whether the authoritative
+    evaluator produced a complete bundle for this assignment.
     """
 
     cell: str
@@ -73,7 +75,19 @@ class LaunchOutcome:
     cost: float | None
     mechanical_success: bool
     combined_success: bool
-    completeness_rate: float = 1.0
+    cost_completeness_rate: float
+    evaluation_complete: bool
+
+    def __post_init__(self) -> None:
+        """Reject success claims that lack a complete authoritative evaluation."""
+        if not 0.0 <= self.cost_completeness_rate <= 1.0:
+            raise ValueError("cost_completeness_rate must be between 0.0 and 1.0")
+        if not self.evaluation_complete and (
+            self.mechanical_success or self.combined_success
+        ):
+            raise ValueError("an incomplete evaluation cannot report success")
+        if self.status == "evaluation_failed" and self.evaluation_complete:
+            raise ValueError("evaluation_failed outcomes must be evaluation-incomplete")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +107,8 @@ class ConfirmatoryReport:
 
     Primary ITT success analysis remains available when secondary cost is
     incomplete. Cost endpoints report ``cost_available=false`` and the exact
-    missing assignment keys instead of imputing zero or dropping pairs.
+    missing assignment keys instead of imputing zero or dropping pairs. Evaluator
+    completeness is reported independently and gates the superiority decision.
     """
 
     pairs: tuple[InstancePair, ...]
@@ -105,6 +120,9 @@ class ConfirmatoryReport:
     b4_cost: CostEndpoints
     cost_available: bool
     missing_cost_keys: tuple[str, ...]
+    evaluation_completeness_rate: float
+    evaluation_complete: bool
+    incomplete_evaluation_keys: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
         """Render the report as JSON-compatible primitives."""
@@ -254,7 +272,7 @@ def pair_by_instance(
 def _is_missing_cost(outcome: LaunchOutcome) -> bool:
     """True when usage is unknown, including the legacy ``0.0``+zero-completeness sentinel."""
     return outcome.cost is None or (
-        outcome.cost == 0.0 and outcome.completeness_rate == 0.0
+        outcome.cost == 0.0 and outcome.cost_completeness_rate == 0.0
     )
 
 
@@ -313,7 +331,7 @@ def cost_endpoints_from_outcomes(outcomes: Sequence[LaunchOutcome]) -> CostEndpo
     missing = tuple(
         _assignment_key(outcome) for outcome in outcomes if _is_missing_cost(outcome)
     )
-    completeness = sum(o.completeness_rate for o in outcomes) / len(outcomes)
+    completeness = sum(o.cost_completeness_rate for o in outcomes) / len(outcomes)
     if missing:
         return CostEndpoints(
             cost_per_run=None,
@@ -352,7 +370,8 @@ def run_confirmatory_study(
 
     The order is deterministic given ``seed``; every launch is enrolled under
     intention-to-treat (failures/timeouts retained); pairs feed the predeclared
-    McNemar + paired-bootstrap statistics and both arms' cost endpoints.
+    McNemar + paired-bootstrap statistics, both arms' cost endpoints, and the
+    independent evaluator-completeness guard.
     ``launch`` is the only side-effecting seam — a fake in tests, the harness in
     production — so this function is fully unit-testable and never spawns a run.
     """
@@ -373,16 +392,30 @@ def run_confirmatory_study(
     missing_cost_keys = tuple(
         sorted({*n1_cost.missing_assignment_keys, *b4_cost.missing_assignment_keys})
     )
+    incomplete_evaluation_keys = tuple(
+        _assignment_key(outcome) for outcome in outcomes if not outcome.evaluation_complete
+    )
+    evaluation_completeness_rate = (
+        (len(outcomes) - len(incomplete_evaluation_keys)) / len(outcomes)
+    )
+    evaluation_complete = not incomplete_evaluation_keys
     return ConfirmatoryReport(
         pairs=pairs,
         observations=observations,
         mcnemar_p=mcnemar_exact(observations),
         intervals=intervals,
-        superiority=superiority_supported(difference) if difference is not None else False,
+        superiority=(
+            evaluation_complete
+            and difference is not None
+            and superiority_supported(difference)
+        ),
         n1_cost=n1_cost,
         b4_cost=b4_cost,
         cost_available=n1_cost.cost_available and b4_cost.cost_available,
         missing_cost_keys=missing_cost_keys,
+        evaluation_completeness_rate=evaluation_completeness_rate,
+        evaluation_complete=evaluation_complete,
+        incomplete_evaluation_keys=incomplete_evaluation_keys,
     )
 
 

@@ -1,31 +1,35 @@
 # Experiments Re-Architecture
 
-## 2026-07-12 N1 vs B4 confirmatory target
+## 2026-07-13 N1/B3/B4 design
 
 This is the canonical design and release gate for the next N1 vs B4 experiment. It is
 not a claim that every item is implemented; current gaps are listed explicitly at the
-end. Historical matrix proposals remain available in Git history and must not be used
-to interpret the active treatments.
+end. The runtime is experiment-agnostic: source code does not branch on study or
+treatment identifiers. Each study selects behavior only through its YAML configuration.
 
 ### Treatments
 
-| Cell | Frozen treatment | Purpose |
+| Cell | Treatment | Purpose |
 |---|---|---|
-| N1 | one flat OpenHands session | naive baseline |
-| B4 | `b4-adaptive-v1`: BOSS -> four phase controllers -> compact role workers; targeted specialists added only after phase failure | adaptive hierarchical treatment |
-| B3 | `b4-adaptive-rolefused-v1`: BOSS -> four fused LLM phase workers plus four host procedures; no phase managers or role children | composite manager-plus-specialization ablation |
+| N1 | `n1-openhands-linear`: one flat OpenHands session | naive baseline |
+| B4 | `b4-adaptive-manager-v2`: BOSS -> four host-created phase Managers -> host-created compact role workers; after a required failure the LLM Manager proposes same-phase recovery roles and failure-specific instructions | adaptive hierarchical treatment |
+| B3 | `b3-direct-compact-v1`: BOSS -> the same nine compact roles directly; Manager layer omitted | direct manager-layer ablation |
 
-B3 is not a pure manager ablation. It simultaneously removes phase managers and fuses
-specialist roles, changing prompt scope, context allocation, and model-token allocation.
-Reports must use the term **role-fused composite ablation**. Do not claim that B3 alone
-identifies a causal manager effect.
+B3 changes only the Manager layer: `include_manager_layer: false`. Every other resolved
+behavioral setting, including hierarchy limits, is identical to B4. The host
+generically flattens the same compact phase DAG. B3 otherwise inherits B4's role prompts,
+models, tools, procedures, domain context, retry policy, and budgets. Runtime briefing and
+ancestry metadata necessarily differs because the Manager node is absent, so rendered prompts
+are not byte-identical. Dependency-scoped source packets remain equivalent: grouping
+predecessors expand to their terminal leaf sinks before entry workers receive context.
 
-The active B3 config may be replaced with the role-fused treatment, but historical runs
-remain immutable and retain their original treatment version in provenance.
+N1 remains flat. Runtime source does not branch on N1/B3/B4 study names or treatment
+identifiers.
 
 ### B4 adaptive route
 
-The current fixed compact route is deterministic host policy, not an LLM manager choice:
+The trusted host deterministically creates the four-phase DAG and each phase's compact
+initial role route:
 
 ```text
 BOSS
@@ -36,14 +40,23 @@ BOSS
 ```
 
 Hard phase dependencies are `Builder -> Exploiter -> Fixer -> Reporter`. A phase gate
-must pass before its dependent phase can become runnable. On failure, the controller
-adds only trigger-matched specialists and reuses successful artifacts. An unrecognized
-failure escalates to that phase's full specialist set, never the whole 16-role catalog.
+must pass before its dependent phase can become runnable. A B4 Manager uses the existing
+LLM decomposition path only after a required failure. It proposes same-phase role labels
+and failure-specific task instructions from the supplied failure evidence.
 
-The prompts must describe this adaptive behavior. B4 does not spawn every catalog role:
-it spawns the selected compact/escalated roles as distinct workers. B3 is the treatment
-that merges each phase's selected responsibilities into one fused phase worker. A prompt
-that forces all 16 roles in B4, or recreates role children in B3, blocks experiment launch.
+The host never interprets failure keywords. It drops unsafe or invalid selections, closes
+hard dependencies, binds each accepted role to its trusted catalog prompt, model, and
+procedure, schedules execution, and records route provenance. It expands to the full
+remaining same-phase set only when the Manager decision is explicitly invalid and leaves
+no safe selection. This is a fail-safe, not normal routing. Completed roles are reused and
+must not be respawned; failed compact roles may be reissued with revised instructions.
+
+`PhaseRouteSelected.task_sources` records each role instruction as `host_policy`, `llm`,
+or `host_repair`. Manager evidence references are copied into child `Briefing` values and
+worker prompts, keeping recovery instructions traceable to the failed evidence.
+
+B4 does not spawn every catalog role initially. B3 receives the same dependency-closed
+nine-role compact route directly from the host, without phase-Manager role selection.
 
 ### Worker taxonomy and model policy
 
@@ -73,9 +86,27 @@ This means `PoC-Researcher`, `Data-Flow-Analyst`, `PoC-Tester`,
 `Build-Setup`, `Build-Executor`, and `Repro-Creator` use `gpt-5.4-mini`.
 `Build-Verifier`, `Exploit-Validator`, `Patch-Applier`, and `Patch-Validator` use no LLM.
 
-In role-fused B3, Builder uses `gpt-5.4-mini`; Exploiter, Fixer, and Reporter use
-`gpt-5.3-codex` because their fused prompts contain reasoning. Persist the selected
+B3 uses the identical B4 per-role routing: the same five LLM-backed compact roles select
+the same models, and the same four procedure-backed roles use no LLM. Persist the selected
 model on every worker-cost event and in the run manifest.
+
+The in-run procedure contract is also identical in B3 and B4. Reproducers declare a
+structured direct argv: an exact prefix resolves the first Builder binary and selected
+PoC, then the final `exec "$BIN"` may contain inert literal arguments and exactly one
+`$POC`, or the sole supported stdin redirection. OpenEXR's
+`exec "$BIN" -v "$POC" /dev/null` and FAAD2's
+`exec "$BIN" "$POC" -o /dev/null` are valid; shell control, substitution, wrappers,
+pipes, setup, and other redirection are not. The Host freezes source/Builder state,
+selected-binary digest, PoC, resolved argv/stdin mode, exploit verdict, plan, and patch
+identity. Procedure commands use direct argv, a fixed launch environment, and an
+in-container timeout; timeout recovery restarts the shared container. Pre-patch success
+requires complete oracle-matching signatures and consistent termination across 3/3, not
+a nonzero exit. Post-patch clean replay accepts only exit 0 or the frozen dataset exit
+oracle and rejects any sanitizer evidence.
+
+`ProcedureEvidence` is Host-computed and stronger than an agent-authored verdict file,
+but its commands still run in the mutable shared worker container. It is an in-run gate;
+the fresh arm-independent evaluator below remains confirmatory authority.
 
 ### Success architecture
 
@@ -96,26 +127,33 @@ All four terms are fail-closed and use the same frozen evaluator across arms.
 - Accept a declared PoC even when its file is zero bytes; presence and path resolution,
   not non-empty content, determine eligibility.
 - Start each evaluation from a fresh frozen base image/worktree.
-- Run the exploit three independent times. Require 3/3 agreement with the frozen CVE
-  oracle on sanitizer class, access kind, top frame/function, signal, exit class, and
-  timeout status.
+- Run the exploit three independent times. Each replay must satisfy the frozen
+  evaluator's own completion, timeout, and sanitizer checks, and all 3/3 must match
+  the frozen CVE oracle on sanitizer class, access kind, and top frame/function.
 - Apply the model patch, rebuild, and run the frozen post-patch evaluator three times.
   Any timeout,
-  signal, assertion, sanitizer finding, disallowed nonzero exit, or crash fails.
+  signal, assertion, sanitizer finding, exit outside the accepted frozen set, or crash fails.
 - Run the declared regression suite separately. A fixed PoC does not imply regression
   safety.
-- Preserve raw stdout/stderr, argv, exit code, signal, duration, timeout flag, image and
-  commit identity, and SHA-256 hashes. Derived summaries do not replace raw evidence.
+- Preserve the exact argv, exit code, derived signal, timeout flag, output hash, image
+  and commit identity, plus the upstream evaluator's raw JSON reports. The normalized
+  adapter currently captures combined command output rather than separate stdout/stderr
+  or a per-command duration field; documentation must not claim those absent fields.
 
 #### Safety and provenance
 
-- Protect benchmark scripts, submitted PoC artifacts, evaluator inputs, and oracle data from patch
-  modification.
+- Protect the canonical host-owned paths enforced by the safety floor: PoC and binary
+  pointers, the repro and patch wrappers, validation transcripts, the evaluation bundle,
+  and the `secb`/compile shims. The external adapter transports the submitted PoC and patch
+  separately, but the safety floor does not dynamically add the declared PoC payload path
+  to its protected-path set; do not claim that stronger property.
 - Bind both replay trios to the requested CVE instance and same frozen base commit. The
   upstream PoC and patch evaluators use different artifact transports, so do not claim
   byte-identical PoC execution without additional adapter evidence.
-- Reject path escape, protected-path edits, stale workspaces, missing command evidence,
-  and PatchPlan/rendered-diff divergence.
+- Reject path escape, edits to the canonical protected set, stale workspaces, and missing
+  command evidence. PatchPlan validation and literal rendering are enforced by the B3/B4
+  in-run Patch-Applier procedure; the arm-independent authoritative evaluator supplies the
+  plan and diff to semantic review but does not mechanically compare them.
 - Retain the cost of failed, timed-out, or incomplete runs. Missing usage is `missing`,
   never zero.
 
@@ -152,22 +190,21 @@ judge; exhausted errors fail the semantic gate. Mechanical or safety failure can
 overridden by the panel. Persist the full prompt, schema, response, token usage, model
 identifier, timestamps, retry history, and aggregation result.
 
-The three calls currently made to one OpenAI model are repeated samples, not a
-heterogeneous panel. The existing human-audit fields and CLI override must be removed,
-not disabled by setting an audit rate to zero.
-
 ### Confirmatory protocol
 
 - Use a new untouched cohort. Development CVEs used to tune prompts, routes, models, or
-  thresholds are excluded.
+  thresholds are excluded. Declare the development enrollment locks in the
+  preregistration; the launch adapter rejects any cohort overlap before launch.
 - Put N1 and B4 in one immutable study manifest with identical `(task, base_commit,
   replicate)` assignments.
 - Randomize instance order and which arm runs first inside each adjacent pair; freeze
   the seed.
 - Enroll every launch by intention to treat. Failures, launch errors, and timeouts stay
   in the denominator.
-- Reject missing arms, duplicates, unequal task sets, and incomplete evaluator bundles.
-  Never silently intersect or skip them.
+- Reject missing arms, duplicates, and unequal task sets. Retain an evaluator failure as
+  an ITT failure, report it separately through `evaluation_completeness_rate`, and block
+  the superiority decision unless every assignment has a complete authoritative bundle.
+  Never silently intersect, skip, or treat an incomplete evaluation as success.
 - Preregister primary success endpoint, cost endpoint, superiority/non-inferiority
   margins, sample size/power, bootstrap seed and sample count, retry policy, and stopping
   rule before launching.
@@ -178,15 +215,15 @@ not disabled by setting an audit rate to zero.
 
 | Status required | Gate |
 |---|---|
-| PASS | prompts agree with adaptive and role-fused policies |
+| PASS | prompts agree with the B4 Manager-recovery and B3 direct-compact policies |
 | PASS | generic per-role `model_overrides` selects the documented models and is covered by adapter/config tests |
 | PASS | four host procedures and their one-retry escalation are covered by timeout, signal, nonzero-exit, zero-byte-PoC, and evidence-integrity tests |
 | PASS | automated heterogeneous judge panel replaces all human-audit paths |
 | PASS | judge evidence includes frozen oracle and raw replay/regression evidence |
 | PASS | authoritative evaluator performs 3x pre-patch and 3x post-patch replay plus regression |
 | PASS | evaluator bundle persists raw evidence, versions, hashes, prompts, responses, retries, and timestamps |
-| PASS | paired runner rejects missing/duplicate/unequal arms and never converts missing usage to zero |
-| PASS | untouched paired N1/B4 manifest and preregistration exist |
+| PASS | paired runner rejects missing/duplicate/unequal arms, reports evaluator completeness separately from cost completeness, blocks the decision on incomplete bundles, and never converts missing usage to zero |
+| PASS | paired N1/B4 manifest and preregistration are validated, then frozen |
 | PASS | targeted tests, full `uv run pytest`, `uv run pyright`, and architecture-boundary check pass |
 | PASS | development-cohort dry run produces complete bundles with no human action |
 
@@ -200,22 +237,31 @@ Landed (verify against tests, not this list alone):
    deterministic 2-of-3; the human audit queue is removed.
 3. Six independent fresh replays (PoC×3, patch×3) with exact crash-signature oracle.
 4. Confirmatory exact pairing rejects missing/duplicate/unequal arms.
-5. Runnable `b4-confirmatory-cohort` + role-fused `b3-rolefused` studies exist.
+5. Runnable `b4-boss-manager-worker`, `b3-direct-compact`, and `n1-openhands-linear`
+   development studies exist; the N1/B4 confirmatory preregistration remains draft.
 6. Missing cost no longer blocks primary ITT success; cost endpoints report unavailability.
-7. Host regression contract + runner exist and fail closed without a frozen plan.
-8. All 19 regression plans use project-specific executable probes, are validated on
-   base and gold-patched fresh containers, and are bound by a plan-set SHA-256.
+7. Evaluator completeness is reported separately from cost completeness; an incomplete
+   bundle remains an ITT failure and blocks the superiority decision.
+8. Host regression contract + runner exist and fail closed without a frozen plan.
+9. All 19 candidate regression plans use project-specific executable probes, are
+   validated on base and gold-patched fresh containers, and are bound by a plan-set
+   SHA-256; they must be regenerated for the replacement cohort.
 
 Still open before confirmatory launch:
 
-1. Provider smoke for the three pinned judges (`claude-opus-4-8`,
+1. Replace the current 19-task candidate roster: all 19 tasks appear in declared
+   development enrollments. The launch adapter now fails closed on this overlap.
+2. Provider smoke for the three pinned judges (`claude-opus-4-8`,
    `gpt-5.5-2026-04-23`, `gemini/gemini-3.5-flash`) must return valid structured
    responses in this environment. A permanently unavailable Anthropic seat collapses
    the panel into OpenAI/Gemini unanimity and requires a new evaluator version — do
    not ship that way.
-2. Development-cohort end-to-end pilot bundle must prove: six distinct container IDs,
+3. Development-cohort end-to-end pilot bundle must prove: six distinct container IDs,
    exact oracle 3/3, frozen host regression pass, all three judge seats valid,
    full provenance/hashes, no blinded treatment/model fields to judges.
+4. Real Postgres-backed recovery-path validation must prove the required-failure ->
+   Manager decision -> host validation -> scheduled role execution -> persisted provenance
+   path. The confirmatory preregistration is draft and unfrozen until that validation passes.
 Landed since the prior blockers list (verify against tests):
 
 - `fresh_base` derived from six distinct container identities (not asserted).
@@ -226,8 +272,9 @@ Landed since the prior blockers list (verify against tests):
   19-fixture preflight has zero incomplete signatures.
 - Regression executes only inside a fresh patched SEC-bench container (host argv
   execution removed as a P0 defect).
-- Final verification after the adaptive/role-fused repair: 1,494 passed / 13 skipped, Pyright 0,
-  manifests and architecture checks pass, diff check clean, DOCX re-rendered to 20 pages.
+- Verification status is intentionally non-numeric in this design document. Use the final
+  task report for the current focused/full test, type-check, architecture-boundary, and
+  `git diff --check` results; do not treat an earlier pass count as current evidence.
 
 Do not start confirmatory experiments until every release-gate row passes.
 

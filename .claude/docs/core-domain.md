@@ -66,7 +66,7 @@ Never call `AgentSession(agent_id)` directly. Use one of:
 | `apply_subtasks_and_spawn_children(subtasks, child_role, briefing)` | Emits `SubtasksDefined` + N x `ChildSpawned` + `StatusChanged(WAITING)`. Returns `list[(child_id, subtask)]` |
 | `start_worker_execution(tool_name)` | Emits `CodeGenerationStarted`, status -> IN_PROGRESS |
 | `handle_child_update(child_id, result, report)` | Emits `ChildCompleted`; auto-emits `WorkCompleted` when all children reported |
-| `handle_child_failure(child_id, reason, child_task, digest, max_redecompositions)` | Emits enriched `ChildFailed` (carries `child_task` + `digest`); when all children reported: partial `WorkCompleted` if any succeeded; if ALL failed, emits `RedecompositionTriggered` while `redecomposition_count < max_redecompositions` (informed re-decomposition), else `WorkFailed` |
+| `handle_child_failure(child_id, reason, child_task, digest, max_redecompositions)` | Emits enriched `ChildFailed` (carries `child_task` + `digest`); when all children report: partial `WorkCompleted` if any succeeded; if required children fail, applies the caller-supplied re-plan budget. `ParentNotificationService` supplies a nonzero budget only to MANAGER parents, so non-Managers emit `WorkFailed` instead of re-planning. |
 | `mark_infeasible(reason, min_subtasks, min_depth)` | Emits `DecisionInfeasible`, status -> FAILED |
 | `trigger_redecomposition(child_id, reason)` | Emits `RedecompositionTriggered`, WAITING -> ANALYZING, clears children |
 | `schedule_retry(reason, escalated_model)` | Emits `RetryScheduled`, FAILED -> ANALYZING, optionally upgrades model config |
@@ -223,7 +223,7 @@ All events extend `DomainEvent` (frozen Pydantic `BaseModel`). Base fields: `eve
 | `DecisionInfeasible` | `mark_infeasible()` | status=FAILED. Fields: `reason`, `minimum_subtasks`, `minimum_depth` |
 | `RetryScheduled` | `schedule_retry()` | status=ANALYZING, increments retry_count, optionally upgrades model. Preserves `failure_digest` + `verification_feedback` for the retry prompt |
 | `FailureDigestRecorded` | `record_failure_digest()` | Sets `failure_digest`. Fields: `digest`, `source` (`"worker_crash"`/`"procedure_failure"`) |
-| `RedecompositionTriggered` | `trigger_redecomposition()` | status=ANALYZING; extends `failure_history` from `failed_children`, then clears `child_ids`/`child_reports`/`failed_children`; increments redecomposition_count. Trigger: child infeasible **or** all children failed with re-plan budget left |
+| `RedecompositionTriggered` | `trigger_redecomposition()` | status=ANALYZING; extends `failure_history` from `failed_children`, then clears `child_ids`/`child_reports`/`failed_children`; increments redecomposition_count. Trigger: a MANAGER's child is infeasible or its required children fail with re-plan budget left. |
 | `VerificationFailed` | `mark_verification_failed()` | status=FAILED. Fields: `failed_stage`, `feedback`, `stages_passed` |
 | `VerificationPassed` | `mark_verification_passed()` | Version bump only (observability). Field: `feedback` |
 
@@ -316,9 +316,9 @@ Represents a decomposed task unit. All new fields have defaults for backward com
 | `target_paths` | `tuple[str, ...]` | Files/dirs child should focus on |
 | `symbols` | `tuple[str, ...]` | Function/class names relevant to subtask |
 | `search_hints` | `tuple[str, ...]` | Keywords to search for |
-| `execution_mode` | `Literal["auto", "agentic", "procedural"]` | Parent's dispatch marking (default `"auto"`). `"agentic"` forces an LLM worker; `"procedural"` forces a registered procedure; unknown `procedural` refs downgrade to `"auto"` at spawn (fail open) |
-| `procedure_ref` | `str` | Registered procedure id, used when `execution_mode == "procedural"` |
-| `procedure_params` | `dict[str, Any]` | Optional parameters passed to the procedure executor |
+| `execution_mode` | `Literal["auto", "agentic", "procedural"]` | Non-authoritative parent metadata retained on events; the Host registry alone decides dispatch. |
+| `procedure_ref` | `str` | Non-authoritative procedure metadata; ignored as dispatch authority. |
+| `procedure_params` | `dict[str, Any]` | Non-authoritative metadata; Host execution constructs trusted parameters. |
 
 ### HierarchyLimits (`limits.py`)
 
@@ -471,7 +471,7 @@ OCC is enforced via `expected_version` on writes. Raises `ConcurrencyError` on m
 
 | Port | Methods | Purpose |
 |---|---|---|
-| `ProcedureExecutorPort` | `match(task_description, domain_context) -> str \| None`, `resolve(procedure_ref) -> bool`, `async execute(procedure_ref, task_description, domain_context, params) -> ProcedureResult` | The deterministic worker tier. `match` maps a task to a registered `procedure_ref`; `resolve` validates an LLM-supplied ref; `execute` runs it host-side. Task-level failure returns `success=False` + digest; raises only for infrastructure faults (the caller escalates agentically) |
+| `ProcedureExecutorPort` | `match(task_description, domain_context) -> str \| None`, `resolve(procedure_ref) -> bool`, `async execute(procedure_ref, task_description, domain_context, params) -> ProcedureResult` | The deterministic worker tier. `match` maps a task through the Host registry, `resolve` verifies that Host-matched ref, and `execute` runs it host-side with Host-built parameters. Parent/LLM procedure fields are not dispatch authority. Task-level failure returns `success=False` + digest; raises only for infrastructure faults. |
 | `NullProcedureExecutor` | Same three methods | Default binding when no plugin provides procedures: `match` -> None, `resolve` -> False, `execute` raises. With this bound, dispatch always takes the agentic path -- behavior byte-identical to pre-feature |
 
 ### Domain Plugin Port (`domain_plugin_port.py`)

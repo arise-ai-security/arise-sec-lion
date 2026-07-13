@@ -18,6 +18,8 @@ from plugins.security.deliverables import (
     VALIDATION_REQUIRED,
 )
 from plugins.security.roles import (
+    ADAPTIVE_SPECIALISTS,
+    COMPACT_ROLES,
     PHASE_ROLES,
     Role,
     deliverables_owned_by_others,
@@ -183,7 +185,6 @@ class SecBenchPromptStrategy:
         self,
         enabled_tools: list[str] | None = None,
         shared_code_first: bool = False,
-        role_fused: bool = False,
     ) -> None:
         self._enabled_tools = enabled_tools or []
         # When True, the run-global shared code block renders BEFORE the
@@ -191,7 +192,6 @@ class SecBenchPromptStrategy:
         # byte region the block occupies and cross-branch prefix-cache hits
         # become possible. Off keeps the legacy order (cache forks per branch).
         self._shared_code_first = shared_code_first
-        self._role_fused = role_fused
 
     def extend_assessment_prompt(
         self,
@@ -244,12 +244,28 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = _with_contract_context(cve_instance.to_template_context())
-        branch = _detect_branch_from_task(context.task_description)
-        if branch is None:
-            branch = detect_benchmark_branch(context.ancestor_task_descriptions)
+        # Render every phase catalog in the stable prefix. The current phase and
+        # failure history live after the cache breakpoint, so neither may select
+        # content here without destroying cross-branch/retry prefix reuse.
+        cve_ctx["phase_catalogs"] = tuple(
+            {
+                "phase": phase,
+                "compact_roles": tuple(
+                    role
+                    for name in COMPACT_ROLES.get(phase, ())
+                    if (role := role_by_name_ci(name)) is not None
+                ),
+                "adaptive_specialists": tuple(
+                    role
+                    for name in ADAPTIVE_SPECIALISTS.get(phase, ())
+                    if (role := role_by_name_ci(name)) is not None
+                ),
+            }
+            for phase in PHASE_ROLES
+        )
 
         chain = _with_cve_display(
-            chain, cve_instance, phase=branch, include_decomposition=True
+            chain, cve_instance, include_decomposition=True
         ).render("domains/secbench/manager.j2", **cve_ctx)
         # Boss recon block (the files the boss already read), injected into the
         # cached stable prefix. It is fixed once the boss has decomposed, so it
@@ -293,13 +309,12 @@ class SecBenchPromptStrategy:
         # whole-phase runbook.
         worker_role = role_from_task(context.task_description)
         cve_ctx["worker_role"] = worker_role
-        cve_ctx["role_fused"] = self._role_fused
         cve_ctx["foreign_deliverables"] = (
             deliverables_owned_by_others(worker_role) if worker_role is not None else ()
         )
 
         # Gate the shared-code prompt guidance on the feature actually producing
-        # a block. N cells (no provider, flag off) and a run's first worker
+        # a block. Runs with no provider/flag and a run's first worker
         # (nothing observed yet) get the ORIGINAL BEF prompt with no
         # <provided_source_files> mention; only workers that actually receive
         # provided files see the "already in context / don't re-view" guidance.

@@ -274,8 +274,8 @@ class TestOpenHandsAdapter:
             assert params["host_work_root"] == str(tmp_path / "work")
 
     def test_enable_subagents_flag_defaults_false_and_is_stored(self) -> None:
-        # Given/When: adapters built with and without the N2 subagent toggle.
-        # Then: the flag defaults off (N1) and is stored when enabled (N2).
+        # Given/When: adapters built with and without native subagent delegation.
+        # Then: the flag defaults off and is stored when enabled.
         assert _adapter().enable_subagents is False
         assert _adapter(enable_subagents=True).enable_subagents is True
 
@@ -284,7 +284,7 @@ class TestOpenHandsAdapter:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Given: an N2 adapter (enable_subagents) for a container-backed run.
+        # Given: an adapter with subagents enabled for a container-backed run.
         adapter = _adapter(allowed_tools=["file_editor", "glob", "grep"], enable_subagents=True)
         container_session = _container_session(tmp_path)
         captured: dict[str, Any] = {}

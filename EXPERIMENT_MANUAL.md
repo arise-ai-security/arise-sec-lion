@@ -70,21 +70,26 @@ For the current development treatments:
 
 ```bash
 experiments/b4-boss-manager-worker/smoke.sh
-experiments/b3-rolefused/smoke.sh
+experiments/b3-direct-compact/smoke.sh
 ```
 
-The untouched N1-vs-B4 confirmatory study uses its separate paired, randomized,
-interleaved runner. It reads the seed, replicate count, and bootstrap count from
-`preregistration.yaml`; CLI values cannot override them:
+The N1-vs-B4 confirmatory study uses its separate paired, randomized, interleaved
+runner. Its final roster must be untouched, but the current draft candidate roster
+overlaps development enrollments and must be replaced before freezing. The runner
+reads the seed, replicate count, and bootstrap count from `preregistration.yaml`; CLI
+values cannot override them:
 
 ```bash
 uv run python -m experiments.shared.evaluation.confirmatory_runner \
-  --study b4-confirmatory-cohort
+  --study b4-boss-manager-worker/confirmatory
 ```
 
-Do not run that command until the development pilot is complete and all three pinned
-semantic judge seats pass live smoke. The runner itself rejects cohort, oracle,
-regression-plan, arm, and preregistration drift before the first launch.
+The confirmatory preregistration is draft and unfrozen. Do not run that command until a real
+Postgres-backed development run validates B4's required-failure recovery path, the
+development pilot is complete, the cohort overlap is removed, and all three pinned semantic
+judge seats pass live smoke.
+The runner itself rejects cohort, oracle, regression-plan, arm, and preregistration drift
+before the first launch.
 
 ### Useful flags
 

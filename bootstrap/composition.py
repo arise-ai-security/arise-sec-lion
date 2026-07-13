@@ -31,17 +31,9 @@ from .infrastructure import InfrastructureConfig, get_infrastructure
 
 logger = logging.getLogger(__name__)
 
-_ADAPTIVE_TREATMENTS = frozenset(
-    {"b4-adaptive-v1", "b4-adaptive-rolefused-v1"}
-)
 
-
-def _is_adaptive_treatment(treatment_version: str | None) -> bool:
-    return treatment_version in _ADAPTIVE_TREATMENTS
-
-
-def _experimental_config_hash(settings: Settings) -> str:
-    """Hash behavior-bearing settings without database credentials."""
+def _effective_config_hash(settings: Settings) -> str:
+    """Hash the redacted effective settings, including opaque run provenance."""
     return compute_config_sha256(settings)
 
 
@@ -90,10 +82,7 @@ def _build_security_components(settings: Settings | ApiSettings) -> DomainCompon
     plugin = SecurityDomainPlugin(
         enabled_tools=security.tools,
         shared_code_prefix_first=settings.orchestration.shared_code_prefix_first,
-        adaptive_execution=_is_adaptive_treatment(
-            settings.orchestration.treatment_version
-        ),
-        policy_version=settings.orchestration.treatment_version or "b4-adaptive-v1",
+        route_policy_version=security.route_policy_version,
     )
     plugin.set_container_runtime(runtime)
     return DomainComponents(
@@ -214,8 +203,8 @@ def _flat_subagent_enabled(settings: Settings) -> bool:
     excluding ``Task`` would still get the note — revisit the predicate when
     introducing such a config). ``openhands`` gates its native
     task-delegation tool behind ``tool_params.openhands.enable_subagents``,
-    which is also what arms the tool in the adapter — note and capability
-    stay in lockstep (N1 vs N2 contrast).
+    which is also what arms the tool in the adapter, so note and capability
+    stay in lockstep.
     """
     if settings.worker.tool == "openhands":
         params = settings.worker.tool_params.openhands
@@ -409,7 +398,7 @@ def create_runtime_cli(
             share_boss_recon=settings.orchestration.share_boss_recon,
             procedural_dispatch=settings.orchestration.procedural_dispatch,
             treatment_version=settings.orchestration.treatment_version,
-            config_hash=_experimental_config_hash(settings),
+            config_hash=_effective_config_hash(settings),
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

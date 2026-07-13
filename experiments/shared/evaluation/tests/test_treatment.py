@@ -1,4 +1,4 @@
-"""Tests for immutable B4 treatment classification."""
+"""Tests for configured treatment metadata."""
 
 from uuid import uuid4
 
@@ -19,22 +19,17 @@ def _run(tmp_path, version):
     return RunData(run_id=run_id, events=[event], run_dir=tmp_path, manifest={})
 
 
-def test_historical_unversioned_b4_is_classified_without_event_mutation(tmp_path) -> None:
-    # Given: An unversioned historical B4 event
+def test_unversioned_run_has_no_inferred_treatment(tmp_path) -> None:
     run = _run(tmp_path, None)
     original = run.events[0].model_dump()
 
-    # When: The treatment is classified
-    version = treatment_version(run, cell="B4")
+    version = treatment_version(run)
 
-    # Then: It is reported as b4-full-v0 and the frozen event is unchanged
-    assert version == "b4-full-v0"
+    assert version is None
     assert run.events[0].model_dump() == original
 
 
-def test_recorded_adaptive_version_wins(tmp_path) -> None:
-    # Given: A new adaptive B4 run
-    run = _run(tmp_path, "b4-adaptive-v1")
+def test_recorded_treatment_is_returned(tmp_path) -> None:
+    run = _run(tmp_path, "b4")
 
-    # When/Then: The persisted version is returned
-    assert treatment_version(run, cell="B4") == "b4-adaptive-v1"
+    assert treatment_version(run) == "b4"

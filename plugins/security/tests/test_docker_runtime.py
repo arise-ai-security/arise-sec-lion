@@ -15,9 +15,11 @@ from plugins.security.container_runtime import (
 )
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.docker_runtime import (
+    DockerProcedureSession,
     DockerSecBenchRuntime,
     _FORBIDDEN_TESTCASE_ARTIFACTS,
 )
+from plugins.security.procedures import ProcedureInfrastructureError
 from plugins.security.runtime import docker_cli, image_ensurer, sealer, workspace_mirror
 
 
@@ -864,3 +866,241 @@ async def test_prepare_workspace_seeds_non_golden_runtime_scripts(
     assert by_kind["patch_script"].container_path == "/testcase/patch.sh"
     assert by_kind["secb_wrapper"].container_path == "/usr/local/bin/secb"
     assert all(a.non_golden and len(a.content_sha256) == 64 for a in sealed.artifacts)
+
+
+async def test_procedure_session_executes_direct_argv_with_safe_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Procedure commands remain argv vectors and retain the image environment."""
+
+    # Given: a completed Docker exec subprocess and a run container session.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    process_argv: tuple[str, ...] = ()
+    process_stdin: bytes | None = None
+
+    class _CompletedProcess:
+        returncode = 7
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            nonlocal process_stdin
+            process_stdin = input
+            return (b"combined output", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("completed procedure must not be killed")
+
+    async def _fake_create(*args: str, **_kwargs: object) -> _CompletedProcess:
+        nonlocal process_argv
+        process_argv = args
+        return _CompletedProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    procedure = DockerProcedureSession(container)
+
+    # When: running arguments that would be shell syntax through a caller environment.
+    outcome = await procedure.run(
+        ("/work/bin/target", "argument with spaces", ";", "$(touch /tmp/pwned)"),
+        timeout=3.5,
+        stdin=b"PoC bytes",
+        env=(
+            ("UBSAN_OPTIONS", "halt_on_error=1"),
+            ("PATH", "/tmp/attacker"),
+            ("BASH_ENV", "/tmp/payload"),
+        ),
+    )
+
+    # Then: Docker launches GNU timeout followed by the exact target argv, without a shell.
+    timeout_index = process_argv.index("/usr/bin/timeout")
+    assert process_argv[timeout_index:] == (
+        "/usr/bin/timeout",
+        "--signal=TERM",
+        "--kill-after=5s",
+        "3.5s",
+        "/work/bin/target",
+        "argument with spaces",
+        ";",
+        "$(touch /tmp/pwned)",
+    )
+    assert "bash" not in process_argv[timeout_index:]
+    assert "-lc" not in process_argv
+
+    # And: fixed launch controls cannot be overridden, while sanitizer overrides survive.
+    environment = {
+        process_argv[index + 1]
+        for index, token in enumerate(process_argv)
+        if token == "--env"
+    }
+    assert "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" in environment
+    assert "BASH_ENV=/dev/null" in environment
+    assert "ENV=/dev/null" in environment
+    assert "LC_ALL=C" in environment
+    assert "UBSAN_OPTIONS=halt_on_error=1" in environment
+    assert "PATH=/tmp/attacker" not in environment
+    assert "BASH_ENV=/tmp/payload" not in environment
+
+    # And: SRC/WORK/OUT/SANITIZER are not replaced, so Docker inherits them from the image.
+    assert not any(
+        item.startswith(("SRC=", "WORK=", "OUT=", "SANITIZER=")) for item in environment
+    )
+    assert process_stdin == b"PoC bytes"
+    assert outcome.exit_code == 7
+    assert outcome.output == "combined output"
+    assert not outcome.timed_out
+
+
+async def test_procedure_session_restarts_container_after_inner_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GNU timeout exit 124 restarts the container before returning task failure."""
+
+    # Given: GNU timeout terminates the in-container command with exit 124.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _TimedOutProcess:
+        returncode = 124
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            return (b"partial output", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("inner timeout already terminated the command")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _TimedOutProcess:
+        return _TimedOutProcess()
+
+    restart = AsyncMock(return_value="abc123def456\n")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    # When: the procedure session observes the timeout status.
+    outcome = await DockerProcedureSession(container).run(("/bin/sleep", "60"), timeout=1.0)
+
+    # Then: the shared container is restarted and the timeout remains a task outcome.
+    restart.assert_awaited_once_with(
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        timeout=60.0,
+    )
+    assert outcome.exit_code == 124
+    assert outcome.output == "partial output"
+    assert outcome.timed_out
+
+
+async def test_procedure_session_restarts_container_after_outer_watchdog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stuck Docker exec is killed locally and its container is restarted."""
+
+    # Given: the outer watchdog expires before Docker exec returns.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _StuckProcess:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.kill_called = False
+            self.communications = 0
+
+        def communicate(self, input: bytes | None = None) -> asyncio.Future[tuple[bytes, bytes]]:
+            self.communications += 1
+            future = asyncio.get_running_loop().create_future()
+            if self.communications > 1:
+                future.set_result((b"partial output", b""))
+            return future
+
+        def kill(self) -> None:
+            self.kill_called = True
+
+    process = _StuckProcess()
+    wait_calls = 0
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _StuckProcess:
+        return process
+
+    async def _fake_wait_for(awaitable: object, timeout: float) -> object:
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            assert timeout == 10.25
+            assert isinstance(awaitable, asyncio.Future)
+            awaitable.cancel()
+            raise TimeoutError
+        assert isinstance(awaitable, asyncio.Future)
+        return await awaitable
+
+    restart = AsyncMock(return_value="abc123def456\n")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(asyncio, "wait_for", _fake_wait_for)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    # When: running a command past the host watchdog.
+    outcome = await DockerProcedureSession(container).run(("/bin/sleep", "60"), timeout=0.25)
+
+    # Then: both the client process and container workload are stopped.
+    assert process.kill_called
+    restart.assert_awaited_once_with(
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        timeout=60.0,
+    )
+    assert outcome.exit_code == 124
+    assert outcome.output == "partial output"
+    assert outcome.timed_out
+
+
+async def test_procedure_session_restart_failure_is_infrastructure_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure to reset a timed-out shared container is not a task verdict."""
+
+    # Given: an inner timeout and a Docker restart failure.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _TimedOutProcess:
+        returncode = 124
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            return (b"", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("inner timeout already terminated the command")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _TimedOutProcess:
+        return _TimedOutProcess()
+
+    async def _restart_failure(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("Docker daemon unavailable")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", _restart_failure)
+
+    # When / Then: the failed recovery raises an infrastructure error with its cause.
+    with pytest.raises(ProcedureInfrastructureError) as exc_info:
+        await DockerProcedureSession(container).run(("/bin/sleep", "60"), timeout=1.0)
+    assert isinstance(exc_info.value.__cause__, RuntimeError)

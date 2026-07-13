@@ -1,5 +1,4 @@
-{# SEC-bench assessment policy for legacy LLM-selected decompositions.
-   Host-selected adaptive and role-fused routes bypass this prompt entirely.
+{# SEC-bench assessment policy for phase tasks and atomic catalog roles.
    Role menus render from the injected catalog. The
    CWE-specific `security_insights` requirements live in the included partial
    (_security_insights.j2) so the role catalog, the decomposition rules, and the
@@ -23,15 +22,22 @@
 
 This is a security vulnerability reproduction task.
 
-### Host routing takes precedence
+### Phase routing
 
-The host may already classify a phase as an atomic role-fused worker or supply an adaptive fixed decomposition. Follow that decision exactly: do not re-expand a fused phase, do not add catalog roles outside the selected route, and do not rediscover topology. This prompt is reached only when no host route exists.
-
-For a legacy phase-level task whose description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, choose `"action": "decompose"` and use the catalog contract below. Required roles apply only to this legacy full decomposition; they do not override a host-selected compact or role-fused route. Use exact bracket names and add optional roles only when the CVE needs them.
+For a phase-level task whose description starts with `[Builder]`, `[Exploiter]`, or
+`[Fixer]`, choose `"action": "decompose"` only when no Host policy already supplied a
+route. The Host owns the compact initial route; this assessment must not rediscover or
+expand it. A Manager uses its separate decomposition prompt only after a required child
+fails, using the supplied failure history to select same-phase recovery roles and
+instructions. A phase task already marked `estimated_complexity="simple"` is atomic and
+bypasses this assessment.
 
 ### Dependency contract
 
-For an LLM-selected legacy decomposition, if you select a role with hard dependencies, include each listed producer role as a sibling subtask, place the producer before the consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling position. Missing producer roles, missing `depends_on` edges, or `depends_on` edges pointing at the wrong sibling are run failures.
+For a Manager-authored decomposition during recovery, if you select a role with hard dependencies,
+include each listed producer role as a sibling subtask, place the producer before the
+consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling
+position. Missing or incorrect dependency edges are run failures.
 
 Hard dependencies are only artifact dependencies: role B hard-depends on role A when B consumes an artifact A is responsible for producing. Soft inputs are useful evidence if present; they are fallback guidance only. Do not put soft inputs in JSON `depends_on`.
 
@@ -54,7 +60,7 @@ If your task description starts with ANY of these bracketed role names, **defaul
 
 {% for r in all_roles %}`[{{ r.name }}]`{% if not loop.last %}, {% endif %}{% endfor %}
 
-**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. A host-marked simple phase is atomic even when its prefix is `[Builder]`, `[Exploiter]`, or `[Fixer]`.
+**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. A configured simple phase is atomic even when its prefix is `[Builder]`, `[Exploiter]`, or `[Fixer]`.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
 {% if shared_code_enabled %}

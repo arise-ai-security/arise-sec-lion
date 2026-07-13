@@ -1,5 +1,0 @@
-# Design pointer only — not a dataset.
-# Frozen confirmatory tasks live exclusively in:
-#   ../b4-confirmatory-cohort/dataset.yaml
-source_of_truth: ../b4-confirmatory-cohort/dataset.yaml
-status: pointer-only-not-runnable

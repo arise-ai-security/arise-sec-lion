@@ -1,23 +1,19 @@
-"""Tests for the SEC-bench decomposition role-contract validator.
-
-The validator classifies a phase manager's proposed child decomposition against the
-role catalog: every REQUIRED role must appear as its own single-role leaf. Missing
-roles become injection suggestions; leaves merging >1 catalog role are flagged for
-removal and split.
-"""
+"""Tests for SEC-bench Manager decomposition validation."""
 
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.decomposition_validator import SecBenchDecompositionValidator
+from plugins.security.plugin import SecurityDomainPlugin
+from plugins.security.route_catalog import phase_controller_instruction, role_instruction
 
 
-EXPLOITER_REQUIRED = (
-    "PoC-Researcher",
-    "Data-Flow-Analyst",
-    "PoC-Tester",
-    "Forward-Instrumentator",
+EXPLOITER_COMPACT = (
     "Repro-Creator",
     "Exploit-Validator",
 )
+BUILDER_TASK = phase_controller_instruction("Builder")
+EXPLOITER_TASK = phase_controller_instruction("Exploiter")
+FIXER_TASK = phase_controller_instruction("Fixer")
+REPORTER_TASK = phase_controller_instruction("Reporter")
 
 
 def _cve() -> CVEInstance:
@@ -33,11 +29,17 @@ def _cve() -> CVEInstance:
     )
 
 
-def test_complete_exploiter_decomposition_is_ok() -> None:
+def _adaptive_validator(
+    policy_version: str = "policy-v2",
+) -> SecBenchDecompositionValidator:
+    return SecBenchDecompositionValidator(policy_version=policy_version)
+
+
+def test_complete_compact_exploiter_decomposition_is_ok() -> None:
     v = SecBenchDecompositionValidator()
-    subs = tuple(f"[{r}] do {r}" for r in EXPLOITER_REQUIRED)
+    subs = tuple(f"[{r}] do {r}" for r in EXPLOITER_COMPACT)
     verdict = v.classify(
-        parent_task_description="[Exploiter] Reproduce the vulnerability",
+        parent_task_description=EXPLOITER_TASK,
         subtask_descriptions=subs,
         domain_context=_cve(),
     )
@@ -48,9 +50,9 @@ def test_complete_exploiter_decomposition_is_ok() -> None:
 
 def test_missing_exploit_validator_is_injected() -> None:
     v = SecBenchDecompositionValidator()
-    subs = tuple(f"[{r}] do {r}" for r in EXPLOITER_REQUIRED if r != "Exploit-Validator")
+    subs = tuple(f"[{r}] do {r}" for r in EXPLOITER_COMPACT if r != "Exploit-Validator")
     verdict = v.classify(
-        parent_task_description="[Exploiter] Reproduce the vulnerability",
+        parent_task_description=EXPLOITER_TASK,
         subtask_descriptions=subs,
         domain_context=_cve(),
     )
@@ -62,7 +64,6 @@ def test_missing_exploit_validator_is_injected() -> None:
 
 def test_merged_repro_validator_leaf_is_split() -> None:
     v = SecBenchDecompositionValidator()
-    # 4 single-role leaves + 1 merged leaf carrying two Exploiter roles (the libxml2 case).
     subs = (
         "[PoC-Researcher] map",
         "[Data-Flow-Analyst] trace",
@@ -71,12 +72,12 @@ def test_merged_repro_validator_leaf_is_split() -> None:
         "[Repro-Creator] write repro.sh and [Exploit-Validator] validate and write verdict",
     )
     verdict = v.classify(
-        parent_task_description="[Exploiter] Reproduce the vulnerability",
+        parent_task_description=EXPLOITER_TASK,
         subtask_descriptions=subs,
         domain_context=_cve(),
     )
     assert not verdict.ok
-    assert 4 in verdict.removals  # the merged leaf is dropped
+    assert 4 in verdict.removals
     labels = [a.description.split("]")[0] + "]" for a in verdict.additions]
     assert "[Repro-Creator]" in labels
     assert "[Exploit-Validator]" in labels
@@ -94,7 +95,6 @@ def test_non_cve_domain_context_is_noop() -> None:
 
 
 def test_non_phase_parent_is_noop() -> None:
-    # A boss-level task carries no phase bracket → no leaf-role contract to enforce.
     v = SecBenchDecompositionValidator()
     verdict = v.classify(
         parent_task_description="Reproduce and fix the CVE",
@@ -105,8 +105,6 @@ def test_non_phase_parent_is_noop() -> None:
 
 
 def test_phase_resolved_only_from_leading_bracket() -> None:
-    # An incidental phase name mid-text must NOT trigger the phase contract — only a
-    # leading [Phase] bracket counts.
     v = SecBenchDecompositionValidator()
     verdict = v.classify(
         parent_task_description="Investigate the [Exploiter] phase artifacts",
@@ -118,8 +116,6 @@ def test_phase_resolved_only_from_leading_bracket() -> None:
 
 
 def test_role_bracket_parent_is_noop() -> None:
-    # A leaf-role-bracketed parent (a worker that itself decomposed) does NOT own the
-    # phase's full role set, so it must NOT be expanded into the phase contract.
     v = SecBenchDecompositionValidator()
     verdict = v.classify(
         parent_task_description="[Repro-Creator] write the repro script",
@@ -130,28 +126,45 @@ def test_role_bracket_parent_is_noop() -> None:
     assert not verdict.additions
 
 
+def test_reporter_leaf_is_not_misclassified_as_reporter_controller() -> None:
+    verdict = SecBenchDecompositionValidator().classify(
+        parent_task_description=role_instruction("Reporter"),
+        subtask_descriptions=("[Not-A-Real-Role] should be ignored",),
+        domain_context=_cve(),
+    )
+
+    assert verdict.ok
+    assert not verdict.additions
+    assert not verdict.removals
+
+
 def test_injected_leaf_carries_insight_and_validator_exposes_hard_deps() -> None:
-    # An injected leaf must carry the role's empirical insight (not just its summary), and
-    # the validator must expose catalog hard deps (core resolves them to sibling indices).
     v = SecBenchDecompositionValidator()
-    subs = tuple(f"[{r}] do {r}" for r in EXPLOITER_REQUIRED if r != "Exploit-Validator")
+    subs = tuple(f"[{r}] do {r}" for r in EXPLOITER_COMPACT if r != "Exploit-Validator")
     verdict = v.classify(
-        parent_task_description="[Exploiter] Reproduce the vulnerability",
+        parent_task_description=EXPLOITER_TASK,
         subtask_descriptions=subs,
         domain_context=_cve(),
     )
     ev = next(a for a in verdict.additions if a.description.startswith("[Exploit-Validator]"))
-    assert "deterministic" in ev.description.lower()  # role.insight carried, not just summary
+    assert "deterministic" in ev.description.lower()
     assert v.hard_dependencies("Exploit-Validator") == ("Repro-Creator",)
-    assert v.hard_dependencies("PoC-Researcher") == ()  # role with no hard producer
+    assert v.hard_dependencies("PoC-Researcher") == ()
+    assert v.hard_dependencies("Reporter") == (
+        "Builder",
+        "Exploiter",
+        "Fixer",
+        "Build-Verifier",
+        "Exploit-Validator",
+        "Patch-Validator",
+    )
 
 
 def test_builder_phase_required_roles_enforced() -> None:
-    # Generic across phases: a Builder decomposition missing Build-Verifier is repaired.
     v = SecBenchDecompositionValidator()
     subs = ("[Build-Setup] x", "[Build-Executor] x")
     verdict = v.classify(
-        parent_task_description="[Builder] Build the project",
+        parent_task_description=BUILDER_TASK,
         subtask_descriptions=subs,
         domain_context=_cve(),
     )
@@ -159,188 +172,342 @@ def test_builder_phase_required_roles_enforced() -> None:
     assert any(a.description.startswith("[Build-Verifier]") for a in verdict.additions)
 
 
-def test_adaptive_policy_returns_fixed_skeleton_then_compact_route() -> None:
-    # Given: Adaptive B4 policy and a SEC-bench task
-    validator = SecBenchDecompositionValidator(adaptive_execution=True)
+def test_initial_decomposition_enforces_compact_roles() -> None:
+    v = SecBenchDecompositionValidator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=("[Repro-Creator] x", "[Exploit-Validator] y"),
+        domain_context=_cve(),
+    )
+    assert verdict.ok
+    assert not verdict.additions
 
-    # When: The root and Exploiter controller request fixed decompositions
-    skeleton = validator.fixed_decomposition(
+
+def test_initial_decomposition_removes_optional_specialist() -> None:
+    verdict = SecBenchDecompositionValidator().classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[PoC-Researcher] research",
+            "[Repro-Creator] create",
+            "[Exploit-Validator] validate",
+        ),
+        domain_context=_cve(),
+    )
+
+    assert not verdict.ok
+    assert verdict.removals == (0,)
+    assert any(v.kind == "disallowed_role" for v in verdict.violations)
+
+
+def test_security_plugin_propagates_route_policy_version() -> None:
+    # Given: A security plugin with explicit route provenance
+    plugin = SecurityDomainPlugin(route_policy_version="policy-v3")
+
+    # When: The plugin constructs its initial policy and adaptive validator
+    policy = plugin.get_decomposition_policy()
+    initial = policy.select_initial(
         parent_task_description="Repair the CVE",
         domain_context=_cve(),
+        is_root=True,
         redecomposition_count=0,
     )
-    compact = validator.fixed_decomposition(
-        parent_task_description="[Exploiter] reproduce",
-        domain_context=_cve(),
-        redecomposition_count=0,
-    )
-
-    # Then: The root skeleton is fixed and Exploiter starts compact
-    assert skeleton is not None
-    assert [item.description.split("]")[0] for item in skeleton.subtasks] == [
-        "[Builder",
-        "[Exploiter",
-        "[Fixer",
-        "[Reporter",
-    ]
-    assert compact is not None
-    assert compact.route == "compact"
-    assert [item.description.split("]")[0] for item in compact.subtasks] == [
-        "[Repro-Creator",
-        "[Exploit-Validator",
-    ]
-
-
-def test_compact_builder_route_includes_build_executor_hard_dependency() -> None:
-    validator = SecBenchDecompositionValidator(adaptive_execution=True)
-
-    compact = validator.fixed_decomposition(
-        parent_task_description="[Builder] build",
-        domain_context=_cve(),
-        redecomposition_count=0,
-    )
-
-    assert compact is not None
-    assert [item.description.split("]")[0] for item in compact.subtasks] == [
-        "[Build-Setup",
-        "[Build-Executor",
-        "[Build-Verifier",
-    ]
-
-
-def test_adaptive_failed_compact_route_expands_only_same_phase() -> None:
-    # Given: An Exploiter controller re-entering after its phase gate failed
-    validator = SecBenchDecompositionValidator(adaptive_execution=True)
-
-    # When: The route is selected for redecomposition
-    selection = validator.fixed_decomposition(
-        parent_task_description="[Exploiter] reproduce",
+    validator = plugin.get_decomposition_validator()
+    assert validator is not None
+    adaptive = validator.classify(
+        parent_task_description=REPORTER_TASK,
+        subtask_descriptions=("[Reporter] revise the failed report",),
         domain_context=_cve(),
         redecomposition_count=1,
+        redecomposition_limit=2,
     )
 
-    # Then: Only exploit specialists are added and the route is escalated
-    assert selection is not None
-    assert selection.route == "escalated"
-    labels = {item.description.split("]")[0] for item in selection.subtasks}
-    assert labels == {
-        "[PoC-Researcher",
-        "[PoC-Tester",
-        "[Repro-Creator",
-        "[Exploit-Validator",
+    # Then: Both route sources stamp the configured policy version
+    assert initial is not None
+    assert initial.policy_version == "policy-v3"
+    assert adaptive.policy_version == "policy-v3"
+
+
+def test_manager_specialists_accepted_with_escalated_route() -> None:
+    v = _adaptive_validator()
+    originals = (
+        "[PoC-Researcher] map ops to functions from the digest",
+        "[Data-Flow-Analyst] trace the conflict path",
+        "[Repro-Creator] rewrite repro for the selected PoC",
+        "[Exploit-Validator] re-validate determinism",
+    )
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=originals,
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Repro-Creator", "Exploit-Validator"),
+        completed_role_labels=(),
+    )
+    assert verdict.route == "escalated"
+    assert "manager_llm" in verdict.triggers
+    assert verdict.phase == "Exploiter"
+    labels = _final_labels(verdict, originals)
+    assert "PoC-Researcher" in labels
+    assert "Data-Flow-Analyst" in labels
+    assert "Repro-Creator" in labels
+
+
+def test_accepted_role_label_is_canonicalized_without_losing_instruction() -> None:
+    verdict = _adaptive_validator().classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=("investigate [poc-researcher] using failure.log",),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+
+    assert verdict.validated_subtasks[0].canonical_description == (
+        "[PoC-Researcher] investigate using failure.log"
+    )
+
+
+def test_two_manager_decisions_yield_different_specialist_sets() -> None:
+    v = _adaptive_validator()
+    a = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[PoC-Researcher] research",
+            "[PoC-Tester] test",
+            "[Repro-Creator] repro",
+            "[Exploit-Validator] validate",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+    b = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[Data-Flow-Analyst] trace",
+            "[Forward-Instrumentator] probe",
+            "[Repro-Creator] repro",
+            "[Exploit-Validator] validate",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+    labels_a = _final_labels(a, (
+        "[PoC-Researcher] research",
+        "[PoC-Tester] test",
+        "[Repro-Creator] repro",
+        "[Exploit-Validator] validate",
+    ))
+    labels_b = _final_labels(b, (
+        "[Data-Flow-Analyst] trace",
+        "[Forward-Instrumentator] probe",
+        "[Repro-Creator] repro",
+        "[Exploit-Validator] validate",
+    ))
+    assert labels_a != labels_b
+    assert "PoC-Tester" in labels_a
+    assert "Data-Flow-Analyst" in labels_b
+    assert "Forward-Instrumentator" in labels_b
+    # Forward-Instrumentator requires PoC-Researcher
+    assert "PoC-Researcher" in labels_b
+
+
+def test_keywords_in_stdout_do_not_affect_routing() -> None:
+    # Validator has no failure_signal / keyword path — identical inputs → identical output.
+    v = _adaptive_validator()
+    kwargs = dict(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=("[Repro-Creator] x", "[Exploit-Validator] y"),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+    first = v.classify(**kwargs)
+    second = v.classify(**kwargs)
+    assert first.route == second.route
+    assert first.additions == second.additions
+    assert first.removals == second.removals
+
+
+def test_cross_phase_role_is_removed() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[Root-Cause-Analyst] wrong phase",
+            "[Repro-Creator] ok",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Repro-Creator",),
+    )
+    assert 0 in verdict.removals
+    assert any(viol.kind == "invalid_role" for viol in verdict.violations)
+    assert verdict.route == "escalated"
+
+
+def test_mixed_phase_leaf_is_rejected_before_phase_filtering() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[PoC-Researcher] investigate and [Build-Setup] rebuild",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+
+    assert verdict.removals == (0,)
+    assert any(violation.kind == "merged_leaf" for violation in verdict.violations)
+    labels = {addition.description.split("]")[0][1:] for addition in verdict.additions}
+    assert "PoC-Researcher" in labels
+    assert "Build-Setup" not in labels
+
+
+def test_unknown_role_triggers_fallback_when_nothing_valid_remains() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=("[Not-A-Real-Role] invent",),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+    assert verdict.route == "expanded"
+    assert "fallback_expanded" in verdict.triggers
+    labels = {a.description.split("]")[0][1:] for a in verdict.additions}
+    assert "Repro-Creator" in labels
+    assert "Exploit-Validator" in labels
+    assert "PoC-Researcher" in labels
+
+
+def test_merged_roles_split_on_redecomposition() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[Repro-Creator] write and [Exploit-Validator] validate",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+    assert 0 in verdict.removals
+    labels = {a.description.split("]")[0][1:] for a in verdict.additions}
+    assert "Repro-Creator" in labels
+    assert "Exploit-Validator" in labels
+
+
+def test_missing_hard_dependency_is_injected() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=("[Forward-Instrumentator] probe without producer",),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+    )
+    assert any(a.description.startswith("[PoC-Researcher]") for a in verdict.additions)
+    assert any(viol.kind == "missing_hard_dependency" for viol in verdict.violations)
+    assert verdict.route == "escalated"
+
+
+def test_completed_role_is_not_respawned() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[Repro-Creator] already done",
+            "[PoC-Researcher] new specialist",
+            "[Exploit-Validator] recheck",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+        completed_role_labels=("Repro-Creator",),
+    )
+    assert 0 in verdict.removals
+    assert any(viol.kind == "completed_role" for viol in verdict.violations)
+    # Must not re-inject completed Repro-Creator via hard deps of Exploit-Validator
+    assert not any(a.description.startswith("[Repro-Creator]") for a in verdict.additions)
+
+
+def test_failed_compact_role_may_be_reissued() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=(
+            "[Repro-Creator] revised repro for nondeterministic crash",
+            "[Exploit-Validator] re-validate",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Repro-Creator", "Exploit-Validator"),
+        completed_role_labels=(),
+    )
+    assert verdict.route == "escalated"
+    assert 0 not in verdict.removals  # failed compact kept
+
+
+def test_reporter_failure_can_reissue_reporter() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=REPORTER_TASK,
+        subtask_descriptions=("[Reporter] rewrite with evidence links",),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Reporter",),
+    )
+    assert verdict.route == "escalated"
+    assert not verdict.removals
+
+
+def test_invalid_decision_expands_within_same_phase_only() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=FIXER_TASK,
+        subtask_descriptions=("[Totally-Invalid] x",),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Patch-Validator",),
+    )
+    assert verdict.route == "expanded"
+    labels = {a.description.split("]")[0][1:] for a in verdict.additions}
+    assert "Root-Cause-Analyst" in labels
+    assert "Patch-Applier" in labels
+    assert "Patch-Validator" in labels
+    assert "Candidate-Reviewer" in labels or "Regression-Tester" in labels
+    assert "PoC-Researcher" not in labels
+    assert "Builder" not in labels
+
+
+def test_phase_route_provenance_on_valid_manager_decision() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=BUILDER_TASK,
+        subtask_descriptions=(
+            "[Build-Setup] install deps from digest",
+            "[Build-Executor] rebuild",
+            "[Build-Verifier] verify",
+        ),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Build-Verifier",),
+    )
+    assert verdict.route == "escalated"
+    assert verdict.triggers == ("phase_gate_failed", "manager_llm")
+    assert verdict.policy_version == "policy-v2"
+    assert verdict.phase == "Builder"
+    assert verdict.remaining_budget == 0
+
+
+def _final_labels(verdict, originals: tuple[str, ...]) -> set[str]:
+    kept = {
+        originals[i].split("]")[0][1:]
+        for i in range(len(originals))
+        if i not in verdict.removals
     }
-
-
-def test_policy_version_is_sourced_from_config_not_hardcoded() -> None:
-    # Given: a validator configured with a specific treatment/policy version
-    validator = SecBenchDecompositionValidator(
-        adaptive_execution=True, policy_version="b4-adaptive-v2"
-    )
-
-    # When: it produces both the skeleton and a phase route
-    skeleton = validator.fixed_decomposition(
-        parent_task_description="Repair the CVE",
-        domain_context=_cve(),
-        redecomposition_count=0,
-    )
-    compact = validator.fixed_decomposition(
-        parent_task_description="[Exploiter] reproduce",
-        domain_context=_cve(),
-        redecomposition_count=0,
-    )
-
-    # Then: the emitted policy version reflects config, not a hardcoded literal
-    assert skeleton is not None and skeleton.policy_version == "b4-adaptive-v2"
-    assert compact is not None and compact.policy_version == "b4-adaptive-v2"
-
-
-def test_role_fused_policy_spawns_phase_workers_without_role_decomposition() -> None:
-    # Given: The adaptive role-fused treatment
-    validator = SecBenchDecompositionValidator(
-        adaptive_execution=True,
-        policy_version="b4-adaptive-rolefused-v1",
-    )
-
-    # When: Root and phase tasks request policy-controlled decomposition
-    skeleton = validator.fixed_decomposition(
-        parent_task_description="Repair the CVE",
-        domain_context=_cve(),
-        redecomposition_count=0,
-    )
-    phase = validator.fixed_decomposition(
-        parent_task_description="[Fixer] repair the vulnerability",
-        domain_context=_cve(),
-        redecomposition_count=0,
-    )
-
-    # Then: LLM phase work is fused while the four mechanical gates remain explicit
-    assert skeleton is not None
-    assert all(item.estimated_complexity == "simple" for item in skeleton.subtasks)
-    assert [item.description.split("]")[0] for item in skeleton.subtasks] == [
-        "[Builder",
-        "[Build-Verifier",
-        "[Exploiter",
-        "[Exploit-Validator",
-        "[Fixer",
-        "[Patch-Applier",
-        "[Patch-Validator",
-        "[Reporter",
-    ]
-    assert validator.hard_dependencies("Build-Verifier") == ("Builder",)
-    assert validator.hard_dependencies("Patch-Applier") == ("Fixer",)
-    assert phase is None
-
-
-def test_exploiter_expansion_is_conditioned_on_the_failure_signal() -> None:
-    # Given: an Exploiter controller re-entering after a reproduction/data-flow conflict
-    validator = SecBenchDecompositionValidator(adaptive_execution=True)
-
-    # When: the escalation is selected with that specific failure signal
-    selection = validator.fixed_decomposition(
-        parent_task_description="[Exploiter] reproduce",
-        domain_context=_cve(),
-        redecomposition_count=1,
-        failure_signal="reproduction conflicts with the CVE evidence; data flow unclear",
-    )
-
-    # Then: compact roles, specialists, and the Forward-Instrumentator's hard producer run
-    assert selection is not None and selection.route == "escalated"
-    labels = {item.description.split("]")[0] for item in selection.subtasks}
-    assert "[Repro-Creator" in labels and "[Exploit-Validator" in labels  # compact preserved
-    assert "[Data-Flow-Analyst" in labels and "[Forward-Instrumentator" in labels
-    assert "[PoC-Researcher" in labels
-    # the sanitizer-trigger specialists are NOT pulled in for this signal
-    assert "[PoC-Tester" not in labels
-
-
-def test_fixer_patch_failure_expands_with_regression_tester() -> None:
-    # Given: a Fixer controller re-entering after patch validation regressed
-    validator = SecBenchDecompositionValidator(adaptive_execution=True)
-
-    # When: the escalation is selected with a patch/regression failure signal
-    selection = validator.fixed_decomposition(
-        parent_task_description="[Fixer] fix",
-        domain_context=_cve(),
-        redecomposition_count=1,
-        failure_signal="patch validation failed: the repro still crashes after rebuild",
-    )
-
-    # Then: the targeted Regression-Tester is added, compact Fixer roles preserved,
-    # and the whole catalog is NOT injected (stays same-phase)
-    assert selection is not None and selection.route == "escalated"
-    labels = {item.description.split("]")[0] for item in selection.subtasks}
-    assert "[Regression-Tester" in labels
-    assert "[Root-Cause-Analyst" in labels and "[Patch-Applier" in labels
-    assert "[PoC-Researcher" not in labels  # no cross-phase leakage
-
-
-def test_invalid_or_incomplete_route_falls_back_to_expanded() -> None:
-    # Given/When: Route policy receives invalid or incomplete decisions
-    invalid = SecBenchDecompositionValidator.safe_route("unknown", decision_complete=True)
-    incomplete = SecBenchDecompositionValidator.safe_route(
-        "compact", decision_complete=False
-    )
-
-    # Then: Both fail safe to expanded
-    assert invalid == "expanded"
-    assert incomplete == "expanded"
+    for add in verdict.additions:
+        kept.add(add.description.split("]")[0][1:])
+    return kept

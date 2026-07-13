@@ -1,1 +1,1 @@
-"""Security-domain experiment preparation commands."""
+"""Security-domain preparation commands."""

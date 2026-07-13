@@ -17,6 +17,13 @@ class TopologyConfig(BaseModel):
     max_depth: int
     max_children_per_node: int
     max_total_agents: int
+    include_manager_layer: bool = Field(
+        default=True,
+        description=(
+            "Keep deterministic grouping nodes as Managers. False flattens one fixed "
+            "grouping layer while preserving its child dependency DAG."
+        ),
+    )
 
     def is_depth_limited(self) -> bool:
         return self.max_depth > 0
@@ -81,12 +88,12 @@ class OrchestrationConfig(BaseModel):
 
     treatment_version: str | None = Field(
         default=None,
-        description="Frozen experimental treatment identifier persisted on RunStarted.",
+        description="Opaque run-variant identifier persisted on RunStarted for provenance.",
     )
 
     mode: Literal["hierarchical", "flat"] = Field(
         default="hierarchical",
-        description="Top-level execution shape: hierarchical (BOSS->managers->workers) or flat.",
+        description="Top-level execution shape: hierarchical recursive tree or flat worker.",
     )
     max_retries: int = Field(ge=0, le=10)
     poll_interval: float = Field(ge=0.01)

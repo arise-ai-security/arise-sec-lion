@@ -1,8 +1,0 @@
-extends: experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml
-
-overrides:
-  orchestration.treatment_version: b4-full-v0
-  orchestration.scoped_worker_context: false
-  orchestration.shared_code_render_mode: append_only
-  orchestration.topology.max_children_per_node: 7
-  orchestration.topology.max_total_agents: 40

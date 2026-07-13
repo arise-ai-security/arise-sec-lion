@@ -310,7 +310,7 @@ def test_run_task_emits_one_disallowed_flag_per_tool(
 def test_run_task_emits_single_disallowed_flag_when_policy_has_one_tool(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:
-    """A single-tool exclusion (the A2 case today) emits one --disallowedTools pair."""
+    """A single-tool exclusion emits one --disallowedTools pair."""
     # Given: a stubbed `claude` binary path and a captured create_subprocess_exec.
     monkeypatch.setattr(
         "infrastructure.workers.claude_code_worker.shutil.which",
@@ -482,7 +482,7 @@ def test_run_task_emits_empty_allowlist_when_policy_has_no_bash_commands(
 def test_run_task_can_use_global_claude_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:
-    """A-cells may use the operator/global Claude config while preserving CLI policy."""
+    """Flat runs may use the operator/global Claude config while preserving CLI policy."""
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
     monkeypatch.setattr(
@@ -1248,13 +1248,13 @@ def test_cost_event_aliases_reasoning_to_thinking() -> None:
 
 
 def test_tool_use_events_populate_structured_tool_name(tmp_path: Path, run_id: UUID) -> None:
-    """Pins audit N-6 fix: ``ThoughtCaptured`` rows from the Claude Code stream
+    """Pins the structured-tool-name regression: Claude Code ``ThoughtCaptured`` rows
     expose the canonical tool name on the structured ``tool_name`` field, so
     downstream analysis no longer has to parse the rendered content prefix.
 
     Also pins the content rendering invariant -- ``prefixes.recover_tool_name``
     relies on the leading ``"Running: "`` / ``"Reading: "`` prefix for historic
-    A1/A2 data, so the human-readable description must remain intact.
+    rows, so the human-readable description must remain intact.
     """
 
     # Given: a Claude Code stream-json transcript containing one Bash tool_use
@@ -1310,12 +1310,12 @@ def test_tool_use_events_populate_structured_tool_name(tmp_path: Path, run_id: U
     assert read_event.tool_name == "Read"
 
     # And: the rendered content still carries the human-readable prefix so the
-    # ``prefixes.recover_tool_name`` recovery layer keeps working for the
-    # historic A1/A2 data that pre-dates this fix.
+    # ``prefixes.recover_tool_name`` recovery layer keeps working for rows that
+    # pre-date this fix.
     assert bash_event.content.startswith("Running: ")
     assert read_event.content.startswith("Reading: ")
 
     # And: the stream identifier still tags the row as the Claude Code CLI
-    # path so analysis can distinguish A1/A2 from B-family SDK rows.
+    # path so analysis can distinguish CLI rows from SDK rows.
     assert bash_event.stream == "claude_code"
     assert read_event.stream == "claude_code"

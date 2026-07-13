@@ -25,7 +25,7 @@ class BefPhase(str, Enum):
     """Top-level BEF phase a leaf agent belongs to.
 
     ``ORCHESTRATION`` buckets boss/manager work that is not under any phase
-    subtree. ``LINEAR`` is used by the N1/N2 functions, where one agent runs all
+    subtree. ``LINEAR`` is used for flat runs, where one agent runs all
     phases and no per-phase agent exists.
     """
 

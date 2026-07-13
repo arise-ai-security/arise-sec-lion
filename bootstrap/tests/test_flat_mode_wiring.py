@@ -368,7 +368,7 @@ def _custom_tool_policy_settings(tmp_path: Path, *, tool: str, model: str) -> Pa
 
 
 def test_create_runtime_cli_threads_allowed_tools_to_claude_sdk(tmp_path: Path) -> None:
-    """B-cell wiring: YAML ``worker.allowed_tools`` reaches the Claude SDK adapter."""
+    """YAML ``worker.allowed_tools`` reaches the Claude SDK adapter."""
     from bootstrap.composition import create_runtime_cli
     from config.settings import Settings
     from infrastructure.adapters.worker import ClaudeAgentSDKAdapter
@@ -398,7 +398,7 @@ def test_create_runtime_cli_threads_allowed_tools_to_claude_sdk(tmp_path: Path) 
 
 
 def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -> None:
-    """C-cell wiring: YAML OpenHands native/MCP tools reach the adapter."""
+    """YAML OpenHands native/MCP tools reach the adapter."""
     from bootstrap.composition import create_runtime_cli
     from config.settings import Settings
     from infrastructure.adapters.worker import OpenHandsAdapter

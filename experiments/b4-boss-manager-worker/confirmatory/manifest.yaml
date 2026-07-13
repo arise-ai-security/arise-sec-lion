@@ -1,0 +1,13 @@
+study_id: b4-boss-manager-worker/confirmatory
+created_at: 2026-07-12T00:00:00+00:00
+hypothesis: >
+  Draft confirmatory N1 versus adaptive B4. The current candidate roster overlaps
+  development enrollments and must be replaced before freezing. The final arms
+  will be paired by task and base commit, launched in seeded randomized-interleaved
+  order, and analyzed intention-to-treat.
+dataset: dataset.yaml
+replicates: 1
+cells:
+  N1: {group: N, runner: arise, config: ../../n1-openhands-linear/configs/N1-openhands-linear.yaml}
+  B4: {group: B, runner: arise, config: ../configs/B4-boss-manager-worker.yaml}
+headline_cells: [N1, B4]

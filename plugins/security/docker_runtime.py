@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .container_runtime import SecBenchContainerSession, SecBenchWorkspace
-from .procedures import CommandOutcome
+from .procedures import CommandOutcome, ProcedureInfrastructureError
 from .runtime import docker_cli, image_ensurer, sealer, workspace_mirror
 from .runtime.sealer import _FORBIDDEN_TESTCASE_ARTIFACTS  # noqa: F401  re-exported for tests
 
@@ -23,6 +23,14 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+_PROCEDURE_FIXED_ENV = {
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "LC_ALL": "C",
+    "BASH_ENV": "/dev/null",
+    "ENV": "/dev/null",
+}
 
 
 class DockerSecBenchRuntime:
@@ -183,7 +191,7 @@ class DockerSecBenchRuntime:
             # Bind the workspace root so worker scratch files (e.g. mcp config,
             # scratch CLAUDE_CONFIG_DIR) written on the host are reachable from
             # inside the container — required when the agent process itself
-            # runs in-container (Cell A flat-mode docker-exec path).
+            # runs through the flat in-container docker-exec path.
             "-v",
             f"{self._host_path(workspace.host_root)}:{workspace.container_workspace_root}",
             "-v",
@@ -291,42 +299,80 @@ class DockerProcedureSession:
     """ProcedureSession over the run's shared worker container.
 
     Drives ``docker exec`` synchronously for the deterministic procedure tier.
-    A timeout is a task-level outcome (``CommandOutcome(timed_out=True)``),
-    never an exception — the procedure turns it into a FAIL verdict digest.
+    A timeout resets the shared container and becomes a task-level outcome. Failure
+    to reset the container is an infrastructure error because it is unsafe to continue.
     """
 
     def __init__(self, session: SecBenchContainerSession) -> None:
         self._session = session
         self.testcase_dir = session.workspace.host_testcase_dir
         self.source_dir = session.workspace.host_source_dir
+        self.work_dir = session.workspace.host_work_root
+        self.identity_dir = sealer.sealed_dir(session.workspace.host_root)
 
-    async def run(self, command: str, *, timeout: float) -> CommandOutcome:  # noqa: ASYNC109
-        argv = [
+    async def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        timeout: float,
+        stdin: bytes | None = None,
+        env: tuple[tuple[str, str], ...] = (),
+    ) -> CommandOutcome:  # noqa: ASYNC109
+        if not argv:
+            raise ValueError("procedure argv must not be empty")
+        if timeout <= 0:
+            raise ValueError("procedure timeout must be positive")
+
+        # Docker preserves the image's OSS-Fuzz environment (SRC, WORK, OUT,
+        # SANITIZER, compiler flags). Override only the command-specific values
+        # plus the fixed process-launch controls, which callers cannot replace.
+        procedure_env = dict(env)
+        procedure_env.update(_PROCEDURE_FIXED_ENV)
+        docker_env = [
+            item
+            for pair in procedure_env.items()
+            for item in ("--env", "=".join(pair))
+        ]
+        inner_timeout = f"{timeout}s"
+        docker_argv = [
             "docker",
             "exec",
             "-i",
+            *docker_env,
             "-w",
             self._session.workspace.container_working_directory,
             self._session.container_id,
-            "bash",
-            "-lc",
-            command,
+            "/usr/bin/timeout",
+            "--signal=TERM",
+            "--kill-after=5s",
+            inner_timeout,
+            *argv,
         ]
         process = await asyncio.create_subprocess_exec(
-            *argv,
+            *docker_argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=os.environ.copy(),
         )
         try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(input=stdin), timeout=timeout + 10.0
+            )
         except TimeoutError:
             process.kill()
             try:
                 stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
             except TimeoutError:
                 stdout = b""
-                logger.warning("docker exec did not exit after kill: %s", command[:80])
+                logger.warning("docker exec did not exit after kill: %s", docker_argv[-8:])
+            await self._restart_after_timeout()
+            return CommandOutcome(
+                exit_code=124,
+                output=stdout.decode("utf-8", errors="replace"),
+                timed_out=True,
+            )
+        if process.returncode == 124:
+            await self._restart_after_timeout()
             return CommandOutcome(
                 exit_code=124,
                 output=stdout.decode("utf-8", errors="replace"),
@@ -336,3 +382,14 @@ class DockerProcedureSession:
             exit_code=process.returncode or 0,
             output=stdout.decode("utf-8", errors="replace"),
         )
+
+    async def _restart_after_timeout(self) -> None:
+        try:
+            await docker_cli.run_checked(
+                ["docker", "restart", "--timeout", "0", self._session.container_id],
+                timeout=60.0,
+            )
+        except RuntimeError as exc:
+            raise ProcedureInfrastructureError(
+                "procedure timed out and the shared container could not be restarted"
+            ) from exc

@@ -1,13 +1,10 @@
-"""Catalog invariants for plugins/security/roles.py and its eval/prompt derivations."""
+"""Catalog invariants for plugins/security/roles.py and prompt derivations."""
 
-from experiments.shared.evaluation import criteria
-from experiments.shared.evaluation.models import BefPhase
 from plugins.security import roles as R
 from plugins.security.deliverables import (
     ARTIFACT_DIRS,
     ARTIFACT_PATHS,
     HIERARCHICAL_ONLY,
-    MAY_BE_EMPTY,
     REQUIRED_FILES,
     VALIDATION_REQUIRED,
 )
@@ -77,23 +74,6 @@ def test_hard_dependencies_match_develop_prompt_artifact_handoffs() -> None:
 
     for role in R.ROLES:
         assert role.depends_on == expected[role.name]
-
-
-def test_evaluation_contract_mirror_matches_plugin_source_of_truth() -> None:
-    """The evaluation contract mirror must remain aligned with the security plugin."""
-    # Given: the security plugin's deliverable and role catalogs.
-    expected_phases = {role.name: BefPhase[role.phase.upper()] for role in R.ROLES}
-    expected_dependencies = {
-        role.name: role.depends_on for role in R.ROLES if role.depends_on
-    }
-
-    # Then: every evaluation-layer mirror matches its plugin source of truth.
-    assert criteria._REQUIRED_FILES == REQUIRED_FILES
-    assert criteria._VALIDATION_REQUIRED == VALIDATION_REQUIRED
-    assert criteria._MAY_BE_EMPTY == MAY_BE_EMPTY
-    assert criteria._HIERARCHICAL_ROLE_SPECIFIC_FIXER == HIERARCHICAL_ONLY["Fixer"]
-    assert criteria._ROLE_PHASE == expected_phases
-    assert criteria._ROLE_DEPENDS_ON == expected_dependencies
 
 
 def test_soft_dependencies_match_develop_prompt_fallback_handoffs() -> None:

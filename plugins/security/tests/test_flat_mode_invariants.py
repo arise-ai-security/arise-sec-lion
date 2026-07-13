@@ -83,16 +83,14 @@ def _demo_cve_instance() -> CVEInstance:
 def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> None:
     """The bootstrap-side invariant builder picks up overlaid settings.
 
-    A-cell tool policy is expressed at the top level in YAML — A2 sets
-    ``worker.disallowed_tools: ["Task"]`` to suppress Claude's Task tool
-    (that's the entire A1-vs-A2 contrast). The closure reads from there
-    directly so the policy flows through to the ``ClaudeCodeWorker`` CLI flags.
+    Flat tool policy is expressed at the top level in YAML. The closure reads
+    it directly so the policy flows through to the ``ClaudeCodeWorker`` CLI flags.
     """
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
 
     # Given: a settings overlay that pins per-worker-call to 450s and the
-    # top-level tool allow/deny lists used by A1/A2.
+    # top-level tool allow/deny lists.
     settings_path = _settings_with(
         tmp_path,
         worker={
@@ -134,7 +132,7 @@ def test_flat_invariant_builder_consumes_settings_overlay(tmp_path: Path) -> Non
 
 
 def test_flat_invariant_builder_rejects_missing_cve_instance(tmp_path: Path) -> None:
-    """Cell A's flat dispatch demands a CVEInstance domain_context.
+    """Flat security dispatch demands a CVEInstance domain_context.
 
     Without it, the unified prompt renderer cannot produce the input
     block. Fail fast at builder time rather than ship a context-free
@@ -155,20 +153,18 @@ def test_flat_invariant_builder_rejects_missing_cve_instance(tmp_path: Path) -> 
         builder(task="task-1", domain_context=None, run_dir=run_dir)
 
 
-def test_flat_invariant_builder_pins_a2_task_denial_against_default_tool_params(
+def test_flat_invariant_builder_pins_task_denial_against_default_tool_params(
     tmp_path: Path,
 ) -> None:
-    """A2's ``worker.disallowed_tools: ["Task"]`` must reach the worker.
+    """Top-level ``worker.disallowed_tools: ["Task"]`` must reach the worker.
 
-    A2's `tool_params.claude_code` slot omits `disallowed_tools` (defaults to
-    `[]`), and the entire A1-vs-A2 contrast hinges on the top-level denial
-    reaching the Claude CLI. A regression that re-prefers the nested slot
-    would silently make A1 ≡ A2.
+    The nested `tool_params.claude_code` slot omits `disallowed_tools` (defaults
+    to `[]`), so a regression that re-prefers it would lose the top-level denial.
     """
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
 
-    # Given: an A2-shaped settings overlay — Task denied at the top level,
+    # Given: Task denied at the top level,
     # the nested claude_code slot deliberately omits ``disallowed_tools``.
     settings_path = _settings_with(
         tmp_path,
@@ -196,7 +192,7 @@ def test_flat_invariant_builder_pins_a2_task_denial_against_default_tool_params(
     )
 
     # When: invoking the closure on a valid CVE context.
-    run_dir = tmp_path / "runs" / "a2"
+    run_dir = tmp_path / "runs" / "task-denied"
     run_dir.mkdir(parents=True)
     bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
 
@@ -205,13 +201,15 @@ def test_flat_invariant_builder_pins_a2_task_denial_against_default_tool_params(
     assert bundle.tool_policy.disallowed == ("Task",)
 
 
-def test_flat_invariant_builder_renders_a1_prompt_with_subagent_note(tmp_path: Path) -> None:
-    """A1's flat prompt carries the ``FLAT_SUBAGENT_NOTE`` capability hint."""
+def test_flat_invariant_builder_renders_subagent_note_when_task_allowed(
+    tmp_path: Path,
+) -> None:
+    """A flat prompt carries the subagent note when delegation is allowed."""
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
     from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 
-    # Given: an A1-shaped settings overlay — Task tool allowed.
+    # Given: the Task tool is allowed.
     settings_path = _settings_with(
         tmp_path,
         worker={
@@ -238,7 +236,7 @@ def test_flat_invariant_builder_renders_a1_prompt_with_subagent_note(tmp_path: P
     )
 
     # When: the closure renders for a CVE.
-    run_dir = tmp_path / "runs" / "a1"
+    run_dir = tmp_path / "runs" / "task-allowed"
     run_dir.mkdir(parents=True)
     bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
 
@@ -248,7 +246,7 @@ def test_flat_invariant_builder_renders_a1_prompt_with_subagent_note(tmp_path: P
 
 
 def _openhands_worker_overlay(*, enable_subagents: bool) -> dict:
-    """Worker overlay matching the N-cell OpenHands baselines."""
+    """Build an OpenHands worker overlay with optional native subagents."""
     return {
         "model": "gpt-5.3-codex",
         "tool": "openhands",
@@ -265,18 +263,20 @@ def _openhands_worker_overlay(*, enable_subagents: bool) -> dict:
     }
 
 
-def test_flat_invariant_builder_openhands_n1_omits_subagent_note(tmp_path: Path) -> None:
-    """N1 (openhands, subagents off) must NOT receive ``FLAT_SUBAGENT_NOTE``.
+def test_flat_invariant_builder_openhands_without_subagents_omits_note(
+    tmp_path: Path,
+) -> None:
+    """OpenHands without subagents must not receive ``FLAT_SUBAGENT_NOTE``.
 
     The legacy predicate keyed off ``"Task" not in worker.disallowed_tools``;
-    an OpenHands cell never lists Claude's Task tool, so N1 would wrongly get
+    an OpenHands configuration never lists Claude's Task tool, so it would wrongly get
     the note. The predicate must be tool-aware.
     """
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
     from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 
-    # Given: an N1-shaped overlay — openhands, enable_subagents=False, Task not disallowed.
+    # Given: OpenHands with native subagents disabled and Task not disallowed.
     settings_path = _settings_with(
         tmp_path,
         worker=_openhands_worker_overlay(enable_subagents=False),
@@ -288,7 +288,7 @@ def test_flat_invariant_builder_openhands_n1_omits_subagent_note(tmp_path: Path)
     )
 
     # When: the closure renders for a CVE.
-    run_dir = tmp_path / "runs" / "n1"
+    run_dir = tmp_path / "runs" / "without-subagents"
     run_dir.mkdir(parents=True)
     bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
 
@@ -297,13 +297,15 @@ def test_flat_invariant_builder_openhands_n1_omits_subagent_note(tmp_path: Path)
     assert FLAT_SUBAGENT_NOTE not in bundle.spec.rendered_prompt
 
 
-def test_flat_invariant_builder_openhands_n2_includes_subagent_note(tmp_path: Path) -> None:
-    """N2 (openhands, enable_subagents=True) receives ``FLAT_SUBAGENT_NOTE``."""
+def test_flat_invariant_builder_openhands_with_subagents_includes_note(
+    tmp_path: Path,
+) -> None:
+    """OpenHands with native subagents receives ``FLAT_SUBAGENT_NOTE``."""
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
     from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 
-    # Given: an N2-shaped overlay — openhands with subagent delegation enabled.
+    # Given: OpenHands with subagent delegation enabled.
     settings_path = _settings_with(
         tmp_path,
         worker=_openhands_worker_overlay(enable_subagents=True),
@@ -315,7 +317,7 @@ def test_flat_invariant_builder_openhands_n2_includes_subagent_note(tmp_path: Pa
     )
 
     # When: the closure renders for a CVE.
-    run_dir = tmp_path / "runs" / "n2"
+    run_dir = tmp_path / "runs" / "with-subagents"
     run_dir.mkdir(parents=True)
     bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
 
@@ -324,13 +326,15 @@ def test_flat_invariant_builder_openhands_n2_includes_subagent_note(tmp_path: Pa
     assert FLAT_SUBAGENT_NOTE in bundle.spec.rendered_prompt
 
 
-def test_flat_invariant_builder_renders_a2_prompt_without_subagent_note(tmp_path: Path) -> None:
-    """A2's flat prompt omits the ``FLAT_SUBAGENT_NOTE`` because Task is denied."""
+def test_flat_invariant_builder_omits_subagent_note_when_task_denied(
+    tmp_path: Path,
+) -> None:
+    """The flat prompt omits ``FLAT_SUBAGENT_NOTE`` when Task is denied."""
     from bootstrap.composition import _make_flat_invariant_builder
     from config.settings import Settings
     from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 
-    # Given: an A2-shaped settings overlay — Task tool denied.
+    # Given: the Task tool is denied.
     settings_path = _settings_with(
         tmp_path,
         worker={
@@ -357,7 +361,7 @@ def test_flat_invariant_builder_renders_a2_prompt_without_subagent_note(tmp_path
     )
 
     # When: the closure renders for a CVE.
-    run_dir = tmp_path / "runs" / "a2"
+    run_dir = tmp_path / "runs" / "task-denied"
     run_dir.mkdir(parents=True)
     bundle = builder(task="t1", domain_context=_demo_cve_instance(), run_dir=run_dir)
 
@@ -367,7 +371,7 @@ def test_flat_invariant_builder_renders_a2_prompt_without_subagent_note(tmp_path
 
 
 def test_flat_prompt_carries_no_tree_or_judge_vocabulary(tmp_path: Path) -> None:
-    """The N baseline prompt = CVE + BEF pipeline + artifacts + task — nothing else.
+    """The flat worker prompt = CVE + BEF pipeline + artifacts + task — nothing else.
 
     Tree-topology vocabulary (decompose/subtask/sibling/manager), judge framing,
     and the shared-code block are hierarchical-arm engineering; any of them in the
@@ -388,8 +392,8 @@ def test_flat_prompt_carries_no_tree_or_judge_vocabulary(tmp_path: Path) -> None
         "<context-update>",
     )
 
-    for cell, enable_subagents in (("n1", False), ("n2", True)):
-        # Given: an N-shaped overlay (openhands; N2 additionally arms subagents).
+    for cell, enable_subagents in (("disabled", False), ("enabled", True)):
+        # Given: OpenHands with native subagent delegation toggled by configuration.
         settings_path = _settings_with(
             tmp_path,
             worker=_openhands_worker_overlay(enable_subagents=enable_subagents),

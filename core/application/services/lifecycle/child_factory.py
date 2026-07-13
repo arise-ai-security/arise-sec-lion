@@ -87,6 +87,28 @@ class ChildAgentFactory:
     def reserved(self) -> int:
         return self._reserved
 
+    # ------------------------------------------------------------------
+    # Public role-history queries (outcome-aware cross-tree dedup)
+    # ------------------------------------------------------------------
+
+    def get_sibling_role_prefixes(self, agent_id: UUID, parent_id: UUID) -> set[str]:
+        return self._limits_registry.get_sibling_role_prefixes(agent_id, parent_id)
+
+    def get_tree_role_prefixes(self, agent_id: UUID) -> set[str]:
+        return self._limits_registry.get_tree_role_prefixes(agent_id)
+
+    def get_completed_role_prefixes(self, agent_id: UUID) -> set[str]:
+        return self._limits_registry.get_completed_role_prefixes(agent_id)
+
+    def get_failed_role_prefixes(self, agent_id: UUID) -> set[str]:
+        return self._limits_registry.get_failed_role_prefixes(agent_id)
+
+    def mark_role_completed(self, agent_id: UUID) -> None:
+        self._limits_registry.mark_role_completed(agent_id)
+
+    def mark_role_failed(self, agent_id: UUID) -> None:
+        self._limits_registry.mark_role_failed(agent_id)
+
     def is_at_agent_limit(self) -> bool:
         if self._max_total_agents < 0:
             return False
@@ -185,6 +207,8 @@ class ChildAgentFactory:
         self,
         events: list[ChildSpawned],
         parent_id: UUID,
+        *,
+        parent_hard_predecessor_ids: tuple[UUID, ...] = (),
     ) -> list[ChildCreationResult]:
         """Create multiple child agents from ChildSpawned events.
 
@@ -204,12 +228,32 @@ class ChildAgentFactory:
         # predecessor agent ids so a worker's context packet can be scoped to
         # exactly its hard predecessors.
         sibling_map = {event.sibling_index: event.child_id for event in events}
+        child_dependencies = {
+            event.child_id: tuple(
+                sibling_map[index]
+                for index in event.subtask.depends_on
+                if index in sibling_map
+            )
+            for event in events
+        }
+        parent_sink_ids = self._limits_registry.expand_to_terminal_sinks(
+            parent_hard_predecessor_ids
+        )
 
         # Create all child agents in parallel using asyncio.gather
         # This is safe because each event creates an independent agent
         results = await asyncio.gather(
-            *[self._create_child_parallel(event, parent_id, sibling_map) for event in events]
+            *[
+                self._create_child_parallel(
+                    event,
+                    parent_id,
+                    sibling_map,
+                    parent_sink_ids,
+                )
+                for event in events
+            ]
         )
+        self._limits_registry.replace_child_generation(parent_id, child_dependencies)
 
         # Commit the reservation atomically (moves from _reserved to
         # _total_created under the lock when the factory is bounded).
@@ -222,6 +266,7 @@ class ChildAgentFactory:
         event: ChildSpawned,
         parent_id: UUID,
         sibling_map: dict[int, UUID],
+        parent_hard_predecessor_ids: tuple[UUID, ...],
     ) -> ChildCreationResult:
         """Create a single child agent (for parallel execution).
 
@@ -229,11 +274,20 @@ class ChildAgentFactory:
         """
         child_role = AgentRole(event.child_role)
         child_config = self._apply_manager_config(event.child_config)
-        hard_predecessor_ids = [
+        sibling_predecessor_ids = [
             sibling_map[index]
             for index in event.subtask.depends_on
             if index in sibling_map
         ]
+        # An entry child of a grouping node inherits the group's external
+        # prerequisites. Children with local predecessors stay scoped to the
+        # sibling DAG, which is the equivalent edge after that grouping layer
+        # is flattened.
+        hard_predecessor_ids = (
+            sibling_predecessor_ids
+            if event.subtask.depends_on
+            else list(dict.fromkeys(parent_hard_predecessor_ids))
+        )
 
         child = AgentSession.create(
             agent_id=event.child_id,

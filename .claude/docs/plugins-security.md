@@ -1,5 +1,5 @@
 <!-- Read this when: working on the security plugin or SEC-bench pipeline -->
-The security plugin (`plugins/security/`) implements SEC-bench vulnerability analysis as the sole domain plugin. It supplies the generic core with a `DomainPlugin`, `PromptStrategy`, `DecompositionValidator`, and -- when procedural dispatch is enabled -- a `ProcedureExecutorPort` implementation for deterministic security procedures.
+The security plugin (`plugins/security/`) implements SEC-bench vulnerability analysis as the sole domain plugin. It supplies the generic core with a `DomainPlugin`, `PromptStrategy`, `InitialDecompositionPolicy`, `DecompositionValidator`, and -- when procedural dispatch is enabled -- a `ProcedureExecutorPort` implementation for deterministic security procedures.
 
 ## Boundary Rules
 
@@ -16,7 +16,8 @@ The plugin never imports from `infrastructure/`. It defines its own `SecurityCon
 | `plugin.py` | `SecurityDomainPlugin` -- implements `DomainPlugin` protocol |
 | `prompt_strategy.py` | `SecBenchPromptStrategy` -- implements `PromptStrategy` protocol; `detect_benchmark_branch()` and `_detect_branch_from_task()` |
 | `roles.py` | The 16-role SEC-bench catalog, phase ownership, deliverables, hard/soft dependencies, and required/optional status |
-| `decomposition_validator.py` | Adaptive B4 fixed phase skeleton, compact/escalated role routes, and role-fused treatment policy |
+| `decomposition_policy.py` | `SecBenchInitialDecompositionPolicy` -- deterministic root phase DAG and compact initial role routes; never interprets failure evidence |
+| `decomposition_validator.py` | SEC-bench role, phase, dependency, and adaptive re-decomposition constraints |
 | `cve_instance.py` | `CVEInstance` frozen Pydantic model (16 stored fields, 6 computed) |
 | `cve_inference.py` | `CVEInstanceInferenceService` -- regex extraction from task text; `CVEInferenceError` |
 | `container_runtime.py` | `SecurityContainerRuntime` protocol + `SecBenchWorkspace` / `SecBenchContainerSession` frozen dataclasses |
@@ -52,7 +53,8 @@ Methods implemented by `SecurityDomainPlugin`:
 | `prepare_worker_execution` | `(*, root_id, agent_id, run_output_path, domain_context) -> WorkerExecutionContext \| None` | Starts a Docker container session, caches in `_sessions[root_id]` |
 | `cleanup_worker_execution` | `(*, root_id, agent_id, domain_context) -> None` | Intentional no-op; the run-shared container persists until process cleanup |
 | `get_prompt_strategy` | `() -> PromptStrategy \| None` | Returns `SecBenchPromptStrategy()` |
-| `get_decomposition_validator` | `() -> DecompositionValidator \| None` | Returns the adaptive/full/role-fused SEC-bench decomposition policy |
+| `get_decomposition_policy` | `() -> InitialDecompositionPolicy \| None` | Returns the deterministic SEC-bench initial phase/role policy |
+| `get_decomposition_validator` | `() -> DecompositionValidator \| None` | Returns the SEC-bench decomposition constraint validator |
 | `get_procedure_executor` | `() -> ProcedureExecutorPort \| None` | Returns the four-role deterministic procedure executor |
 
 ### PromptStrategy protocol
@@ -67,7 +69,7 @@ cat core/application/services/prompt/prompt_strategy.py
 |---|---|---|
 | `extend_assessment_prompt` | Assessor | `cve.j2` + `assess.j2` |
 | `extend_boss_prompt` | Boss | `cve.j2` + `boss.j2` |
-| `extend_manager_prompt` | Manager | `cve.j2` + `manager.j2` + `manager/{phase}.j2` (direct boss children only) |
+| `extend_manager_prompt` | Manager | `cve.j2` + the generic `manager.j2` recovery guidance |
 | `extend_worker_prompt` | Worker | `cve.j2` + `worker.j2` + `worker/{phase}.j2` |
 
 All four methods return `None` when `domain_context` is not a `CVEInstance`, causing core to use default prompts.
@@ -84,11 +86,12 @@ The wiring path in `_build_security_components(settings)`:
 
 1. Checks `settings.security.enabled`. Returns empty `DomainComponents()` if disabled.
 2. Creates `DockerSecBenchRuntime()` directly.
-3. Creates `SecurityDomainPlugin(...)` with tools, shared-context ordering,
-   `adaptive_execution`, and `treatment_version` from settings.
+3. Creates `SecurityDomainPlugin(...)` with tools, shared-context ordering, and
+   `route_policy_version` from the security plugin settings.
 4. Calls `plugin.set_container_runtime(runtime)` to inject the runtime.
-5. Calls `plugin.get_prompt_strategy()` to get the paired `SecBenchPromptStrategy`.
-6. Exposes prompt, decomposition, and procedure seams through generic ports; bootstrap
+5. Retrieves the plugin's prompt strategy, initial decomposition policy, decomposition
+   validator, and procedure executor.
+6. Exposes those seams through generic core ports; bootstrap
    remains the only cross-boundary importer.
 
 Activation requires one of:
@@ -130,15 +133,19 @@ the LLM-backed roles and persists the selected model in worker cost events.
 | Fixer | `Fix-Aggregator` (optional) | LLM | synthesis | `gpt-5.3-codex` |
 | Reporter | `Reporter` | LLM | synthesis/reasoning | `gpt-5.3-codex` |
 
-In the role-fused B3 treatment, a phase worker receives one model. Apply the same
-functional policy: Builder uses `gpt-5.4-mini`; Exploiter, Fixer, and Reporter use
-`gpt-5.3-codex` because each fused task contains reasoning. Record this as part of the
-treatment: B3 role fusion changes model-token allocation as well as topology.
+The B3 direct-compact treatment inherits B4's worker configuration. Each of its nine
+direct roles therefore uses the same trusted role template, model, tools, and host
+procedure as the corresponding B4 role. B3 omits only the Manager nodes, so rendered
+briefings differ only where Manager ancestry/recovery metadata cannot exist. Dependency-
+scoped source packets remain equivalent after grouping predecessors expand to leaf sinks.
 
-## Adaptive and Role-Fused Policies
+## Deterministic Initial Decomposition and Adaptive Validation
 
-`SecBenchDecompositionValidator.fixed_decomposition()` owns the current deterministic
-adaptive policy when `adaptive_execution` is enabled:
+The active B4 treatment version is `b4-adaptive-manager-v2`; its direct compact-role
+ablation is B3 `b3-direct-compact-v1`.
+
+`SecBenchInitialDecompositionPolicy` deterministically creates the root four-phase DAG
+and the compact initial role route under each phase Manager:
 
 ```text
 BOSS
@@ -148,43 +155,60 @@ BOSS
   -> Reporter -> Reporter
 ```
 
-That compact route is nine leaf workers, four of which are host procedures. It is
-selected by trusted host code, not by an LLM manager. A failed phase re-decomposition
-adds only specialists whose trigger matches the failure; an unrecognized failure uses
-the phase's full escalated set. Hard dependencies are closed transitively, so an adaptive
-route cannot select a consumer without its producer. `b4-adaptive-rolefused-v1` creates
-four fused LLM phase workers plus the same four host procedures, with no role children.
-The assess and worker prompts describe these two treatment shapes explicitly.
+That compact route is nine leaf workers, four of which are host procedures. The initial
+policy never interprets failure evidence. On a required failure, the B4 Manager uses the
+existing LLM decomposition path to select same-phase role labels and write
+failure-specific task instructions.
+
+The host validator never routes on failure keywords. It drops illegal, cross-phase,
+duplicate, merged, or completed selections; closes hard dependencies; and binds each
+accepted role to the trusted catalog prompt, model, and procedure before scheduling and
+recording provenance. Full remaining same-phase expansion occurs only when the Manager's
+decision is explicitly invalid and leaves no safe selection.
+
+The resulting `PhaseRouteSelected` event stores per-role `task_sources` (`host_policy`,
+`llm`, or `host_repair`), task instructions, selected roles, and evidence references.
+Manager evidence references propagate through each selected `Subtask` into the child
+`Briefing` and worker prompt.
+
+B3 sets `orchestration.topology.include_manager_layer: false`. Generic core flattening
+turns the same host-owned compact phase DAG into nine direct BOSS children while
+preserving cross-phase and role dependencies. Every other resolved behavioral setting,
+including hierarchy limits, is identical to B4; runtime source does not branch on
+experiment identifiers.
 
 ## Deterministic Procedure Tier (procedural dispatch)
 
-When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecutor` (`procedures.py`) is bound as the run's `ProcedureExecutorPort` via `SecurityDomainPlugin.get_procedure_executor()`. It runs four fixed roles host-side with zero LLM turns, so validation and literal patch application become host-computed and event-sourced instead of agent-authored. Default off => `NullProcedureExecutor` => the agentic path.
+When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecutor` (`procedures.py`) is bound as the run's `ProcedureExecutorPort` via `SecurityDomainPlugin.get_procedure_executor()`. It runs four fixed roles under Host control with zero LLM turns, so validation and literal patch application become Host-computed and event-sourced instead of agent-authored. Default off => `NullProcedureExecutor` => the agentic path.
 
 **Static registry (leading `[Role]` bracket -> `procedure_ref`):**
 
-| `[Role]` bracket | `procedure_ref` | `secb` commands (host-driven, synchronous) |
+| `[Role]` bracket | `procedure_ref` | Host-controlled action |
 |---|---|---|
-| `[Build-Verifier]` | `secb_build_validation` | `secb build`, then resolve and inspect the declared binary |
-| `[Exploit-Validator]` | `secb_exploit_validation` | `secb repro` x3 |
+| `[Build-Verifier]` | `secb_build_validation` | `secb build`, then validate every declared executable ELF and initialize its configured sanitizer runtime |
+| `[Exploit-Validator]` | `secb_exploit_validation` | Resolve the declared target and PoC, then execute that target directly x3 |
 | `[Patch-Applier]` | `secb_patch_apply` | validate the approved `patch_plan.json`; render `model_patch.diff` literally |
-| `[Patch-Validator]` | `secb_patch_validation` | `secb patch` -> `secb build` -> `secb repro` x3 (post-patch, expect no crash) |
+| `[Patch-Validator]` | `secb_patch_validation` | `secb patch` -> `secb build` -> direct target replay x3 (post-patch, expect no crash) |
 
 - `match()` parses the task's leading `[Role]` bracket (via `role_from_task`) and looks it up in `_REGISTRY`; `resolve()` checks membership in `_PROCEDURE_REFS`.
 - `execute()` resolves the run's live container through the injected `session_resolver(root_id)` (the orchestrator injects `root_id` into `procedure_params` from `hierarchy_limits`), downcasts `domain_context` to `CVEInstance`, and drives the container `ProcedureSession` synchronously. Task-level failure (FAIL verdict, preflight miss, timeout) returns `success=False` + a bounded digest and never raises; only a missing session / missing `root_id` / unknown ref raises `ProcedureInfrastructureError`.
-- **Verdict by crash signature.** Each `secb repro` output is reduced to a `CrashSignature` (sanitizer class / access type / top frame) by `crash_signature.py`; `_consensus` picks the majority signature + determinism count; `signatures_match` compares it against the CVE oracle (`compute_crash_signature(cve.sanitizer_report)`). Exploit PASS iff the observed signature matches the oracle across 3/3 deterministic runs. `crash_signature.py` is drift-tested against `experiments/shared/evaluation/criteria.py::_crash_signature` (same 3-tuple shape).
-- **Same on-disk contract.** Writes the identical artifacts the agentic path uses -- `exploit_validation_results.txt` / `patch_validation_results.txt`, `repro_run_*.log`, exit sentinels -- reusing `ARTIFACT_PATHS` / `PHASE_COMMANDS` from `deliverables.py`. Additionally each command becomes a `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, `excerpt`) on the `ProcedureExecutionFinished` event -- agent-unforgeable, unlike the agent-written verdict files.
+- **Host-bound replay.** `repro.sh` has an exact four-line prefix that reads the first declared binary and PoC path. Its final `exec "$BIN" ...` line is parsed with `shlex`, not executed as shell: it may contain inert literal arguments and exactly one `$POC`, or end with the sole supported redirection `< "$POC"`. For example, OpenEXR uses `exec "$BIN" -v "$POC" /dev/null`; FAAD2 uses `exec "$BIN" "$POC" -o /dev/null`. The Host resolves the placeholders, freezes the argv/input, and invokes the target directly. Other variables, command substitution, control operators, wrappers, pipes, setup commands, and other redirections fail closed and use the single agentic fallback.
+- **Verdict by crash signature.** Each direct replay output is reduced to a `CrashSignature` (sanitizer class / access type / top frame) by `crash_signature.py`; `_consensus` picks the majority signature + determinism count; `signatures_match` compares it against the CVE oracle (`compute_crash_signature(cve.sanitizer_report)`). Exploit PASS iff every run yields a complete oracle-matching signature, all 3/3 signatures agree, and process termination is consistent. A recoverable UBSan finding may exit 0; exploit success does not require a failing exit. The experiment-side drift test compares the runtime and official evaluator implementations without importing `experiments/` into runtime code.
+- **Frozen handoff.** A sealed replay contract binds the CVE/base/sanitizer/work directory, dataset exit oracle, source HEAD and Builder-baseline digest, reproducer, PoC/pointer, declared and selected binary plus its digest, resolved replay argv/stdin mode, and exploit verdict. Patch application additionally seals the plan, rendered diff, and replay identity. Patch validation rejects any source, build-input, target-binary, replay-input, plan, or patch drift before applying, rebuilding, and replaying the frozen target.
+- **Controlled execution.** Procedure commands use argv vectors, never `bash -lc`. Docker preserves the image's OSS-Fuzz variables while the Host fixes `PATH`, `LC_ALL=C`, `BASH_ENV=/dev/null`, and `ENV=/dev/null`; sanitizer-specific halt options are supplied for direct replay. GNU `timeout` runs inside the container with TERM then KILL. Either its exit 124 or an outer watchdog timeout restarts the run's shared container before returning a task-level timeout; restart failure is an infrastructure error.
+- **Same on-disk contract.** Writes the identical artifacts the agentic path uses -- `exploit_validation_results.txt` / `patch_validation_results.txt`, `repro_run_*.log`, exit sentinels -- reusing `ARTIFACT_PATHS` / `PHASE_COMMANDS` from `deliverables.py`. Each command also becomes `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, `excerpt`) on `ProcedureExecutionFinished`. That event is Host-computed and an agent cannot directly author it, but the command still executes in the run's mutable shared worker container. Treat it as stronger in-run evidence, not the arm-independent confirmatory authority; the fresh external evaluator remains authoritative.
 
 ### Mechanical criteria
 
 | Gate | PASS | FAIL |
 |---|---|---|
-| Build | `secb build` exits 0 before timeout and the declared binary pointer resolves | timeout, nonzero exit, missing/invalid binary pointer |
-| Exploit preflight | `repro.sh`, PoC pointer, and binary pointer resolve; the reproducer is not the seeded stub | any missing, unresolved, or stub artifact |
-| Exploit replay | three independent `secb repro` runs produce the frozen oracle crash signature | fewer than 3/3 matches, timeout, signal/exit inconsistency, sanitizer/access/top-frame mismatch |
-| Patch plan | JSON schema, allowed operations, paths, context anchors, and frozen scope all validate | malformed plan, path escape/protected path, missing/ambiguous anchor, unsupported operation |
-| Patch apply | host renders the approved plan into a unified diff without discretionary edits | any mismatch between approved plan and rendered patch |
-| Patch validation | patch applies, build succeeds, and all three post-patch replays are crash-free | patch/build timeout or nonzero exit, signal, assertion, sanitizer, or any replay crash |
-| Safety/provenance | protected artifacts unchanged; all six containers are distinct; pre/post replay trios target the requested CVE and same frozen base | target/base identity drift, protected-path modification, reused container, missing host evidence |
+| Build | `secb build` exits 0; every declared absolute path is a non-empty executable ELF and emits the configured ASan/MSan/UBSan startup marker | timeout, nonzero exit, missing/relative path, non-ELF/non-executable target, missing or unsupported sanitizer runtime |
+| Exploit preflight | canonical structured direct-argv replay; PoC file and non-empty binary resolve; source/Builder baseline and selected-binary digest freeze; configured sanitizer initializes (a declared zero-byte PoC is valid) | unsafe replay grammar, missing/unresolved or symlinked artifact, source/build drift, empty/changed binary, or sanitizer failure |
+| Exploit replay | three Host-constructed direct target runs each produce the complete frozen oracle crash signature with consistent termination | fewer than 3/3 complete matches, timeout, inconsistent termination, or sanitizer/access/top-frame mismatch; exit 0 alone is not failure when complete sanitizer evidence is present |
+| Patch plan | JSON schema, allowed operations, paths, context anchors, frozen scope, and replay identity all validate | malformed plan, path escape/protected path, missing/ambiguous anchor, unsupported operation, identity mismatch |
+| Patch apply | Host renders the approved plan into a unified diff without discretionary edits and seals plan/diff hashes against the replay identity | any mismatch between approved plan, rendered patch, or frozen replay identity |
+| Patch validation | protected replay/patch inputs are unchanged; patch applies; build and binary/sanitizer checks succeed; all three direct post-patch replays are crash-free and exit consistently with `0` or the frozen dataset exit oracle | identity drift, patch/build timeout or nonzero exit, invalid binary/runtime, replay exit outside the accepted set, signal, assertion, sanitizer, or any replay crash |
+| External official evaluation | six fresh containers independently verify target/base identity and pre/post safety/regression results | reused container, wrong target/base, missing evaluator evidence, safety or regression failure |
 
 Mechanical gates never accept an agent-authored `VERDICT: PASS`. A failed procedure
 records a bounded `failure_digest` and gets exactly one agentic retry; the retry does
@@ -250,14 +274,14 @@ The `_as_cve_instance` helper is defined independently in both `plugin.py` and `
 
 ## SEC-bench Phases
 
-Four phases correspond to branches of the BOSS agent's decomposition tree. Each has its own worker template; three have manager templates.
+Four phases correspond to branches of the BOSS agent's decomposition tree. Each has its own worker template. One generic `manager.j2` template receives the phase-specific task and briefing when a Manager layer exists.
 
-| Phase | Purpose | Keywords for detection | Templates |
+| Phase | Purpose | Keywords for detection | Worker template |
 |---|---|---|---|
-| `builder` | Compile the project in the container | `builder`, `environment`, `setup`, `docker pull` | `manager/builder.j2`, `worker/builder.j2` |
-| `exploiter` | Trigger the vulnerability with a PoC | `exploiter`, `poc`, `exploit`, `proof of concept` | `manager/exploiter.j2`, `worker/exploiter.j2` |
-| `fixer` | Patch the vulnerability | `fixer`, `patch`, `fix` | `manager/fixer.j2`, `worker/fixer.j2` |
-| `reporter` | Write a security report | `reporter`, `report`, `security report` | `worker/reporter.j2` (no manager template) |
+| `builder` | Compile the project in the container | `builder`, `environment`, `setup`, `docker pull` | `worker/builder.j2` |
+| `exploiter` | Trigger the vulnerability with a PoC | `exploiter`, `poc`, `exploit`, `proof of concept` | `worker/exploiter.j2` |
+| `fixer` | Patch the vulnerability | `fixer`, `patch`, `fix` | `worker/fixer.j2` |
+| `reporter` | Write a security report | `reporter`, `report`, `security report` | `worker/reporter.j2` |
 
 ### Phase Detection
 
@@ -267,9 +291,10 @@ Two functions in `prompt_strategy.py` handle detection:
 
 **`_detect_branch_from_task(task_description)`** -- Checks for explicit bracket prefixes first (`[Builder]`, `[Exploiter]`, `[Fixer]`, `[Reporter]`) as authoritative matches, then falls back to loose keyword matching. This is the primary detection method.
 
-Worker and manager prompt extension methods try `_detect_branch_from_task` first, then fall back to `detect_benchmark_branch`.
-
-Manager phase-specific templates are only injected for direct boss children (`len(briefing.ancestry) == 1`). This prevents sub-managers from receiving redundant phase-specific instructions. Worker phase templates are injected regardless of depth.
+Worker prompt extension tries `_detect_branch_from_task` first, then falls back to
+`detect_benchmark_branch`. Managers receive the one generic `manager.j2` recovery
+template; there are no phase-specific Manager templates. Worker phase templates are
+injected regardless of depth.
 
 ## Container Runtime
 
@@ -371,13 +396,14 @@ prompts/domains/secbench/
     cve.j2                    -- CVE metadata display (shared across roles)
     assess.j2                 -- Assessment-specific CVE analysis
     boss.j2                   -- BOSS decomposition guidance
-    manager.j2                -- Base manager instructions
+    manager.j2                -- Generic failure-informed Manager recovery guidance
     worker.j2                 -- Base worker instructions
     tools.j2                  -- Security tool docs (appended via enrich_prompt)
-    manager/
-        builder.j2            -- Builder phase manager instructions
-        exploiter.j2          -- Exploiter phase manager instructions
-        fixer.j2              -- Fixer phase manager instructions
+    phases/
+        build.j2              -- Builder phase contract
+        exploit.j2            -- Exploiter phase contract
+        fix.j2                -- Fixer phase contract
+        report.j2             -- Reporter phase contract
     worker/
         builder.j2            -- Builder phase worker instructions
         exploiter.j2          -- Exploiter phase worker instructions

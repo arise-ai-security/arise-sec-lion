@@ -42,6 +42,7 @@ HARNESS_FINAL_STEP_MARKER = "ARISE-REPRO-FINAL-STEP"
 # SIGSEGV(11). SIGABRT surfaces through the shell as exit 128+6=134.
 _SIGABRT = 6
 _SIGABRT_EXIT_CODE = 128 + _SIGABRT
+_MAX_LINUX_SIGNAL = 64
 _CORE_DUMPING_SIGNALS: frozenset[int] = frozenset({3, 4, 5, 6, 7, 8, 11})
 _CORE_DUMP_MARKER = "core dumped"
 _SANITIZER_MARKERS: tuple[str, ...] = (
@@ -52,17 +53,27 @@ _SANITIZER_MARKERS: tuple[str, ...] = (
     "UndefinedBehaviorSanitizer",
     "runtime error:",  # UBSan without a symbolized header
 )
-_ASAN_CLASS_RX = re.compile(r"ERROR:\s*AddressSanitizer:\s*([A-Za-z0-9_-]+)")
+_ASAN_HEADER_RX = re.compile(r"ERROR:\s*AddressSanitizer:\s*([^\r\n]+)")
+_MSAN_HEADER_RX = re.compile(
+    r"(?:WARNING|ERROR):\s*MemorySanitizer:\s*([A-Za-z0-9_-]+)"
+)
+_LSAN_HEADER_RX = re.compile(
+    r"ERROR:\s*LeakSanitizer:\s*detected\s+memory\s+leaks", re.IGNORECASE
+)
+_UBSAN_SUMMARY_RX = re.compile(
+    r"SUMMARY:\s*UndefinedBehaviorSanitizer:\s*[A-Za-z0-9_-]+\s+"
+    r"(?P<path>\S+?):(?P<line>\d+)(?::\d+)?"
+    r"(?:[ \t]+in(?:[ \t]+(?P<function>[^\r\n]+))?)?[ \t]*$",
+    re.MULTILINE,
+)
+_UBSAN_RUNTIME_RX = re.compile(
+    r"^(?P<path>\S+):(?P<line>\d+):\d+:\s+runtime error:", re.MULTILINE
+)
 _ASAN_ACCESS_RX = re.compile(r"\b(READ|WRITE)\s+of\s+size\s+\d+", re.IGNORECASE)
 _ASAN_ACCESS_CAUSE_RX = re.compile(
     r"caused by a\s+(READ|WRITE)\s+memory access", re.IGNORECASE
 )
-# Explicit access category for "SEGV on unknown address" when ASan cannot
-# classify the access as READ/WRITE (not a missing field — preregistered).
-_ASAN_SEGV_UNKNOWN_ADDR_RX = re.compile(
-    r"SEGV\s+on\s+unknown\s+address", re.IGNORECASE
-)
-_ASAN_FRAME_RX = re.compile(r"#\d+\s+0x[0-9a-fA-F]+\s+in\s+(.+)$")
+_STACK_FRAME_RX = re.compile(r"#\d+\s+0x[0-9a-fA-F]+\s+in\s+(.+)$")
 # Symbol-less frames: "#0 0xaddr  (/out/mupdf/mutool+0x45c0d5)"
 _ASAN_FRAME_MODULE_OFFSET_RX = re.compile(
     r"#\d+\s+0x[0-9a-fA-F]+\s+\(([^)]+\+0x[0-9a-fA-F]+)\)"
@@ -80,8 +91,8 @@ _NONAPP_FUNC_RX = re.compile(
     re.IGNORECASE,
 )
 _NONAPP_PATH_RX = re.compile(
-    r"compiler-rt|sanitizer_common|/asan/|libasan|libc-start|/glibc|llvm-project"
-    r"|/sysdeps/|interception|/libc\.so|ld-linux",
+    r"compiler-rt|libsanitizer|sanitizer_common|libasan|libc-start|/glibc|llvm-project"
+    r"|/sysdeps/|interception|/libc\.so|ld-linux|/usr/include/",
     re.IGNORECASE,
 )
 # Module basenames that are never application crash sites for module+offset frames.
@@ -94,7 +105,7 @@ _ACCESS_UNKNOWN = "unknown"
 
 @dataclass(frozen=True, slots=True)
 class CommandEvidence:
-    """Agent-unforgeable evidence captured by the host command runner."""
+    """Evidence captured and authored by the host command runner."""
 
     argv: tuple[str, ...]
     exit_code: int
@@ -117,7 +128,9 @@ class CrashSignature:
 
     @property
     def complete(self) -> bool:
-        return self.sanitizer_class is not None and self.top_application_frame is not None
+        return bool(
+            self.sanitizer_class and self.access_kind and self.top_application_frame
+        )
 
 
 def _normalize_module_offset_frame(raw: str) -> str:
@@ -131,7 +144,7 @@ def _normalize_module_offset_frame(raw: str) -> str:
 def _top_application_frame(text: str) -> str | None:
     """First non-sanitizer application frame, including module+offset frames."""
     for line in text.splitlines():
-        frame_match = _ASAN_FRAME_RX.search(line)
+        frame_match = _STACK_FRAME_RX.search(line)
         if frame_match is not None:
             rest = frame_match.group(1).strip()
             path_match = _FRAME_PATH_RX.search(rest)
@@ -155,27 +168,72 @@ def _top_application_frame(text: str) -> str | None:
     return None
 
 
-def crash_signature(text: str) -> CrashSignature:
-    """Extract sanitizer class, access kind, and first application frame.
+def _normalize_asan_class(message: str) -> str:
+    normalized = message.strip().lower()
+    if normalized.startswith("attempting double-free"):
+        return "double-free"
+    if normalized.startswith("attempting free"):
+        return "bad-free"
+    return normalized.split(maxsplit=1)[0].rstrip(":")
 
-    Access kind is ``read``/``write`` when ASan states it. For
-    ``SEGV on unknown address`` without a READ/WRITE classification, access is
-    the explicit preregistered category ``unknown`` (not missing).
+
+def _sanitizer_identity(text: str) -> tuple[str | None, str | None]:
+    candidates: list[tuple[int, str, str]] = []
+    if match := _ASAN_HEADER_RX.search(text):
+        candidates.append((match.start(), "address", _normalize_asan_class(match.group(1))))
+    if match := _MSAN_HEADER_RX.search(text):
+        candidates.append((match.start(), "memory", match.group(1).lower()))
+    if match := _LSAN_HEADER_RX.search(text):
+        candidates.append((match.start(), "leak", "memory-leak"))
+    ubsan_match = _UBSAN_RUNTIME_RX.search(text) or _UBSAN_SUMMARY_RX.search(text)
+    if ubsan_match is not None:
+        candidates.append((ubsan_match.start(), "undefined", "undefined-behavior"))
+    if not candidates:
+        return None, None
+    _, family, sanitizer_class = min(candidates, key=lambda candidate: candidate[0])
+    return family, sanitizer_class
+
+
+def _source_location_frame(path: str, line: str) -> str:
+    return f"{path.rsplit('/', 1)[-1]}:{line}"
+
+
+def _ubsan_frame(text: str) -> str | None:
+    stack_frame = _top_application_frame(text)
+    if stack_frame is not None:
+        return stack_frame
+    summary = _UBSAN_SUMMARY_RX.search(text)
+    if summary is not None:
+        function = (summary.group("function") or "").strip()
+        if function:
+            return re.split(r"[(<]", function)[0].strip()
+        return _source_location_frame(summary.group("path"), summary.group("line"))
+    runtime = _UBSAN_RUNTIME_RX.search(text)
+    if runtime is not None:
+        return _source_location_frame(runtime.group("path"), runtime.group("line"))
+    return None
+
+
+def crash_signature(text: str) -> CrashSignature:
+    """Extract an exact crash key from ASan, MSan, UBSan, or LSan output.
+
+    Access kind is ``read``/``write`` when ASan states it. Sanitizer reports that
+    do not classify an access use the explicit category ``unknown`` (not missing).
     Symbol-less stacks yield a normalized module-relative frame such as
     ``mutool+0x45c0d5``.
     """
     if not text:
         return CrashSignature(None, None, None)
-    class_match = _ASAN_CLASS_RX.search(text)
-    sanitizer_class = class_match.group(1).lower() if class_match else None
+    family, sanitizer_class = _sanitizer_identity(text)
+    if sanitizer_class is None:
+        return CrashSignature(None, None, None)
     access_match = _ASAN_ACCESS_RX.search(text) or _ASAN_ACCESS_CAUSE_RX.search(text)
     if access_match is not None:
         access_kind: str | None = access_match.group(1).lower()
-    elif sanitizer_class == "segv" and _ASAN_SEGV_UNKNOWN_ADDR_RX.search(text):
-        access_kind = _ACCESS_UNKNOWN
     else:
-        access_kind = None
-    return CrashSignature(sanitizer_class, access_kind, _top_application_frame(text))
+        access_kind = _ACCESS_UNKNOWN
+    top_frame = _ubsan_frame(text) if family == "undefined" else _top_application_frame(text)
+    return CrashSignature(sanitizer_class, access_kind, top_frame)
 
 
 def _signal_from_exit(exit_code: int) -> int | None:
@@ -185,9 +243,9 @@ def _signal_from_exit(exit_code: int) -> int | None:
     above 128 follow the shell ``128 + N`` convention. Anything else is a normal
     exit that carries no signal.
     """
-    if exit_code < 0:
+    if -_MAX_LINUX_SIGNAL <= exit_code < 0:
         return -exit_code
-    if exit_code > 128:
+    if 128 < exit_code <= 128 + _MAX_LINUX_SIGNAL:
         return exit_code - 128
     return None
 
@@ -201,10 +259,11 @@ def command_evidence_from_capture(
     signal: int | None = None,
     final_step_marker: str = HARNESS_FINAL_STEP_MARKER,
 ) -> CommandEvidence:
-    """Derive agent-unforgeable evidence from a captured host execution.
+    """Derive Host-authored evidence from a captured command execution.
 
     Crash and sanitizer semantics are reconstructed from the host exit code and
-    the combined stdout/stderr text, never from any agent-authored verdict.
+    combined output, never from an agent-authored verdict. The official fresh-
+    container evaluation remains authoritative over shared-container observations.
 
     Args:
         argv: The exact command the host ran.

@@ -250,13 +250,15 @@ class ProcedureExecutionFinished(DomainEvent):
 
 
 class PhaseRouteSelected(DomainEvent):
-    """Host policy selected a phase execution route."""
+    """A phase execution route was selected (host policy or validated Manager decision)."""
 
     policy_version: str
     phase: str
     route: Literal["compact", "expanded", "escalated"]
     evidence_references: list[str] = Field(default_factory=list)
     selected_roles: list[str] = Field(default_factory=list)
+    task_instructions: dict[str, str] = Field(default_factory=dict)
+    task_sources: dict[str, str] = Field(default_factory=dict)
     triggers: list[str] = Field(default_factory=list)
     remaining_budget: int
 

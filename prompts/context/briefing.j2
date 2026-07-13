@@ -23,4 +23,12 @@
     {% endfor %}
 </thinker_justification>
 {% endif %}
+{% if briefing.evidence_references %}
+<assignment_evidence>
+    Validate and use these evidence references when executing the assignment:
+    {% for reference in briefing.evidence_references %}
+        - {{ reference }}
+    {% endfor %}
+</assignment_evidence>
+{% endif %}
 {% endif %}

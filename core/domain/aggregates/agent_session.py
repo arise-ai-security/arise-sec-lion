@@ -569,8 +569,9 @@ class AgentSession:
         # orchestrator skip the assessment LLM and execute directly.
         # ``"unknown"`` (default) preserves prior behaviour.
         self.estimated_complexity = "unknown"
-        # Deterministic execution tier: parent's marking from the Subtask,
-        # plus the once-only guard so a failed procedure escalates agentic.
+        # Deterministic execution-tier metadata from the Subtask. Dispatch
+        # authority remains with the Host registry; the once-only guard makes
+        # a failed procedure's next attempt agentic.
         self.execution_mode = "auto"
         self.procedure_ref = ""
         self.procedure_params = {}
@@ -860,6 +861,8 @@ class AgentSession:
         route: Literal["compact", "expanded", "escalated"],
         evidence_references: list[str],
         selected_roles: list[str],
+        task_instructions: dict[str, str],
+        task_sources: dict[str, str],
         triggers: list[str],
         remaining_budget: int,
     ) -> None:
@@ -872,6 +875,8 @@ class AgentSession:
                 route=route,
                 evidence_references=evidence_references,
                 selected_roles=selected_roles,
+                task_instructions=task_instructions,
+                task_sources=task_sources,
                 triggers=triggers,
                 remaining_budget=remaining_budget,
             )
@@ -1085,13 +1090,13 @@ class AgentSession:
 
         for sibling_index, subtask in enumerate(subtasks):
             child_id = uuid4()
-            # Augment briefing with per-subtask justification (Design Choice 4).
+            briefing_updates: dict[str, object] = {}
+            if subtask.justification:
+                briefing_updates["subtask_justification"] = subtask.justification
+            if subtask.evidence_references:
+                briefing_updates["evidence_references"] = subtask.evidence_references
             child_briefing = (
-                briefing.model_copy(
-                    update={"subtask_justification": subtask.justification}
-                )
-                if subtask.justification
-                else briefing
+                briefing.model_copy(update=briefing_updates) if briefing_updates else briefing
             )
             child_event = ChildSpawned(
                 aggregate_id=self.agent_id,
