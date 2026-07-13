@@ -113,6 +113,9 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "PromptContextAssembled": PromptContextAssembled,
 }
 
+_SCHEMA_LOCK_NAMESPACE = 0x41524953  # "ARIS"
+_SCHEMA_LOCK_RESOURCE = 0x45564E54  # "EVNT"
+
 
 class PostgresEventStore(EventStorePort):
     """PostgreSQL event store with append-only log and OCC via UNIQUE constraint."""
@@ -187,7 +190,14 @@ class PostgresEventStore(EventStorePort):
 
         try:
             create_table_sql = self._load_sql("create_events_table.sql")
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire() as conn, conn.transaction():
+                # PostgreSQL's IF NOT EXISTS does not prevent concurrent catalog
+                # creation races when independent processes initialize a fresh DB.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock($1, $2)",
+                    _SCHEMA_LOCK_NAMESPACE,
+                    _SCHEMA_LOCK_RESOURCE,
+                )
                 await conn.execute(create_table_sql)
         except Exception as e:
             raise EventStoreError(

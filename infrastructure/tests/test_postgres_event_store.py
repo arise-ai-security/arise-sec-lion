@@ -5,6 +5,7 @@ live database. The SQL tiebreaker test requires Postgres and is gated by
 ``TEST_DB_URL``.
 """
 
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
@@ -103,6 +104,35 @@ async def event_store():
         async with store.pool.acquire() as conn:
             await conn.execute("DROP TABLE IF EXISTS events")
     await store.disconnect()
+
+
+@_skip_if_no_db
+@pytest.mark.asyncio
+async def test_initialize_schema_serializes_concurrent_callers() -> None:
+    """Concurrent processes can initialize the same fresh database safely."""
+
+    # Given: two independent event stores connected to a database without the events table
+    first = PostgresEventStore(TEST_DB_URL, pool_min=1, pool_max=1)
+    second = PostgresEventStore(TEST_DB_URL, pool_min=1, pool_max=1)
+    await asyncio.gather(first.connect(), second.connect())
+    assert first.pool is not None
+
+    try:
+        async with first.pool.acquire() as conn:
+            await conn.execute("DROP TABLE IF EXISTS events")
+
+        # When: both stores initialize the schema concurrently
+        await asyncio.gather(first.initialize_schema(), second.initialize_schema())
+
+        # Then: initialization succeeds and creates exactly one usable table
+        async with first.pool.acquire() as conn:
+            table_exists = await conn.fetchval("SELECT to_regclass('public.events') IS NOT NULL")
+        assert table_exists is True
+    finally:
+        if first.pool:
+            async with first.pool.acquire() as conn:
+                await conn.execute("DROP TABLE IF EXISTS events")
+        await asyncio.gather(first.disconnect(), second.disconnect())
 
 
 @_skip_if_no_db
