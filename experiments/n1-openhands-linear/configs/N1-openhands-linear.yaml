@@ -10,6 +10,7 @@ overrides:
   orchestration.mode: flat
   orchestration.skip_judge: true   # flat mode has no judge stage; pinned for explicitness
   orchestration.max_run_duration_seconds: 14400   # CONTROL: identical across all 3 cells (non-binding for flat)
+  orchestration.concurrency.max_agent_step_seconds: 3600
   boss.model: claude-sonnet-4-6     # unused in flat mode; required by the Settings schema
   manager.model: claude-sonnet-4-6  # unused in flat mode; required by the Settings schema
   worker.tool: openhands

@@ -27,6 +27,7 @@ overrides:
   orchestration.topology.max_total_agents: 30
   # Escalated routes and verification retries still require a wide wall-clock cap.
   orchestration.max_run_duration_seconds: 14400
+  orchestration.concurrency.max_agent_step_seconds: 3600
   boss.model: gpt-5.4
   manager.model: gpt-5.4
   worker.tool: openhands
