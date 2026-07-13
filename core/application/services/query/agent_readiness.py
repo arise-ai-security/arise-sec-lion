@@ -30,7 +30,7 @@ class AgentReadinessService:
         root_id: UUID | None = None,
         sequential_workers: bool = False,
     ) -> list[UUID]:
-        """Return agent IDs not in terminal state (COMPLETED/FAILED).
+        """Return runnable IDs, including terminals with pending post-step work.
 
         Args:
             root_id: If provided, only return agents in this hierarchy.
@@ -58,11 +58,16 @@ class AgentReadinessService:
         # Build children map once for efficient tree operations
         children_map = self._build_children_map(summaries)
 
-        # Get non-terminal agents (single pass, combined filtering)
+        # Pending terminal post-steps must run before normal dispatch. They bypass
+        # DAG gates because retry scheduling and parent notification are recovery work.
+        pending_post_steps: list[UUID] = []
         non_workers: list[UUID] = []
         workers: list[tuple[UUID, AgentSummaryReadModel]] = []
 
         for agent_id, summary in summaries.items():
+            if summary.post_step_pending:
+                pending_post_steps.append(agent_id)
+                continue
             if summary.is_terminal:
                 continue
             if not self._sibling_deps_satisfied(summary, summaries, children_map):
@@ -82,10 +87,10 @@ class AgentReadinessService:
                 non_workers.append(agent_id)
 
         if not sequential_workers:
-            return non_workers + [agent_id for agent_id, _ in workers]
+            return [*pending_post_steps, *non_workers, *(agent_id for agent_id, _ in workers)]
 
         if not workers:
-            return non_workers
+            return [*pending_post_steps, *non_workers]
 
         # DAG-aware scheduling: check if workers' dependencies are satisfied
         # Group workers by parent for sibling-level dependency resolution
@@ -109,11 +114,11 @@ class AgentReadinessService:
                     eligible_workers.append((agent_id, path))
 
         if not eligible_workers:
-            return non_workers
+            return [*pending_post_steps, *non_workers]
 
         # Sort by path and return only the leftmost eligible worker
         eligible_workers.sort(key=lambda x: x[1])
-        return [*non_workers, eligible_workers[0][0]]
+        return [*pending_post_steps, *non_workers, eligible_workers[0][0]]
 
     def _get_dag_ready_workers(
         self,

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     )
     from core.application.services.lifecycle.agent_repository import AgentRepository
     from core.application.types import ProgressCallback
+    from core.domain.aggregates.agent_session import AgentSession
     from core.domain.events.events import DomainEvent
     from core.ports.domain_plugin_port import DomainPlugin
     from core.ports.worker_port import WorkerPort
@@ -196,6 +197,7 @@ class FlatModeRunner:
                     status=reloaded.status.value,
                     duration_seconds=now - execution_started_at,
                 )
+                self._complete_pending_post_steps(reloaded)
                 await self._repository.persist_events(reloaded, self._progress_callback)
                 await emit_run_completed(
                     root_agent_id,
@@ -219,6 +221,7 @@ class FlatModeRunner:
                 status=reloaded.status.value,
                 duration_seconds=now - execution_started_at,
             )
+            self._complete_pending_post_steps(reloaded)
             await self._repository.persist_events(reloaded, self._progress_callback)
 
             await emit_run_completed(
@@ -233,6 +236,11 @@ class FlatModeRunner:
                     agent_id=root_agent_id,
                     domain_context=domain_context,
                 )
+
+    @staticmethod
+    def _complete_pending_post_steps(agent: AgentSession) -> None:
+        while terminal_event_id := agent.pending_post_step_terminal_event_id:
+            agent.complete_post_step(terminal_event_id)
 
     @staticmethod
     def _build_terminal_event(

@@ -148,3 +148,35 @@ def test_patch_applier_renders_diff_without_mutating_source(tmp_path) -> None:
     assert result.status == "RENDERED"
     assert "+void parse(void) { safe(); }" in result.diff
     assert source.read_bytes() == before
+
+
+def test_patch_applier_preserves_crlf_and_decomposed_utf8_bytes(tmp_path) -> None:
+    """Rendering and applying preserve every byte outside the literal replacement."""
+
+    # Given: A CRLF source whose UTF-8 comment uses a decomposed accent
+    source = tmp_path / "project" / "vulnerable.c"
+    source.parent.mkdir()
+    original = b"// Cafe\xcc\x81\r\nvoid parse(void) { unsafe(); }\r\n"
+    patched = b"// Cafe\xcc\x81\r\nvoid parse(void) { safe(); }\r\n"
+    source.write_bytes(original)
+    plan = _plan(source)
+    applier = PatchApplier(PatchPlanValidator(tmp_path, {"event:root-cause"}))
+
+    # When: The Host renders and then applies the exact plan
+    rendered = applier.render(plan)
+    applied = applier.apply(plan)
+
+    # Then: The render round-trips the exact preimage and patched bytes
+    assert rendered.status == "RENDERED"
+    assert rendered.original_content is not None
+    assert rendered.patched_content is not None
+    assert rendered.original_content.encode("utf-8") == original
+    assert rendered.patched_content.encode("utf-8") == patched
+    assert hashlib.sha256(rendered.original_content.encode("utf-8")).hexdigest() == plan.base_sha256
+    assert hashlib.sha256(rendered.patched_content.encode("utf-8")).hexdigest() == hashlib.sha256(
+        patched
+    ).hexdigest()
+
+    # And: Applying writes the exact bytes without newline or Unicode normalization
+    assert applied.status == "APPLIED"
+    assert source.read_bytes() == patched

@@ -219,12 +219,6 @@ class TestPromptParserPatternInference:
         sections = parser.parse(prompt)
         assert sections[0].provenance == SectionProvenance.SIBLING
 
-    def test_legacy_system_pattern_inference(self, parser: PromptParser) -> None:
-        """Test that historical system tags still classify as SYSTEM."""
-        prompt = "<bug_report_details>content</bug_report_details>"
-        sections = parser.parse(prompt)
-        assert sections[0].provenance == SectionProvenance.SYSTEM
-
     def test_unknown_uppercase_defaults_to_template(self, parser: PromptParser) -> None:
         """Test that unknown UPPERCASE tags default to TEMPLATE."""
         prompt = "<UNKNOWN_TAG>content</UNKNOWN_TAG>"

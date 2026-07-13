@@ -20,8 +20,9 @@ prompt/model/procedure; it does not interpret failure semantics or choose recove
 3. Select only **same-phase** roles from the catalogs below.
 4. Put exact failure/artifact references in each child's `evidence_references`.
 5. Give every selected role materially revised instructions tied to that evidence.
-6. Never respawn completed roles.
-7. Include required hard-dependency producers when their outputs are not already done.
+6. Reuse completed artifacts by default. Reissue a completed role only when the failure
+   evidence shows that role's owned artifact or capability requires correction.
+7. Include required hard-dependency producers when their outputs are not already valid.
 8. Produce detailed, executable worker instructions, success criteria, and scope.
 9. Do not select a model, system prompt, procedure implementation, or untrusted role.
    The host binds the trusted role template, configured model, and registered procedure.

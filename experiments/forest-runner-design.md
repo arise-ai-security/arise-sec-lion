@@ -100,8 +100,8 @@ The image bakes the repo at `/src/<project>@base_commit` and seeds the PoC under
 
 ## 5. Forest goal/prompt + anti-leak
 
-- A single Build→Exploit→Fix `--goal` + `--extra-context` carrying the CVE spec **minus the answer key**. Mirror `_PROMPT_FORBIDDEN_FIELDS = {patch, candidate_fixes, secb_sh}` (`cve_instance.py:15`, stripped via `to_template_context()` `cve_instance.py:98-110`).
-- **Allowed context:** `build_sh`, `bug_description`, `bug_report`, `sanitizer`, `sanitizer_report`. **Forbidden:** `patch`, `candidate_fixes`, `secb_sh` (the gold `repro()`/`patch()` bodies).
+- A single Build→Exploit→Fix `--goal` + `--extra-context` carrying the CVE spec **minus the answer key**. Mirror `_PROMPT_FORBIDDEN_FIELDS = {bug_report, candidate_fixes, patch, secb_sh}` (`cve_instance.py:15`, stripped via `to_template_context()` `cve_instance.py:98-110`).
+- **Allowed solver context:** `build_sh`, `bug_description`, `sanitizer`, `sanitizer_report`. **Evaluator-only:** `bug_report`. **Forbidden solver context:** `patch`, `candidate_fixes`, `secb_sh` (the gold `repro()`/`patch()` bodies).
 - **Do not hand-decompose.** Feed the goal + deliverable contract + CVE context and let forest's planner build its own tree. Forest's *emergent* decomposition vs arise's fixed 4-phase pipeline vs OpenHands-linear is the experiment's central comparison.
 
 ---

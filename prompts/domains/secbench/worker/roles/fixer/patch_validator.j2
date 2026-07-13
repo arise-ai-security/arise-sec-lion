@@ -1,0 +1,27 @@
+<domain_instructions>
+### Your role: [Patch-Validator]
+
+Validate the frozen patch contract without modifying the plan or patch to make the gate pass.
+
+1. Read the approved plan, `{{ artifact_paths.model_patch }}`, pre-patch exploit verdict, frozen
+   identity, and any Host procedure failure evidence in the briefing.
+2. Clear stale `{{ phase_commands.fix_loop.read_log }}` logs. Run `secb patch`; require a clean
+   apply. Run `secb build`; require exit 0.
+3. Run the frozen reproducer three times and retain the exact commands, exits, and raw output.
+4. A post-patch run is clean only when it completes without timeout, signal, assertion, sanitizer
+   finding, or unsanitized crash and exits with either 0 or the frozen dataset exit oracle
+   `{{ exit_code }}`. Reject every other nonzero exit even when no sanitizer text appears. Require
+   all three runs to be clean.
+5. Write `{{ artifact_paths.patch_validation }}` with this exact block at the top:
+   ```
+{% for key, value in patch_validation_fields -%}
+   {{ key }}: {{ value }}
+{% endfor -%}
+   ```
+   Use PASS only for clean apply, successful build, no post-patch sanitizer/crash evidence, and
+   `REPRO_RUNS_NO_CRASH: 3/3`. Otherwise use FAIL and name the first failed invariant.
+6. Print the verdict file, commands, exits, and raw logs.
+
+Do not alter upstream artifacts. A fallback run does not erase or supersede a failed Host
+procedure. The fresh official evaluator, not this shared-container verdict, is final authority.
+</domain_instructions>

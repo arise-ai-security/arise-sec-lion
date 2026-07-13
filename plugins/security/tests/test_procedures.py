@@ -117,6 +117,62 @@ class FakeSession:
         return self._default
 
 
+class StatefulPatchSession(FakeSession):
+    """Patch session that mutates the shared source and binary like the real runtime."""
+
+    def __init__(
+        self,
+        testcase_dir: Path,
+        *,
+        original_source: bytes = b"void parse(void) { unsafe(); }\n",
+        patched_source: bytes = b"void parse(void) { safe(); }\n",
+    ) -> None:
+        super().__init__(
+            testcase_dir,
+            responses=[
+                _Resp("secb patch", _clean("applied")),
+                _Resp("secb patch", _clean("applied")),
+                _Resp("secb build", _crash("compile failed after replacing the binary")),
+                _Resp("secb build", _clean("rebuilt")),
+                *_binary_validation(),
+                *_direct_replay(_clean(_NO_CRASH), times=3),
+            ],
+        )
+        self.patch_calls = 0
+        self.build_calls = 0
+        self.original_source = original_source
+        self.patched_source = patched_source
+        self.prepatch_observations: list[bytes] = []
+
+    async def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        timeout: float,
+        stdin: bytes | None = None,
+        env: tuple[tuple[str, str], ...] = (),
+    ) -> CommandOutcome:
+        if argv == ("/usr/local/bin/secb", "patch"):
+            target = self.source_dir / "project" / "vulnerable.c"
+            observed = target.read_bytes()
+            assert observed == self.original_source
+            self.prepatch_observations.append(observed)
+            target.write_bytes(self.patched_source)
+            self.patch_calls += 1
+        elif argv == ("/usr/local/bin/secb", "build"):
+            self.build_calls += 1
+            binary = self.work_dir / "bin" / "app"
+            if self.build_calls == 1:
+                binary.unlink(missing_ok=True)
+            else:
+                assert not binary.exists()
+                _seed_elf(
+                    binary,
+                    payload=f"post-patch-build-{self.build_calls}".encode(),
+                )
+        return await super().run(argv, timeout=timeout, stdin=stdin, env=env)
+
+
 def _cve(*, exit_code: int = 0) -> CVEInstance:
     return CVEInstance(
         instance_id="nginx.cve-2024-0001",
@@ -311,6 +367,27 @@ async def test_build_validation_fails_when_binary_pointer_missing(tmp_path: Path
 
     # Then: it fails — a build without a resolvable binary is not a valid Builder outcome
     assert result.success is False
+
+
+async def test_build_validation_rejects_testcase_binary_snapshot(tmp_path: Path) -> None:
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/testcase/bin/app\n", encoding="utf-8")
+    _seed_elf(tc / "bin" / "app")
+    session = FakeSession(
+        tc,
+        responses=[_Resp("secb build", _clean("built"))],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation",
+        "[Build-Verifier] verify",
+        _cve(),
+        {"root_id": uuid4()},
+    )
+
+    assert result.success is False
+    assert "rebuildable /src or /work path" in result.summary
 
 
 async def test_build_validation_rejects_non_elf_nonempty_target(tmp_path: Path) -> None:
@@ -528,12 +605,17 @@ async def _freeze_exploit_identity(
     return (tc / "exploit_input_identity.txt").read_text(encoding="utf-8").strip()
 
 
-async def _seed_patch_inputs(tc: Path, *, cve: CVEInstance | None = None) -> None:
+async def _seed_patch_inputs(
+    tc: Path,
+    *,
+    cve: CVEInstance | None = None,
+    target_bytes: bytes = b"void parse(void) { unsafe(); }\n",
+) -> None:
     cve = cve or _cve()
     source_dir = tc.parent / "src"
     target = source_dir / "project" / "vulnerable.c"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    target.write_bytes(target_bytes)
     identity = await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
@@ -1298,6 +1380,36 @@ async def test_patch_validation_accepts_declared_nonzero_normal_exit(tmp_path: P
         assert (tc / f"fix_run_{index}.log").read_text().rstrip().endswith("exit=1")
 
 
+async def test_patch_validation_accepts_mixed_clean_declared_exits(tmp_path: Path) -> None:
+    cve = _cve(exit_code=1)
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc, cve=cve)
+    session = FakeSession(
+        tc,
+        responses=[
+            _Resp("secb patch", _clean("applied")),
+            _Resp("secb build", _clean("built ok")),
+            *_binary_validation(),
+            *_direct_replay(CommandOutcome(exit_code=0, output=_NO_CRASH)),
+            *_direct_replay(CommandOutcome(exit_code=1, output=_NO_CRASH)),
+            *_direct_replay(CommandOutcome(exit_code=0, output=_NO_CRASH)),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_patch_validation", "[Patch-Validator]", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is True
+    assert "REPRO_RUNS_NO_CRASH: 3/3" in (
+        tc / "patch_validation_results.txt"
+    ).read_text(encoding="utf-8")
+    assert [
+        (tc / f"fix_run_{index}.log").read_text().rstrip().splitlines()[-1]
+        for index in (1, 2, 3)
+    ] == ["exit=0", "exit=1", "exit=0"]
+
+
 async def test_patch_validation_dirty_apply_fails_and_skips_build(tmp_path: Path) -> None:
     # Given: secb patch reports a conflict
     tc = tmp_path / "testcase"
@@ -1345,6 +1457,234 @@ async def test_patch_validation_build_failure_fails_and_skips_repro(tmp_path: Pa
     verdict = (tc / "patch_validation_results.txt").read_text()
     assert "VERDICT: FAIL" in verdict
     assert "BUILD_STATUS: failed" in verdict
+
+
+async def test_patch_validation_recheck_restores_prepatch_state(tmp_path: Path) -> None:
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc)
+    session = StatefulPatchSession(tc)
+    executor = _executor(session)
+    root_id = uuid4()
+
+    first = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    second = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 2},
+    )
+
+    assert first.success is False
+    assert second.success is True
+    assert session.patch_calls == 2
+    assert session.build_calls == 2
+    assert (session.source_dir / "project" / "vulnerable.c").read_text(
+        encoding="utf-8"
+    ) == "void parse(void) { safe(); }\n"
+    assert "REPRO_RUNS_NO_CRASH: 3/3" in (
+        tc / "patch_validation_results.txt"
+    ).read_text(encoding="utf-8")
+
+
+async def test_patch_validation_resumed_initial_attempt_restores_state(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc)
+    session = StatefulPatchSession(tc)
+    executor = _executor(session)
+    root_id = uuid4()
+
+    first = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    resumed = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {
+            "root_id": root_id,
+            "procedure_attempt": 1,
+            "procedure_resume": True,
+        },
+    )
+
+    assert first.success is False
+    assert resumed.success is True
+    assert session.prepatch_observations == [
+        b"void parse(void) { unsafe(); }\n",
+        b"void parse(void) { unsafe(); }\n",
+    ]
+
+
+async def test_patch_validation_recheck_rejects_unapproved_source_drift(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc)
+    session = StatefulPatchSession(tc)
+    executor = _executor(session)
+    root_id = uuid4()
+
+    first = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    target = session.source_dir / "project" / "vulnerable.c"
+    target.write_text("void parse(void) { unrelated(); }\n", encoding="utf-8")
+    second = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 2},
+    )
+
+    assert first.success is False
+    assert second.success is False
+    assert "drifted outside" in second.summary
+    assert session.patch_calls == 1
+    assert session.build_calls == 1
+
+
+async def test_patch_validation_recheck_restores_crlf_preimage_exactly(
+    tmp_path: Path,
+) -> None:
+    original = b"// Cafe\xcc\x81\r\nvoid parse(void) { unsafe(); }\r\n"
+    patched = b"// Cafe\xcc\x81\r\nvoid parse(void) { safe(); }\r\n"
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc, target_bytes=original)
+    session = StatefulPatchSession(
+        tc,
+        original_source=original,
+        patched_source=patched,
+    )
+    executor = _executor(session)
+    root_id = uuid4()
+
+    first = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    second = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 2},
+    )
+
+    assert first.success is False
+    assert second.success is True
+    assert session.prepatch_observations == [original, original]
+    assert (session.source_dir / "project" / "vulnerable.c").read_bytes() == patched
+
+
+async def test_patch_validation_recheck_rejects_worker_planted_binary(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc)
+    session = FakeSession(
+        tc,
+        responses=[
+            _Resp("secb patch", _clean("applied")),
+            _Resp("secb build", _crash("first build failed")),
+            _Resp("secb patch", _clean("applied")),
+            _Resp("secb build", _clean("no-op build")),
+        ],
+    )
+    executor = _executor(session)
+    root_id = uuid4()
+
+    first = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    _seed_elf(session.work_dir / "bin" / "app", payload=b"worker-planted-clean-fake")
+    second = await executor.execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        _cve(),
+        {"root_id": root_id, "procedure_attempt": 2},
+    )
+
+    assert first.success is False
+    assert second.success is False
+    assert "post-patch binary validation failed" in second.summary
+    assert not (session.work_dir / "bin" / "app").exists()
+    assert not any(
+        invocation[0][0] == "/work/bin/app" for invocation in session.invocations
+    )
+
+
+async def test_patch_validation_recheck_cleans_untracked_git_build_inputs(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "src"
+    worktree = source_dir / "project"
+    worktree.mkdir(parents=True)
+    _git(worktree, "init")
+    target = worktree / "vulnerable.c"
+    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    _git(worktree, "add", "vulnerable.c")
+    _git(
+        worktree,
+        "-c",
+        "user.name=Procedure Tests",
+        "-c",
+        "user.email=procedure-tests@example.invalid",
+        "commit",
+        "-m",
+        "Seed fixture",
+    )
+    base_commit = _git(worktree, "rev-parse", "HEAD")
+    cve = _cve().model_copy(
+        update={"base_commit": base_commit, "work_dir": "/src/project"}
+    )
+    tc = tmp_path / "testcase"
+    identity = await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
+    (tc / "patch_plan.json").write_text(
+        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+    )
+    session = StatefulPatchSession(tc)
+    approval = await _executor(session).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", cve, {"root_id": uuid4()}
+    )
+    assert approval.success is True
+    root_id = uuid4()
+
+    first = await _executor(session).execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        cve,
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    planted = worktree / "attacker-controlled.o"
+    planted.write_bytes(b"worker controlled build input")
+    second = await _executor(session).execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        cve,
+        {"root_id": root_id, "procedure_attempt": 2},
+    )
+
+    assert first.success is False
+    assert second.success is True
+    assert not planted.exists()
 
 
 async def test_patch_validation_empty_diff_fails_without_running_secb(tmp_path: Path) -> None:

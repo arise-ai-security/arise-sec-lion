@@ -267,7 +267,7 @@ def test_adaptive_validator_rejects_duplicate_role_leaf() -> None:
     assert "host_structural_repair" in verdict.triggers
 
 
-def test_completed_role_history_is_case_insensitive() -> None:
+def test_explicit_completed_role_reissue_is_case_insensitive() -> None:
     # Given: A completed role recorded with non-canonical casing
     validator = SecBenchDecompositionValidator()
 
@@ -281,12 +281,12 @@ def test_completed_role_history_is_case_insensitive() -> None:
         redecomposition_limit=2,
     )
 
-    # Then: The completed role is removed despite the case difference
-    assert verdict.removals == (0,)
-    assert any(violation.kind == "completed_role" for violation in verdict.violations)
-    assert not any(
-        addition.description.startswith("[Repro-Creator]")
-        for addition in verdict.additions
+    # Then: Explicit selection reissues the completed owner despite the case difference
+    assert verdict.removals == ()
+    assert not any(violation.kind == "completed_role" for violation in verdict.violations)
+    assert any(
+        validated.canonical_description.startswith("[Repro-Creator]")
+        for validated in verdict.validated_subtasks
     )
 
 

@@ -63,7 +63,10 @@ class PostStepHandler:
         self._progress_callback = progress_callback
 
     async def handle_post_step(self, agent: AgentSession, events: list[DomainEvent]) -> None:
-        child_events = [e for e in events if isinstance(e, ChildSpawned)]
+        child_events: list[ChildSpawned] = []
+        for event in events:
+            if isinstance(event, ChildSpawned):
+                child_events.append(event)
         if child_events:
             await self._child_factory.create_children_from_events(
                 child_events,
@@ -76,23 +79,29 @@ class PostStepHandler:
             # same aggregate cannot double-release the slot count.
             agent.pending_reservation = 0
 
+        terminal_event_id = agent.pending_post_step_terminal_event_id
+        if terminal_event_id is None:
+            return
+
         if agent.role == AgentRole.WORKER and agent.status == AgentStatus.COMPLETED:
             await self._process_worker_context_updates(agent)
 
         if agent.status == AgentStatus.COMPLETED:
             self._child_factory.mark_role_completed(agent.agent_id)
             await self._parent_notifier.notify_if_complete(agent)
-            return
-
-        if agent.status == AgentStatus.FAILED:
+        elif agent.status == AgentStatus.FAILED:
             self._child_factory.mark_role_failed(agent.agent_id)
-            # Capture the first crash for retry context. After a failed procedural
-            # fallback, replace its procedure digest with the agentic attempt's evidence.
+            # Capture the first crash for retry context. After a failed agentic
+            # repair, replace the original procedure digest with that attempt's evidence.
             # Best-effort: a digest-build error must never block the failure path.
             if (
                 agent.role == AgentRole.WORKER
                 and (
-                    (agent.last_attempt_procedural and agent.retry_count > 0)
+                    (
+                        agent.procedure_attempted
+                        and not agent.last_attempt_procedural
+                        and agent.retry_count > 0
+                    )
                     or (agent.failure_digest is None and not agent.verification_feedback)
                 )
             ):
@@ -108,32 +117,29 @@ class PostStepHandler:
                     agent.record_failure_digest(digest, source="worker_crash")
                     await self._repository.persist_events(agent, self._progress_callback)
 
-            # Escalation ladder: a failed procedural attempt gets exactly one
-            # guaranteed agentic retry (dispatch routes it agentic via
-            # last_attempt_procedural), carrying the procedure's digest.
+            # Escalation ladder: the first failed procedure gets exactly one
+            # guaranteed agentic repair carrying the procedure's digest.
             if (
                 agent.role == AgentRole.WORKER
+                and agent.procedure_attempted
                 and agent.last_attempt_procedural
                 and agent.retry_count == 0
             ):
                 agent.schedule_retry(reason=f"Procedural attempt failed: {agent.error_message}")
                 await self._repository.persist_events(agent, self._progress_callback)
-                return
-
-            if agent.role == AgentRole.WORKER and agent.last_attempt_procedural:
+            elif agent.role == AgentRole.WORKER and agent.procedure_attempted:
                 await self._parent_notifier.notify_if_failed(agent)
-                return
+            else:
+                # Worker retry: up to verification_max_retries with judge feedback or
+                # crash digest as the injected context.
+                retried = await self._maybe_retry_worker(agent)
+                if not retried:
+                    retried = await self._retry_policy.maybe_schedule_retry(agent)
+                if not retried:
+                    await self._parent_notifier.notify_if_failed(agent)
 
-            # Worker retry: up to verification_max_retries with judge feedback or
-            # crash digest as the injected context.
-            if await self._maybe_retry_worker(agent):
-                return
-
-            retried = await self._retry_policy.maybe_schedule_retry(agent)
-            if retried:
-                return  # Agent re-queued for execution, don't notify parent
-
-            await self._parent_notifier.notify_if_failed(agent)
+        agent.complete_post_step(terminal_event_id)
+        await self._repository.persist_events(agent, self._progress_callback)
 
     async def _maybe_retry_worker(self, agent: AgentSession) -> bool:
         """Retry a worker that failed verification or crashed, with feedback/digest context.
@@ -178,6 +184,14 @@ class PostStepHandler:
         current_version = context.version
 
         for decision in parsed.decisions:
+            existing = context.get_decision(decision.key)
+            if (
+                existing is not None
+                and existing.value == decision.value
+                and existing.rationale == decision.rationale
+                and existing.decided_by == agent.agent_id
+            ):
+                continue
             context.record_decision(
                 decision_key=decision.key,
                 decision_value=decision.value,
@@ -186,6 +200,14 @@ class PostStepHandler:
             )
 
         for output in parsed.artifacts:
+            existing = context.get_artifact(output.key)
+            if (
+                existing is not None
+                and existing.content_type == "text/plain"
+                and existing.content == output.description
+                and existing.stored_by == agent.agent_id
+            ):
+                continue
             context.store_artifact(
                 key=output.key,
                 content_type="text/plain",
@@ -203,10 +225,17 @@ class PostStepHandler:
             if agent is None:
                 return
 
+            if agent.pending_post_step_terminal_event_id is not None:
+                await self.handle_post_step(agent, [])
+                return
+
+            if agent.is_terminal():
+                return
+
             agent.fail_with_reason(f"Execution error: {error!r}")
             await self._repository.persist_events(agent, self._progress_callback)
 
-            await self._parent_notifier.notify_if_failed(agent)
+            await self.handle_post_step(agent, [])
         except Exception as persist_error:
             raise RuntimeError(
                 f"Failed to persist error state for agent {agent_id}: {persist_error!r}"

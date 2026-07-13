@@ -125,6 +125,9 @@ _SANITIZER_PROBE_SECONDS = 10
 
 _REPLAY_CONTRACT_JSON = "replay-contract.json"
 _PATCH_APPROVAL_JSON = "patch-approval.json"
+_PATCH_TARGET_PREIMAGE = "patch-target-preimage"
+_PROCEDURE_ATTEMPT_PARAM = "procedure_attempt"
+_PROCEDURE_RESUME_PARAM = "procedure_resume"
 
 _CANONICAL_REPRO_PREFIX = (
     "#!/bin/bash",
@@ -192,10 +195,13 @@ class _PatchApproval(BaseModel):
 
     model_config = {"frozen": True}
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     replay_identity: str
     plan_sha256: str
     patch_sha256: str
+    target_file: str
+    preimage_sha256: str
+    patched_sha256: str
 
 
 class ProcedureSession(Protocol):
@@ -283,7 +289,13 @@ class SecBenchProcedureExecutor:
         if procedure_ref == _PROCEDURE_EXPLOIT:
             return await _run_exploit_validation(session, cve)
         if procedure_ref == _PROCEDURE_PATCH:
-            return await _run_patch_validation(session, cve)
+            return await _run_patch_validation(
+                session,
+                cve,
+                is_recheck=(
+                    _procedure_attempt(params) > 1 or _procedure_resume(params)
+                ),
+            )
         raise ProcedureInfrastructureError(f"unknown procedure_ref {procedure_ref!r}")
 
 
@@ -344,6 +356,8 @@ async def _validate_declared_binaries(
     for path in paths:
         if not PurePosixPath(path).is_absolute():
             return f"Builder binary path must be absolute: {path}"
+        if not _is_rebuildable_binary_path(path):
+            return f"Builder binary must remain at a rebuildable /src or /work path: {path}"
         binary = _resolve_workspace_file(session, path)
         structural_reason = _validate_host_binary(binary)
         evidence.append(_host_file_evidence("host-elf-check", path, structural_reason))
@@ -420,14 +434,29 @@ async def _run_patch_apply(
             outcome.reason,
             evidence,
         )
+    if outcome.original_content is None or outcome.patched_content is None:
+        raise ProcedureInfrastructureError(
+            "rendered PatchPlan omitted the frozen target transformation"
+        )
 
     _write_file(tc / _MODEL_PATCH, outcome.diff)
+    _write_private_bytes(
+        _patch_target_preimage_path(session),
+        outcome.original_content.encode("utf-8"),
+    )
     _freeze_patch_approval(
         session,
         _PatchApproval(
             replay_identity=replay_contract.identity,
             plan_sha256=outcome.plan_sha256,
             patch_sha256=_sha256_file(tc / _MODEL_PATCH),
+            target_file=plan.target_file,
+            preimage_sha256=hashlib.sha256(
+                outcome.original_content.encode("utf-8")
+            ).hexdigest(),
+            patched_sha256=hashlib.sha256(
+                outcome.patched_content.encode("utf-8")
+            ).hexdigest(),
         ),
     )
     return ProcedureResult(
@@ -464,6 +493,7 @@ async def _capture_replay_contract(
     cve: CVEInstance | None,
     *,
     include_verdict: bool = False,
+    frozen_binary_sha256: str | None = None,
 ) -> tuple[_ReplayContract | None, str | None]:
     """Build the current replay identity after enforcing its artifact handoff."""
     if cve is None:
@@ -498,13 +528,24 @@ async def _capture_replay_contract(
         return None, f"Builder binary pointer {_BINARY_POINTER} names no paths"
     if any(not PurePosixPath(path).is_absolute() for path in binary_paths):
         return None, "every Builder binary path must be absolute"
+    if any(not _is_rebuildable_binary_path(path) for path in binary_paths):
+        return None, "every Builder binary must remain at a rebuildable /src or /work path"
 
     selected_binary = binary_paths[0]
-    selected_binary_file = _resolve_workspace_file(session, selected_binary)
-    if selected_binary_file is None:
-        return None, f"selected binary does not resolve inside the run workspace: {selected_binary}"
-    if _validate_host_binary(selected_binary_file) is not None:
-        return None, f"selected binary is not a non-empty executable ELF: {selected_binary}"
+    selected_binary_file: Path | None = None
+    selected_binary_sha256 = frozen_binary_sha256
+    if selected_binary_sha256 is None:
+        selected_binary_file = _resolve_workspace_file(session, selected_binary)
+        if selected_binary_file is None:
+            return None, (
+                f"selected binary does not resolve inside the run workspace: {selected_binary}"
+            )
+        if _validate_host_binary(selected_binary_file) is not None:
+            return None, f"selected binary is not a non-empty executable ELF: {selected_binary}"
+        try:
+            selected_binary_sha256 = _sha256_file(selected_binary_file)
+        except OSError:
+            return None, "selected binary must be a stable regular file"
 
     source_head, builder_baseline, baseline_reason = await asyncio.to_thread(
         _measure_builder_baseline, session, cve
@@ -543,7 +584,7 @@ async def _capture_replay_contract(
             poc_sha256=_sha256_file(poc_file),
             binary_paths=binary_paths,
             selected_binary=selected_binary,
-            selected_binary_sha256=_sha256_file(selected_binary_file),
+            selected_binary_sha256=selected_binary_sha256,
             binary_pointer_sha256=_sha256_file(tc / _BINARY_POINTER),
             replay_argv=replay_argv,
             replay_stdin=replay_stdin,
@@ -568,6 +609,22 @@ def _resolve_workspace_file(session: ProcedureSession, container_path: str) -> P
         if candidate is not None:
             return candidate
     return None
+
+
+def _resolve_rebuild_output(session: ProcedureSession, container_path: str) -> Path | None:
+    for mount, root in (("/src", session.source_dir), ("/work", session.work_dir)):
+        relative = _mounted_relative_parts(container_path, mount)
+        if not relative:
+            continue
+        candidate = root.joinpath(*relative)
+        if _safe_mounted_path(root, candidate.parent, require_directory=True):
+            return candidate
+    return None
+
+
+def _is_rebuildable_binary_path(container_path: str) -> bool:
+    parts = PurePosixPath(container_path).parts
+    return parts[:2] in (("/", "src"), ("/", "work"))
 
 
 def _resolve_workspace_directory(
@@ -895,29 +952,38 @@ def _validate_patch_approval(
     session: ProcedureSession,
     replay_contract: _ReplayContract,
     patch_text: str,
-) -> str | None:
+) -> tuple[_PatchApproval | None, str | None]:
     path = _patch_approval_path(session)
     try:
         approval = _PatchApproval.model_validate_json(_read_regular_bytes(path))
     except FileNotFoundError:
-        return "Host patch approval is missing; model_patch.diff is not trusted"
+        return None, "Host patch approval is missing; model_patch.diff is not trusted"
     except (OSError, ValidationError) as exc:
-        return f"Host patch approval is invalid: {exc}"
+        return None, f"Host patch approval is invalid: {exc}"
     if approval.replay_identity != replay_contract.identity:
-        return "Host patch approval targets a different pre-patch replay identity"
+        return None, "Host patch approval targets a different pre-patch replay identity"
     if approval.patch_sha256 != hashlib.sha256(patch_text.encode("utf-8")).hexdigest():
-        return "model_patch.diff changed after Host approval"
+        return None, "model_patch.diff changed after Host approval"
     try:
         plan = PatchPlan.model_validate_json(_read(session.testcase_dir / _PATCH_PLAN_JSON))
     except ValidationError:
-        return "patch_plan.json changed or became invalid after Host approval"
+        return None, "patch_plan.json changed or became invalid after Host approval"
     if plan.sha256 != approval.plan_sha256:
-        return "patch_plan.json changed after Host approval"
-    return None
+        return None, "patch_plan.json changed after Host approval"
+    if plan.target_file != approval.target_file:
+        return None, "PatchPlan target changed after Host approval"
+    try:
+        preimage = _read_regular_bytes(_patch_target_preimage_path(session))
+    except OSError as exc:
+        return None, f"Host patch target preimage is unavailable: {exc}"
+    if hashlib.sha256(preimage).hexdigest() != approval.preimage_sha256:
+        return None, "Host patch target preimage changed after approval"
+    return approval, None
 
 
 def _clear_patch_approval(session: ProcedureSession) -> None:
     _patch_approval_path(session).unlink(missing_ok=True)
+    _patch_target_preimage_path(session).unlink(missing_ok=True)
 
 
 def _replay_contract_path(session: ProcedureSession) -> Path:
@@ -928,8 +994,16 @@ def _patch_approval_path(session: ProcedureSession) -> Path:
     return session.identity_dir / _PATCH_APPROVAL_JSON
 
 
+def _patch_target_preimage_path(session: ProcedureSession) -> Path:
+    return session.identity_dir / _PATCH_TARGET_PREIMAGE
+
+
 def _write_private_json(path: Path, payload: str) -> None:
     _atomic_write(path, payload, mode=0o600)
+
+
+def _write_private_bytes(path: Path, payload: bytes) -> None:
+    _atomic_write_bytes(path, payload, mode=0o600)
 
 
 def _sha256_file(path: Path) -> str:
@@ -1081,7 +1155,10 @@ def _write_exploit_verdict(
 
 
 async def _run_patch_validation(
-    session: ProcedureSession, cve: CVEInstance | None
+    session: ProcedureSession,
+    cve: CVEInstance | None,
+    *,
+    is_recheck: bool,
 ) -> ProcedureResult:
     evidence: list[ProcedureEvidence] = []
     tc = session.testcase_dir
@@ -1096,14 +1173,21 @@ async def _run_patch_validation(
         )
         return _failed(_PROCEDURE_PATCH, f"Patch validation FAIL: {reason}", reason, evidence)
 
-    replay_contract, replay_reason = await _validate_replay_contract(session, cve)
+    if is_recheck:
+        replay_contract, replay_reason = await _prepare_patch_recheck(
+            session, cve, patch_text
+        )
+    else:
+        replay_contract, replay_reason = await _validate_replay_contract(session, cve)
     if replay_contract is None:
         reason = replay_reason or "pre-patch replay identity is unavailable"
         _write_patch_verdict(
             tc, "FAIL", reason, pre, "unknown", "failed", "failed", 0, patched_files
         )
         return _failed(_PROCEDURE_PATCH, f"Patch validation FAIL: {reason}", reason, evidence)
-    approval_reason = _validate_patch_approval(session, replay_contract, patch_text)
+    _approval, approval_reason = _validate_patch_approval(
+        session, replay_contract, patch_text
+    )
     if approval_reason is not None:
         _write_patch_verdict(
             tc,
@@ -1120,6 +1204,34 @@ async def _run_patch_validation(
             _PROCEDURE_PATCH,
             f"Patch validation FAIL: {approval_reason}",
             approval_reason,
+            evidence,
+        )
+
+    reset_reason = (
+        _reset_recheck_build_state(
+            session,
+            cve,
+            replay_contract.binary_paths,
+        )
+        if is_recheck
+        else None
+    )
+    if reset_reason is not None:
+        _write_patch_verdict(
+            tc,
+            "FAIL",
+            reset_reason,
+            pre,
+            "unknown",
+            "failed",
+            "failed",
+            0,
+            patched_files,
+        )
+        return _failed(
+            _PROCEDURE_PATCH,
+            f"Patch validation FAIL: {reset_reason}",
+            reset_reason,
             evidence,
         )
 
@@ -1172,6 +1284,85 @@ async def _run_patch_validation(
         replay_contract,
         _PatchContext(tc=tc, pre=pre, apply_status=apply_status, patched_files=patched_files),
     )
+
+
+async def _prepare_patch_recheck(
+    session: ProcedureSession,
+    cve: CVEInstance | None,
+    patch_text: str,
+) -> tuple[_ReplayContract | None, str | None]:
+    """Restore the approved pre-patch target before a stateful Host recheck."""
+    stored, load_reason = _load_replay_contract(session)
+    if stored is None:
+        return None, load_reason
+    approval, approval_reason = _validate_patch_approval(session, stored, patch_text)
+    if approval is None:
+        return None, approval_reason
+
+    target = _resolve_workspace_file(session, approval.target_file)
+    if target is None:
+        return None, "Host-approved patch target no longer resolves inside /src"
+    try:
+        current = _read_regular_bytes(target)
+        preimage = _read_regular_bytes(_patch_target_preimage_path(session))
+        target_mode = stat.S_IMODE(target.lstat().st_mode)
+    except OSError as exc:
+        return None, f"Host-approved patch target cannot be read safely: {exc}"
+
+    current_sha256 = hashlib.sha256(current).hexdigest()
+    if current_sha256 not in {approval.preimage_sha256, approval.patched_sha256}:
+        return None, "patch target drifted outside the Host-approved pre/post images"
+    if current_sha256 == approval.patched_sha256:
+        _atomic_write_bytes(target, preimage, mode=target_mode)
+
+    current_contract, capture_reason = await _capture_replay_contract(
+        session,
+        cve,
+        include_verdict=True,
+        frozen_binary_sha256=stored.selected_binary_sha256,
+    )
+    if current_contract is None:
+        return None, capture_reason
+    if current_contract != stored:
+        return None, "protected replay inputs changed before the Host recheck"
+    public_identity = _read(session.testcase_dir / _EXPLOIT_IDENTITY).strip()
+    if public_identity != stored.identity:
+        return None, "public exploit input identity does not match the Host-frozen identity"
+    return stored, None
+
+
+def _reset_recheck_build_state(
+    session: ProcedureSession,
+    cve: CVEInstance | None,
+    binary_paths: tuple[str, ...],
+) -> str | None:
+    """Remove mutable repair artifacts so the Host build must recreate outputs."""
+    if cve is not None and PurePosixPath(cve.work_dir).parts[:2] == ("/", "src"):
+        worktree = _resolve_workspace_directory(session, cve.work_dir)
+        if worktree is None:
+            return f"CVE work_dir does not resolve inside the workspace: {cve.work_dir}"
+        try:
+            _git_output(worktree, "clean", "-fdx", "--")
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"untracked build inputs could not be reset before Host recheck: {exc}"
+
+    for container_path in binary_paths:
+        output = _resolve_rebuild_output(session, container_path)
+        if output is None:
+            return f"declared build output cannot be reset safely: {container_path}"
+        try:
+            mode = output.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return f"declared build output cannot be inspected safely: {container_path}: {exc}"
+        if stat.S_ISDIR(mode):
+            return f"declared build output is a directory: {container_path}"
+        try:
+            output.unlink()
+        except OSError as exc:
+            return f"declared build output cannot be removed safely: {container_path}: {exc}"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1434,6 +1625,24 @@ def _root_id_from_params(params: dict[str, Any]) -> UUID:
     raise ProcedureInfrastructureError("params must carry 'root_id' (the run's root agent UUID)")
 
 
+def _procedure_attempt(params: dict[str, Any]) -> int:
+    raw = params.get(_PROCEDURE_ATTEMPT_PARAM, 1)
+    if type(raw) is not int or raw not in (1, 2):
+        raise ProcedureInfrastructureError(
+            f"params[{_PROCEDURE_ATTEMPT_PARAM!r}] must be 1 or 2"
+        )
+    return raw
+
+
+def _procedure_resume(params: dict[str, Any]) -> bool:
+    raw = params.get(_PROCEDURE_RESUME_PARAM, False)
+    if type(raw) is not bool:
+        raise ProcedureInfrastructureError(
+            f"params[{_PROCEDURE_RESUME_PARAM!r}] must be a boolean"
+        )
+    return raw
+
+
 def _failed(
     procedure_ref: str, summary: str, reason: str, evidence: list[ProcedureEvidence]
 ) -> ProcedureResult:
@@ -1481,11 +1690,15 @@ def _write_file(path: Path, content: str) -> None:
 
 
 def _atomic_write(path: Path, content: str, *, mode: int) -> None:
+    _atomic_write_bytes(path, content.encode("utf-8"), mode=mode)
+
+
+def _atomic_write_bytes(path: Path, content: bytes, *, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        with os.fdopen(descriptor, "wb") as stream:
             os.fchmod(stream.fileno(), mode)
             stream.write(content)
             stream.flush()

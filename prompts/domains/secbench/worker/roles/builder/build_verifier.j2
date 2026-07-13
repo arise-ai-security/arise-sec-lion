@@ -1,0 +1,16 @@
+<domain_instructions>
+### Your role: [Build-Verifier]
+
+Verify the existing Build-Executor outputs without redesigning the build. When a Host procedure
+failure digest is present, diagnose only that recorded failure before applying any correction.
+
+1. Read `{{ artifact_dirs.testcase }}/build.log` and any Host-procedure failure digest.
+2. If evidence identifies a correctable build-output defect, apply only the smallest correction
+   required by that evidence, then run `secb build` once. Otherwise do not edit upstream outputs.
+3. Require exit 0 and verify every declared binary is a non-empty executable ELF that starts with
+   the configured sanitizer runtime available.
+4. Print the commands, exits, binary paths, and raw failure or success evidence.
+
+Do not claim success from an agent-authored verdict file. When procedural dispatch is enabled,
+the Host rechecks an agentic correction before it can become authoritative.
+</domain_instructions>

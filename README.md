@@ -212,7 +212,8 @@ A fixture is a single JSON document. Minimum fields:
 | `docker_image_override` | `songtli/secb.eval.x86_64.quickjs-ng.issue-1302:patch` | Base image to layer tools on top of (optional — see §7) |
 | `lang`, `work_dir`, `sanitizer` | `c`, `/src/quickjs`, `address` | Build environment |
 | `base_commit` | `537d004c…` | Vulnerable commit hash |
-| `bug_description`, `sanitizer_report`, `bug_report` | text | Ground truth fed into the BOSS prompt |
+| `bug_description`, `sanitizer_report` | text | Prompt-visible vulnerability and failure context |
+| `bug_report` | text | Evaluator-only answer-bearing report; excluded from solver prompts |
 | `build_sh`, `secb_sh`, `dockerfile` | text | Build + run scripts baked into the image |
 | `exit_code` | `1` | Expected exit code when the PoC triggers |
 

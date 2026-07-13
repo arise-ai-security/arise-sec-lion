@@ -413,12 +413,12 @@ def test_missing_hard_dependency_is_injected() -> None:
     assert verdict.route == "escalated"
 
 
-def test_completed_role_is_not_respawned() -> None:
+def test_explicit_completed_owner_may_be_reissued_for_correction() -> None:
     v = _adaptive_validator()
     verdict = v.classify(
         parent_task_description=EXPLOITER_TASK,
         subtask_descriptions=(
-            "[Repro-Creator] already done",
+            "[Repro-Creator] repair the rejected replay artifact",
             "[PoC-Researcher] new specialist",
             "[Exploit-Validator] recheck",
         ),
@@ -427,9 +427,20 @@ def test_completed_role_is_not_respawned() -> None:
         failed_role_labels=("Exploit-Validator",),
         completed_role_labels=("Repro-Creator",),
     )
-    assert 0 in verdict.removals
-    assert any(viol.kind == "completed_role" for viol in verdict.violations)
-    # Must not re-inject completed Repro-Creator via hard deps of Exploit-Validator
+    assert 0 not in verdict.removals
+    assert not any(viol.kind == "completed_role" for viol in verdict.violations)
+
+
+def test_unselected_completed_dependency_is_reused_without_injection() -> None:
+    v = _adaptive_validator()
+    verdict = v.classify(
+        parent_task_description=EXPLOITER_TASK,
+        subtask_descriptions=("[Exploit-Validator] recheck repaired evidence",),
+        domain_context=_cve(),
+        redecomposition_count=1,
+        failed_role_labels=("Exploit-Validator",),
+        completed_role_labels=("Repro-Creator",),
+    )
     assert not any(a.description.startswith("[Repro-Creator]") for a in verdict.additions)
 
 

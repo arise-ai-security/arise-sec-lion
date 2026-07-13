@@ -34,6 +34,7 @@ from core.application.services.orchestration.decomposition_contract import (
 from core.application.services.orchestration.recon_propagation import ReconPropagationService
 from core.application.services.prompt.cache_breakpoint import strip_cache_breakpoint
 from core.domain.exceptions import ToolNotAvailableError
+from core.domain.events.events import WorkCompleted
 from core.domain.services import AssessmentResult, parse_assessment_response_async
 from core.domain.services.config_resolver import ConfigResolver, OperationType
 from core.domain.values.enums import AgentRole, AgentStatus
@@ -543,12 +544,38 @@ class AgentOrchestrator:
             return
 
         # Deterministic tier: registry-matched tasks run host-side with zero
-        # LLM turns. A previously failed procedural attempt dispatches agentic
-        # (the escalation ladder), never procedural twice.
+        # LLM turns. A failed first attempt gets one agentic repair, followed by
+        # one Host recheck so downstream code can trust regenerated evidence.
         procedure_ref = self._resolve_procedure_ref(agent)
-        if procedure_ref is not None and not agent.last_attempt_procedural:
+        if procedure_ref is not None and agent.procedure_in_progress:
+            await self._execute_procedure(
+                agent,
+                procedure_ref,
+                persist_checkpoint,
+                resume_started=True,
+            )
+            return
+        if (
+            procedure_ref is not None
+            and agent.status == AgentStatus.IN_PROGRESS
+            and agent.last_attempt_procedural
+            and agent.last_procedure_success is not None
+        ):
+            await self._finalize_procedure_outcome(
+                agent,
+                success=agent.last_procedure_success,
+                summary=agent.last_procedure_summary,
+                persist_checkpoint=persist_checkpoint,
+            )
+            return
+        if procedure_ref is not None and not agent.procedure_attempted:
             await self._execute_procedure(agent, procedure_ref, persist_checkpoint)
             return
+        recheck_after_agentic = (
+            procedure_ref is not None
+            and agent.procedure_attempted
+            and agent.retry_count > 0
+        )
 
         op = "worker_execution"
         with self._timed_operation(agent, op):
@@ -621,8 +648,12 @@ class AgentOrchestrator:
             if task_context_overrides:
                 task_context.update(task_context_overrides)
 
+            pending_completion: WorkCompleted | None = None
             try:
                 async for tool_event in self._worker_port.run_session(task_context):
+                    if isinstance(tool_event, WorkCompleted):
+                        pending_completion = tool_event
+                        continue
                     agent.apply_worker_event(tool_event)
                     if persist_checkpoint is not None:
                         await persist_checkpoint(agent)
@@ -630,11 +661,28 @@ class AgentOrchestrator:
                         await self._realtime_callback.on_event(tool_event, root_id)
             except ToolNotAvailableError as e:
                 agent.fail_with_reason(str(e))
+                if persist_checkpoint is not None:
+                    await persist_checkpoint(agent)
                 return
 
-            # Verify worker output if completed successfully
-            if agent.status == AgentStatus.COMPLETED:
+            if (
+                pending_completion is not None
+                and recheck_after_agentic
+                and agent.status == AgentStatus.IN_PROGRESS
+                and procedure_ref is not None
+            ):
+                await self._execute_procedure(agent, procedure_ref, persist_checkpoint)
+                return
+
+            # A worker's completion is provisional until verification returns.
+            # Holding the terminal event out of the checkpoint stream prevents a
+            # verifier exception from leaving a durable, unverified success.
+            if pending_completion is not None and agent.status == AgentStatus.IN_PROGRESS:
+                agent.apply_worker_event(pending_completion)
                 await self._verification_pipeline.verify(agent)
+
+            if agent.is_terminal() and persist_checkpoint is not None:
+                await persist_checkpoint(agent)
 
     def _resolve_procedure_ref(self, agent: "AgentSession") -> str | None:
         """Resolve procedures only through the trusted Host registry."""
@@ -650,6 +698,8 @@ class AgentOrchestrator:
         agent: "AgentSession",
         procedure_ref: str,
         persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None",
+        *,
+        resume_started: bool = False,
     ) -> None:
         """Run a registered procedure host-side: no prompt, no LLM, no cost.
 
@@ -659,14 +709,19 @@ class AgentOrchestrator:
         """
         op = "procedure_execution"
         with self._timed_operation(agent, op):
-            agent.start_procedure(procedure_ref)
-            if persist_checkpoint is not None:
-                await persist_checkpoint(agent)
+            procedure_attempt = 2 if agent.retry_count > 0 else 1
+            if not resume_started:
+                agent.start_procedure(procedure_ref)
+                if persist_checkpoint is not None:
+                    await persist_checkpoint(agent)
 
             # The run's root_id rides in params so a domain executor can
             # resolve the run's shared container session (core stays
             # topology-only; params remain an opaque dict).
-            params: dict[str, Any] = {}
+            params: dict[str, Any] = {
+                "procedure_attempt": procedure_attempt,
+                "procedure_resume": resume_started,
+            }
             if agent.hierarchy_limits is not None:
                 params.setdefault("root_id", agent.hierarchy_limits.root_id)
 
@@ -705,14 +760,39 @@ class AgentOrchestrator:
                         result.plan_approval.evidence_references
                     ),
                 )
-            if result.success:
-                agent.complete_with_result(result.summary)
-                await self._verification_pipeline.verify(agent)
-            else:
+            if not result.success:
                 agent.record_failure_digest(
                     result.digest or result.summary, source="procedure_failure"
                 )
-                agent.fail_with_reason(result.summary)
+
+            # Procedure evidence and any Host approval/failure digest are durable
+            # before verification or runtime cleanup can fail.
+            if persist_checkpoint is not None:
+                await persist_checkpoint(agent)
+
+            await self._finalize_procedure_outcome(
+                agent,
+                success=result.success,
+                summary=result.summary,
+                persist_checkpoint=persist_checkpoint,
+            )
+
+    async def _finalize_procedure_outcome(
+        self,
+        agent: "AgentSession",
+        *,
+        success: bool,
+        summary: str,
+        persist_checkpoint: "Callable[[AgentSession], Awaitable[object]] | None",
+    ) -> None:
+        if success:
+            agent.complete_with_result(summary)
+            await self._verification_pipeline.verify(agent)
+        else:
+            agent.fail_with_reason(summary)
+
+        if persist_checkpoint is not None:
+            await persist_checkpoint(agent)
 
     # -------------------------------------------------------------------------
     # Helpers

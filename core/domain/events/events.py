@@ -140,6 +140,18 @@ class WorkFailed(DomainEvent):
     reason: str
 
 
+class PostStepRequested(DomainEvent):
+    """Durably request terminal post-step processing for one outcome."""
+
+    terminal_event_id: UUID
+
+
+class PostStepCompleted(DomainEvent):
+    """Record completion of terminal post-step processing for one outcome."""
+
+    terminal_event_id: UUID
+
+
 class VerificationFailed(DomainEvent):
     """Worker output failed verification checks.
 

@@ -474,7 +474,7 @@
           <path class="d-edge" d="M220,139 H300" marker-end="url(#w-a)"/>
           <rect class="d-card amber" x="302" y="96" width="230" height="86" rx="6"/><text class="d-title xs" x="417" y="121" text-anchor="middle">Frozen command and verdict?</text><text class="d-sub xs" x="417" y="144" text-anchor="middle">no hypothesis or semantic choice</text><text class="d-sub xs" x="417" y="162" text-anchor="middle">repeatable host evidence</text>
           <path class="d-edge green" d="M532,118 H650" marker-end="url(#w-a)"/><text class="d-cap" x="590" y="108" text-anchor="middle">yes</text>
-          <rect class="d-card fill-green" x="652" y="60" width="360" height="72" rx="6"/><text class="d-title sm" x="832" y="87" text-anchor="middle">Host procedure · no LLM</text><text class="d-sub" x="832" y="108" text-anchor="middle">ProcedureEvidence → machine gate</text>
+          <rect class="d-card fill-green" x="652" y="60" width="360" height="72" rx="6"/><text class="d-title sm" x="832" y="87" text-anchor="middle">Host procedure attempt · no LLM</text><text class="d-sub" x="832" y="108" text-anchor="middle">ProcedureEvidence → machine gate</text>
           <path class="d-edge blue" d="M532,160 H650 V222" marker-end="url(#w-a)"/><text class="d-cap" x="590" y="150" text-anchor="middle">no</text>
           <rect class="d-card fill-blue" x="652" y="188" width="360" height="82" rx="6"/><text class="d-title sm" x="832" y="215" text-anchor="middle">LLM worker</text><text class="d-sub" x="832" y="237" text-anchor="middle">coding → GPT-5.4 mini</text><text class="d-sub" x="832" y="255" text-anchor="middle">reasoning / hybrid / synthesis → GPT-5.3 Codex</text>
         </svg>
@@ -584,11 +584,11 @@
   <!-- ============ 07 — PROCEDURE TIER ============ -->
   <section id="proc">
     <div class="kick" data-reveal><b>08</b> / Deterministic procedures</div>
-    <h2 data-reveal>A deterministic tier for tasks that don't need an LLM</h2>
-    <p class="intro" data-reveal>Four roles have frozen command and transformation contracts. With <code>procedural_dispatch</code> enabled, the Arise Host controls them with <strong>zero LLM turns</strong>. “Host” means the orchestrator process, not a human. Arise captures argv evidence and computes the in-run verdict; an agent-written <code>VERDICT: PASS</code> is never authoritative. Commands still execute in the run's mutable shared worker container, so fresh external replay remains the confirmatory authority.</p>
+    <h2 data-reveal>Deterministic Host gates with one bounded repair</h2>
+    <p class="intro" data-reveal>Four roles have frozen command and transformation contracts. With <code>procedural_dispatch</code> enabled, each Arise Host procedure attempt uses <strong>zero LLM turns</strong>. An initial Host failure permits exactly one LLM-backed repair and, if that repair completes, exactly one Host recheck. “Host” means the orchestrator process, not a human. Arise captures argv evidence and computes the in-run verdict; an agent-written <code>VERDICT: PASS</code> is never authoritative. Commands still execute in the run's mutable shared worker container, so fresh external replay remains the confirmatory authority.</p>
     <figure data-reveal>
       <div class="frame m">
-        <svg viewBox="0 0 1080 520" role="img" aria-label="Procedural dispatch ladder and escalation">
+        <svg viewBox="0 0 1080 690" role="img" aria-label="Procedure lifecycle with one initial Host attempt, one agentic repair, and one Host recheck">
           <defs>
             <marker id="p-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
             <marker id="p-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
@@ -597,96 +597,105 @@
           </defs>
 
           <!-- top: execute_task -->
-          <rect class="d-card ink" x="80" y="20" width="260" height="52" rx="6"/>
-          <text class="d-title sm" x="210" y="44" text-anchor="middle">execute_task (WORKER)</text>
-          <text class="d-sub" x="210" y="61" text-anchor="middle">_resolve_procedure_ref</text>
-          <path class="d-edge" d="M210,72 V96" marker-end="url(#p-a)"/>
+          <rect class="d-card ink" x="60" y="20" width="270" height="52" rx="6"/>
+          <text class="d-title sm" x="195" y="44" text-anchor="middle">execute_task (WORKER)</text>
+          <text class="d-sub" x="195" y="61" text-anchor="middle">_resolve_procedure_ref</text>
+          <path class="d-edge" d="M195,72 V96" marker-end="url(#p-a)"/>
 
           <!-- decision ladder — left column of 4 rungs -->
-          <rect class="d-card amber" x="80" y="98" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="119" text-anchor="middle">Host executor.match(task)</text>
-          <text class="d-sub xs" x="210" y="134" text-anchor="middle">no match → agentic</text>
+          <rect class="d-card amber" x="60" y="98" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="119" text-anchor="middle">Host executor.match(task)</text>
+          <text class="d-sub xs" x="195" y="134" text-anchor="middle">no match → ordinary agentic path</text>
 
-          <rect class="d-card amber" x="80" y="158" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="179" text-anchor="middle">match returns ref</text>
-          <text class="d-sub xs" x="210" y="194" text-anchor="middle">Host-registry candidate</text>
+          <rect class="d-card amber" x="60" y="158" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="179" text-anchor="middle">match returns ref</text>
+          <text class="d-sub xs" x="195" y="194" text-anchor="middle">Host-registry candidate</text>
 
-          <rect class="d-card amber" x="80" y="218" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="239" text-anchor="middle">executor.resolve(ref)</text>
-          <text class="d-sub xs" x="210" y="254" text-anchor="middle">stale ref → agentic</text>
+          <rect class="d-card amber" x="60" y="218" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="239" text-anchor="middle">executor.resolve(ref)</text>
+          <text class="d-sub xs" x="195" y="254" text-anchor="middle">stale ref → ordinary agentic path</text>
 
-          <rect class="d-card amber" x="80" y="278" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="299" text-anchor="middle">resolved Host ref</text>
-          <text class="d-sub xs" x="210" y="314" text-anchor="middle">zero-LLM procedure path</text>
+          <rect class="d-card amber" x="60" y="278" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="299" text-anchor="middle">resolved Host ref</text>
+          <text class="d-sub xs" x="195" y="314" text-anchor="middle">zero-LLM procedure path</text>
 
           <!-- rung to rung -->
-          <path class="d-edge" d="M210,144 V158" marker-end="url(#p-a)"/>
-          <path class="d-edge" d="M210,204 V218" marker-end="url(#p-a)"/>
-          <path class="d-edge" d="M210,264 V278" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M195,144 V158" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M195,204 V218" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M195,264 V278" marker-end="url(#p-a)"/>
 
           <!-- AGENTIC lane (right-top) -->
-          <rect class="d-card blue" x="470" y="98" width="250" height="52" rx="6"/>
-          <text class="d-title sm" x="595" y="122" text-anchor="middle">Agentic worker</text>
-          <text class="d-sub" x="595" y="139" text-anchor="middle">WorkerToolPort · LLM · verify</text>
+          <rect class="d-card blue" x="410" y="98" width="300" height="56" rx="6"/>
+          <text class="d-title sm" x="560" y="122" text-anchor="middle">Ordinary agentic worker</text>
+          <text class="d-sub" x="560" y="140" text-anchor="middle">only when no Host procedure resolves</text>
           <!-- no Host match -> agentic worker -->
-          <path class="d-edge blue" d="M340,121 H468" marker-end="url(#p-b)"/>
-          <text class="d-anno sm blue" x="404" y="112" text-anchor="middle">no trusted ref</text>
+          <path class="d-edge blue" d="M330,121 H408" marker-end="url(#p-b)"/>
+          <text class="d-anno sm blue" x="369" y="112" text-anchor="middle">no trusted ref</text>
 
-          <!-- PROCEDURAL lane -->
-          <rect class="d-card fill-blue" x="470" y="278" width="250" height="46" rx="6"/>
-          <text class="d-title xs" x="595" y="299" text-anchor="middle">start_procedure(ref)</text>
-          <text class="d-sub xs" x="595" y="314" text-anchor="middle">ProcedureExecutionStarted</text>
-          <!-- resolved Host ref enters the procedural lane -->
-          <path class="d-edge" d="M340,301 H430"/>
-          <path class="d-edge" d="M430,181 V301"/>
-          <path class="d-edge" d="M430,301 H468" marker-end="url(#p-a)"/>
-          <text class="d-anno sm" x="452" y="252" text-anchor="middle">ref</text>
-          <text class="d-cap" x="210" y="344" text-anchor="middle">parent hints/refs/params never override Host dispatch</text>
+          <!-- initial Host procedure attempt -->
+          <rect class="d-card blue" x="410" y="274" width="300" height="78" rx="6"/>
+          <text class="d-title sm" x="560" y="298" text-anchor="middle">Initial Host procedure attempt</text>
+          <text class="d-sub" x="560" y="318" text-anchor="middle">start → execute → finish</text>
+          <text class="d-sub" x="560" y="337" text-anchor="middle">Host command evidence · zero LLM</text>
+          <path class="d-edge" d="M330,301 H408" marker-end="url(#p-a)"/>
 
-          <path class="d-edge blue" d="M595,324 V352" marker-end="url(#p-b)"/>
-          <rect class="d-card blue" x="470" y="354" width="250" height="60" rx="6"/>
-          <text class="d-title xs" x="595" y="377" text-anchor="middle">executor.execute — Host-controlled</text>
-          <text class="d-sub xs" x="595" y="395" text-anchor="middle">build / direct argv×3 / plan→diff / patch / replay×3</text>
-          <path class="d-edge blue" d="M595,414 V442" marker-end="url(#p-b)"/>
+          <rect class="d-card fill-green" x="780" y="274" width="240" height="66" rx="6"/>
+          <text class="d-title xs" x="900" y="300" text-anchor="middle">success → WorkCompleted</text>
+          <text class="d-sub xs" x="900" y="320" text-anchor="middle">protected Host evidence</text>
+          <path class="d-edge green" d="M710,300 H778" marker-end="url(#p-g)"/>
 
-          <rect class="d-card blue" x="470" y="444" width="250" height="52" rx="6"/>
-          <text class="d-title xs" x="595" y="465" text-anchor="middle">finish_procedure(evidence)</text>
-          <text class="d-sub xs" x="595" y="482" text-anchor="middle">ProcedureEvidence per command</text>
+          <!-- bounded recovery -->
+          <rect class="d-card fill-red" x="410" y="382" width="300" height="54" rx="6"/>
+          <text class="d-title xs" x="560" y="404" text-anchor="middle">Host failure evidence + digest</text>
+          <text class="d-sub xs" x="560" y="422" text-anchor="middle">initial failure remains event-sourced</text>
+          <path class="d-edge red" d="M560,352 V380" marker-end="url(#p-r)"/>
 
-          <!-- outcomes on far right -->
-          <rect class="d-card fill-green" x="800" y="354" width="220" height="52" rx="6"/>
-          <text class="d-title xs" x="910" y="375" text-anchor="middle">success → WorkCompleted</text>
-          <text class="d-sub xs" x="910" y="392" text-anchor="middle">normal verification pipeline</text>
-          <path class="d-edge green" d="M720,376 H798" marker-end="url(#p-g)"/>
+          <rect class="d-card fill-red" x="410" y="466" width="300" height="58" rx="6"/>
+          <text class="d-title xs" x="560" y="490" text-anchor="middle">Exactly one agentic repair</text>
+          <text class="d-sub xs" x="560" y="510" text-anchor="middle">LLM receives the procedure failure digest</text>
+          <path class="d-edge red" d="M560,436 V464" marker-end="url(#p-r)"/>
 
-          <rect class="d-card fill-red" x="800" y="444" width="220" height="52" rx="6"/>
-          <text class="d-title xs" x="910" y="465" text-anchor="middle">fail → digest + WorkFailed</text>
-          <text class="d-sub xs" x="910" y="482" text-anchor="middle">source = procedure_failure</text>
-          <path class="d-edge red" d="M720,470 H798" marker-end="url(#p-r)"/>
+          <rect class="d-card fill-red" x="780" y="466" width="240" height="58" rx="6"/>
+          <text class="d-title xs" x="900" y="490" text-anchor="middle">repair fails → terminal</text>
+          <text class="d-sub xs" x="900" y="510" text-anchor="middle">no Host recheck</text>
+          <path class="d-edge red" d="M710,490 H778" marker-end="url(#p-r)"/>
 
-          <!-- escalation: procedure fail -> exactly one agentic retry (perimeter up to agentic lane) -->
-          <path class="d-edge red dashed" d="M1020,470 H1052 V124 H722" marker-end="url(#p-r)"/>
-          <text class="d-anno sm red" x="1066" y="300" transform="rotate(-90 1066 300)" text-anchor="middle">1 guaranteed agentic retry (carries digest)</text>
+          <rect class="d-card blue" x="410" y="556" width="300" height="66" rx="6"/>
+          <text class="d-title xs" x="560" y="580" text-anchor="middle">Exactly one Host procedure recheck</text>
+          <text class="d-sub xs" x="560" y="600" text-anchor="middle">repair WorkCompleted is provisional</text>
+          <path class="d-edge blue dashed" d="M560,524 V554" marker-end="url(#p-b)"/>
+          <text class="d-anno sm blue" x="575" y="542" text-anchor="start">repair completes</text>
+
+          <rect class="d-card fill-green" x="780" y="548" width="240" height="54" rx="6"/>
+          <text class="d-title xs" x="900" y="570" text-anchor="middle">recheck success → complete</text>
+          <text class="d-sub xs" x="900" y="588" text-anchor="middle">protected Host evidence</text>
+          <path class="d-edge green" d="M710,574 H778" marker-end="url(#p-g)"/>
+
+          <rect class="d-card fill-red" x="780" y="622" width="240" height="54" rx="6"/>
+          <text class="d-title xs" x="900" y="644" text-anchor="middle">recheck fails → terminal</text>
+          <text class="d-sub xs" x="900" y="662" text-anchor="middle">no further LLM retry</text>
+          <path class="d-edge red" d="M710,598 H744 V649 H778" marker-end="url(#p-r)"/>
 
           <!-- flag note -->
-          <rect class="d-card fill-panel" x="80" y="360" width="330" height="120" rx="6"/>
-          <text class="d-title xs" x="98" y="384" text-anchor="start">settings.orchestration.procedural_dispatch</text>
-          <text class="d-sub" x="98" y="406" text-anchor="start">default OFF → NullProcedureExecutor</text>
-          <text class="d-sub" x="98" y="424" text-anchor="start">→ match/resolve return None/False</text>
-          <text class="d-sub" x="98" y="442" text-anchor="start">→ ladder always yields agentic</text>
-          <text class="d-sub" x="98" y="460" text-anchor="start">→ behavior byte-identical to before</text>
+          <rect class="d-card fill-panel" x="60" y="382" width="270" height="154" rx="6"/>
+          <text class="d-title xs" x="78" y="406" text-anchor="start">procedural_dispatch</text>
+          <text class="d-sub" x="78" y="428" text-anchor="start">default OFF → NullProcedureExecutor</text>
+          <text class="d-sub" x="78" y="448" text-anchor="start">→ match/resolve return None/False</text>
+          <text class="d-sub" x="78" y="468" text-anchor="start">→ ordinary agentic path only</text>
+          <text class="d-cap" x="195" y="504" text-anchor="middle">parent hints, refs, and params</text>
+          <text class="d-cap" x="195" y="521" text-anchor="middle">never override Host dispatch</text>
         </svg>
       </div>
       <div class="legend">
         <span><i class="li-amber"></i> dispatch resolution</span>
-        <span><i class="li-blue"></i> procedural path (0 LLM)</span>
-        <span><i class="li-green"></i> success</span>
-        <span><i class="li-red"></i> failure → 1 agentic retry</span>
+        <span><i class="li-blue"></i> Host attempt / recheck</span>
+        <span><i class="li-green"></i> protected Host success evidence</span>
+        <span><i class="li-red"></i> bounded repair / terminal failure</span>
       </div>
-      <figcaption><b>Fig 8.</b> A procedure is dispatched at most once. The Host freezes source, Builder, binary, PoC, argv/stdin, verdict, plan, and patch identity. Direct argv runs use a fixed launch environment and an in-container timeout; timeout recovery restarts the shared container. Failure records Host-computed evidence and escalates to exactly one agentic retry carrying the digest.</figcaption>
+      <figcaption><b>Fig 8.</b> A procedure-backed role starts with one Host attempt. Initial failure records Host evidence and permits exactly one digest-bearing agentic repair. If the repair completes, the orchestrator suppresses its terminal <code>WorkCompleted</code> and runs exactly one Host recheck. Within that recovery path, only recheck success completes the role with protected Host evidence; repair or recheck failure is terminal and cannot trigger another LLM retry.</figcaption>
     </figure>
     <table class="grid" data-reveal>
-      <thead><tr><th>Role</th><th>Procedure</th><th>PASS</th><th>Immediate failure</th></tr></thead>
+      <thead><tr><th>Role</th><th>Procedure</th><th>PASS</th><th>Host attempt FAIL</th></tr></thead>
       <tbody>
         <tr><td class="cell">Build-Verifier</td><td><code>secb_build_validation</code></td><td>build exits 0; every declared executable ELF initializes the configured sanitizer</td><td>timeout, nonzero exit, non-ELF/non-executable path, missing sanitizer runtime</td></tr>
         <tr><td class="cell">Exploit-Validator</td><td><code>secb_exploit_validation</code></td><td>complete frozen crash signature and consistent termination match 3/3; complete UBSan evidence may exit 0</td><td>unsafe/missing input, timeout, termination drift, incomplete or mismatched sanitizer/access/top-frame</td></tr>
@@ -805,7 +814,7 @@
         <div class="term"><dt>Re-decomposition</dt><dd>A Manager re-plans (bounded by <code>max_redecompositions</code>) from <code>failure_history</code>; non-Manager parents fail upward.</dd></div>
       </dl>
       <dl>
-        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier running registry-matched tasks under Host control with zero LLM turns.</dd></div>
+        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier whose Host attempts use zero LLM turns; initial failure permits one agentic repair and, if it completes, one Host recheck.</dd></div>
         <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — Host-computed and not directly agent-authored; still in-run evidence from the shared worker container.</dd></div>
         <div class="term"><dt>DooD</dt><dd>Docker-out-of-Docker: the orchestrator launches each CVE container on the host's Docker daemon.</dd></div>
         <div class="term"><dt>Crash signature</dt><dd><code>(sanitizer_class, access_type, top_frame)</code> — matched against the CVE oracle to decide a verdict.</dd></div>

@@ -680,7 +680,7 @@ async def test_repair_exceeding_child_limit_fails_before_spawning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dedup_allows_failed_role_reissue_but_blocks_completed() -> None:
+async def test_redecomposition_allows_failed_and_completed_role_reissue() -> None:
     orch = _orchestrator(None)
     factory = orch._child_factory
     factory.get_tree_role_prefixes = MagicMock(return_value={"Role-A", "Role-B", "Role-C"})
@@ -688,6 +688,7 @@ async def test_dedup_allows_failed_role_reissue_but_blocks_completed() -> None:
     factory.get_failed_role_prefixes = MagicMock(return_value={"Role-B"})
     factory.get_sibling_role_prefixes = MagicMock(return_value=set())
     agent = _manager_agent()
+    agent.redecomposition_count = 1
     agent.failure_history = [
         ChildFailureRecord(
             child_id=uuid4(),
@@ -698,17 +699,97 @@ async def test_dedup_allows_failed_role_reissue_but_blocks_completed() -> None:
     kept = orch._dedup_subtasks_against_siblings(
         agent,
         [
-            _sub("[Role-A] completed — must strip"),
+            _sub("[Role-A] completed owner — may reissue"),
             _sub("[Role-B] failed — may reissue"),
             _sub("[Role-C] other used — strip"),
             _sub("[Role-D] fresh — keep"),
         ],
     )
     labels = [s.description.split("]")[0] for s in kept]
-    assert "[Role-A" not in labels
+    assert "[Role-A" in labels
     assert "[Role-B" in labels
     assert "[Role-C" not in labels
     assert "[Role-D" in labels
+
+
+def test_stale_completion_does_not_override_replacement_generation() -> None:
+    # Given: A completed role generation
+    root_id = uuid4()
+    first_id = uuid4()
+    second_id = uuid4()
+    registry = HierarchyLimitsRegistry()
+    registry.create_root(
+        root_id,
+        max_depth=3,
+        max_children_per_node=7,
+        max_retries=3,
+        max_total_agents=40,
+    )
+    registry.propagate_to_child(root_id, first_id)
+    registry.register_role(first_id, "Role-A", parent_id=root_id)
+    registry.mark_role_completed(first_id)
+    assert registry.get_completed_role_prefixes(first_id) == {"Role-A"}
+
+    # When: A case-variant replacement is registered and the old agent completes again
+    registry.propagate_to_child(root_id, second_id)
+    registry.register_role(second_id, "role-a", parent_id=root_id)
+    registry.mark_role_completed(first_id)
+
+    # Then: Registration clears the old outcome and the stale completion is ignored
+    assert registry.get_completed_role_prefixes(second_id) == set()
+    assert registry.get_failed_role_prefixes(second_id) == set()
+
+
+def test_stale_failure_does_not_override_replacement_generation() -> None:
+    # Given: A failed role generation
+    root_id = uuid4()
+    first_id = uuid4()
+    second_id = uuid4()
+    registry = HierarchyLimitsRegistry()
+    registry.create_root(
+        root_id,
+        max_depth=3,
+        max_children_per_node=7,
+        max_retries=3,
+        max_total_agents=40,
+    )
+    registry.propagate_to_child(root_id, first_id)
+    registry.register_role(first_id, "Role-A", parent_id=root_id)
+    registry.mark_role_failed(first_id)
+    assert registry.get_failed_role_prefixes(first_id) == {"Role-A"}
+
+    # When: A case-variant replacement is registered and the old agent fails again
+    registry.propagate_to_child(root_id, second_id)
+    registry.register_role(second_id, "ROLE-A", parent_id=root_id)
+    registry.mark_role_failed(first_id)
+
+    # Then: Registration clears the old outcome and the stale failure is ignored
+    assert registry.get_completed_role_prefixes(second_id) == set()
+    assert registry.get_failed_role_prefixes(second_id) == set()
+
+
+def test_current_generation_completion_clears_failure() -> None:
+    # Given: The current role generation has failed
+    root_id = uuid4()
+    agent_id = uuid4()
+    registry = HierarchyLimitsRegistry()
+    registry.create_root(
+        root_id,
+        max_depth=3,
+        max_children_per_node=7,
+        max_retries=3,
+        max_total_agents=40,
+    )
+    registry.propagate_to_child(root_id, agent_id)
+    registry.register_role(agent_id, "Role-A", parent_id=root_id)
+    registry.mark_role_failed(agent_id)
+
+    # When: That same generation later completes
+    registry.mark_role_completed(agent_id)
+
+    # Then: Completion replaces the failed outcome
+    assert registry.get_completed_role_prefixes(agent_id) == {"Role-A"}
+    assert registry.get_failed_role_prefixes(agent_id) == set()
 
 
 def test_dedup_allows_failed_leaf_with_same_role_as_manager() -> None:

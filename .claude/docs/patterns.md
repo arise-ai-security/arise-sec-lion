@@ -530,7 +530,7 @@ class MyProcedureExecutor:  # structural: satisfies ProcedureExecutorPort
 
 2. Return it from your plugin's `get_procedure_executor()` (return `None` to keep the tier off). `bootstrap/application.py` binds it as the run's executor **only when** `settings.orchestration.procedural_dispatch` is on; otherwise `NullProcedureExecutor` keeps behavior byte-identical.
 
-3. Register the trusted role bracket in the plugin executor's `match()` implementation. At runtime the Host calls `match(task, domain_context)` and then `resolve()`; parent-authored `Subtask.execution_mode`, `procedure_ref`, and `procedure_params` are provenance only and never dispatch authority. A failed procedure escalates to exactly one agentic retry carrying the procedure's digest.
+3. Register the trusted role bracket in the plugin executor's `match()` implementation. At runtime the Host calls `match(task, domain_context)` and then `resolve()`; parent-authored `Subtask.execution_mode`, `procedure_ref`, and `procedure_params` are provenance only and never dispatch authority. A failed procedure escalates to exactly one agentic repair carrying the procedure's digest. A completed repair is provisional until one Host recheck succeeds; repair or recheck failure is terminal.
 
 **Do NOT** add non-security procedures to `plugins/security/`. Procedures are domain-specific worker behavior, so they live in a domain plugin -- never in `core/` or `infrastructure/`.
 

@@ -8,12 +8,12 @@ from pydantic import BaseModel, computed_field
 
 
 # Fields that exist on CVEInstance for evaluation/grading but MUST NEVER
-# reach a prompt template. Embedding the gold patch (or a candidate fix
-# body) would tutor the model with the answer key and invalidate the
-# evaluation. Python code that needs these fields (e.g., post-run patch
-# similarity scoring) accesses them via the typed attribute directly.
+# reach a prompt template. Embedding the gold patch, a candidate fix body,
+# or the answer-bearing bug report would tutor the model with the answer key
+# and invalidate the evaluation. Python code that needs these fields accesses
+# them via the typed attribute directly.
 _PROMPT_FORBIDDEN_FIELDS: frozenset[str] = frozenset(
-    {"patch", "candidate_fixes", "secb_sh"}
+    {"bug_report", "candidate_fixes", "patch", "secb_sh"}
 )
 
 
@@ -98,10 +98,9 @@ class CVEInstance(BaseModel):
     def to_template_context(self) -> dict[str, Any]:
         """Render-safe view for prompt templates.
 
-        Excludes :data:`_PROMPT_FORBIDDEN_FIELDS` so the gold patch and
-        any candidate fix bodies cannot leak into prompts. Use the
-        attributes directly (``cve.patch``) for evaluation-side code
-        that legitimately needs them.
+        Excludes :data:`_PROMPT_FORBIDDEN_FIELDS` so answer-bearing
+        evaluation data cannot leak into prompts. Use the attributes
+        directly for evaluation-side code that legitimately needs them.
         """
         return {
             key: value

@@ -429,10 +429,11 @@ class DecompositionContractService:
         agent: AgentSession,
         subtasks: list[Subtask],
     ) -> list[Subtask]:
-        """Remove subtasks whose roles are completed or already covered (not failed).
+        """Remove subtasks whose roles are already covered by an active attempt.
 
-        Completed roles are always forbidden. Failed roles may be reissued.
-        Unrelated tree-wide duplicates remain forbidden.
+        Failed roles may be reissued. During re-decomposition, a Manager may also
+        explicitly reissue a completed owner when downstream evidence shows that
+        its artifact needs correction. Unrelated active duplicates remain forbidden.
         """
         if agent.parent_id is None:
             return subtasks  # Boss-level decomposition — no siblings to clash with
@@ -458,9 +459,11 @@ class DecompositionContractService:
             return subtasks
 
         # The registry excludes this grouping agent itself but retains every
-        # other same-labelled agent. A failed leaf may be deliberately reissued.
+        # other same-labelled agent. Failed leaves may be reissued, and a
+        # re-decomposition may explicitly replace a completed generation.
         used = uncle_roles | tree_roles
-        forbidden = (used - failed) | completed
+        reissuable = failed | (completed if agent.redecomposition_count > 0 else set())
+        forbidden = used - reissuable
 
         kept: list[Subtask] = []
         for st in subtasks:
@@ -469,7 +472,7 @@ class DecompositionContractService:
             if normalized_prefix and normalized_prefix in forbidden:
                 logger.info(
                     "Agent %s: stripping duplicate subtask [%s] "
-                    "(completed or already covered by another agent)",
+                    "(already covered by an active agent)",
                     agent.agent_id,
                     prefix,
                 )

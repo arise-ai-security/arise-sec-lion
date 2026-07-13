@@ -28,6 +28,8 @@ from core.domain.events.events import (
     PatchPlanApproved,
     PhaseGateRecorded,
     PhaseRouteSelected,
+    PostStepCompleted,
+    PostStepRequested,
     ProbeCompleted,
     ProbeStarted,
     ProcedureExecutionFinished,
@@ -106,6 +108,10 @@ class AgentSession:
     execution_mode: str
     procedure_ref: str
     procedure_params: dict[str, Any]
+    procedure_attempted: bool
+    procedure_in_progress: bool
+    last_procedure_success: bool | None
+    last_procedure_summary: str
     last_attempt_procedural: bool
     retry_count: int
     redecomposition_count: int
@@ -116,6 +122,7 @@ class AgentSession:
     failed_children: dict[UUID, ChildFailureRecord]
     child_subtasks: dict[UUID, Subtask]
     failure_history: list[ChildFailureRecord]
+    pending_post_step_terminal_event_ids: list[UUID]
     # Per-coroutine reservation bookkeeping for child-spawn OCC (D.2).
     # NOT event-sourced — lives only on the in-memory aggregate for the
     # duration of one run_agent_step attempt; reset on every fresh load
@@ -284,6 +291,17 @@ class AgentSession:
         """Apply and record an uncommitted domain event."""
         self._apply(event)
         self._changes.append(event)
+        if isinstance(
+            event,
+            (DecisionInfeasible, VerificationFailed, WorkCompleted, WorkFailed),
+        ):
+            self._emit(
+                PostStepRequested(
+                    aggregate_id=self.agent_id,
+                    sequence_number=self._next_sequence(),
+                    terminal_event_id=event.event_id,
+                )
+            )
         return event
 
     @_apply.register
@@ -336,6 +354,18 @@ class AgentSession:
     def _(self, event: WorkFailed) -> None:
         self.status = AgentStatus.FAILED
         self.error_message = event.reason
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: PostStepRequested) -> None:
+        if event.terminal_event_id not in self.pending_post_step_terminal_event_ids:
+            self.pending_post_step_terminal_event_ids.append(event.terminal_event_id)
+        self.version += 1
+
+    @_apply.register
+    def _(self, event: PostStepCompleted) -> None:
+        if event.terminal_event_id in self.pending_post_step_terminal_event_ids:
+            self.pending_post_step_terminal_event_ids.remove(event.terminal_event_id)
         self.version += 1
 
     @_apply.register
@@ -394,18 +424,25 @@ class AgentSession:
 
     @_apply.register
     def _(self, event: CodeGenerationStarted) -> None:
+        self.last_attempt_procedural = False
         self.status = AgentStatus.IN_PROGRESS
         self.version += 1
 
     @_apply.register
     def _(self, event: ProcedureExecutionStarted) -> None:
-        # Once-only guard: a later failed attempt must dispatch agentic.
+        self.procedure_attempted = True
+        self.procedure_in_progress = True
+        self.last_procedure_success = None
+        self.last_procedure_summary = ""
         self.last_attempt_procedural = True
         self.status = AgentStatus.IN_PROGRESS
         self.version += 1
 
     @_apply.register
     def _(self, event: ProcedureExecutionFinished) -> None:
+        self.procedure_in_progress = False
+        self.last_procedure_success = event.success
+        self.last_procedure_summary = event.summary
         self.version += 1
 
     @_apply.register
@@ -575,6 +612,10 @@ class AgentSession:
         self.execution_mode = "auto"
         self.procedure_ref = ""
         self.procedure_params = {}
+        self.procedure_attempted = False
+        self.procedure_in_progress = False
+        self.last_procedure_success = None
+        self.last_procedure_summary = ""
         self.last_attempt_procedural = False
         # Retry tracking
         self.retry_count = 0
@@ -594,6 +635,7 @@ class AgentSession:
         # Failures accumulated across redecompositions, rendered into the
         # next decomposition prompt
         self.failure_history = []
+        self.pending_post_step_terminal_event_ids = []
         # Per-coroutine reservation count (see D.2). Reset on every fresh
         # load, every replay, and after commit/release in the orchestrator.
         self.pending_reservation = 0
@@ -775,6 +817,25 @@ class AgentSession:
     def is_terminal(self) -> bool:
         """True if COMPLETED or FAILED."""
         return self.status in (AgentStatus.COMPLETED, AgentStatus.FAILED)
+
+    @property
+    def pending_post_step_terminal_event_id(self) -> UUID | None:
+        """Return the oldest terminal outcome awaiting post-step processing."""
+        if not self.pending_post_step_terminal_event_ids:
+            return None
+        return self.pending_post_step_terminal_event_ids[0]
+
+    def complete_post_step(self, terminal_event_id: UUID) -> None:
+        """Record that the terminal outcome's post-step work is complete."""
+        if terminal_event_id not in self.pending_post_step_terminal_event_ids:
+            return
+        self._emit(
+            PostStepCompleted(
+                aggregate_id=self.agent_id,
+                sequence_number=self._next_sequence(),
+                terminal_event_id=terminal_event_id,
+            )
+        )
 
     def is_leaf(self) -> bool:
         """True if WORKER with no children."""

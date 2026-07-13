@@ -23,7 +23,7 @@ class PatchOperation(BaseModel):
 
 
 class PatchPlan(BaseModel):
-    """Frozen manager-authored plan consumed literally by Patch-Applier."""
+    """Frozen Root-Cause-Analyst plan consumed literally by Patch-Applier."""
 
     model_config = {"frozen": True}
 
@@ -74,6 +74,9 @@ class PatchRenderResult:
     plan_sha256: str
     reason: str
     diff: str = ""
+    target_path: Path | None = None
+    original_content: str | None = None
+    patched_content: str | None = None
 
 
 class PatchPlanValidator:
@@ -103,10 +106,14 @@ class PatchPlanValidator:
         if commands != required_commands:
             return self._blocked(plan, "validation commands must be exactly secb patch/build/repro")
 
-        original = target.read_text(encoding="utf-8")
-        actual_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        original_bytes = target.read_bytes()
+        actual_hash = hashlib.sha256(original_bytes).hexdigest()
         if actual_hash != plan.base_sha256:
             return self._blocked(plan, "target hash does not match plan base_sha256")
+        try:
+            original = original_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return self._blocked(plan, "target file is not valid UTF-8")
 
         patched = original
         for operation in plan.operations:
@@ -175,7 +182,7 @@ class PatchApplier:
             )
         if validation.target_path is None or validation.patched_content is None:
             raise RuntimeError("approved PatchPlan validation omitted transformed source")
-        validation.target_path.write_text(validation.patched_content, encoding="utf-8")
+        validation.target_path.write_bytes(validation.patched_content.encode("utf-8"))
         return PatchApplyResult(
             status="APPLIED",
             plan_sha256=validation.plan_sha256,
@@ -208,4 +215,7 @@ class PatchApplier:
             plan_sha256=validation.plan_sha256,
             reason="plan rendered literally",
             diff=diff,
+            target_path=validation.target_path,
+            original_content=validation.original_content,
+            patched_content=validation.patched_content,
         )

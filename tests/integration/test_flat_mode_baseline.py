@@ -53,6 +53,8 @@ from core.domain.events.events import (
     CodeGenerationStarted,
     OperationFinished,
     OperationStarted,
+    PostStepCompleted,
+    PostStepRequested,
     PromptSent,
     RunCompleted,
     RunStarted,
@@ -156,6 +158,7 @@ class _LimitsBridge:
     max_concurrent_workers: int = -1
     max_concurrent_llm_calls: int = -1
     llm_jitter_max_ms: int = 0
+    max_agent_step_seconds: float = -1
     max_run_duration_seconds: float = 1800
 
     def is_workers_limited(self) -> bool:
@@ -273,7 +276,7 @@ async def test_flat_mode_skips_decomposition_and_dispatches_via_worker_port(
 @pytest.mark.asyncio
 async def test_flat_mode_emits_expected_event_sequence(tmp_path: Path) -> None:
     """The BOSS aggregate accrues AgentCreated -> TaskAssigned -> RunStarted ->
-    CodeGenerationStarted -> WorkCompleted -> RunCompleted in flat mode."""
+    CodeGenerationStarted -> WorkCompleted -> PostStepRequested -> RunCompleted in flat mode."""
     # Given: a flat-mode service with a successful fake worker.
     fake_worker = FakeFlatWorker(exit_status="completed", summary="done")
     service, event_store = _wire_flat_service(
@@ -297,8 +300,10 @@ async def test_flat_mode_emits_expected_event_sequence(tmp_path: Path) -> None:
         CodeGenerationStarted.__name__,
         PromptSent.__name__,
         WorkCompleted.__name__,
+        PostStepRequested.__name__,
         OperationFinished.__name__,
         AgentExecutionFinished.__name__,
+        PostStepCompleted.__name__,
         RunCompleted.__name__,
     ]
     # And: the WorkCompleted carries the worker's summary.
@@ -307,6 +312,7 @@ async def test_flat_mode_emits_expected_event_sequence(tmp_path: Path) -> None:
     # And: the RunCompleted reflects success.
     run_completed = next(e for e in boss_events if isinstance(e, RunCompleted))
     assert run_completed.status == "completed"
+    assert root_id not in await service._query_service.get_active_agent_ids(root_id=root_id)
 
 
 @pytest.mark.asyncio
@@ -332,6 +338,7 @@ async def test_flat_mode_translates_worker_failure_to_workfailed(
     assert not any(isinstance(e, WorkCompleted) for e in boss_events)
     run_completed = next(e for e in boss_events if isinstance(e, RunCompleted))
     assert run_completed.status == "failed"
+    assert root_id not in await service._query_service.get_active_agent_ids(root_id=root_id)
 
 
 @pytest.mark.asyncio

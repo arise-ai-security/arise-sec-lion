@@ -50,7 +50,8 @@ Never call `AgentSession(agent_id)` directly. Use one of:
 | `failure_digest` | `str \| None` | `FailureDigestRecorded` (deterministic crash/procedure digest for retry + parent prompts); retained across `RetryScheduled`, mirroring `verification_feedback` |
 | `recent_thoughts` | `deque[ThoughtExcerpt]` (maxlen 20) | Appended by `ThoughtCaptured` (bounded tool-output tail; source material for the failure digest) |
 | `failure_history` | `list[ChildFailureRecord]` | Extended from `failed_children` on `RedecompositionTriggered` (prior attempts' failures for informed re-decomposition) |
-| `last_attempt_procedural` | `bool` | Set True by `ProcedureExecutionStarted` (once-only guard: a failed procedure escalates to an *agentic* retry, never a second procedure) |
+| `procedure_attempted` | `bool` | Set True by `ProcedureExecutionStarted` and retained across the one agentic repair; prevents the retry from being mistaken for a first Host dispatch |
+| `last_attempt_procedural` | `bool` | Set True by `ProcedureExecutionStarted` and False by `CodeGenerationStarted`; distinguishes an initial/recheck Host failure from an agentic-repair failure |
 | `sibling_index` | `int` | `AgentCreated` (position among siblings, 0-indexed) |
 | `success_criteria` | `str` | `AgentCreated` (from parent's `Subtask`) |
 | `target_paths` | `tuple[str, ...]` | `AgentCreated` (structured child scoping) |
@@ -64,7 +65,7 @@ Never call `AgentSession(agent_id)` directly. Use one of:
 | `assign_task(description)` | Emits `TaskAssigned`, status -> ANALYZING |
 | `apply_complexity_result(complexity, reasoning, determined_role)` | Emits `ComplexityEvaluated`, updates role |
 | `apply_subtasks_and_spawn_children(subtasks, child_role, briefing)` | Emits `SubtasksDefined` + N x `ChildSpawned` + `StatusChanged(WAITING)`. Returns `list[(child_id, subtask)]` |
-| `start_worker_execution(tool_name)` | Emits `CodeGenerationStarted`, status -> IN_PROGRESS |
+| `start_worker_execution(tool_name)` | Emits `CodeGenerationStarted`, status -> IN_PROGRESS, sets `last_attempt_procedural=False` |
 | `handle_child_update(child_id, result, report)` | Emits `ChildCompleted`; auto-emits `WorkCompleted` when all children reported |
 | `handle_child_failure(child_id, reason, child_task, digest, max_redecompositions)` | Emits enriched `ChildFailed` (carries `child_task` + `digest`); when all children report: partial `WorkCompleted` if any succeeded; if required children fail, applies the caller-supplied re-plan budget. `ParentNotificationService` supplies a nonzero budget only to MANAGER parents, so non-Managers emit `WorkFailed` instead of re-planning. |
 | `mark_infeasible(reason, min_subtasks, min_depth)` | Emits `DecisionInfeasible`, status -> FAILED |
@@ -74,9 +75,9 @@ Never call `AgentSession(agent_id)` directly. Use one of:
 | `fail_with_reason(reason)` | Emits `WorkFailed`, status -> FAILED |
 | `mark_verification_passed(feedback)` | Emits `VerificationPassed` (observability only, status stays COMPLETED) |
 | `record_failure_digest(digest, source)` | Emits `FailureDigestRecorded` (`source` ∈ `"worker_crash"`/`"procedure_failure"`); sets `failure_digest` for retry/parent prompts |
-| `start_procedure(procedure_ref)` | Emits `ProcedureExecutionStarted`, status -> IN_PROGRESS, sets `last_attempt_procedural` (deterministic tier; no prompt, no LLM) |
+| `start_procedure(procedure_ref)` | Emits `ProcedureExecutionStarted`, status -> IN_PROGRESS, sets `procedure_attempted=True` and `last_attempt_procedural=True` (deterministic tier; no prompt, no LLM) |
 | `finish_procedure(procedure_ref, success, summary, evidence)` | Emits `ProcedureExecutionFinished` with host-captured `evidence`; the terminal `WorkCompleted`/`WorkFailed` follows separately |
-| `complete_with_result(result)` | Emits `WorkCompleted` directly from a host-computed result (procedural success path) |
+| `complete_with_result(result)` | Emits `WorkCompleted` directly from a host-computed result (initial procedure or post-repair recheck success) |
 | `record_decision(decision)` | Appends to `local_decisions` (no event, in-memory only) |
 | `record_artifact(artifact_key)` | Appends to `local_artifacts` (no event, in-memory only) |
 | `build_briefing_for_child()` | Build `Briefing` with full ancestry chain via `build_briefing()` |
@@ -210,10 +211,10 @@ All events extend `DomainEvent` (frozen Pydantic `BaseModel`). Base fields: `eve
 
 | Event | Trigger | State Effect |
 |---|---|---|
-| `CodeGenerationStarted` | `start_worker_execution()` | status=IN_PROGRESS |
+| `CodeGenerationStarted` | `start_worker_execution()` | status=IN_PROGRESS, sets `last_attempt_procedural=False`; on procedure recovery this marks the single agentic repair |
 | `ThoughtCaptured` | `apply_worker_event()` | Appends a `ThoughtExcerpt` (content capped at 500 chars) to `recent_thoughts`; version bump. Fields: `content`, `stream`, `output_type`, `tool_name` |
 | `PromptSent` | `emit_prompt_sent()` | Version bump only. Fields: `prompt`, `prompt_type`, `target` |
-| `ProcedureExecutionStarted` | `start_procedure()` | status=IN_PROGRESS, sets `last_attempt_procedural`. Field: `procedure_ref`. Deterministic tier -- no prompt, no LLM turns |
+| `ProcedureExecutionStarted` | `start_procedure()` | status=IN_PROGRESS, sets `procedure_attempted=True` and `last_attempt_procedural=True`. Field: `procedure_ref`. Deterministic tier -- no prompt, no LLM turns |
 | `ProcedureExecutionFinished` | `finish_procedure()` | Version bump only (terminal `WorkCompleted`/`WorkFailed` follows). Fields: `procedure_ref`, `success`, `summary`, `evidence: list[dict]` (host-captured, agent-unforgeable) |
 
 ### Infeasibility and Retry Events

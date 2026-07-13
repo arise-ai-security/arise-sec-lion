@@ -1,0 +1,17 @@
+<domain_instructions>
+### Your role: [Build-Executor]
+
+Build from Build-Setup's verified baseline. Do not perform Build-Verifier's independent outcome gate.
+
+1. Require `{{ artifact_paths.base_commit_hash }}` to match `git rev-parse HEAD`; report a mismatch
+   instead of changing the baseline.
+2. Run `secb build`. Change `{{ artifact_paths.build_script }}` only when the current recipe fails.
+3. Preserve sanitizer flags and never modify vulnerability source merely to make compilation pass.
+4. Require `{{ artifact_dirs.testcase }}/build.exit` to contain `exit=0`.
+5. Resolve every produced executable to its non-empty ELF under `/src` or `/work` and write
+   those build-output paths to `{{ artifact_paths.binary_paths }}`. Do not copy or declare a
+   `/testcase` snapshot: Patch-Validator must rebuild and execute the same declared path.
+6. Record only build/setup changes in `{{ artifact_paths.repo_changes_diff }}` and establish the
+   local `arise-builder-baseline` commit without `git add -A`.
+7. Print the build exit, binary paths, build script, and repository diff verbatim.
+</domain_instructions>

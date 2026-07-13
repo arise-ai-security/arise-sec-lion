@@ -68,8 +68,8 @@ The vulnerable source the boss already read is provided below — **build on it*
 {% else %}
 **If you choose DECOMPOSE, you MUST** use your recon tools to read the vulnerable source code FIRST — do not decompose from the CVE description alone:
 
-1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE/bug report — understand the function structure, error handling, and resource lifecycle
-2. **`read_symbol`** on the specific function named in the bug report — identify the exact code path that leads to the vulnerability
+1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE description or sanitizer report — understand the function structure, error handling, and resource lifecycle
+2. **`read_symbol`** on the specific application function named in the sanitizer report — identify the exact code path that leads to the vulnerability
 3. **`search_codebase`** to find related patterns (callers, error-handling idioms, cleanup conventions) — some vulnerabilities span multiple files
 {% endif %}
 

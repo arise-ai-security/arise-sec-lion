@@ -399,16 +399,17 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
                           phase_commands,             • patch          (gold fix)
                           required_files,             • candidate_fixes (fix bodies)
                           validation_required,        • secb_sh        (golden repro())
-                          hierarchical_only, …      cve_instance.py:15-17, 106-110
+                          hierarchical_only, …        • bug_report     (answer-bearing report)
+                                                  cve_instance.py:15-17, 106-110
 ```
 
-**`_CVE_DISPLAY_FIELDS`** — the 11-field allowlist actually shown to the agent
+**`_CVE_DISPLAY_FIELDS`** — the 10-field allowlist actually shown to the agent
 (`prompt_strategy.py:29-41`, empty values dropped): `instance_id`, `cve_id`, `repo`,
 `project_name`, `lang`, `sanitizer`, `base_commit`, `work_dir`, `bug_description`,
-`sanitizer_report`, `bug_report`.
+`sanitizer_report`.
 
-> `sanitizer_report` and `bug_report` are kept **on purpose** — they are the *expected-
-> failure oracle* the Exploiter must match, not the answer. The fix (`patch`),
+> `sanitizer_report` is kept **on purpose** as the expected-failure oracle the
+> Exploiter must match. The potentially answer-bearing `bug_report`, the fix (`patch`),
 > alternative fixes (`candidate_fixes`), and the golden harness (`secb_sh`) are stripped.
 > Golden strings appear in templates only as **prohibitions** in
 > `_secb_runtime_contract.j2:11`. Verified absent from rendered prompts:
@@ -416,13 +417,21 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
 
 ### Retry semantics — what triggers a retry, and the cap
 
-Only **WORKER** agents retry. `PostStepHandler` owns three mutually bounded cases. A failed
-host procedure receives exactly one agentic attempt and never enters either generic retry
-path afterward. A non-procedural verification failure or crash carrying feedback/digest
-uses `_maybe_retry_worker`, capped at `verification_max_retries` (default **2** ⇒ up to
-**3** attempts). If that path declines, `RetryPolicy` may schedule model escalation from
+Only **WORKER** agents retry. `PostStepHandler` owns three mutually bounded cases. A
+procedure-backed worker starts with one Host attempt. Failure records Host evidence and a
+bounded digest, then permits exactly one agentic repair outside both generic retry paths.
+If the repair fails, the worker fails terminally. If it completes, its provisional
+`WorkCompleted` is suppressed and the Host runs exactly one procedure recheck. Within the
+recovery path, only recheck success completes the role with protected Host evidence;
+recheck failure is terminal and permits no further LLM retry. A non-procedural
+verification failure or crash carrying feedback/digest uses `_maybe_retry_worker`, capped
+at `verification_max_retries` (default **2** ⇒ up to **3** attempts). If that path declines,
+`RetryPolicy` may schedule model escalation from
 `orchestration.retry.model_escalation_chain`. Both non-procedural paths share
 `agent.retry_count`, so their budgets do not stack independently.
+
+The diagram below covers only the non-procedural verification/crash path. The distinct
+procedure recovery sequence is summarized in the table that follows.
 
 ```mermaid
 stateDiagram-v2
@@ -443,7 +452,7 @@ stateDiagram-v2
 |---|---|---|
 | Config key / default / bounds | `verification_max_retries` / `2` / `ge=0,le=10` | `config/settings/orchestration.py` |
 | Attempt cap (verification/crash path) | ≤ 3 (1 initial + 2 retries; `retry_count` 0→1→2) | `post_step.py:_maybe_retry_worker` |
-| Procedure failure | exactly one agentic attempt, then terminal propagation | `post_step.py:handle_post_step` |
+| Procedure recovery | one initial Host attempt → one agentic repair → one Host recheck after completed repair; repair failure or recheck failure is terminal | `agent_orchestrator.py:execute_task`; `post_step.py:handle_post_step` |
 | Second non-procedural path | `RetryPolicy` model escalation; runs after `_maybe_retry_worker` declines and shares `agent.retry_count` | `retry_policy.py` |
 | Trigger | a structural stage failing **or** the LLM judge failing on a COMPLETED worker | `verification_pipeline.py:138-172` |
 | Enforcement site | `PostStepHandler.handle_post_step` | `core/application/services/orchestration/post_step.py` |
@@ -575,6 +584,9 @@ tier is an in-run gate, while the fresh external evaluator remains confirmatory 
 | Forward-Instrumentator | LLM | hybrid reasoning/coding | `gpt-5.3-codex` |
 | Fix-Aggregator, Reporter | LLM | synthesis/reasoning | `gpt-5.3-codex` |
 
+`none` describes each Host procedure attempt. If an initial attempt fails, the bounded
+recovery lifecycle above may invoke exactly one agentic repair before the Host recheck.
+
 This routing is implemented by `WorkerConfig.model_overrides` and resolved from the
 leading task-role prefix. B3 uses the same nine role labels and inherits B4's worker
 configuration, so each direct role resolves to the same model or host procedure. The
@@ -617,8 +629,9 @@ empty `/testcase/repro.sh` skeleton, the immutable `/testcase/patch.sh`.
 
 ```
 ALLOWED into prompt / container                FORBIDDEN to the agent
-  • 11 CVE display fields (incl. the             • CVEInstance.patch / candidate_fixes / secb_sh
-    sanitizer_report + bug_report ORACLE)          (stripped from template context)
+  • 10 CVE display fields (incl. the             • CVEInstance.bug_report / patch /
+    sanitizer_report oracle)                       candidate_fixes / secb_sh
+                                                   (stripped from template context)
   • /src/build.sh                                • baked golden secb / repro() body / replay_build.sh
   • shipped PoC files in /testcase                 (secb wrapper overlaid from sealed dir;
     (any filename)                                  REPLAY_ENABLED stripped)
@@ -755,14 +768,10 @@ three-seat, zero-human semantic panel after the mechanical, safety, and regressi
 The table remains useful as rubric history, not as an implementation description.
 
 > **Anti-leak nuance (important — see §II.6).** "Golden" here means *ground-truth expected
-> values*, **not** *secret-from-the-agent*. `sanitizer_report` / `bug_report` /
-> `bug_description` are the expected-failure **oracle that is ALREADY rendered to the agent**
-> (`_CVE_DISPLAY_FIELDS`) — the judge merely re-checks observed-vs-oracle; it introduces no
-> data the agent didn't see. Only the gold `patch` / `candidate_fixes` / `secb_sh` are
-> host-side-secret (`_PROMPT_FORBIDDEN_FIELDS = {patch, candidate_fixes, secb_sh}`,
-> `cve_instance.py:15`), and of those only the patch-correctness judge optionally consults
-> the gold `patch`. *Hiding* the oracle from the agent would itself be a target-state
-> anti-leak change, not current behavior.
+> values. `sanitizer_report` and `bug_description` are rendered to the agent through
+> `_CVE_DISPLAY_FIELDS`; `bug_report` is retained for evaluator-side judging but stripped
+> from solver prompt context because it may contain answer-bearing fix details. The gold
+> `patch`, `candidate_fixes`, and `secb_sh` are likewise host-side-only.
 
 The **first proposed** judge below is different — a *provenance precondition* that needs no reference
 data at all: it cross-checks the agent's event-sourced transcript to catch fabricated
@@ -936,6 +945,13 @@ with per-command `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, boun
 commands still run inside its mutable shared container; the evidence is an in-run control,
 not a substitute for the external §IV.0 fresh-replay authority.
 
+An initial Host procedure failure records that evidence and a bounded digest, then permits
+exactly one agentic repair. A failed repair is terminal. A completed repair is provisional:
+the orchestrator suppresses its terminal `WorkCompleted` and runs exactly one Host procedure
+recheck. Within this recovery path, only recheck success completes the role and produces
+protected Host success evidence. Recheck failure is terminal and cannot trigger another
+LLM repair. The failed initial Host evidence remains in the event stream.
+
 The agent-authored `repro.sh` is parsed as a structured contract, not executed. Its first
 four non-empty lines are fixed; the final line is `exec "$BIN"` plus inert literal
 arguments and exactly one `$POC`, or ends with the sole supported redirection `< "$POC"`.
@@ -1000,7 +1016,7 @@ Build-Setup, Build-Executor, and Reporter remain agentic.
 | **Sealed dir** | `<run>.sealed/`, a sibling of the run root with no bind mount; holds `secb` + `secb-exec` |
 | **Builder baseline** | Local `arise-builder-baseline` commit of `repo_changes.diff`, so the Fixer's `git diff HEAD` carries only Fixer edits |
 | **Flat / hierarchical arm** | Single agent doing all phases vs BOSS→MANAGER→WORKER decomposition |
-| **Oracle** | `sanitizer_report` + `bug_report` — the expected failure the Exploiter must match (shown to the agent on purpose) |
+| **Oracle** | Solver-visible `sanitizer_report` plus evaluator-only `bug_report`; the latter is never rendered into solver prompts |
 | **OCC** | Optimistic concurrency control via `UNIQUE(aggregate_id, sequence_number)` |
 | **Wired / unwired** | Whether a `criteria.py` function is actually reached by a production consumer (`bef.py`/`linear.py`) |
 

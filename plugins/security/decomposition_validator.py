@@ -241,11 +241,7 @@ class SecBenchDecompositionValidator:
                     )
                 )
                 for role_name in roles:
-                    if (
-                        role_name in allowed_set
-                        and role_name not in completed
-                        and role_name not in manager_roles
-                    ):
+                    if role_name in allowed_set and role_name not in manager_roles:
                         manager_roles.append(role_name)
                 continue
 
@@ -267,17 +263,6 @@ class SecBenchDecompositionValidator:
                     DecompositionViolation(
                         kind="invalid_role",
                         detail=f"leaf {index} uses {role_name} outside {phase}",
-                        subtask_index=index,
-                    )
-                )
-                continue
-
-            if role_name in completed:
-                removals.append(index)
-                violations.append(
-                    DecompositionViolation(
-                        kind="completed_role",
-                        detail=f"completed role must not be respawned: {role_name}",
                         subtask_index=index,
                     )
                 )
@@ -315,11 +300,12 @@ class SecBenchDecompositionValidator:
                 )
             )
 
-        # Close hard dependencies; completed producers are treated as satisfied.
+        # Close hard dependencies. Completed producers are satisfied unless the
+        # Manager explicitly selected their owner for evidence-driven correction.
         closed = [
             name
             for name in dependency_closed_roles(phase, tuple(manager_roles))
-            if name not in completed
+            if name in manager_roles or name not in completed
         ]
         injected_deps = [name for name in closed if name not in manager_roles]
         if injected_deps:
@@ -336,7 +322,7 @@ class SecBenchDecompositionValidator:
 
         if not final_roles:
             # Fail-safe: full remaining same-phase escalation set.
-            final_roles = list(allowed)
+            final_roles = [name for name in allowed if name not in completed]
             route = "expanded"
             triggers = ("manager_decision_invalid", "fallback_expanded")
             violations.append(
@@ -362,7 +348,6 @@ class SecBenchDecompositionValidator:
                 for roles in (self._catalog_roles_in(description),)
                 if len(roles) == 1
                 and self._role_phase(roles[0]) == phase
-                and roles[0] not in completed
             }
             inject_names = [n for n in final_roles if n not in present_after]
             catalog_order = {
@@ -410,7 +395,7 @@ class SecBenchDecompositionValidator:
         completed: set[str],
         failed: set[str],
     ) -> tuple[str, ...]:
-        """Compact + specialists for the phase, minus completed roles."""
+        """Return every same-phase role a Manager may explicitly select."""
         compact = COMPACT_ROLES.get(phase, ())
         specialists = ADAPTIVE_SPECIALISTS.get(phase, ())
         selected = dependency_closed_roles(phase, (*compact, *specialists))
@@ -423,7 +408,7 @@ class SecBenchDecompositionValidator:
         )
         if extra_failed:
             selected = dependency_closed_roles(phase, (*selected, *extra_failed))
-        return tuple(name for name in selected if name not in completed)
+        return selected
 
     @staticmethod
     def _catalog_roles_in(description: str) -> list[str]:

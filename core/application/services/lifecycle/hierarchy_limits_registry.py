@@ -16,6 +16,7 @@ class HierarchyLimitsRegistry:
         self._failed_roles: dict[UUID, set[str]] = {}  # root_id → failed roles
         self._parent_children: dict[UUID, set[UUID]] = {}  # parent_id → child_ids
         self._agent_role_prefix: dict[UUID, str] = {}  # agent_id → role prefix
+        self._current_role_generation: dict[tuple[UUID, str], UUID] = {}
         self._current_child_dags: dict[
             UUID, dict[UUID, tuple[UUID, ...]]
         ] = {}  # parent_id → current child_id → sibling predecessor ids
@@ -27,6 +28,7 @@ class HierarchyLimitsRegistry:
         self._failed_roles.clear()
         self._parent_children.clear()
         self._agent_role_prefix.clear()
+        self._current_role_generation.clear()
         self._current_child_dags.clear()
 
     def create_root(
@@ -115,19 +117,23 @@ class HierarchyLimitsRegistry:
         self, agent_id: UUID, role_prefix: str, parent_id: UUID | None = None
     ) -> None:
         self._agent_role_prefix[agent_id] = role_prefix
+        root_id = self._root_for(agent_id)
+        self._current_role_generation[(root_id, role_prefix.casefold())] = agent_id
+        self._clear_role_outcome(root_id, role_prefix)
         if parent_id is not None:
             self._parent_children.setdefault(parent_id, set()).add(agent_id)
 
     def mark_role_completed(self, agent_id: UUID) -> None:
-        """Record that this agent's role finished successfully (must not respawn)."""
+        """Record that the current generation of this role finished successfully."""
         role = self._agent_role_prefix.get(agent_id)
         if role is None:
             return
         root_id = self._root_for(agent_id)
+        if self._current_role_generation.get((root_id, role.casefold())) != agent_id:
+            return
+        self._discard_role(self._completed_roles.get(root_id), role)
         self._completed_roles.setdefault(root_id, set()).add(role)
-        failed = self._failed_roles.get(root_id)
-        if failed is not None:
-            failed.discard(role)
+        self._discard_role(self._failed_roles.get(root_id), role)
 
     def mark_role_failed(self, agent_id: UUID) -> None:
         """Record that this agent's role failed (may be reissued on re-decomposition)."""
@@ -135,11 +141,24 @@ class HierarchyLimitsRegistry:
         if role is None:
             return
         root_id = self._root_for(agent_id)
-        # A later completion of a reissued role already cleared failure; only mark
-        # failed when not already completed.
-        if role in self._completed_roles.get(root_id, set()):
+        if self._current_role_generation.get((root_id, role.casefold())) != agent_id:
             return
+        self._discard_role(self._completed_roles.get(root_id), role)
+        self._discard_role(self._failed_roles.get(root_id), role)
         self._failed_roles.setdefault(root_id, set()).add(role)
+
+    def _clear_role_outcome(self, root_id: UUID, role_prefix: str) -> None:
+        self._discard_role(self._completed_roles.get(root_id), role_prefix)
+        self._discard_role(self._failed_roles.get(root_id), role_prefix)
+
+    @staticmethod
+    def _discard_role(role_prefixes: set[str] | None, role_prefix: str) -> None:
+        if role_prefixes is None:
+            return
+        normalized = role_prefix.casefold()
+        role_prefixes.difference_update(
+            existing for existing in tuple(role_prefixes) if existing.casefold() == normalized
+        )
 
     def get_sibling_role_prefixes(self, agent_id: UUID, parent_id: UUID) -> set[str]:
         """Get [Role-Name] prefixes of an agent's siblings (same parent)."""

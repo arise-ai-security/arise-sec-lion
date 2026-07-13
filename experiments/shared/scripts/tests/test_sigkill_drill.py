@@ -36,7 +36,7 @@ import pytest
 from experiments.shared.scripts.run_matrix import _sweep_stale_state
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 _DEAD_PID = 2**31 - 1  # Max signed int32. Never a live PID.
 _PLACEHOLDER_IMAGE = "busybox:latest"
 

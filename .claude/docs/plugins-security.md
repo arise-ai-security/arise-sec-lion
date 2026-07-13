@@ -133,6 +133,9 @@ the LLM-backed roles and persists the selected model in worker cost events.
 | Fixer | `Fix-Aggregator` (optional) | LLM | synthesis | `gpt-5.3-codex` |
 | Reporter | `Reporter` | LLM | synthesis/reasoning | `gpt-5.3-codex` |
 
+`none` describes each Host procedure attempt. If an initial attempt fails, the bounded
+recovery lifecycle below may invoke exactly one agentic repair before the Host recheck.
+
 The B3 direct-compact treatment inherits B4's worker configuration. Each of its nine
 direct roles therefore uses the same trusted role template, model, tools, and host
 procedure as the corresponding B4 role. B3 omits only the Manager nodes, so rendered
@@ -179,7 +182,7 @@ experiment identifiers.
 
 ## Deterministic Procedure Tier (procedural dispatch)
 
-When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecutor` (`procedures.py`) is bound as the run's `ProcedureExecutorPort` via `SecurityDomainPlugin.get_procedure_executor()`. It runs four fixed roles under Host control with zero LLM turns, so validation and literal patch application become Host-computed and event-sourced instead of agent-authored. Default off => `NullProcedureExecutor` => the agentic path.
+When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecutor` (`procedures.py`) is bound as the run's `ProcedureExecutorPort` via `SecurityDomainPlugin.get_procedure_executor()`. It runs each Host attempt for four fixed roles with zero LLM turns, so validation and literal patch application become Host-computed and event-sourced instead of agent-authored. A failed initial attempt may invoke the single agentic repair described below. Default off => `NullProcedureExecutor` => the agentic path.
 
 **Static registry (leading `[Role]` bracket -> `procedure_ref`):**
 
@@ -192,7 +195,7 @@ When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecu
 
 - `match()` parses the task's leading `[Role]` bracket (via `role_from_task`) and looks it up in `_REGISTRY`; `resolve()` checks membership in `_PROCEDURE_REFS`.
 - `execute()` resolves the run's live container through the injected `session_resolver(root_id)` (the orchestrator injects `root_id` into `procedure_params` from `hierarchy_limits`), downcasts `domain_context` to `CVEInstance`, and drives the container `ProcedureSession` synchronously. Task-level failure (FAIL verdict, preflight miss, timeout) returns `success=False` + a bounded digest and never raises; only a missing session / missing `root_id` / unknown ref raises `ProcedureInfrastructureError`.
-- **Host-bound replay.** `repro.sh` has an exact four-line prefix that reads the first declared binary and PoC path. Its final `exec "$BIN" ...` line is parsed with `shlex`, not executed as shell: it may contain inert literal arguments and exactly one `$POC`, or end with the sole supported redirection `< "$POC"`. For example, OpenEXR uses `exec "$BIN" -v "$POC" /dev/null`; FAAD2 uses `exec "$BIN" "$POC" -o /dev/null`. The Host resolves the placeholders, freezes the argv/input, and invokes the target directly. Other variables, command substitution, control operators, wrappers, pipes, setup commands, and other redirections fail closed and use the single agentic fallback.
+- **Host-bound replay.** `repro.sh` has an exact four-line prefix that reads the first declared binary and PoC path. Its final `exec "$BIN" ...` line is parsed with `shlex`, not executed as shell: it may contain inert literal arguments and exactly one `$POC`, or end with the sole supported redirection `< "$POC"`. For example, OpenEXR uses `exec "$BIN" -v "$POC" /dev/null`; FAAD2 uses `exec "$BIN" "$POC" -o /dev/null`. The Host resolves the placeholders, freezes the argv/input, and invokes the target directly. Other variables, command substitution, control operators, wrappers, pipes, setup commands, and other redirections fail closed, triggering the bounded agentic-repair flow below.
 - **Verdict by crash signature.** Each direct replay output is reduced to a `CrashSignature` (sanitizer class / access type / top frame) by `crash_signature.py`; `_consensus` picks the majority signature + determinism count; `signatures_match` compares it against the CVE oracle (`compute_crash_signature(cve.sanitizer_report)`). Exploit PASS iff every run yields a complete oracle-matching signature, all 3/3 signatures agree, and process termination is consistent. A recoverable UBSan finding may exit 0; exploit success does not require a failing exit. The experiment-side drift test compares the runtime and official evaluator implementations without importing `experiments/` into runtime code.
 - **Frozen handoff.** A sealed replay contract binds the CVE/base/sanitizer/work directory, dataset exit oracle, source HEAD and Builder-baseline digest, reproducer, PoC/pointer, declared and selected binary plus its digest, resolved replay argv/stdin mode, and exploit verdict. Patch application additionally seals the plan, rendered diff, and replay identity. Patch validation rejects any source, build-input, target-binary, replay-input, plan, or patch drift before applying, rebuilding, and replaying the frozen target.
 - **Controlled execution.** Procedure commands use argv vectors, never `bash -lc`. Docker preserves the image's OSS-Fuzz variables while the Host fixes `PATH`, `LC_ALL=C`, `BASH_ENV=/dev/null`, and `ENV=/dev/null`; sanitizer-specific halt options are supplied for direct replay. GNU `timeout` runs inside the container with TERM then KILL. Either its exit 124 or an outer watchdog timeout restarts the run's shared container before returning a task-level timeout; restart failure is an infrastructure error.
@@ -210,9 +213,13 @@ When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecu
 | Patch validation | protected replay/patch inputs are unchanged; patch applies; build and binary/sanitizer checks succeed; all three direct post-patch replays are crash-free and exit consistently with `0` or the frozen dataset exit oracle | identity drift, patch/build timeout or nonzero exit, invalid binary/runtime, replay exit outside the accepted set, signal, assertion, sanitizer, or any replay crash |
 | External official evaluation | six fresh containers independently verify target/base identity and pre/post safety/regression results | reused container, wrong target/base, missing evaluator evidence, safety or regression failure |
 
-Mechanical gates never accept an agent-authored `VERDICT: PASS`. A failed procedure
-records a bounded `failure_digest` and gets exactly one agentic retry; the retry does
-not erase the failed host evidence.
+Mechanical gates never accept an agent-authored `VERDICT: PASS`. Each procedure-backed
+worker starts with one Host attempt. Failure records a bounded `failure_digest` and permits
+exactly one agentic repair; a failed repair is terminal. If the repair completes, its
+`WorkCompleted` is provisional and the Host runs exactly one procedure recheck. Within
+this recovery path, only recheck success completes the role with protected Host evidence.
+Recheck failure is terminal with no further LLM retry, and the failed initial Host evidence
+remains in the event stream.
 
 ## CVEInstance Model
 
@@ -236,7 +243,7 @@ not erase the failed host evidence.
 | `patch` | `str` | `""` | Gold patch (ground truth fix) |
 | `exit_code` | `int` | `0` | Expected exit code |
 | `sanitizer_report` | `str` | `""` | Full sanitizer output |
-| `bug_report` | `str` | `""` | Bug report text |
+| `bug_report` | `str` | `""` | Evaluator-only bug report text; excluded from solver prompt context |
 | `candidate_fixes` | `str` | `""` | Candidate fix suggestions |
 
 ### Computed Fields

@@ -1,0 +1,34 @@
+<role_contract>
+## Catalog role: [{{ worker_role.name }}]
+
+**Objective:** {{ worker_role.summary }}
+
+{% if worker_role.depends_on %}
+**Required predecessor roles:** {% for name in worker_role.depends_on %}`[{{ name }}]`{% if not loop.last %}, {% endif %}{% endfor %}.
+Read their artifacts and raw evidence before acting.
+{% endif %}
+{% if worker_role.soft_depends_on %}
+**Optional evidence roles:** {% for name in worker_role.soft_depends_on %}`[{{ name }}]`{% if not loop.last %}, {% endif %}{% endfor %}.
+Use their evidence when present; do not assume it exists.
+{% endif %}
+{% if worker_role.produces %}
+**Owned contract outputs:** {% for path in worker_role.produces %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+Normally create or edit only these contract outputs. A role procedure may explicitly authorize
+one evidence-bound correction to another artifact; that narrow exception does not transfer
+ownership of the artifact.
+{% else %}
+**Owned contract outputs:** none. You may write the evidence file named by your role procedure,
+but it is analysis evidence rather than a phase verdict or contract deliverable.
+{% endif %}
+{% if foreign_deliverables %}
+**Foreign contract outputs — do not create or edit unless this role's procedure explicitly
+authorizes a narrow evidence-bound correction:**
+{% for path in foreign_deliverables %}- `{{ path }}`
+{% endfor %}
+Hand relevant findings to their owners through `<context-update>`.
+{% endif %}
+
+Complete only this role. Do not absorb another catalog role because its work appears related.
+Host-authored procedure evidence is stronger than an agent claim but is measured in the mutable
+shared run container; the fresh official evaluator remains final authority.
+</role_contract>

@@ -314,6 +314,10 @@ class AgentExecutionService:
                 agent = await self._load_agent_with_context(agent_id)
                 last_agent = agent
 
+                if agent.pending_post_step_terminal_event_id is not None:
+                    await self._handle_post_step(agent, [])
+                    return
+
                 await self._dispatch_agent_action(agent)
                 uncommitted = await self._persist_agent_events(agent)
                 await self._handle_post_step(agent, uncommitted)
@@ -903,7 +907,11 @@ class AgentExecutionService:
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
         """Dispatch based on role."""
-        if agent.status != AgentStatus.ANALYZING:
+        can_resume_worker = (
+            agent.role == AgentRole.WORKER
+            and agent.status == AgentStatus.IN_PROGRESS
+        )
+        if agent.status != AgentStatus.ANALYZING and not can_resume_worker:
             return
 
         handler = self._role_handlers.get(agent.role)

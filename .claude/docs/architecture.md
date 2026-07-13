@@ -473,16 +473,24 @@ execute_task(WORKER)
        no match or stale ref                       -> None (agentic)
        subtask execution_mode/procedure_ref/params -> ignored as dispatch authority
   -> ref is None  -> agentic path: WorkerToolPort.run_session -> stream events -> VerificationPipeline
-  -> ref present  -> deterministic path (zero LLM turns: no prompt, no worker session, no cost events):
-       agent.start_procedure(ref)                # ProcedureExecutionStarted; last_attempt_procedural=True
+  -> ref present and procedure_attempted=False -> initial Host attempt (zero LLM turns):
+       agent.start_procedure(ref)                # ProcedureExecutionStarted;
+                                                 # procedure_attempted=True,
+                                                 # last_attempt_procedural=True
        result = executor.execute(ref, task, domain_context, {root_id from hierarchy_limits})
        agent.finish_procedure(ref, success, summary, evidence)   # ProcedureExecutionFinished (host evidence)
        success -> complete_with_result(summary)  # WorkCompleted -> normal VerificationPipeline
        failure -> record_failure_digest(digest, "procedure_failure") + fail_with_reason   # WorkFailed
-  -> escalation (execution_service._handle_post_step):
-       failed procedural attempt (last_attempt_procedural && retry_count==0)
-         -> schedule_retry: exactly one guaranteed AGENTIC retry (dispatch never routes procedural twice),
-            the agentic retry prompt carrying the procedure's digest
+  -> first Host failure (procedure_attempted && last_attempt_procedural && retry_count==0):
+       PostStepHandler -> agent.schedule_retry -> exactly one agentic repair carrying the procedure digest
+  -> agentic repair:
+       CodeGenerationStarted          # last_attempt_procedural=False; procedure_attempted remains True
+       repair WorkFailed              -> terminal parent notification; no Host recheck
+       repair WorkCompleted           -> suppress provisional WorkCompleted and run exactly one Host recheck
+  -> Host recheck:
+       ProcedureExecutionStarted/Finished with fresh Host evidence
+       success -> complete_with_result(summary) -> VerificationPipeline
+       failure -> WorkFailed -> terminal parent notification; no further LLM retry
 ```
 
 ## Agent Hierarchy and Roles

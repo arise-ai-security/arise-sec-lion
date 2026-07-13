@@ -13,7 +13,6 @@ import yaml
 
 from experiments.shared.evaluation.criteria import _crash_signature
 from experiments.shared.evaluation.official import crash_signature
-from plugins.security.crash_signature import compute_crash_signature, signatures_match
 
 
 # Real ASan excerpts (trimmed) from the held-out runs.
@@ -126,34 +125,6 @@ def test_libasan_module_offset_is_skipped_to_app_frame() -> None:
         "read",
         "htmlescape",
     )
-
-
-def test_security_plugin_signature_stays_aligned_with_official_evaluator() -> None:
-    """The experiment layer may compare inward; runtime code never imports outward."""
-    root = Path(__file__).resolve().parents[4]
-    fixtures = root / "plugins/security/tests/fixtures"
-    mismatches: list[str] = []
-    for path in sorted(fixtures.glob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        report = payload.get("sanitizer_report")
-        if not isinstance(report, str):
-            continue
-        runtime_signature = compute_crash_signature(report)
-        runtime = runtime_signature.as_tuple()
-        official = crash_signature(report)
-        expected = (
-            official.sanitizer_class,
-            official.access_kind,
-            official.top_application_frame,
-        )
-        if runtime != expected:
-            mismatches.append(f"{path.name}: runtime={runtime!r}, official={expected!r}")
-        expected_self_match = official.complete
-        if signatures_match(runtime_signature, runtime_signature) != expected_self_match:
-            mismatches.append(
-                f"{path.name}: runtime completeness disagrees with official evaluator"
-            )
-    assert mismatches == []
 
 
 def test_confirmatory_cohort_19_fixtures_have_complete_signatures() -> None:

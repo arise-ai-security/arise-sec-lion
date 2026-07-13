@@ -67,11 +67,11 @@ class CveOracle:
 
     A raw (plugin-free) projection of the host dataset JSON — the *same* file the
     harness resolved to launch the run. Carries only the judging fields verbatim:
-    the expected-failure oracle (``sanitizer`` / ``sanitizer_report`` /
-    ``bug_report`` / ``bug_description``) that is already rendered to the agent,
-    plus the optional host-side secret ``gold_patch`` consumed *only* by the
-    patch-correctness judge. ``gold_patch`` must NEVER feed a prompt (mirrors the
-    plugin's ``_PROMPT_FORBIDDEN_FIELDS``).
+    the prompt-visible expected-failure oracle (``sanitizer`` /
+    ``sanitizer_report`` / ``bug_description``), evaluator-only ``bug_report``,
+    and the optional host-side secret ``gold_patch`` consumed *only* by the
+    patch-correctness judge. Neither evaluator-only field may feed a solver prompt
+    (mirrors the plugin's ``_PROMPT_FORBIDDEN_FIELDS``).
 
     Every field is a verbatim copy of the dataset JSON — no semantic derivation
     (no expected-error class, no crash-frame extraction). All semantic judgement

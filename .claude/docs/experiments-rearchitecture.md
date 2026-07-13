@@ -84,11 +84,13 @@ This means `PoC-Researcher`, `Data-Flow-Analyst`, `PoC-Tester`,
 `Forward-Instrumentator`, `Root-Cause-Analyst`, `Candidate-Reviewer`,
 `Regression-Tester`, `Fix-Aggregator`, and `Reporter` use `gpt-5.3-codex` when spawned.
 `Build-Setup`, `Build-Executor`, and `Repro-Creator` use `gpt-5.4-mini`.
-`Build-Verifier`, `Exploit-Validator`, `Patch-Applier`, and `Patch-Validator` use no LLM.
+`Build-Verifier`, `Exploit-Validator`, `Patch-Applier`, and `Patch-Validator` use no LLM
+during each Host procedure attempt; their bounded failure path is the sole exception.
 
 B3 uses the identical B4 per-role routing: the same five LLM-backed compact roles select
-the same models, and the same four procedure-backed roles use no LLM. Persist the selected
-model on every worker-cost event and in the run manifest.
+the same models, and the same four procedure-backed roles use no LLM during each Host
+attempt. Their bounded failure path may invoke the single agentic repair described below.
+Persist the selected model on every worker-cost event and in the run manifest.
 
 The in-run procedure contract is also identical in B3 and B4. Reproducers declare a
 structured direct argv: an exact prefix resolves the first Builder binary and selected
@@ -107,6 +109,13 @@ oracle and rejects any sanitizer evidence.
 `ProcedureEvidence` is Host-computed and stronger than an agent-authored verdict file,
 but its commands still run in the mutable shared worker container. It is an in-run gate;
 the fresh arm-independent evaluator below remains confirmatory authority.
+
+Each procedure-backed worker starts with one zero-LLM Host attempt. Failure records Host
+evidence and a bounded digest, then permits exactly one agentic repair. A failed repair is
+terminal. If the repair completes, its `WorkCompleted` is provisional and the Host runs
+exactly one procedure recheck. Within this recovery path, only recheck success completes
+the role with protected Host evidence. Recheck failure is terminal with no further LLM
+retry. B3 and B4 use this identical procedure-recovery lifecycle.
 
 ### Success architecture
 
@@ -217,7 +226,7 @@ identifier, timestamps, retry history, and aggregation result.
 |---|---|
 | PASS | prompts agree with the B4 Manager-recovery and B3 direct-compact policies |
 | PASS | generic per-role `model_overrides` selects the documented models and is covered by adapter/config tests |
-| PASS | four host procedures and their one-retry escalation are covered by timeout, signal, nonzero-exit, zero-byte-PoC, and evidence-integrity tests |
+| PASS | four host procedures and their bounded repair lifecycle (initial Host attempt, one agentic repair, then one Host recheck after completed repair) are covered by timeout, signal, nonzero-exit, zero-byte-PoC, terminal-recheck, and evidence-integrity tests |
 | PASS | automated heterogeneous judge panel replaces all human-audit paths |
 | PASS | judge evidence includes frozen oracle and raw replay/regression evidence |
 | PASS | authoritative evaluator performs 3x pre-patch and 3x post-patch replay plus regression |
