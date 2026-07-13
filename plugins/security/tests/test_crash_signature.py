@@ -93,6 +93,22 @@ def test_different_sanitizer_families_do_not_match() -> None:
     assert not matched
 
 
+def test_asan_frame_with_bare_source_file_strips_file_suffix() -> None:
+    # Given: ASan output whose frame path is a bare source filename without a line suffix
+    output = """==30594==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x1
+WRITE of size 4 at 0x1 thread T0
+    #0 0x7fffff76d868 in calculate_gain sbr_hfadj.c
+    #1 0x7fffff76bf9f in hf_adjustment sbr_hfadj.c
+SUMMARY: AddressSanitizer: stack-buffer-overflow sbr_hfadj.c in calculate_gain
+"""
+
+    # When: The runtime computes its crash signature
+    signature = compute_crash_signature(output)
+
+    # Then: The trailing source file is not treated as part of the function name
+    assert signature.as_tuple() == ("stack-buffer-overflow", "write", "calculate_gain")
+
+
 def test_missing_sanitizer_evidence_is_incomplete() -> None:
     # Given: Output without a sanitizer report
     output = "ordinary program output"

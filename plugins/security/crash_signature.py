@@ -38,7 +38,8 @@ _ASAN_FRAME_MODULE_OFFSET_RX = re.compile(
     r"#\d+\s+0x[0-9a-fA-F]+\s+\(([^)]+\+0x[0-9a-fA-F]+)\)"
 )
 _FRAME_PATH_RX = re.compile(
-    r"\s+((?:/\S+|\([^)]*\)|(?:\.\.?/)\S+|\S+\.(?:c|cc|cpp|cxx|h|hh|hpp):\d+\S*))\s*$"
+    r"\s+((?:/\S+|\([^)]*\)|(?:\.\.?/)\S+|\S+\.(?:c|cc|cpp|cxx|h|hh|hpp)"
+    r"(?::\d+\S*)?))\s*$"
 )
 _NONAPP_FUNC_RX = re.compile(
     r"^(?:__asan|__lsan|__interceptor|__sanitizer|__isoc99_|asan_|scanf_common"
