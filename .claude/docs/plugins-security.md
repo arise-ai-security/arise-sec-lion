@@ -17,7 +17,7 @@ The plugin never imports from `infrastructure/`. It defines its own `SecurityCon
 | `prompt_strategy.py` | `SecBenchPromptStrategy` -- implements `PromptStrategy` protocol; `detect_benchmark_branch()` and `_detect_branch_from_task()` |
 | `roles.py` | The 16-role SEC-bench catalog, phase ownership, deliverables, hard/soft dependencies, and required/optional status |
 | `decomposition_validator.py` | Adaptive B4 fixed phase skeleton, compact/escalated role routes, and role-fused treatment policy |
-| `cve_instance.py` | `CVEInstance` frozen Pydantic model (16 stored fields, 6 computed) |
+| `cve_instance.py` | `CVEInstance` frozen Pydantic model (17 stored fields, 6 computed) |
 | `cve_inference.py` | `CVEInstanceInferenceService` -- regex extraction from task text; `CVEInferenceError` |
 | `container_runtime.py` | `SecurityContainerRuntime` protocol + `SecBenchWorkspace` / `SecBenchContainerSession` frozen dataclasses |
 | `docker_runtime.py` | `DockerSecBenchRuntime` -- concrete Docker-backed implementation of `SecurityContainerRuntime` |
@@ -46,7 +46,7 @@ Methods implemented by `SecurityDomainPlugin`:
 | `infer_context` | `(task_text: str, **kwargs) -> object \| None` | Loads `CVEInstance` from `--cve-file` JSON or infers via regex from task text |
 | `enrich_prompt` | `(prompt: str, *, domain_context, briefing, chain_factory) -> str` | Appends security tool instructions (Valgrind/KLEE) based on detected phase |
 | `get_run_metadata` | `(domain_context: object) -> JsonObject` | Returns `{"instance_id": ...}` for event store persistence |
-| `get_tag_mappings` | `() -> dict[str, SectionProvenance]` | Maps 14 prompt template tags to `SectionProvenance.SYSTEM` |
+| `get_tag_mappings` | `() -> dict[str, SectionProvenance]` | Maps 15 prompt template tags to `SectionProvenance.SYSTEM` |
 | `get_provenance_patterns` | `() -> list[tuple[str, SectionProvenance]]` | Returns regex pattern for security-related tag detection |
 | `prepare_run` | `(*, root_id, run_output_path, domain_context) -> PreparedRunWorkspace \| None` | Creates host workspace via container runtime, caches in `_workspaces[root_id]` |
 | `prepare_worker_execution` | `(*, root_id, agent_id, run_output_path, domain_context) -> WorkerExecutionContext \| None` | Starts a Docker container session, caches in `_sessions[root_id]` |
@@ -68,7 +68,7 @@ cat core/application/services/prompt/prompt_strategy.py
 | `extend_assessment_prompt` | Assessor | `cve.j2` + `assess.j2` |
 | `extend_boss_prompt` | Boss | `cve.j2` + `boss.j2` |
 | `extend_manager_prompt` | Manager | `cve.j2` + `manager.j2` + `manager/{phase}.j2` (direct boss children only) |
-| `extend_worker_prompt` | Worker | `cve.j2` + `worker.j2` + `worker/{phase}.j2` |
+| `extend_worker_prompt` | Worker | Common `cve.j2` + `worker.j2`, then either `worker/role_contract.j2` + one allowlisted `worker/roles/{phase}/{role}.j2`, or a phase-level `worker/{phase}.j2` for fused/whole-phase work |
 
 All four methods return `None` when `domain_context` is not a `CVEInstance`, causing core to use default prompts.
 
@@ -212,17 +212,17 @@ not erase the failed host evidence.
 | `patch` | `str` | `""` | Gold patch (ground truth fix) |
 | `exit_code` | `int` | `0` | Expected exit code |
 | `sanitizer_report` | `str` | `""` | Full sanitizer output |
-| `bug_report` | `str` | `""` | Bug report text |
+| `bug_report` | `str` | `""` | Original report retained for provenance/evaluation/curation; stripped from solving prompts because it may disclose the fix |
 | `candidate_fixes` | `str` | `""` | Candidate fix suggestions |
+| `docker_image_override` | `str` | `""` | Optional explicit SEC-bench image name |
 
 ### Computed Fields
 
 | Field | Type | Derivation |
 |---|---|---|
 | `cve_id` | `str` | Second part of `instance_id` split on `.` |
-| `docker_image` | `str` | `hwiwonlee/secb.eval.x86_64.{project_name}.{cve_id}:patch` |
+| `docker_image` | `str` | `docker_image_override` when set; otherwise `hwiwonlee/secb.eval.x86_64.{project_name}.{cve_id}:patch` |
 | `expected_sanitizer_error` | `str` | Parsed from `sanitizer_report` (ASan error types, MSan, UBSan patterns) |
-| `has_gold_patch` | `bool` | `bool(self.patch.strip())` |
 | `has_dockerfile` | `bool` | `bool(self.dockerfile.strip())` |
 | `has_build_script` | `bool` | `bool(self.build_sh.strip())` |
 | `has_cve_data` | `bool` | `bool(self.bug_description.strip())` |
@@ -254,10 +254,10 @@ Four phases correspond to branches of the BOSS agent's decomposition tree. Each 
 
 | Phase | Purpose | Keywords for detection | Templates |
 |---|---|---|---|
-| `builder` | Compile the project in the container | `builder`, `environment`, `setup`, `docker pull` | `manager/builder.j2`, `worker/builder.j2` |
-| `exploiter` | Trigger the vulnerability with a PoC | `exploiter`, `poc`, `exploit`, `proof of concept` | `manager/exploiter.j2`, `worker/exploiter.j2` |
-| `fixer` | Patch the vulnerability | `fixer`, `patch`, `fix` | `manager/fixer.j2`, `worker/fixer.j2` |
-| `reporter` | Write a security report | `reporter`, `report`, `security report` | `worker/reporter.j2` (no manager template) |
+| `builder` | Compile the project in the container | `builder`, `environment`, `setup`, `docker pull` | `manager/builder.j2`, phase-level `worker/builder.j2`, per-role `worker/roles/builder/*.j2` |
+| `exploiter` | Trigger the vulnerability with a PoC | `exploiter`, `poc`, `exploit`, `proof of concept` | `manager/exploiter.j2`, phase-level `worker/exploiter.j2`, per-role `worker/roles/exploiter/*.j2` |
+| `fixer` | Patch the vulnerability | `fixer`, `patch`, `fix` | `manager/fixer.j2`, phase-level `worker/fixer.j2`, per-role `worker/roles/fixer/*.j2` |
+| `reporter` | Write a security report | `reporter`, `report`, `security report` | phase-level `worker/reporter.j2`, per-role `worker/roles/reporter/reporter.j2` (no manager template) |
 
 ### Phase Detection
 
@@ -268,6 +268,12 @@ Two functions in `prompt_strategy.py` handle detection:
 **`_detect_branch_from_task(task_description)`** -- Checks for explicit bracket prefixes first (`[Builder]`, `[Exploiter]`, `[Fixer]`, `[Reporter]`) as authoritative matches, then falls back to loose keyword matching. This is the primary detection method.
 
 Worker and manager prompt extension methods try `_detect_branch_from_task` first, then fall back to `detect_benchmark_branch`.
+
+Worker role selection is stricter than phase detection. `role_from_task()` resolves the
+leading bracket against the catalog, then `_ROLE_TEMPLATE_BY_NAME` maps the canonical
+role to one explicit template path. Never derive a Jinja path from task text. Canonical
+phase brackets select `_PHASE_TEMPLATE_BY_BRANCH`; any other unknown bracket raises
+`ValueError` rather than receiving a whole-phase contract.
 
 Manager phase-specific templates are only injected for direct boss children (`len(briefing.ancestry) == 1`). This prevents sub-managers from receiving redundant phase-specific instructions. Worker phase templates are injected regardless of depth.
 
@@ -379,17 +385,67 @@ prompts/domains/secbench/
         exploiter.j2          -- Exploiter phase manager instructions
         fixer.j2              -- Fixer phase manager instructions
     worker/
-        builder.j2            -- Builder phase worker instructions
-        exploiter.j2          -- Exploiter phase worker instructions
-        fixer.j2              -- Fixer phase worker instructions
-        reporter.j2           -- Reporter phase worker instructions
+        role_contract.j2      -- Shared ownership/dependency boundary for catalog roles
+        builder.j2            -- Builder fused/whole-phase instructions
+        exploiter.j2          -- Exploiter fused/whole-phase instructions
+        fixer.j2              -- Fixer fused/whole-phase instructions
+        reporter.j2           -- Reporter fused/whole-phase instructions
+        roles/
+            builder/
+                build_setup.j2
+                build_executor.j2
+                build_verifier.j2
+            exploiter/
+                poc_researcher.j2
+                data_flow_analyst.j2
+                poc_tester.j2
+                forward_instrumentator.j2
+                repro_creator.j2
+                exploit_validator.j2
+            fixer/
+                root_cause_analyst.j2
+                candidate_reviewer.j2
+                regression_tester.j2
+                patch_applier.j2
+                patch_validator.j2
+                fix_aggregator.j2
+            reporter/
+                reporter.j2
 ```
 
-The `_with_cve_display()` helper in `prompt_strategy.py` renders `cve.j2` with a filtered set of CVE fields defined by `_CVE_DISPLAY_FIELDS`: `instance_id`, `cve_id`, `repo`, `project_name`, `lang`, `sanitizer`, `base_commit`, `work_dir`, `bug_description`.
+The 16 files under `worker/roles/` are the only catalog-role bodies. A B4 role leaf
+renders the common runtime/CVE/worker prefix, `role_contract.j2`, and exactly one of
+those files. It does not render `worker/{builder,exploiter,fixer,reporter}.j2` or a full
+phase partial. The four phase-level worker templates remain separate for role-fused B3
+and whole-phase fallback. This separation prevents a role from inheriting sibling
+deliverables while preserving an intentional composite contract for fused workers.
+
+The solver-facing boundary is `CVEInstance.to_template_context()`, not the raw model.
+It removes `bug_report`, `patch`, `candidate_fixes`, and `secb_sh` before
+`_with_cve_display()` selects fields for `cve.j2`. The effective CVE display is
+`instance_id`, `cve_id`, `repo`, `project_name`, `lang`, `sanitizer`, `base_commit`,
+`work_dir`, `bug_description`, and `sanitizer_report` (empty values are omitted).
+
+This follows the official SEC-bench evaluation convention: solving agents receive the
+concise vulnerability description and sanitizer crash report, while the unrestricted
+original report and gold patch stay host-side. The distinction is visible in the
+[paper's patch-task formulation](https://arxiv.org/pdf/2506.11791) and the
+[official patch prompt](https://github.com/SEC-bench/smolagents/blob/a945dba9d6f2594cd94eb00d77f6b41a92fea88b/src/smolagents/prompts/patch.j2#L1-L10).
+Do not remove `bug_report` from `CVEInstance`: host-side curation and evaluation may
+still need the original bytes. Do not pass it through a prompt-safe dictionary or render
+it for workers. An upstream report may contain the official fix commit or exact changed
+code.
+
+The authoritative mechanical crash oracle is `sanitizer_report`. The current evaluator
+still retains `bug_report`, and two semantic paths expose it to judges:
+`experiments/shared/evaluation/criteria/judge_prompts.py::build_cve_reproduced_prompt()`
+and `experiments/shared/scripts/evaluate_run.py::_semantic_evidence()`. That is a known
+leakage risk when the field contains gold fix content; it is not part of the solver prompt
+contract and must not be described as safe merely because the consumer is a judge.
 
 ### Tag Provenance
 
-`get_tag_mappings()` registers 14 tags as `SectionProvenance.SYSTEM`: `cve_context`, `security_context`, `issue_description`, `repository_info`, `cve_instance`, `bug_report`, `sanitizer`, `work_dir`, `base_commit_hash`, `commit_hash`, `commit_hash1`, `commit_hash2`, `commit_url`, `changed_file_path`, `security_tools`.
+`get_tag_mappings()` registers 15 tags as `SectionProvenance.SYSTEM`: `cve_context`, `security_context`, `issue_description`, `repository_info`, `cve_instance`, `bug_report`, `sanitizer`, `work_dir`, `base_commit_hash`, `commit_hash`, `commit_hash1`, `commit_hash2`, `commit_url`, `changed_file_path`, `security_tools`. This is provenance classification for parsing; the presence of a `bug_report` tag mapping does not authorize rendering `CVEInstance.bug_report` to a solver.
 
 `get_provenance_patterns()` returns the regex `cve|security|workspace|instance|commit|file|bug|sanitizer|exploit` to catch remaining security-related tags.
 
@@ -437,5 +493,6 @@ Tests live in `plugins/security/tests/` using Given-When-Then style:
 | `test_docker_runtime.py` | DockerSecBenchRuntime subprocess behavior |
 | `test_image_resolver.py` | Image name remapping, tools-disabled passthrough |
 | `test_prompt_building.py` | Phase detection, template rendering per role, `None` returns |
+| `test_role_prompt_catalog.py` | All 16 catalog roles map to explicit templates; role ownership, unknown-label rejection, and role/phase isolation |
 
 Fixtures are in `plugins/security/tests/fixtures/`.

@@ -1,15 +1,8 @@
-"""Prompt-normalization invariants for the BEF 4-arm comparison.
+"""Prompt-normalization invariants for flat and hierarchical SEC-bench treatments.
 
-The flat baseline and the BEF workers must share ONE task-spec so every arm
-emits byte-identical ``/testcase/`` artifacts. This is enforced structurally:
-both consumers ``{% include %}`` the same per-phase partials under
-``prompts/domains/secbench/phases/``. These tests prove the two properties
-that comparability rests on:
-
-(a) each phase's deliverable+gate block is BYTE-IDENTICAL between the flat
-    prompt and the matching BEF worker branch, and
-(b) the flat prompt carries ZERO sibling/peer/handoff wording — the
-    single-agent baseline cannot contain tree-topology coordination language.
+N1 renders the canonical four whole-phase partials. B4 catalog leaves instead receive
+one ownership-scoped role contract, while B3 receives fused producer contracts plus host
+validators. The flat prompt must also remain free of tree coordination vocabulary.
 """
 
 import re
@@ -103,12 +96,11 @@ def _render_phase_partial(builder: PromptBuilder, cve: CVEInstance, phase: str) 
     )
 
 
-class TestPhaseBlocksAreByteIdenticalAcrossArms:
-    """Each phase's deliverable+gate block is identical in flat and BEF worker."""
+class TestFlatPhaseContractsRemainCanonical:
+    """N1 retains all four phase contracts after B4 roles become independently scoped."""
 
-    def test_each_phase_partial_is_verbatim_in_flat_and_worker(self) -> None:
-        # Given: a flat prompt and one BEF worker prompt per branch, all on the
-        # same CVE, built through PromptBuilder + SecBenchPromptStrategy.
+    def test_each_phase_partial_is_verbatim_in_flat_prompt(self) -> None:
+        # Given: one N1 flat prompt built from the canonical phase partials.
         builder = _builder()
         cve = _cve()
 
@@ -117,30 +109,15 @@ class TestPhaseBlocksAreByteIdenticalAcrossArms:
             agent_id=uuid4(),
             domain_context=cve,
         )
-        worker_prompts = {
-            bracket: builder.build_worker_prompt(
-                task_description=f"{bracket} do the phase",
-                domain_context=cve,
-                briefing=None,
-            )
-            for bracket, _ in _BRANCH_TO_PHASE
-        }
 
-        for bracket, phase in _BRANCH_TO_PHASE:
-            # When: extracting the canonical per-phase block (the shared partial).
+        for _bracket, phase in _BRANCH_TO_PHASE:
+            # When: extracting each canonical per-phase block.
             block = _render_phase_partial(builder, cve, phase)
 
-            # Then: it appears byte-identically in BOTH the flat prompt and the
-            # matching BEF worker branch — same task spec, same deliverables,
-            # same verdict gate.
+            # Then: N1 contains it byte-identically.
             assert block in flat_prompt, (
-                f"Phase {phase!r} block is not a verbatim substring of the flat "
-                f"prompt — flat and worker no longer share the partial."
-            )
-            assert block in worker_prompts[bracket], (
-                f"Phase {phase!r} block is not a verbatim substring of the "
-                f"{bracket} worker prompt — the worker shell stopped including "
-                f"the shared partial."
+                f"Phase {phase!r} block is not a verbatim substring of N1; the "
+                "flat treatment contract changed during the B4 role refactor."
             )
 
         # And: the blocks are non-trivial (the gate text is actually rendered).

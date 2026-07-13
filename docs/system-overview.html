@@ -87,6 +87,20 @@
   .d-cap { font-family:var(--mono); font-size:10.5px; fill:var(--ink-3); }
   .d-layer { font-family:var(--mono); font-size:12px; font-weight:600; letter-spacing:0.04em; }
 
+  /* Mobile rendering for the solver-input trust boundary */
+  .oracle-desktop { display:none; }
+  .oracle-mobile { border:1px solid var(--line-2); border-radius:8px; overflow:hidden; background:var(--card); }
+  .oracle-mobile .om-block { padding:18px; }
+  .oracle-mobile .om-block + .om-block { border-top:1px solid var(--line-2); }
+  .oracle-mobile .om-visible { background:var(--blue-bg); }
+  .oracle-mobile .om-host { background:var(--red-bg); }
+  .oracle-mobile .om-signature { background:var(--green-bg); }
+  .oracle-mobile .om-title { margin:0 0 9px; font-family:var(--sans); font-size:16px; font-weight:600; color:var(--ink); }
+  .oracle-mobile .om-list, .oracle-mobile .om-steps { margin:0; padding-left:20px; color:var(--ink-2); font-family:var(--mono); font-size:14px; line-height:1.55; }
+  .oracle-mobile li + li { margin-top:5px; }
+  .oracle-mobile .om-outcome { margin:12px 0 0; padding:10px 12px; border:1px solid var(--green); border-radius:6px; color:var(--green-tx); font-family:var(--mono); font-size:14px; font-weight:600; }
+  .oracle-mobile .om-detail { margin:0; color:var(--ink-2); font-family:var(--mono); font-size:14px; line-height:1.55; overflow-wrap:anywhere; }
+
   /* reference table */
   .gtab { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--card); margin-top:24px; }
   .gtab > h4 { margin:0; padding:11px 16px; font-family:var(--mono); font-size:12px; border-bottom:1px solid var(--line); color:var(--green-tx); background:var(--green-bg); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
@@ -123,6 +137,7 @@
   [data-reveal] { opacity:0; transform:translateY(10px); transition:opacity .55s ease, transform .55s ease; }
   [data-reveal].in { opacity:1; transform:none; }
   @media (max-width:900px){ .lex{grid-template-columns:1fr;} }
+  @media (min-width:701px){ .oracle-desktop{display:block;} .oracle-mobile{display:none;} }
   @media (max-width:700px){
     .wrap{padding-left:20px;padding-right:20px;}
     table.grid{display:block;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;}
@@ -135,6 +150,8 @@
     section{page-break-inside:avoid;}
     .frame{overflow:visible;padding:12px;}
     .frame svg{width:100%!important;min-width:0!important;}
+    .oracle-desktop{display:block;}
+    .oracle-mobile{display:none;}
     [data-reveal]{opacity:1;transform:none;}
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   }
@@ -180,7 +197,7 @@
   <span class="brand"><span class="dot">▸</span> arise × sec-bench</span>
   <span class="links">
     <a href="#story">what</a><a href="#arch">architecture</a><a href="#matrix">experiments</a>
-    <a href="#adaptive">adaptive</a><a href="#roles">workers</a><a href="#proc">procedures</a><a href="#evaluator">evaluator</a><a href="#release">release</a><a href="#ref">reference</a>
+    <a href="#adaptive">adaptive</a><a href="#roles">workers</a><a href="#proc">procedures</a><a href="#oracle">solver inputs</a><a href="#evaluator">evaluator</a><a href="#release">release</a><a href="#ref">reference</a>
   </span>
 </div></nav>
 
@@ -704,9 +721,132 @@
     </table>
   </section>
 
-  <!-- ============ 09 — EVALUATOR ============ -->
+  <!-- ============ 09 — SOLVER INPUT BOUNDARY ============ -->
+  <section id="oracle">
+    <div class="kick" data-reveal><b>09</b> / Solver input boundary</div>
+    <h2 data-reveal>Show the failure oracle; keep the answer key host-side</h2>
+    <p class="intro" data-reveal>Solving agents receive <code>bug_description</code> and <code>sanitizer_report</code>. These fields identify the defect and expose the crash evidence needed to reproduce it. They never receive unrestricted <code>bug_report</code>, which can contain the upstream fix and exact implementation edits.</p>
+
+    <figure data-reveal>
+      <div class="frame m oracle-desktop">
+        <svg viewBox="0 0 1080 500" role="img" aria-label="SEC-bench solver input boundary and unchanged proof-of-concept validation flow">
+          <defs>
+            <marker id="o-a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#6b7280"/></marker>
+            <marker id="o-g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#16a34a"/></marker>
+            <marker id="o-r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#dc2626"/></marker>
+          </defs>
+
+          <rect class="d-card" x="40" y="42" width="230" height="108" rx="8"/>
+          <text class="d-title" x="60" y="70">SEC-bench record</text>
+          <text class="d-sub" x="60" y="95">bug_description</text>
+          <text class="d-sub" x="60" y="116">sanitizer_report</text>
+          <text class="d-sub" x="60" y="137">bug_report</text>
+
+          <path d="M270 96H348" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#o-g)"/>
+          <rect class="d-card fill-blue" x="350" y="30" width="310" height="136" rx="8"/>
+          <text class="d-title" x="370" y="58">Solver-visible failure oracle</text>
+          <text class="d-sub" x="370" y="85">✓ concise bug_description</text>
+          <text class="d-sub" x="370" y="108">✓ raw sanitizer_report</text>
+          <text class="d-sub" x="370" y="139">No unrestricted bug_report</text>
+
+          <path d="M155 150V298H348" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#o-r)"/>
+          <rect class="d-card fill-red" x="350" y="230" width="310" height="136" rx="8"/>
+          <text class="d-title" x="370" y="258">Host-retained record</text>
+          <text class="d-sub" x="370" y="285">dataset provenance</text>
+          <text class="d-sub" x="370" y="308">evaluator evidence</text>
+          <text class="d-sub" x="370" y="331">benchmark curation</text>
+          <text class="d-sub" x="370" y="354">bug_report never enters solver prompts</text>
+
+          <path d="M660 98H738" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#o-a)"/>
+          <rect class="d-card" x="740" y="30" width="300" height="336" rx="8"/>
+          <text class="d-title" x="760" y="59">Validation flow</text>
+          <text class="d-sub" x="770" y="96">1 · Build vulnerable base</text>
+          <path d="M788 106V121" stroke="#6b7280" stroke-width="1.5" marker-end="url(#o-a)"/>
+          <text class="d-sub" x="770" y="143">2 · Exploit: same PoC crashes</text>
+          <path d="M788 153V168" stroke="#6b7280" stroke-width="1.5" marker-end="url(#o-a)"/>
+          <text class="d-sub" x="770" y="190">3 · Fix minimal source code</text>
+          <path d="M788 200V215" stroke="#6b7280" stroke-width="1.5" marker-end="url(#o-a)"/>
+          <text class="d-sub" x="770" y="237">4 · Rebuild patched source</text>
+          <path d="M788 247V262" stroke="#6b7280" stroke-width="1.5" marker-end="url(#o-a)"/>
+          <text class="d-sub" x="770" y="284">5 · Replay the unchanged PoC</text>
+          <rect class="d-card fill-green" x="765" y="306" width="250" height="42" rx="7"/>
+          <text class="d-role green" x="890" y="331" text-anchor="middle">sanitizer crash absent</text>
+
+          <rect class="d-card fill-green" x="40" y="408" width="1000" height="58" rx="8"/>
+          <text class="d-title" x="60" y="433">Compare normalized crash identity, not byte-identical sanitizer text</text>
+          <text class="d-sub" x="60" y="455">sanitizer_class · access_kind · top_application_frame; ignore volatile PIDs, addresses, paths, and formatting</text>
+        </svg>
+      </div>
+      <div class="oracle-mobile" role="group" aria-label="SEC-bench solver input boundary and unchanged proof-of-concept validation flow">
+        <div class="om-block">
+          <p class="om-title">SEC-bench record</p>
+          <ul class="om-list">
+            <li><code>bug_description</code></li>
+            <li><code>sanitizer_report</code></li>
+            <li><code>bug_report</code></li>
+          </ul>
+        </div>
+        <div class="om-block om-visible">
+          <p class="om-title">Solver-visible failure oracle</p>
+          <ul class="om-list">
+            <li>concise <code>bug_description</code></li>
+            <li>raw <code>sanitizer_report</code></li>
+            <li>no unrestricted <code>bug_report</code></li>
+          </ul>
+        </div>
+        <div class="om-block om-host">
+          <p class="om-title">Host-retained record</p>
+          <ul class="om-list">
+            <li>dataset provenance</li>
+            <li>evaluator evidence</li>
+            <li>benchmark curation</li>
+            <li><code>bug_report</code> never enters solver prompts</li>
+          </ul>
+        </div>
+        <div class="om-block">
+          <p class="om-title">Validation flow</p>
+          <ol class="om-steps">
+            <li>Build vulnerable base</li>
+            <li>Exploit: same PoC crashes</li>
+            <li>Fix minimal source code</li>
+            <li>Rebuild patched source</li>
+            <li>Replay the unchanged PoC</li>
+          </ol>
+          <p class="om-outcome">sanitizer crash absent</p>
+        </div>
+        <div class="om-block om-signature">
+          <p class="om-title">Compare normalized crash identity, not byte-identical sanitizer text</p>
+          <p class="om-detail"><code>sanitizer_class</code> · <code>access_kind</code> · <code>top_application_frame</code>; ignore volatile PIDs, addresses, paths, and formatting</p>
+        </div>
+      </div>
+      <figcaption><b>Fig 9.</b> The dataset record splits at a trust boundary. Agents get the failure oracle; answer-bearing report content remains with the host.</figcaption>
+    </figure>
+
+    <table class="grid" data-reveal>
+      <thead><tr><th>Field</th><th>Solver access</th><th>Purpose and risk</th></tr></thead>
+      <tbody>
+        <tr><td><code>bug_description</code></td><td><code>VISIBLE</code></td><td>Concise vulnerability statement that defines the repair target.</td></tr>
+        <tr><td><code>sanitizer_report</code></td><td><code>VISIBLE</code></td><td>Crash evidence used to reproduce the defect and derive its normalized signature.</td></tr>
+        <tr><td><code>bug_report</code></td><td><code>HOST ONLY</code></td><td>Retained for dataset provenance, evaluator evidence, and benchmark curation. It may disclose the upstream answer.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="gtab" data-reveal>
+      <h4><code>gpac.cve-2022-3178</code> <span class="when">concrete leakage example</span></h4>
+      <dl>
+        <div class="row"><span class="id">solver-visible</span><span><code>bug_description</code>: “Buffer Over-read in GitHub repository gpac/gpac prior to 2.1.0-DEV.” The sanitizer report supplies the crash evidence.</span></div>
+        <div class="row"><span class="id">host-only</span><span>The full bug report exposes the upstream fix commit and the exact allocation-size and string-terminator edits.</span></div>
+        <div class="row"><span class="id">why split it</span><span>Showing the full report would tutor the implementation. The concise description plus sanitizer evidence defines the task and its observable failure without revealing the repair.</span></div>
+      </dl>
+    </div>
+
+    <p data-reveal>The unchanged PoC is the control. Before the fix, it must reproduce the same normalized crash signature: sanitizer class, access kind, and top application frame. After the fix and rebuild, that same PoC must no longer trigger the sanitizer crash. Byte-for-byte sanitizer output is not required because process IDs, addresses, paths, and formatting vary between runs.</p>
+    <p data-reveal>Primary SEC-bench sources: the <a href="https://github.com/SEC-bench/smolagents/blob/a945dba9d6f2594cd94eb00d77f6b41a92fea88b/src/smolagents/prompts/patch.j2#L1-L10">official patch prompt</a> places <code>bug_description</code> and <code>sanitizer_report</code> in the issue description; the <a href="https://papers.nips.cc/paper_files/paper/2025/file/a9168f1c54e5147027f1e8cf83e1a775-Paper-Conference.pdf">SEC-bench paper</a> describes the benchmark; and the <a href="https://huggingface.co/datasets/SEC-bench/SEC-bench">official dataset</a> publishes its source records.</p>
+  </section>
+
+  <!-- ============ 10 — EVALUATOR ============ -->
   <section id="evaluator">
-    <div class="kick" data-reveal><b>09</b> / Success and judges</div>
+    <div class="kick" data-reveal><b>10</b> / Success and judges</div>
     <h2 data-reveal>Mechanical truth first; semantic judgment stays separate</h2>
     <p class="intro" data-reveal>The target evaluator has no human queue or override. It seals objective execution facts before asking models about root-cause and patch semantics. Judges cannot rescue a timeout, wrong crash, sanitizer suppression, failed build, or regression.</p>
     <figure data-reveal>
@@ -748,7 +888,7 @@
           <text class="d-sub" x="540" y="532" text-anchor="middle">immutable bundle: prompts · responses · raw evidence · retries · hashes · timestamps</text>
         </svg>
       </div>
-      <figcaption><b>Fig 9.</b> One Opus judge is independent but insufficient. Three heterogeneous pinned families reduce correlated error. The gold patch is excluded from acceptance so valid alternative fixes can pass; it may be used only for development calibration or sensitivity analysis.</figcaption>
+      <figcaption><b>Fig 10.</b> One Opus judge is independent but insufficient. Three heterogeneous pinned families reduce correlated error. The gold patch is excluded from acceptance so valid alternative fixes can pass; it may be used only for development calibration or sensitivity analysis.</figcaption>
     </figure>
     <table class="grid" data-reveal>
       <thead><tr><th>Judge rule</th><th>Frozen behavior</th></tr></thead>
@@ -762,9 +902,9 @@
     </table>
   </section>
 
-  <!-- ============ 10 — RELEASE GATE ============ -->
+  <!-- ============ 11 — RELEASE GATE ============ -->
   <section id="release">
-    <div class="kick" data-reveal><b>10</b> / Experiment release gate</div>
+    <div class="kick" data-reveal><b>11</b> / Experiment release gate</div>
     <h2 data-reveal>Current status: not ready for confirmatory N1 vs B4</h2>
     <p class="intro" data-reveal>Evaluator architecture is implemented on this branch (six-replay mechanical, provenance-proven fresh base, containerized host regression, zero-human three-seat panel). Launch is still blocked on operational freeze and live smoke — not on missing design.</p>
     <table class="grid" data-reveal>
@@ -787,9 +927,9 @@
     </table>
   </section>
 
-  <!-- ============ 11 — REFERENCE ============ -->
+  <!-- ============ 12 — REFERENCE ============ -->
   <section id="ref" style="border-bottom:none;">
-    <div class="kick" data-reveal><b>11</b> / Reference</div>
+    <div class="kick" data-reveal><b>12</b> / Reference</div>
     <h2 data-reveal>Event families &amp; glossary</h2>
     <div class="gtab" data-reveal>
       <h4>Event stream <span class="when">42 frozen types · EVENT_TYPE_REGISTRY · two aggregates</span></h4>
@@ -812,7 +952,7 @@
         <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier running registry-matched tasks host-side with zero LLM turns.</dd></div>
         <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — captured by the host, unforgeable.</dd></div>
         <div class="term"><dt>DooD</dt><dd>Docker-out-of-Docker: the orchestrator launches each CVE container on the host's Docker daemon.</dd></div>
-        <div class="term"><dt>Crash signature</dt><dd><code>(sanitizer_class, access_type, top_frame)</code> — matched against the CVE oracle to decide a verdict.</dd></div>
+        <div class="term"><dt>Crash signature</dt><dd><code>(sanitizer_class, access_kind, top_application_frame)</code> — matched against the CVE oracle to decide a verdict.</dd></div>
       </dl>
     </div>
     <p style="margin-top:26px; font-size:14px; color:var(--ink-3);">Deeper detail for engineers lives in <code>/SYSTEM_REFERENCE.md</code> (as-built spec) and <code>.claude/docs/</code> (architecture, core-domain, plugins-security, patterns).</p>

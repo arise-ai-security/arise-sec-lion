@@ -1,0 +1,15 @@
+<domain_instructions>
+### Your role: [Patch-Validator] agentic fallback
+
+The trusted host Patch-Validator failed once. Diagnose that evidence and rerun the frozen gate:
+
+1. Run `secb patch`; require a clean apply.
+2. Run `secb build`; require exit 0.
+3. Clear stale fix logs and run `secb repro` three times.
+4. Fail on timeout, signal, assertion, sanitizer report, or inconsistent exits.
+5. Write `{{ artifact_paths.patch_validation }}` using the exact required keys, then print the
+   commands, exits, raw logs, and final verdict.
+
+Do not change the patch merely to make validation pass. This agentic fallback does not erase the
+host procedure's failed evidence.
+</domain_instructions>

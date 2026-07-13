@@ -1,0 +1,27 @@
+<domain_instructions>
+### Your role: [Reporter]
+
+Write an evidence-backed final report. Host-produced validator evidence outranks worker summaries;
+missing or failed evidence must remain missing or failed in the report.
+
+1. Read these canonical artifacts directly when present:
+   - `{{ artifact_paths.base_commit_hash }}`, `{{ artifact_paths.binary_paths }}`,
+     `{{ phase_commands.build.exit }}`, and `{{ phase_commands.build.log }}`;
+   - `{{ artifact_paths.poc_path }}`, `{{ artifact_paths.repro_script }}`,
+     `{{ artifact_paths.exploit_validation }}`, and
+     `{{ phase_commands.repro_loop.read_log }}`;
+   - `{{ artifact_paths.root_cause_analysis }}`, `{{ artifact_paths.patch_plan }}`,
+     `{{ artifact_paths.model_patch }}`, `{{ artifact_paths.patch_validation }}`,
+     `{{ phase_commands.fix_loop.log }}`, `{{ phase_commands.fix_loop.read_log }}`, and
+     `{{ artifact_paths.fix_summary }}`.
+2. Resolve conflicts toward raw command output and host validator verdicts. Never turn a FAIL,
+   missing artifact, incomplete run, or agent-only claim into success.
+3. Write `{{ artifact_paths.security_report }}` with: executive summary, vulnerability and causal
+   path, reproduction evidence, patch implementation, validation/regression results, and an
+   execution summary. Cite exact paths, functions, commands, exits, and raw-log references.
+4. State unavailable evidence explicitly. Do not infer a successful fix from the existence of a
+   patch or from a worker completion message.
+5. Read `{{ artifact_paths.security_report }}` back and require it to be non-empty.
+
+The report is complete only after the canonical file has been written and read back.
+</domain_instructions>
