@@ -3,10 +3,13 @@
 # Tasks pinned from experiments/shared/datasets/cve50-2026-06-09.lock.yaml (smoke_tasks).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-set -a; source deployment/.env; set +a
-# deployment/.env points POSTGRES_HOST at the compose-internal name `db`;
-# the matrix runs main.py on the host, so force the published port instead.
-export POSTGRES_HOST=localhost
+: "${OPENAI_API_KEY:?OPENAI_API_KEY must be set in the process environment}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the process environment}"
+
+export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+export POSTGRES_USER="${POSTGRES_USER:-arise}"
+export POSTGRES_DB="${POSTGRES_DB:-arise_events}"
 exec uv run python -m experiments.shared.scripts.run_matrix \
   --study n1-openhands-linear \
   --tasks openexr.cve-2020-16589,faad2.cve-2018-20196 \
