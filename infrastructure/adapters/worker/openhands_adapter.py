@@ -48,6 +48,7 @@ logging.getLogger("openhands.tools").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS_PER_RUN = 20
+_OPENHANDS_MCP_DATA_ARGUMENT_PATCHED = False
 
 
 def _event_dedup_key(sdk_event: Any) -> Any:
@@ -132,6 +133,41 @@ def _normalize_base_url(base_url: str | None) -> str | None:
     if not stripped:
         return None
     return _TRAILING_PORT_DOT_PATTERN.sub(r":\g<port>", stripped)
+
+
+def _normalize_openhands_mcp_arguments(arguments: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(arguments or {})
+    nested_data = raw.get("data")
+    if set(raw) == {"data"} and isinstance(nested_data, dict):
+        return dict(nested_data)
+    return raw
+
+
+def _apply_openhands_mcp_data_argument_patch() -> None:
+    global _OPENHANDS_MCP_DATA_ARGUMENT_PATCHED
+    if _OPENHANDS_MCP_DATA_ARGUMENT_PATCHED:
+        return
+
+    try:
+        from openhands.sdk.mcp.tool import MCPToolDefinition
+
+        original = MCPToolDefinition.action_from_arguments
+        if getattr(original, "_arise_accepts_nested_data", False):
+            _OPENHANDS_MCP_DATA_ARGUMENT_PATCHED = True
+            return
+
+        def _action_from_arguments(self: Any, arguments: dict[str, Any]) -> Any:
+            normalized = _normalize_openhands_mcp_arguments(arguments)
+            return original(self, normalized)
+
+        _action_from_arguments._arise_accepts_nested_data = True  # type: ignore[attr-defined]
+        MCPToolDefinition.action_from_arguments = _action_from_arguments  # type: ignore[method-assign]
+        _OPENHANDS_MCP_DATA_ARGUMENT_PATCHED = True
+    except Exception:
+        logger.warning(
+            "could not apply OpenHands MCP argument normalization; SDK default will apply",
+            exc_info=True,
+        )
 
 
 class _ConversationLike(Protocol):
@@ -289,6 +325,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         self._reasoning_effort: str | None = reasoning_effort
         self._reasoning_effort_overrides: dict[str, str] = dict(reasoning_effort_overrides or {})
         self._skip_directory_view_capture: bool = skip_directory_view_capture
+        _apply_openhands_mcp_data_argument_patch()
         # When True, the agent gets OpenHands' native task-delegation tool so it
         # can spawn a single-level tree of child subagents. Children reuse the
         # parent's container-aware tools and lack

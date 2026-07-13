@@ -987,6 +987,32 @@ class TestOpenHandsAdapterStreaming:
 class TestMCPServersWiring:
     """Verify ``task_context['mcp_servers']`` reaches the OpenHands Agent config."""
 
+    @staticmethod
+    def _shell_in_container_tool_definition() -> Any:
+        from mcp.types import Tool
+        from openhands.sdk.mcp.tool import (
+            MCPToolAction,
+            MCPToolDefinition,
+            MCPToolObservation,
+        )
+
+        return MCPToolDefinition(
+            description="run shell command",
+            action_type=MCPToolAction,
+            observation_type=MCPToolObservation,
+            executor=None,
+            mcp_tool=Tool(
+                name="shell_in_container",
+                description="run shell command",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            ),
+        )
+
     def test_extract_mcp_servers_returns_none_when_absent(self) -> None:
         # Given/When/Then
         adapter = _adapter()
@@ -1003,6 +1029,30 @@ class TestMCPServersWiring:
 
         # Then
         assert result == raw
+
+    def test_mcp_action_accepts_sdk_data_wrapper_without_extra_keys(self) -> None:
+        # Given
+        openhands_adapter_module._apply_openhands_mcp_data_argument_patch()
+        tool = self._shell_in_container_tool_definition()
+
+        # When
+        action = tool.action_from_arguments({"data": {"command": "pytest -q"}})
+
+        # Then
+        assert action.data == {"command": "pytest -q"}
+
+    def test_mcp_action_rejects_data_wrapper_with_extra_keys(self) -> None:
+        from pydantic import ValidationError
+
+        # Given
+        openhands_adapter_module._apply_openhands_mcp_data_argument_patch()
+        tool = self._shell_in_container_tool_definition()
+
+        # When/Then
+        with pytest.raises(ValidationError, match="data"):
+            tool.action_from_arguments(
+                {"data": {"command": "pytest -q"}, "unexpected": "value"}
+            )
 
     def test_build_conversation_passes_mcp_config_kwarg_to_agent(
         self,
