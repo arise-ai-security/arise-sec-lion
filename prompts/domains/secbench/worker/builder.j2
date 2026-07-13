@@ -3,14 +3,67 @@
 
 Refer to Task Context above for repository location, base commit hash, and vulnerability details.
 
+{% include 'domains/secbench/phases/build.j2' %}
+{% set wr = worker_role %}
+{% if wr and wr.name == 'Build-Setup' %}
+### Your role: [Build-Setup]
+
+Identify and prepare the exact vulnerable baseline. Do not run the full build and do not
+create `{{ artifact_paths.repo_changes_diff }}` or `{{ artifact_paths.binary_paths }}`.
+
+1. Read the supplied base commit from Task Context and verify it with
+   `cd {{ work_dir }} && git rev-parse HEAD`.
+2. If the checkout differs, reset only to the supplied commit. Never select a newer commit.
+3. Write that exact 40-character hash to `{{ artifact_paths.base_commit_hash }}`.
+4. Inspect `{{ artifact_paths.build_script }}` and install only missing system dependencies;
+   do not edit project source or the build script.
+5. Print `git rev-parse HEAD`, the dependency commands and results, and
+   `cat {{ artifact_paths.base_commit_hash }}`.
+
+You are done when the checkout and base-commit artifact agree and the dependency setup is
+recorded for Build-Executor.
+{% elif wr and wr.name == 'Build-Executor' %}
+### Your role: [Build-Executor]
+
+Build from Build-Setup's verified baseline and own exactly
+`{{ artifact_paths.build_script }}`, `{{ artifact_paths.repo_changes_diff }}`, and
+`{{ artifact_paths.binary_paths }}`.
+
+1. Verify `{{ artifact_paths.base_commit_hash }}` matches `git rev-parse HEAD`; stop and
+   report the mismatch instead of changing the baseline.
+2. Run `secb build`. Read the full build log and change `{{ artifact_paths.build_script }}`
+   only when the current recipe fails.
+3. Preserve sanitizer flags. Do not suppress warnings by removing instrumentation and do not
+   modify vulnerability source merely to make compilation pass.
+4. Re-run `secb build` until `{{ artifact_dirs.testcase }}/build.exit` contains `exit=0`.
+5. Resolve each produced executable to a real non-empty ELF, copy durable binaries under
+   `{{ artifact_dirs.testcase }}/bin/`, and write their absolute paths one per line to
+   `{{ artifact_paths.binary_paths }}`.
+6. Record only build/setup changes in `{{ artifact_paths.repo_changes_diff }}` and establish
+   the local `arise-builder-baseline` commit without `git add -A`.
+7. Print the build exit, binary paths, build script, and repository diff verbatim.
+
+Do not perform Build-Verifier's independent outcome gate.
+{% elif wr and wr.name == 'Build-Verifier' %}
+### Your role: [Build-Verifier] agentic fallback
+
+The host procedure failed once. Diagnose only the recorded failure and verify the existing
+Build-Executor artifacts; do not redesign the build.
+
+1. Read the previous-attempt failure digest and `{{ artifact_dirs.testcase }}/build.log`.
+2. Run `secb build` once after the smallest necessary correction.
+3. Require exit 0 and verify every path in `{{ artifact_paths.binary_paths }}` is a non-empty,
+   executable ELF that starts with the sanitizer runtime available.
+4. Print the exact commands, exit codes, binary paths, and failure or success evidence.
+
+Do not claim success from an agent-authored verdict file.
+{% else %}
 {# The included phase partial (phases/build.j2) is the shared "phase contract":
    its Goal + deliverables render identically for every Builder worker and the
    flat arm, so it sits in the common cacheable prefix (run-scoped shard for
    OpenHands; cache_control for Anthropic via LiteLLM). Keep text above this
    include stable across workers to preserve that prefix.
-#}
-
-{% include 'domains/secbench/phases/build.j2' %}
+    #}
 
 ### Setup
 
@@ -103,4 +156,5 @@ After creating or editing each file, run: `echo "=== <filename> ===" && cat /pat
 
 ### Rules
 - DO NOT disable sanitizer options — they are essential for bug detection
+{% endif %}
 </domain_instructions>

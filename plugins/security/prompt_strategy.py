@@ -183,6 +183,7 @@ class SecBenchPromptStrategy:
         self,
         enabled_tools: list[str] | None = None,
         shared_code_first: bool = False,
+        role_fused: bool = False,
     ) -> None:
         self._enabled_tools = enabled_tools or []
         # When True, the run-global shared code block renders BEFORE the
@@ -190,6 +191,7 @@ class SecBenchPromptStrategy:
         # byte region the block occupies and cross-branch prefix-cache hits
         # become possible. Off keeps the legacy order (cache forks per branch).
         self._shared_code_first = shared_code_first
+        self._role_fused = role_fused
 
     def extend_assessment_prompt(
         self,
@@ -291,6 +293,7 @@ class SecBenchPromptStrategy:
         # whole-phase runbook.
         worker_role = role_from_task(context.task_description)
         cve_ctx["worker_role"] = worker_role
+        cve_ctx["role_fused"] = self._role_fused
         cve_ctx["foreign_deliverables"] = (
             deliverables_owned_by_others(worker_role) if worker_role is not None else ()
         )

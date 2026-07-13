@@ -609,9 +609,7 @@ class TestSecurityPromptBuilding:
         assert "Create `/testcase/repro.sh`" not in prompt
 
     def test_secbench_fixer_uses_verifiable_async_validation(self) -> None:
-        # Reverted Builder/Fixer role-gating (it regressed the weak worker), but KEPT the
-        # verifiable-async provenance in the whole-phase fixer: the validation step launches
-        # the detached secb loop AND polls the result back into the transcript.
+        # Given: The agentic fallback for the normally mechanical Patch-Validator.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
@@ -622,10 +620,77 @@ class TestSecurityPromptBuilding:
             domain_context=make_test_cve_instance(),
             briefing=None,
         )
-        # Whole-phase body (no role-scoping) + the poll-into-transcript provenance step.
-        assert "### Your role:" not in prompt
-        assert "poll the result INTO your transcript" in prompt
-        assert "launched secb patch/build/repro validation" in prompt
+        # Then: It receives only the validation fallback, not patch-authoring instructions.
+        assert "### Your role: [Patch-Validator] agentic fallback" in prompt
+        assert "`secb patch`; require a clean apply" in prompt
+        assert "Do not change the patch merely to make validation pass" in prompt
+        assert "Develop the fix" not in prompt
+
+    def test_root_cause_analyst_is_scoped_to_reasoning_and_patch_plan(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="[Root-Cause-Analyst] identify the causal defect",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        assert "### Your role: [Root-Cause-Analyst]" in prompt
+        assert "You must not edit source" in prompt
+        assert "write `/testcase/patch_plan.json`" in prompt
+        assert "Create `/testcase/model_patch.diff`" not in prompt
+        assert "Develop the fix" not in prompt
+
+    def test_builder_roles_receive_non_overlapping_instructions(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        setup = builder.build_worker_prompt(
+            task_description="[Build-Setup] prepare the baseline",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        executor = builder.build_worker_prompt(
+            task_description="[Build-Executor] compile the target",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        assert "### Your role: [Build-Setup]" in setup
+        assert "Do not run the full build" in setup
+        assert "### Your role: [Build-Executor]" in executor
+        assert "Do not perform Build-Verifier's independent outcome gate" in executor
+
+    def test_role_fused_prompts_leave_mechanical_authority_to_host_roles(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(role_fused=True),
+        )
+
+        exploiter = builder.build_worker_prompt(
+            task_description="[Exploiter] reproduce",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        fixer = builder.build_worker_prompt(
+            task_description="[Fixer] plan the repair",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        assert "`[Exploit-Validator]` owns the authoritative three-run verdict" in exploiter
+        assert "Do not write `/testcase/exploit_validation_results.txt`" in exploiter
+        assert "`[Patch-Applier]` and" in fixer
+        assert "`[Patch-Validator]` own source transformation" in fixer
+        assert "Do not create `/testcase/model_patch.diff`" in fixer
 
     def test_secbench_exploiter_handoff_example_uses_parseable_decision_shape(self) -> None:
         # Given: a Repro-Creator worker prompt whose body shows a <context-update>
