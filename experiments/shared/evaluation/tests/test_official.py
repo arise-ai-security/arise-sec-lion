@@ -3,22 +3,19 @@
 import hashlib
 import inspect
 import stat
-import subprocess
 
 from experiments.shared.evaluation.official import (
     CANONICAL_PROTECTED_PATHS,
     CommandEvidence,
+    command_evidence_from_capture,
     EvaluationBundleWriter,
+    evaluate_safety_floor,
     HARNESS_FINAL_STEP_MARKER,
+    interpret_patch,
+    interpret_poc,
     MechanicalVerdict,
     SafetyFloorInput,
     SafetyFloorVerdict,
-    SecBenchReplayResult,
-    SecBenchReplayRunner,
-    command_evidence_from_capture,
-    evaluate_safety_floor,
-    interpret_patch,
-    interpret_poc,
 )
 
 
@@ -212,31 +209,6 @@ def test_host_evidence_builder_reads_final_step_marker() -> None:
     assert not command_evidence_from_capture(
         argv=("secb", "repro"), exit_code=0, output="running poc\n", timed_out=False
     ).final_step_reached
-
-
-def test_replay_runner_emits_command_evidence(tmp_path, monkeypatch) -> None:
-    """The runner attaches host CommandEvidence derived from the captured execution."""
-
-    # Given: A stub SEC-bench evaluator layout, a report file, and a mocked subprocess capture
-    script = tmp_path / "secb" / "evaluator" / "eval_instances.py"
-    script.parent.mkdir(parents=True)
-    script.write_text("", encoding="utf-8")
-    output_dir = tmp_path / "out"
-    output_dir.mkdir()
-    (output_dir / "report_sanitizer.jsonl").write_text('{"instance_id": "x"}\n', encoding="utf-8")
-
-    captured = subprocess.CompletedProcess(args=(), returncode=0, stdout="poc ran\n", stderr="")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: captured)
-    runner = SecBenchReplayRunner(tmp_path)
-
-    # When: A PoC replay runs
-    result = runner.run(input_dir=tmp_path / "in", output_dir=output_dir, evaluation_type="poc")
-
-    # Then: The result carries CommandEvidence over the same captured output
-    assert isinstance(result, SecBenchReplayResult)
-    assert isinstance(result.command_evidence, CommandEvidence)
-    assert result.command_evidence.exit_code == 0
-    assert result.command_evidence.output_sha256 == result.output_sha256
 
 
 def test_written_bundle_files_are_read_only(tmp_path) -> None:

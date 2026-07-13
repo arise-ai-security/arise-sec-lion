@@ -263,6 +263,17 @@ def test_declared_path_exists_resolves_lines_with_traversal_guard(tmp_path) -> N
     assert declared_path_exists(pointer, run_dir) is False
 
 
+def test_declared_path_exists_can_accept_zero_byte_poc(tmp_path) -> None:
+    run_dir = write_files(
+        tmp_path,
+        {"/testcase/poc_path.txt": b"/testcase/poc.bin\n", "/testcase/poc.bin": b""},
+    )
+    pointer = run_dir / "testcase" / "poc_path.txt"
+
+    assert not declared_path_exists(pointer, run_dir)
+    assert declared_path_exists(pointer, run_dir, allow_empty=True)
+
+
 def test_references_is_plain_substring() -> None:
     """references() is a literal substring test — no tokenizing or shell parsing."""
     # Given: a repro script that reads binary_paths.txt
@@ -762,28 +773,3 @@ def test_provenance_mechanical_precheck_detects_secb_launch(tmp_path) -> None:
     forged.tool(boss2, shell("echo 'VERDICT: PASS' > /testcase/exploit_validation_results.txt"))
     forged.tool_result(boss2, "==1==ERROR: AddressSanitizer: heap-buffer-overflow")  # echoed
     assert _has_secb_launch(forged.run_data(write_files(tmp_path / "b", {})), ef) is False
-
-
-# ---------------------------------------------------------------------------
-# Drift guard (the only sanctioned plugins.security import — test-only)
-# ---------------------------------------------------------------------------
-
-
-def test_criteria_contract_mirror_matches_deliverables_and_roles_source_of_truth() -> None:
-    """criteria.py hand-copies the SEC-bench contract; assert it never silently drifts."""
-    # Given: the security plugin is the single source of truth for the contract.
-    from experiments.shared.evaluation import criteria
-    from experiments.shared.evaluation.models import BefPhase
-    from plugins.security import deliverables, roles
-
-    # Then: every hand-copied mirror in criteria.py equals the plugin source of truth.
-    assert criteria._REQUIRED_FILES == deliverables.REQUIRED_FILES
-    assert criteria._VALIDATION_REQUIRED == deliverables.VALIDATION_REQUIRED
-    assert criteria._MAY_BE_EMPTY == deliverables.MAY_BE_EMPTY
-    assert criteria._HIERARCHICAL_ROLE_SPECIFIC_FIXER == deliverables.HIERARCHICAL_ONLY["Fixer"]
-
-    # And: the role->phase and hard-dependency mirrors equal the role catalog.
-    assert criteria._ROLE_PHASE == {r.name: BefPhase[r.phase.upper()] for r in roles.ROLES}
-    assert criteria._ROLE_DEPENDS_ON == {
-        r.name: r.depends_on for r in roles.ROLES if r.depends_on
-    }

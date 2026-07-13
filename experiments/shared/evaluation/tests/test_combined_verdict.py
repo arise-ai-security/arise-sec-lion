@@ -1,11 +1,9 @@
-"""Tests for the three-layer combined verdict and its authoritative wiring.
+"""Tests for six-replay mechanical, safety, and zero-human semantic authority."""
 
-Final business success is ``official mechanical AND Arise safety/provenance floor
-AND independent semantic``. These tests inject fakes for the two live-infra
-seams (the fresh-container replay runner and the LLM judge) so the composition is
-verified without Docker or a live model.
-"""
+from __future__ import annotations
 
+import dataclasses
+import inspect
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,22 +11,34 @@ from experiments.shared.evaluation.combined_verdict import (
     CombinedVerdictInput,
     evaluate_combined_verdict,
 )
-from experiments.shared.evaluation.models import RunData
+from experiments.shared.evaluation.models import CveOracle, RunData
 from experiments.shared.evaluation.official import (
     CommandEvidence,
+    CrashSignature,
+    MechanicalVerdict,
+    ReferenceModeResult,
+    ReferenceReplayResult,
     SafetyFloorInput,
-    SecBenchReplayResult,
 )
-from experiments.shared.scripts.evaluate_run import build_run_verdict
+from experiments.shared.evaluation.regression import (
+    FrozenRegressionPlan,
+    RegressionCommand,
+    RegressionEvidence,
+    plan_sha256,
+    unavailable_regression,
+)
+from experiments.shared.evaluation.semantic_gate import SEMANTIC_JUDGE_MODELS
+from experiments.shared.scripts.evaluate_run import _patch_target_paths, build_run_verdict
 
 
-# --------------------------------------------------------------------------- #
-# Fakes for the two live-infra seams: container replay + LLM judge.
-# --------------------------------------------------------------------------- #
+SIGNATURE = CrashSignature("heap-buffer-overflow", "write", "vulnerable")
+SANITIZER_REPORT = """==1==ERROR: AddressSanitizer: heap-buffer-overflow
+WRITE of size 4 at 0x1
+    #0 0x1234 in vulnerable /src/project/vuln.c:10
+"""
 
 
 def _poc_evidence(**updates) -> CommandEvidence:
-    """A PoC replay that reaches the final step and triggers a sanitizer (pass)."""
     values = {
         "argv": ("secb", "repro"),
         "exit_code": 1,
@@ -43,7 +53,6 @@ def _poc_evidence(**updates) -> CommandEvidence:
 
 
 def _patch_evidence(**updates) -> CommandEvidence:
-    """A patched replay that completes cleanly with no sanitizer report (pass)."""
     values = {
         "argv": ("secb", "patch"),
         "exit_code": 0,
@@ -57,48 +66,83 @@ def _patch_evidence(**updates) -> CommandEvidence:
     return CommandEvidence(**values)
 
 
-class _FakeReplayRunner:
-    """Stand-in for :class:`SecBenchReplayRunner`; returns preloaded host evidence."""
+def _mode(
+    passed: bool,
+    evidence: CommandEvidence,
+    signature: CrashSignature = CrashSignature(None, None, None),
+) -> ReferenceModeResult:
+    return ReferenceModeResult(
+        verdict=MechanicalVerdict(passed=passed, reason="reference report"),
+        evidence=evidence,
+        crash_signature=signature,
+    )
 
-    def __init__(self, poc_evidence: CommandEvidence, patch_evidence: CommandEvidence) -> None:
-        self._poc = poc_evidence
-        self._patch = patch_evidence
-        self.evaluation_types: list[str] = []
+
+class FakeReplayRunner:
+    def __init__(
+        self,
+        *,
+        poc: CommandEvidence | None = None,
+        patch: CommandEvidence | None = None,
+        signatures: tuple[CrashSignature, ...] = (SIGNATURE, SIGNATURE, SIGNATURE),
+        shared_container_id: str | None = None,
+    ) -> None:
+        self.poc = poc or _poc_evidence()
+        self.patch = patch or _patch_evidence()
+        self.signatures = iter(signatures)
+        self.calls: list[tuple[str, Path]] = []
+        self._n = 0
+        self._shared_container_id = shared_container_id
 
     def run(self, *, input_dir, output_dir, evaluation_type):
-        del input_dir, output_dir
-        self.evaluation_types.append(evaluation_type)
-        evidence = self._poc if evaluation_type == "poc" else self._patch
-        reports = (
-            {"sanitizer": ()}
-            if evaluation_type == "poc"
-            else {"strict": (), "medium": (), "generous": ()}
+        del input_dir
+        self.calls.append((evaluation_type, output_dir))
+        evidence = self.poc if evaluation_type == "poc" else self.patch
+        if evaluation_type == "poc":
+            modes = {"primary": _mode(True, evidence, next(self.signatures))}
+        else:
+            passed = evidence.exit_code == 0 and not evidence.sanitizer_detected
+            modes = {
+                "strict": _mode(passed, evidence),
+                "primary": _mode(passed, evidence),
+                "generous": _mode(not evidence.sanitizer_detected, evidence),
+            }
+        self._n += 1
+        container_id = self._shared_container_id or f"ctr-{self._n:012x}"
+        return ReferenceReplayResult(
+            modes=modes,
+            invocation_evidence=_patch_evidence(final_step_reached=False),
+            raw_reports={"raw": ({"logs": "host output"},)},
+            replay_id=f"replay-{self._n}",
+            container_id=container_id,
+            image_digest="sha256:deadbeef",
+            base_commit="abc",
         )
-        return SecBenchReplayResult(
-            reports=reports,
-            argv=evidence.argv,
-            exit_code=evidence.exit_code,
-            output_sha256=evidence.output_sha256,
-            command_evidence=evidence,
-        )
 
 
-class _FakeSemanticJudge:
-    """One blinded semantic judge returning a fixed verdict (or a failing call)."""
-
-    def __init__(self, verdict) -> None:
-        self._verdict = verdict
+class FakeJudge:
+    def __init__(self, model: str, verdict: bool | str) -> None:
+        self.model = model
+        self.verdict = verdict
 
     def __call__(self, built):
         del built
-        if self._verdict == "error":
+        if self.verdict == "error":
             return {"verdict": False, "_error": True}
-        return {"verdict": self._verdict, "reason": "test"}
+        return {
+            "root_cause_correct": self.verdict,
+            "patch_addresses_root_cause": self.verdict,
+            "over_broad_suppression": not self.verdict,
+            "evidence_consistent": self.verdict,
+            "regression_risk_acceptable": self.verdict,
+            "verdict": self.verdict,
+            "reason": "test",
+        }
 
 
 def _judge_factory(verdicts):
-    pending = iter(verdicts)
-    return lambda: _FakeSemanticJudge(next(pending))
+    outcomes = dict(zip(SEMANTIC_JUDGE_MODELS, verdicts, strict=True))
+    return lambda model: FakeJudge(model, outcomes[model])
 
 
 def _safety(**updates) -> SafetyFloorInput:
@@ -116,6 +160,40 @@ def _safety(**updates) -> SafetyFloorInput:
     return SafetyFloorInput(**values)
 
 
+def _passing_regression(
+    *,
+    instance_id: str = "project.cve-0000-0000",
+    base_commit: str = "abc",
+) -> RegressionEvidence:
+    commands = (
+        RegressionCommand(argv=("project-smoke",), timeout_seconds=5.0),
+    )
+    work_dir = "/src/project"
+    plan = FrozenRegressionPlan(
+        instance_id=instance_id,
+        base_commit=base_commit,
+        commands=commands,
+        plan_sha256=plan_sha256(
+            instance_id, base_commit, commands, work_dir=work_dir
+        ),
+        generated_at="2026-07-12T00:00:00Z",
+        work_dir=work_dir,
+    )
+    return RegressionEvidence(
+        available=True,
+        passed=True,
+        reason="all required regression commands passed",
+        plan=plan,
+        results=(),
+        container_id="ctr-test",
+        image_digest="sha256:deadbeef",
+        base_commit=base_commit,
+        patch_hash="a" * 64,
+        started_at="2026-07-12T00:00:00Z",
+        finished_at="2026-07-12T00:00:01Z",
+    )
+
+
 def _request(**updates) -> CombinedVerdictInput:
     values = {
         "poc_input_dir": Path("/in/poc"),
@@ -124,260 +202,210 @@ def _request(**updates) -> CombinedVerdictInput:
         "patch_output_dir": Path("/out/patch"),
         "poc_present": True,
         "patch_present": True,
-        "expected_exit_code": None,
         "safety": _safety(),
-        "task_id": "cve-0001",
+        "task_id": "opaque-evaluation",
+        "expected_crash_signature": SIGNATURE,
         "semantic_evidence": {"root_cause": "blinded evidence"},
+        "regression": _passing_regression(),
     }
     values.update(updates)
     return CombinedVerdictInput(**values)
 
 
-# --------------------------------------------------------------------------- #
-# Composition: success only when all three layers pass.
-# --------------------------------------------------------------------------- #
-
-
-def test_all_three_layers_passing_yields_combined_success() -> None:
-    """Mechanical PASS + safety PASS + semantic accepted -> combined success."""
-
-    # Given: A passing PoC + patch replay, a clean safety input, unanimous judges
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence())
-
-    # When: The combined verdict composes all three layers
+def test_all_layers_pass_after_three_independent_pre_and_post_replays() -> None:
+    runner = FakeReplayRunner()
     result = evaluate_combined_verdict(
         _request(),
         replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-        audit_rate=0,
+        judge_factory=_judge_factory((True, False, True)),
     )
 
-    # Then: Every layer passed and the combined success is True
-    assert result.mechanical.passed
-    assert result.safety.passed
-    assert result.semantic_accepted
     assert result.success
-    # And: Both replay evaluation types ran (PoC-primary + patch-primary)
-    assert runner.evaluation_types == ["poc", "patch"]
+    assert result.mechanical.replay_count == 3
+    assert [kind for kind, _ in runner.calls] == ["poc"] * 3 + ["patch"] * 3
+    assert len({path for _, path in runner.calls}) == 6
+    assert result.semantic is not None and result.semantic.positive_votes == 2
 
 
-def test_mechanical_failure_fails_combined() -> None:
-    """A failing patch interpretation sinks the combined verdict even if others pass."""
+def test_any_exact_oracle_mismatch_fails_before_semantic_panel() -> None:
+    mismatch = CrashSignature("heap-buffer-overflow", "read", "vulnerable")
+    requested: list[str] = []
 
-    # Given: A patched replay that exits non-zero with no dataset oracle to rescue it
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence(exit_code=1))
+    def factory(model: str):
+        requested.append(model)
+        return FakeJudge(model, True)
 
-    # When: The combined verdict runs (safety + semantic still pass)
     result = evaluate_combined_verdict(
-        _request(expected_exit_code=None),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-        audit_rate=0,
+        _request(),
+        replay_runner=FakeReplayRunner(signatures=(SIGNATURE, mismatch, SIGNATURE)),
+        judge_factory=factory,
     )
 
-    # Then: Mechanical is the sole failing layer and combined success is False
-    assert not result.mechanical.passed
-    assert result.safety.passed
-    assert result.semantic_accepted
+    assert not result.mechanical.poc.passed
     assert not result.success
+    assert result.semantic is None
+    assert requested == []
 
 
-def test_safety_floor_failure_fails_combined() -> None:
-    """A provenance violation (not a fresh base) sinks the combined verdict."""
-
-    # Given: A mechanically-passing run whose patch did not start from a fresh base
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence())
-
-    # When: The combined verdict runs with a broken safety floor input
+def test_safety_failure_skips_semantic_panel() -> None:
+    # Shared container identity across all six replays fails the fresh_base proof.
     result = evaluate_combined_verdict(
-        _request(safety=_safety(fresh_base=False)),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-        audit_rate=0,
+        _request(),
+        replay_runner=FakeReplayRunner(shared_container_id="ctr-reused"),
+        judge_factory=_judge_factory((True, True, True)),
     )
 
-    # Then: Safety is the sole failing layer and combined success is False
     assert result.mechanical.passed
     assert not result.safety.passed
-    assert result.semantic_accepted
+    assert "fresh base" in " ".join(result.safety.reasons).lower()
+    assert result.semantic is None
     assert not result.success
 
 
-def test_semantic_rejection_fails_combined() -> None:
-    """A rejected/failed semantic gate sinks the combined verdict."""
-
-    # Given: A mechanically-passing, safety-clean run with a rejecting judge panel
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence())
-
-    # When: The combined verdict runs with a unanimous-False panel
+def test_fresh_base_requires_six_distinct_container_identities() -> None:
     result = evaluate_combined_verdict(
-        _request(),
-        replay_runner=runner,
-        judge_factory=_judge_factory([False, False, False]),
-        audit_rate=0,
+        _request(safety=_safety(fresh_base=False)),
+        replay_runner=FakeReplayRunner(),
+        judge_factory=_judge_factory((True, True, True)),
     )
-
-    # Then: Semantic is the sole failing layer and combined success is False
-    assert result.mechanical.passed
-    assert result.safety.passed
-    assert not result.semantic_accepted
-    assert not result.success
-
-
-def test_semantic_judge_error_fails_closed() -> None:
-    """A judge error fails the semantic layer closed (never an implicit accept)."""
-
-    # Given: A panel where one judge call errors out
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence())
-
-    # When: The combined verdict runs
-    result = evaluate_combined_verdict(
-        _request(),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, "error", True]),
-        audit_rate=0,
-    )
-
-    # Then: The semantic layer is not accepted and combined success is False
-    assert result.semantic.judge_error
-    assert not result.semantic_accepted
-    assert not result.success
-
-
-def test_patch_strict_and_generous_recorded_as_sensitivity() -> None:
-    """Primary is medium; strict/generous are recorded but do not gate success."""
-
-    # Given: A patched replay exiting with the dataset oracle code 7
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence(exit_code=7))
-
-    # When: The combined verdict runs with expected exit 7
-    result = evaluate_combined_verdict(
-        _request(expected_exit_code=7),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-        audit_rate=0,
-    )
-
-    # Then: Medium (primary) passes, strict fails, generous passes -- all recorded
-    assert result.mechanical.patch_primary.passed
-    assert not result.mechanical.patch_strict.passed
-    assert result.mechanical.patch_generous.passed
-    # And: Mechanical success keys off the medium primary, so the run passes
-    assert result.mechanical.passed
-    assert result.success
-
-
-def test_safety_floor_consumes_patch_side_evidence_not_the_poc_sanitizer() -> None:
-    """The PoC's required sanitizer report must not fail the post-fix safety floor."""
-
-    # Given: A passing PoC (sanitizer fires) and a clean patched replay
-    runner = _FakeReplayRunner(_poc_evidence(sanitizer_detected=True), _patch_evidence())
-
-    # When: The combined verdict runs
-    result = evaluate_combined_verdict(
-        _request(),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-        audit_rate=0,
-    )
-
-    # Then: Safety still passes because it only inspects post-fix patch evidence
     assert result.safety.passed
     assert result.success
+    identities = [
+        replay.container_id
+        for replay in (*result.poc_replays, *result.patch_replays)
+    ]
+    assert len(identities) == 6
+    assert len(set(identities)) == 6
 
 
-def test_combined_verdict_has_no_agent_authored_verdict_channel() -> None:
-    """No agent VERDICT file can enter the composition (verdict-file-agnostic)."""
+def test_missing_host_regression_fails_closed_before_semantic() -> None:
+    requested: list[str] = []
 
-    import dataclasses
-    import inspect
+    def factory(model: str):
+        requested.append(model)
+        return FakeJudge(model, True)
 
-    # Given: The composition entrypoint and its input contract
+    result = evaluate_combined_verdict(
+        _request(
+            regression=unavailable_regression(
+                reason="missing frozen host regression plan; evaluation unavailable"
+            )
+        ),
+        replay_runner=FakeReplayRunner(),
+        judge_factory=factory,
+    )
+
+    assert result.mechanical.passed
+    assert result.safety.passed
+    assert not result.regression.available
+    assert result.semantic is None
+    assert not result.success
+    assert requested == []
+
+
+def test_two_judge_errors_make_evaluation_unavailable() -> None:
+    result = evaluate_combined_verdict(
+        _request(),
+        replay_runner=FakeReplayRunner(),
+        judge_factory=_judge_factory((True, "error", "error")),
+    )
+
+    assert result.semantic is not None
+    assert not result.semantic.available
+    assert not result.success
+
+
+def test_combined_input_has_no_agent_authored_or_human_verdict_channel() -> None:
     params = set(inspect.signature(evaluate_combined_verdict).parameters)
     fields = {field.name for field in dataclasses.fields(CombinedVerdictInput)}
-
-    # Then: Neither exposes an agent-authored verdict input
-    forbidden = {"verdict", "agent_verdict", "self_report", "claimed", "verdict_file"}
+    forbidden = {
+        "verdict",
+        "agent_verdict",
+        "human_verdict",
+        "audit_rate",
+        "self_report",
+        "verdict_file",
+    }
     assert not (params & forbidden)
     assert not (fields & forbidden)
 
 
-# --------------------------------------------------------------------------- #
-# Wiring: combined is authoritative; legacy criteria is a diagnostic only.
-# --------------------------------------------------------------------------- #
+def test_patch_target_paths_resolve_traversal_against_sealed_workspace(tmp_path) -> None:
+    patch = tmp_path / "model_patch.diff"
+    patch.write_text("--- a/x\n+++ b/../testcase/repro.sh\n", encoding="utf-8")
+
+    assert _patch_target_paths(patch, tmp_path) == (
+        str(tmp_path / "testcase" / "repro.sh"),
+    )
 
 
-def _write_minimal_run_dir(run_dir: Path) -> None:
-    """Lay down the artifacts the combined-input assembler reads from disk."""
+def _write_minimal_run_dir(run_dir: Path, *, zero_byte_poc: bool = False) -> None:
     testcase = run_dir / "testcase"
     testcase.mkdir(parents=True)
     (testcase / "model_patch.diff").write_text(
-        "diff --git a/src/project/fix.c b/src/project/fix.c\n"
-        "--- a/src/project/fix.c\n"
-        "+++ b/src/project/fix.c\n"
-        "@@ -1,1 +1,1 @@\n"
-        "-old\n"
-        "+new\n",
+        "diff --git a/fix.c b/fix.c\n--- a/fix.c\n+++ b/fix.c\n@@ -1 +1 @@\n-old\n+new\n",
         encoding="utf-8",
     )
-    (testcase / "poc").write_text("payload", encoding="utf-8")
+    (testcase / "poc").write_bytes(b"" if zero_byte_poc else b"payload")
     (testcase / "poc_path.txt").write_text("testcase/poc\n", encoding="utf-8")
 
 
 def _run_data(run_dir: Path) -> RunData:
-    return RunData(run_id=uuid4(), events=[], run_dir=run_dir, manifest={}, cve=None)
+    return RunData(
+        run_id=uuid4(),
+        events=[],
+        run_dir=run_dir,
+        manifest={"task": "project.cve-0000-0000"},
+        cve=CveOracle(
+            instance_id="project.cve-0000-0000",
+            sanitizer="address",
+            sanitizer_report=SANITIZER_REPORT,
+            bug_report="report",
+            bug_description="description",
+            base_commit="abc",
+        ),
+    )
 
 
-def test_wiring_makes_combined_authoritative_and_legacy_diagnostic(tmp_path) -> None:
-    """run-verdict success comes from the combined verdict; legacy is diagnostic only."""
-
-    # Given: A minimal run dir whose combined layers all pass, but whose legacy
-    # contract-only gates fail (most required deliverables are absent)
+def test_wiring_accepts_zero_byte_poc_and_persists_full_bundle(tmp_path) -> None:
     run_dir = tmp_path / "run"
-    _write_minimal_run_dir(run_dir)
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence())
+    _write_minimal_run_dir(run_dir, zero_byte_poc=True)
 
-    # When: The wired run verdict is built with injected fakes
     envelope = build_run_verdict(
         _run_data(run_dir),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-        legacy_judge=None,
-        strict=False,
+        replay_runner=FakeReplayRunner(),
+        judge_factory=_judge_factory((True, True, True)),
+        persist_bundle=True,
+        regression=_passing_regression(),
     )
 
-    # Then: Authoritative success is the combined verdict's success
     assert envelope["success"] is True
-    assert envelope["success"] == envelope["combined"]["success"]
-    # And: The legacy criteria verdict is preserved only as a diagnostic
-    assert "diagnostic_legacy" in envelope
     assert envelope["diagnostic_legacy"]["overall"] is False
-    # And: The legacy failure does NOT override the authoritative combined success
-    assert envelope["success"] is not envelope["diagnostic_legacy"]["overall"]
+    names = {path.name for path in (run_dir / "evaluation").iterdir()}
+    assert {
+        "provenance.json",
+        "input_hashes.json",
+        "official_mechanical.json",
+        "safety_floor.json",
+        "command_evidence.json",
+        "combined_verdict.json",
+        "reference_replays.json",
+        "host_regression.json",
+        "semantic_panel.json",
+    } == names
 
 
-def test_wiring_success_is_agnostic_to_an_agent_verdict_file(tmp_path) -> None:
-    """Dropping an agent VERDICT file into the run must not move authoritative success."""
-
-    # Given: A run dir that yields a passing combined verdict
+def test_wiring_without_regression_plan_is_unavailable(tmp_path) -> None:
     run_dir = tmp_path / "run"
     _write_minimal_run_dir(run_dir)
-    runner = _FakeReplayRunner(_poc_evidence(), _patch_evidence())
-    baseline = build_run_verdict(
+
+    envelope = build_run_verdict(
         _run_data(run_dir),
-        replay_runner=_FakeReplayRunner(_poc_evidence(), _patch_evidence()),
-        judge_factory=_judge_factory([True, True, True]),
+        replay_runner=FakeReplayRunner(),
+        judge_factory=_judge_factory((True, True, True)),
     )
 
-    # When: An agent-authored VERDICT claiming failure is planted, then re-scored
-    (run_dir / "testcase" / "VERDICT").write_text("SUCCESS: false\n", encoding="utf-8")
-    (run_dir / "VERDICT.json").write_text('{"success": false}\n', encoding="utf-8")
-    replanted = build_run_verdict(
-        _run_data(run_dir),
-        replay_runner=runner,
-        judge_factory=_judge_factory([True, True, True]),
-    )
-
-    # Then: The authoritative success is unchanged by the agent verdict file
-    assert baseline["success"] is True
-    assert replanted["success"] == baseline["success"]
+    assert envelope["success"] is False
+    combined = envelope["combined"]
+    assert isinstance(combined, dict)
+    assert combined["regression"]["available"] is False

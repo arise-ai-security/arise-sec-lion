@@ -1,4 +1,4 @@
-"""Tests for the LLM judge callable: schema translation, coercion, fail-closed.
+"""Tests for the LLM judge callable: schema translation, validation, fail-closed.
 
 The live LLM call is monkeypatched — these stay offline and deterministic. The
 schema-translation test is the most important: OpenAI structured outputs reject a
@@ -11,9 +11,9 @@ from __future__ import annotations
 import experiments.shared.evaluation.judge as judge_mod
 from experiments.shared.evaluation.judge import (
     LLMJudge,
-    _coerce,
     _fail_closed,
     _json_schema_from_contract,
+    _matches_type,
 )
 
 
@@ -36,14 +36,16 @@ def test_json_schema_translation_is_strict_structured_output() -> None:
     assert schema["properties"]["evidence_refs"] == {"type": "array", "items": {"type": "string"}}
 
 
-def test_coerce_normalizes_returned_types() -> None:
-    assert _coerce("true", "bool") is True
-    assert _coerce(False, "bool") is False
-    assert _coerce("0.5", "float") == 0.5
-    assert _coerce(3, "int") == 3
-    assert _coerce("x", "str") == "x"
-    assert _coerce("solo", "list[str]") == ["solo"]
-    assert _coerce(["a", "b"], "list[str]") == ["a", "b"]
+def test_contract_type_validation_is_strict() -> None:
+    assert _matches_type(True, "bool")
+    assert not _matches_type("true", "bool")
+    assert _matches_type(0.5, "float")
+    assert not _matches_type("0.5", "float")
+    assert _matches_type(3, "int")
+    assert _matches_type("x", "str")
+    assert not _matches_type(3, "str")
+    assert _matches_type(["a", "b"], "list[str]")
+    assert not _matches_type("solo", "list[str]")
 
 
 def test_fail_closed_returns_false_verdict_with_marker() -> None:
@@ -78,7 +80,7 @@ class _FakeResponse:
 
 
 def test_judge_parses_structured_response(monkeypatch) -> None:
-    """A well-formed structured response is coerced to the contract dict."""
+    """A well-formed structured response is validated against the contract."""
 
     def fake_completion(**kwargs):
         # Regression guard: the request must use strict json_schema structured output.
@@ -129,3 +131,21 @@ def test_judge_fails_closed_on_empty_content(monkeypatch) -> None:
     out = judge({"prompt": "p", "excerpts": {}, "schema": _CONTRACT})
     assert out["verdict"] is False
     assert out["_error"] is True
+
+
+def test_judge_fails_closed_on_wrong_structured_types(monkeypatch) -> None:
+    monkeypatch.setattr(
+        judge_mod.litellm,
+        "completion",
+        lambda **k: _FakeResponse(
+            '{"verdict": "true", "confidence": 0.9, '
+            '"reason": "ok", "evidence_refs": ["a"]}'
+        ),
+    )
+    judge = LLMJudge()
+
+    out = judge({"prompt": "p", "excerpts": {}, "schema": _CONTRACT})
+
+    assert out["verdict"] is False
+    assert out["_error"] is True
+    assert judge.errors == 1

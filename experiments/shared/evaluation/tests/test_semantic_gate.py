@@ -1,197 +1,262 @@
-"""Tests for three-call semantic judgement and audit routing."""
+"""Tests for the zero-human heterogeneous semantic judge panel."""
+
+from collections.abc import Callable
 
 import pytest
 
-from experiments.shared.evaluation.judge import DEFAULT_JUDGE_MODEL
+import experiments.shared.evaluation.semantic_gate as semantic_gate
 from experiments.shared.evaluation.semantic_gate import (
+    SEMANTIC_JUDGE_MODELS,
+    SEMANTIC_RUBRIC,
     _default_judge_factory,
-    adjudicate_human_reviews,
-    apply_human_override,
     build_blinded_semantic_prompt,
     evaluate_semantic_gate,
-    unanimous_audit_requires_full_review,
 )
 
 
-class _Judge:
-    def __init__(self, verdict):
-        self._verdict = verdict
-
-    def __call__(self, built):
-        del built
-        if self._verdict == "error":
-            return {"verdict": False, "_error": True}
-        return {"verdict": self._verdict, "reason": "test"}
-
-
-def _factory(verdicts):
-    pending = iter(verdicts)
-    return lambda: _Judge(next(pending))
-
-
-class _RecordingJudge:
-    """Pinned-model fake that captures every ``built`` payload it receives."""
-
-    def __init__(self, captured, *, model=DEFAULT_JUDGE_MODEL, verdict=True):
+class FakeJudge:
+    def __init__(self, model: str, outcome: bool | str | Exception) -> None:
         self.model = model
-        self._captured = captured
-        self._verdict = verdict
+        self._outcome = outcome
 
-    def __call__(self, built):
-        self._captured.append(built)
-        return {"verdict": self._verdict, "reason": "test"}
+    def __call__(self, built: dict) -> dict:
+        del built
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        if self._outcome == "error":
+            return {"verdict": False, "reason": "provider failure", "_error": True}
+        if self._outcome == "missing":
+            return {"reason": "schema violation"}
+        if self._outcome == "contradictory":
+            return {
+                "root_cause_correct": False,
+                "patch_addresses_root_cause": True,
+                "over_broad_suppression": False,
+                "evidence_consistent": True,
+                "regression_risk_acceptable": True,
+                "verdict": True,
+                "reason": "contradictory",
+            }
+        return {
+            "root_cause_correct": self._outcome,
+            "patch_addresses_root_cause": self._outcome,
+            "over_broad_suppression": not self._outcome,
+            "evidence_consistent": self._outcome,
+            "regression_risk_acceptable": self._outcome,
+            "verdict": self._outcome,
+            "reason": "test",
+        }
 
 
-def _recording_factory(captured, *, model=DEFAULT_JUDGE_MODEL, verdict=True):
-    return lambda: _RecordingJudge(captured, model=model, verdict=verdict)
+def _factory(
+    outcomes: tuple[bool | str | Exception, ...],
+    requested: list[str] | None = None,
+) -> Callable[[str], FakeJudge]:
+    by_model = dict(zip(SEMANTIC_JUDGE_MODELS, outcomes, strict=True))
+
+    def create(model: str) -> FakeJudge:
+        if requested is not None:
+            requested.append(model)
+        return FakeJudge(model, by_model[model])
+
+    return create
 
 
-def test_unanimous_three_call_result_is_provisionally_accepted() -> None:
-    # Given: Three independent positive judges outside the audit sample
-    factory = _factory([True, True, True])
+def test_two_positive_votes_accept_semantic_gate() -> None:
+    # Given: Two positive provider votes and one negative vote
+    factory = _factory((True, False, True))
 
-    # When: The semantic gate runs
+    # When: The semantic panel aggregates the votes
     result = evaluate_semantic_gate(
-        task_id="unanimous",
+        task_id="two-positive",
         evidence={"root_cause": "blinded evidence"},
         judge_factory=factory,
-        audit_rate=0,
     )
 
-    # Then: It accepts provisionally without human review
-    assert result.provisional_verdict
-    assert result.unanimous
-    assert not result.human_audit_required
+    # Then: The deterministic 2-of-3 rule accepts the fix
+    assert result.available
+    assert result.verdict
+    assert result.valid_votes == 3
+    assert result.positive_votes == 2
+    assert not result.judge_error
 
 
-def test_two_to_one_result_enters_human_adjudication() -> None:
-    # Given: A split panel
-    factory = _factory([True, False, True])
+def test_two_negative_votes_reject_semantic_gate() -> None:
+    # Given: One positive provider vote and two negative votes
+    factory = _factory((False, True, False))
 
-    # When: The semantic gate runs and a human adjudicates
+    # When: The semantic panel aggregates the votes
     result = evaluate_semantic_gate(
-        task_id="split",
+        task_id="two-negative",
         evidence={"root_cause": "blinded evidence"},
         judge_factory=factory,
-        audit_rate=0,
     )
-    final = apply_human_override(result, human_verdict=False)
 
-    # Then: Human review is mandatory and overrides the provisional majority
-    assert result.provisional_verdict
-    assert result.human_audit_required
-    assert not final
+    # Then: The deterministic 2-of-3 rule rejects the fix
+    assert result.available
+    assert not result.verdict
+    assert result.valid_votes == 3
+    assert result.positive_votes == 1
 
 
-def test_judge_error_fails_closed_and_requires_human_review() -> None:
-    # Given: One failed judge call
-    factory = _factory([True, "error", True])
+def test_one_judge_error_makes_panel_unavailable() -> None:
+    # Given: One provider error and two positive valid votes
+    factory = _factory((True, "error", True))
 
-    # When: The semantic gate runs
+    # When: The semantic panel aggregates only valid votes
     result = evaluate_semantic_gate(
-        task_id="error",
+        task_id="one-error",
         evidence={"root_cause": "blinded evidence"},
         judge_factory=factory,
-        audit_rate=0,
     )
 
-    # Then: It fails closed and queues adjudication
-    assert not result.provisional_verdict
+    # Then: A missing heterogeneous seat makes confirmatory evaluation unavailable
+    assert not result.available
+    assert not result.verdict
+    assert result.valid_votes == 2
+    assert result.positive_votes == 2
     assert result.judge_error
-    assert result.human_audit_required
+    assert result.calls[1].verdict is None
+    assert not result.calls[1].valid
 
 
-def test_unanimous_audit_disagreement_above_five_percent_expands_review() -> None:
-    # Given/When/Then: Exactly 5% does not expand; above 5% does
-    assert not unanimous_audit_requires_full_review(audited=20, disagreements=1)
-    assert unanimous_audit_requires_full_review(audited=19, disagreements=1)
+def test_fewer_than_two_valid_votes_is_unavailable_and_fails_closed() -> None:
+    # Given: Two provider errors and one positive valid vote
+    factory = _factory(("error", True, RuntimeError("transport failed")))
 
-
-def test_blinded_prompt_rejects_arm_identity() -> None:
-    # Given/When/Then: Cell, model, cost, topology, and treatment cannot enter judge input
-    with pytest.raises(ValueError, match="blinded fields"):
-        build_blinded_semantic_prompt({"cell": "B4", "root_cause": "evidence"})
-
-
-def test_human_disagreement_requires_third_reviewer() -> None:
-    # Given/When/Then: Two-reviewer disagreement cannot be resolved without reviewer three
-    with pytest.raises(ValueError, match="third reviewer"):
-        adjudicate_human_reviews(True, False)
-    assert adjudicate_human_reviews(True, False, third=False) is False
-
-
-def test_gate_rejects_evidence_carrying_arm_identity() -> None:
-    # Given: Evidence that leaks cell / model / cost / topology identity
-    captured: list = []
-    factory = _recording_factory(captured)
-
-    # When/Then: The gate blinds internally and fails closed before any judge runs
-    for leaked in ("cell", "model", "cost", "topology", "treatment_version"):
-        with pytest.raises(ValueError, match="blinded fields"):
-            evaluate_semantic_gate(
-                task_id="leak",
-                evidence={leaked: "B4", "root_cause": "rc"},
-                judge_factory=factory,
-                audit_rate=0,
-            )
-    assert captured == []
-
-
-def test_gate_builds_blinded_prompt_internally() -> None:
-    # Given: A clean structured record (the caller cannot supply raw prompt text)
-    captured: list = []
-    factory = _recording_factory(captured)
-    evidence = {"root_cause": "rc", "patch": "p"}
-
-    # When: The gate runs
-    evaluate_semantic_gate(
-        task_id="clean", evidence=evidence, judge_factory=factory, audit_rate=0
-    )
-
-    # Then: Each judge sees exactly the internally blinded prompt, nothing caller-authored
-    assert len(captured) == 3
-    expected_prompt = build_blinded_semantic_prompt(evidence)
-    for built in captured:
-        assert built["prompt"] == expected_prompt
-
-
-def test_gate_binds_pinned_judge_model() -> None:
-    # Given: A judge factory bound to the pinned reproducibility snapshot
-    captured: list = []
-    factory = _recording_factory(captured, model=DEFAULT_JUDGE_MODEL)
-
-    # When: The gate runs
+    # When: The semantic panel attempts aggregation
     result = evaluate_semantic_gate(
-        task_id="pinned",
-        evidence={"root_cause": "rc"},
+        task_id="unavailable",
+        evidence={"root_cause": "blinded evidence"},
         judge_factory=factory,
-        audit_rate=0,
     )
 
-    # Then: The result records the pinned model
-    assert result.judge_model == DEFAULT_JUDGE_MODEL
-    assert result.judge_model == "gpt-5.5-2026-04-23"
+    # Then: Evaluation is unavailable and cannot pass
+    assert not result.available
+    assert not result.verdict
+    assert result.valid_votes == 1
+    assert result.positive_votes == 1
+    assert result.judge_error
 
 
-def test_gate_rejects_unpinned_judge_model() -> None:
-    # Given: A judge factory bound to some other, unpinned model
-    captured: list = []
-    factory = _recording_factory(captured, model="gpt-4o-mini")
+def test_two_valid_split_votes_are_unavailable() -> None:
+    # Given: One positive vote, one negative vote, and one invalid response
+    factory = _factory((True, False, "missing"))
 
-    # When/Then: The gate refuses to run against an unpinned judge
-    with pytest.raises(ValueError, match="pinned judge model"):
+    # When: The semantic panel aggregates the valid votes
+    result = evaluate_semantic_gate(
+        task_id="split-valid",
+        evidence={"root_cause": "blinded evidence"},
+        judge_factory=factory,
+    )
+
+    # Then: Evaluation is unavailable because one seat is invalid
+    assert not result.available
+    assert not result.verdict
+    assert result.valid_votes == 2
+    assert result.positive_votes == 1
+    assert result.judge_error
+
+
+def test_logically_contradictory_judge_response_is_invalid() -> None:
+    factory = _factory((True, "contradictory", True))
+
+    result = evaluate_semantic_gate(
+        task_id="contradictory",
+        evidence={"root_cause": "blinded evidence"},
+        judge_factory=factory,
+    )
+
+    assert not result.available
+    assert not result.verdict
+    assert result.valid_votes == 2
+    assert result.calls[1].verdict is None
+    assert not result.calls[1].valid
+
+
+def test_gate_requests_each_pinned_model_once_in_frozen_order() -> None:
+    # Given: A factory recording every requested model
+    requested: list[str] = []
+    factory = _factory((True, True, True), requested)
+
+    # When: The semantic panel runs
+    result = evaluate_semantic_gate(
+        task_id="models",
+        evidence={"root_cause": "blinded evidence"},
+        judge_factory=factory,
+    )
+
+    # Then: Each heterogeneous pinned model occupies exactly one seat
+    assert tuple(requested) == SEMANTIC_JUDGE_MODELS
+    assert result.models == SEMANTIC_JUDGE_MODELS
+
+
+def test_result_persists_prompt_schema_models_and_raw_calls() -> None:
+    # Given: Three judges returning distinct decisions
+    evidence = {"root_cause": "verified defect", "patch": "bounded fix"}
+    factory = _factory((True, False, True))
+
+    # When: The semantic panel runs
+    result = evaluate_semantic_gate(
+        task_id="persisted",
+        evidence=evidence,
+        judge_factory=factory,
+    )
+
+    # Then: The complete frozen judge input and every raw response remain available
+    assert result.task_id == "persisted"
+    assert result.prompt == build_blinded_semantic_prompt(evidence)
+    assert result.schema == SEMANTIC_RUBRIC
+    assert result.models == SEMANTIC_JUDGE_MODELS
+    assert tuple(call.model for call in result.calls) == SEMANTIC_JUDGE_MODELS
+    assert tuple(call.response["verdict"] for call in result.calls) == (True, False, True)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("cell", "model", "cost", "topology", "treatment_version"),
+)
+def test_blinded_prompt_rejects_nested_arm_identity_fields(field: str) -> None:
+    # Given: A forbidden identity field nested below lists and mappings
+    evidence = {"outer": [{"inner": {field: "B4"}}]}
+
+    # When/Then: Recursive blinding rejects the packet before any judge runs
+    with pytest.raises(ValueError, match=r"\$\.outer\[0\]\.inner"):
+        build_blinded_semantic_prompt(evidence)
+
+
+def test_gate_rejects_unpinned_model_returned_by_factory() -> None:
+    # Given: A factory returning a judge whose advertised model differs from its seat
+    def wrong_factory(model: str) -> FakeJudge:
+        del model
+        return FakeJudge("floating-latest", True)
+
+    # When/Then: The gate rejects evaluator model drift
+    with pytest.raises(ValueError, match="requires model"):
         evaluate_semantic_gate(
             task_id="unpinned",
-            evidence={"root_cause": "rc"},
-            judge_factory=factory,
-            audit_rate=0,
+            evidence={"root_cause": "verified"},
+            judge_factory=wrong_factory,
         )
-    assert captured == []
 
 
-def test_default_judge_factory_uses_pinned_model() -> None:
-    # Given/When: The production default factory constructs a judge
-    judge = _default_judge_factory()
+def test_default_factory_binds_each_requested_model() -> None:
+    # Given/When: The production factory constructs each frozen judge seat
+    judges = tuple(_default_judge_factory(model) for model in SEMANTIC_JUDGE_MODELS)
 
-    # Then: It is bound to the pinned snapshot, not a caller free-choice
-    assert judge.model == DEFAULT_JUDGE_MODEL
+    # Then: No model is replaced by a global default or floating alias
+    assert tuple(judge.model for judge in judges) == SEMANTIC_JUDGE_MODELS
+
+
+def test_human_audit_api_is_removed() -> None:
+    # Given/When/Then: The semantic module exposes no human review or override path
+    assert not hasattr(semantic_gate, "adjudicate_human_reviews")
+    assert not hasattr(semantic_gate, "apply_human_override")
+    assert not hasattr(semantic_gate, "unanimous_audit_requires_full_review")
+
+
+def test_human_audit_queue_module_is_removed() -> None:
+    # Given/When/Then: No production human-audit queue or CLI remains
+    import importlib.util
+
+    assert importlib.util.find_spec("experiments.shared.evaluation.audit_queue") is None

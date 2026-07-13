@@ -15,10 +15,14 @@ predeclared cost/success endpoints.
 
 from __future__ import annotations
 
+import argparse
+import json
+import math
 import random
+import sys
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Literal
 
 from experiments.shared.evaluation.confirmatory import (
@@ -56,6 +60,8 @@ class LaunchOutcome:
     ``status`` records the real terminal disposition (``completed`` /
     ``failed`` / ``timeout`` / ...). Failures and timeouts are retained with
     their real (usually False) success flags — never curated away.
+    ``cost=None`` represents unavailable usage and is rejected by cost analysis;
+    it must never be replaced with a numeric zero.
     """
 
     cell: str
@@ -64,7 +70,7 @@ class LaunchOutcome:
     replicate: int
     run_id: str | None
     status: str
-    cost: float
+    cost: float | None
     mechanical_success: bool
     combined_success: bool
     completeness_rate: float = 1.0
@@ -83,7 +89,12 @@ class InstancePair:
 
 @dataclass(frozen=True, slots=True)
 class ConfirmatoryReport:
-    """Assembled confirmatory result: paired statistics plus per-arm cost endpoints."""
+    """Assembled confirmatory result: paired statistics plus per-arm cost endpoints.
+
+    Primary ITT success analysis remains available when secondary cost is
+    incomplete. Cost endpoints report ``cost_available=false`` and the exact
+    missing assignment keys instead of imputing zero or dropping pairs.
+    """
 
     pairs: tuple[InstancePair, ...]
     observations: tuple[PairedObservation, ...]
@@ -92,6 +103,12 @@ class ConfirmatoryReport:
     superiority: bool
     n1_cost: CostEndpoints
     b4_cost: CostEndpoints
+    cost_available: bool
+    missing_cost_keys: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        """Render the report as JSON-compatible primitives."""
+        return asdict(self)
 
 
 LaunchFn = Callable[[ConfirmatoryCandidate], LaunchOutcome]
@@ -123,8 +140,16 @@ def interleaved_launch_order(
     Returns:
         The flattened, interleaved candidate launch order.
     """
+    if not instances:
+        raise ValueError("at least one confirmatory instance is required")
+    if n1_cell == b4_cell:
+        raise ValueError("N1 and B4 cells must be distinct")
     if replicates < 1:
         raise ValueError("replicates must be >= 1")
+    if any(not task.strip() or not base.strip() for task, base in instances):
+        raise ValueError("every confirmatory instance requires a task and base_commit")
+    if len(set(instances)) != len(instances):
+        raise ValueError("confirmatory instances must be unique by (task, base_commit)")
     rng = random.Random(seed)
     units = [(task, base, rep) for (task, base) in instances for rep in range(replicates)]
     rng.shuffle(units)
@@ -173,12 +198,22 @@ def pair_by_instance(
     n1_cell: str,
     b4_cell: str,
 ) -> tuple[InstancePair, ...]:
-    """Pair N1 and B4 outcomes by ``(task, base_commit, replicate)``.
+    """Pair exact, nonempty N1/B4 assignments or fail the confirmatory study.
 
-    Only instances with exactly one outcome per arm form a pair; an instance
-    missing an arm — or carrying duplicates for one arm — is skipped so a
-    partial cell can never silently corrupt the paired statistics.
+    Both arms must contain the same ``(task, base_commit, replicate)`` keys and
+    exactly one outcome for every key. Missing arms, divergent base commits,
+    duplicate launches, and undeclared cells are integrity failures rather than
+    observations that may be skipped.
     """
+    if not outcomes:
+        raise ValueError("at least one outcome per arm is required")
+    if n1_cell == b4_cell:
+        raise ValueError("N1 and B4 cells must be distinct")
+    expected_cells = {n1_cell, b4_cell}
+    unexpected_cells = sorted({outcome.cell for outcome in outcomes} - expected_cells)
+    if unexpected_cells:
+        raise ValueError(f"outcomes contain undeclared cells: {unexpected_cells}")
+
     grouped: dict[tuple[str, str, int], dict[str, list[LaunchOutcome]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -186,17 +221,56 @@ def pair_by_instance(
         key = (outcome.task, outcome.base_commit, outcome.replicate)
         grouped[key][outcome.cell].append(outcome)
 
+    n1_keys = {key for key, arms in grouped.items() if arms.get(n1_cell)}
+    b4_keys = {key for key, arms in grouped.items() if arms.get(b4_cell)}
+    if not n1_keys or not b4_keys:
+        raise ValueError("both N1 and B4 must have at least one outcome")
+    if n1_keys != b4_keys:
+        missing_n1 = sorted(b4_keys - n1_keys)
+        missing_b4 = sorted(n1_keys - b4_keys)
+        raise ValueError(
+            "N1/B4 assignment sets differ; "
+            f"missing from {n1_cell}: {missing_n1}; missing from {b4_cell}: {missing_b4}"
+        )
+
     pairs: list[InstancePair] = []
-    for (task, base, rep), arms in sorted(grouped.items()):
+    for task, base, rep in sorted(n1_keys):
+        arms = grouped[(task, base, rep)]
         n1s = arms.get(n1_cell, [])
         b4s = arms.get(b4_cell, [])
-        if len(n1s) == 1 and len(b4s) == 1:
-            pairs.append(
-                InstancePair(
-                    task=task, base_commit=base, replicate=rep, n1=n1s[0], b4=b4s[0]
-                )
+        if len(n1s) != 1 or len(b4s) != 1:
+            raise ValueError(
+                f"assignment {(task, base, rep)!r} requires exactly one outcome per arm; "
+                f"found {n1_cell}={len(n1s)}, {b4_cell}={len(b4s)}"
             )
+        pairs.append(
+            InstancePair(
+                task=task, base_commit=base, replicate=rep, n1=n1s[0], b4=b4s[0]
+            )
+        )
     return tuple(pairs)
+
+
+def _is_missing_cost(outcome: LaunchOutcome) -> bool:
+    """True when usage is unknown, including the legacy ``0.0``+zero-completeness sentinel."""
+    return outcome.cost is None or (
+        outcome.cost == 0.0 and outcome.completeness_rate == 0.0
+    )
+
+
+def _optional_cost(outcome: LaunchOutcome) -> float | None:
+    """Return measured cost, or None when usage is missing (never coerce to 0.0)."""
+    if _is_missing_cost(outcome):
+        return None
+    if outcome.cost is None or not math.isfinite(outcome.cost) or outcome.cost < 0:
+        raise ValueError(
+            f"launch cost must be finite and non-negative for {outcome.cell}/{outcome.task}"
+        )
+    return outcome.cost
+
+
+def _assignment_key(outcome: LaunchOutcome) -> str:
+    return f"{outcome.cell}/{outcome.task}/{outcome.base_commit}/r{outcome.replicate}"
 
 
 def to_paired_observations(
@@ -204,7 +278,12 @@ def to_paired_observations(
     *,
     success: SuccessKind = "combined",
 ) -> tuple[PairedObservation, ...]:
-    """Project paired instances into confirmatory :class:`PairedObservation` inputs."""
+    """Project paired instances into confirmatory :class:`PairedObservation` inputs.
+
+    Success flags always project. Missing costs become ``None`` so primary ITT
+    success statistics remain computable while secondary cost endpoints report
+    unavailability separately.
+    """
 
     def ok(outcome: LaunchOutcome) -> bool:
         return outcome.combined_success if success == "combined" else outcome.mechanical_success
@@ -213,8 +292,8 @@ def to_paired_observations(
         PairedObservation(
             n1_success=ok(pair.n1),
             b4_success=ok(pair.b4),
-            n1_cost=pair.n1.cost,
-            b4_cost=pair.b4.cost,
+            n1_cost=_optional_cost(pair.n1),
+            b4_cost=_optional_cost(pair.b4),
         )
         for pair in pairs
     )
@@ -226,19 +305,35 @@ def cost_endpoints_from_outcomes(outcomes: Sequence[LaunchOutcome]) -> CostEndpo
     Mirrors :func:`experiments.shared.evaluation.cost.cost_endpoints` but sources
     the already-measured per-launch cost/success/completeness, so it stays pure
     over ITT-enrolled outcomes (no event replay, no database). Failures are kept
-    in the denominator of cost/run and completeness by construction.
+    in the denominator of cost/run and completeness by construction. Missing
+    usage never becomes zero: the endpoint is marked unavailable instead.
     """
     if not outcomes:
         raise ValueError("at least one outcome is required")
+    missing = tuple(
+        _assignment_key(outcome) for outcome in outcomes if _is_missing_cost(outcome)
+    )
+    completeness = sum(o.completeness_rate for o in outcomes) / len(outcomes)
+    if missing:
+        return CostEndpoints(
+            cost_per_run=None,
+            cost_per_mechanical_success=None,
+            cost_per_combined_success=None,
+            completeness_rate=completeness,
+            cost_available=False,
+            missing_assignment_keys=missing,
+        )
     count = len(outcomes)
-    total = sum(o.cost for o in outcomes)
+    total = sum(float(_optional_cost(outcome) or 0.0) for outcome in outcomes)
     mechanical = sum(o.mechanical_success for o in outcomes)
     combined = sum(o.combined_success for o in outcomes)
     return CostEndpoints(
         cost_per_run=total / count,
         cost_per_mechanical_success=(total / mechanical if mechanical else None),
         cost_per_combined_success=(total / combined if combined else None),
-        completeness_rate=sum(o.completeness_rate for o in outcomes) / count,
+        completeness_rate=completeness,
+        cost_available=True,
+        missing_assignment_keys=(),
     )
 
 
@@ -273,12 +368,69 @@ def run_confirmatory_study(
         else {}
     )
     difference = intervals.get("success_difference")
+    n1_cost = cost_endpoints_from_outcomes([o for o in outcomes if o.cell == n1_cell])
+    b4_cost = cost_endpoints_from_outcomes([o for o in outcomes if o.cell == b4_cell])
+    missing_cost_keys = tuple(
+        sorted({*n1_cost.missing_assignment_keys, *b4_cost.missing_assignment_keys})
+    )
     return ConfirmatoryReport(
         pairs=pairs,
         observations=observations,
         mcnemar_p=mcnemar_exact(observations),
         intervals=intervals,
         superiority=superiority_supported(difference) if difference is not None else False,
-        n1_cost=cost_endpoints_from_outcomes([o for o in outcomes if o.cell == n1_cell]),
-        b4_cost=cost_endpoints_from_outcomes([o for o in outcomes if o.cell == b4_cell]),
+        n1_cost=n1_cost,
+        b4_cost=b4_cost,
+        cost_available=n1_cost.cost_available and b4_cost.cost_available,
+        missing_cost_keys=missing_cost_keys,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a declared paired confirmatory study through the production adapter."""
+    parser = argparse.ArgumentParser(description="Run paired N1/B4 confirmatory experiments.")
+    parser.add_argument("--study", required=True)
+    parser.add_argument("--n1-cell", default="N1")
+    parser.add_argument("--b4-cell", default="B4")
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--replicates", type=int)
+    parser.add_argument("--bootstrap-samples", type=int)
+    args = parser.parse_args(argv)
+
+    from experiments.shared.evaluation.adapters.arise_confirmatory import (
+        AriseConfirmatoryAdapter,
+    )
+
+    adapter = AriseConfirmatoryAdapter(
+        study_id=args.study,
+        n1_cell=args.n1_cell,
+        b4_cell=args.b4_cell,
+    )
+    frozen_seed, frozen_replicates, frozen_bootstrap_samples = adapter.frozen_parameters()
+    supplied = (args.seed, args.replicates, args.bootstrap_samples)
+    frozen = (frozen_seed, frozen_replicates, frozen_bootstrap_samples)
+    labels = ("seed", "replicates", "bootstrap_samples")
+    drift = [
+        f"{label}: supplied={value} frozen={expected}"
+        for label, value, expected in zip(labels, supplied, frozen, strict=True)
+        if value is not None and value != expected
+    ]
+    if drift:
+        raise ValueError(
+            "confirmatory CLI parameters drift from preregistration: " + "; ".join(drift)
+        )
+    report = run_confirmatory_study(
+        adapter.instances(),
+        n1_cell=args.n1_cell,
+        b4_cell=args.b4_cell,
+        seed=frozen_seed,
+        launch=adapter,
+        replicates=frozen_replicates,
+        bootstrap_samples=frozen_bootstrap_samples,
+    )
+    sys.stdout.write(json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

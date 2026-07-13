@@ -122,14 +122,20 @@ def literal(path: Path, *needles: str) -> bool:
     return all(needle.lower() in text for needle in needles)
 
 
-def declared_path_exists(pointer_file: Path, run_dir: Path) -> bool:
+def declared_path_exists(
+    pointer_file: Path,
+    run_dir: Path,
+    *,
+    allow_empty: bool = False,
+) -> bool:
     """Whether every non-blank line of ``pointer_file`` names a real deliverable.
 
     Each line is read as a container path, mapped to disk (``run_dir / line`` with
     a leading ``/`` stripped), and must be a non-vacuous file under ``run_dir``
     (a traversal guard rejects any line escaping the run root). Returns ``False``
-    when the pointer file is empty. This is OPAQUE: it checks existence and
-    non-vacuity only, never the file's format.
+    when the pointer file is empty. ``allow_empty`` is reserved for PoC artifacts,
+    where a present zero-byte file is valid input. This is OPAQUE: it never checks
+    the file format.
     """
     lines = [line.strip() for line in _read_text_safe(pointer_file).splitlines() if line.strip()]
     if not lines:
@@ -140,7 +146,7 @@ def declared_path_exists(pointer_file: Path, run_dir: Path) -> bool:
         resolved = candidate.resolve()
         if resolved != run_root and run_root not in resolved.parents:
             return False
-        if is_vacuous(candidate):
+        if not candidate.is_file() or (not allow_empty and is_vacuous(candidate)):
             return False
     return True
 
@@ -390,52 +396,21 @@ def _judge_passed(result: dict[str, Any] | None) -> bool:
 # evidence is unambiguous. They key on the CVE *crash* oracle (sanitizer_report), never
 # the gold patch, so they cannot leak the fix.
 
-_ASAN_CLASS_RX = re.compile(r"ERROR:\s*AddressSanitizer:\s*([A-Za-z0-9_-]+)")
-_ASAN_ACCESS_RX = re.compile(r"\b(READ|WRITE)\s+of\s+size\s+\d+", re.IGNORECASE)
-_ASAN_ACCESS_CAUSE_RX = re.compile(r"caused by a\s+(READ|WRITE)\s+memory access", re.IGNORECASE)
-_ASAN_FRAME_RX = re.compile(r"#\d+\s+0x[0-9a-fA-F]+\s+in\s+(.+)$")
-_FRAME_PATH_RX = re.compile(r"\s+(/\S+|\([^)]*\))\s*$")
-_NONAPP_FUNC_RX = re.compile(
-    r"^(?:__asan|__lsan|__interceptor|__sanitizer|__isoc99_|asan_|scanf_common"
-    r"|printf_common|v?[fs]?scanf|v?[fs]?printf|mem(?:cpy|move|set|cmp)"
-    r"|str(?:n?cpy|n?cat|len|n?cmp|dup)|malloc|calloc|realloc|free"
-    r"|operator new|operator delete|_start|__libc_start_main)",
-    re.IGNORECASE,
-)
-_NONAPP_PATH_RX = re.compile(
-    r"compiler-rt|sanitizer_common|/asan/|libc-start|/glibc|llvm-project|/sysdeps/|interception",
-    re.IGNORECASE,
-)
-
-
 def _crash_signature(text: str) -> tuple[str | None, str | None, str | None]:
     """Extract ``(sanitizer_class, access_kind, top_application_frame)`` from ASan output.
 
-    The top application frame skips sanitizer / interceptor / libc frames (memcpy,
-    scanf_common, __asan_*, glibc, compiler-rt) so the key is the project's own crash
-    site, not the shim it aborted inside.
+    Delegates to :func:`experiments.shared.evaluation.official.crash_signature` so
+    the authoritative and legacy floors share one extractor (including SEGV
+    ``unknown`` access and module-relative symbol-less frames).
     """
-    if not text:
-        return None, None, None
-    cls_m = _ASAN_CLASS_RX.search(text)
-    cls = cls_m.group(1).lower() if cls_m else None
-    acc_m = _ASAN_ACCESS_RX.search(text) or _ASAN_ACCESS_CAUSE_RX.search(text)
-    acc = acc_m.group(1).lower() if acc_m else None
-    top: str | None = None
-    for line in text.splitlines():
-        fm = _ASAN_FRAME_RX.search(line)
-        if not fm:
-            continue
-        rest = fm.group(1).strip()
-        pm = _FRAME_PATH_RX.search(rest)
-        func = (rest[: pm.start()] if pm else rest).strip()
-        path = pm.group(1) if pm else ""
-        base = re.split(r"[(<]", func)[0].strip()
-        if not base or _NONAPP_FUNC_RX.match(base) or _NONAPP_PATH_RX.search(path):
-            continue
-        top = base
-        break
-    return cls, acc, top
+    from experiments.shared.evaluation.official import crash_signature
+
+    signature = crash_signature(text)
+    return (
+        signature.sanitizer_class,
+        signature.access_kind,
+        signature.top_application_frame,
+    )
 
 
 def _crash_signature_matches(run_data: RunData, oracle: CveOracle | None) -> bool:

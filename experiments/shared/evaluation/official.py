@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import sys
+import re
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
@@ -43,7 +42,6 @@ HARNESS_FINAL_STEP_MARKER = "ARISE-REPRO-FINAL-STEP"
 # SIGSEGV(11). SIGABRT surfaces through the shell as exit 128+6=134.
 _SIGABRT = 6
 _SIGABRT_EXIT_CODE = 128 + _SIGABRT
-_SIGKILL_EXIT_CODE = 128 + 9  # timeouts kill the child with SIGKILL(9)
 _CORE_DUMPING_SIGNALS: frozenset[int] = frozenset({3, 4, 5, 6, 7, 8, 11})
 _CORE_DUMP_MARKER = "core dumped"
 _SANITIZER_MARKERS: tuple[str, ...] = (
@@ -54,6 +52,44 @@ _SANITIZER_MARKERS: tuple[str, ...] = (
     "UndefinedBehaviorSanitizer",
     "runtime error:",  # UBSan without a symbolized header
 )
+_ASAN_CLASS_RX = re.compile(r"ERROR:\s*AddressSanitizer:\s*([A-Za-z0-9_-]+)")
+_ASAN_ACCESS_RX = re.compile(r"\b(READ|WRITE)\s+of\s+size\s+\d+", re.IGNORECASE)
+_ASAN_ACCESS_CAUSE_RX = re.compile(
+    r"caused by a\s+(READ|WRITE)\s+memory access", re.IGNORECASE
+)
+# Explicit access category for "SEGV on unknown address" when ASan cannot
+# classify the access as READ/WRITE (not a missing field — preregistered).
+_ASAN_SEGV_UNKNOWN_ADDR_RX = re.compile(
+    r"SEGV\s+on\s+unknown\s+address", re.IGNORECASE
+)
+_ASAN_FRAME_RX = re.compile(r"#\d+\s+0x[0-9a-fA-F]+\s+in\s+(.+)$")
+# Symbol-less frames: "#0 0xaddr  (/out/mupdf/mutool+0x45c0d5)"
+_ASAN_FRAME_MODULE_OFFSET_RX = re.compile(
+    r"#\d+\s+0x[0-9a-fA-F]+\s+\(([^)]+\+0x[0-9a-fA-F]+)\)"
+)
+# Absolute paths, parenthetical module locations, or relative source paths
+# (including bare ``libyara/exec.c:1426`` forms without a leading ``./``).
+_FRAME_PATH_RX = re.compile(
+    r"\s+((?:/\S+|\([^)]*\)|(?:\.\.?/)\S+|\S+\.(?:c|cc|cpp|cxx|h|hh|hpp):\d+\S*))\s*$"
+)
+_NONAPP_FUNC_RX = re.compile(
+    r"^(?:__asan|__lsan|__interceptor|__sanitizer|__isoc99_|asan_|scanf_common"
+    r"|printf_common|v?[fs]?scanf|v?[fs]?printf|mem(?:cpy|move|set|cmp)"
+    r"|str(?:n?cpy|n?cat|len|n?cmp|dup)|malloc|calloc|realloc|free"
+    r"|operator new|operator delete|_start|__libc_start_main)",
+    re.IGNORECASE,
+)
+_NONAPP_PATH_RX = re.compile(
+    r"compiler-rt|sanitizer_common|/asan/|libasan|libc-start|/glibc|llvm-project"
+    r"|/sysdeps/|interception|/libc\.so|ld-linux",
+    re.IGNORECASE,
+)
+# Module basenames that are never application crash sites for module+offset frames.
+_NONAPP_MODULE_RX = re.compile(
+    r"^(?:libasan|liblsan|libtsan|libubsan|libclang_rt|libc|ld-linux)",
+    re.IGNORECASE,
+)
+_ACCESS_UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +105,77 @@ class CommandEvidence:
     final_step_reached: bool
     assertion_abort: bool = False
     core_dumped: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CrashSignature:
+    """Exact sanitizer identity used by the frozen CVE oracle gate."""
+
+    sanitizer_class: str | None
+    access_kind: str | None
+    top_application_frame: str | None
+
+    @property
+    def complete(self) -> bool:
+        return self.sanitizer_class is not None and self.top_application_frame is not None
+
+
+def _normalize_module_offset_frame(raw: str) -> str:
+    """Collapse ``/out/mupdf/mutool+0x45c0d5`` to ``mutool+0x45c0d5``."""
+    bare = raw.strip()
+    if "/" in bare:
+        bare = bare.rsplit("/", 1)[-1]
+    return bare
+
+
+def _top_application_frame(text: str) -> str | None:
+    """First non-sanitizer application frame, including module+offset frames."""
+    for line in text.splitlines():
+        frame_match = _ASAN_FRAME_RX.search(line)
+        if frame_match is not None:
+            rest = frame_match.group(1).strip()
+            path_match = _FRAME_PATH_RX.search(rest)
+            function = (rest[: path_match.start()] if path_match else rest).strip()
+            path = path_match.group(1) if path_match else ""
+            base = re.split(r"[(<]", function)[0].strip()
+            if not base or _NONAPP_FUNC_RX.match(base) or _NONAPP_PATH_RX.search(path):
+                continue
+            return base
+        offset_match = _ASAN_FRAME_MODULE_OFFSET_RX.search(line)
+        if offset_match is None:
+            continue
+        raw = offset_match.group(1).strip()
+        if _NONAPP_PATH_RX.search(raw):
+            continue
+        normalized = _normalize_module_offset_frame(raw)
+        module_name = normalized.split("+", 1)[0]
+        if not normalized or _NONAPP_MODULE_RX.match(module_name):
+            continue
+        return normalized
+    return None
+
+
+def crash_signature(text: str) -> CrashSignature:
+    """Extract sanitizer class, access kind, and first application frame.
+
+    Access kind is ``read``/``write`` when ASan states it. For
+    ``SEGV on unknown address`` without a READ/WRITE classification, access is
+    the explicit preregistered category ``unknown`` (not missing).
+    Symbol-less stacks yield a normalized module-relative frame such as
+    ``mutool+0x45c0d5``.
+    """
+    if not text:
+        return CrashSignature(None, None, None)
+    class_match = _ASAN_CLASS_RX.search(text)
+    sanitizer_class = class_match.group(1).lower() if class_match else None
+    access_match = _ASAN_ACCESS_RX.search(text) or _ASAN_ACCESS_CAUSE_RX.search(text)
+    if access_match is not None:
+        access_kind: str | None = access_match.group(1).lower()
+    elif sanitizer_class == "segv" and _ASAN_SEGV_UNKNOWN_ADDR_RX.search(text):
+        access_kind = _ACCESS_UNKNOWN
+    else:
+        access_kind = None
+    return CrashSignature(sanitizer_class, access_kind, _top_application_frame(text))
 
 
 def _signal_from_exit(exit_code: int) -> int | None:
@@ -272,6 +379,7 @@ class EvaluationBundleWriter:
         safety: SafetyFloorVerdict,
         command_evidence: tuple[CommandEvidence, ...],
         combined_verdict: dict[str, object],
+        additional_payloads: dict[str, object] | None = None,
     ) -> Path:
         if self._directory.exists():
             raise FileExistsError(f"evaluation bundle already exists: {self._directory}")
@@ -286,6 +394,10 @@ class EvaluationBundleWriter:
             "command_evidence.json": [asdict(item) for item in command_evidence],
             "combined_verdict.json": combined_verdict,
         }
+        for name, payload in (additional_payloads or {}).items():
+            if name in payloads or Path(name).name != name or not name.endswith(".json"):
+                raise ValueError(f"invalid or duplicate evaluation payload name: {name!r}")
+            payloads[name] = payload
         for name, payload in payloads.items():
             file_path = self._directory / name
             file_path.write_text(
@@ -298,123 +410,28 @@ class EvaluationBundleWriter:
         return self._directory
 
 
-def _stream_text(stream: str | bytes | None) -> str:
-    """Coerce a captured subprocess stream (str, bytes, or None) to text."""
-    if stream is None:
-        return ""
-    return stream if isinstance(stream, str) else stream.decode("utf-8", "replace")
+@dataclass(frozen=True, slots=True)
+class ReferenceModeResult:
+    """One normalized mode returned by an external reference evaluator."""
+
+    verdict: MechanicalVerdict
+    evidence: CommandEvidence
+    crash_signature: CrashSignature
 
 
 @dataclass(frozen=True, slots=True)
-class SecBenchReplayResult:
-    """Result files and host command evidence from the upstream evaluator."""
+class ReferenceReplayResult:
+    """Normalized external replay result plus raw adapter provenance.
 
-    reports: dict[str, tuple[dict[str, object], ...]]
-    argv: tuple[str, ...]
-    exit_code: int
-    output_sha256: str
-    command_evidence: CommandEvidence
+    Each independent fresh-container replay must carry a unique ``container_id``
+    so the safety floor can prove ``fresh_base`` from six distinct identities
+    rather than asserting it.
+    """
 
-
-class SecBenchReplayRunner:
-    """Run the published SEC-bench evaluator, which creates fresh eval containers."""
-
-    def __init__(
-        self,
-        secbench_root: Path,
-        *,
-        dataset: str = "SEC-bench/SEC-bench",
-        split: str = "eval",
-        timeout_seconds: int = 7200,
-    ) -> None:
-        self._script = secbench_root / "secb" / "evaluator" / "eval_instances.py"
-        if not self._script.is_file():
-            raise FileNotFoundError(f"SEC-bench evaluator not found: {self._script}")
-        self._dataset = dataset
-        self._split = split
-        self._timeout_seconds = timeout_seconds
-
-    def run(
-        self,
-        *,
-        input_dir: Path,
-        output_dir: Path,
-        evaluation_type: Literal["poc", "patch"],
-    ) -> SecBenchReplayResult:
-        """Replay exported artifacts and return the upstream JSONL reports."""
-        mode = "all" if evaluation_type == "patch" else "medium"
-        argv = (
-            sys.executable,
-            str(self._script),
-            "--type",
-            evaluation_type,
-            "--input-dir",
-            str(input_dir),
-            "--output-dir",
-            str(output_dir),
-            "--dataset",
-            self._dataset,
-            "--split",
-            self._split,
-            "--mode",
-            mode,
-            "--num-workers",
-            "1",
-            "--agent",
-            "swea",
-        )
-        timed_out = False
-        try:
-            completed = subprocess.run(
-                argv,
-                cwd=self._script.parents[2],
-                capture_output=True,
-                text=True,
-                timeout=self._timeout_seconds,
-                check=False,
-            )
-            exit_code = completed.returncode
-            output = completed.stdout + completed.stderr
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            exit_code = _SIGKILL_EXIT_CODE
-            output = _stream_text(exc.stdout) + _stream_text(exc.stderr)
-        evidence = command_evidence_from_capture(
-            argv=argv, exit_code=exit_code, output=output, timed_out=timed_out
-        )
-        if timed_out:
-            raise RuntimeError(
-                f"SEC-bench evaluator timed out after {self._timeout_seconds}s; "
-                f"output_sha256={evidence.output_sha256}"
-            )
-        if exit_code != 0:
-            raise RuntimeError(
-                f"SEC-bench evaluator failed with exit {exit_code}; "
-                f"output_sha256={evidence.output_sha256}"
-            )
-        modes = (
-            ("strict", "medium", "generous")
-            if evaluation_type == "patch"
-            else ("sanitizer",)
-        )
-        reports = {
-            report_mode: self._read_jsonl(output_dir / f"report_{report_mode}.jsonl")
-            for report_mode in modes
-        }
-        return SecBenchReplayResult(
-            reports=reports,
-            argv=argv,
-            exit_code=exit_code,
-            output_sha256=evidence.output_sha256,
-            command_evidence=evidence,
-        )
-
-    @staticmethod
-    def _read_jsonl(path: Path) -> tuple[dict[str, object], ...]:
-        if not path.is_file():
-            raise FileNotFoundError(f"SEC-bench report missing: {path}")
-        return tuple(
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        )
+    modes: dict[str, ReferenceModeResult]
+    invocation_evidence: CommandEvidence
+    raw_reports: dict[str, tuple[dict[str, object], ...]]
+    replay_id: str
+    container_id: str | None
+    image_digest: str | None
+    base_commit: str | None

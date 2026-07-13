@@ -31,10 +31,19 @@ _REL_TOL = 1e-6
 
 @dataclass(frozen=True, slots=True)
 class CostEndpoints:
-    cost_per_run: float
+    """Predeclared cost endpoints. Missing usage stays unknown, never zero.
+
+    When any required launch cost is unavailable, ``cost_available`` is False,
+    ``cost_per_*`` fields that depend on totals are None, and
+    ``missing_assignment_keys`` lists the exact incomplete assignments.
+    """
+
+    cost_per_run: float | None
     cost_per_mechanical_success: float | None
     cost_per_combined_success: float | None
     completeness_rate: float
+    cost_available: bool = True
+    missing_assignment_keys: tuple[str, ...] = ()
 
 
 def llm_worker_costs(run_data: RunData) -> tuple[float, float]:

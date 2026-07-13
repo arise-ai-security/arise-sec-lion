@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import litellm
@@ -74,23 +75,25 @@ def _json_schema_from_contract(contract: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _coerce(value: Any, type_spec: str) -> Any:
-    """Defensively coerce a returned field to its contract type."""
+def _matches_type(value: Any, type_spec: str) -> bool:
+    """Return whether a decoded JSON value exactly satisfies the compact contract."""
     spec = type_spec.strip().lower()
-    try:
-        if spec == "bool":
-            if isinstance(value, bool):
-                return value
-            return str(value).strip().lower() in ("true", "1", "yes")
-        if spec == "float":
-            return float(value)
-        if spec == "int":
-            return int(value)
-        if spec.startswith("list"):
-            return list(value) if isinstance(value, (list, tuple)) else [value]
-        return str(value)
-    except (TypeError, ValueError):
-        return value
+    if spec == "bool":
+        return isinstance(value, bool)
+    if spec == "float":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if spec == "int":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if spec == "str":
+        return isinstance(value, str)
+    if spec.startswith("list[") and spec.endswith("]"):
+        element_spec = spec[len("list[") : -1]
+        return isinstance(value, list) and all(
+            _matches_type(element, element_spec) for element in value
+        )
+    if spec in ("list", "array"):
+        return isinstance(value, list)
+    return False
 
 
 def _fail_closed(contract: dict[str, str], reason: str) -> dict[str, Any]:
@@ -141,6 +144,9 @@ class LLMJudge:
 
     def __call__(self, built: dict[str, Any]) -> dict[str, Any]:
         contract: dict[str, str] = built["schema"]
+        started_at = datetime.now(timezone.utc).isoformat()
+        usage_before = dict(self.usage)
+        cost_before = self.cost_usd
         self.calls += 1
         # Optional params go through a dict so litellm's narrow Literal typing for
         # reasoning_effort does not reject our str config; drop_params lets litellm
@@ -166,24 +172,83 @@ class LLMJudge:
         except Exception as exc:  # noqa: BLE001 — litellm raises many provider types; fail closed
             self.errors += 1
             logger.warning("Judge LLM call failed (%s): %s", self.model, exc)
-            return _fail_closed(contract, f"judge_error: {type(exc).__name__}: {exc}")
+            return self._with_provenance(
+                _fail_closed(contract, f"judge_error: {type(exc).__name__}: {exc}"),
+                started_at=started_at,
+                usage_before=usage_before,
+                cost_before=cost_before,
+            )
 
         self._record_usage(response)
         content = response.choices[0].message.content
         if not content:
             self.errors += 1
             logger.warning("Judge returned empty content (%s)", self.model)
-            return _fail_closed(contract, "judge_error: empty content")
+            return self._with_provenance(
+                _fail_closed(contract, "judge_error: empty content"),
+                started_at=started_at,
+                usage_before=usage_before,
+                cost_before=cost_before,
+            )
         try:
             data = json.loads(content)
         except (json.JSONDecodeError, TypeError) as exc:
             self.errors += 1
             logger.warning("Judge returned non-JSON output: %s", exc)
-            return _fail_closed(contract, f"judge_error: invalid json: {exc}")
+            return self._with_provenance(
+                _fail_closed(contract, f"judge_error: invalid json: {exc}"),
+                started_at=started_at,
+                usage_before=usage_before,
+                cost_before=cost_before,
+            )
         if not isinstance(data, dict):
             self.errors += 1
-            return _fail_closed(contract, "judge_error: response is not a JSON object")
-        return {key: _coerce(data.get(key), type_spec) for key, type_spec in contract.items()}
+            return self._with_provenance(
+                _fail_closed(contract, "judge_error: response is not a JSON object"),
+                started_at=started_at,
+                usage_before=usage_before,
+                cost_before=cost_before,
+            )
+        if set(data) != set(contract) or any(
+            not _matches_type(data.get(key), type_spec)
+            for key, type_spec in contract.items()
+        ):
+            self.errors += 1
+            return self._with_provenance(
+                _fail_closed(contract, "judge_error: response violates structured schema"),
+                started_at=started_at,
+                usage_before=usage_before,
+                cost_before=cost_before,
+            )
+        normalized = dict(data)
+        normalized["_raw_content"] = content
+        return self._with_provenance(
+            normalized,
+            started_at=started_at,
+            usage_before=usage_before,
+            cost_before=cost_before,
+        )
+
+    def _with_provenance(
+        self,
+        result: dict[str, Any],
+        *,
+        started_at: str,
+        usage_before: dict[str, int],
+        cost_before: float,
+    ) -> dict[str, Any]:
+        result["_provenance"] = {
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "retry_limit": _NUM_RETRIES,
+            "usage": {
+                key: self.usage[key] - usage_before[key] for key in self.usage
+            },
+            "cost_usd": self.cost_usd - cost_before,
+        }
+        return result
 
     def _record_usage(self, response: Any) -> None:
         usage = getattr(response, "usage", None)

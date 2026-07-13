@@ -1,14 +1,14 @@
-"""Three-call blinded semantic/root-cause gate and human-audit routing."""
+"""Zero-human heterogeneous semantic/root-cause judge panel."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from experiments.shared.evaluation.judge import DEFAULT_JUDGE_MODEL, LLMJudge
+from experiments.shared.evaluation.judge import LLMJudge
 
 
 SEMANTIC_RUBRIC: dict[str, str] = {
@@ -20,12 +20,33 @@ SEMANTIC_RUBRIC: dict[str, str] = {
     "verdict": "bool",
     "reason": "str",
 }
+SEMANTIC_JUDGE_MODELS: tuple[str, ...] = (
+    "claude-opus-4-8",
+    "gpt-5.5-2026-04-23",
+    # LiteLLM provider-qualified ID: bare `gemini-3.5-flash` routes to Vertex AI.
+    "gemini/gemini-3.5-flash",
+)
 _BLINDED_FIELDS = frozenset({"cell", "model", "cost", "topology", "treatment_version"})
+
+
+def _blinded_field_paths(value: Any, path: str = "$") -> tuple[str, ...]:
+    leaked: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            field = str(key)
+            nested_path = f"{path}.{field}"
+            if field.casefold() in _BLINDED_FIELDS:
+                leaked.append(nested_path)
+            leaked.extend(_blinded_field_paths(nested, nested_path))
+    elif isinstance(value, (list, tuple)):
+        for index, nested in enumerate(value):
+            leaked.extend(_blinded_field_paths(nested, f"{path}[{index}]"))
+    return tuple(leaked)
 
 
 def build_blinded_semantic_prompt(evidence: dict[str, Any]) -> str:
     """Render the frozen rubric without arm, model, cost, or topology identity."""
-    leaked = _BLINDED_FIELDS.intersection(evidence)
+    leaked = _blinded_field_paths(evidence)
     if leaked:
         raise ValueError(f"semantic evidence contains blinded fields: {sorted(leaked)}")
     rubric = {
@@ -47,114 +68,161 @@ def build_blinded_semantic_prompt(evidence: dict[str, Any]) -> str:
 
 
 class SemanticJudge(Protocol):
+    model: str
+
     def __call__(self, built: dict[str, Any]) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticJudgeCall:
+    """One pinned model's raw response and normalized vote validity."""
+
+    model: str
+    valid: bool
+    verdict: bool | None
+    response: dict[str, Any]
+    started_at: str
+    finished_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticGateResult:
-    provisional_verdict: bool
-    unanimous: bool
+    """Persisted zero-human panel inputs, calls, and deterministic aggregation."""
+
+    task_id: str
+    verdict: bool
+    available: bool
+    valid_votes: int
+    positive_votes: int
     judge_error: bool
-    human_audit_required: bool
-    audit_reason: str | None
-    judge_model: str
-    calls: tuple[dict[str, Any], ...]
+    prompt: str
+    schema: dict[str, str]
+    models: tuple[str, ...]
+    calls: tuple[SemanticJudgeCall, ...]
 
 
-def adjudicate_human_reviews(
-    first: bool,
-    second: bool,
+JudgeFactory = Callable[[str], SemanticJudge]
+
+
+def _default_judge_factory(model: str) -> SemanticJudge:
+    return LLMJudge(model=model)
+
+
+def _failed_call(
+    model: str,
+    reason: str,
     *,
-    third: bool | None = None,
-) -> bool:
-    """Two reviewers decide; disagreement requires a third reviewer."""
-    if first == second:
-        return first
-    if third is None:
-        raise ValueError("third reviewer required when the first two disagree")
-    return (int(first) + int(second) + int(third)) >= 2
+    started_at: str,
+) -> SemanticJudgeCall:
+    return SemanticJudgeCall(
+        model=model,
+        valid=False,
+        verdict=None,
+        response={"verdict": False, "reason": reason, "_error": True},
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
-def _default_judge_factory() -> SemanticJudge:
-    """Production default: a fresh judge pinned to the reproducible snapshot."""
-    return LLMJudge(model=DEFAULT_JUDGE_MODEL)
+def _validated_semantic_vote(response: dict[str, Any]) -> bool | None:
+    """Return a logically consistent rubric vote, or None for a schema violation."""
+    boolean_fields = (
+        "root_cause_correct",
+        "patch_addresses_root_cause",
+        "over_broad_suppression",
+        "evidence_consistent",
+        "regression_risk_acceptable",
+        "verdict",
+    )
+    if any(not isinstance(response.get(field), bool) for field in boolean_fields):
+        return None
+    if not isinstance(response.get("reason"), str) or not response["reason"].strip():
+        return None
+    computed = bool(
+        response["root_cause_correct"]
+        and response["patch_addresses_root_cause"]
+        and not response["over_broad_suppression"]
+        and response["evidence_consistent"]
+        and response["regression_risk_acceptable"]
+    )
+    return computed if response["verdict"] is computed else None
 
 
-def _enforce_pinned_model(judges: tuple[SemanticJudge, ...]) -> str:
-    """Reject any judge bound to a model other than the pinned snapshot.
+def _run_judge(
+    *,
+    model: str,
+    prompt: str,
+    schema: dict[str, str],
+    judge_factory: JudgeFactory,
+) -> SemanticJudgeCall:
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        judge = judge_factory(model)
+    except Exception as exc:  # noqa: BLE001 -- provider construction failures are invalid votes
+        return _failed_call(
+            model,
+            f"judge_factory_error: {type(exc).__name__}: {exc}",
+            started_at=started_at,
+        )
 
-    Bare test doubles that advertise no ``model`` pass through the injection
-    seam; any judge that does advertise a model must advertise the pinned one.
-    """
-    for judge in judges:
-        model = getattr(judge, "model", None)
-        if model is not None and model != DEFAULT_JUDGE_MODEL:
-            raise ValueError(
-                f"semantic gate requires pinned judge model {DEFAULT_JUDGE_MODEL!r}, "
-                f"got {model!r}"
-            )
-    return DEFAULT_JUDGE_MODEL
+    if judge.model != model:
+        raise ValueError(f"semantic judge seat requires model {model!r}, got {judge.model!r}")
+
+    built = {"prompt": prompt, "schema": dict(schema), "excerpts": {}}
+    try:
+        response = judge(built)
+    except Exception as exc:  # noqa: BLE001 -- provider call failures are invalid votes
+        return _failed_call(
+            model,
+            f"judge_error: {type(exc).__name__}: {exc}",
+            started_at=started_at,
+        )
+    if not isinstance(response, dict):
+        return _failed_call(
+            model,
+            "judge_error: response is not a JSON object",
+            started_at=started_at,
+        )
+
+    persisted = dict(response)
+    verdict = _validated_semantic_vote(persisted)
+    valid = not bool(persisted.get("_error")) and verdict is not None
+    return SemanticJudgeCall(
+        model=model,
+        valid=valid,
+        verdict=verdict if valid else None,
+        response=persisted,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def evaluate_semantic_gate(
     *,
     task_id: str,
     evidence: dict[str, Any],
-    judge_factory: Callable[[], SemanticJudge] | None = None,
-    audit_rate: float = 0.10,
+    judge_factory: JudgeFactory | None = None,
 ) -> SemanticGateResult:
-    """Run three independent blinded calls and route non-unanimous cases.
-
-    The gate blinds ``evidence`` itself via :func:`build_blinded_semantic_prompt`
-    (the caller can never supply raw prompt text) and pins every judge to
-    :data:`DEFAULT_JUDGE_MODEL`, failing closed on either violation.
-    """
+    """Require all three provider seats, then aggregate their votes 2-of-3."""
     prompt = build_blinded_semantic_prompt(evidence)
-    built = {"prompt": prompt, "schema": SEMANTIC_RUBRIC, "excerpts": {}}
-    judges = tuple((judge_factory or _default_judge_factory)() for _ in range(3))
-    judge_model = _enforce_pinned_model(judges)
-    calls = tuple(judge(built) for judge in judges)
-    judge_error = any(bool(call.get("_error")) for call in calls)
-    verdicts = [bool(call.get("verdict", False)) for call in calls]
-    unanimous = len(set(verdicts)) == 1 and not judge_error
-    provisional = verdicts.count(True) >= 2 if not judge_error else False
-    sampled = _stable_audit_sample(task_id, audit_rate)
-    human_required = judge_error or not unanimous or sampled
-    if judge_error:
-        reason = "judge_error"
-    elif not unanimous:
-        reason = "non_unanimous_2_to_1"
-    elif sampled:
-        reason = "stratified_unanimous_audit_sample"
-    else:
-        reason = None
+    schema = dict(SEMANTIC_RUBRIC)
+    factory = judge_factory or _default_judge_factory
+    calls = tuple(
+        _run_judge(model=model, prompt=prompt, schema=schema, judge_factory=factory)
+        for model in SEMANTIC_JUDGE_MODELS
+    )
+    valid_votes = sum(call.valid for call in calls)
+    positive_votes = sum(call.verdict is True for call in calls)
+    available = valid_votes == len(SEMANTIC_JUDGE_MODELS)
     return SemanticGateResult(
-        provisional_verdict=provisional,
-        unanimous=unanimous,
-        judge_error=judge_error,
-        human_audit_required=human_required,
-        audit_reason=reason,
-        judge_model=judge_model,
+        task_id=task_id,
+        verdict=available and positive_votes >= 2,
+        available=available,
+        valid_votes=valid_votes,
+        positive_votes=positive_votes,
+        judge_error=valid_votes != len(SEMANTIC_JUDGE_MODELS),
+        prompt=prompt,
+        schema=schema,
+        models=SEMANTIC_JUDGE_MODELS,
         calls=calls,
     )
-
-
-def _stable_audit_sample(task_id: str, audit_rate: float) -> bool:
-    if not 0.0 <= audit_rate <= 1.0:
-        raise ValueError("audit_rate must be between 0 and 1")
-    bucket = int.from_bytes(hashlib.sha256(task_id.encode("utf-8")).digest()[:8], "big")
-    return bucket / (2**64 - 1) < audit_rate
-
-
-def apply_human_override(result: SemanticGateResult, human_verdict: bool) -> bool:
-    """Human adjudication is authoritative for audited cases."""
-    if not result.human_audit_required:
-        raise ValueError("human override is only valid for an audited case")
-    return human_verdict
-
-
-def unanimous_audit_requires_full_review(*, audited: int, disagreements: int) -> bool:
-    """Expand review when audited unanimous disagreement exceeds five percent."""
-    if audited <= 0:
-        return False
-    return disagreements / audited > 0.05

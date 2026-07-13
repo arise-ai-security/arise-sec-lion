@@ -17,10 +17,12 @@ class ConfidenceInterval:
 
 @dataclass(frozen=True, slots=True)
 class PairedObservation:
+    """One paired assignment. Costs may be unknown without blocking success ITT."""
+
     n1_success: bool
     b4_success: bool
-    n1_cost: float
-    b4_cost: float
+    n1_cost: float | None
+    b4_cost: float | None
 
 
 def mcnemar_exact(observations: tuple[PairedObservation, ...]) -> float:
@@ -40,7 +42,11 @@ def paired_bootstrap(
     samples: int = 10_000,
     seed: int = 0,
 ) -> dict[str, ConfidenceInterval]:
-    """Paired percentile CIs for success difference, cost ratio, and cost/valid-fix."""
+    """Paired percentile CIs for success difference and, when complete, cost ratios.
+
+    Success difference is always computed. Cost endpoints are emitted only when
+    every retained pair has known, non-missing costs on both arms.
+    """
     if not observations:
         raise ValueError("at least one paired observation is required")
     if samples < 1:
@@ -62,7 +68,7 @@ def paired_bootstrap(
             upper=_percentile(values, 0.975),
         )
         for key, values in metrics.items()
-        if values
+        if values and key in point and math.isfinite(point[key])
     }
 
 
@@ -97,17 +103,25 @@ def _metrics(observations: list[PairedObservation]) -> dict[str, float]:
     count = len(observations)
     n1_successes = sum(item.n1_success for item in observations)
     b4_successes = sum(item.b4_success for item in observations)
-    n1_cost = sum(item.n1_cost for item in observations)
-    b4_cost = sum(item.b4_cost for item in observations)
+    result: dict[str, float] = {
+        "success_difference": (b4_successes - n1_successes) / count,
+    }
+    known_costs = [
+        (item.n1_cost, item.b4_cost)
+        for item in observations
+        if item.n1_cost is not None and item.b4_cost is not None
+    ]
+    if len(known_costs) != len(observations):
+        return result
+    n1_cost = sum(pair[0] for pair in known_costs)
+    b4_cost = sum(pair[1] for pair in known_costs)
     n1_cost_per_fix = n1_cost / n1_successes if n1_successes else math.inf
     b4_cost_per_fix = b4_cost / b4_successes if b4_successes else math.inf
-    return {
-        "success_difference": (b4_successes - n1_successes) / count,
-        "cost_ratio": b4_cost / n1_cost if n1_cost else math.inf,
-        "cost_per_valid_fix_ratio": (
-            b4_cost_per_fix / n1_cost_per_fix if math.isfinite(n1_cost_per_fix) else math.inf
-        ),
-    }
+    result["cost_ratio"] = b4_cost / n1_cost if n1_cost else math.inf
+    result["cost_per_valid_fix_ratio"] = (
+        b4_cost_per_fix / n1_cost_per_fix if math.isfinite(n1_cost_per_fix) else math.inf
+    )
+    return result
 
 
 def _percentile(values: list[float], quantile: float) -> float:

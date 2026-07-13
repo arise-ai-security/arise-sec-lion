@@ -72,7 +72,10 @@ _VALIDATION_REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 _MAY_BE_EMPTY: frozenset[str] = frozenset({"/testcase/repo_changes.diff"})
-_HIERARCHICAL_ROLE_SPECIFIC_FIXER: tuple[str, ...] = ("/testcase/root_cause_analysis.txt",)
+_HIERARCHICAL_ROLE_SPECIFIC_FIXER: tuple[str, ...] = (
+    "/testcase/root_cause_analysis.txt",
+    "/testcase/patch_plan.json",
+)
 
 _ROLE_PHASE: dict[str, BefPhase] = {
     "Build-Setup": BefPhase.BUILDER,

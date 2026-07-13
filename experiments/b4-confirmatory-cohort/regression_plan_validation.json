@@ -1,0 +1,2038 @@
+{
+  "plan_set_sha256": "c102617ca7e68ceddbf30d490a44a68f168647453f17fe1cd8554250e108d88a",
+  "validations": [
+    {
+      "base": {
+        "available": true,
+        "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+        "container_id": "0f6d15671ae58e4145910e37ca96b0b5d4c1d061b7fb780592e315f3d1b14f26",
+        "finished_at": "2026-07-13T01:09:43Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196@sha256:4e591e6ac5e6c728cace36a31a0bcc84908915062a5eca4f7355ae0f5986bc17",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:08:48Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196@sha256:4e591e6ac5e6c728cace36a31a0bcc84908915062a5eca4f7355ae0f5986bc17",
+          "instance_id": "faad2.cve-2018-20196",
+          "plan_sha256": "e4e99df64ab2ce7637c498732c8741ae9c1cfa229e22f62c136015835968ae34",
+          "work_dir": "/src/faad2"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.26238298416137695,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:08:48Z"
+      },
+      "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+      "gold": {
+        "available": true,
+        "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+        "container_id": "f1df0ff6d6d70941bb75369f926ccb9dc72b8c429bb83e3a361ad26506b2a0d2",
+        "finished_at": "2026-07-13T01:10:50Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196@sha256:4e591e6ac5e6c728cace36a31a0bcc84908915062a5eca4f7355ae0f5986bc17",
+        "passed": true,
+        "patch_hash": "1ad667e376fd356b6281ce6061956afbc9ee015d61f0687001ffa038bd5f8388",
+        "plan": {
+          "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:08:48Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196@sha256:4e591e6ac5e6c728cace36a31a0bcc84908915062a5eca4f7355ae0f5986bc17",
+          "instance_id": "faad2.cve-2018-20196",
+          "plan_sha256": "e4e99df64ab2ce7637c498732c8741ae9c1cfa229e22f62c136015835968ae34",
+          "work_dir": "/src/faad2"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.29381799697875977,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:09:44Z"
+      },
+      "instance_id": "faad2.cve-2018-20196",
+      "plan_sha256": "41f7a88b87216d48b92e8b084f9b74d74dbdd10794a00a4724b006f9ea80c7c3"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+        "container_id": "eb57627fd1ea12fc2de1b4a782aa5f3fd4a80a0f86dc0b0847c9daa19f832c91",
+        "finished_at": "2026-07-13T01:11:46Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20362@sha256:96f30ac6cb087eefb8ba095190779c741703794be53ba5679b50e76a4e1c94da",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:10:50Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20362@sha256:96f30ac6cb087eefb8ba095190779c741703794be53ba5679b50e76a4e1c94da",
+          "instance_id": "faad2.cve-2018-20362",
+          "plan_sha256": "acdee6b6f0b119a82e5a8674cca2ad8a305af4d22d5aeb55e5ab826998a4c459",
+          "work_dir": "/src/faad2"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2710731029510498,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:10:50Z"
+      },
+      "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+      "gold": {
+        "available": true,
+        "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+        "container_id": "7c2123824160a4eee4c50a77c46d46f83587239b1c42e5ac86ea2bda8bb89981",
+        "finished_at": "2026-07-13T01:12:42Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20362@sha256:96f30ac6cb087eefb8ba095190779c741703794be53ba5679b50e76a4e1c94da",
+        "passed": true,
+        "patch_hash": "40765d7dc6e7991e697ef6e0113b11e4a7664dadfe58f60f28e7f7948be0d522",
+        "plan": {
+          "base_commit": "334e7647a5f31903aca33dde39bb8683e9d8cccd",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:10:50Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20362@sha256:96f30ac6cb087eefb8ba095190779c741703794be53ba5679b50e76a4e1c94da",
+          "instance_id": "faad2.cve-2018-20362",
+          "plan_sha256": "acdee6b6f0b119a82e5a8674cca2ad8a305af4d22d5aeb55e5ab826998a4c459",
+          "work_dir": "/src/faad2"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.25923800468444824,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:11:46Z"
+      },
+      "instance_id": "faad2.cve-2018-20362",
+      "plan_sha256": "ab210fefaf55b23cfcdd8411a3491ff5ba992b3d8830d9f3b5029e7f6421624c"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "7b9cb829f93d1c1f67584345ed65ea830de8bdda",
+        "container_id": "517ee324d2e0411f20a4e9c5755c68a945759816ff7cfa5775aa81cb5a14bdcd",
+        "finished_at": "2026-07-13T01:14:20Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21818@sha256:0b9817077e66421b23e55f3d448831e3f52c352d1a5c24aeb5df860f313e6529",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "7b9cb829f93d1c1f67584345ed65ea830de8bdda",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:12:43Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21818@sha256:0b9817077e66421b23e55f3d448831e3f52c352d1a5c24aeb5df860f313e6529",
+          "instance_id": "libredwg.cve-2020-21818",
+          "plan_sha256": "6b308678131dde39681e644bdf297d5326218dadf2e38c1ee454663b2c121644",
+          "work_dir": "/src/libredwg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.18681907653808594,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:12:43Z"
+      },
+      "base_commit": "7b9cb829f93d1c1f67584345ed65ea830de8bdda",
+      "gold": {
+        "available": true,
+        "base_commit": "7b9cb829f93d1c1f67584345ed65ea830de8bdda",
+        "container_id": "915a6b0a8da1a95ef490075fc71b37384b8a9370d2f76aa6e1a71972519e73b0",
+        "finished_at": "2026-07-13T01:15:49Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21818@sha256:0b9817077e66421b23e55f3d448831e3f52c352d1a5c24aeb5df860f313e6529",
+        "passed": true,
+        "patch_hash": "b84b33c65db0deb433693c0f0800ede50534aedbeba967346845da0a3f8fe8f3",
+        "plan": {
+          "base_commit": "7b9cb829f93d1c1f67584345ed65ea830de8bdda",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:12:43Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21818@sha256:0b9817077e66421b23e55f3d448831e3f52c352d1a5c24aeb5df860f313e6529",
+          "instance_id": "libredwg.cve-2020-21818",
+          "plan_sha256": "6b308678131dde39681e644bdf297d5326218dadf2e38c1ee454663b2c121644",
+          "work_dir": "/src/libredwg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1693410873413086,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:14:21Z"
+      },
+      "instance_id": "libredwg.cve-2020-21818",
+      "plan_sha256": "45aaf07a9ef0b71f293273b91cef568d81d5fd5c0ac5d8d594d7c2943d6321bd"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "5f998146dd695a8b4bfdbd21c233e42fbb94e90d",
+        "container_id": "6510c9513ced95359c3351156f8098426a4d226ff84725392bfe4e8b502caa55",
+        "finished_at": "2026-07-13T01:17:09Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21819@sha256:bf1c3eb50b09694dd0282554a53f143668dfa09641977400565ca742a7cdd556",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "5f998146dd695a8b4bfdbd21c233e42fbb94e90d",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:15:50Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21819@sha256:bf1c3eb50b09694dd0282554a53f143668dfa09641977400565ca742a7cdd556",
+          "instance_id": "libredwg.cve-2020-21819",
+          "plan_sha256": "1020ce08ce40224a388b0216572de304c0a5489c9a624368092082c6452a6165",
+          "work_dir": "/src/libredwg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.16900110244750977,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:15:50Z"
+      },
+      "base_commit": "5f998146dd695a8b4bfdbd21c233e42fbb94e90d",
+      "gold": {
+        "available": true,
+        "base_commit": "5f998146dd695a8b4bfdbd21c233e42fbb94e90d",
+        "container_id": "65c2ff84a960429dbc0cab6cda2b81573966093d66105f225ea97ec7559fd07a",
+        "finished_at": "2026-07-13T01:18:29Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21819@sha256:bf1c3eb50b09694dd0282554a53f143668dfa09641977400565ca742a7cdd556",
+        "passed": true,
+        "patch_hash": "384b3f6c0edebfffbe194b469a6b136e2ee65324dbde1b20e64a98738746a783",
+        "plan": {
+          "base_commit": "5f998146dd695a8b4bfdbd21c233e42fbb94e90d",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:15:50Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21819@sha256:bf1c3eb50b09694dd0282554a53f143668dfa09641977400565ca742a7cdd556",
+          "instance_id": "libredwg.cve-2020-21819",
+          "plan_sha256": "1020ce08ce40224a388b0216572de304c0a5489c9a624368092082c6452a6165",
+          "work_dir": "/src/libredwg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./programs/dwgread --help 2>&1 | grep -qi dwgread"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1679530143737793,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:17:10Z"
+      },
+      "instance_id": "libredwg.cve-2020-21819",
+      "plan_sha256": "173c338ef90cf20a955b1bd6b23f2b62318b9207a1abcaddb9557ab7bb950c00"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "afbc199ed3b0820f156681548bf91290a2be48f4",
+        "container_id": "e5991637f0569b0016e042135ead725a37cfbd5e7174b40f60728e8a835dd6cd",
+        "finished_at": "2026-07-13T01:19:13Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42497373@sha256:0583976556ce546b25ee6212d199d37e6ddaf8fccec38a256da638008df3719d",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "afbc199ed3b0820f156681548bf91290a2be48f4",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:18:30Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42497373@sha256:0583976556ce546b25ee6212d199d37e6ddaf8fccec38a256da638008df3719d",
+          "instance_id": "mruby.ossfuzz-42497373",
+          "plan_sha256": "1119d9d305a67620e988395ab14997cc2a65f57b050a19055a4a80c855cd009f",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.16239404678344727,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:18:30Z"
+      },
+      "base_commit": "afbc199ed3b0820f156681548bf91290a2be48f4",
+      "gold": {
+        "available": true,
+        "base_commit": "afbc199ed3b0820f156681548bf91290a2be48f4",
+        "container_id": "18824fd9108ab916ee9959125e8cd27fa5a02115715b7c02940455cebc514276",
+        "finished_at": "2026-07-13T01:19:57Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42497373@sha256:0583976556ce546b25ee6212d199d37e6ddaf8fccec38a256da638008df3719d",
+        "passed": true,
+        "patch_hash": "0bbe0c1e7318d3f2c184807e79efcaf89661e49611325f03acaaef55a7f41e4a",
+        "plan": {
+          "base_commit": "afbc199ed3b0820f156681548bf91290a2be48f4",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:18:30Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42497373@sha256:0583976556ce546b25ee6212d199d37e6ddaf8fccec38a256da638008df3719d",
+          "instance_id": "mruby.ossfuzz-42497373",
+          "plan_sha256": "1119d9d305a67620e988395ab14997cc2a65f57b050a19055a4a80c855cd009f",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.15121674537658691,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:19:13Z"
+      },
+      "instance_id": "mruby.ossfuzz-42497373",
+      "plan_sha256": "40654cd80c364debda8c57cd253476ffc94b4e046c317873f823cd69c66182eb"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "cd0ffd6f1ca413f36b6239de7779ae7778e1a200",
+        "container_id": "5d218addc2e867f5500c8ea740d03d42e99a75b4d49b117b21043758d7dfbce8",
+        "finished_at": "2026-07-13T01:20:44Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42501420@sha256:c5868153abd7fde21e5a5199881bcd401cd0f0d91c7ab2d17fa4ebdc83d31af9",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "cd0ffd6f1ca413f36b6239de7779ae7778e1a200",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:19:57Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42501420@sha256:c5868153abd7fde21e5a5199881bcd401cd0f0d91c7ab2d17fa4ebdc83d31af9",
+          "instance_id": "mruby.ossfuzz-42501420",
+          "plan_sha256": "d006609a863bfdc18bc6eb4fe9e0f6b7bd4ec7b7ffffdd8d529da35c30bfc309",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.14600801467895508,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:19:57Z"
+      },
+      "base_commit": "cd0ffd6f1ca413f36b6239de7779ae7778e1a200",
+      "gold": {
+        "available": true,
+        "base_commit": "cd0ffd6f1ca413f36b6239de7779ae7778e1a200",
+        "container_id": "d192c591881d9015d2012f4a6320e8528d2d30a0c7bc1f10e36165b255296d7b",
+        "finished_at": "2026-07-13T01:21:31Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42501420@sha256:c5868153abd7fde21e5a5199881bcd401cd0f0d91c7ab2d17fa4ebdc83d31af9",
+        "passed": true,
+        "patch_hash": "e6485634ba84d697b57a58a140def63c9248af20b189f3fee0d4aec74051940c",
+        "plan": {
+          "base_commit": "cd0ffd6f1ca413f36b6239de7779ae7778e1a200",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:19:57Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42501420@sha256:c5868153abd7fde21e5a5199881bcd401cd0f0d91c7ab2d17fa4ebdc83d31af9",
+          "instance_id": "mruby.ossfuzz-42501420",
+          "plan_sha256": "d006609a863bfdc18bc6eb4fe9e0f6b7bd4ec7b7ffffdd8d529da35c30bfc309",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1464991569519043,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:20:44Z"
+      },
+      "instance_id": "mruby.ossfuzz-42501420",
+      "plan_sha256": "c2e4a31bf62cf0ecc5c41f104de8eae16743ee1324213a2bdeaff3cb6e83db0b"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "6b3b1012ca480f1e930c4ddeeaebed55e5df4144",
+        "container_id": "785ce402bf00c0a7906206b69e68c7a7425d458ee6c2ad73dee01e83da881694",
+        "finished_at": "2026-07-13T01:22:18Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42503243@sha256:43b4bf0098704099a3703b10cd95f8785f2a5f64bf89885ce4496996e63005d0",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "6b3b1012ca480f1e930c4ddeeaebed55e5df4144",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:21:31Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42503243@sha256:43b4bf0098704099a3703b10cd95f8785f2a5f64bf89885ce4496996e63005d0",
+          "instance_id": "mruby.ossfuzz-42503243",
+          "plan_sha256": "ada7139a7f972f7947950b6cf670cd423ed0ec21a944f31b5afe4280c7737c91",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.15958309173583984,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:21:31Z"
+      },
+      "base_commit": "6b3b1012ca480f1e930c4ddeeaebed55e5df4144",
+      "gold": {
+        "available": true,
+        "base_commit": "6b3b1012ca480f1e930c4ddeeaebed55e5df4144",
+        "container_id": "ae12eb499e48a2367ce31bbaf9924adf227c9ee58dde2194d1078c82a27a29bb",
+        "finished_at": "2026-07-13T01:23:06Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42503243@sha256:43b4bf0098704099a3703b10cd95f8785f2a5f64bf89885ce4496996e63005d0",
+        "passed": true,
+        "patch_hash": "f5dffe478fdbbe958c88494040327a1a260651243b9b7968b5794ca13ac36b87",
+        "plan": {
+          "base_commit": "6b3b1012ca480f1e930c4ddeeaebed55e5df4144",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:21:31Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42503243@sha256:43b4bf0098704099a3703b10cd95f8785f2a5f64bf89885ce4496996e63005d0",
+          "instance_id": "mruby.ossfuzz-42503243",
+          "plan_sha256": "ada7139a7f972f7947950b6cf670cd423ed0ec21a944f31b5afe4280c7737c91",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.15488696098327637,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:22:18Z"
+      },
+      "instance_id": "mruby.ossfuzz-42503243",
+      "plan_sha256": "b2014073cc7a294397b1886883ffaae3c5e5e1e0033ae3ed47900093ec287b8d"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "49b8cef31f01c0d88d874e17714dff1fa5b85df0",
+        "container_id": "8d694031c39d7606d428e738b7d808c46983e9ae7b5188ba0c198fbf64603c17",
+        "finished_at": "2026-07-13T01:23:53Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42511322@sha256:6e1cb878ed25d9d83dcb0468a6dc35e1eadab68e28b776a4e93e161f3db464c6",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "49b8cef31f01c0d88d874e17714dff1fa5b85df0",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:23:06Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42511322@sha256:6e1cb878ed25d9d83dcb0468a6dc35e1eadab68e28b776a4e93e161f3db464c6",
+          "instance_id": "mruby.ossfuzz-42511322",
+          "plan_sha256": "379d4c96f7eb4116186bcb3e07e93075d3735b3ab09742804a0636b70b4c8862",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.15791010856628418,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:23:06Z"
+      },
+      "base_commit": "49b8cef31f01c0d88d874e17714dff1fa5b85df0",
+      "gold": {
+        "available": true,
+        "base_commit": "49b8cef31f01c0d88d874e17714dff1fa5b85df0",
+        "container_id": "7fd4efb4198466ffa40d755ae6f459edcbdee776ebdbe224ece2a56169538127",
+        "finished_at": "2026-07-13T01:24:42Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42511322@sha256:6e1cb878ed25d9d83dcb0468a6dc35e1eadab68e28b776a4e93e161f3db464c6",
+        "passed": true,
+        "patch_hash": "212d2bcd6dc813544afb64d6232ee9cd8c638e3fd3cbd0a9a85326603a1e2113",
+        "plan": {
+          "base_commit": "49b8cef31f01c0d88d874e17714dff1fa5b85df0",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:23:06Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42511322@sha256:6e1cb878ed25d9d83dcb0468a6dc35e1eadab68e28b776a4e93e161f3db464c6",
+          "instance_id": "mruby.ossfuzz-42511322",
+          "plan_sha256": "379d4c96f7eb4116186bcb3e07e93075d3735b3ab09742804a0636b70b4c8862",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.15270495414733887,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:23:54Z"
+      },
+      "instance_id": "mruby.ossfuzz-42511322",
+      "plan_sha256": "e97d39b165c6f4b9aaff8bdab64e065e728bee58d2aa3c45dd0a959f56ce147d"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "219cfd63e151360efe664728e3b5dbcf6e102d44",
+        "container_id": "b64f36cd3104d8cd2dba29091058dccb1ff61fe7fb49568e001ae3ad40d24578",
+        "finished_at": "2026-07-13T01:25:36Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42532420@sha256:645b0e39d47887e816bc39ec5685dcdb76f7a32456071e9109c934681241572f",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "219cfd63e151360efe664728e3b5dbcf6e102d44",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:24:42Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42532420@sha256:645b0e39d47887e816bc39ec5685dcdb76f7a32456071e9109c934681241572f",
+          "instance_id": "mruby.ossfuzz-42532420",
+          "plan_sha256": "8d054f8364b3c444389635befe7a25b0ff46cdc32d3abe953a02d18a173abad8",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1458728313446045,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:24:42Z"
+      },
+      "base_commit": "219cfd63e151360efe664728e3b5dbcf6e102d44",
+      "gold": {
+        "available": true,
+        "base_commit": "219cfd63e151360efe664728e3b5dbcf6e102d44",
+        "container_id": "cf1db6a1f5e1bf38260bc5101f9a56d64992fd8b0134326f2d1e9ea3ca7519ba",
+        "finished_at": "2026-07-13T01:26:29Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42532420@sha256:645b0e39d47887e816bc39ec5685dcdb76f7a32456071e9109c934681241572f",
+        "passed": true,
+        "patch_hash": "93db2fbed7f1e434dcb12404a1b0f2fad7cf5c52893ced5263a6236ae1f7ad98",
+        "plan": {
+          "base_commit": "219cfd63e151360efe664728e3b5dbcf6e102d44",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "./build/host/bin/mruby",
+                "-e",
+                "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:24:42Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42532420@sha256:645b0e39d47887e816bc39ec5685dcdb76f7a32456071e9109c934681241572f",
+          "instance_id": "mruby.ossfuzz-42532420",
+          "plan_sha256": "8d054f8364b3c444389635befe7a25b0ff46cdc32d3abe953a02d18a173abad8",
+          "work_dir": "/src/mruby"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "./build/host/bin/mruby",
+              "-e",
+              "raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.14818882942199707,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:25:36Z"
+      },
+      "instance_id": "mruby.ossfuzz-42532420",
+      "plan_sha256": "4978b90b5203dfd62a9f76645be28866cea2beae83764e88e374afb1c209e513"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "360a6e0772e48272a738a9d825ba554387892ff7",
+        "container_id": "e7e20721af641b1765986b02a1569ddf4103a059396bb7fcc9573d072e8d35bf",
+        "finished_at": "2026-07-13T01:28:12Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mupdf.ossfuzz-42520029@sha256:983d8d810e105a27941cf7607a23e14466190c6869034db7717bf1e02ba4cc2e",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "360a6e0772e48272a738a9d825ba554387892ff7",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "/out/mupdf/mutool -v 2>&1 | grep -q 'mutool version'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:26:29Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mupdf.ossfuzz-42520029@sha256:983d8d810e105a27941cf7607a23e14466190c6869034db7717bf1e02ba4cc2e",
+          "instance_id": "mupdf.ossfuzz-42520029",
+          "plan_sha256": "65567031f087f69d27bf33a9e0e7eb071164ad1dd6e8ded67f1632b26a47b53e",
+          "work_dir": "/src/mupdf"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "/out/mupdf/mutool -v 2>&1 | grep -q 'mutool version'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2565481662750244,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:26:29Z"
+      },
+      "base_commit": "360a6e0772e48272a738a9d825ba554387892ff7",
+      "gold": {
+        "available": true,
+        "base_commit": "360a6e0772e48272a738a9d825ba554387892ff7",
+        "container_id": "64aa3b9182e2bdcb2d5d2699f54f834cfe7008a62949c8e6301e5725c627d515",
+        "finished_at": "2026-07-13T01:29:54Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.mupdf.ossfuzz-42520029@sha256:983d8d810e105a27941cf7607a23e14466190c6869034db7717bf1e02ba4cc2e",
+        "passed": true,
+        "patch_hash": "30d95628665be2b73fc011e97ab6bfe57aaee32350629b00709bc9f4de99d605",
+        "plan": {
+          "base_commit": "360a6e0772e48272a738a9d825ba554387892ff7",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "/out/mupdf/mutool -v 2>&1 | grep -q 'mutool version'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:26:29Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.mupdf.ossfuzz-42520029@sha256:983d8d810e105a27941cf7607a23e14466190c6869034db7717bf1e02ba4cc2e",
+          "instance_id": "mupdf.ossfuzz-42520029",
+          "plan_sha256": "65567031f087f69d27bf33a9e0e7eb071164ad1dd6e8ded67f1632b26a47b53e",
+          "work_dir": "/src/mupdf"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "/out/mupdf/mutool -v 2>&1 | grep -q 'mutool version'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2510030269622803,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:28:12Z"
+      },
+      "instance_id": "mupdf.ossfuzz-42520029",
+      "plan_sha256": "dcfdc1751e5896090d64cead5ad0d101d00f774db1249e8964bcaa642209a747"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "c3da13fb18f0d8ec809b346096feab572e634486",
+        "container_id": "e0324384ee0bbf74c9721f04db36f6ba629711f28d51d0cc632abd31c2564030",
+        "finished_at": "2026-07-13T01:30:25Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2020-24348@sha256:87cac4f3666b983d0e5d74c94ddd141f2344b026a2e5bb0ee0725548747d7471",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "c3da13fb18f0d8ec809b346096feab572e634486",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:29:54Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2020-24348@sha256:87cac4f3666b983d0e5d74c94ddd141f2344b026a2e5bb0ee0725548747d7471",
+          "instance_id": "njs.cve-2020-24348",
+          "plan_sha256": "964ab9cb6d555df2f18dab373682cb162022d7e143dde6a07baf676667baad2b",
+          "work_dir": "/src/njs"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.3731040954589844,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:29:54Z"
+      },
+      "base_commit": "c3da13fb18f0d8ec809b346096feab572e634486",
+      "gold": {
+        "available": true,
+        "base_commit": "c3da13fb18f0d8ec809b346096feab572e634486",
+        "container_id": "64a38cf73116d5748f11c30a1c994c2170eaddca17a8081ab151dbb876f3bab2",
+        "finished_at": "2026-07-13T01:30:56Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2020-24348@sha256:87cac4f3666b983d0e5d74c94ddd141f2344b026a2e5bb0ee0725548747d7471",
+        "passed": true,
+        "patch_hash": "a0da9dddad0e581855278adbf7ca9a888a5b73c2a0f73cb8b661aec8640d3e7e",
+        "plan": {
+          "base_commit": "c3da13fb18f0d8ec809b346096feab572e634486",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:29:54Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2020-24348@sha256:87cac4f3666b983d0e5d74c94ddd141f2344b026a2e5bb0ee0725548747d7471",
+          "instance_id": "njs.cve-2020-24348",
+          "plan_sha256": "964ab9cb6d555df2f18dab373682cb162022d7e143dde6a07baf676667baad2b",
+          "work_dir": "/src/njs"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.37410497665405273,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:30:25Z"
+      },
+      "instance_id": "njs.cve-2020-24348",
+      "plan_sha256": "be803df62e5e38d6a92ff5f4d9713a979da4892326fcf10cc2aa80c9ad34fb3e"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "f65981b0b8fcf02d69a40bc934803c25c9f607ab",
+        "container_id": "e65627df3cfdd1a0f4b072de6b03e1dcc6ecb7adfeef473d77a1923ed652eda4",
+        "finished_at": "2026-07-13T01:31:30Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2022-32414@sha256:8b9c17cc6ae2b7aae0d2d2c3f4e4e9a9ea16e663a825ac798984c54155f4b291",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "f65981b0b8fcf02d69a40bc934803c25c9f607ab",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:30:56Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2022-32414@sha256:8b9c17cc6ae2b7aae0d2d2c3f4e4e9a9ea16e663a825ac798984c54155f4b291",
+          "instance_id": "njs.cve-2022-32414",
+          "plan_sha256": "abf8f8b484d6bd566f2fadb7c402c0eb0026cd6be66dd253922220f51de7bbdc",
+          "work_dir": "/src/njs"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.16260194778442383,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:30:56Z"
+      },
+      "base_commit": "f65981b0b8fcf02d69a40bc934803c25c9f607ab",
+      "gold": {
+        "available": true,
+        "base_commit": "f65981b0b8fcf02d69a40bc934803c25c9f607ab",
+        "container_id": "10ea92955d9728c0ba47c44d66881957dd17dbb7735038ddeb3989d956857b8f",
+        "finished_at": "2026-07-13T01:32:05Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2022-32414@sha256:8b9c17cc6ae2b7aae0d2d2c3f4e4e9a9ea16e663a825ac798984c54155f4b291",
+        "passed": true,
+        "patch_hash": "ebf572cfd1dbf4907f1bd3aa943f9bec56b67838fcc5b2d845e73cd3a7472652",
+        "plan": {
+          "base_commit": "f65981b0b8fcf02d69a40bc934803c25c9f607ab",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:30:56Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.njs.cve-2022-32414@sha256:8b9c17cc6ae2b7aae0d2d2c3f4e4e9a9ea16e663a825ac798984c54155f4b291",
+          "instance_id": "njs.cve-2022-32414",
+          "plan_sha256": "abf8f8b484d6bd566f2fadb7c402c0eb0026cd6be66dd253922220f51de7bbdc",
+          "work_dir": "/src/njs"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/njs -v 2>&1 | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.16576695442199707,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:31:31Z"
+      },
+      "instance_id": "njs.cve-2022-32414",
+      "plan_sha256": "c89db247c69bf7aceeedbffe7586de8555ea46a14eeb4c7fe7e7285146b85e16"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "5597522cac96b1bc6d48a447751b1c6049248eef",
+        "container_id": "73b5f04fb3c46c751974b0703778b31eecae5f6ab168852e262e03ebbcc30393",
+        "finished_at": "2026-07-13T01:32:28Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2017-14041@sha256:84012bfa467b95e0ae20ef09c75c65478095f35c247c66ab7d937dad1de3351c",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "5597522cac96b1bc6d48a447751b1c6049248eef",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:32:05Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2017-14041@sha256:84012bfa467b95e0ae20ef09c75c65478095f35c247c66ab7d937dad1de3351c",
+          "instance_id": "openjpeg.cve-2017-14041",
+          "plan_sha256": "be8c5ec10ab013e2fb9299453d0c0f77c8ce1f73f2b78af51ac186684be3f6ea",
+          "work_dir": "/src/openjpeg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.15318608283996582,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:32:05Z"
+      },
+      "base_commit": "5597522cac96b1bc6d48a447751b1c6049248eef",
+      "gold": {
+        "available": true,
+        "base_commit": "5597522cac96b1bc6d48a447751b1c6049248eef",
+        "container_id": "76c0805b70c42b2b3768eb0528eef2b150f38f5401c71b91a1f7e355362385d8",
+        "finished_at": "2026-07-13T01:32:52Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2017-14041@sha256:84012bfa467b95e0ae20ef09c75c65478095f35c247c66ab7d937dad1de3351c",
+        "passed": true,
+        "patch_hash": "3b579c9a4d87ad9aec8f8dd3787cedc182bc07ec199932f17739f6215ef354ec",
+        "plan": {
+          "base_commit": "5597522cac96b1bc6d48a447751b1c6049248eef",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:32:05Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2017-14041@sha256:84012bfa467b95e0ae20ef09c75c65478095f35c247c66ab7d937dad1de3351c",
+          "instance_id": "openjpeg.cve-2017-14041",
+          "plan_sha256": "be8c5ec10ab013e2fb9299453d0c0f77c8ce1f73f2b78af51ac186684be3f6ea",
+          "work_dir": "/src/openjpeg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.17071270942687988,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:32:28Z"
+      },
+      "instance_id": "openjpeg.cve-2017-14041",
+      "plan_sha256": "a05420fdefa516b9bc6db9ac3d1697d2b6fcfb70a6b6f1ddc0baf6f1bdb4d4c7"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "4ec0aca4d733a852186bbce82e58043095a372d4",
+        "container_id": "396a97d15e7ef33af5b65d4f29d2178a0ad94fe4eaf2c4f43dba13b3eeb20956",
+        "finished_at": "2026-07-13T01:33:25Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2024-56827@sha256:d17f6788f2915d31b21c8af1b3fa9b68ee71447247a1f97d4cec1217a06b0c5a",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "4ec0aca4d733a852186bbce82e58043095a372d4",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:32:53Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2024-56827@sha256:d17f6788f2915d31b21c8af1b3fa9b68ee71447247a1f97d4cec1217a06b0c5a",
+          "instance_id": "openjpeg.cve-2024-56827",
+          "plan_sha256": "f69dab7ab4c0f78923e40cc6d90406315e80a80336a83fa782d0452495aded4f",
+          "work_dir": "/src/openjpeg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.16308021545410156,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:32:53Z"
+      },
+      "base_commit": "4ec0aca4d733a852186bbce82e58043095a372d4",
+      "gold": {
+        "available": true,
+        "base_commit": "4ec0aca4d733a852186bbce82e58043095a372d4",
+        "container_id": "0e65923a43c1559ac55d23c07c50dd13985e67fd0742caa1f227015f04fac861",
+        "finished_at": "2026-07-13T01:33:55Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2024-56827@sha256:d17f6788f2915d31b21c8af1b3fa9b68ee71447247a1f97d4cec1217a06b0c5a",
+        "passed": true,
+        "patch_hash": "4264a705abcac59fe82e0c4fb25a5ae45ff3be39a0bdafd8f1cd18d39c3c9d02",
+        "plan": {
+          "base_commit": "4ec0aca4d733a852186bbce82e58043095a372d4",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:32:53Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.openjpeg.cve-2024-56827@sha256:d17f6788f2915d31b21c8af1b3fa9b68ee71447247a1f97d4cec1217a06b0c5a",
+          "instance_id": "openjpeg.cve-2024-56827",
+          "plan_sha256": "f69dab7ab4c0f78923e40cc6d90406315e80a80336a83fa782d0452495aded4f",
+          "work_dir": "/src/openjpeg"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1638941764831543,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:33:25Z"
+      },
+      "instance_id": "openjpeg.cve-2024-56827",
+      "plan_sha256": "fe1be412902366a6e390065e85910be6248cfd9478a22734f1f99c4f7f316a06"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "24b4ec42e701814b5bf55685f6fbc81e25f1044c",
+        "container_id": "02bff91ed29fb32338c26bf1d5be8f6051c731228f2aed4bbbb02de92feecabc",
+        "finished_at": "2026-07-13T01:36:18Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-402200343@sha256:93323c5c6679a84d54cda600519ffbe30d37784b60fa616cd685eb7bda1869a1",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "24b4ec42e701814b5bf55685f6fbc81e25f1044c",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/debug/upx --version 2>&1 | grep -qi UPX"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:33:56Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-402200343@sha256:93323c5c6679a84d54cda600519ffbe30d37784b60fa616cd685eb7bda1869a1",
+          "instance_id": "upx.ossfuzz-402200343",
+          "plan_sha256": "0ad033e2eb2073c5710adec84da9232b8e7dbd429ce61e63aa6842a8bc12f174",
+          "work_dir": "/src/upx"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/debug/upx --version 2>&1 | grep -qi UPX"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2209329605102539,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:33:56Z"
+      },
+      "base_commit": "24b4ec42e701814b5bf55685f6fbc81e25f1044c",
+      "gold": {
+        "available": true,
+        "base_commit": "24b4ec42e701814b5bf55685f6fbc81e25f1044c",
+        "container_id": "23041e70bead663d96cbcc97fb53381c788d94c93a85a1dbc54cf1eb835ed714",
+        "finished_at": "2026-07-13T01:38:45Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-402200343@sha256:93323c5c6679a84d54cda600519ffbe30d37784b60fa616cd685eb7bda1869a1",
+        "passed": true,
+        "patch_hash": "b4249626488cb9ee2964bcbe8feacc7d56dbc4421f528b94a1ad440d04090bbc",
+        "plan": {
+          "base_commit": "24b4ec42e701814b5bf55685f6fbc81e25f1044c",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/debug/upx --version 2>&1 | grep -qi UPX"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:33:56Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-402200343@sha256:93323c5c6679a84d54cda600519ffbe30d37784b60fa616cd685eb7bda1869a1",
+          "instance_id": "upx.ossfuzz-402200343",
+          "plan_sha256": "0ad033e2eb2073c5710adec84da9232b8e7dbd429ce61e63aa6842a8bc12f174",
+          "work_dir": "/src/upx"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/debug/upx --version 2>&1 | grep -qi UPX"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2061619758605957,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:36:18Z"
+      },
+      "instance_id": "upx.ossfuzz-402200343",
+      "plan_sha256": "3a5c94d2a7009208baa7d7a3742ba765a97cc1eed830f828889565ed5facdea9"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "3dca1175e5899b54ac97e2ffab38dc5191cc4be4",
+        "container_id": "59eb433b593741fddba67bbae85d35f13fafc56b6f25c232e4650c8ea932a0c4",
+        "finished_at": "2026-07-13T01:40:57Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531653@sha256:f1fa88c9a2f1fb5e4b3f0b8a5a86942f7e7b739e7f88edeefa1072678da6c75d",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "3dca1175e5899b54ac97e2ffab38dc5191cc4be4",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/debug/upx --version 2>&1 | grep -qi UPX"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:38:45Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531653@sha256:f1fa88c9a2f1fb5e4b3f0b8a5a86942f7e7b739e7f88edeefa1072678da6c75d",
+          "instance_id": "upx.ossfuzz-42531653",
+          "plan_sha256": "a995514c1f348ece1d540eecba8386c5f844a70d9297f75a617beba16d5e9e4b",
+          "work_dir": "/src/upx"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/debug/upx --version 2>&1 | grep -qi UPX"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.19127392768859863,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:38:45Z"
+      },
+      "base_commit": "3dca1175e5899b54ac97e2ffab38dc5191cc4be4",
+      "gold": {
+        "available": true,
+        "base_commit": "3dca1175e5899b54ac97e2ffab38dc5191cc4be4",
+        "container_id": "26410c7941af87114decb7c4abf139cbfe9aefc2fcdfc182f564e92b6a609c84",
+        "finished_at": "2026-07-13T01:43:07Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531653@sha256:f1fa88c9a2f1fb5e4b3f0b8a5a86942f7e7b739e7f88edeefa1072678da6c75d",
+        "passed": true,
+        "patch_hash": "d6dcddbb9cad5a4d29a8cc5de9ee3f66508b1430b52107443f7db7aaba6653d0",
+        "plan": {
+          "base_commit": "3dca1175e5899b54ac97e2ffab38dc5191cc4be4",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/debug/upx --version 2>&1 | grep -qi UPX"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:38:45Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531653@sha256:f1fa88c9a2f1fb5e4b3f0b8a5a86942f7e7b739e7f88edeefa1072678da6c75d",
+          "instance_id": "upx.ossfuzz-42531653",
+          "plan_sha256": "a995514c1f348ece1d540eecba8386c5f844a70d9297f75a617beba16d5e9e4b",
+          "work_dir": "/src/upx"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/debug/upx --version 2>&1 | grep -qi UPX"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.21133804321289062,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:40:58Z"
+      },
+      "instance_id": "upx.ossfuzz-42531653",
+      "plan_sha256": "85a9740d16faffda2174a2868248d5384e7e14a4676c818768267dfd0062ed9d"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "d549c2b5c9a2880ba03b6522e055bbe673fa7753",
+        "container_id": "b6e62e1f809e9d7ea079fae39733e1f6d8e6d2047b39f1202306e31dd284612a",
+        "finished_at": "2026-07-13T01:45:12Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531672@sha256:4bf81cab9ad77881dc7eb68414fcece580e0ebaa0538206a8ba2843679048b5d",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "d549c2b5c9a2880ba03b6522e055bbe673fa7753",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/debug/upx --version 2>&1 | grep -qi UPX"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:43:07Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531672@sha256:4bf81cab9ad77881dc7eb68414fcece580e0ebaa0538206a8ba2843679048b5d",
+          "instance_id": "upx.ossfuzz-42531672",
+          "plan_sha256": "17bddf99b6b8d2282d6adc15d16cd01789fca5d6d3e75f543fa486b6b62285a8",
+          "work_dir": "/src/upx"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/debug/upx --version 2>&1 | grep -qi UPX"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1944119930267334,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:43:07Z"
+      },
+      "base_commit": "d549c2b5c9a2880ba03b6522e055bbe673fa7753",
+      "gold": {
+        "available": true,
+        "base_commit": "d549c2b5c9a2880ba03b6522e055bbe673fa7753",
+        "container_id": "06ac0c0b00e50098ee858d5273bf9313297000300d9e52569ed874c1e06318fd",
+        "finished_at": "2026-07-13T01:47:21Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531672@sha256:4bf81cab9ad77881dc7eb68414fcece580e0ebaa0538206a8ba2843679048b5d",
+        "passed": true,
+        "patch_hash": "c916ebaa3641c711cf46dbc9063ec15da6323dab491949123aa23523148d78dd",
+        "plan": {
+          "base_commit": "d549c2b5c9a2880ba03b6522e055bbe673fa7753",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/debug/upx --version 2>&1 | grep -qi UPX"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:43:07Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531672@sha256:4bf81cab9ad77881dc7eb68414fcece580e0ebaa0538206a8ba2843679048b5d",
+          "instance_id": "upx.ossfuzz-42531672",
+          "plan_sha256": "17bddf99b6b8d2282d6adc15d16cd01789fca5d6d3e75f543fa486b6b62285a8",
+          "work_dir": "/src/upx"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/debug/upx --version 2>&1 | grep -qi UPX"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.21626067161560059,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:45:12Z"
+      },
+      "instance_id": "upx.ossfuzz-42531672",
+      "plan_sha256": "428b7d603d4344d7f97d44539371bb55b88ad08f357baa4c10633f4c90a6dabb"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "cfbfbbff1531b4eaf7e557816ea4649e4e259cb1",
+        "container_id": "7b2ec73af878745c3a1c12655e08b3ece113d8947e9627150b680fe30b5425e3",
+        "finished_at": "2026-07-13T01:47:34Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.wasm3.ossfuzz-42495624@sha256:cf27010cdccbad5510a8b2125c0b6b938769834af099cf0b1631b686f2d1c3b6",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "cfbfbbff1531b4eaf7e557816ea4649e4e259cb1",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/wasm3 --version 2>&1 | grep -qi wasm3"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:47:22Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.wasm3.ossfuzz-42495624@sha256:cf27010cdccbad5510a8b2125c0b6b938769834af099cf0b1631b686f2d1c3b6",
+          "instance_id": "wasm3.ossfuzz-42495624",
+          "plan_sha256": "b2f669c91d025e3c816fc4c87abd35d7731534d81461c7d3bdffba191ef923b0",
+          "work_dir": "/src/wasm3"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/wasm3 --version 2>&1 | grep -qi wasm3"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.16976714134216309,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:47:22Z"
+      },
+      "base_commit": "cfbfbbff1531b4eaf7e557816ea4649e4e259cb1",
+      "gold": {
+        "available": true,
+        "base_commit": "cfbfbbff1531b4eaf7e557816ea4649e4e259cb1",
+        "container_id": "4e6b969303daf6ef2f175f77b063055f9effe539f33453f32cd22ce8888d2d70",
+        "finished_at": "2026-07-13T01:47:46Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.wasm3.ossfuzz-42495624@sha256:cf27010cdccbad5510a8b2125c0b6b938769834af099cf0b1631b686f2d1c3b6",
+        "passed": true,
+        "patch_hash": "ba5875e35c549b88b63f19c738a4b7a489f639e920ce1c97b539e9b4ac4f9643",
+        "plan": {
+          "base_commit": "cfbfbbff1531b4eaf7e557816ea4649e4e259cb1",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./build/wasm3 --version 2>&1 | grep -qi wasm3"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:47:22Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.wasm3.ossfuzz-42495624@sha256:cf27010cdccbad5510a8b2125c0b6b938769834af099cf0b1631b686f2d1c3b6",
+          "instance_id": "wasm3.ossfuzz-42495624",
+          "plan_sha256": "b2f669c91d025e3c816fc4c87abd35d7731534d81461c7d3bdffba191ef923b0",
+          "work_dir": "/src/wasm3"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./build/wasm3 --version 2>&1 | grep -qi wasm3"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.1489419937133789,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:47:34Z"
+      },
+      "instance_id": "wasm3.ossfuzz-42495624",
+      "plan_sha256": "2fe645c008db4d80a0474bf30abbb6d8886b2e2c067819b907d65c136c395950"
+    },
+    {
+      "base": {
+        "available": true,
+        "base_commit": "d1ff3ecc465d7ed882943fd1278dd8981b704f02",
+        "container_id": "19eae46612aba71222b0e505ef8b078c2c1b4c8e6fcb7ebbb635415fc138933d",
+        "finished_at": "2026-07-13T01:48:55Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.yara.cve-2023-40857@sha256:5af23c11359efe21f51ea80e0b7fcc74184d8c391516ac7e6c87bf1573c4cccd",
+        "passed": true,
+        "patch_hash": null,
+        "plan": {
+          "base_commit": "d1ff3ecc465d7ed882943fd1278dd8981b704f02",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./yara --version 2>&1 | grep -Eq '^[0-9]+\\.'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:47:46Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.yara.cve-2023-40857@sha256:5af23c11359efe21f51ea80e0b7fcc74184d8c391516ac7e6c87bf1573c4cccd",
+          "instance_id": "yara.cve-2023-40857",
+          "plan_sha256": "67e5128144a07680593e63845fe6584218ef8afd236e00c54b51ade16fb1b243",
+          "work_dir": "/src/yara"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./yara --version 2>&1 | grep -Eq '^[0-9]+\\.'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2744929790496826,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:47:46Z"
+      },
+      "base_commit": "d1ff3ecc465d7ed882943fd1278dd8981b704f02",
+      "gold": {
+        "available": true,
+        "base_commit": "d1ff3ecc465d7ed882943fd1278dd8981b704f02",
+        "container_id": "23f807ed2bb34b926e826164bb93f8216cdcf32fb7de24b823eb4b1ddb3c1a1c",
+        "finished_at": "2026-07-13T01:50:09Z",
+        "image_digest": "hwiwonlee/secb.eval.x86_64.yara.cve-2023-40857@sha256:5af23c11359efe21f51ea80e0b7fcc74184d8c391516ac7e6c87bf1573c4cccd",
+        "passed": true,
+        "patch_hash": "6f1a595df68b94faa23c954a0b657403a96b1f28c13002ecf1959424d45d1dc3",
+        "plan": {
+          "base_commit": "d1ff3ecc465d7ed882943fd1278dd8981b704f02",
+          "base_validation_sha256": null,
+          "commands": [
+            {
+              "argv": [
+                "bash",
+                "-lc",
+                "./yara --version 2>&1 | grep -Eq '^[0-9]+\\.'"
+              ],
+              "cwd": ".",
+              "required": true,
+              "timeout_seconds": 60.0
+            }
+          ],
+          "dataset_revision": "SEC-bench/SEC-bench@eval",
+          "generated_at": "2026-07-13T01:47:46Z",
+          "generator_model": "container-probe-v1",
+          "gold_validation_sha256": null,
+          "image_digest": "hwiwonlee/secb.eval.x86_64.yara.cve-2023-40857@sha256:5af23c11359efe21f51ea80e0b7fcc74184d8c391516ac7e6c87bf1573c4cccd",
+          "instance_id": "yara.cve-2023-40857",
+          "plan_sha256": "67e5128144a07680593e63845fe6584218ef8afd236e00c54b51ade16fb1b243",
+          "work_dir": "/src/yara"
+        },
+        "reason": "all required regression commands passed",
+        "results": [
+          {
+            "argv": [
+              "bash",
+              "-lc",
+              "./yara --version 2>&1 | grep -Eq '^[0-9]+\\.'"
+            ],
+            "cwd": ".",
+            "duration_seconds": 0.2580749988555908,
+            "exit_code": 0,
+            "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "required": true,
+            "signal": null,
+            "timed_out": false
+          }
+        ],
+        "started_at": "2026-07-13T01:48:55Z"
+      },
+      "instance_id": "yara.cve-2023-40857",
+      "plan_sha256": "0d8376462dcfa35b4e498ba9cef8d45ec828d1fe3d8467999186b9ae6416e82a"
+    }
+  ]
+}

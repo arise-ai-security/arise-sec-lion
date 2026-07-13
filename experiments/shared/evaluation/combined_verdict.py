@@ -1,53 +1,40 @@
-"""Authoritative per-run verdict: official mechanical AND safety floor AND semantic.
-
-The declared business definition of success is the conjunction of three
-independently-owned layers, none of which trusts an agent-authored VERDICT file:
-
-1. **Official mechanical** -- SEC-bench PoC-primary and patch-primary (``medium``)
-   interpretation of host command evidence, replayed in fresh containers by an
-   injected :class:`ReplayRunnerPort` (:func:`interpret_poc`/:func:`interpret_patch`).
-   Strict/generous patch modes are recorded as sensitivity, never as gates.
-2. **Arise safety/provenance floor** -- path, identity, fresh-base, and crash-safety
-   invariants over the *post-fix* patch evidence (:func:`evaluate_safety_floor`).
-3. **Independent semantic gate** -- the three-call blinded LLM adjudication
-   (:func:`evaluate_semantic_gate`), whose judge is injected via ``judge_factory``.
-
-``success = mechanical.passed AND safety.passed AND semantic_accepted``. The two
-live-infra seams (the container replay runner and the LLM judge) are dependency-
-injected so this composition is unit-verifiable with fakes while a real run binds
-the real Docker replay and the real pinned model.
-"""
+"""Authoritative verdict: mechanical AND safety AND regression AND semantics."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from experiments.shared.evaluation.official import (
+    CrashSignature,
     MechanicalVerdict,
+    ReferenceReplayResult,
     SafetyFloorInput,
     SafetyFloorVerdict,
-    SecBenchReplayResult,
     evaluate_safety_floor,
-    interpret_patch,
-    interpret_poc,
+)
+from experiments.shared.evaluation.regression import (
+    RegressionEvidence,
+    unavailable_regression,
 )
 from experiments.shared.evaluation.semantic_gate import (
+    JudgeFactory,
     SemanticGateResult,
     evaluate_semantic_gate,
 )
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from experiments.shared.evaluation.official import CommandEvidence
-    from experiments.shared.evaluation.semantic_gate import SemanticJudge
+
+
+REPLAY_COUNT = 3
 
 
 class ReplayRunnerPort(Protocol):
-    """The fresh-container replay seam (satisfied by :class:`SecBenchReplayRunner`)."""
+    """Fresh-container replay seam implemented by the external evaluator."""
 
     def run(
         self,
@@ -55,59 +42,65 @@ class ReplayRunnerPort(Protocol):
         input_dir: Path,
         output_dir: Path,
         evaluation_type: Literal["poc", "patch"],
-    ) -> SecBenchReplayResult: ...
+    ) -> ReferenceReplayResult: ...
 
 
 @dataclass(frozen=True, slots=True)
 class CombinedVerdictInput:
-    """Everything the composition needs, with the two live seams left injectable.
-
-    Carries no agent-authored verdict channel: mechanical eligibility is decided
-    from host replay evidence plus artifact *presence* only, and the semantic
-    evidence is blinded by the gate itself.
-    """
-
     poc_input_dir: Path
     poc_output_dir: Path
     patch_input_dir: Path
     patch_output_dir: Path
     poc_present: bool
     patch_present: bool
-    expected_exit_code: int | None
     safety: SafetyFloorInput
     task_id: str
+    expected_crash_signature: CrashSignature
     semantic_evidence: dict[str, Any]
+    regression: RegressionEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class MechanicalOutcome:
-    """Official mechanical layer: PoC-primary + patch-primary (medium), with sensitivity."""
+    """All three independent pre- and post-patch replay outcomes."""
 
     passed: bool
     poc: MechanicalVerdict
     patch_primary: MechanicalVerdict
     patch_strict: MechanicalVerdict
     patch_generous: MechanicalVerdict
+    replay_count: int
+    expected_crash_signature: CrashSignature
 
 
 @dataclass(frozen=True, slots=True)
 class CombinedVerdict:
-    """The authoritative three-layer verdict for one run."""
-
     success: bool
     mechanical: MechanicalOutcome
     safety: SafetyFloorVerdict
-    semantic: SemanticGateResult
+    regression: RegressionEvidence
+    semantic: SemanticGateResult | None
     semantic_accepted: bool
-    poc_evidence: CommandEvidence
-    patch_evidence: CommandEvidence
+    poc_replays: tuple[ReferenceReplayResult, ...]
+    patch_replays: tuple[ReferenceReplayResult, ...]
+
+    @property
+    def poc_evidence(self) -> tuple[CommandEvidence, ...]:
+        return tuple(replay.modes["primary"].evidence for replay in self.poc_replays)
+
+    @property
+    def patch_evidence(self) -> tuple[CommandEvidence, ...]:
+        return tuple(replay.modes["primary"].evidence for replay in self.patch_replays)
 
     def to_dict(self) -> dict[str, Any]:
-        """Render as JSON-serialisable primitives (dataclasses flattened)."""
         return {
             "success": self.success,
             "mechanical": {
                 "passed": self.mechanical.passed,
+                "replay_count": self.mechanical.replay_count,
+                "expected_crash_signature": asdict(
+                    self.mechanical.expected_crash_signature
+                ),
                 "poc": asdict(self.mechanical.poc),
                 "patch_primary": asdict(self.mechanical.patch_primary),
                 "sensitivity": {
@@ -116,17 +109,15 @@ class CombinedVerdict:
                 },
             },
             "safety": asdict(self.safety),
-            "semantic": {
-                "accepted": self.semantic_accepted,
-                "provisional_verdict": self.semantic.provisional_verdict,
-                "unanimous": self.semantic.unanimous,
-                "judge_error": self.semantic.judge_error,
-                "human_audit_required": self.semantic.human_audit_required,
-                "audit_reason": self.semantic.audit_reason,
-                "judge_model": self.semantic.judge_model,
+            "regression": self.regression.to_dict(),
+            "semantic": asdict(self.semantic) if self.semantic is not None else {
+                "accepted": False,
+                "available": False,
+                "skipped": "prior_gate_failed",
             },
-            "poc_evidence": asdict(self.poc_evidence),
-            "patch_evidence": asdict(self.patch_evidence),
+            "semantic_accepted": self.semantic_accepted,
+            "poc_replays": [asdict(replay) for replay in self.poc_replays],
+            "patch_replays": [asdict(replay) for replay in self.patch_replays],
         }
 
 
@@ -134,82 +125,153 @@ def evaluate_combined_verdict(
     request: CombinedVerdictInput,
     *,
     replay_runner: ReplayRunnerPort,
-    judge_factory: Callable[[], SemanticJudge] | None = None,
-    audit_rate: float = 0.10,
+    judge_factory: JudgeFactory | None = None,
 ) -> CombinedVerdict:
-    """Compose the three layers into one authoritative verdict.
+    """Run six fresh replays, exact-oracle validation, safety, host regression, judges.
 
-    The PoC replay proves the exploit (its evidence must trigger a sanitizer); the
-    patch replay proves the fix (its evidence must be crash-free). The safety floor
-    therefore inspects only the *post-fix* patch evidence -- feeding it the PoC's
-    required sanitizer report would fail every genuine run.
-
-    Args:
-        request: The assembled, verdict-file-agnostic inputs.
-        replay_runner: The injected fresh-container replay seam.
-        judge_factory: The injected semantic-judge factory (``None`` uses the gate's
-            pinned production default).
-        audit_rate: Stratified human-audit sampling rate passed to the gate.
-
-    Returns:
-        The combined verdict recording every layer's outcome and the final success.
+    Semantic judges run only after mechanical, safety, and host regression all pass.
+    Worker-authored regression prose never substitutes for host regression evidence.
     """
-    poc_result = replay_runner.run(
+    poc_replays = _run_replays(
+        replay_runner,
         input_dir=request.poc_input_dir,
         output_dir=request.poc_output_dir,
         evaluation_type="poc",
     )
-    patch_result = replay_runner.run(
+    patch_replays = _run_replays(
+        replay_runner,
         input_dir=request.patch_input_dir,
         output_dir=request.patch_output_dir,
         evaluation_type="patch",
     )
 
-    poc_verdict = interpret_poc(
-        artifact_present=request.poc_present, evidence=poc_result.command_evidence
+    poc_modes = tuple(replay.modes["primary"] for replay in poc_replays)
+    patch_primary_modes = tuple(replay.modes["primary"] for replay in patch_replays)
+    patch_strict_modes = tuple(replay.modes["strict"] for replay in patch_replays)
+    patch_generous_modes = tuple(replay.modes["generous"] for replay in patch_replays)
+
+    oracle_matches = (
+        request.expected_crash_signature.complete
+        and request.expected_crash_signature.access_kind is not None
+        and all(
+            mode.crash_signature == request.expected_crash_signature for mode in poc_modes
+        )
     )
-    patch_primary = interpret_patch(
-        patch_present=request.patch_present,
-        evidence=patch_result.command_evidence,
-        expected_exit_code=request.expected_exit_code,
-        mode="medium",
+    poc = _aggregate(
+        request.poc_present
+        and all(mode.verdict.passed for mode in poc_modes)
+        and oracle_matches,
+        success="all 3 PoC replays matched the exact frozen crash oracle",
+        failure=(
+            "PoC replay failed or sanitizer class/access/top application frame did not "
+            "match the frozen oracle in all 3 fresh containers"
+        ),
     )
-    patch_strict = interpret_patch(
-        patch_present=request.patch_present,
-        evidence=patch_result.command_evidence,
-        expected_exit_code=request.expected_exit_code,
-        mode="strict",
+    patch_primary = _aggregate_modes(
+        request.patch_present, patch_primary_modes, "patch primary"
     )
-    patch_generous = interpret_patch(
-        patch_present=request.patch_present,
-        evidence=patch_result.command_evidence,
-        expected_exit_code=request.expected_exit_code,
-        mode="generous",
+    patch_strict = _aggregate_modes(
+        request.patch_present, patch_strict_modes, "patch strict"
+    )
+    patch_generous = _aggregate_modes(
+        request.patch_present, patch_generous_modes, "patch generous"
     )
     mechanical = MechanicalOutcome(
-        passed=poc_verdict.passed and patch_primary.passed,
-        poc=poc_verdict,
+        passed=poc.passed and patch_primary.passed,
+        poc=poc,
         patch_primary=patch_primary,
         patch_strict=patch_strict,
         patch_generous=patch_generous,
+        replay_count=REPLAY_COUNT,
+        expected_crash_signature=request.expected_crash_signature,
     )
 
-    safety = evaluate_safety_floor(request.safety, (patch_result.command_evidence,))
-
-    semantic = evaluate_semantic_gate(
-        task_id=request.task_id,
-        evidence=request.semantic_evidence,
-        judge_factory=judge_factory,
-        audit_rate=audit_rate,
+    # fresh_base is proven from six distinct container identities, never asserted.
+    safety = evaluate_safety_floor(
+        replace(
+            request.safety,
+            fresh_base=_fresh_base_from_replays(poc_replays, patch_replays),
+        ),
+        tuple(mode.evidence for mode in patch_primary_modes),
     )
-    semantic_accepted = semantic.provisional_verdict
+    regression = request.regression or unavailable_regression(
+        reason="missing frozen host regression plan; evaluation unavailable",
+        base_commit="",
+    )
+    regression_ok = regression.available and regression.passed
 
+    semantic: SemanticGateResult | None = None
+    if mechanical.passed and safety.passed and regression_ok:
+        semantic = evaluate_semantic_gate(
+            task_id=request.task_id,
+            evidence={
+                **request.semantic_evidence,
+                "host_replay": {
+                    "expected_crash_signature": asdict(request.expected_crash_signature),
+                    "pre_patch": [asdict(replay) for replay in poc_replays],
+                    "post_patch": [asdict(replay) for replay in patch_replays],
+                },
+                "host_regression": regression.to_dict(),
+            },
+            judge_factory=judge_factory,
+        )
+    semantic_accepted = semantic is not None and semantic.verdict
     return CombinedVerdict(
-        success=mechanical.passed and safety.passed and semantic_accepted,
+        success=mechanical.passed and safety.passed and regression_ok and semantic_accepted,
         mechanical=mechanical,
         safety=safety,
+        regression=regression,
         semantic=semantic,
         semantic_accepted=semantic_accepted,
-        poc_evidence=poc_result.command_evidence,
-        patch_evidence=patch_result.command_evidence,
+        poc_replays=poc_replays,
+        patch_replays=patch_replays,
     )
+
+
+def _run_replays(
+    runner: ReplayRunnerPort,
+    *,
+    input_dir: Path,
+    output_dir: Path,
+    evaluation_type: Literal["poc", "patch"],
+) -> tuple[ReferenceReplayResult, ...]:
+    return tuple(
+        runner.run(
+            input_dir=input_dir,
+            output_dir=output_dir.parent / f"{output_dir.name}-{index}",
+            evaluation_type=evaluation_type,
+        )
+        for index in range(1, REPLAY_COUNT + 1)
+    )
+
+
+def _fresh_base_from_replays(
+    poc_replays: tuple[ReferenceReplayResult, ...],
+    patch_replays: tuple[ReferenceReplayResult, ...],
+) -> bool:
+    """True iff six replays each report a distinct non-empty container identity."""
+    identities = tuple(
+        replay.container_id
+        for replay in (*poc_replays, *patch_replays)
+        if isinstance(replay.container_id, str) and replay.container_id.strip()
+    )
+    return len(identities) == REPLAY_COUNT * 2 and len(set(identities)) == REPLAY_COUNT * 2
+
+
+def _aggregate_modes(
+    artifact_present: bool,
+    modes: tuple[Any, ...],
+    label: str,
+) -> MechanicalVerdict:
+    passed = artifact_present and len(modes) == REPLAY_COUNT and all(
+        mode.verdict.passed for mode in modes
+    )
+    return _aggregate(
+        passed,
+        success=f"all {REPLAY_COUNT} {label} replays passed",
+        failure=f"{label} artifact absent or at least one of {REPLAY_COUNT} replays failed",
+    )
+
+
+def _aggregate(passed: bool, *, success: str, failure: str) -> MechanicalVerdict:
+    return MechanicalVerdict(passed=passed, reason=success if passed else failure)

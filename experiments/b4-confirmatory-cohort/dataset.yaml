@@ -1,0 +1,44 @@
+name: b4-confirmatory-cohort
+default_cves:
+- faad2.cve-2018-20196
+- faad2.cve-2018-20362
+- libredwg.cve-2020-21818
+- libredwg.cve-2020-21819
+- mruby.ossfuzz-42497373
+- mruby.ossfuzz-42501420
+- mruby.ossfuzz-42503243
+- mruby.ossfuzz-42511322
+- mruby.ossfuzz-42532420
+- mupdf.ossfuzz-42520029
+- njs.cve-2020-24348
+- njs.cve-2022-32414
+- openjpeg.cve-2017-14041
+- openjpeg.cve-2024-56827
+- upx.ossfuzz-402200343
+- upx.ossfuzz-42531653
+- upx.ossfuzz-42531672
+- wasm3.ossfuzz-42495624
+- yara.cve-2023-40857
+per_cell_overrides: {}
+source:
+  kind: deployment-json
+  paths:
+  - plugins/security/tests/fixtures/faad2.cve-2018-20196.json
+  - plugins/security/tests/fixtures/faad2.cve-2018-20362.json
+  - plugins/security/tests/fixtures/libredwg.cve-2020-21818.json
+  - plugins/security/tests/fixtures/libredwg.cve-2020-21819.json
+  - plugins/security/tests/fixtures/mruby.ossfuzz-42497373.json
+  - plugins/security/tests/fixtures/mruby.ossfuzz-42501420.json
+  - plugins/security/tests/fixtures/mruby.ossfuzz-42503243.json
+  - plugins/security/tests/fixtures/mruby.ossfuzz-42511322.json
+  - plugins/security/tests/fixtures/mruby.ossfuzz-42532420.json
+  - plugins/security/tests/fixtures/mupdf.ossfuzz-42520029.json
+  - plugins/security/tests/fixtures/njs.cve-2020-24348.json
+  - plugins/security/tests/fixtures/njs.cve-2022-32414.json
+  - plugins/security/tests/fixtures/openjpeg.cve-2017-14041.json
+  - plugins/security/tests/fixtures/openjpeg.cve-2024-56827.json
+  - plugins/security/tests/fixtures/upx.ossfuzz-402200343.json
+  - plugins/security/tests/fixtures/upx.ossfuzz-42531653.json
+  - plugins/security/tests/fixtures/upx.ossfuzz-42531672.json
+  - plugins/security/tests/fixtures/wasm3.ossfuzz-42495624.json
+  - plugins/security/tests/fixtures/yara.cve-2023-40857.json
