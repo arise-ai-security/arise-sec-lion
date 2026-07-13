@@ -20,7 +20,7 @@
 
     **For exploit development (Exploiter)**:
     - Use **Valgrind** to confirm memory errors, get detailed stack traces, and verify the sanitizer error matches
-    the bug report
+    the bug description and sanitizer report
     - Use **KLEE** on isolated vulnerability-relevant functions to generate inputs that trigger specific code paths
     - KLEE requires LLVM bitcode: compile with `clang -emit-llvm -c -g -O0 -Xclang -disable-O0-optnone`
     - Prefer Valgrind for quick validation; use KLEE when you need to discover trigger inputs systematically

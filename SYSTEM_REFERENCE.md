@@ -106,6 +106,7 @@ sealed/stripped by Arise (§II.5):
 | Golden surface | Where it can live | Why it is the answer |
 |---|---|---|
 | Gold patch / candidate fixes | `CVEInstance.patch`, `candidate_fixes`; `/testcase/*.patch` | The fix itself |
+| Unrestricted original bug report | `CVEInstance.bug_report` | May contain the official fix commit, exact replacement code, or a successful post-fix transcript |
 | Golden `secb_sh` / `repro()` body | `CVEInstance.secb_sh`, baked `/usr/local/bin/secb` | Encodes the exact reproduction command |
 | Golden repro script / `replay_build.sh` | baked `/testcase/repro.sh`, `$SRC/replay_build.sh` | Pre-written trigger / build |
 | Pre-baked `model_patch.diff`, `gold*.patch` | `/testcase/` | The fix, again |
@@ -367,24 +368,39 @@ Tier 4  domains/secbench/*   ← SecBenchPromptStrategy extender (CVE context)
 ### Tier-4 composition — flat vs hierarchical (the shared-contract anchor)
 
 ```
-FLAT  (extend_flat_prompt, prompt_strategy.py:337-364)
+FLAT  (SecBenchPromptStrategy.extend_flat_prompt)
   _secb_runtime_contract.j2 → cve.j2 (phase=None) → flat_pipeline.j2
         └─ phases/_mindset.j2 + include phases/{build,exploit,fix,report}.j2
      (NO worker/*.j2; no manager/sibling/handoff wording)
 
-HIER  (extend_worker_prompt, prompt_strategy.py:247-335)  — per worker leaf
+HIER role leaf  (extend_worker_prompt) — one catalog role
   _secb_runtime_contract.j2 → cve.j2 (phase=branch) → worker.j2
-        → worker/<branch>.j2  ──include──▶ phases/<branch>.j2  + role overlay steps
+        → worker/role_contract.j2
+        → worker/roles/<branch>/<role>.j2
+        → (optional) tools.j2
+
+HIER role-fused B3 phase task
+  _secb_runtime_contract.j2 → cve.j2 (phase=branch) → worker.j2
+        → worker/<branch>.j2  (role_fused branch; host-procedure ownership preserved)
+        → (optional) tools.j2
+
+HIER whole-phase fallback
+  _secb_runtime_contract.j2 → cve.j2 (phase=branch) → worker.j2
+        → worker/<branch>.j2  ──include──▶ phases/<branch>.j2
         → (optional) tools.j2
 ```
 
-`phases/{build,exploit,fix,report}.j2` are `{% include %}`-ed by **both** arms and
-rendered with identical context, so each phase's Goal + Deliverables + Validation block
-is **byte-identical across arms** — proven by
-`plugins/security/tests/test_prompt_normalization.py:106-148`. This is why the Builder-
-Baseline and Fixer-Diff-Baseline procedures (which keep `model_patch.diff` free of
-Builder hunks) live in the phase partials, not the worker overlays — so the flat arm
-inherits them too.
+`_ROLE_TEMPLATE_BY_NAME` is an explicit 16-entry allowlist; no template path is derived
+from task text. An unknown bracket label fails closed. Each B4 catalog worker renders one
+small role template under `worker/roles/` after the shared role contract, so it does not
+inherit another role's deliverables or a contradictory whole-phase mandate.
+
+The four `worker/<branch>.j2` files remain separate phase-level runbooks, with dedicated
+role-fused B3 branches and whole-phase fallback branches. The latter reuse
+`phases/{build,exploit,fix,report}.j2` with `flat_pipeline.j2`; fused B3 uses its shorter
+producer contract because the four host procedures own the mechanical gates. The
+role-specific B4 templates reference the same artifact constants but intentionally do
+not render the whole phase partial.
 
 ### What the agent sees — the input contract
 
@@ -395,20 +411,27 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
                           phase_commands,             • patch          (gold fix)
                           required_files,             • candidate_fixes (fix bodies)
                           validation_required,        • secb_sh        (golden repro())
-                          hierarchical_only, …      cve_instance.py:15-17, 106-110
+                          hierarchical_only, …        • bug_report     (may disclose fix)
+                                                   cve_instance.py:_PROMPT_FORBIDDEN_FIELDS
 ```
 
-**`_CVE_DISPLAY_FIELDS`** — the 11-field allowlist actually shown to the agent
-(`prompt_strategy.py:29-41`, empty values dropped): `instance_id`, `cve_id`, `repo`,
-`project_name`, `lang`, `sanitizer`, `base_commit`, `work_dir`, `bug_description`,
-`sanitizer_report`, `bug_report`.
+**Effective solving-agent CVE display.** `_CVE_DISPLAY_FIELDS`
+is applied only after `CVEInstance.to_template_context()`
+builds the prompt-safe view. The effective solving-agent display contains at most ten
+non-empty fields: `instance_id`, `cve_id`, `repo`, `project_name`, `lang`, `sanitizer`,
+`base_commit`, `work_dir`, `bug_description`, and `sanitizer_report`.
 
-> `sanitizer_report` and `bug_report` are kept **on purpose** — they are the *expected-
-> failure oracle* the Exploiter must match, not the answer. The fix (`patch`),
-> alternative fixes (`candidate_fixes`), and the golden harness (`secb_sh`) are stripped.
-> Golden strings appear in templates only as **prohibitions** in
-> `_secb_runtime_contract.j2:11`. Verified absent from rendered prompts:
-> `test_prompt_building.py:64-95, 119-148`.
+`CVEInstance` still stores `bug_report` for provenance, curation, and host-side
+evaluation, but `to_template_context()` strips it together with `patch`,
+`candidate_fixes`, and `secb_sh`. An unrestricted upstream report is not a safe solver
+input: it may include the official fix commit, exact changed lines, or a successful
+post-fix transcript. Solving prompts follow the official SEC-bench patch-task convention:
+the concise `bug_description` plus the crash `sanitizer_report`, never the gold patch or
+the unrestricted report.
+
+Primary references: the SEC-bench paper task formulation and prompts
+([arXiv:2506.11791, §2.4 and Appendix B.5](https://arxiv.org/pdf/2506.11791)) and the
+[official patch-task template](https://github.com/SEC-bench/smolagents/blob/a945dba9d6f2594cd94eb00d77f6b41a92fea88b/src/smolagents/prompts/patch.j2#L1-L10).
 
 ### Retry semantics — what triggers a retry, and the cap
 
@@ -600,9 +623,11 @@ empty `/testcase/repro.sh` skeleton, the immutable `/testcase/patch.sh`.
 ## III.5 — Anti-leak model (allowed vs forbidden)
 
 ```
-ALLOWED into prompt / container                FORBIDDEN to the agent
-  • 11 CVE display fields (incl. the             • CVEInstance.patch / candidate_fixes / secb_sh
-    sanitizer_report + bug_report ORACLE)          (stripped from template context)
+ALLOWED into solving prompt / container        FORBIDDEN to the solving agent
+  • prompt-safe CVE fields, including             • CVEInstance.bug_report / patch /
+    bug_description + sanitizer_report              candidate_fixes / secb_sh
+                                                    (retained host-side; stripped from
+                                                     template context)
   • /src/build.sh                                • baked golden secb / repro() body / replay_build.sh
   • shipped PoC files in /testcase                 (secb wrapper overlaid from sealed dir;
     (any filename)                                  REPLAY_ENABLED stripped)
@@ -729,7 +754,7 @@ presence). Names are the exact `deliverables.py` / `criteria.py` constants.
 | **Exploiter — determinism loop ran** | `repro_loop.exit == done` and ≥3 `repro_run_*.log`, each with an `exit=` line | warning | `validation_macros.j2:11-14` |
 | **Fixer — model_patch.diff** | non-empty, valid unified diff (`diff --git` + ≥1 `@@`); presence proves in-run authorship (pre-seeded copy removed) | **yes** | `criteria.py:634-635`; removal `docker_runtime.py:569-577` |
 | **Fixer — clean apply** | `fix_loop.log` shows `patch_exit=0` (+ `build_exit=0`); apply runs through the immutable 0555 `patch.sh` | **yes** | `validation_macros.j2:21-24`; `_PATCH_SCRIPT` |
-| **Fixer — patch is Fixer-only** | no hunk in `model_patch.diff` is byte-identical to a `repo_changes.diff` hunk (symptom check) | warning | `build.j2:25-42`, `fix.j2:17-40` |
+| **Fixer — patch is Fixer-only** | no hunk in `model_patch.diff` is byte-identical to a `repo_changes.diff` hunk (symptom check) | warning | `phases/build.j2:27-42`, `phases/fix.j2:28-37` |
 | **Fixer — verdict** | `patch_validation_results.txt` + `VERDICT: PASS`, `PATCH_APPLY_STATUS: clean`, `BUILD_STATUS: success`, `REPRO_RUNS_NO_CRASH: 3/3` | **yes** | `PATCH_VALIDATION_FIELDS`; `criteria.py:655-657` |
 | **Fixer — root-cause block** *(decomposed only)* | `root_cause_analysis.txt` + all 5 `ROOT_CAUSE_BLOCK_KEYS` | warning | `HIERARCHICAL_ONLY['Fixer']` |
 | **Reporter** | `security_report.md` present + non-vacuous (sections are an LLM concern) | **yes** | `REQUIRED_FILES['Reporter']` |
@@ -743,15 +768,16 @@ builders are UNWIRED and `RunData` does not yet thread `CVEInstance` (it carries
 Each judge compares observed agent artifacts + DB events against the CVE **golden/reference**
 fields.
 
-> **Anti-leak nuance (important — see §II.6).** "Golden" here means *ground-truth expected
-> values*, **not** *secret-from-the-agent*. `sanitizer_report` / `bug_report` /
-> `bug_description` are the expected-failure **oracle that is ALREADY rendered to the agent**
-> (`_CVE_DISPLAY_FIELDS`) — the judge merely re-checks observed-vs-oracle; it introduces no
-> data the agent didn't see. Only the gold `patch` / `candidate_fixes` / `secb_sh` are
-> host-side-secret (`_PROMPT_FORBIDDEN_FIELDS = {patch, candidate_fixes, secb_sh}`,
-> `cve_instance.py:15`), and of those only the patch-correctness judge optionally consults
-> the gold `patch`. *Hiding* the oracle from the agent would itself be a target-state
-> anti-leak change, not current behavior.
+> **Anti-leak nuance (important — see §II.6).** Solving agents receive
+> `bug_description` + `sanitizer_report`; they do not receive unrestricted `bug_report`.
+> The evaluator may retain `bug_report` as host-side provenance/curation metadata, but
+> answer-bearing report text must not enter a worker or judge prompt. The authoritative
+> mechanical crash signature is derived from `sanitizer_report` only. Two evaluator paths
+> still violate the judge half of this target rule: legacy
+> `criteria/judge_prompts.py::build_cve_reproduced_prompt()` adds
+> `GOLDEN_bug_report`, and `scripts/evaluate_run.py::_semantic_evidence()` places
+> `bug_report` in the semantic panel's `frozen_oracle`. Treat this as an unresolved
+> evaluator leakage risk, not evidence that workers see the field.
 
 The **first** judge below is different — a *provenance precondition* that needs no reference
 data at all: it cross-checks the agent's event-sourced transcript to catch fabricated
@@ -760,11 +786,11 @@ verdicts (§IV.5).
 | Judge | Inputs (observed + **golden**) | What it compares | Verdict |
 |---|---|---|---|
 | **★ Execution-provenance / anti-fabrication** (precondition; needs no reference data) | observed: the worker's persisted `ThoughtCaptured` transcript (tool_use/tool_result) for the Exploiter/Fixer subtree, the verdict files, `repro_run_*.log` / `*.exit` sentinels | the transcript actually contains the `secb repro`/`patch`/`build` **launch** AND a read-back of a *real* crash / exit (not an empty or `echo`-ed file), with ≥3 genuine runs corroborating `DETERMINISM_RUNS: 3/3`; the verdict-file PASS is backed by what actually ran | `{verdict, ran_secb, runs_observed, fabrication_suspected, reason, evidence_refs}` — reject a PASS the transcript does not back (the observed hallucination) |
-| **★ Exploit sanitizer-match** (your headline example) | observed: `OBSERVED_SANITIZER_ERROR`, `CRASH_FUNCTION_OBSERVED`, `DETERMINISM_RUNS`, raw `repro_run_*.log`, `repro.sh`, `poc_path.txt`, DB events. **golden:** `sanitizer_report`, `bug_report`, `bug_description`, `expected_sanitizer_error` | a real sanitizer abort actually fired (not just an asserted PASS) **AND** observed error == golden error type **AND** crash fn matches the golden `bug_report` frame **AND** 3/3 | `{verdict, confidence, reason, evidence_refs}`; reason must cite the golden-vs-observed comparison |
-| Exploit same-class/same-site | observed: crash fn, corruption origin, top-N frames, optional `forward_instrumentation.log`. **golden:** `bug_report`, `bug_description`, `sanitizer` | `matched_error_type` (heap-overflow ≠ use-after-free) AND `matched_crash_site` (frame aligns to golden function) | `{verdict, matched_error_type, matched_crash_site, …}` |
-| Root-cause soundness | observed: 5-key `root_cause_analysis.txt`, corruption origin. **golden:** `bug_description`, `bug_report`, `sanitizer_report` | rationale explains the golden corruption mechanism (causal, not a crash-line restatement); origin upstream of the crash; principled alternative rejection | `{verdict, confidence, reason, evidence_refs}` |
+| **★ Exploit sanitizer-match** (your headline example) | observed: `OBSERVED_SANITIZER_ERROR`, `CRASH_FUNCTION_OBSERVED`, `DETERMINISM_RUNS`, raw `repro_run_*.log`, `repro.sh`, `poc_path.txt`, DB events. **frozen crash oracle:** `sanitizer_report`, `bug_description`, `expected_sanitizer_error` | a real sanitizer abort actually fired (not just an asserted PASS) **AND** observed class/access/top frame matches the signature derived from `sanitizer_report` **AND** 3/3 | `{verdict, confidence, reason, evidence_refs}`; reason must cite the oracle-vs-observed comparison |
+| Exploit same-class/same-site | observed: crash fn, corruption origin, top-N frames, optional `forward_instrumentation.log`. **frozen crash oracle:** `sanitizer_report`, `bug_description`, `sanitizer` | `matched_error_type` (heap-overflow ≠ use-after-free) AND `matched_crash_site` (frame aligns to the sanitizer-report application frame) | `{verdict, matched_error_type, matched_crash_site, …}` |
+| Root-cause soundness | observed: 5-key `root_cause_analysis.txt`, corruption origin. **frozen solver context:** `bug_description`, `sanitizer_report` | rationale explains the frozen corruption mechanism (causal, not a crash-line restatement); origin upstream of the crash; principled alternative rejection | `{verdict, confidence, reason, evidence_refs}` |
 | Patch correctness & minimality | observed: full `model_patch.diff`, `patch_validation_results.txt`, `PROPOSED_FIX_SITE`, DB `SourceFileEdited`. **golden:** `bug_description`, `sanitizer_report`; optional host-side `patch` as reference | post-patch sanitizer none + 3/3 + clean + success; diff edits the root-cause site; **`over_broad_suppression=false`** (must NOT disable the sanitizer / strip `-fsanitize` / widen the allocation / blanket try-catch) | `{verdict, over_broad_suppression, fixes_root_cause, …}` |
-| Report evidence-quality | observed: `security_report.md` + all upstream verdict/log artifacts + DB events. **golden:** `sanitizer_report`, `bug_report`, `bug_description` | required sections present; every claim traces to a real artifact; stated error/site agree with golden (no narrating an unreproduced crash) | `{verdict, confidence, reason, evidence_refs}` |
+| Report evidence-quality | observed: `security_report.md` + all upstream verdict/log artifacts + DB events. **frozen solver context:** `sanitizer_report`, `bug_description` | required sections present; every claim traces to a real artifact; stated error/site agree with the frozen crash context (no narrating an unreproduced crash) | `{verdict, confidence, reason, evidence_refs}` |
 
 ## IV.4 — How criteria read the event store (not files)
 
@@ -943,9 +969,9 @@ the agentic path; Build-Setup, Build-Executor, and Reporter remain agentic.
 | CVE instance / anti-leak fields | `plugins/security/cve_instance.py` |
 | Role catalog | `plugins/security/roles.py` |
 | Artifact contract | `plugins/security/deliverables.py` |
-| Drift tests | `plugins/security/tests/test_roles.py`, `test_prompt_building.py`, `test_prompt_normalization.py` |
+| Drift tests | `plugins/security/tests/test_roles.py`, `test_prompt_building.py`, `test_prompt_normalization.py`, `test_role_prompt_catalog.py` |
 | Prompt strategy / branch detection | `plugins/security/prompt_strategy.py` |
-| Prompt templates | `prompts/system.j2`, `prompts/roles/`, `prompts/operations/`, `prompts/domains/secbench/{_secb_runtime_contract,cve,flat_pipeline,_validation_macros}.j2`, `prompts/domains/secbench/{phases,worker}/*.j2` |
+| Prompt templates | `prompts/system.j2`, `prompts/roles/`, `prompts/operations/`, `prompts/domains/secbench/{_secb_runtime_contract,cve,flat_pipeline,_validation_macros}.j2`, `prompts/domains/secbench/{phases,worker}/*.j2`, `prompts/domains/secbench/worker/roles/*/*.j2` |
 | Events / aggregates | `core/domain/events/events.py`, `core/domain/aggregates/agent_session.py`, `core/domain/shared_context.py` |
 | Event store / OCC | `infrastructure/adapters/postgres_event_store.py`, `infrastructure/sql/create_events_table.sql` |
 | Verification / retry | `core/application/services/orchestration/verification_pipeline.py`, `core/application/execution_service.py`, `config/settings.py` |
@@ -957,14 +983,15 @@ the agentic path; Build-Setup, Build-Executor, and Reporter remain agentic.
 | Term | Meaning |
 |---|---|
 | **Patch image** | SEC-bench `:patch`-tagged image: vulnerable source + build wrapper + testcase, **no** fix |
-| **Golden** | Any baked-in answer (gold patch, golden `secb`/`repro()`, candidate fixes) the agent must never see |
+| **Golden** | Any baked-in answer (gold patch, golden `secb`/`repro()`, candidate fixes, or answer-bearing report content) the solving agent must never see |
 | **`secb`** | The command harness; Arise overlays a delegating wrapper (`build`→`compile`, `repro`→`repro.sh`, `patch`→`patch.sh`) |
 | **`repo_changes.diff`** | Build/setup baseline delta (replayed before patch); **not** the fix |
 | **`model_patch.diff`** | The Fixer deliverable — the candidate security fix |
 | **Sealed dir** | `<run>.sealed/`, a sibling of the run root with no bind mount; holds `secb` + `secb-exec` |
 | **Builder baseline** | Local `arise-builder-baseline` commit of `repo_changes.diff`, so the Fixer's `git diff HEAD` carries only Fixer edits |
 | **Flat / hierarchical arm** | Single agent doing all phases vs BOSS→MANAGER→WORKER decomposition |
-| **Oracle** | `sanitizer_report` + `bug_report` — the expected failure the Exploiter must match (shown to the agent on purpose) |
+| **Solver crash context** | `bug_description` + `sanitizer_report`, rendered to solving agents according to the SEC-bench patch-task convention |
+| **Frozen evaluator oracle** | Host-side CVE projection retained for evaluation; authoritative mechanical crash identity comes from `sanitizer_report`; unrestricted `bug_report` is provenance/curation metadata and is unsafe for prompts when it contains fix content |
 | **OCC** | Optimistic concurrency control via `UNIQUE(aggregate_id, sequence_number)` |
 | **Wired / unwired** | Whether a `criteria.py` function is actually reached by a production consumer (`bef.py`/`linear.py`) |
 

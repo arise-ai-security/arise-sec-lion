@@ -252,8 +252,8 @@ class SafetyFloorInput:
     modified_paths: tuple[str, ...]
     forbidden_paths: tuple[str, ...]
     fresh_base: bool
-    pre_patch_exploit_identity: str
-    post_patch_exploit_identity: str
+    pre_patch_replay_identity: str | None
+    post_patch_replay_identity: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,8 +339,10 @@ def evaluate_safety_floor(
             reasons.append(f"patch modified forbidden path: {path}")
     if not safety.fresh_base:
         reasons.append("patch evaluation did not start from a fresh base")
-    if safety.pre_patch_exploit_identity != safety.post_patch_exploit_identity:
-        reasons.append("pre/post patch PoC or repro identity differs")
+    if not safety.pre_patch_replay_identity or not safety.post_patch_replay_identity:
+        reasons.append("pre/post replay target identity unavailable")
+    elif safety.pre_patch_replay_identity != safety.post_patch_replay_identity:
+        reasons.append("pre/post replay target identity differs")
     for item in evidence:
         if item.timed_out:
             reasons.append("host command timed out")
@@ -432,6 +434,7 @@ class ReferenceReplayResult:
     invocation_evidence: CommandEvidence
     raw_reports: dict[str, tuple[dict[str, object], ...]]
     replay_id: str
+    instance_id: str
     container_id: str | None
     image_digest: str | None
     base_commit: str | None

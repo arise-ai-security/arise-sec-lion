@@ -1,7 +1,7 @@
 # Cell B3 — adaptive B4 with the phase-manager/specialist layer fused.
-# BOSS -> four atomic phase workers. The treatment keeps B4's context,
-# procedure, tool, budget, and model policy; only the manager/specialist
-# topology is removed. This is a composite manager-plus-specialization ablation.
+# BOSS -> four role-fused LLM phase workers plus B4's four host procedures.
+# The treatment keeps B4's execution mechanisms, context, tools, budgets, and
+# model policy while removing phase managers and fusing LLM specialists.
 #
 # Fused phase labels are not B4 specialist prefixes. Exploiter/Fixer/Reporter
 # fused workers contain reasoning work and must use gpt-5.3-codex. Builder stays
@@ -12,6 +12,7 @@ extends: experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml
 overrides:
   orchestration.treatment_version: b4-adaptive-rolefused-v1
   orchestration.topology.max_depth: 2
+  orchestration.topology.max_children_per_node: 8
   orchestration.topology.max_total_agents: 12
   worker.model_overrides:
     "[Exploiter]": gpt-5.3-codex

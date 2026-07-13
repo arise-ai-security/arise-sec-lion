@@ -80,8 +80,8 @@ def test_exit_134_fails_safety_floor() -> None:
         modified_paths=("/sealed/run/src/project/fix.c",),
         forbidden_paths=("/sealed/run/testcase",),
         fresh_base=True,
-        pre_patch_exploit_identity="same",
-        post_patch_exploit_identity="same",
+        pre_patch_replay_identity="same",
+        post_patch_replay_identity="same",
     )
 
     # When: The safety floor evaluates exit 134
@@ -100,8 +100,8 @@ def _safety(**updates) -> SafetyFloorInput:
         "modified_paths": ("/sealed/run/src/project/fix.c",),
         "forbidden_paths": (),
         "fresh_base": True,
-        "pre_patch_exploit_identity": "same",
-        "post_patch_exploit_identity": "same",
+        "pre_patch_replay_identity": "same",
+        "post_patch_replay_identity": "same",
     }
     values.update(updates)
     return SafetyFloorInput(**values)

@@ -87,6 +87,7 @@ class SecurityDomainPlugin(DomainPlugin):
         return SecBenchPromptStrategy(
             enabled_tools=self._enabled_tools,
             shared_code_first=self._shared_code_prefix_first,
+            role_fused=self._policy_version == "b4-adaptive-rolefused-v1",
         )
 
     def get_decomposition_validator(self) -> DecompositionValidator | None:

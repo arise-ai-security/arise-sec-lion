@@ -55,6 +55,7 @@ class CombinedVerdictInput:
     patch_present: bool
     safety: SafetyFloorInput
     task_id: str
+    expected_instance_id: str
     expected_crash_signature: CrashSignature
     semantic_evidence: dict[str, Any]
     regression: RegressionEvidence | None = None
@@ -191,6 +192,12 @@ def evaluate_combined_verdict(
         replace(
             request.safety,
             fresh_base=_fresh_base_from_replays(poc_replays, patch_replays),
+            pre_patch_replay_identity=_replay_target_identity(
+                poc_replays, request.expected_instance_id
+            ),
+            post_patch_replay_identity=_replay_target_identity(
+                patch_replays, request.expected_instance_id
+            ),
         ),
         tuple(mode.evidence for mode in patch_primary_modes),
     )
@@ -256,6 +263,28 @@ def _fresh_base_from_replays(
         if isinstance(replay.container_id, str) and replay.container_id.strip()
     )
     return len(identities) == REPLAY_COUNT * 2 and len(set(identities)) == REPLAY_COUNT * 2
+
+
+def _replay_target_identity(
+    replays: tuple[ReferenceReplayResult, ...],
+    expected_instance_id: str,
+) -> str | None:
+    """Bind a replay trio to one expected CVE instance and base commit."""
+    if len(replays) != REPLAY_COUNT:
+        return None
+    identities: set[tuple[str, str]] = set()
+    for replay in replays:
+        instance_id = replay.instance_id.strip()
+        base_commit = replay.base_commit
+        if not instance_id or not isinstance(base_commit, str) or not base_commit.strip():
+            return None
+        identities.add((instance_id, base_commit.strip()))
+    if len(identities) != 1:
+        return None
+    instance_id, base_commit = identities.pop()
+    if instance_id != expected_instance_id:
+        return None
+    return f"{instance_id}@{base_commit}"
 
 
 def _aggregate_modes(

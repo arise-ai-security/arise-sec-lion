@@ -1,10 +1,8 @@
-"""SEC-bench implementation of the decomposition role-contract validator.
+"""SEC-bench adaptive and role-contract decomposition policy.
 
-Enforces, for a phase manager's decomposition, that every REQUIRED catalog role of the
-parent phase appears as its own single-role leaf. Missing roles are suggested for
-injection; a leaf that merges more than one catalog role of the phase is flagged for
-removal and split into one leaf per role. The role contract is read from
-``plugins.security.roles`` so it stays the single source of truth.
+Adaptive treatments select dependency-closed compact or escalated routes. Legacy phase
+decompositions still enforce required single-role leaves. The role-fused treatment emits
+four LLM phase workers and four host procedure roles directly under the boss.
 """
 
 from __future__ import annotations
@@ -39,6 +37,25 @@ class SecBenchDecompositionValidator:
         "Exploiter": ("Repro-Creator", "Exploit-Validator"),
         "Fixer": ("Root-Cause-Analyst", "Patch-Applier", "Patch-Validator"),
         "Reporter": ("Reporter",),
+    }
+    _ROLE_FUSED_ROOT = (
+        "Builder",
+        "Build-Verifier",
+        "Exploiter",
+        "Exploit-Validator",
+        "Fixer",
+        "Patch-Applier",
+        "Patch-Validator",
+        "Reporter",
+    )
+    _ROLE_FUSED_DEPS = {
+        "Build-Verifier": ("Builder",),
+        "Exploiter": ("Build-Verifier",),
+        "Exploit-Validator": ("Exploiter",),
+        "Fixer": ("Exploit-Validator",),
+        "Patch-Applier": ("Fixer",),
+        "Patch-Validator": ("Patch-Applier",),
+        "Reporter": ("Patch-Validator",),
     }
     _ESCALATED = {
         "Builder": ("Build-Setup", "Build-Executor", "Build-Verifier"),
@@ -120,6 +137,24 @@ class SecBenchDecompositionValidator:
         selected.sort(key=lambda name: order.get(name, len(order)))
         return tuple(selected)
 
+    @staticmethod
+    def _with_hard_dependencies(phase: str, role_names: tuple[str, ...]) -> tuple[str, ...]:
+        """Return selected roles plus every transitive hard producer in catalog order."""
+        selected = set(role_names)
+        changed = True
+        while changed:
+            changed = False
+            for role in PHASE_ROLES.get(phase, ()):
+                if role.name not in selected:
+                    continue
+                for dependency in role.depends_on:
+                    if dependency not in selected:
+                        selected.add(dependency)
+                        changed = True
+        return tuple(
+            role.name for role in PHASE_ROLES.get(phase, ()) if role.name in selected
+        )
+
     def fixed_decomposition(
         self,
         *,
@@ -134,12 +169,13 @@ class SecBenchDecompositionValidator:
         if phase is None:
             if _BRACKET.match((parent_task_description or "").lstrip()) is not None:
                 return None
+            root_roles = self._ROLE_FUSED_ROOT if self._role_fused else self._PHASES
             subtasks = tuple(
                 SuggestedSubtask(
                     description=f"[{name}] Execute the {name} phase outcome gate.",
                     estimated_complexity="simple" if self._role_fused else "complex",
                 )
-                for name in self._PHASES
+                for name in root_roles
             )
             return FixedDecomposition(
                 subtasks=subtasks,
@@ -152,10 +188,12 @@ class SecBenchDecompositionValidator:
         if self._role_fused:
             return None
         if redecomposition_count == 0:
-            role_names: tuple[str, ...] = self._COMPACT[phase]
+            role_names = self._with_hard_dependencies(phase, self._COMPACT[phase])
             route_name = self.safe_route("compact", decision_complete=True)
         else:
-            role_names = self._escalated_roles(phase, failure_signal)
+            role_names = self._with_hard_dependencies(
+                phase, self._escalated_roles(phase, failure_signal)
+            )
             route_name = self.safe_route("escalated", decision_complete=True)
         return FixedDecomposition(
             subtasks=tuple(self._leaf_for(name) for name in role_names),
@@ -181,7 +219,9 @@ class SecBenchDecompositionValidator:
         if phase is None:
             return DecompositionVerdict(ok=True)
         if self._adaptive_execution:
-            required_names = set(self._COMPACT[phase])
+            required_names = set(
+                self._with_hard_dependencies(phase, self._COMPACT[phase])
+            )
             required = tuple(
                 role for role in PHASE_ROLES.get(phase, ()) if role.name in required_names
             )
@@ -280,6 +320,8 @@ class SecBenchDecompositionValidator:
         )
 
     def hard_dependencies(self, role_label: str) -> tuple[str, ...]:
+        if self._role_fused and role_label in self._ROLE_FUSED_DEPS:
+            return self._ROLE_FUSED_DEPS[role_label]
         if self._adaptive_execution and role_label in self._PHASE_DEPS:
             return self._PHASE_DEPS[role_label]
         role = role_by_name_ci(role_label)

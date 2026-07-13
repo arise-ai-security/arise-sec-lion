@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -121,31 +120,6 @@ def _hash_run_artifacts(run_dir: Path) -> tuple[tuple[str, ...], dict[str, str]]
                 paths.append(key)
                 hashes[key] = sha256_file(path)
     return tuple(paths), hashes
-
-
-def _poc_identity(run_dir: Path) -> str:
-    """Content identity of the declared PoC artifacts (stable across pre/post fix).
-
-    The safety floor forbids modifying the PoC/repro artifacts, so their content is
-    invariant across the exploit and fix evaluations; hashing them here yields the
-    same identity on both sides. A stronger in-container binding is validated only
-    under a live replay.
-    """
-    pointer = run_dir / "testcase" / "poc_path.txt"
-    digest = hashlib.sha256()
-    for path in (pointer, run_dir / "testcase" / "repro.sh"):
-        if path.is_file():
-            digest.update(path.name.encode("utf-8"))
-            digest.update(sha256_file(path).encode("utf-8"))
-    for line in _read_text(pointer).splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        target = (run_dir / stripped.lstrip("/")).resolve()
-        if target.is_file():
-            digest.update(stripped.encode("utf-8"))
-            digest.update(sha256_file(target).encode("utf-8"))
-    return digest.hexdigest()
 
 
 def _semantic_evidence(run_data: RunData, *, poc_present: bool, patch_present: bool) -> dict:
@@ -253,11 +227,11 @@ def _assemble_combined_input(
 ) -> CombinedVerdictInput:
     """Derive the verdict-file-agnostic combined inputs from the loaded run.
 
-    Groundable fields (artifact presence, hashes, patched paths, PoC identity) come
-    straight from the run artifacts. ``fresh_base`` is left false here and proven
-    later from six distinct replay container identities inside
-    :func:`evaluate_combined_verdict`. Host regression is fail-closed without a
-    frozen plan and runs inside a fresh patched SEC-bench container.
+    Groundable fields (artifact presence, hashes, and patched paths) come straight
+    from the run artifacts. Replay identity and ``fresh_base`` are proven later from
+    the six replay results inside :func:`evaluate_combined_verdict`. Host regression
+    is fail-closed without a frozen plan and runs inside a fresh patched SEC-bench
+    container.
     """
     run_dir = run_data.run_dir
     testcase = run_dir / "testcase"
@@ -268,8 +242,6 @@ def _assemble_combined_input(
         testcase / "poc_path.txt", run_dir, allow_empty=True
     )
     artifact_paths, artifact_hashes = _hash_run_artifacts(run_dir)
-    poc_identity = _poc_identity(run_dir)
-
     safety = SafetyFloorInput(
         workspace_root=str(run_dir),
         artifact_paths=artifact_paths,
@@ -277,8 +249,8 @@ def _assemble_combined_input(
         modified_paths=_patch_target_paths(patch_file, run_dir),
         forbidden_paths=(),  # the floor unions the canonical protected set itself
         fresh_base=False,  # proven from six distinct container identities after replay
-        pre_patch_exploit_identity=poc_identity,
-        post_patch_exploit_identity=poc_identity,
+        pre_patch_replay_identity=None,
+        post_patch_replay_identity=None,
     )
     replay_root = run_dir / "evaluation_replay"
     instance_id = (
@@ -299,7 +271,8 @@ def _assemble_combined_input(
         poc_present=poc_present,
         patch_present=patch_present,
         safety=safety,
-        task_id=str(run_data.manifest.get("task") or run_data.run_id),
+        task_id=str(run_data.run_id),
+        expected_instance_id=instance_id,
         expected_crash_signature=(
             crash_signature(run_data.cve.sanitizer_report)
             if run_data.cve is not None

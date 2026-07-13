@@ -191,6 +191,23 @@ def test_adaptive_policy_returns_fixed_skeleton_then_compact_route() -> None:
     ]
 
 
+def test_compact_builder_route_includes_build_executor_hard_dependency() -> None:
+    validator = SecBenchDecompositionValidator(adaptive_execution=True)
+
+    compact = validator.fixed_decomposition(
+        parent_task_description="[Builder] build",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+
+    assert compact is not None
+    assert [item.description.split("]")[0] for item in compact.subtasks] == [
+        "[Build-Setup",
+        "[Build-Executor",
+        "[Build-Verifier",
+    ]
+
+
 def test_adaptive_failed_compact_route_expands_only_same_phase() -> None:
     # Given: An Exploiter controller re-entering after its phase gate failed
     validator = SecBenchDecompositionValidator(adaptive_execution=True)
@@ -256,9 +273,21 @@ def test_role_fused_policy_spawns_phase_workers_without_role_decomposition() -> 
         redecomposition_count=0,
     )
 
-    # Then: Root phases are atomic workers and never expand into compact role leaves
+    # Then: LLM phase work is fused while the four mechanical gates remain explicit
     assert skeleton is not None
     assert all(item.estimated_complexity == "simple" for item in skeleton.subtasks)
+    assert [item.description.split("]")[0] for item in skeleton.subtasks] == [
+        "[Builder",
+        "[Build-Verifier",
+        "[Exploiter",
+        "[Exploit-Validator",
+        "[Fixer",
+        "[Patch-Applier",
+        "[Patch-Validator",
+        "[Reporter",
+    ]
+    assert validator.hard_dependencies("Build-Verifier") == ("Builder",)
+    assert validator.hard_dependencies("Patch-Applier") == ("Fixer",)
     assert phase is None
 
 
@@ -274,11 +303,12 @@ def test_exploiter_expansion_is_conditioned_on_the_failure_signal() -> None:
         failure_signal="reproduction conflicts with the CVE evidence; data flow unclear",
     )
 
-    # Then: the compact roles are preserved and only the data-flow specialists are added
+    # Then: compact roles, specialists, and the Forward-Instrumentator's hard producer run
     assert selection is not None and selection.route == "escalated"
     labels = {item.description.split("]")[0] for item in selection.subtasks}
     assert "[Repro-Creator" in labels and "[Exploit-Validator" in labels  # compact preserved
     assert "[Data-Flow-Analyst" in labels and "[Forward-Instrumentator" in labels
+    assert "[PoC-Researcher" in labels
     # the sanitizer-trigger specialists are NOT pulled in for this signal
     assert "[PoC-Tester" not in labels
 

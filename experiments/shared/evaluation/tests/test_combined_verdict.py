@@ -86,6 +86,9 @@ class FakeReplayRunner:
         patch: CommandEvidence | None = None,
         signatures: tuple[CrashSignature, ...] = (SIGNATURE, SIGNATURE, SIGNATURE),
         shared_container_id: str | None = None,
+        instance_id: str = "opaque-evaluation",
+        poc_base_commit: str = "abc",
+        patch_base_commit: str = "abc",
     ) -> None:
         self.poc = poc or _poc_evidence()
         self.patch = patch or _patch_evidence()
@@ -93,6 +96,9 @@ class FakeReplayRunner:
         self.calls: list[tuple[str, Path]] = []
         self._n = 0
         self._shared_container_id = shared_container_id
+        self._instance_id = instance_id
+        self._poc_base_commit = poc_base_commit
+        self._patch_base_commit = patch_base_commit
 
     def run(self, *, input_dir, output_dir, evaluation_type):
         del input_dir
@@ -114,9 +120,14 @@ class FakeReplayRunner:
             invocation_evidence=_patch_evidence(final_step_reached=False),
             raw_reports={"raw": ({"logs": "host output"},)},
             replay_id=f"replay-{self._n}",
+            instance_id=self._instance_id,
             container_id=container_id,
             image_digest="sha256:deadbeef",
-            base_commit="abc",
+            base_commit=(
+                self._poc_base_commit
+                if evaluation_type == "poc"
+                else self._patch_base_commit
+            ),
         )
 
 
@@ -153,8 +164,8 @@ def _safety(**updates) -> SafetyFloorInput:
         "modified_paths": ("/sealed/run/src/project/fix.c",),
         "forbidden_paths": (),
         "fresh_base": True,
-        "pre_patch_exploit_identity": "same",
-        "post_patch_exploit_identity": "same",
+        "pre_patch_replay_identity": "same",
+        "post_patch_replay_identity": "same",
     }
     values.update(updates)
     return SafetyFloorInput(**values)
@@ -204,6 +215,7 @@ def _request(**updates) -> CombinedVerdictInput:
         "patch_present": True,
         "safety": _safety(),
         "task_id": "opaque-evaluation",
+        "expected_instance_id": "opaque-evaluation",
         "expected_crash_signature": SIGNATURE,
         "semantic_evidence": {"root_cause": "blinded evidence"},
         "regression": _passing_regression(),
@@ -276,6 +288,30 @@ def test_fresh_base_requires_six_distinct_container_identities() -> None:
     ]
     assert len(identities) == 6
     assert len(set(identities)) == 6
+
+
+def test_replay_target_must_match_requested_instance() -> None:
+    result = evaluate_combined_verdict(
+        _request(),
+        replay_runner=FakeReplayRunner(instance_id="different.cve-0000-0001"),
+        judge_factory=_judge_factory((True, True, True)),
+    )
+
+    assert not result.safety.passed
+    assert "identity unavailable" in " ".join(result.safety.reasons)
+    assert result.semantic is None
+
+
+def test_pre_and_post_replay_targets_must_share_base_commit() -> None:
+    result = evaluate_combined_verdict(
+        _request(),
+        replay_runner=FakeReplayRunner(patch_base_commit="different-base"),
+        judge_factory=_judge_factory((True, True, True)),
+    )
+
+    assert not result.safety.passed
+    assert "identity differs" in " ".join(result.safety.reasons)
+    assert result.semantic is None
 
 
 def test_missing_host_regression_fails_closed_before_semantic() -> None:
@@ -373,7 +409,7 @@ def test_wiring_accepts_zero_byte_poc_and_persists_full_bundle(tmp_path) -> None
 
     envelope = build_run_verdict(
         _run_data(run_dir),
-        replay_runner=FakeReplayRunner(),
+        replay_runner=FakeReplayRunner(instance_id="project.cve-0000-0000"),
         judge_factory=_judge_factory((True, True, True)),
         persist_bundle=True,
         regression=_passing_regression(),
@@ -401,7 +437,7 @@ def test_wiring_without_regression_plan_is_unavailable(tmp_path) -> None:
 
     envelope = build_run_verdict(
         _run_data(run_dir),
-        replay_runner=FakeReplayRunner(),
+        replay_runner=FakeReplayRunner(instance_id="project.cve-0000-0000"),
         judge_factory=_judge_factory((True, True, True)),
     )
 

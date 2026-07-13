@@ -1,106 +1,34 @@
 <domain_instructions>
-## Builder Worker — Step-by-Step
+## Builder Phase Worker
 
-Refer to Task Context above for repository location, base commit hash, and vulnerability details.
+{% if role_fused %}
+### Role-fused Builder — baseline and build production
 
-{# The included phase partial (phases/build.j2) is the shared "phase contract":
-   its Goal + deliverables render identically for every Builder worker and the
-   flat arm, so it sits in the common cacheable prefix (run-scoped shard for
-   OpenHands; cache_control for Anthropic via LiteLLM). Keep text above this
-   include stable across workers to preserve that prefix.
-#}
+You combine Build-Setup and Build-Executor. The trusted host `[Build-Verifier]` owns the
+independent build verdict.
 
+1. Verify the supplied base commit and write it to `{{ artifact_paths.base_commit_hash }}`.
+2. Install only missing build dependencies, then run `secb build`.
+3. Change `{{ artifact_paths.build_script }}` only when the existing recipe fails; preserve all
+   sanitizer instrumentation and do not edit vulnerability source to force compilation.
+4. Require the build sentinel to contain `exit=0`, then write real non-empty executable paths to
+   `{{ artifact_paths.binary_paths }}`.
+5. Record build/setup changes in `{{ artifact_paths.repo_changes_diff }}` and establish the local
+   `arise-builder-baseline` without `git add -A`.
+6. Print all four Builder artifacts and raw build evidence.
+
+Do not decide the final build PASS/FAIL. The host Build-Verifier runs after this producer.
+{% else %}
 {% include 'domains/secbench/phases/build.j2' %}
 
-### Setup
+### Whole-phase Builder procedure
 
-Install analysis tools that will be useful for build validation:
-```bash
-apt-get install -y cppcheck gdb 2>/dev/null || true
-```
+1. Verify and record the supplied vulnerable base commit.
+2. Run `secb build`; repair only build/setup failures while preserving sanitizer flags.
+3. Declare real Builder-produced executable paths and record the build/setup diff.
+4. Establish the Builder-adjusted local baseline using the phase contract above.
+5. Print every required artifact and the build log before concluding.
 
-### Steps
-
-1. **Determine base commit** from vulnerability description (Task Context):
-   - If a more suitable commit exists: save to `{{ artifact_paths.base_commit_hash }}`, run `git reset --hard <hash>`
-   - Otherwise: save the provided base commit to `{{ artifact_paths.base_commit_hash }}`
-   - `{{ artifact_paths.base_commit_hash }}` MUST exist before proceeding
-
-2. **Build the project**: `cd {{ work_dir }} && secb build`
-
-3. **Improve `{{ artifact_paths.build_script }}` only when needed**:
-   - Treat `{{ artifact_paths.build_script }}` as the editable project build recipe used by `secb build`
-   - Make standalone — remove undefined/environment variables not set in script
-   - Remove fuzzer-related build commands
-   - Add `-j$(nproc)` to `make` (do NOT use `make all`; keep `make install` if present — it installs binaries to the prefix directory needed by later phases)
-   - Add `-p` to mkdir commands
-   - Place `make clean` before configure/make
-   - Preserve existing flags: `export CFLAGS="$CFLAGS -fsanitize=address"`
-   - Define exports before `./configure` or `cmake`
-   - Check local script existence before running (e.g., `[ -f ./autogen.sh ] && ./autogen.sh`)
-   - Exception: `$SRC` = `{{ artifact_dirs.source }}`, `$WORK` = `{{ artifact_dirs.work }}` are predefined
-
-4. **Rebuild**: `cd {{ work_dir }} && secb build`
-
-5. **Verify sanitizer runtime**: If the build uses `-fsanitize=address`, test that the binary actually executes: run the main binary with `--help` or `-h`. If it fails with "cannot open shared object file: libclang_rt.asan" or "libasan", the sanitizer runtime library is missing. Fix it:
-   ```bash
-   # Install the ASan runtime matching the system's GCC/clang version:
-   apt-get install -y $(apt-cache search libasan | head -1 | awk '{print $1}') 2>/dev/null || true
-   # If clang's runtime is at a non-standard path, add it:
-   export LD_LIBRARY_PATH=$(dirname $(find /usr/local -name 'libclang_rt.asan*.so' 2>/dev/null | head -1)):$LD_LIBRARY_PATH
-   ```
-   This is critical — ALL downstream phases (Exploiter, Fixer) need to run the instrumented binary. A build that compiles but can't execute is worse than a build failure.
-
-6. **Fix build errors** (if any):
-   - Focus on `error` messages only, ignore warnings
-   - C++17 errors: add `-std=c++14` to CXXFLAGS only (NEVER add it to CFLAGS — it breaks the C compiler)
-   - Implicit int: add explicit type declarations
-   - Function overload: add `-D_GNU_SOURCE`
-   - Define suppression flags before `./configure` or `cmake`
-   - Make MINIMAL source changes if needed
-
-7. **Declare executable paths — ONLY after a clean build**: Confirm `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`. If it does not, the current build did NOT succeed — read `build.log`, fix the compile error, and re-run `secb build` until `build.exit` reports `exit=0`. Do NOT declare a pre-existing or stale binary from an earlier failed attempt. Then write `{{ artifact_paths.binary_paths }}` with one absolute Builder-produced executable path per line, each produced by THIS successful build. To survive any later baseline reset, also copy each declared executable (resolving libtool wrapper scripts to the real ELF under `.libs/`) into `{{ artifact_dirs.testcase }}/bin/` and declare that durable copy: `mkdir -p {{ artifact_dirs.testcase }}/bin && cp <real-binary> {{ artifact_dirs.testcase }}/bin/<name>`
-
-8. **Save source changes and establish the Builder baseline**: Follow the
-   Builder Baseline procedure in the phase contract above. It records
-   `{{ artifact_paths.repo_changes_diff }}` and, when non-empty, commits exactly
-   that recorded source/setup diff as local `arise-builder-baseline`. Do not use
-   `git add -A`.
-
-9. **Verify deliverables exist and handoff contract is satisfied**:
-{% for p in required_files["Builder"] %}
-   - `{{ p }}`
-{%- endfor %}
-   - The instrumented executable(s) that a later `secb repro` will invoke must exist at the locations listed in `{{ artifact_paths.binary_paths }}`. Confirm each binary is real, non-vacuous, executable, and actually runs with the sanitizer.
-
-   **Handoff rule (mandatory)**: The binary location that the Exploiter's `secb repro` will use **must** be one you as Builder were responsible for producing. Downstream workers are forbidden from using a different location that bypasses your build output.
-
-10. **Run quick static analysis** (optional but recommended):
-{% if shared_code_enabled %}
-   - The relevant source is already in `<provided_source_files>` — build on it; only re-`view` a file after you edit it or one that is not provided there.
+Do not disable sanitizer instrumentation or include vulnerability-fix changes in Builder output.
 {% endif %}
-   - `cppcheck --enable=all <specific_vulnerable_file.c>` — scan ONLY the specific file(s) relevant to the CVE, NOT the entire codebase (full-project scans take too long and waste iterations)
-   - Note any findings in context-update for exploiter/fixer workers
-
-### Peer Validation
-If upstream siblings (e.g., Build-Setup) shared decisions, verify them:
-- Check that `{{ artifact_paths.base_commit_hash }}` actually contains a valid commit hash
-- Verify the repo is at the correct commit: `git log -1 --format=%H`
-- If findings are inconsistent, investigate and correct
-
-### CRITICAL: Print Deliverable Files
-
-After creating each deliverable, you **MUST print its contents** via `cat` so the evaluation harness can see the evidence in your output log. The harness evaluates from a truncated command log — files created via the file editor are invisible unless you explicitly print them:
-
-```bash
-echo "=== base_commit_hash ===" && cat {{ artifact_paths.base_commit_hash }}
-echo "=== build.sh ===" && cat {{ artifact_paths.build_script }}
-echo "=== repo_changes.diff ===" && cat {{ artifact_paths.repo_changes_diff }}
-echo "=== binary_paths.txt ===" && cat {{ artifact_paths.binary_paths }}
-```
-
-After creating or editing each file, run: `echo "=== <filename> ===" && cat /path/to/<filename>` to make the contents visible.
-
-### Rules
-- DO NOT disable sanitizer options — they are essential for bug detection
 </domain_instructions>

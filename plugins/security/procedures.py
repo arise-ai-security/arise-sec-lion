@@ -1,9 +1,9 @@
-"""SEC-bench deterministic procedure executor (Exploit-Validator / Patch-Validator).
+"""SEC-bench deterministic procedure executor for four mechanical roles.
 
-Runs the two fixed validator roles host-side with zero LLM turns, driving the
-run's existing container session synchronously from Python (no detached-nohup /
-poll dance). The verdict files are host-computed and event-sourced, so validator
-verdicts become agent-unforgeable by construction (SYSTEM_REFERENCE §V.7).
+Runs the fixed verifier, validator, and patch-application roles host-side with zero LLM
+turns, driving the run's existing container session synchronously from Python (no
+detached-nohup / poll dance). The verdict files are host-computed and event-sourced, so
+validator verdicts become agent-unforgeable by construction (SYSTEM_REFERENCE §V.7).
 
 On-disk artifacts (``exploit_validation_results.txt``, ``patch_validation_results.txt``,
 ``repro_run_*.log`` / ``fix_run_*.log`` and their ``.exit`` sentinels) keep the exact
@@ -72,7 +72,7 @@ _REGISTRY: dict[str, str] = {
     "Patch-Applier": _PROCEDURE_PATCH_APPLY,
     "Patch-Validator": _PROCEDURE_PATCH,
 }
-# The approved PatchPlan the weak Patch-Applier consumes (never reasons).
+# The approved PatchPlan the mechanical Patch-Applier consumes (never reasons).
 _PATCH_PLAN_JSON = PurePosixPath(ARTIFACT_PATHS["patch_plan"]).name
 _PROCEDURE_REFS = frozenset(_REGISTRY.values())
 
@@ -232,9 +232,9 @@ async def _run_build_validation(
 async def _run_patch_apply(
     session: ProcedureSession, cve: CVEInstance | None
 ) -> ProcedureResult:
-    """Apply the manager-authored PatchPlan literally, or block without editing.
+    """Apply the reasoning worker's PatchPlan literally, or block without editing.
 
-    The Fixer manager authors ``patch_plan.json``; this applier NEVER reasons. It
+    The Root-Cause-Analyst authors ``patch_plan.json``; this applier NEVER reasons. It
     validates the frozen plan against the sealed ``/src`` source (hash, unique
     anchor, allow/forbid paths) and either applies it exactly and emits the diff
     deliverable, or returns ``PATCH_PLAN_BLOCKED`` leaving every byte untouched.
