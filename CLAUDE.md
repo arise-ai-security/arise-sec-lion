@@ -55,7 +55,7 @@
 | Security plugin internals | `.claude/docs/plugins-security.md` |
 | Concurrency / OCC / atomic writes / Docker cleanup | `agent-docs/concurrency-invariants.md` |
 | REST API surface | `agent-docs/api-reference.md` |
-| Experiment design / the B3/B4/N1/N2 matrix | `.claude/docs/experiments-rearchitecture.md` (paper intent: `research/`) |
+| Adaptive B4, role-fused B3, worker-model routing, zero-human judges, or N1/B4 confirmatory design | `.claude/docs/experiments-rearchitecture.md` (role details: `.claude/docs/plugins-security.md`) |
 | Running the system / experiments (CLI) | `/USER_MANUAL.md`, `/EXPERIMENT_MANUAL.md` |
 | Upstream SEC-bench / SecVerifier build pipeline | `agent-docs/secbench-pipeline-tech-doc.md` |
 
@@ -64,7 +64,7 @@
 - **Strict hexagonal boundary** -- `core/` depends only on stdlib and its own `core/ports/` Protocols. All infrastructure is injected at bootstrap. Pre-commit enforced.
 - **Two event-sourced aggregates** -- `AgentSession` (primary, 39 of the 42 registered event types) and `SharedStore` (3 event types; a `uuid5`-derived `aggregate_id` sharing the same events table). All state is replayed from **42 frozen Pydantic events** (`EVENT_TYPE_REGISTRY`). OCC via unique `(aggregate_id, sequence_number)`. No mutable state tables. Postgres events are the sole source of truth (no events.jsonl projection).
 - **Self-healing failure loop** -- a crashed WORKER gets a deterministic, LLM-free `failure_digest` (`FailureDigestRecorded`, built by `core/application/services/orchestration/failure_digest.py`) injected into a context-rich retry; when ALL sibling children fail with budget left, the parent re-decomposes *informed* by `failure_history` (`RedecompositionTriggered`) instead of failing up. Details in `.claude/docs/core-domain.md`.
-- **Deterministic procedure tier (flag-gated)** -- when `settings.orchestration.procedural_dispatch` is on, registry-matched worker tasks run host-side with zero LLM turns via `ProcedureExecutorPort` (`core/ports/procedure_ports.py`), emitting `ProcedureExecutionStarted/Finished` with agent-unforgeable `ProcedureEvidence`; a failed procedure escalates to exactly one agentic retry. Default off binds `NullProcedureExecutor` -> byte-identical behavior. Security executor: `.claude/docs/plugins-security.md`.
+- **Deterministic procedure tier (flag-gated)** -- when `settings.orchestration.procedural_dispatch` is on, `Build-Verifier`, `Exploit-Validator`, `Patch-Applier`, and `Patch-Validator` run host-side with zero LLM turns via `ProcedureExecutorPort` (`core/ports/procedure_ports.py`), emitting `ProcedureExecutionStarted/Finished` with agent-unforgeable `ProcedureEvidence`; a failed procedure escalates to exactly one agentic retry. Default off binds `NullProcedureExecutor`. Security executor and mechanical criteria: `.claude/docs/plugins-security.md`.
 - **Three direct orchestrator methods** -- `assess_task`, `evaluate_task`, `execute_task` are plain methods on `AgentOrchestrator`. Do NOT wrap them in pipeline/strategy/chain-of-responsibility abstractions. Intentional.
 - **Domain context is an opaque slot** -- `HierarchyLimits.domain_context: object | None` carries plugin data (e.g. `CVEInstance`) through the tree; only the plugin downcasts. Core stays domain-ignorant.
 - **`bootstrap/composition.py` is the sole cross-boundary import** -- it is the only file that imports from `plugins/`. Every other layer references protocols only.
@@ -100,6 +100,6 @@
 | `ANTHROPIC_API_KEY` | No | Anthropic API key (Claude worker) | -- |
 | `HOST_PROJECT_ROOT` | No | Host path for Docker-out-of-Docker volume mapping | -- |
 
-Config loads: `config/config.yaml` (base) <- `config/config.{ARISE_ENV}.yaml` (overlay) <- env vars (highest priority). Setup: `cp deployment/.env.example deployment/.env` and fill in values.
+Config loads: `config/config.yaml` (base) <- `config/config.{ARISE_ENV}.yaml` (overlay) <- env vars (highest priority). `deployment/.env` may hold non-secret local configuration only. Retrieve personal provider/database credentials from Bitwarden and inject them into the process environment at launch; never persist them in `.env`.
 
 > Step-by-step recipes (events, endpoints, ports/adapters, plugins, config) live in `.claude/docs/patterns.md`.

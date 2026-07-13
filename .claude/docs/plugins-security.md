@@ -1,5 +1,5 @@
 <!-- Read this when: working on the security plugin or SEC-bench pipeline -->
-The security plugin (`plugins/security/`) implements SEC-bench vulnerability analysis as the sole domain plugin, connecting to core via two protocols (`DomainPlugin`, `PromptStrategy`) and -- when procedural dispatch is enabled -- a `ProcedureExecutorPort` implementation for the deterministic validator tier.
+The security plugin (`plugins/security/`) implements SEC-bench vulnerability analysis as the sole domain plugin. It supplies the generic core with a `DomainPlugin`, `PromptStrategy`, `DecompositionValidator`, and -- when procedural dispatch is enabled -- a `ProcedureExecutorPort` implementation for deterministic security procedures.
 
 ## Boundary Rules
 
@@ -15,18 +15,21 @@ The plugin never imports from `infrastructure/`. It defines its own `SecurityCon
 |---|---|
 | `plugin.py` | `SecurityDomainPlugin` -- implements `DomainPlugin` protocol |
 | `prompt_strategy.py` | `SecBenchPromptStrategy` -- implements `PromptStrategy` protocol; `detect_benchmark_branch()` and `_detect_branch_from_task()` |
+| `roles.py` | The 16-role SEC-bench catalog, phase ownership, deliverables, hard/soft dependencies, and required/optional status |
+| `decomposition_validator.py` | Adaptive B4 fixed phase skeleton, compact/escalated role routes, and role-fused treatment policy |
 | `cve_instance.py` | `CVEInstance` frozen Pydantic model (16 stored fields, 6 computed) |
 | `cve_inference.py` | `CVEInstanceInferenceService` -- regex extraction from task text; `CVEInferenceError` |
 | `container_runtime.py` | `SecurityContainerRuntime` protocol + `SecBenchWorkspace` / `SecBenchContainerSession` frozen dataclasses |
 | `docker_runtime.py` | `DockerSecBenchRuntime` -- concrete Docker-backed implementation of `SecurityContainerRuntime` |
 | `image_resolver.py` | `resolve_secbench_image()` -- Docker image name remapping to tool-enriched variants |
 | `security_tool.py` | `SECURITY_TOOL_REGISTRY` with Valgrind and KLEE definitions; `get_tools_for_phase()` |
-| `procedures.py` | `SecBenchProcedureExecutor` -- implements `ProcedureExecutorPort` (deterministic Exploit-Validator / Patch-Validator tier); `ProcedureSession` protocol |
+| `procedures.py` | `SecBenchProcedureExecutor` -- implements `ProcedureExecutorPort` for four deterministic roles; `ProcedureSession` protocol |
 | `crash_signature.py` | `compute_crash_signature()` / `signatures_match()` / `CrashSignature` -- sanitizer-class/access-type/top-frame reduction for host-computed verdicts |
+| `patch_plan.py` | Structured `PatchPlan`, validation, approval, and literal diff rendering for the mechanical patch-applier |
 | `deliverables.py` | `ARTIFACT_PATHS` / `PHASE_COMMANDS` -- the on-disk artifact + verdict-file contract shared by the agentic and procedural paths |
 | `__init__.py` | Public exports (re-exports key symbols) |
 
-## Connection to Core: Two Protocols
+## Connection to Core
 
 ### DomainPlugin protocol
 
@@ -47,8 +50,10 @@ Methods implemented by `SecurityDomainPlugin`:
 | `get_provenance_patterns` | `() -> list[tuple[str, SectionProvenance]]` | Returns regex pattern for security-related tag detection |
 | `prepare_run` | `(*, root_id, run_output_path, domain_context) -> PreparedRunWorkspace \| None` | Creates host workspace via container runtime, caches in `_workspaces[root_id]` |
 | `prepare_worker_execution` | `(*, root_id, agent_id, run_output_path, domain_context) -> WorkerExecutionContext \| None` | Starts a Docker container session, caches in `_sessions[root_id]` |
-| `cleanup_worker_execution` | `(*, root_id, agent_id, domain_context) -> None` | Stops and removes the container, pops from `_sessions` |
+| `cleanup_worker_execution` | `(*, root_id, agent_id, domain_context) -> None` | Intentional no-op; the run-shared container persists until process cleanup |
 | `get_prompt_strategy` | `() -> PromptStrategy \| None` | Returns `SecBenchPromptStrategy()` |
+| `get_decomposition_validator` | `() -> DecompositionValidator \| None` | Returns the adaptive/full/role-fused SEC-bench decomposition policy |
+| `get_procedure_executor` | `() -> ProcedureExecutorPort \| None` | Returns the four-role deterministic procedure executor |
 
 ### PromptStrategy protocol
 
@@ -79,30 +84,114 @@ The wiring path in `_build_security_components(settings)`:
 
 1. Checks `settings.security.enabled`. Returns empty `DomainComponents()` if disabled.
 2. Creates `DockerSecBenchRuntime()` directly.
-3. Creates `SecurityDomainPlugin(enabled_tools=settings.security.tools)`.
+3. Creates `SecurityDomainPlugin(...)` with tools, shared-context ordering,
+   `adaptive_execution`, and `treatment_version` from settings.
 4. Calls `plugin.set_container_runtime(runtime)` to inject the runtime.
 5. Calls `plugin.get_prompt_strategy()` to get the paired `SecBenchPromptStrategy`.
-6. Returns `DomainComponents(plugin=..., prompt_strategy=..., domain_key="secbench")`.
+6. Exposes prompt, decomposition, and procedure seams through generic ports; bootstrap
+   remains the only cross-boundary importer.
 
 Activation requires one of:
 - `--domain security` CLI flag
 - `--cve-file <path>` (auto-activates the security domain)
 
+## Worker Classification
+
+The role taxonomy uses two independent axes. Do not put `mechanical`, `coding`, and
+`reasoning` in one enum: the first describes **how work executes**, while the second
+describes **what kind of work it is**.
+
+| Axis | Values | Meaning |
+|---|---|---|
+| Execution mechanism | `LLM`, `host procedure` | Whether a model conversation runs or trusted Arise Python executes a fixed procedure |
+| Task character | `coding/execution`, `reasoning`, `hybrid`, `synthesis` | The cognitive shape of the task; `thinking` is not a separate category from reasoning |
+
+The target pre-experiment model policy is role-based and is **not implemented yet**.
+Every role classified as reasoning, hybrid, or synthesis uses `gpt-5.3-codex`; pure
+coding/execution roles use `gpt-5.4-mini`; host procedures use no model. This requires a
+generic `worker.model_overrides` configuration path. The current worker configuration
+has only `reasoning_effort_overrides`.
+
+| Phase | Catalog role | Current mechanism | Task character | Target model |
+|---|---|---|---|---|
+| Builder | `Build-Setup` | LLM | coding/execution | `gpt-5.4-mini` |
+| Builder | `Build-Executor` | LLM | coding/execution | `gpt-5.4-mini` |
+| Builder | `Build-Verifier` | host procedure | mechanical verification | none |
+| Exploiter | `PoC-Researcher` | LLM | reasoning | `gpt-5.3-codex` |
+| Exploiter | `Data-Flow-Analyst` | LLM | reasoning | `gpt-5.3-codex` |
+| Exploiter | `PoC-Tester` | LLM | reasoning/execution | `gpt-5.3-codex` |
+| Exploiter | `Forward-Instrumentator` | LLM | hybrid reasoning/coding | `gpt-5.3-codex` |
+| Exploiter | `Repro-Creator` | LLM | coding/execution | `gpt-5.4-mini` |
+| Exploiter | `Exploit-Validator` | host procedure | mechanical verification | none |
+| Fixer | `Root-Cause-Analyst` | LLM | reasoning | `gpt-5.3-codex` |
+| Fixer | `Candidate-Reviewer` | LLM | reasoning | `gpt-5.3-codex` |
+| Fixer | `Regression-Tester` | LLM | reasoning/execution | `gpt-5.3-codex` |
+| Fixer | `Patch-Applier` | host procedure | mechanical transformation | none |
+| Fixer | `Patch-Validator` | host procedure | mechanical verification | none |
+| Fixer | `Fix-Aggregator` (optional) | LLM | synthesis | `gpt-5.3-codex` |
+| Reporter | `Reporter` | LLM | synthesis/reasoning | `gpt-5.3-codex` |
+
+In the role-fused B3 treatment, a phase worker receives one model. Apply the same
+functional policy: Builder uses `gpt-5.4-mini`; Exploiter, Fixer, and Reporter use
+`gpt-5.3-codex` because each fused task contains reasoning. Record this as part of the
+treatment: B3 role fusion changes model-token allocation as well as topology.
+
+## Adaptive and Role-Fused Policies
+
+`SecBenchDecompositionValidator.fixed_decomposition()` owns the current deterministic
+adaptive policy when `adaptive_execution` is enabled:
+
+```text
+BOSS
+  -> Builder -> Build-Executor, Build-Verifier
+  -> Exploiter -> Repro-Creator, Exploit-Validator
+  -> Fixer -> Root-Cause-Analyst, Patch-Applier, Patch-Validator
+  -> Reporter -> Reporter
+```
+
+That compact route is eight leaf workers, four of which are host procedures. It is
+selected by trusted host code, not by an LLM manager. A failed phase re-decomposition
+adds only specialists whose trigger matches the failure; an unrecognized failure uses
+the phase's full escalated set. `b4-adaptive-rolefused-v1` marks the four root phases
+simple and stops decomposition at the phase worker.
+
+The prompt files are not yet aligned with that policy: `prompts/domains/secbench/assess.j2`
+still requires separate required-role leaves and rejects merged roles. Do not begin a
+confirmatory experiment until prompt and fixed-policy behavior agree.
+
 ## Deterministic Procedure Tier (procedural dispatch)
 
-When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecutor` (`procedures.py`) is bound as the run's `ProcedureExecutorPort` via `SecurityDomainPlugin.get_procedure_executor()`. It runs the two **validator** roles host-side with zero LLM turns, so their verdicts become host-computed and event-sourced instead of agent-authored -- closing the SYSTEM_REFERENCE §V.7 fabrication gap for validator verdicts when the flag is on. Default off => `NullProcedureExecutor` => behavior byte-identical.
+When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecutor` (`procedures.py`) is bound as the run's `ProcedureExecutorPort` via `SecurityDomainPlugin.get_procedure_executor()`. It runs four fixed roles host-side with zero LLM turns, so validation and literal patch application become host-computed and event-sourced instead of agent-authored. Default off => `NullProcedureExecutor` => the agentic path.
 
 **Static registry (leading `[Role]` bracket -> `procedure_ref`):**
 
 | `[Role]` bracket | `procedure_ref` | `secb` commands (host-driven, synchronous) |
 |---|---|---|
+| `[Build-Verifier]` | `secb_build_validation` | `secb build`, then resolve and inspect the declared binary |
 | `[Exploit-Validator]` | `secb_exploit_validation` | `secb repro` x3 |
+| `[Patch-Applier]` | `secb_patch_apply` | validate the approved `patch_plan.json`; render `model_patch.diff` literally |
 | `[Patch-Validator]` | `secb_patch_validation` | `secb patch` -> `secb build` -> `secb repro` x3 (post-patch, expect no crash) |
 
 - `match()` parses the task's leading `[Role]` bracket (via `role_from_task`) and looks it up in `_REGISTRY`; `resolve()` checks membership in `_PROCEDURE_REFS`.
 - `execute()` resolves the run's live container through the injected `session_resolver(root_id)` (the orchestrator injects `root_id` into `procedure_params` from `hierarchy_limits`), downcasts `domain_context` to `CVEInstance`, and drives the container `ProcedureSession` synchronously. Task-level failure (FAIL verdict, preflight miss, timeout) returns `success=False` + a bounded digest and never raises; only a missing session / missing `root_id` / unknown ref raises `ProcedureInfrastructureError`.
 - **Verdict by crash signature.** Each `secb repro` output is reduced to a `CrashSignature` (sanitizer class / access type / top frame) by `crash_signature.py`; `_consensus` picks the majority signature + determinism count; `signatures_match` compares it against the CVE oracle (`compute_crash_signature(cve.sanitizer_report)`). Exploit PASS iff the observed signature matches the oracle across 3/3 deterministic runs. `crash_signature.py` is drift-tested against `experiments/shared/evaluation/criteria.py::_crash_signature` (same 3-tuple shape).
 - **Same on-disk contract.** Writes the identical artifacts the agentic path uses -- `exploit_validation_results.txt` / `patch_validation_results.txt`, `repro_run_*.log`, exit sentinels -- reusing `ARTIFACT_PATHS` / `PHASE_COMMANDS` from `deliverables.py`. Additionally each command becomes a `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, `excerpt`) on the `ProcedureExecutionFinished` event -- agent-unforgeable, unlike the agent-written verdict files.
+
+### Mechanical criteria
+
+| Gate | PASS | FAIL |
+|---|---|---|
+| Build | `secb build` exits 0 before timeout and the declared binary pointer resolves | timeout, nonzero exit, missing/invalid binary pointer |
+| Exploit preflight | `repro.sh`, PoC pointer, and binary pointer resolve; the reproducer is not the seeded stub | any missing, unresolved, or stub artifact |
+| Exploit replay | three independent `secb repro` runs produce the frozen oracle crash signature | fewer than 3/3 matches, timeout, signal/exit inconsistency, sanitizer/access/top-frame mismatch |
+| Patch plan | JSON schema, allowed operations, paths, context anchors, and frozen scope all validate | malformed plan, path escape/protected path, missing/ambiguous anchor, unsupported operation |
+| Patch apply | host renders the approved plan into a unified diff without discretionary edits | any mismatch between approved plan and rendered patch |
+| Patch validation | patch applies, build succeeds, and all three post-patch replays are crash-free | patch/build timeout or nonzero exit, signal, assertion, sanitizer, or any replay crash |
+| Safety/provenance | protected artifacts unchanged; exploit identity and fresh-base replay preserved | identity drift, protected-path modification, stale workspace, missing host evidence |
+
+Mechanical gates never accept an agent-authored `VERDICT: PASS`. A failed procedure
+records a bounded `failure_digest` and gets exactly one agentic retry; the retry does
+not erase the failed host evidence.
 
 ## CVEInstance Model
 

@@ -22,9 +22,14 @@ Every `(cell, task, replicate)` mints a `BOSS_ID`, writes events to Postgres, an
 
 ```bash
 uv sync --frozen
-cp deployment/.env.example deployment/.env   # fill POSTGRES_PASSWORD, OPENAI_API_KEY, ANTHROPIC_API_KEY, HOST_PROJECT_ROOT
+cp deployment/.env.example deployment/.env   # non-secret local configuration only
 docker compose --profile local up -d --build
 ```
+
+Never put provider keys or shared database credentials in `deployment/.env`. Retrieve
+personal provider credentials from Bitwarden at process launch and export them only into
+that process environment. If `bw` is locked, stop and unlock it; do not use a plaintext
+fallback.
 
 Dashboard at http://localhost:8000.
 
@@ -61,6 +66,26 @@ uv run python -m experiments.shared.scripts.run_matrix \
 
 The driver loads `manifest.yaml`, sweeps stale state, enumerates `cells × tasks × replicates`, dispatches via the `arise` runner (`main.py run` inside `arise-app`), and writes `experiments/${STUDY}/reports/{matrix-summary.md, enrollment.lock.yaml}`.
 
+For the current development treatments:
+
+```bash
+experiments/b4-boss-manager-worker/smoke.sh
+experiments/b3-rolefused/smoke.sh
+```
+
+The untouched N1-vs-B4 confirmatory study uses its separate paired, randomized,
+interleaved runner. It reads the seed, replicate count, and bootstrap count from
+`preregistration.yaml`; CLI values cannot override them:
+
+```bash
+uv run python -m experiments.shared.evaluation.confirmatory_runner \
+  --study b4-confirmatory-cohort
+```
+
+Do not run that command until the development pilot is complete and all three pinned
+semantic judge seats pass live smoke. The runner itself rejects cohort, oracle,
+regression-plan, arm, and preregistration drift before the first launch.
+
 ### Useful flags
 
 | Flag                                | Purpose                                                                          |
@@ -90,7 +115,7 @@ uv run python -m experiments.shared.scripts.run_matrix \
 | `experiments/<study>/reports/enrollment.lock.yaml`    | `(cell, task, replicate) → run_id` mapping.                         |
 | `runs/<run_id>/testcase/`                             | `security_report.md`, `model_patch.diff`, `repro.sh`, worker logs.  |
 | `runs/<run_id>/run_manifest.json`                     | Run metadata (`exit_status`, `models`, `deliverables`).             |
-| `runs/<run_id>/events.jsonl`                          | Per-run event stream (also in Postgres).                            |
+| Postgres `events` table                              | Authoritative event stream; no `events.jsonl` projection is used.  |
 
 CLI views from inside `arise-app`:
 
