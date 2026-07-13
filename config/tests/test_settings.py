@@ -314,8 +314,7 @@ def test_overlay_yaml_is_resolved_by_from_yaml(tmp_path: Path) -> None:
 def test_overlay_openhands_tool_policy_overrides_base_defaults(tmp_path: Path) -> None:
     """An overlay pinning the openhands tool surface replaces base worker defaults."""
 
-    # Given: an overlay pinning the SEC-bench MCP tool surface explicitly
-    # (the shape the removed C-cell study overlays used).
+    # Given: an overlay pinning an MCP tool surface explicitly.
     overlay = tmp_path / "openhands_policy.yaml"
     _write_yaml(
         overlay,
@@ -329,8 +328,8 @@ def test_overlay_openhands_tool_policy_overrides_base_defaults(tmp_path: Path) -
                 "worker.allowed_tools": ["file_editor", "glob", "grep"],
                 "worker.tool_params.openhands.mcp_tools": [
                     "shell_in_container",
-                    "valgrind_run",
-                    "klee_run",
+                    "analyze_artifact",
+                    "verify_artifact",
                 ],
             },
         },
@@ -350,53 +349,9 @@ def test_overlay_openhands_tool_policy_overrides_base_defaults(tmp_path: Path) -
     assert settings.worker.tool_params.openhands is not None
     assert settings.worker.tool_params.openhands.mcp_tools == [
         "shell_in_container",
-        "valgrind_run",
-        "klee_run",
+        "analyze_artifact",
+        "verify_artifact",
     ]
-
-
-def test_secbench_recon_tool_allowlist_matches_registered_tools() -> None:
-    """Configured secbench recon tools must exist and resolve for each role."""
-
-    from core.application.services.toolset.toolset_context import LoopPolicy
-    from core.application.services.toolset.toolset_policy_resolver import (
-        ToolsetPolicyResolver,
-    )
-    from core.domain.values.enums import AgentRole
-    from infrastructure.adapters.recon_tool_adapter import ReconToolAdapter
-
-    settings = Settings._build_from_config(_add_required_models(_load_base_config()))
-    recon = ReconToolAdapter()
-    registered = {
-        tool["function"]["name"]
-        for tool in recon.get_tool_definitions()
-    }
-    expected = [
-        "read_file",
-        "search_codebase",
-        "get_file_structure",
-        "get_symbols_overview",
-        "read_symbol",
-    ]
-
-    assert set(expected) <= registered
-
-    resolver = ToolsetPolicyResolver(
-        toolsets=(recon,),
-        config=settings.orchestration.tool_calling.policies.to_raw_dict(),
-        default_loop_policy=LoopPolicy(
-            max_iterations=settings.orchestration.tool_calling.max_iterations,
-            result_char_limit=settings.orchestration.tool_calling.result_char_limit,
-        ),
-        domain_key="secbench",
-    )
-
-    for role in (AgentRole.BOSS, AgentRole.PENDING, AgentRole.MANAGER):
-        resolved = resolver.resolve(role)
-        names = [tool["function"]["name"] for tool in resolved.tool_definitions]
-        assert sorted(names) == sorted(expected)
-        assert set(resolved.executors) == set(expected)
-        assert resolved.loop_policy.max_iterations == 3
 
 
 def test_worker_cost_knobs_default_to_legacy() -> None:
@@ -408,6 +363,7 @@ def test_worker_cost_knobs_default_to_legacy() -> None:
     # Then: worker LLM knobs keep the SDK defaults.
     assert settings.worker.reasoning_effort is None
     assert settings.worker.reasoning_effort_overrides == {}
+    assert settings.worker.model_overrides == {}
 
     # Then: orchestration knobs keep byte-identical prompts and today's retry budget.
     orch = settings.orchestration
@@ -429,8 +385,11 @@ def test_worker_cost_knobs_round_trip_from_yaml(tmp_path: Path) -> None:
     payload["worker"]["tool"] = "openhands"
     payload["worker"]["reasoning_effort"] = "low"
     payload["worker"]["reasoning_effort_overrides"] = {
-        "[Exploiter]": "medium",
-        "[Fixer]": "medium",
+        "[Analysis]": "medium",
+        "[Execution]": "medium",
+    }
+    payload["worker"]["model_overrides"] = {
+        "[Review]": "gpt-5.3-codex",
     }
     payload["worker"]["tool_params"] = {"openhands": {"run_scoped_prompt_cache_key": True}}
     payload["orchestration"]["shared_worker_session"] = True
@@ -438,7 +397,7 @@ def test_worker_cost_knobs_round_trip_from_yaml(tmp_path: Path) -> None:
     payload["orchestration"]["shared_code_index"] = True
     payload["orchestration"]["shared_code_skip_dir_listings"] = True
     payload["orchestration"]["shared_code_render_mode"] = "latest_only"
-    payload["orchestration"]["workspace_listing_dirs"] = ["testcase"]
+    payload["orchestration"]["workspace_listing_dirs"] = ["artifacts"]
     payload["orchestration"]["workspace_listing_max_entries"] = 200
     payload["orchestration"]["verification_max_retries"] = 1
     payload["orchestration"]["capture_recon_reads"] = True
@@ -450,7 +409,8 @@ def test_worker_cost_knobs_round_trip_from_yaml(tmp_path: Path) -> None:
 
     # Then
     assert settings.worker.reasoning_effort == "low"
-    assert settings.worker.reasoning_effort_overrides["[Exploiter]"] == "medium"
+    assert settings.worker.reasoning_effort_overrides["[Analysis]"] == "medium"
+    assert settings.worker.model_overrides["[Review]"] == "gpt-5.3-codex"
     assert settings.worker.tool_params.openhands is not None
     assert settings.worker.tool_params.openhands.run_scoped_prompt_cache_key is True
     orch = settings.orchestration
@@ -458,7 +418,7 @@ def test_worker_cost_knobs_round_trip_from_yaml(tmp_path: Path) -> None:
     assert orch.shared_code_index is True
     assert orch.shared_code_skip_dir_listings is True
     assert orch.shared_code_render_mode == "latest_only"
-    assert orch.workspace_listing_dirs == ["testcase"]
+    assert orch.workspace_listing_dirs == ["artifacts"]
     assert orch.workspace_listing_max_entries == 200
     assert orch.verification_max_retries == 1
     assert orch.capture_recon_reads is True

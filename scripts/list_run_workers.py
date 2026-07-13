@@ -3,7 +3,7 @@
 
 For a given BOSS run_id, traverses the hierarchy and emits one line per
 descendant agent with its worker_id and the bracketed role name parsed
-from its task description (e.g., ``[PoC-Researcher] ...`` -> ``PoC-Researcher``).
+from its task description (e.g., ``[Analysis] ...`` -> ``Analysis``).
 
 Usage:
     POSTGRES_PASSWORD=arise python scripts/list_run_workers.py <run_id>

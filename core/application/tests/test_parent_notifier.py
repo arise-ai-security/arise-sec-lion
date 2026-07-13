@@ -29,7 +29,7 @@ def _config() -> dict:
 
 def _phase_manager() -> AgentSession:
     parent = AgentSession.create(agent_id=uuid4(), role=AgentRole.MANAGER, config=_config())
-    parent.assign_task("[Fixer] fix")
+    parent.assign_task("[Review] verify")
     return parent
 
 
@@ -67,10 +67,10 @@ def test_phase_gate_recorded_once_on_terminal_completion() -> None:
     # When: the terminal-gate recorder runs
     ParentNotificationService._record_terminal_phase_gate(parent, child)
 
-    # Then: exactly one passing gate is recorded for the Fixer phase
+    # Then: exactly one passing gate is recorded for the review phase
     gates = [e for e in parent.events if isinstance(e, PhaseGateRecorded)]
     assert len(gates) == 1
-    assert gates[0].phase == "Fixer"
+    assert gates[0].phase == "Review"
     assert gates[0].passed is True
 
 
@@ -213,7 +213,7 @@ async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
     child = _make_failed_child(
         child_ids[0],
         parent.agent_id,
-        task="build the PoC",
+        task="build the artifact",
         reason="Segfault in parser",
         digest="FAILURE: Segfault in parser\nLAST TOOL CALLS:\n[bash/tool_result] make",
     )
@@ -225,7 +225,7 @@ async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
     # Then: the parent's ChildFailureRecord retains task, reason, and digest
     reloaded_parent = await repository.load(parent.agent_id)
     record = reloaded_parent.failed_children[child_ids[0]]
-    assert record.child_task == "build the PoC"
+    assert record.child_task == "build the artifact"
     assert record.reason == "Segfault in parser"
     assert record.digest is not None and "LAST TOOL CALLS" in record.digest
     # And: the second child has not reported, so the parent stays WAITING

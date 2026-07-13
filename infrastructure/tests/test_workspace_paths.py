@@ -17,19 +17,19 @@ def test_workspace_path_mapper_maps_virtual_paths_to_host_mirrors(
     mapper = WorkspacePathMapper(
         (
             WorkspacePathAlias("/src", str(tmp_path / "src")),
-            WorkspacePathAlias("/testcase", str(tmp_path / "testcase")),
+            WorkspacePathAlias("/artifacts", str(tmp_path / "artifacts")),
             WorkspacePathAlias("/work", str(tmp_path / "work")),
         )
     )
 
     # When: Mapping virtual paths used by agents.
     source_path = mapper.map_virtual_to_host("/src/demo/vuln.c")
-    testcase_path = mapper.map_virtual_to_host("/testcase/poc")
+    artifact_path = mapper.map_virtual_to_host("/artifacts/result")
     unrelated_path = mapper.map_virtual_to_host("/tmp/file")
 
     # Then: Known aliases point at host mirrors and unknown paths are unchanged.
     assert source_path == str(tmp_path / "src" / "demo" / "vuln.c")
-    assert testcase_path == str(tmp_path / "testcase" / "poc")
+    assert artifact_path == str(tmp_path / "artifacts" / "result")
     assert unrelated_path == "/tmp/file"
 
 
@@ -43,15 +43,15 @@ def test_workspace_path_mapper_resolves_relative_host_mirrors(
     monkeypatch.chdir(tmp_path)
     mapper = WorkspacePathMapper(
         (
-            WorkspacePathAlias("/testcase", "runs/demo/testcase"),
+            WorkspacePathAlias("/artifacts", "runs/demo/artifacts"),
         )
     )
 
     # When: Mapping a container path used by an agent.
-    testcase_path = mapper.map_virtual_to_host("/testcase/base_commit_hash")
+    artifact_path = mapper.map_virtual_to_host("/artifacts/revision")
 
     # Then: The host-side tool receives an absolute path, not a cwd-relative path.
-    assert testcase_path == str(tmp_path / "runs" / "demo" / "testcase" / "base_commit_hash")
+    assert artifact_path == str(tmp_path / "runs" / "demo" / "artifacts" / "revision")
 
 
 def test_workspace_path_mapper_rewrites_host_paths_back_to_virtual(
@@ -66,14 +66,14 @@ def test_workspace_path_mapper_rewrites_host_paths_back_to_virtual(
         (
             WorkspacePathAlias("/src", str(host_source_dir)),
             WorkspacePathAlias("/src/demo", str(host_work_dir)),
-            WorkspacePathAlias("/testcase", str(tmp_path / "testcase")),
+            WorkspacePathAlias("/artifacts", str(tmp_path / "artifacts")),
         )
     )
     observation = {
         "path": str(host_work_dir / "main.c"),
         "matches": [
             f"{host_source_dir / 'lib.c'}:1:int f(void)",
-            str(tmp_path / "testcase" / "poc"),
+            str(tmp_path / "artifacts" / "result"),
         ],
     }
 
@@ -85,7 +85,7 @@ def test_workspace_path_mapper_rewrites_host_paths_back_to_virtual(
         "path": "/src/demo/main.c",
         "matches": [
             "/src/lib.c:1:int f(void)",
-            "/testcase/poc",
+            "/artifacts/result",
         ],
     }
 

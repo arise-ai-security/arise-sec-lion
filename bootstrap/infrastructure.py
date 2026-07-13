@@ -62,6 +62,7 @@ class InfrastructureConfig:
     default_worker_tool: WorkerToolType
     worker_tool_model: str
     worker_tool_timeout: int
+    worker_model_overrides: dict[str, str] | None = None
     worker_allowed_tools: list[str] | None = None
     worker_disallowed_tools: list[str] | None = None
     worker_mcp_tools: list[str] | None = None
@@ -128,6 +129,7 @@ def _create_worker_adapter(
     if config.default_worker_tool == "openhands":
         return OpenHandsAdapter(
             model=config.worker_tool_model,
+            model_overrides=config.worker_model_overrides,
             timeout_seconds=config.worker_tool_timeout,
             max_iterations_per_run=config.worker_tool_max_iterations,
             base_url=config.worker_tool_base_url,

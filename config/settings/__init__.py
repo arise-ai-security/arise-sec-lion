@@ -18,7 +18,6 @@ from .loader import (
 from .orchestration import ConcurrencyConfig, OrchestrationConfig, RetryConfig, TopologyConfig
 from .output import OutputConfig
 from .root import ApiSettings, Settings
-from .security import SecurityConfig
 from .toolsets import ToolCallingConfig, ToolsetConfig, ToolsetPolicyConfig, ToolsetRoleConfig
 from .worker import (
     _WORKER_TOOL_PARAM_TYPES,
@@ -50,7 +49,6 @@ __all__ = [
     "OutputConfig",
     "ReasoningEffort",
     "RetryConfig",
-    "SecurityConfig",
     "Settings",
     "ToolCallingConfig",
     "ToolsetConfig",

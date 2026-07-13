@@ -34,12 +34,17 @@ from core.domain.events.events import (
     CodeGenerationStarted,
     DomainEvent,
     FailureDigestRecorded,
+    PatchPlanApproved,
     ProcedureExecutionFinished,
     ProcedureExecutionStarted,
     RetryScheduled,
     WorkCompleted,
 )
-from core.domain.values.procedure import ProcedureEvidence, ProcedureResult
+from core.domain.values.procedure import (
+    ProcedureEvidence,
+    ProcedurePlanApproval,
+    ProcedureResult,
+)
 
 
 class FakeProcedureExecutor:
@@ -164,7 +169,7 @@ async def test_matched_task_executes_procedurally_without_llm_turns() -> None:
             success=True,
             summary="VERDICT: PASS",
             evidence=(
-                ProcedureEvidence(argv=("secb", "repro"), exit_code=0, output_sha256="ab" * 32),
+                ProcedureEvidence(argv=("tool", "validate"), exit_code=0, output_sha256="ab" * 32),
             ),
         )
     )
@@ -200,7 +205,7 @@ async def test_failed_procedure_escalates_agentic_with_digest() -> None:
         result=ProcedureResult(
             success=False,
             summary="VERDICT: FAIL — signature mismatch",
-            digest="FAILURE: crash signature mismatch (heap-buffer-overflow vs use-after-free)",
+            digest="FAILURE: artifact signature mismatch (observed vs expected)",
         )
     )
     worker = RecordingWorker()
@@ -227,6 +232,40 @@ async def test_failed_procedure_escalates_agentic_with_digest() -> None:
     assert "Previous Attempt Failure" in worker.prompts[0]
     assert "signature mismatch" in worker.prompts[0]
     assert _get_agent_status(event_store, child_id) == "completed"
+
+
+@pytest.mark.asyncio
+async def test_procedure_records_plan_approval_provenance() -> None:
+    """A host-approved plan is frozen on the worker event stream."""
+
+    # Given: A matched procedure returning host validation provenance
+    event_store = InMemoryEventStore()
+    llm = FakeLLM()
+    llm._default_subtasks = _subtask_json("[Fake-Procedure] render the patch")
+    executor = FakeProcedureExecutor(
+        result=ProcedureResult(
+            success=True,
+            summary="patch rendered",
+            plan_approval=ProcedurePlanApproval(
+                plan_sha256="ab" * 32,
+                evidence_references=("/workspace/analysis.txt",),
+            ),
+        )
+    )
+    svc = _wire_service(event_store, llm, RecordingWorker(), executor)
+
+    # When: The procedure completes
+    _, child_id = await _spawn_worker(svc, event_store)
+    await svc.run_agent_step(child_id)
+
+    # Then: PatchPlanApproved records the host-frozen identity
+    approvals = [
+        event
+        for event in _events_for(event_store, child_id)
+        if isinstance(event, PatchPlanApproved)
+    ]
+    assert len(approvals) == 1
+    assert approvals[0].plan_sha256 == "ab" * 32
 
 
 @pytest.mark.asyncio

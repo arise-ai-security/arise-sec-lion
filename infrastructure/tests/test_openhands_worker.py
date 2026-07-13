@@ -55,7 +55,7 @@ def _make_invocation(tmp_path: Path) -> dict:
         "spec": TaskPromptSpec(
             rendered_prompt="rendered",
             prompt_sha="0" * 64,
-            cve_context=None,
+            domain_context=None,
             task="t",
         ),
         "tool_policy": ToolPolicy(
@@ -147,7 +147,7 @@ def test_openhands_worker_returns_failed_when_adapter_raises(tmp_path: Path) -> 
 
 def test_openhands_worker_forwards_workspace_extras_into_task_context(tmp_path: Path) -> None:
     """Flat-mode plugin extras (container session, MCP servers) reach the adapter."""
-    # Given: a workspace whose extras carry the security plugin's task_context.
+    # Given: a workspace whose extras carry a domain plugin's task context.
     fake_aggregate = uuid4()
     adapter = _FakeOpenHandsAdapter(
         [WorkCompleted(aggregate_id=fake_aggregate, sequence_number=2, result="ok")]
@@ -156,7 +156,7 @@ def test_openhands_worker_forwards_workspace_extras_into_task_context(tmp_path: 
     invocation = _make_invocation(tmp_path)
     extras = {
         "container_session": {"container_id": "deadbeef", "container_workspace_root": "/work"},
-        "mcp_servers": {"security-tools": {"command": "python"}},
+        "mcp_servers": {"custom-tools": {"command": "python"}},
         "task_description": "extras must never shadow the rendered prompt",
     }
     invocation["workspace"] = WorkspaceSpec(root=tmp_path, extras=extras)

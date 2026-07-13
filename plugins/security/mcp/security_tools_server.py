@@ -50,6 +50,8 @@ _KLEE_PROBE_CMD = "command -v klee"
 _KLEE_INSTALL_CMD = "apt-get update && apt-get install -y klee"
 
 _DEFAULT_TIMEOUT_SECONDS = 600
+_IN_CONTAINER_PYTHON = "/opt/arise-mcp/venv/bin/python"
+_IN_CONTAINER_PYTHONPATH = "/opt/arise-mcp"
 
 mcp = FastMCP("arise-secbench-tools")
 
@@ -96,6 +98,12 @@ def build_stdio_config(
         "command": python_executable,
         "args": ["-m", "plugins.security.mcp.security_tools_server"],
         "env": env,
+        "in_container": {
+            "command": _IN_CONTAINER_PYTHON,
+            "args": ["-m", "plugins.security.mcp.security_tools_server"],
+            "remove_env": [ENV_HELPER_SCRIPT],
+            "env": {"PYTHONPATH": _IN_CONTAINER_PYTHONPATH},
+        },
     }
 
 

@@ -45,8 +45,7 @@ class FormatRepairerConfig(BaseModel):
     unknown). The repair model must be configured by YAML; there is no
     source-code model fallback.
 
-    Distinct from the security-domain "Fixer" agent role — this repairs
-    output format, never source code.
+    This repairs output format; it does not execute domain tasks.
     """
 
     model_config = {"extra": "forbid"}

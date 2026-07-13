@@ -634,34 +634,3 @@ class TestReadFileDedup:
         assert tool_msgs[0]["content"] == "SOURCE-BODY-OF-X"
         assert "not re-sent" in tool_msgs[1]["content"]
         assert "SOURCE-BODY-OF-X" not in tool_msgs[1]["content"]
-
-
-class TestRollingTailCacheBreakpoint:
-    """The last message gets an ephemeral breakpoint on Anthropic, no-op elsewhere."""
-
-    def test_anthropic_tail_gets_cache_control(self):
-        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
-
-        msgs = [{"role": "user", "content": "p"},
-                {"role": "tool", "tool_call_id": "c1", "content": "tool result"}]
-        out = apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6")
-
-        last = out[-1]["content"]
-        assert isinstance(last, list)
-        assert last[-1]["cache_control"] == {"type": "ephemeral"}
-        assert last[-1]["text"] == "tool result"
-        # original not mutated
-        assert msgs[-1]["content"] == "tool result"
-
-    def test_non_anthropic_is_noop(self):
-        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
-
-        msgs = [{"role": "user", "content": "p"},
-                {"role": "tool", "tool_call_id": "c1", "content": "r"}]
-        assert apply_anthropic_cache_to_tail(msgs, "gpt-5.4-mini") == msgs
-
-    def test_single_message_is_noop(self):
-        from infrastructure.adapters.anthropic_cache import apply_anthropic_cache_to_tail
-
-        msgs = [{"role": "user", "content": "p"}]
-        assert apply_anthropic_cache_to_tail(msgs, "claude-sonnet-4-6") == msgs

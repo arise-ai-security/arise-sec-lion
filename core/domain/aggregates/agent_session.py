@@ -923,11 +923,10 @@ class AgentSession:
         plan_sha256: str,
         evidence_references: list[str],
     ) -> None:
-        """Record that a host-validated security PatchPlan was frozen and approved.
+        """Record that a host-validated change plan was frozen and approved.
 
-        Emitted after plan validation passes and before the weak Patch-Applier
-        runs, so the frozen plan identity is on the event stream (provenance the
-        agent cannot forge).
+        Emitted after plan validation and before application, so the frozen
+        identity is on the event stream as host-owned provenance.
         """
         self._emit(
             PatchPlanApproved(

@@ -162,8 +162,10 @@ class TestSecurityPromptBuilding:
             domain_context=make_test_cve_instance(),
         )
 
-        # Then: managers are told to emit correct deps and not lean on the repair gate.
-        assert "Do NOT rely on any repair gate" in prompt
+        # Then: legacy LLM-selected decompositions still carry hard-dep contracts,
+        # while host adaptive/role-fused routes are declared authoritative.
+        assert "Host routing takes precedence" in prompt
+        assert "For an LLM-selected legacy decomposition" in prompt
         assert (
             "`[Forward-Instrumentator]` hard depends_on: `[PoC-Researcher]`"
             in prompt
@@ -792,8 +794,8 @@ class TestSecurityPromptBuilding:
         assert "Do not manually reset or apply patches while authoring" in prompt
 
     def test_secbench_fixer_leaf_with_exploit_wording_renders_fixer_prompt(self) -> None:
-        # Given: a Fixer leaf (Root-Cause-Analyst) whose own task carries no
-        # fixer keyword, under a Fixer parent whose summary legitimately mentions
+        # Given: a leaf whose own task carries no catalog role or phase keyword,
+        # under a Fixer parent whose summary legitimately mentions
         # the exploit/repro it validates against.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
@@ -817,11 +819,19 @@ class TestSecurityPromptBuilding:
                 ),
             ),
         )
-        leaf_task = "[Root-Cause-Analyst] Identify the data-corruption origin and emit the block"
+        leaf_task = "[Specialist] Identify the data-corruption origin and emit the block"
 
         # When / Then: the [Fixer] bracket on the parent wins over the loose
         # "exploit" keyword, so the leaf renders the Fixer prompt, not Exploiter.
-        assert detect_benchmark_branch(briefing) == "fixer"
+        assert (
+            detect_benchmark_branch(
+                (
+                    "exploit reproduction without an explicit phase",
+                    "[Fixer] Patch the vulnerability",
+                )
+            )
+            == "fixer"
+        )
 
         prompt = builder.build_worker_prompt(
             task_description=leaf_task,

@@ -1,4 +1,4 @@
-{# Shared code-prefix block: source files already read by prior workers on this CVE,
+{# Shared code-prefix block: source files already read by prior workers on this task,
    replayed as an APPEND-ONLY log — earlier bytes never change as the run progresses,
    so each worker's request shares the longest possible prefix with its predecessor's
    and OpenAI's prefix cache keeps serving the carried content at the cache-read rate.

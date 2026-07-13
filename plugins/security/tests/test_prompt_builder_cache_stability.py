@@ -1,4 +1,4 @@
-"""Cache-stability invariant for PromptBuilder's stable prefix.
+"""Cache-stability invariant for SEC-bench PromptBuilder's stable prefix.
 
 The repo's multi-provider cache architecture relies on the **byte-identity of
 the stable prefix** that ``PromptBuilder.build_*_prompt(...)`` produces for a

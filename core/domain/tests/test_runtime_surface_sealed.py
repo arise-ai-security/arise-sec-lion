@@ -29,22 +29,24 @@ def test_emit_runtime_surface_sealed_records_event_on_boss() -> None:
     version_before = boss.version
     artifacts = [
         SealedArtifact(
-            container_path="/testcase/repro.sh", kind="repro_skeleton", content_sha256="a" * 64
+            container_path="/artifacts/bootstrap.sh",
+            kind="bootstrap_script",
+            content_sha256="a" * 64,
         ),
-        SealedArtifact(container_path="/usr/local/bin/secb", kind="secb_wrapper"),
+        SealedArtifact(container_path="/usr/local/bin/runner", kind="runtime_wrapper"),
     ]
 
     # When: Arise seals the agent-visible runtime surface.
-    boss.emit_runtime_surface_sealed(surface="secbench", sealed_artifacts=artifacts)
+    boss.emit_runtime_surface_sealed(surface="sample", sealed_artifacts=artifacts)
 
     # Then: a RuntimeSurfaceSealed event is recorded carrying the sealed artifacts.
     event = boss.events[-1]
     assert isinstance(event, RuntimeSurfaceSealed)
     assert event.aggregate_id == agent_id
-    assert event.surface == "secbench"
-    assert [a.kind for a in event.sealed_artifacts] == ["repro_skeleton", "secb_wrapper"]
+    assert event.surface == "sample"
+    assert [a.kind for a in event.sealed_artifacts] == ["bootstrap_script", "runtime_wrapper"]
 
-    # And: the secb_wrapper artifact defaults to the non-golden anti-leak marker.
+    # And: the runtime wrapper defaults to the non-reference-data marker.
     assert event.sealed_artifacts[1].non_golden is True
 
     # And: the aggregate version advanced for OCC.
@@ -55,7 +57,7 @@ def test_sealed_artifact_is_frozen() -> None:
     """SealedArtifact is an immutable value object."""
 
     # Given: a sealed artifact.
-    artifact = SealedArtifact(container_path="/testcase/patch.sh", kind="patch_script")
+    artifact = SealedArtifact(container_path="/artifacts/change.sh", kind="change_script")
 
     # When/Then: reassignment is rejected by the frozen model.
     with pytest.raises(ValidationError):

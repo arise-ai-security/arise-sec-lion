@@ -271,7 +271,7 @@ class PhaseGateRecorded(DomainEvent):
 
 
 class PatchPlanApproved(DomainEvent):
-    """Host approved and froze a validated security patch plan."""
+    """Host approved and froze a validated change plan."""
 
     plan_sha256: str
     evidence_references: list[str] = Field(default_factory=list)
@@ -656,8 +656,8 @@ class SealedArtifact(BaseModel):
 
     model_config = {"frozen": True}
 
-    container_path: str  # e.g. "/testcase/repro.sh", "/usr/local/bin/secb"
-    kind: str  # "repro_skeleton" | "patch_script" | "secb_wrapper"
+    container_path: str  # path inside the runtime container
+    kind: str  # plugin-defined artifact kind
     non_golden: bool = True  # explicit anti-leak marker
     content_sha256: str = ""  # integrity of the Arise-owned content written
 
@@ -666,14 +666,10 @@ class RuntimeSurfaceSealed(DomainEvent):
     """Arise sealed the agent-visible runtime surface (anti-leak enforcement).
 
     Records that the orchestrator overwrote agent-facing runtime artifacts
-    (the seeded non-golden repro skeleton, the immutable patch script, and the
-    delegating secb wrapper) with Arise-owned versions, so the agent cannot
-    read a baked golden solution. Reconstructable from the DB alone for
-    post-hoc anti-leak audit. Observability event -- does not change agent
-    state. The secb wrapper's content/path are deterministic constants
-    installed unconditionally per worker container, so it is recorded here at
-    workspace-prep time alongside the repro/patch scripts.
+    with host-owned versions, so the agent cannot read hidden reference data.
+    Reconstructable from the DB alone for post-hoc isolation audit. This is an
+    observability event and does not change agent state.
     """
 
-    surface: str  # which runtime surface was sealed, e.g. "secbench"
+    surface: str  # plugin-defined runtime surface identifier
     sealed_artifacts: list[SealedArtifact]

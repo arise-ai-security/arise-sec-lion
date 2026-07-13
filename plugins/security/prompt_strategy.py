@@ -28,7 +28,6 @@ from plugins.security.security_tool import get_tools_for_phase
 
 if TYPE_CHECKING:
     from core.application.services import TemplateChain
-    from core.domain.values.node_message import Briefing
 
 
 _CVE_DISPLAY_FIELDS = (
@@ -73,26 +72,19 @@ def _branch_from_brackets(text: str) -> str | None:
     return _PHASE_TO_BRANCH.get(label) or _ROLE_TO_BRANCH.get(label)
 
 
-def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
-    """Detect which SEC-bench branch an agent belongs to.
-
-    Ancestry is root-first, so iterate in reverse (direct parent first)
-    to prefer the most specific ancestor over generic BOSS-level tasks.
-    """
-    if briefing is None:
-        return None
-
-    # Authoritative first: the nearest ancestor stamped with an explicit
+def detect_benchmark_branch(task_descriptions: tuple[str, ...]) -> str | None:
+    """Classify nearest-first ancestor task descriptions into a SEC-bench branch."""
+    # Authoritative first: the nearest task stamped with an explicit
     # [Phase] bracket. A Fixer subtask legitimately references the exploit/repro
     # it validates against, so the loose keyword pass below (exploiter before
     # fixer) would otherwise misroute a Fixer leaf to the Exploiter prompt.
-    for ancestor in reversed(briefing.ancestry):
-        bracket = _branch_from_brackets(ancestor.task_summary)
+    for task_description in task_descriptions:
+        bracket = _branch_from_brackets(task_description)
         if bracket is not None:
             return bracket
 
-    for ancestor in reversed(briefing.ancestry):
-        task_lower = ancestor.task_summary.lower()
+    for task_description in task_descriptions:
+        task_lower = task_description.lower()
         if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
             return "builder"
         if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
@@ -252,7 +244,7 @@ class SecBenchPromptStrategy:
         cve_ctx = _with_contract_context(cve_instance.to_template_context())
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
-            branch = detect_benchmark_branch(context.briefing)
+            branch = detect_benchmark_branch(context.ancestor_task_descriptions)
 
         chain = _with_cve_display(
             chain, cve_instance, phase=branch, include_decomposition=True
@@ -275,7 +267,7 @@ class SecBenchPromptStrategy:
         cve_ctx = _with_contract_context(cve_instance.to_template_context())
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
-            branch = detect_benchmark_branch(context.briefing)
+            branch = detect_benchmark_branch(context.ancestor_task_descriptions)
 
         # A CVE worker with no detectable branch has no phase contract: the
         # shared phase partial (deliverables + verdict gate) is keyed on the

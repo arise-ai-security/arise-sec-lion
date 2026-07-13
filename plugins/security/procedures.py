@@ -24,7 +24,7 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from core.domain.values.procedure import ProcedureEvidence, ProcedureResult
+from core.domain.values.procedure import ProcedureEvidence, ProcedurePlanApproval, ProcedureResult
 from plugins.security.crash_signature import (
     CrashSignature,
     compute_crash_signature,
@@ -72,8 +72,8 @@ _REGISTRY: dict[str, str] = {
     "Patch-Applier": _PROCEDURE_PATCH_APPLY,
     "Patch-Validator": _PROCEDURE_PATCH,
 }
-# The manager-authored PatchPlan the weak Patch-Applier consumes (never reasons).
-_PATCH_PLAN_JSON = "patch_plan.json"
+# The approved PatchPlan the weak Patch-Applier consumes (never reasons).
+_PATCH_PLAN_JSON = PurePosixPath(ARTIFACT_PATHS["patch_plan"]).name
 _PROCEDURE_REFS = frozenset(_REGISTRY.values())
 
 # Canonical /testcase filenames, derived from the deliverables contract.
@@ -252,17 +252,18 @@ async def _run_patch_apply(
         reason = f"PatchPlan schema invalid ({exc.error_count()} errors)"
         return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
 
-    applier = PatchApplier(PatchPlanValidator(session.source_dir, set(plan.evidence_references)))
-    outcome = applier.apply(plan)
+    resolved_evidence = _resolved_plan_evidence(tc, plan.evidence_references)
+    applier = PatchApplier(PatchPlanValidator(session.source_dir, resolved_evidence))
+    outcome = applier.render(plan)
     evidence.append(
         ProcedureEvidence(
-            argv=("patch-plan-apply", plan.target_file),
-            exit_code=0 if outcome.status == "APPLIED" else 1,
+            argv=("patch-plan-render", plan.target_file),
+            exit_code=0 if outcome.status == "RENDERED" else 1,
             output_sha256=outcome.plan_sha256,
             excerpt=outcome.reason[:_EXCERPT_LIMIT],
         )
     )
-    if outcome.status != "APPLIED":
+    if outcome.status != "RENDERED":
         return _failed(
             _PROCEDURE_PATCH_APPLY,
             f"Patch apply BLOCKED: {outcome.reason}",
@@ -270,14 +271,30 @@ async def _run_patch_apply(
             evidence,
         )
 
-    # Emit the model_patch.diff deliverable from the applied source change.
-    diff = await _run_cmd(session, "git -C /src diff", timeout=_PATCH_TIMEOUT, evidence=evidence)
-    _write_file(tc / _MODEL_PATCH, diff.output)
+    _write_file(tc / _MODEL_PATCH, outcome.diff)
     return ProcedureResult(
         success=True,
-        summary=f"Patch apply APPLIED plan {outcome.plan_sha256[:12]} to {plan.target_file}",
+        summary=f"Patch apply RENDERED plan {outcome.plan_sha256[:12]} for {plan.target_file}",
         evidence=tuple(evidence),
+        plan_approval=ProcedurePlanApproval(
+            plan_sha256=outcome.plan_sha256,
+            evidence_references=plan.evidence_references,
+        ),
     )
+
+
+def _resolved_plan_evidence(testcase: Path, references: tuple[str, ...]) -> set[str]:
+    """Resolve non-empty plan evidence under the sealed testcase directory."""
+    root = testcase.resolve()
+    resolved: set[str] = set()
+    for reference in references:
+        path = PurePosixPath(reference)
+        if not path.is_absolute() or path.parts[:2] != ("/", "testcase"):
+            continue
+        candidate = (root / Path(*path.parts[2:])).resolve()
+        if candidate.is_relative_to(root) and candidate.is_file() and candidate.stat().st_size > 0:
+            resolved.add(reference)
+    return resolved
 
 
 # ---------------------------------------------------------------------------

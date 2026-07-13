@@ -7,11 +7,12 @@ topology or orchestration: it only *describes* roles and their artifact dependen
 ``deliverables.py`` paths are mirrored in each role's ``produces`` so the eval
 layer can check exactly the roles that actually ran.
 
-Adaptive selection (the manager picks the roles a CVE needs) is described by two fields:
+Adaptive selection (the frozen domain policy picks the roles a task needs) is described
+by two fields:
 ``depends_on`` (hard producer roles whose artifacts this role consumes) and
 ``soft_depends_on`` (optional inputs the role uses if present and otherwise
-regenerates/degrades — never a blind reference). The system does not repair missing
-dependencies; prompt noncompliance is reported by evaluation.
+regenerates/degrades — never a blind reference). The decomposition validator replaces
+merged specialist leaves and injects missing roles required by the selected route.
 """
 
 from __future__ import annotations
@@ -41,8 +42,8 @@ class Role:
     ``depends_on``    — upstream *roles* whose outputs this role hard-requires.
     ``soft_depends_on`` — upstream roles used if present, otherwise the role must
                           regenerate/degrade (the input is not guaranteed to exist).
-    ``required``      — part of the phase's core chain (always spawned) vs optional
-                        (selected only when the CVE needs it).
+    ``required``      — part of the full phase contract vs optional. B4's compact route
+                        may select a strict subset before evidence-triggered expansion.
     ``insight``       — the empirical question seed for security_insights; the full
                         CWE-conditional guidance stays in assess.j2.
     ``evidence_file`` — the canonical artifact path a non-deliverable (research) role
@@ -162,11 +163,12 @@ ROLES: Final[tuple[Role, ...]] = (
         phase="Fixer",
         required=True,
         summary="Root-cause the bug at code-block level; emit the structured fix-site block.",
-        produces=(ARTIFACT_PATHS["root_cause_analysis"],),
+        produces=(ARTIFACT_PATHS["root_cause_analysis"], ARTIFACT_PATHS["patch_plan"]),
         soft_depends_on=("Forward-Instrumentator",),
         insight=(
             "Identify the data-corruption origin (not just the crash site) with live "
-            "instrumentation, and emit the block keys: " + ", ".join(ROOT_CAUSE_BLOCK_KEYS)
+            "instrumentation, emit the block keys, and author the exact host-validated PatchPlan: "
+            + ", ".join(ROOT_CAUSE_BLOCK_KEYS)
         ),
     ),
     Role(

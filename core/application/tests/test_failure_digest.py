@@ -17,7 +17,7 @@ def _config() -> dict:
 
 def _worker() -> AgentSession:
     worker = AgentSession.create(agent_id=uuid4(), role=AgentRole.WORKER, config=_config())
-    worker.assign_task("reproduce the CVE")
+    worker.assign_task("reproduce the issue")
     return worker
 
 

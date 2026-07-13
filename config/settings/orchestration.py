@@ -130,7 +130,7 @@ class OrchestrationConfig(BaseModel):
             "Place the shared code block BEFORE the per-phase domain content in "
             "worker prompts, so the run-global block sits in the byte region all "
             "branches share and cross-branch prefix-cache hits become possible. "
-            "Default keeps the legacy order (per-phase CVE display and mindset "
+            "Default keeps the legacy order (per-phase domain display and mindset "
             "first), which forks the cache per branch."
         ),
     )
@@ -183,7 +183,7 @@ class OrchestrationConfig(BaseModel):
         default=None,
         description=(
             "Whitelist of top-level workspace directories to include in the "
-            "<workspace> file listing of worker prompts (e.g. ['testcase']). "
+            "<workspace> file listing of worker prompts (e.g. ['artifacts']). "
             "None keeps the legacy behavior: list everything except src/. "
             "Build trees (work/*-build, CMakeFiles) made the legacy listing "
             "balloon to ~50KB per prompt turn."

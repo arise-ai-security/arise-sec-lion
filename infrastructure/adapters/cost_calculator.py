@@ -290,7 +290,7 @@ class DefaultCostCalculator(CostCalculatorPort):
         return self._lookup_fallback_pricing(model)
 
     def _lookup_fallback_pricing(self, model: str) -> ModelPricing:
-        """Look up pricing from fallback table with fuzzy matching."""
+        """Look up pricing from the fallback table with approximate matching."""
         # Exact match
         if model in self._fallback_pricing:
             return self._fallback_pricing[model]

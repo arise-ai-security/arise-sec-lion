@@ -524,14 +524,14 @@ class TestSiblingResultSummary:
 
         result = (
             "$ view (exit None)\nInvalid `path` parameter: /src/missing.c\n"
-            f"{WORKER_CONCLUSION_MARKER}\nBuilt the PoC; repro.sh reproduces the crash."
+            f"{WORKER_CONCLUSION_MARKER}\nBuilt the artifact; validation succeeded."
         )
 
         # When
         summary = _sibling_result_summary(result)
 
         # Then: siblings see the conclusion, not the transcript noise
-        assert summary == "Built the PoC; repro.sh reproduces the crash."
+        assert summary == "Built the artifact; validation succeeded."
         assert "Invalid `path`" not in summary
 
     def test_falls_back_to_head_tail_without_marker(self) -> None:

@@ -129,3 +129,22 @@ def test_patch_applier_makes_no_edit_for_forbidden_or_unresolved_input(tmp_path)
     assert forbidden_result.status == "PATCH_PLAN_BLOCKED"
     assert unresolved_result.status == "PATCH_PLAN_BLOCKED"
     assert source.read_bytes() == before
+
+
+def test_patch_applier_renders_diff_without_mutating_source(tmp_path) -> None:
+    """Rendering prepares the validator input while preserving the fresh source base."""
+
+    # Given: A valid literal plan over an unchanged source tree
+    source = tmp_path / "project" / "vulnerable.c"
+    source.parent.mkdir()
+    source.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    plan = _plan(source)
+    before = source.read_bytes()
+
+    # When: The plan is rendered for independent patch validation
+    result = PatchApplier(PatchPlanValidator(tmp_path, {"event:root-cause"})).render(plan)
+
+    # Then: The diff contains the literal replacement and source remains unchanged
+    assert result.status == "RENDERED"
+    assert "+void parse(void) { safe(); }" in result.diff
+    assert source.read_bytes() == before

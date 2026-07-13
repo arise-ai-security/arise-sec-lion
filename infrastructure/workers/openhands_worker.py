@@ -54,7 +54,7 @@ class OpenHandsWorker:
         del timeouts  # OpenHandsAdapter has its own timeout configured at construction time.
 
         # Forward flat-mode plugin context (container session, MCP servers,
-        # helper script) so the adapter routes execution into the SEC-bench
+        # helper script) so the adapter routes execution into the plugin-provided
         # container; canonical keys win over extras collisions.
         task_context: dict[str, object] = {
             **dict(workspace.extras),

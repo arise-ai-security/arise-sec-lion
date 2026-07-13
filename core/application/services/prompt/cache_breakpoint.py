@@ -23,7 +23,7 @@ def remove_cache_breakpoints(text: str) -> str:
     """Remove every breakpoint marker from a text segment (no-op if absent).
 
     Used by the prompt builder to scrub any marker that data-controlled content
-    (CVE text, task, briefing) might literally contain, so the only marker in
+    (domain text, task, briefing) might literally contain, so the only marker in
     the assembled prompt is the single seam the builder inserts itself.
     """
     return text.replace(CACHE_BREAKPOINT_MARKER, "")

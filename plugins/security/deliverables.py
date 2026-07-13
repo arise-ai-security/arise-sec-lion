@@ -34,6 +34,7 @@ ARTIFACT_PATHS: Final[dict[str, str]] = {
     "exploit_validation": f"{ARTIFACT_DIRS['testcase']}/exploit_validation_results.txt",
     "patch_validation": f"{ARTIFACT_DIRS['testcase']}/patch_validation_results.txt",
     "root_cause_analysis": f"{ARTIFACT_DIRS['testcase']}/root_cause_analysis.txt",
+    "patch_plan": f"{ARTIFACT_DIRS['testcase']}/patch_plan.json",
     "fix_summary": f"{ARTIFACT_DIRS['testcase']}/fix_summary.md",
     "poc_operation_map": f"{ARTIFACT_DIRS['testcase']}/poc_operation_map.txt",
     "forward_instrumentation": f"{ARTIFACT_DIRS['testcase']}/forward_instrumentation.log",
@@ -145,6 +146,7 @@ VALIDATION_REQUIRED: Final[dict[str, tuple[str, ...]]] = {
 HIERARCHICAL_ONLY: Final[dict[str, tuple[str, ...]]] = {
     "Fixer": (
         ARTIFACT_PATHS["root_cause_analysis"],
+        ARTIFACT_PATHS["patch_plan"],
     ),
 }
 

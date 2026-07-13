@@ -229,6 +229,7 @@ class RunPersistence:
         wall_started_at: datetime,
         wall_ended_at: datetime,
         summary: _SummaryView | None,
+        artifact_subdirectory: str | None = None,
         kind: str = "ours",
     ) -> Path:
         """Write `runs/<run_id>/run_manifest.json` with runtime-level fields.
@@ -261,7 +262,7 @@ class RunPersistence:
                 "worker": settings.worker.model,
             },
             "summary_available": summary is not None,
-            "deliverables": _probe_deliverables(run_dir),
+            "deliverables": _probe_deliverables(run_dir, artifact_subdirectory),
         }
         # Only emit tokens / costs_by_model when a real summary was produced.
         # Zeros-as-fallback would be indistinguishable from a genuinely empty
@@ -302,15 +303,18 @@ def _costs_by_model(summary: _SummaryView) -> dict[str, float]:
     return {str(model): float(amount) for model, amount in cost.cost_by_model.items()}
 
 
-def _probe_deliverables(run_dir: Path) -> dict[str, bool]:
-    """Report top-level files inside ``run_dir/testcase`` as {filename: True}.
+def _probe_deliverables(
+    run_dir: Path, artifact_subdirectory: str | None
+) -> dict[str, bool]:
+    """Report top-level files inside the plugin-owned artifact directory.
 
     Probing the filesystem keeps this layer domain-agnostic: whatever the
-    runtime happened to drop into ``testcase/`` is what gets recorded, with
-    no hardcoded SEC-bench filenames baked into presentation. A missing
-    directory yields an empty dict.
+    runtime placed there is recorded without hardcoded domain paths or
+    filenames. A missing directory yields an empty dict.
     """
-    testcase_dir = run_dir / "testcase"
-    if not testcase_dir.is_dir():
+    if artifact_subdirectory is None:
         return {}
-    return {child.name: True for child in testcase_dir.iterdir() if child.is_file()}
+    artifact_dir = run_dir / artifact_subdirectory
+    if not artifact_dir.is_dir():
+        return {}
+    return {child.name: True for child in artifact_dir.iterdir() if child.is_file()}

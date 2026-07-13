@@ -254,6 +254,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
     def __init__(
         self,
         model: str | None = None,
+        model_overrides: dict[str, str] | None = None,
         api_key: str | None = None,
         timeout_seconds: int = 300,
         max_iterations_per_run: int = DEFAULT_MAX_ITERATIONS_PER_RUN,
@@ -272,6 +273,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         if not model:
             raise ValueError("OpenHandsAdapter requires an explicit model")
         self.model: str = model
+        self._model_overrides: dict[str, str] = dict(model_overrides or {})
         self.api_key = api_key or self._detect_api_key()
         self.max_iterations_per_run: int = max_iterations_per_run
         self.base_url: str | None = _normalize_base_url(base_url)
@@ -283,7 +285,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         # defeats cross-worker prefix-cache reuse (each worker = own shard).
         self._run_scoped_cache_key: bool = run_scoped_cache_key
         # None keeps the SDK default ("high"). Overrides map a task-description
-        # prefix (e.g. "[Exploiter]") to an effort; first match wins.
+        # prefix (e.g. "[Analysis]") to an effort; first match wins.
         self._reasoning_effort: str | None = reasoning_effort
         self._reasoning_effort_overrides: dict[str, str] = dict(reasoning_effort_overrides or {})
         self._skip_directory_view_capture: bool = skip_directory_view_capture
@@ -360,6 +362,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         mcp_servers = self._extract_mcp_servers(task_context)
         children_before = snapshot_child_pids()
         capture = self._setup_shared_code_capture(agent_id, task_context)
+        effective_model = self._resolve_model(task_context)
 
         # SDK callbacks fire synchronously from the OpenHands worker thread.
         # Bridge them onto the running event loop so the async generator can
@@ -384,6 +387,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 callbacks=[sdk_event_callback],
                 prompt_cache_key=self._resolve_prompt_cache_key(task_context),
                 reasoning_effort=self._resolve_reasoning_effort(task_context),
+                model=effective_model,
             )
         except ImportError as error:
             yield sequencer.failed(
@@ -439,7 +443,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                     conversation,
                     sequencer,
                     tool_name=self._get_tool_name(),
-                    model=self.model,
+                    model=effective_model,
                     duration_seconds=time() - started_at,
                     container_id=container_session.container_id if container_session else None,
                     conversation_id=conversation_identity,
@@ -465,7 +469,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 conversation,
                 sequencer,
                 tool_name=self._get_tool_name(),
-                model=self.model,
+                model=effective_model,
                 duration_seconds=time() - started_at,
                 container_id=container_session.container_id if container_session else None,
                 conversation_id=conversation_identity,
@@ -509,6 +513,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         callbacks: list[Callable[[Any], None]] | None = None,
         prompt_cache_key: str | None = None,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> _ConversationLike:
         # Pass everything positionally so existing test fakes that monkey-patch
         # ``_build_conversation`` with ``lambda *_args: conversation`` continue to
@@ -522,6 +527,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 callbacks,
                 prompt_cache_key,
                 reasoning_effort,
+                model,
             ),
         )
 
@@ -540,6 +546,15 @@ class OpenHandsAdapter(WorkerAdapterBase):
                 if task_summary.startswith(prefix):
                     return effort
         return self._reasoning_effort
+
+    def _resolve_model(self, task_context: dict[str, Any]) -> str:
+        """First task-prefix model override, else the configured worker model."""
+        task_summary = task_context.get("task_summary")
+        if isinstance(task_summary, str):
+            for prefix, model in self._model_overrides.items():
+                if task_summary.startswith(prefix):
+                    return model
+        return self.model
 
     def _create_conversation_run(
         self,
@@ -698,6 +713,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         callbacks: list[Callable[[Any], None]] | None = None,
         prompt_cache_key: str | None = None,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> Any:
         import warnings
 
@@ -711,7 +727,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
             )
             from openhands.sdk import LLM, Agent, Conversation, Tool
 
-        llm = LLM(**self._build_llm_kwargs(reasoning_effort))
+        llm = LLM(**self._build_llm_kwargs(reasoning_effort, model))
         if prompt_cache_key is not None:
             # Pre-pin before Conversation.__init__ runs _pin_prompt_cache_key,
             # which only assigns when the key is still None. A run-scoped key
@@ -738,13 +754,17 @@ class OpenHandsAdapter(WorkerAdapterBase):
             callbacks=callbacks or [],
         )
 
-    def _build_llm_kwargs(self, reasoning_effort: str | None = None) -> dict[str, Any]:
+    def _build_llm_kwargs(
+        self,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         # caching_prompt enables Anthropic prompt caching in the OpenHands SDK.
         # It is the SDK default, but set explicitly here so the intent is
         # visible; the SDK gates it by model support, so it is a safe no-op for
         # non-Anthropic models.
         llm_kwargs: dict[str, Any] = {
-            "model": self.model,
+            "model": model or self.model,
             "api_key": self.api_key,
             "caching_prompt": True,
         }
@@ -842,10 +862,10 @@ class OpenHandsAdapter(WorkerAdapterBase):
         OpenHands' native ``task_tool_set`` delegates to a registered agent
         type (default ``general-purpose``). The SDK's built-in general-purpose
         agent runs on the HOST, so its shell/build commands would diverge from
-        the CVE container. We instead register a child whose tools are the
+        the plugin-provided container. We instead register a child whose tools are the
         parent's own container-aware {file_editor, glob, grep} plus the same
-        MCP ``shell_in_container`` server, so subagent work lands in the
-        container. Children get no delegation tool, bounding the tree to two
+        container shell server, so subagent work lands in the container.
+        Children get no delegation tool, bounding the tree to two
         levels. ``register_agent_if_absent`` is idempotent; the naive runner
         executes one job per process, so the first registration wins.
         """
@@ -863,7 +883,7 @@ class OpenHandsAdapter(WorkerAdapterBase):
         register_agent_if_absent(
             "general-purpose",
             _build_child,
-            "Container-aware general-purpose subagent for SEC-bench BEF tasks.",
+            "Container-aware general-purpose subagent for plugin tasks.",
         )
 
     @staticmethod
@@ -876,11 +896,11 @@ class OpenHandsAdapter(WorkerAdapterBase):
             "image": container_session.image,
             "workspace_root": str(container_session.workspace_root),
             "host_source_dir": str(container_session.host_source_dir),
-            "host_testcase_dir": str(container_session.host_testcase_dir),
+            "host_artifact_dir": str(container_session.host_artifact_dir),
             "host_work_root": str(container_session.host_work_root),
             "host_work_dir": str(container_session.host_work_dir),
             "container_source_dir": container_session.container_source_dir,
-            "container_testcase_dir": container_session.container_testcase_dir,
+            "container_artifact_dir": container_session.container_artifact_dir,
             "container_work_dir": container_session.container_work_dir,
             "container_working_directory": (container_session.container_working_directory),
             "helper_script": str(container_session.helper_script),

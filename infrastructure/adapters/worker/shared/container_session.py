@@ -18,10 +18,10 @@ class ContainerSessionContext:
     image: str
     workspace_root: Path
     host_source_dir: Path
-    host_testcase_dir: Path
+    host_artifact_dir: Path
     host_work_dir: Path
     container_source_dir: str
-    container_testcase_dir: str
+    container_artifact_dir: str
     container_working_directory: str
     helper_script: Path
     container_work_dir: str = "/work"
@@ -40,10 +40,10 @@ class ContainerSessionContext:
             image=str(raw["image"]),
             workspace_root=Path(raw["workspace_root"]),
             host_source_dir=Path(raw["host_source_dir"]),
-            host_testcase_dir=Path(raw["host_testcase_dir"]),
+            host_artifact_dir=Path(raw["host_artifact_dir"]),
             host_work_dir=Path(raw["host_work_dir"]),
             container_source_dir=str(raw["container_source_dir"]),
-            container_testcase_dir=str(raw["container_testcase_dir"]),
+            container_artifact_dir=str(raw["container_artifact_dir"]),
             container_working_directory=str(raw["container_working_directory"]),
             helper_script=Path(raw["helper_script"]),
             container_work_dir=str(raw.get("container_work_dir", "/work")),
@@ -65,8 +65,8 @@ class ContainerSessionContext:
                 ),
                 WorkspacePathAlias(self.container_source_dir, str(self.host_source_dir)),
                 WorkspacePathAlias(
-                    self.container_testcase_dir,
-                    str(self.host_testcase_dir),
+                    self.container_artifact_dir,
+                    str(self.host_artifact_dir),
                 ),
             )
         )
@@ -95,8 +95,7 @@ class ContainerSessionContext:
 
         Build/test/runtime commands must run inside the target container,
         not on the host. Workers reach the container through the MCP
-        ``shell_in_container`` tool (see
-        ``plugins/security/mcp/security_tools_server.py``). When ``auto_shell``
+        ``shell_in_container`` tool. When ``auto_shell``
         is true the adapter's permission hook ALSO rewrites a Bash tool call
         into a ``docker exec`` against the container, but the agent should
         prefer ``shell_in_container`` so the MCP server is the single source
@@ -110,40 +109,42 @@ class ContainerSessionContext:
                 "by this runtime as a fallback, but `shell_in_container` is "
                 "preferred for clarity.\n"
                 "- Do not place host mirror paths in shell commands; use "
-                "`/src`, `/testcase`, and `/work` paths.\n"
+                f"`{self.container_source_dir}`, `{self.container_artifact_dir}`, "
+                f"and `{self.container_work_dir}` paths.\n"
             )
         else:
             shell_line = (
                 "- **ALL build/test/runtime shell commands** MUST use the MCP "
                 "`shell_in_container` tool. Do NOT run them on the host "
-                "terminal. Paths like `/src`, `/testcase`, and `/work` exist "
+                f"terminal. Paths like `{self.container_source_dir}`, "
+                f"`{self.container_artifact_dir}`, and `{self.container_work_dir}` exist "
                 "inside the container, not on the host terminal, so raw host "
                 "shell commands will fail.\n"
                 '- Example: call `shell_in_container` with '
                 '`command="cd /src/<project> && make"`.\n'
                 "- Never call `shell_in_container` with a command containing "
-                "host machine paths; use `/src`, `/testcase`, and `/work` paths.\n"
+                "host machine paths; use the declared container paths.\n"
             )
         prefix = (
             "## Container-backed workspace\n\n"
             "⚠️ **ABSOLUTE RULE — USE CONTAINER PATHS:**\n"
-            "Source code, testcase files, and build artifacts are mirrored between "
+            "Source code, test artifacts, and build artifacts are mirrored between "
             "the host and a Docker container, but agents must only use the canonical "
             "container paths below. File/search/edit tools map these paths to the "
             "run-scoped host mirror internally.\n\n"
             "**File tools (read/write/edit/search) — use these paths:**\n"
             f"- Source code: `{self.container_source_dir}/...`\n"
-            f"- Test artifacts: `{self.container_testcase_dir}/...`\n"
+            f"- Test artifacts: `{self.container_artifact_dir}/...`\n"
             f"- Build artifacts: `{self.container_work_dir}/...`\n"
             f"- Repository root: `{self.container_working_directory}/...`\n"
             "- Do not invent or use host machine paths.\n"
-            "- Example: to read a source file, use `/src/<project>/src/file.c`.\n"
-            "- Example: to read a testcase artifact, use "
-            "`/testcase/<testcase>.sh`.\n\n"
+            f"- Example source path: `{self.container_source_dir}/<project>/src/file.c`.\n"
+            "- Example: to read a test artifact, use "
+            f"`{self.container_artifact_dir}/<artifact>`.\n\n"
             "**Shell commands — ALWAYS use the MCP `shell_in_container` tool "
             "with CONTAINER paths:**\n"
             f"- Source code in shell: `{self.container_source_dir}/...`\n"
-            f"- Test artifacts in shell: `{self.container_testcase_dir}/...`\n"
+            f"- Test artifacts in shell: `{self.container_artifact_dir}/...`\n"
             f"- Build artifacts in shell: `{self.container_work_dir}/...`\n"
             f"{shell_line}\n"
             f"**Source code is already cloned** at `{self.container_source_dir}/` "

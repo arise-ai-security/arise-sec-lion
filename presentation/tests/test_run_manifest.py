@@ -77,13 +77,13 @@ def _summary_with_cost(prompt: int, completion: int, **extra: float) -> Projecti
 @pytest.mark.asyncio
 async def test_write_run_manifest_emits_full_payload(tmp_path: Path) -> None:
     # Given: persistence pointed at a tmp runs dir, and a run_id whose
-    # testcase/ directory carries two files.
+    # artifacts/ directory carries two files.
     persistence = RunPersistence(tmp_path)
     run_id = uuid4()
-    testcase = tmp_path / str(run_id) / "testcase"
-    testcase.mkdir(parents=True)
-    (testcase / "model_patch.diff").write_text("diff --git\n")
-    (testcase / "repro.sh").write_text("#!/bin/sh\n")
+    artifacts = tmp_path / str(run_id) / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "change.diff").write_text("diff --git\n")
+    (artifacts / "run.sh").write_text("#!/bin/sh\n")
 
     settings = _make_settings()
     summary = _summary_with_cost(prompt=12345, completion=678, **{"o3": 0.41, "openai/o3": 0.29})
@@ -95,12 +95,13 @@ async def test_write_run_manifest_emits_full_payload(tmp_path: Path) -> None:
     path = await persistence.write_run_manifest(
         run_id,
         settings=settings,
-        task="gpac.cve-2021-40575",
+        task="sample.issue-40575",
         domain_context_path=None,
         exit_status="success",
         wall_started_at=started,
         wall_ended_at=ended,
         summary=summary,
+        artifact_subdirectory="artifacts",
     )
 
     # Then: the file exists at the canonical location.
@@ -128,8 +129,8 @@ async def test_write_run_manifest_emits_full_payload(tmp_path: Path) -> None:
     # Deliverables come from a filesystem probe — only files actually on
     # disk appear, keyed by their real filenames.
     assert payload["deliverables"] == {
-        "model_patch.diff": True,
-        "repro.sh": True,
+        "change.diff": True,
+        "run.sh": True,
     }
 
     # And: invocation_sha256 is a well-formed hex digest.
@@ -156,6 +157,7 @@ async def test_write_run_manifest_handles_missing_cost_summary(tmp_path: Path) -
         wall_started_at=datetime(2026, 1, 1, tzinfo=UTC),
         wall_ended_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
         summary=ProjectionSummary.empty(),
+        artifact_subdirectory="artifacts",
     )
 
     # Then: tokens default to zero and costs_by_model is an empty dict.
@@ -199,17 +201,17 @@ async def test_write_run_manifest_none_summary_omits_token_fields(tmp_path: Path
 async def test_write_run_manifest_probes_filesystem_for_deliverables(
     tmp_path: Path,
 ) -> None:
-    # Given: a run directory whose testcase/ carries arbitrary files not
+    # Given: a run directory whose artifacts/ carries arbitrary files not
     # listed anywhere in presentation code. The filesystem probe must
     # surface whatever is actually on disk.
     persistence = RunPersistence(tmp_path)
     run_id = uuid4()
-    testcase = tmp_path / str(run_id) / "testcase"
-    testcase.mkdir(parents=True)
-    (testcase / "custom_artifact.tar.gz").write_bytes(b"payload")
-    (testcase / "scratch.txt").write_text("note\n")
+    artifacts = tmp_path / str(run_id) / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "custom_artifact.tar.gz").write_bytes(b"payload")
+    (artifacts / "scratch.txt").write_text("note\n")
     # Nested directories are NOT flattened into the top-level list.
-    nested = testcase / "nested"
+    nested = artifacts / "nested"
     nested.mkdir()
     (nested / "buried.log").write_text("hidden\n")
 
@@ -223,6 +225,7 @@ async def test_write_run_manifest_probes_filesystem_for_deliverables(
         wall_started_at=datetime(2026, 1, 1, tzinfo=UTC),
         wall_ended_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
         summary=ProjectionSummary.empty(),
+        artifact_subdirectory="artifacts",
     )
 
     # Then: only the top-level files show up, each with value True.
@@ -234,10 +237,10 @@ async def test_write_run_manifest_probes_filesystem_for_deliverables(
 
 
 @pytest.mark.asyncio
-async def test_write_run_manifest_empty_deliverables_when_no_testcase_dir(
+async def test_write_run_manifest_empty_deliverables_when_no_artifact_dir(
     tmp_path: Path,
 ) -> None:
-    # Given: a run that never produced a testcase directory.
+    # Given: a run that never produced an artifact directory.
     persistence = RunPersistence(tmp_path)
     run_id = uuid4()
 
@@ -245,7 +248,7 @@ async def test_write_run_manifest_empty_deliverables_when_no_testcase_dir(
     path = await persistence.write_run_manifest(
         run_id,
         settings=_make_settings(),
-        task="no-testcase",
+        task="no-artifacts",
         domain_context_path=None,
         exit_status="failed",
         wall_started_at=datetime(2026, 1, 1, tzinfo=UTC),

@@ -82,6 +82,14 @@ class WorkerConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     model: str
+    model_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Task-prefix → worker-model overrides; the first key the worker's task "
+            "description starts with wins (e.g. '[Analysis]': model-name). "
+            "Falls back to model when nothing matches."
+        ),
+    )
     tool: Literal["claude_code", "openhands", "google_adk"]
     allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
     disallowed_tools: list[str] = Field(default_factory=list)
@@ -109,7 +117,7 @@ class WorkerConfig(BaseModel):
         default_factory=dict,
         description=(
             "Task-prefix → reasoning-effort overrides; the first key the worker's "
-            "task description starts with wins (e.g. '[Exploiter]': medium). "
+            "task description starts with wins (e.g. '[Analysis]': medium). "
             "Falls back to reasoning_effort when nothing matches."
         ),
     )

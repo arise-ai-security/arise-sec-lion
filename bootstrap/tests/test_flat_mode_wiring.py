@@ -240,6 +240,100 @@ def test_create_runtime_cli_leaves_hierarchical_mode_default(tmp_path: Path) -> 
     assert service._flat_invariant_builder is None
 
 
+def test_build_flat_worker_picks_claude_code(tmp_path: Path) -> None:
+    """``_build_flat_worker`` returns a ClaudeCodeWorker for claude_code."""
+    from bootstrap.composition import _build_flat_worker
+    from config.settings import Settings
+    from infrastructure.workers import ClaudeCodeWorker
+
+    # Given: a flat-mode Claude Code worker configuration.
+    settings_path = _settings_with(
+        tmp_path,
+        worker={
+            "model": "gpt-4o",
+            "tool": "claude_code",
+            "allowed_tools": ["Bash"],
+            "disallowed_tools": [],
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            "tool_params": {
+                "claude_code": {
+                    "output_format": "stream-json",
+                    "include_partial_messages": True,
+                    "max_turns": 40,
+                }
+            },
+        },
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+
+    # When: constructing the flat worker.
+    worker = _build_flat_worker(settings)
+
+    # Then: bootstrap selects the Claude Code adapter.
+    assert isinstance(worker, ClaudeCodeWorker)
+
+
+def test_build_flat_worker_rejects_google_adk(tmp_path: Path) -> None:
+    """google_adk has no flat-mode adapter, so bootstrap fails fast."""
+    from bootstrap.composition import _build_flat_worker
+    from config.settings import Settings
+
+    # Given: a flat-mode Google ADK worker configuration.
+    settings_path = _settings_with(
+        tmp_path,
+        worker={
+            "model": "gemini-1.5-pro",
+            "tool": "google_adk",
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            "tool_params": {"google_adk": {}},
+        },
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+
+    # When + Then: unsupported flat-mode wiring raises a precise error.
+    with pytest.raises(NotImplementedError, match="google_adk"):
+        _build_flat_worker(settings)
+
+
+def test_build_flat_worker_picks_openhands(tmp_path: Path) -> None:
+    """``_build_flat_worker`` carries OpenHands subagent configuration."""
+    from bootstrap.composition import _build_flat_worker
+    from config.settings import Settings
+    from infrastructure.workers import OpenHandsWorker
+
+    # Given: a flat-mode OpenHands worker with subagents enabled.
+    settings_path = _settings_with(
+        tmp_path,
+        worker={
+            "model": "gpt-5.3-codex",
+            "tool": "openhands",
+            "allowed_tools": ["file_editor", "glob", "grep"],
+            "disallowed_tools": [],
+            "timeout": 300,
+            "max_iterations_per_run": 20,
+            "tool_params": {
+                "openhands": {
+                    "mcp_tools": ["shell_in_container"],
+                    "enable_subagents": True,
+                }
+            },
+        },
+        orchestration={"mode": "flat"},
+    )
+    settings = Settings.from_yaml(settings_path)
+
+    # When: constructing the flat worker.
+    worker = _build_flat_worker(settings)
+
+    # Then: bootstrap selects OpenHands and carries the subagent flag.
+    assert isinstance(worker, OpenHandsWorker)
+    assert worker._adapter.enable_subagents is True  # noqa: SLF001 — wiring probe
+
+
 # BUG-TOOL1 regression: composition.py used to construct InfrastructureConfig
 # without ``worker_allowed_tools`` / ``worker_disallowed_tools``, so the
 # hierarchical adapters silently fell back to each SDK's hardcoded defaults
@@ -320,7 +414,7 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
         "grep",
     ]
     overlay["worker"]["tool_params"] = {
-        "openhands": {"mcp_tools": ["shell_in_container", "valgrind_run", "klee_run"]}
+        "openhands": {"mcp_tools": ["shell_in_container", "analyze", "verify"]}
     }
     settings_path.write_text(yaml.safe_dump(overlay), encoding="utf-8")
     settings = Settings.from_yaml(settings_path)
@@ -336,4 +430,4 @@ def test_create_runtime_cli_threads_allowed_tools_to_openhands(tmp_path: Path) -
         "glob",
         "grep",
     ]
-    assert worker_port.mcp_tools == ["shell_in_container", "valgrind_run", "klee_run"]
+    assert worker_port.mcp_tools == ["shell_in_container", "analyze", "verify"]

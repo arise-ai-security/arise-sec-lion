@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from difflib import unified_diff
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -52,6 +53,7 @@ class PatchPlanValidation:
     plan_sha256: str
     reason: str
     target_path: Path | None = None
+    original_content: str | None = None
     patched_content: str | None = None
 
 
@@ -62,6 +64,16 @@ class PatchApplyResult:
     status: Literal["APPLIED", "PATCH_PLAN_BLOCKED"]
     plan_sha256: str
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class PatchRenderResult:
+    """Validated patch artifact rendered without mutating the live source tree."""
+
+    status: Literal["RENDERED", "PATCH_PLAN_BLOCKED"]
+    plan_sha256: str
+    reason: str
+    diff: str = ""
 
 
 class PatchPlanValidator:
@@ -114,6 +126,7 @@ class PatchPlanValidator:
             plan_sha256=plan.sha256,
             reason="approved",
             target_path=target,
+            original_content=original,
             patched_content=patched,
         )
 
@@ -167,4 +180,32 @@ class PatchApplier:
             status="APPLIED",
             plan_sha256=validation.plan_sha256,
             reason="plan applied literally",
+        )
+
+    def render(self, plan: PatchPlan) -> PatchRenderResult:
+        """Render the literal edit as a unified diff without editing ``/src``."""
+        validation = self._validator.validate(plan)
+        if not validation.approved:
+            return PatchRenderResult(
+                status="PATCH_PLAN_BLOCKED",
+                plan_sha256=validation.plan_sha256,
+                reason=validation.reason,
+            )
+        if validation.original_content is None or validation.patched_content is None:
+            raise RuntimeError("approved PatchPlan validation omitted source content")
+        relative = PurePosixPath(plan.target_file).relative_to("/src").as_posix()
+        body = "".join(
+            unified_diff(
+                validation.original_content.splitlines(keepends=True),
+                validation.patched_content.splitlines(keepends=True),
+                fromfile=f"a/{relative}",
+                tofile=f"b/{relative}",
+            )
+        )
+        diff = f"diff --git a/{relative} b/{relative}\n{body}"
+        return PatchRenderResult(
+            status="RENDERED",
+            plan_sha256=validation.plan_sha256,
+            reason="plan rendered literally",
+            diff=diff,
         )

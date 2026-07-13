@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 label="${1:?usage: run-cycle.sh <cycle-label>}"
 mkdir -p "temp/${label}"
 
-studies=(n1-openhands-linear n2-openhands-subagents b3-boss-bef-direct b4-boss-manager-worker)
+studies=(n1-openhands-linear n2-openhands-subagents b3-rolefused b4-boss-manager-worker)
 pids=()
 for study in "${studies[@]}"; do
   "experiments/${study}/smoke.sh" > "temp/${label}/${study}.log" 2>&1 &

@@ -383,7 +383,7 @@ class AgentOrchestrator:
         """Pre-warm OpenAI's prompt cache for a batch of depth-1 phase managers.
 
         Their assessment prompts share a long head (system + persona + operation +
-        CVE block) but diverge at per-manager scope, so no manager's request is a
+        domain block) but diverge at per-manager scope, so no manager's request is a
         prefix of another's and none warms the cache for its siblings. This issues
         ONE cheap request carrying their longest common (prompt-prefix, tool defs)
         so each manager's real assessment call reads it back. Returns the primed
@@ -701,6 +701,13 @@ class AgentOrchestrator:
                 summary=result.summary,
                 evidence=[item.model_dump() for item in result.evidence],
             )
+            if result.plan_approval is not None:
+                agent.record_patch_plan_approved(
+                    plan_sha256=result.plan_approval.plan_sha256,
+                    evidence_references=list(
+                        result.plan_approval.evidence_references
+                    ),
+                )
             if result.success:
                 agent.complete_with_result(result.summary)
                 await self._verification_pipeline.verify(agent)

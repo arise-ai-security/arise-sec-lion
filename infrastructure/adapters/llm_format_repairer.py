@@ -7,9 +7,8 @@ text to a small/fast repair model with a strict "preserve every value
 verbatim, only fix structure" instruction. The repaired response is
 re-fed through the standard parser by the caller.
 
-Naming note: this repairs the *output format* of LLM responses. It is
-unrelated to the security-domain "Fixer" agent role, which patches
-source code.
+Naming note: this repairs the *output format* of LLM responses; it does
+not execute domain tasks.
 
 Design notes:
 - The repair model is itself an LLM, so it is selectable via config.

@@ -22,6 +22,7 @@ from infrastructure.cleanup.registry import CleanupRegistry
 from infrastructure.snapshot import snapshot_effective_config
 
 from .composition import (
+    available_domain_names,
     create_runtime_cli,
     get_first_enabled_domain_components,
     get_run_domain_components,
@@ -49,7 +50,7 @@ def main(args: list[str] | None = None) -> None:
     # Install signal/atexit cleanup hooks once at process entry. Idempotent
     # internally, but main() runs once per invocation so a fresh registry
     # per process is the natural lifetime. Registry is threaded into every
-    # command handler so domain plugins (e.g., security) can register
+    # command handler so domain plugins can register
     # SIGKILL-recovery cleanup callbacks at composition time.
     cleanup_registry = CleanupRegistry()
     cleanup_registry.install(signals=(signal.SIGTERM, signal.SIGINT))
@@ -99,7 +100,7 @@ def _create_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--domain",
         type=str,
-        choices=["security"],
+        choices=available_domain_names(),
         help="Enable an optional domain plugin for this run",
     )
     p.add_argument(
@@ -232,6 +233,7 @@ async def _run_task(
             wall_started_at=wall_started_at,
             wall_ended_at=wall_ended_at,
             summary=summary,
+            artifact_subdirectory=domain_components.artifact_subdirectory,
         )
     except Exception:
         logger.exception(

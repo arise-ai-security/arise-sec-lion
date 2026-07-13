@@ -86,6 +86,7 @@ class SecBenchDecompositionValidator:
         # composition root — not owned here. Stamped onto route provenance so it
         # cannot silently drift from settings.orchestration.treatment_version.
         self._policy_version = policy_version
+        self._role_fused = policy_version == "b4-adaptive-rolefused-v1"
 
     @staticmethod
     def safe_route(
@@ -136,7 +137,7 @@ class SecBenchDecompositionValidator:
             subtasks = tuple(
                 SuggestedSubtask(
                     description=f"[{name}] Execute the {name} phase outcome gate.",
-                    estimated_complexity="complex",
+                    estimated_complexity="simple" if self._role_fused else "complex",
                 )
                 for name in self._PHASES
             )
@@ -148,6 +149,8 @@ class SecBenchDecompositionValidator:
                 triggers=("run_started",),
                 remaining_budget=1,
             )
+        if self._role_fused:
+            return None
         if redecomposition_count == 0:
             role_names: tuple[str, ...] = self._COMPACT[phase]
             route_name = self.safe_route("compact", decision_complete=True)

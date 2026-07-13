@@ -15,7 +15,6 @@ from config import (
     OrchestrationConfig,
     OutputConfig,
     RetryConfig,
-    SecurityConfig,
     Settings,
     ToolCallingConfig,
     TopologyConfig,
@@ -76,7 +75,7 @@ def _make_settings(**overrides: Any) -> Settings:
             log_level="INFO",
             directory="./runs",
         ),
-        security=SecurityConfig(enabled=True, tools=["valgrind"]),
+        domain_plugins={},
         format_repairer=FormatRepairerConfig(model="gpt-5.4-mini"),
         cors=CorsConfig(),
     )
@@ -102,8 +101,8 @@ def test_compute_invocation_sha256_is_deterministic(tmp_path: Path) -> None:
     # Given: fixed settings, task, and context file.
     settings = _make_settings()
     ctx = tmp_path / "context.json"
-    ctx.write_bytes(b'{"cve": "CVE-2021-40575"}')
-    task = "Reproduce and patch the vulnerability"
+    ctx.write_bytes(b'{"issue": "ISSUE-40575"}')
+    task = "Resolve the reported issue"
 
     # When: hashing twice with identical inputs.
     a = compute_invocation_sha256(settings=settings, task=task, domain_context_path=ctx)
@@ -150,8 +149,8 @@ def test_compute_invocation_sha256_changes_on_context_change(tmp_path: Path) -> 
     settings = _make_settings()
     ctx_a = tmp_path / "a.json"
     ctx_b = tmp_path / "b.json"
-    ctx_a.write_bytes(b'{"cve": "A"}')
-    ctx_b.write_bytes(b'{"cve": "B"}')
+    ctx_a.write_bytes(b'{"issue": "A"}')
+    ctx_b.write_bytes(b'{"issue": "B"}')
 
     # When: hashing each.
     ha = compute_invocation_sha256(settings=settings, task="t", domain_context_path=ctx_a)

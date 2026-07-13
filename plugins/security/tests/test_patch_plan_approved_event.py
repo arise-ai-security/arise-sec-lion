@@ -1,4 +1,4 @@
-"""Domain tests for the PatchPlanApproved provenance emitter."""
+"""Security plugin tests for PatchPlanApproved provenance."""
 
 from uuid import uuid4
 

@@ -106,7 +106,7 @@ def test_workspace_spec_carries_extras(tmp_path: Path) -> None:
 
 def test_value_objects_are_frozen(tmp_path: Path) -> None:
     """Mutation on the value objects raises ValidationError (frozen=True)."""
-    spec = TaskPromptSpec(rendered_prompt="hi", prompt_sha="abc", cve_context=None, task="t")
+    spec = TaskPromptSpec(rendered_prompt="hi", prompt_sha="abc", domain_context=None, task="t")
     policy = ToolPolicy(allowed=("a",), disallowed=(), allowed_bash_commands=())
     budget = TimeoutBudget(per_worker_call=10, per_run_total=20)
     workspace = WorkspaceSpec(root=tmp_path, extras={})

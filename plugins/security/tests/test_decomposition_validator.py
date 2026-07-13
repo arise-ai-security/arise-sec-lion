@@ -237,6 +237,31 @@ def test_policy_version_is_sourced_from_config_not_hardcoded() -> None:
     assert compact is not None and compact.policy_version == "b4-adaptive-v2"
 
 
+def test_role_fused_policy_spawns_phase_workers_without_role_decomposition() -> None:
+    # Given: The adaptive role-fused treatment
+    validator = SecBenchDecompositionValidator(
+        adaptive_execution=True,
+        policy_version="b4-adaptive-rolefused-v1",
+    )
+
+    # When: Root and phase tasks request policy-controlled decomposition
+    skeleton = validator.fixed_decomposition(
+        parent_task_description="Repair the CVE",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+    phase = validator.fixed_decomposition(
+        parent_task_description="[Fixer] repair the vulnerability",
+        domain_context=_cve(),
+        redecomposition_count=0,
+    )
+
+    # Then: Root phases are atomic workers and never expand into compact role leaves
+    assert skeleton is not None
+    assert all(item.estimated_complexity == "simple" for item in skeleton.subtasks)
+    assert phase is None
+
+
 def test_exploiter_expansion_is_conditioned_on_the_failure_signal() -> None:
     # Given: an Exploiter controller re-entering after a reproduction/data-flow conflict
     validator = SecBenchDecompositionValidator(adaptive_execution=True)

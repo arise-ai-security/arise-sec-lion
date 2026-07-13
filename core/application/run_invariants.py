@@ -50,7 +50,7 @@ _ENV_ALLOWLIST: frozenset[str] = frozenset(
 class TaskPromptSpec(BaseModel):
     """Rendered task prompt with provenance for both flat and hierarchical dispatchers.
 
-    Although ``cve_context`` is typed ``Mapping``, Pydantic v2 coerces inputs to a
+    Although ``domain_context`` is typed ``Mapping``, Pydantic v2 coerces inputs to a
     plain ``dict`` during validation; mutating its values is not supported and may
     produce undefined behavior. Treat as read-only.
 
@@ -65,7 +65,7 @@ class TaskPromptSpec(BaseModel):
 
     rendered_prompt: str
     prompt_sha: str
-    cve_context: Mapping[str, object] | None = None
+    domain_context: Mapping[str, object] | None = None
     task: str
 
 
@@ -147,9 +147,8 @@ def build_workspace_spec(
 ) -> WorkspaceSpec:
     """Construct the workspace handoff for a run.
 
-    ``core/`` is domain-agnostic; the actual workspace prep (e.g. mounting
-    /src and /testcase, ensuring ``secb`` is available) is the security
-    plugin's job and is invoked separately. This builder only stamps the
-    root path and any extras the plugin populates.
+    ``core/`` is domain-agnostic; the plugin performs any domain-specific
+    workspace preparation separately. This builder only stamps the root path
+    and any extras the plugin populates.
     """
     return WorkspaceSpec(root=run_dir, extras=dict(extras or {}))

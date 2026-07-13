@@ -53,23 +53,23 @@ class TestDecompositionFailureHistoryBlock:
         history = (
             ChildFailureRecord(
                 child_id=uuid4(),
-                child_task="Reproduce the heap overflow with the PoV input",
-                reason="worker crashed before producing pov.bin",
+                child_task="Reproduce the reported failure with the fixture",
+                reason="worker stopped before producing artifact.bin",
                 digest=oversized_digest,
             ),
         )
 
         # When: building the manager decomposition prompt with that history.
         prompt = builder.build_manager_decomposition_prompt(
-            task_description="[Exploiter] decompose the reproduction phase",
+            task_description="[Analysis] decompose the reproduction phase",
             agent_id=uuid4(),
             failure_history=history,
         )
 
         # Then: the guarded block renders with the subtask label and reason.
         assert "<previous_attempt_failures>" in prompt
-        assert "Reproduce the heap overflow with the PoV input" in prompt
-        assert "worker crashed before producing pov.bin" in prompt
+        assert "Reproduce the reported failure with the fixture" in prompt
+        assert "worker stopped before producing artifact.bin" in prompt
 
         # And: the oversized digest is excerpted head + tail with the omission marker.
         assert "HEAD_MARKER_" in prompt
@@ -90,7 +90,7 @@ class TestDecompositionFailureHistoryBlock:
 
         # When: building the prompt.
         prompt = builder.build_manager_decomposition_prompt(
-            task_description="[Exploiter] decompose",
+            task_description="[Analysis] decompose",
             agent_id=uuid4(),
             failure_history=history,
         )
@@ -107,7 +107,7 @@ class TestDecompositionFailureHistoryBlock:
 
         # When: building the prompt without failure_history.
         prompt = builder.build_manager_decomposition_prompt(
-            task_description="[Exploiter] decompose",
+            task_description="[Analysis] decompose",
             agent_id=uuid4(),
         )
 
@@ -128,7 +128,7 @@ class TestDecompositionFailureHistoryBlock:
 
         # When: building the boss delegation prompt with that history.
         prompt = builder.build_boss_delegation_prompt(
-            task_description="Fix the CVE",
+            task_description="Resolve the issue",
             agent_id=uuid4(),
             failure_history=history,
         )
@@ -156,7 +156,7 @@ class TestBuildRetryContextBlock:
     def test_digest_only_has_failure_block_not_feedback_block(self) -> None:
         # Given: a retry agent with a failure digest but no verifier feedback.
         agent = FakeRetryAgent(
-            failure_digest="FAILURE: segfault\nLAST TOOL CALLS: run pov.bin\nATTEMPT: 2",
+            failure_digest="FAILURE: process stopped\nLAST TOOL CALLS: run artifact.bin\nATTEMPT: 2",
         )
 
         # When: assembling the retry context.
@@ -164,7 +164,7 @@ class TestBuildRetryContextBlock:
 
         # Then: the failure block is present with the digest verbatim...
         assert "## Previous Attempt Failure (Retry)" in block
-        assert "FAILURE: segfault\nLAST TOOL CALLS: run pov.bin\nATTEMPT: 2" in block
+        assert "FAILURE: process stopped\nLAST TOOL CALLS: run artifact.bin\nATTEMPT: 2" in block
 
         # And: the verification-feedback block is absent.
         assert "## Previous Attempt Feedback (Retry)" not in block
@@ -172,8 +172,8 @@ class TestBuildRetryContextBlock:
     def test_feedback_only_has_feedback_block_not_failure_block(self) -> None:
         # Given: a retry agent with verifier feedback but no digest.
         agent = FakeRetryAgent(
-            verification_feedback="pov.bin is missing from the workspace",
-            success_criteria="pov.bin exists and triggers the sanitizer",
+            verification_feedback="artifact.bin is missing from the workspace",
+            success_criteria="artifact.bin exists and triggers validation",
         )
 
         # When: assembling the retry context.
@@ -181,8 +181,8 @@ class TestBuildRetryContextBlock:
 
         # Then: the feedback block (with success criteria) is present...
         assert "## Previous Attempt Feedback (Retry)" in block
-        assert "pov.bin is missing from the workspace" in block
-        assert "pov.bin exists and triggers the sanitizer" in block
+        assert "artifact.bin is missing from the workspace" in block
+        assert "artifact.bin exists and triggers validation" in block
 
         # And: the failure block is absent.
         assert "## Previous Attempt Failure (Retry)" not in block
@@ -216,7 +216,7 @@ class TestBuildRetryContextBlock:
             role=AgentRole.WORKER,
             config=_worker_config(),
         )
-        agent.assign_task("[Fixer] apply the bounds check")
+        agent.assign_task("[Execution] apply the requested change")
         agent.fail_with_reason("worker crashed")
         agent.record_failure_digest("FAILURE: null deref\nATTEMPT: 1", source="worker_crash")
         agent.schedule_retry(reason="worker crashed")

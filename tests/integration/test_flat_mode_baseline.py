@@ -122,7 +122,7 @@ def _make_invariant_builder() -> FlatInvariantBuilder:
         spec = TaskPromptSpec(
             rendered_prompt=f"BRIEFING\n\nTask: {task}",
             prompt_sha="abc123",
-            cve_context=None,
+            domain_context=None,
             task=task,
         )
         policy = ToolPolicy(

@@ -240,7 +240,7 @@ async def test_build_validation_fails_when_binary_pointer_missing(tmp_path: Path
 
 def _patch_plan(target: Path) -> dict:
     return {
-        "evidence_references": ["event:root-cause"],
+        "evidence_references": ["/testcase/root_cause_analysis.txt"],
         "target_file": "/src/project/vulnerable.c",
         "target_symbol": "parse",
         "base_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
@@ -261,29 +261,29 @@ def _patch_plan(target: Path) -> dict:
 
 
 async def test_patch_apply_applies_validated_plan_and_writes_diff(tmp_path: Path) -> None:
-    # Given: a sealed /src source, a manager-authored PatchPlan, and a git diff to emit
+    # Given: a sealed /src source and a manager-authored PatchPlan with real evidence
     src = tmp_path / "src" / "project"
     src.mkdir(parents=True)
     target = src / "vulnerable.c"
     target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
     tc = tmp_path / "testcase"
     tc.mkdir()
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(json.dumps(_patch_plan(target)), encoding="utf-8")
-    session = FakeSession(
-        tc,
-        responses=[_Resp(needle="git", outcome=CommandOutcome(exit_code=0, output="diff --git a b\n"))],
-        source_dir=tmp_path / "src",
-    )
+    session = FakeSession(tc, source_dir=tmp_path / "src")
 
     # When: the weak Patch-Applier procedure runs
     result = await _executor(session).execute(
         "secb_patch_apply", "[Patch-Applier] apply", _cve(), {"root_id": uuid4()}
     )
 
-    # Then: the exact edit is applied host-side and the diff deliverable is written
+    # Then: source remains fresh and the exact edit is emitted as a diff for validation
     assert result.success is True
-    assert target.read_text(encoding="utf-8") == "void parse(void) { safe(); }\n"
-    assert (tc / "model_patch.diff").read_text(encoding="utf-8").startswith("diff --git")
+    assert target.read_text(encoding="utf-8") == "void parse(void) { unsafe(); }\n"
+    rendered = (tc / "model_patch.diff").read_text(encoding="utf-8")
+    assert rendered.startswith("diff --git a/project/vulnerable.c b/project/vulnerable.c")
+    assert "+void parse(void) { safe(); }" in rendered
+    assert result.plan_approval is not None
 
 
 async def test_patch_apply_blocks_and_makes_no_edit_on_forbidden_target(tmp_path: Path) -> None:
@@ -295,6 +295,7 @@ async def test_patch_apply_blocks_and_makes_no_edit_on_forbidden_target(tmp_path
     before = target.read_bytes()
     tc = tmp_path / "testcase"
     tc.mkdir()
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     plan = _patch_plan(target)
     plan["forbidden_paths"] = ["/src/project"]
     (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
@@ -309,6 +310,28 @@ async def test_patch_apply_blocks_and_makes_no_edit_on_forbidden_target(tmp_path
     assert result.success is False
     assert target.read_bytes() == before
     assert not (tc / "model_patch.diff").exists()
+
+
+async def test_patch_apply_blocks_unresolved_evidence_reference(tmp_path: Path) -> None:
+    # Given: A structurally valid plan citing an evidence file that does not exist
+    src = tmp_path / "src" / "project"
+    src.mkdir(parents=True)
+    target = src / "vulnerable.c"
+    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "patch_plan.json").write_text(json.dumps(_patch_plan(target)), encoding="utf-8")
+    session = FakeSession(tc, source_dir=tmp_path / "src")
+
+    # When: The host validates the plan evidence
+    result = await _executor(session).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: The plan blocks and source is untouched
+    assert result.success is False
+    assert "unresolved evidence" in result.summary
+    assert target.read_text(encoding="utf-8") == "void parse(void) { unsafe(); }\n"
 
 
 def test_match_returns_none_for_unregistered_or_missing_bracket() -> None:

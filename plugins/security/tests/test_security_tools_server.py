@@ -60,6 +60,12 @@ def test_build_stdio_config_returns_engine_agnostic_dict() -> None:
     assert spec["env"][server.ENV_CONTAINER_SOURCE_DIR] == "/src"
     assert spec["env"][server.ENV_CONTAINER_TESTCASE_DIR] == "/testcase"
     assert spec["env"][server.ENV_CONTAINER_WORK_DIR] == "/work"
+    assert spec["in_container"] == {
+        "command": "/opt/arise-mcp/venv/bin/python",
+        "args": ["-m", "plugins.security.mcp.security_tools_server"],
+        "remove_env": [server.ENV_HELPER_SCRIPT],
+        "env": {"PYTHONPATH": "/opt/arise-mcp"},
+    }
 
 
 def test_build_stdio_config_omits_work_dir_when_unset() -> None:
